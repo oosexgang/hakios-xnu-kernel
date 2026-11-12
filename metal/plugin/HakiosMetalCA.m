@@ -6175,7 +6175,19 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				}
 				const BOOL main = mainOn && slowUs > 4000 && slowDraws >= 40 && mainShown < 6;
 				mainShown += main ? 1 : 0;
-				if ((slowUs > 20000 && !hm_fps.heavyShown) || few || main) {
+				/* (boot-arg metal_heavy_ms=N: a heavy pass from N ms, not 20) */
+				static double heavyUs = -1;
+				if (heavyUs < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					const char *at;
+
+					heavyUs = 20000;
+					if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_heavy_ms=")) != NULL) {
+						heavyUs = atoi(at + strlen("metal_heavy_ms=")) * 1000.0;
+					}
+				}
+				if ((slowUs > heavyUs && !hm_fps.heavyShown) || few || main) {
 					hm_fps.heavyShown = YES;
 					hm_print("fps: ... a heavy pass, %.1f ms%s%s; its draws:\n", slowUs / 1e3,
 						 hakios_metal_cb_pass_sysmem_why(cb, slow)[0] != 0 ? ", in sysmem: " : "", hakios_metal_cb_pass_sysmem_why(cb, slow));
@@ -6189,6 +6201,34 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 						}
 						if (pass == slow) {
 							hm_print("fps: ...   %s %.0f us over %ux%u at (%u,%u)\n", name, dus, area[2] - area[0] + 1, area[3] - area[1] + 1, area[0], area[1]);
+						}
+					}
+				}
+			}
+			/* (metal_fps=draws: the draws of a sysmem pass of 4 draws or fewer over 0.5 ms, 24 such passes -- one draw that
+			 * costs a millisecond is its shader's doing or its size's) */
+			static unsigned lightShown;
+			if (hm_fps_draws() && lightShown < 24) {
+				const int n = hakios_metal_cb_pass_time(cb, 0, NULL, NULL, NULL, NULL, NULL);
+				for (int p = 0; p < n && lightShown < 24; p++) {
+					unsigned kind, width, height, draws;
+					double us;
+
+					hakios_metal_cb_pass_time(cb, (unsigned)p, &kind, &width, &height, &draws, &us);
+					if (draws == 0 || draws > 4 || us < 500 || hakios_metal_cb_pass_tiles(cb, (unsigned)p) > 0) continue;
+					lightShown++;
+					hm_print("fps: ... a light pass %d of %u draws, %ux%u, %.2f ms; its draws:\n", p, draws, width, height, us / 1e3);
+					for (unsigned i = 0;; i++) {
+						const char *name = NULL;
+						unsigned pass, area[4];
+						double dus = 0;
+
+						if (hakios_metal_cb_draw_place(cb, i, &pass, area) <= (int)i || hakios_metal_cb_draw_time(cb, i, &name, &dus) <= (int)i) {
+							break;
+						}
+						if (pass == (unsigned)p) {
+							hm_print("fps: ...   %s %.0f us over %ux%u at (%u,%u)\n", name, dus, area[2] - area[0] + 1, area[3] - area[1] + 1,
+								 area[0], area[1]);
 						}
 					}
 				}
@@ -6215,7 +6255,7 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 			/* metal_fps=timeline: a heavy buffer's every pass, the first 80 such buffers (metal_timeline_from=SECONDS: from
 			 * so long after the first buffer timed, past the lock screen's say) */
 			static unsigned heavyListed;
-			static double listFrom = -1;
+			static double listFrom = -1, listOver = 0.015;
 			if (listFrom < 0) {
 				char args[1024] = "";
 				size_t size = sizeof(args) - 1;
@@ -6225,8 +6265,10 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_timeline_from=")) != NULL) {
 					listFrom += atoi(at + strlen("metal_timeline_from="));
 				}
+				/* (metal_timeline_ms=N: a buffer is heavy from N ms of commit to completion, not 15) */
+				if ((at = strstr(args, "metal_timeline_ms=")) != NULL) listOver = atoi(at + strlen("metal_timeline_ms=")) / 1e3;
 			}
-			const BOOL listAll = gpu > 0.015 && heavyListed < 80 && hm_timeline_on() && hm_now() >= listFrom;
+			const BOOL listAll = gpu > listOver && heavyListed < 80 && hm_timeline_on() && hm_now() >= listFrom;
 			NSMutableString *all = listAll ? [NSMutableString string] : nil;
 
 			heavyListed += listAll ? 1 : 0;
@@ -6235,18 +6277,27 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				double us;
 
 				if (hakios_metal_cb_pass_time(cb, i, &kind, &width, &height, &draws, &us) <= (int)i) {
-					if (all != nil) hm_print("timeline: a buffer of %.1f ms on the GPU:%s\n", gpu * 1e3, [all UTF8String]);
+					/* (in pieces of 8 passes: the console cuts a line at 1023 bytes, and a buffer of CoreAnimation's
+					 * has 37 passes) */
+					if (all != nil) {
+						NSArray *each = [all componentsSeparatedByString:@"|"];
+						static unsigned listed;
+						listed++;
+						for (NSUInteger k = 1; k < [each count]; k += 8) {
+							NSRange r = NSMakeRange(k, MIN((NSUInteger)8, [each count] - k));
+							hm_print("timeline: buffer %u of %.1f ms on the GPU, %lu passes, from %lu:%s\n", listed, gpu * 1e3,
+								 (unsigned long)[each count] - 1, (unsigned long)k - 1, [[[each subarrayWithRange:r] componentsJoinedByString:@""] UTF8String]);
+						}
+					}
 					break;
 				}
 				if (all != nil) {
 					unsigned attached = 0, touched = 0;
 					hakios_metal_cb_pass_attachments(cb, i, &attached, &touched);
-					const char *sysWhy = hakios_metal_cb_pass_sysmem_why(cb, i);
 
-					[all appendFormat:@" [%u %ux%u %u draws%@ %.2f ms]", kind, width, height, draws,
-							  hakios_metal_cb_pass_tiles(cb, i) > 0 ? [NSString stringWithFormat:@" %d tiles (attachments %#x, touched %#x)",
-														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] :
-							  kind == 0 && sysWhy[0] != 0 ? [NSString stringWithFormat:@" in sysmem: %s", sysWhy] : @"",
+					[all appendFormat:@"| [%u %ux%u %ud%@ %.2f]", kind, width, height, draws,
+							  hakios_metal_cb_pass_tiles(cb, i) > 0 ? [NSString stringWithFormat:@" %dt %#x/%#x",
+														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] : @"",
 							  us / 1e3];
 				}
 				hm_fps.passUs += us;
