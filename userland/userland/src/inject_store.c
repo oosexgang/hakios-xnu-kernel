@@ -174,7 +174,7 @@ enum {
 	COUNT_processStream, COUNT_updateStorefront, COUNT_addCookiesBlocking, COUNT_dataTaskCreated,
 	COUNT_last
 };
-static const char *const counted[COUNT_last] = {
+static const char *const counted[] = {
 	"-[ACAccount ams_storefront]", "-[AMSBagNetworkDataSource cachedStorefront]",
 	"-[AMSBagFixedAccountProvider bagStorefrontForAccountMediaType:]",
 	"-[AMSBagActiveAccountProvider bagStorefrontForAccountMediaType:]",
@@ -192,7 +192,6 @@ static const char *const counted[COUNT_last] = {
 	"-[AMSMutablePromise finishWithResult:error:]", "-[AMSMutablePromise thenWithBlock:]",
 	"-[AMSMutablePromise continueWithBlock:]", "-[AMSBagValue valueWithError:]",
 	"-[AMSPromise resultBeforeDate:error:]",
-	"-[AMSBagValue valueWithError:]", "-[AMSPromise resultBeforeDate:error:]",
 	"-[ACAccountStore _ams_localiTunesAccountAfterUpdatingStorefront:]",
 	"ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies:",
 	"-[AMSUserAgent _sharedComponentFairPlayDeviceType]",
@@ -202,6 +201,8 @@ static const char *const counted[COUNT_last] = {
 	"ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies: (answered empty)",
 	"-[NSURLSession dataTaskWithRequest:...] (created, not resumed)",
 };
+/* (one name a counter: a name too many or too few and every count after it is printed against another's name) */
+_Static_assert(sizeof(counted) / sizeof(counted[0]) == COUNT_last, "a name for each counter, in the counters' order");
 static unsigned long entered[COUNT_last];
 /*
  * And how many times each came BACK. A method that hangs and a method that is never called look the
