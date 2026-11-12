@@ -52,7 +52,8 @@ enum {
 	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (redwood_speaker.c, redwood_sound.c) */
 	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (redwood_haptic.c) */
 	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (redwood_torch.c) */
-	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* redwood's four cameras and their wiring (redwood_camera.c) */
+	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* cameras on an SM7325's camera blocks, powered by a PM8008, wired as
+	                                         * the board's [camera] says (redwood_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (redwood_wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (redwood_mic.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
@@ -63,6 +64,13 @@ enum {
 	HAKIOS_BACKLIGHT_NONE = 0,
 	HAKIOS_BACKLIGHT_DCS  = 1,              /* MIPI DCS 0x51 through the SoC's DSI controller */
 	HAKIOS_BACKLIGHT_SOFT = 2,              /* the display driver darkens the picture */
+};
+
+/* how a camera sensor's supply is switched (board: [[camera.sensors]] vana, vdig, vio) */
+enum {
+	HAKIOS_SUPPLY_NONE = 0,                 /* not switched: always on, or not there */
+	HAKIOS_SUPPLY_LDO  = 1,                 /* "ldoN MVmV": a regulator of the sensors' PMIC, at a set point */
+	HAKIOS_SUPPLY_GPIO = 2,                 /* "gpioN MVmV USus": a fixed regulator that a pin of the SoC switches */
 };
 
 #define HAKIOS_CPU_GROUPS       4               /* groups of cores with a clock of their own, at most */
@@ -244,6 +252,29 @@ struct hakios_board {
 		int16_t pin[3];                 /* the radio's enable, Bluetooth's reset and its sw-ctrl; -1: not said */
 		char supply[3][8];              /* RPMh's names of the radio's vdd-cx-mx, 1.8 V and 1.3 V; "": not said */
 	} wifi;
+
+	/* the cameras as the phone has them wired (board: [camera] and its [[camera.sensors]]) */
+	struct {
+		uint8_t pmic_sda, pmic_scl;     /* the I2C bus of the PMIC whose regulators feed the sensors (a PM8008) */
+		uint8_t sensor_count;           /* 0: the board says nothing of its cameras */
+		uint8_t test_sensor, ios_sensor;        /* which the driver works on by itself (cam=1..4), which for iOS (cam=5) */
+		struct hakios_camera_sensor {
+			const char *name;               /* "macro", "wide", ...: what cam_sensor= picks it by */
+			const char *chip;               /* one of the camera driver's chips */
+			uint8_t cci, cci_master;        /* the CCI the sensor is on and which of its two masters ... */
+			uint8_t sda, scl;               /* ... and that master's pins */
+			uint8_t reset;                  /* the sensor's reset pin */
+			uint8_t mclk, mclk_pin;         /* which of camcc's MCLKs it runs on, and that clock's pin */
+			uint8_t csiphy;                 /* the CSI receiver its lanes go to */
+			uint8_t focus_motor;            /* 1: a DW9800 moves its lens */
+			struct hakios_camera_supply {
+				uint8_t kind;           /* HAKIOS_SUPPLY_NONE, _LDO (one of the PMIC's), _GPIO (a pin switches it) */
+				uint8_t ldo;            /* _LDO: which */
+				uint16_t mv;            /* the set point (for _GPIO: what the switched regulator gives) */
+				uint16_t gpio, ramp_us; /* _GPIO: the pin, active high, and how long the regulator takes */
+			} vana, vdig, vio;
+		} sensors[4];
+	} cameras;
 
 	/* CPU frequency (soc: [cpufreq]) */
 	struct {

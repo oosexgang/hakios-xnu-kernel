@@ -86,6 +86,15 @@ SOC_SCHEMA = {
     'scmi_perf': {'shmem': (int, True), 'mailbox': (int, True), 'doorbell': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
+# a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
+SUPPLY = re.compile(r'ldo([1-9]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
+# the sensor chips the camera driver knows (redwood_camera.c, chips[]: their registers, colour order and gains)
+CAMERA_CHIPS = ('OV02B10', 'S5KHM2SD', 'OV16A1Q', 'S5K4H7')
+CAMERA_SENSOR = {'name': (str, True), 'chip': (CAMERA_CHIPS, True), 'cci': ([int], True), 'pins': ([int], True),
+                 'reset': (int, True), 'mclk': (int, True), 'mclk_pin': (int, True), 'csiphy': (int, True),
+                 'vana': (SUPPLY, False), 'vdig': (SUPPLY, False), 'vio': (SUPPLY, False),
+                 'focus_motor': (('dw9800',), False)}
+CAMERA_SENSORS_MOST = 4         # (struct hakios_board's room)
 BOARD_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True), 'soc': (str, True), 'features': ([str], True)},
     'backlight': {'type': (('dcs', 'soft', 'none'), True), 'panel_mode': (('command', 'video'), False),
@@ -111,6 +120,8 @@ BOARD_SCHEMA = {
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'mic': {'codec_reset': (int, True)},
+    'camera': {'pmic_pins': ([int], True), 'sensors': ([CAMERA_SENSOR], True), 'test_sensor': (str, False),
+               'ios_sensor': (str, False)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
              'dsp_memory_size': (int, False), 'pins': ([int], False), 'supplies': ([str], False)},
@@ -156,7 +167,7 @@ PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
                           'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',
-                          'touch-ft3658u': 'touch'}
+                          'touch-ft3658u': 'touch', 'camera-redwood': 'camera'}
 # ... and what a controller's driver uses of [touch] beyond what every one needs
 TOUCH_NEEDS = {'touch-goodix': ('analog_enable', 'vendor_pins'), 'touch-ft3658u': ('analog_supply',)}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
@@ -342,7 +353,16 @@ def check_table(where, table, schema, problems):
             problems.add(where, f'unknown key "{key}" (known: {", ".join(sorted(schema))})')
             continue
         kind = schema[key][0]
-        if isinstance(kind, tuple):
+        if isinstance(kind, list) and isinstance(kind[0], dict):
+            if not isinstance(value, list) or not value or any(not isinstance(item, dict) for item in value):
+                problems.add(where, f'{key}: one table or more, each [[{where.rsplit("[", 1)[-1].rstrip("]")}.{key}]]')
+            else:
+                for i, item in enumerate(value):
+                    check_table(f'{where} {key}[{i}]', item, kind[0], problems)
+        elif isinstance(kind, re.Pattern):
+            if type(value) is not str or not kind.fullmatch(value):
+                problems.add(where, f'{key} = {value!r}: not in the form {kind.pattern!r}')
+        elif isinstance(kind, tuple):
             if value not in kind:
                 problems.add(where, f'{key} = {value!r}: one of {", ".join(kind)}')
         elif isinstance(kind, list):
@@ -372,6 +392,44 @@ def check_file(path, data, schema, problems):
             problems.add(rel, f'unknown section [{section}] (known: {", ".join(s for s in schema if s)})')
         else:
             check_table(f'{rel} [{section}]', value, schema[section], problems)
+
+
+def supply_of(text):
+    """A sensor's supply as the board says it: (kind, ldo, mV, gpio, ramp in us); kind 0 none, 1 an LDO, 2 a pin."""
+    if text is None:
+        return (0, 0, 0, 0, 0)
+    found = SUPPLY.fullmatch(text)
+    if found[1]:
+        return (1, int(found[1]), int(found[2]), 0, 0)
+    return (2, 0, int(found[4]), int(found[3]), int(found[5]))
+
+
+def camera_problems(where, cameras, problems):
+    """What a board's [camera] says that cannot be: the values are of the right kinds already."""
+    sensors = cameras['sensors']
+    pmic = cameras['pmic_pins']
+    if len(pmic) != 2 or pmic[0] == pmic[1] or any(not 0 <= pin <= 255 for pin in pmic):
+        problems.add(where, 'pmic_pins are the PMIC\'s bus: SDA then SCL, two different pins of the SoC, 0 to 255')
+    if len(sensors) > CAMERA_SENSORS_MOST:
+        problems.add(where, f'{len(sensors)} sensors: the driver has room for {CAMERA_SENSORS_MOST}')
+    names = [sensor['name'] for sensor in sensors]
+    for i, sensor in enumerate(sensors):
+        at = f'{where} sensors[{i}]'
+        if not NAME.match(sensor['name']) or names.count(sensor['name']) > 1:
+            problems.add(at, f'name = {sensor["name"]!r}: lower-case letters, digits and dashes, and no other sensor\'s')
+        if len(sensor['cci']) != 2 or any(not 0 <= n <= 1 for n in sensor['cci']):
+            problems.add(at, 'cci is the CCI and its master: [0 or 1, 0 or 1]')
+        if len(sensor['pins']) != 2:
+            problems.add(at, 'pins are the CCI master\'s SDA and SCL: two')
+        if not 0 <= sensor['mclk'] <= 3 or not 0 <= sensor['csiphy'] <= 3:
+            problems.add(at, 'mclk and csiphy are numbers of camcc\'s clocks and of the CSI receivers: 0 to 3')
+        switches = [supply_of(sensor.get(key))[3] for key in ('vana', 'vdig', 'vio') if supply_of(sensor.get(key))[0] == 2]
+        wires = list(sensor['pins']) + [sensor['reset'], sensor['mclk_pin']] + switches
+        if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
+            problems.add(at, 'its pins (the bus\'s two, reset, mclk_pin, a supply\'s switch) are different pins of the SoC, 0 to 255')
+    for key in ('test_sensor', 'ios_sensor'):
+        if key in cameras and cameras[key] not in names:
+            problems.add(where, f'{key} = {cameras[key]!r}: the name of one of its sensors ({", ".join(names)})')
 
 
 def load(problems=None):
@@ -454,6 +512,9 @@ def load(problems=None):
                 problems.add(f'{rel} [storage]', 'write_first is a block of the partition, past what the build puts at its start: not 0, and inside it')
             if 'loader' not in data:
                 problems.add(f'{rel} [storage]', 'the loader serves the writes: the board needs [loader] as well')
+        cameras = data.get('camera')
+        if cameras is not None:
+            camera_problems(f'{rel} [camera]', cameras, problems)
         touch = data.get('touch')
         if touch is not None:
             wires = list(touch['bus_pins']) + [touch['interrupt'], touch['reset']] + list(touch.get('vendor_pins', [])) + \
@@ -759,6 +820,25 @@ def table_text(socs, boards):
                        f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x},\n\t\t\t'
                        f'.pin = {{ {", ".join(str(pin) for pin in radio.get("pins", [-1, -1, -1]))} }}, '
                        f'.supply = {{ {", ".join(f'"{name}"' for name in radio.get("supplies", ["", "", ""]))} }} }},')
+        cameras = board.get('camera')
+        if cameras:
+            names = [sensor['name'] for sensor in cameras['sensors']]
+            out += ['\t\t.cameras = {',
+                    f'\t\t\t.pmic_sda = {cameras["pmic_pins"][0]}, .pmic_scl = {cameras["pmic_pins"][1]}, '
+                    f'.sensor_count = {len(names)},',
+                    f'\t\t\t.test_sensor = {names.index(cameras.get("test_sensor", names[0]))}, '
+                    f'.ios_sensor = {names.index(cameras.get("ios_sensor", names[0]))},',
+                    '\t\t\t.sensors = {']
+            for sensor in cameras['sensors']:
+                supplies = ', '.join(f'.{key} = {{ {", ".join(str(v) for v in supply_of(sensor.get(key)))} }}'
+                                     for key in ('vana', 'vdig', 'vio'))
+                out += [f'\t\t\t\t{{ .name = {c_string(sensor["name"])}, .chip = {c_string(sensor["chip"])}, '
+                        f'.cci = {sensor["cci"][0]}, .cci_master = {sensor["cci"][1]}, '
+                        f'.sda = {sensor["pins"][0]}, .scl = {sensor["pins"][1]}, .reset = {sensor["reset"]},',
+                        f'\t\t\t\t  .mclk = {sensor["mclk"]}, .mclk_pin = {sensor["mclk_pin"]}, .csiphy = {sensor["csiphy"]}, '
+                        f'.focus_motor = {int("focus_motor" in sensor)},',
+                        f'\t\t\t\t  {supplies} }},']
+            out += ['\t\t\t},', '\t\t},']
         gpu = board.get('gpu')
         if gpu:
             out += [
@@ -1146,7 +1226,10 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
             for key, value in values.items():
                 said = tree.get(section, {}).get(key)
                 where = f'[{section}] {key}'
-                if said is None:
+                if isinstance(value, list) and value and isinstance(value[0], dict):
+                    counts['unsaid'] += 1
+                    lines.append(f'    {where:34} {len(value)} table{"s" if len(value) != 1 else ""}, not looked for in the tree')
+                elif said is None:
                     counts['unsaid'] += 1
                     lines.append(f'    {where:34} {key_value(key, value):28} not in the tree')
                 elif said == value:

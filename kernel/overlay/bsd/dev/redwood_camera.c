@@ -1,13 +1,15 @@
 /*
- * The cameras of the POCO X5 Pro (redwood): the macro one, an OmniVision OV02B10 (2 MP, Android's
- * camera 2, "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD (108 MP, Android's
- * camera 0, "redwood_sunny_s5khm2sd_wide"), the front one and the ultra-wide one. Every address and
- * number below belongs to this phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
+ * Cameras on an SM7325, written for those of the POCO X5 Pro (redwood): the macro one, an OmniVision
+ * OV02B10 (2 MP, Android's camera 2, "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD
+ * (108 MP, Android's camera 0, "redwood_sunny_s5khm2sd_wide"), the front one and the ultra-wide one.
+ * How each sensor is wired is the board's ([camera] in board.toml: redwood's is described below as an
+ * example); what each chip is, and the SoC's camera blocks, are this file's. Every number was found on
+ * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
  * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.redwood_*.bin: the
  * slave address, the chip ID and where it is read, the power sequence, the tables) and the drivers
  * of the phone's kernel (MiCode redwood-s-oss: cam_sensor_util.c, qcom_pm8008-regulator.c,
  * camcc-yupik.c, gdsc-regulator.c, pinctrl-yupik.c, pinctrl-spmi-gpio.c, cam_csiphy_*), read as
- * data. The macro one (the others' differences are in sensors[] below and capture_sensor()):
+ * data. The macro one (the others' differences are in redwood's board file, chips[] below and capture_sensor()):
  *
  *   the sensor     on CCI 1, master 0 (GPIO 73 data, 74 clock, function cci_i2c, internal pull-ups),
  *                  slave address 0x3c; done by hand here, as the other drivers do their I2C (the
@@ -138,78 +140,113 @@ static vm_offset_t tlmm;
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-#define PIN_PMIC_SDA            4       /* the serial engine 1's I2C: the PM8008i */
-#define PIN_PMIC_SCL            5
-
 /*
- * The four sensors, as Android's device tree has them (cam-sensor2 the macro, cam-sensor0 the wide,
- * cam-sensor1 the front, cam-sensor3 the ultra-wide): the pins of their CCI master (taken by hand),
- * the reset, MCLK (camcc RCG and branch, the pin and its function 1, cam_mclk, at 4 mA), the supplies
- * the module file's power sequence switches (a PM8008i LDO at the device tree's voltage, or a GPIO
- * that switches a fixed regulator), the CSIPHY with its clocks, and how the sensor's exposure
- * registers are laid out. Boot-arg cam_sensor=macro|wide|front|ultra picks one (default: the macro,
- * and for cam=5 the wide).
+ * The sensors come from the board ([camera] and its [[camera.sensors]] in board.toml): where each is wired
+ * -- its CCI master's pins (taken by hand), the reset, which MCLK (its pin, function 1, cam_mclk, at 4 mA),
+ * the CSIPHY, and how the module file's power sequence switches its supplies (a PM8008 LDO at the device
+ * tree's voltage, or a GPIO that switches a fixed regulator). What a sensor is -- its module file, how its
+ * exposure registers are laid out, its colour order and gains -- is its chip's, in chips[] below. Boot-arg
+ * cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra");
+ * without it, the board's test_sensor, and for cam=5 its ios_sensor.
  */
-enum { SUPPLY_NONE, SUPPLY_LDO, SUPPLY_GPIO };
-struct supply {
-	uint8_t         kind, ldo;      /* SUPPLY_LDO: PM8008i LDO n ... */
-	uint16_t        mv;             /* ... at this set point (the device tree's) */
-	uint16_t        gpio, ramp_us;  /* SUPPLY_GPIO: the pin, active high, and the regulator's ramp */
-};
-struct sensor_hw {
-	const char *    name;
-	const char *    tab;            /* in fw/ of the small image (tools/camsensor.py) */
-	const char *    bus_name;
-	unsigned        sda, scl, reset;
-	uint32_t        mclk_cmd, mclk_cbcr;
-	unsigned        mclk_pin;
-	struct supply   vana, vdig, vio;
-	unsigned        csiphy;
-	uint32_t        phy_cbcr, timer_cmd, timer_cbcr;
-	uint8_t         regs;           /* the exposure registers: REGS_OV_PAGED, REGS_SMIA or REGS_OV16 */
-	uint8_t         bayer;          /* the picture's order as it comes here (camraw.py's codes: 1 GRBG, 3 BGGR) */
-	uint8_t         pattern_bayer;  /* ... and its own colour bars' (its module file's "tpgon") */
-	const char *    chip;           /* for the frames' header */
-	uint16_t        gain_unity, gain_max;   /* the analog gain register's 1x, and the most it is given */
-};
 enum {
 	REGS_OV_PAGED,                  /* OmniVision, 8-bit registers in pages (0xfd): exposure 0x0e/0x0f, gain 0x22, VTS 0x14/0x15 */
 	REGS_SMIA,                      /* SMIA: frame length 0x0340, coarse integration 0x0202, analog gain 0x0204, hold 0x0104 */
 	REGS_OV16,                      /* OmniVision, 16-bit addresses: exposure 0x3500.., gain 0x3508, VTS 0x380e, hold 0x3208 */
 };
-static const struct sensor_hw sensors[] = {
-	{       /* cam-sensor2: OV02B10, CCI 1 master 0 (GPIO 73/74), reset GPIO 77, MCLK2 (GPIO 66), csiphy 2 */
-		.name = "macro (OV02B10)", .tab = "camera-ov02b10.tab", .bus_name = "CCI 1 master 0", .sda = 73, .scl = 74, .reset = 77,
-		.mclk_cmd = 0xe038, .mclk_cbcr = 0xe050, .mclk_pin = 66,
-		.vana = { SUPPLY_LDO, 7, 2800, 0, 0 }, .vdig = { SUPPLY_LDO, 6, 1800, 0, 0 }, .vio = { SUPPLY_NONE, 0, 0, 0, 0 },
-		.csiphy = 2, .phy_cbcr = 0xe110, .timer_cmd = 0xe0f4, .timer_cbcr = 0xe10c, .regs = REGS_OV_PAGED, .bayer = 3,
-		.pattern_bayer = 2, .chip = "OV02B10", .gain_unity = 16, .gain_max = 0xf8,
-	},
-	{       /* cam-sensor0: S5KHM2SD, CCI 0 master 1 (GPIO 71/72), reset GPIO 21, MCLK1 (GPIO 65), csiphy 1;
-		 * VANA: camera_wide_vana_ldo, a fixed 2.8 V regulator from BOB switched by GPIO 106 (ramp 135 us) */
-		.name = "wide (S5KHM2SD)", .tab = "camera-s5khm2sd.tab", .bus_name = "CCI 0 master 1", .sda = 71, .scl = 72, .reset = 21,
-		.mclk_cmd = 0xe01c, .mclk_cbcr = 0xe034, .mclk_pin = 65,
-		.vana = { SUPPLY_GPIO, 0, 2800, 106, 135 }, .vdig = { SUPPLY_LDO, 1, 1000, 0, 0 }, .vio = { SUPPLY_LDO, 5, 1800, 0, 0 },
-		.csiphy = 1, .phy_cbcr = 0xe0ec, .timer_cmd = 0xe0d0, .timer_cbcr = 0xe0e8, .regs = REGS_SMIA, .bayer = 1,
-		.pattern_bayer = 2, .chip = "S5KHM2SD", .gain_unity = 32, .gain_max = 0x800,
-	},
-	{       /* cam-sensor1: OV16A1Q, CCI 0 master 0 (GPIO 69/70), reset GPIO 20, MCLK0 (GPIO 64), csiphy 0 */
-		.name = "front (OV16A1Q)", .tab = "camera-ov16a1q.tab", .bus_name = "CCI 0 master 0", .sda = 69, .scl = 70, .reset = 20,
-		.mclk_cmd = 0xe000, .mclk_cbcr = 0xe018, .mclk_pin = 64,
-		.vana = { SUPPLY_LDO, 3, 2800, 0, 0 }, .vdig = { SUPPLY_LDO, 2, 1200, 0, 0 }, .vio = { SUPPLY_LDO, 5, 1800, 0, 0 },
-		.csiphy = 0, .phy_cbcr = 0xe0c8, .timer_cmd = 0xe0ac, .timer_cbcr = 0xe0c4, .regs = REGS_OV16, .bayer = 3,
-		.pattern_bayer = 0, .chip = "OV16A1Q", .gain_unity = 0x100, .gain_max = 0xf80,
-	},
-	{       /* cam-sensor3: S5K4H7, CCI 1 master 1 (GPIO 75/76), reset GPIO 78, MCLK3 (GPIO 67, 24 MHz: camcc's PLL2), csiphy 3;
-		 * VDIG: camera_ultra_dvdd_ldo, a fixed 1.2 V regulator from PM7325 S8 switched by GPIO 108 (ramp 135 us) */
-		.name = "ultra-wide (S5K4H7)", .tab = "camera-s5k4h7.tab", .bus_name = "CCI 1 master 1", .sda = 75, .scl = 76, .reset = 78,
-		.mclk_cmd = 0xe054, .mclk_cbcr = 0xe06c, .mclk_pin = 67,
-		.vana = { SUPPLY_LDO, 4, 2800, 0, 0 }, .vdig = { SUPPLY_GPIO, 0, 1200, 108, 135 }, .vio = { SUPPLY_LDO, 5, 1800, 0, 0 },
-		.csiphy = 3, .phy_cbcr = 0xe138, .timer_cmd = 0xe11c, .timer_cbcr = 0xe134, .regs = REGS_SMIA, .bayer = 1,
-		.pattern_bayer = 2, .chip = "S5K4H7", .gain_unity = 32, .gain_max = 0x200,
-	},
+/* the sensor chips this driver knows (tools/boards.py's CAMERA_CHIPS is this list's names) */
+static const struct chip {
+	const char *    name;           /* as the board names it, and for the frames' header */
+	const char *    tab;            /* its module file, in fw/ of the small image (tools/camsensor.py) */
+	uint8_t         regs;           /* the exposure registers: REGS_OV_PAGED, REGS_SMIA or REGS_OV16 */
+	uint8_t         bayer;          /* the picture's order as it comes here (camraw.py's codes: 1 GRBG, 3 BGGR) */
+	uint8_t         pattern_bayer;  /* ... and its own colour bars' (its module file's "tpgon") */
+	bool            exposure;       /* cam_shutter, cam_gain and cam_vblank have been tried on it */
+	uint16_t        gain_unity, gain_max;   /* the analog gain register's 1x, and the most it is given */
+} chips[] = {
+	{ "OV02B10", "camera-ov02b10.tab", REGS_OV_PAGED, 3, 2, true, 16, 0xf8 },
+	{ "S5KHM2SD", "camera-s5khm2sd.tab", REGS_SMIA, 1, 2, true, 32, 0x800 },
+	{ "OV16A1Q", "camera-ov16a1q.tab", REGS_OV16, 3, 0, false, 0x100, 0xf80 },
+	{ "S5K4H7", "camera-s5k4h7.tab", REGS_SMIA, 1, 2, false, 32, 0x200 },
 };
+/* camcc of the SM7325 (camcc-yupik.c): MCLK n's RCG and branch; CSIPHY n's branch, and its timer's RCG and branch */
+static const struct { uint32_t rcg, branch; } mclk_clocks[4] = {
+	{ 0xe000, 0xe018 }, { 0xe01c, 0xe034 }, { 0xe038, 0xe050 }, { 0xe054, 0xe06c },
+};
+static const struct { uint32_t branch, timer_rcg, timer_branch; } csiphy_clocks[4] = {
+	{ 0xe0c8, 0xe0ac, 0xe0c4 }, { 0xe0ec, 0xe0d0, 0xe0e8 }, { 0xe110, 0xe0f4, 0xe10c }, { 0xe138, 0xe11c, 0xe134 },
+};
+/* a sensor as the rest of this file works on it: the board's wiring, its chip's ways, its clocks' registers */
+struct sensor_hw {
+	char            name[40];       /* "macro (OV02B10)" */
+	const char *    tab;
+	char            bus_name[24];   /* "CCI 1 master 0" */
+	unsigned        sda, scl, reset;
+	uint32_t        mclk_cmd, mclk_cbcr;
+	unsigned        mclk_pin;
+	struct hakios_camera_supply vana, vdig, vio;
+	unsigned        csiphy;
+	uint32_t        phy_cbcr, timer_cmd, timer_cbcr;
+	uint8_t         regs, bayer, pattern_bayer;
+	bool            exposure, focus_motor;
+	const char *    chip;           /* for the frames' header */
+	uint16_t        gain_unity, gain_max;
+};
+static struct sensor_hw sensors[4];
+static unsigned sensor_count;
 static const struct sensor_hw *hw = &sensors[0];
+
+/* The board's sensors, each with its chip's ways; false (and said why) when one of them cannot be worked with. */
+static bool
+sensors_from_board(void)
+{
+	const struct hakios_board *board = hakios_board();
+
+	for (unsigned i = 0; i < board->cameras.sensor_count && i < sizeof(sensors) / sizeof(sensors[0]); i++) {
+		const struct hakios_camera_sensor *wired = &board->cameras.sensors[i];
+		const struct chip *chip = NULL;
+		struct sensor_hw *to = &sensors[i];
+
+		for (unsigned c = 0; c < sizeof(chips) / sizeof(chips[0]); c++) {
+			chip = strcmp(chips[c].name, wired->chip) == 0 ? &chips[c] : chip;
+		}
+		if (chip == NULL || wired->mclk >= 4 || wired->csiphy >= 4) {
+			say("camera: disabled: the board's %s camera is %s, which this driver does not know\n", wired->name,
+			    chip == NULL ? wired->chip : "on an MCLK or a CSIPHY the SoC has not");
+			return false;
+		}
+		snprintf(to->name, sizeof(to->name), "%s (%s)", wired->name, chip->name);
+		snprintf(to->bus_name, sizeof(to->bus_name), "CCI %u master %u", wired->cci, wired->cci_master);
+		to->tab = chip->tab;
+		to->chip = chip->name;
+		to->regs = chip->regs;
+		to->bayer = chip->bayer;
+		to->pattern_bayer = chip->pattern_bayer;
+		to->exposure = chip->exposure;
+		to->gain_unity = chip->gain_unity;
+		to->gain_max = chip->gain_max;
+		to->sda = wired->sda;
+		to->scl = wired->scl;
+		to->reset = wired->reset;
+		to->mclk_pin = wired->mclk_pin;
+		to->mclk_cmd = mclk_clocks[wired->mclk].rcg;
+		to->mclk_cbcr = mclk_clocks[wired->mclk].branch;
+		to->csiphy = wired->csiphy;
+		to->phy_cbcr = csiphy_clocks[wired->csiphy].branch;
+		to->timer_cmd = csiphy_clocks[wired->csiphy].timer_rcg;
+		to->timer_cbcr = csiphy_clocks[wired->csiphy].timer_branch;
+		to->vana = wired->vana;
+		to->vdig = wired->vdig;
+		to->vio = wired->vio;
+		to->focus_motor = wired->focus_motor != 0;
+		sensor_count = i + 1;
+	}
+	if (sensor_count == 0) {
+		say("camera: disabled: the board's [camera] names no sensor\n");
+		return false;
+	}
+	return true;
+}
 static unsigned hw_index;
 
 static void
@@ -250,7 +287,7 @@ struct bus {
 	const char *    name;
 	struct i2c_gpio pins;
 };
-static struct bus pmic_bus = { .name = "the PM8008i's I2C", .pins = { .sda = PIN_PMIC_SDA, .scl = PIN_PMIC_SCL } };
+static struct bus pmic_bus = { .name = "the PM8008i's I2C" };    /* (its pins: the board's [camera] pmic_pins) */
 static struct bus cci_bus;              /* the sensor's (from hw) */
 
 static void
@@ -483,10 +520,10 @@ pgpio_read_all(uint8_t *regs)
 static bool
 sensor_ldo(unsigned n, unsigned mv)
 {
-	const struct supply *all[3] = { &hw->vana, &hw->vdig, &hw->vio };
+	const struct hakios_camera_supply *all[3] = { &hw->vana, &hw->vdig, &hw->vio };
 
 	for (int i = 0; i < 3; i++) {
-		if (all[i]->kind == SUPPLY_LDO && all[i]->ldo == n && (mv == 0 || all[i]->mv == mv)) {
+		if (all[i]->kind == HAKIOS_SUPPLY_LDO && all[i]->ldo == n && (mv == 0 || all[i]->mv == mv)) {
 			return true;
 		}
 	}
@@ -1017,12 +1054,12 @@ static bool chip_enable_switched, powered, reset_driven, vana_gpio_switched;
 
 /* A GPIO-switched supply (the wide sensor's VANA, the ultra-wide's VDIG): the pin a high output (GPIO, no pull, 2 mA: cam_sensor_active_*). */
 static bool
-supply_on(const struct supply *s)
+supply_on(const struct hakios_camera_supply *s)
 {
-	if (s->kind == SUPPLY_LDO) {
+	if (s->kind == HAKIOS_SUPPLY_LDO) {
 		return ldo_on(s->ldo, s->mv);
 	}
-	if (s->kind == SUPPLY_GPIO) {
+	if (s->kind == HAKIOS_SUPPLY_GPIO) {
 		found_vana_cfg = rd(GPIO_CFG(s->gpio));
 		found_vana_io = rd(GPIO_IO(s->gpio));
 		vana_gpio_switched = true;
@@ -1041,11 +1078,11 @@ supply_on(const struct supply *s)
 }
 
 static void
-supply_off(const struct supply *s)
+supply_off(const struct hakios_camera_supply *s)
 {
-	if (s->kind == SUPPLY_LDO) {
+	if (s->kind == HAKIOS_SUPPLY_LDO) {
 		ldo_off(s->ldo);
-	} else if (s->kind == SUPPLY_GPIO && vana_gpio_switched) {
+	} else if (s->kind == HAKIOS_SUPPLY_GPIO && vana_gpio_switched) {
 		wr(GPIO_IO(s->gpio), 0);
 		spin_us(10);
 		wr(GPIO_IO(s->gpio), found_vana_io & 2);
@@ -1069,7 +1106,7 @@ sensor_delay(uint32_t us)
 static bool
 power_step(const struct ctab_entry *e, bool up)
 {
-	const struct supply *s = e->address == 1 ? &hw->vana : e->address == 2 ? &hw->vdig : e->address == 3 ? &hw->vio : NULL;
+	const struct hakios_camera_supply *s = e->address == 1 ? &hw->vana : e->address == 2 ? &hw->vdig : e->address == 3 ? &hw->vio : NULL;
 
 	switch (e->address) {
 	case 8:
@@ -1090,7 +1127,7 @@ power_step(const struct ctab_entry *e, bool up)
 		}
 		break;
 	case 1: case 2: case 3:
-		if (s->kind == SUPPLY_NONE) {
+		if (s->kind == HAKIOS_SUPPLY_NONE) {
 			give_up("a supply the device tree does not give this sensor");
 			return false;
 		}
@@ -2785,7 +2822,7 @@ static void
 af_up(bool sensor_frames)
 {
 	af_position = REDWOOD_CAMERA_NO_FOCUS;
-	if (hw != &sensors[1] || !sensor_frames) {
+	if (!hw->focus_motor || !sensor_frames) {
 		return;
 	}
 	if (!af_write(AF_CONTROL, 0x01)) {
@@ -2873,9 +2910,9 @@ exposure(const struct ctab_mode *mode)
 	if (shutter == 0 && gain == 0 && vblank == 0) {
 		return true;
 	}
-	if (hw->regs != REGS_OV_PAGED && hw != &sensors[1]) {
-		say("camera: cam_shutter, cam_gain and cam_vblank are for the macro and the wide camera: the %s one's exposure is "
-		    "its tables'\n", hw->name);
+	if (!hw->exposure) {
+		say("camera: cam_shutter, cam_gain and cam_vblank have been tried on the OV02B10 and the S5KHM2SD: the %s one's "
+		    "exposure is its tables'\n", hw->name);
 		return true;
 	}
 	vblank = vblank > 0x3fff ? 0x3fff : vblank;
@@ -3761,7 +3798,7 @@ camdev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		return 0;
 	}
 	if (c.command == REDWOOD_CAMERA_SENSOR) {
-		if (c.a >= sizeof(sensors) / sizeof(sensors[0])) {
+		if (c.a >= sensor_count) {
 			return EINVAL;
 		}
 		lck_mtx_lock(&ios_lock);
@@ -3905,10 +3942,10 @@ serve_ios(void)
 static void
 show_ldos(void)
 {
-	const struct supply *all[3] = { &hw->vana, &hw->vdig, &hw->vio };
+	const struct hakios_camera_supply *all[3] = { &hw->vana, &hw->vdig, &hw->vio };
 
 	for (int i = 0; i < 3; i++) {
-		if (all[i]->kind == SUPPLY_LDO) {
+		if (all[i]->kind == HAKIOS_SUPPLY_LDO) {
 			show_ldo(all[i]->ldo);
 		}
 	}
@@ -3920,13 +3957,13 @@ look(void)
 	uint8_t regs[5], type = 0, subtype = 0, sts = 0, revid[4] = { 0 }, enable = 0;
 
 	show_clocks();
-	show_pin(PIN_PMIC_SDA, "the PM8008i's I2C data");
-	show_pin(PIN_PMIC_SCL, "the PM8008i's I2C clock");
+	show_pin(pmic_bus.pins.sda, "the PM8008i's I2C data");
+	show_pin(pmic_bus.pins.scl, "the PM8008i's I2C clock");
 	show_pin(hw->mclk_pin, "the sensor's MCLK");
 	show_pin(hw->sda, "the sensor's CCI data");
 	show_pin(hw->scl, "the sensor's CCI clock");
 	show_pin(hw->reset, "the sensor's reset");
-	if (hw->vana.kind == SUPPLY_GPIO) {
+	if (hw->vana.kind == HAKIOS_SUPPLY_GPIO) {
 		show_pin(hw->vana.gpio, "the sensor's VANA switch");
 	}
 	if (!pgpio_found || pgpio_read(PGPIO_TYPE, &type) != NULL || pgpio_read(PGPIO_SUBTYPE, &subtype) != NULL ||
@@ -3956,9 +3993,9 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	if (level == 5) {
 		camdev_make();
 	}
-	select_sensor(level == 5 ? 1 : 0);
+	select_sensor(level == 5 ? hakios_board()->cameras.ios_sensor : hakios_board()->cameras.test_sensor);
 	if (PE_parse_boot_arg_str("cam_sensor", which, sizeof(which))) {
-		for (unsigned i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
+		for (unsigned i = 0; i < sensor_count; i++) {
 			if (strncmp(which, sensors[i].name, strlen(which)) == 0 && (sensors[i].name[strlen(which)] == ' ' ||
 			    sensors[i].name[strlen(which)] == '-')) {
 				select_sensor(i);
@@ -4019,11 +4056,17 @@ redwood_camera_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD)) {
-		/* every address below is one phone's: not on a board that does not say it is wired the same */
+		/* the camera blocks are an SM7325's, the sensors' supplies a PM8008's: not on a board that does not say so */
 		say("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
 		level = 0;
 		return;
 	}
+	if (!sensors_from_board()) {
+		level = 0;
+		return;
+	}
+	pmic_bus.pins.sda = hakios_board()->cameras.pmic_sda;
+	pmic_bus.pins.scl = hakios_board()->cameras.pmic_scl;
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
 		say("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
 		level = 0;

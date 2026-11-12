@@ -103,6 +103,29 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # default), 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary
 #                                   # (the sound card's dai-tdm node: qcom,msm-dai-tdm-pri-rx is 0, ...-tert-rx 2)
 
+# The cameras, for the feature "camera-redwood": the sensors on an SM7325's camera blocks, their
+# supplies from a PM8008's regulators. Each sensor is one [[camera.sensors]] table, in the order iOS's
+# side numbers them; Android's device tree has each as a qcom,cam-sensor node (cam-sensorN).
+# [camera]
+# pmic_pins = [4, 5]                # the PM8008's I2C bus: the pins of its qcom,i2c node's pinctrl, SDA then SCL
+# test_sensor = "macro"             # optional: the one cam=1 to cam=4 work on (the first, if not said)
+# ios_sensor = "wide"               # optional: the one whose frames iOS gets with cam=5 (the first, if not said)
+#
+# [[camera.sensors]]
+# name = "wide"                     # what cam_sensor= picks it by: lower-case letters, digits and dashes
+# chip = "S5KHM2SD"                 # one the driver knows: OV02B10, S5KHM2SD, OV16A1Q or S5K4H7
+# cci = [0, 1]                      # the node's cci-device and cci-master
+# pins = [71, 72]                   # that master's pins, SDA then SCL (the cci pinctrl node of that master)
+# reset = 21                        # the node's gpios: the one gpio-reset names
+# mclk = 1                          # which MCLK: the node's clock-names "cam_clk" is cam_cc_mclkN_clk
+# mclk_pin = 65                     # ... and its pin (the gpios' first, cam_sensor_mclkN pinctrl)
+# csiphy = 1                        # the node's csiphy-sd-index
+# vana = "gpio106 2800mV 135us"     # optional, each of the three: how the supply is switched -- "ldoN MVmV", the
+# vdig = "ldo1 1000mV"              # PM8008's LDO N at that set point (cam_vana-supply and the like name it, its
+# vio = "ldo5 1800mV"               # rgltr-min-voltage the set point), or "gpioN MVmV USus", a fixed regulator a
+#                                   # pin switches (its gpio, its voltage, its startup-delay-us); left out: not switched
+# focus_motor = "dw9800"            # optional: a DW9800 moves the lens (an actuator node with compatible dw9800)
+
 # The vibration motor's chip, for the feature "haptic-aw86927": an Awinic AW86927 on two of the SoC's
 # pins (I2C by hand), its reset and its interrupt, and what Android's driver found for this motor.
 # [haptic]

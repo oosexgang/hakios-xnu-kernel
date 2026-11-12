@@ -114,6 +114,67 @@ speeds_khz = [315000, 450000, 550000]
 speed_levels = [64, 128, 192]
 default_speed = 3
 
+# The cameras (feature "camera-redwood"). The PM8008 whose regulators feed the sensors is on the I2C bus of
+# GPIO 4 and 5. Each sensor as Android's device tree has it (cam-sensor2, 0, 1 and 3, in this order, which
+# is the one iOS's side numbers them in): its CCI master and that master's pins, its reset, which MCLK and
+# that clock's pin, the CSI receiver, and how the module file's power sequence switches its supplies.
+[camera]
+pmic_pins = [4, 5]
+test_sensor = "macro"
+ios_sensor = "wide"
+
+[[camera.sensors]]
+name = "macro"
+chip = "OV02B10"
+cci = [1, 0]
+pins = [73, 74]
+reset = 77
+mclk = 2
+mclk_pin = 66
+csiphy = 2
+vana = "ldo7 2800mV"
+vdig = "ldo6 1800mV"
+
+[[camera.sensors]]
+name = "wide"
+chip = "S5KHM2SD"
+cci = [0, 1]
+pins = [71, 72]
+reset = 21
+mclk = 1
+mclk_pin = 65
+csiphy = 1
+vana = "gpio106 2800mV 135us"         # camera_wide_vana_ldo: a fixed regulator from BOB
+vdig = "ldo1 1000mV"
+vio = "ldo5 1800mV"
+focus_motor = "dw9800"
+
+[[camera.sensors]]
+name = "front"
+chip = "OV16A1Q"
+cci = [0, 0]
+pins = [69, 70]
+reset = 20
+mclk = 0
+mclk_pin = 64
+csiphy = 0
+vana = "ldo3 2800mV"
+vdig = "ldo2 1200mV"
+vio = "ldo5 1800mV"
+
+[[camera.sensors]]
+name = "ultra-wide"
+chip = "S5K4H7"
+cci = [1, 1]
+pins = [75, 76]
+reset = 78
+mclk = 3
+mclk_pin = 67
+csiphy = 3
+vana = "ldo4 2800mV"
+vdig = "gpio108 1200mV 135us"         # camera_ultra_dvdd_ldo: a fixed regulator from the PM7325's S8
+vio = "ldo5 1800mV"
+
 # The loader knows this one by its framebuffer, as it knows a phone under its UEFI.
 [loader]
 fb_base = 0x9B000000                # (no phone's: a real package beside this one must not look the same to the loader)

@@ -38,6 +38,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     (the floors), `[buttons]` (the keys' PMIC peripherals), `[adsp]` (firmware directory, memory, the
     gauge's units), `[gpu]` (the Adreno's profile), `[wifi]` (the radio, its early memory pool, the
     Wi-Fi DSP's memory, the radio's pins and its supplies' names), `[mic]` (the codec's reset pin),
+    `[camera]` (the sensors' PMIC bus, and one `[[camera.sensors]]` table a sensor: its chip, CCI
+    master and pins, reset, MCLK, CSI receiver and supplies; the driver's table of four is gone),
     `[screen]` (the status bar's shift past the camera), `[loader]` (framebuffer base,
     `uefi_charger`), `[boot]` (the boot tool's defaults);
   - in the SoC file: `[platform]` (interrupt controller, cores, PSCI, I/O window), `[clocks]`,
@@ -266,9 +268,9 @@ Not changed:
 
 - Drivers did not move or change names. `redwood_*` is the historical prefix of the platform layer, not
   a statement about which phone the code is for.
-- Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, one
-  camera module. Which pins they are on, and the radio's supplies, are board data now; how each part is
-  spoken to is not. They are the largest share of the work on a new phone.
+- Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, the
+  sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
+  wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
 - redwood has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.

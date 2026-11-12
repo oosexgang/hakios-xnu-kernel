@@ -605,6 +605,51 @@ class Generate(Sandbox):
                       '.sound_pin = { 97, 100, 98, 99 }, .sound_function = 1, .tdm = 0 },',
                       boards.table_text(*boards.load()))
 
+    def test_the_cameras_are_described_one_table_a_sensor(self):
+        path = self.dir / 'devices/phone/board.toml'
+        plain = path.read_text()
+        wide = ('[[camera.sensors]]\nname = "wide"\nchip = "S5KHM2SD"\ncci = [0, 1]\npins = [71, 72]\nreset = 21\nmclk = 1\n'
+                'mclk_pin = 65\ncsiphy = 1\nvana = "gpio106 2800mV 135us"\nvdig = "ldo1 1000mV"\nfocus_motor = "dw9800"\n')
+        front = ('[[camera.sensors]]\nname = "front"\nchip = "OV16A1Q"\ncci = [0, 0]\npins = [69, 70]\nreset = 20\nmclk = 0\n'
+                 'mclk_pin = 64\ncsiphy = 0\nvana = "ldo3 2800mV"\n')
+        camera = '[camera]\npmic_pins = [4, 5]\nios_sensor = "wide"\n'
+        path.write_text(plain + camera + wide + front)
+        self.assertEqual(self.problems(), '')
+        table = boards.table_text(*boards.load())
+        for line in ('.pmic_sda = 4, .pmic_scl = 5, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0,',
+                     '{ .name = "wide", .chip = "S5KHM2SD", .cci = 0, .cci_master = 1, .sda = 71, .scl = 72, .reset = 21,',
+                     '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1,',
+                     '.vana = { 2, 0, 2800, 106, 135 }, .vdig = { 1, 1, 1000, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },',
+                     '.vana = { 1, 3, 2800, 0, 0 }, .vdig = { 0, 0, 0, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },'):
+            self.assertIn(line, table)
+        # what a sensor's table may not say, each with the reason
+        for wrong, said in ((wide.replace('"S5KHM2SD"', '"IMX766"'), 'chip = \'IMX766\': one of OV02B10'),
+                            (wide.replace('"ldo1 1000mV"', '"ldo1 1V"'), "vdig = 'ldo1 1V': not in the form"),
+                            (wide.replace('mclk = 1', 'mclk = 4'), 'mclk and csiphy are numbers'),
+                            (wide.replace('cci = [0, 1]', 'cci = [2, 1]'), 'cci is the CCI and its master'),
+                            (wide.replace('reset = 21', 'reset = 106'), 'different pins of the SoC'),    # (the supply's switch)
+                            (wide.replace('"wide"', '"front"'), "no other sensor's"),
+                            (wide.replace('name = "wide"\n', ''), '"name" is missing'),
+                            (wide.replace('focus_motor = "dw9800"', 'lens = 1'), 'unknown key "lens"')):
+            path.write_text(plain + camera + wrong + front)
+            self.assertIn(said, self.problems())
+        path.write_text(plain + camera.replace('[4, 5]', '[4, 4]') + wide + front)
+        self.assertIn('pmic_pins are the PMIC', self.problems())
+        path.write_text(plain + camera.replace('"wide"', '"tele"') + wide + front)
+        self.assertIn("ios_sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
+        path.write_text(plain + camera + wide + front + front.replace('"front"', '"b"') + front.replace('"front"', '"c"') +
+                        front.replace('"front"', '"d"'))
+        self.assertIn('5 sensors: the driver has room for 4', self.problems())
+        path.write_text(plain + camera)
+        self.assertIn('"sensors" is missing', self.problems())
+        path.write_text(plain + camera + 'sensors = 1\n')
+        self.assertIn('sensors: one table or more, each [[camera.sensors]]', self.problems())
+
+    def test_the_chips_a_board_may_name_are_the_camera_drivers(self):
+        driver = (ROOT / 'kernel/overlay/bsd/dev/redwood_camera.c').read_text()
+        listed = re.findall(r'^\t\{ "(\w+)", "camera-[\w-]+\.tab"', driver, re.M)
+        self.assertEqual(tuple(listed), boards.CAMERA_CHIPS)
+
     def test_part_drivers_need_the_pins_and_the_table_carries_them(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "haptic-aw86927", "touch-goodix"')
         said = self.problems()
@@ -1295,7 +1340,14 @@ class Repository(unittest.TestCase):
             if section:
                 self.assertTrue(f'[{section}]' in template, f'the template does not show [{section}]')
                 self.assertTrue(f'`[{section}]`' in readme, f'devices/README.md does not name [{section}]')
-            for key in keys:
+            for key, (kind, _) in keys.items():
+                if isinstance(kind, list) and isinstance(kind[0], dict):
+                    # an array of tables: its header, and each of its keys
+                    self.assertTrue(f'[[{section}.{key}]]' in template, f'the template does not show [[{section}.{key}]]')
+                    for inner in kind[0]:
+                        self.assertTrue(re.search(rf'(?m)^(# )?{inner} = ', template),
+                                        f'[[{section}.{key}]] {inner} is not explained in the template')
+                    continue
                 self.assertTrue(re.search(rf'(?m)^(# )?{key} = ', template), f'[{section}] {key} is not explained in the template')
         for section in boards.SOC_SCHEMA:
             if section:
