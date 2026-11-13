@@ -322,6 +322,72 @@ scan_request(void)
 	CHECK(scans == 2, "nothing refused reached the station: %u", scans);
 }
 
+/* channels by number alone, with no band said: 1 to 14 are 2.4 GHz (14 is 2484 MHz), the rest 5 GHz up to 196; 6 GHz none */
+static void
+channels_by_number(void)
+{
+	static struct apple80211_scan_request scan;
+	static const struct { unsigned channel, flags, frequency; } asked[] = {
+		{ 14, 0, 2484 }, { 13, 0, 2472 }, { 196, 0, 5980 }, { 197, 0, 0 }, { 36, 0, 5180 }, { 1, 0x2000, 0 }, { 0, 0, 0 },
+		{ 14, CHANNEL_5GHZ, 5070 },
+	};
+	unsigned n = 0;
+
+	memset(&scan, 0, sizeof(scan));
+	scan.channel_count = sizeof(asked) / sizeof(asked[0]);
+	for (unsigned i = 0; i < scan.channel_count; i++) {
+		scan.channels[i] = (struct apple80211_channel) { 1, asked[i].channel, asked[i].flags };
+	}
+	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == 0, "asked");
+	for (unsigned i = 0; i < scan.channel_count; i++) {
+		if (asked[i].frequency != 0) {
+			CHECK(n < asked_scan.frequency_count && asked_scan.frequencies[n] == asked[i].frequency, "channel %u (%#x): %u MHz",
+			    asked[i].channel, asked[i].flags, n < asked_scan.frequency_count ? asked_scan.frequencies[n] : 0);
+			n++;
+		}
+	}
+	CHECK(asked_scan.frequency_count == n, "%u of them the radio's: %u", n, asked_scan.frequency_count);
+}
+
+/* rates from both of the elements that carry them (1 and 50), wherever they are among the others */
+static void
+rates_in_two_elements(void)
+{
+	static const uint8_t elements[] = { 0, 4, 'h', 'o', 'm', 'e', 1, 2, 0x82, 0x84, 3, 1, 6, 50, 2, 0x8c, 0x98 };
+	struct hakios_sta_bss bss = network("home", false);
+	struct apple80211_scan_result result;
+
+	memcpy(bss.elements, elements, sizeof(elements));
+	bss.elements_length = sizeof(elements);
+	heard[heard_n++] = bss;
+	memset(&result, FILL, sizeof(result));
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0, "given");
+	CHECK(result.rate_count == 4 && result.rates[0] == 1 && result.rates[1] == 2 && result.rates[2] == 6 && result.rates[3] == 12,
+	    "1, 2, 6 and 12 Mbit/s: %u rates", result.rate_count);
+}
+
+/* an element that says it is longer than what is left of them: not read, nor what lies past the elements */
+static void
+a_cut_off_element(void)
+{
+	struct hakios_sta_bss bss = network("home", false);
+	struct apple80211_scan_result result;
+
+	bss.elements[0] = 1;
+	bss.elements[1] = 8;            /* eight rates, of which two are there */
+	bss.elements[2] = 0x82;
+	bss.elements[3] = 0x84;
+	memset(bss.elements + 4, 0x96, 8);      /* (past the elements: not the network's) */
+	bss.elements_length = 4;
+	heard[heard_n++] = bss;
+	memset(&result, FILL, sizeof(result));
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0, "given");
+	CHECK(result.rate_count == 0, "no rates: %u", result.rate_count);
+	CHECK(result.elements_length == 4, "the elements given as heard: %u", result.elements_length);
+}
+
 /* what is not built is said to be that, and nothing is asked about a network that is not joined */
 static void
 refusals(void)
@@ -345,7 +411,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "scan_results", scan_results }, { "radio_says_too_much", radio_says_too_much }, { "caller_room", caller_room },
-		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "refusals", refusals },
+		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "channels_by_number", channels_by_number },
+		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
 	};
 
 	if (argc < 2) {
