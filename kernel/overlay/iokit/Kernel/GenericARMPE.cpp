@@ -218,6 +218,12 @@ GenericARMPE::start(IOService * provider)
 		return false;
 	}
 	IOLog("GenericARMPE: platform \"%s\"\n", provider->getName());
+	/*
+	 * The time of day is this platform expert's (getGMTTimeOfDay(): the loader's boot epoch), not an
+	 * RTC driver's: say so, or bsd_init's IOKitInitializeTime() waits 30 seconds for an "IORTC" that
+	 * never comes before it reads the calendar from here all the same.
+	 */
+	publishResource("IORTC", this);
 
 	/*
 	 * super::start() published the /cpus children as nubs. Attach a CPU driver to each
