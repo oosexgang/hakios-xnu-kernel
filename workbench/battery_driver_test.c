@@ -74,11 +74,30 @@ HakiosBatteryReport(const void *state __unused, unsigned size)
 	reported_size = size;
 }
 
+/*
+ * The driver's copy of the cache, which a test can have the loader write into while it is made: half of it
+ * copied, then a whole update made (the sequence even before and after it), then the rest. What is copied
+ * is then half of one update and half of the next.
+ */
+static int race_soc = -1, race_mv;
+static void *
+copy_while_updated(void *to, const void *from, size_t size)
+{
+	memcpy(to, from, size / 2);
+	if (race_soc >= 0) {
+		publish(VALID | PRESENT | VOLTAGE_VALID, race_soc, race_mv, 0, 28);
+		race_soc = -1;
+	}
+	return memcpy((uint8_t *)to + size / 2, (const uint8_t *)from + size / 2, size - size / 2), to;
+}
+
 /* the driver's includes are the kernel's: the fake kernel answers for them */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #include "board/board.c"
+#define memcpy copy_while_updated
 #include "board/battery.c"
+#undef memcpy
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 
 static int failures;
@@ -161,6 +180,36 @@ torn_update(void)
 	cache->sequence++;                      /* ... and ends */
 	WAIT_FOR(s("battery_soc") == 99 && s("battery_voltage_mv") == 4100, 2000);
 	CHECK(s("battery_soc") == 99 && s("battery_voltage_mv") == 4100, "and the whole update is taken once it is whole");
+}
+
+/* an update made from start to end while the driver copies the cache: what it copied is not taken, the next copy is */
+static void
+updated_while_copied(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 30, 3500, 0, 28);
+	hakios_battery_init();
+	WAIT_FOR(s("battery_soc") == 30, 2000);
+	race_mv = 4200;
+	race_soc = 90;                          /* (armed: the next copy is torn -- its percent the old, its voltage the new) */
+	WAIT_FOR(race_soc == -1, 2000);
+	usleep(15 * 1000);                      /* (a third of a look: the copy made again at once, not at the next look) */
+	CHECK(s("battery_soc") == 90 && s("battery_voltage_mv") == 4200, "the whole new update, not half of each: %d%%, %d mV",
+	    s("battery_soc"), s("battery_voltage_mv"));
+}
+
+/* empty and full are values like any other */
+static void
+empty_and_full(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 0, 3300, 0, 20);
+	hakios_battery_init();
+	WAIT_FOR(s("battery_soc") == 0, 2000);
+	CHECK(s("battery_soc") == 0, "0%% is taken: %d", s("battery_soc"));
+	publish(VALID | PRESENT | VOLTAGE_VALID, 100, 4400, 0, 20);
+	WAIT_FOR(s("battery_soc") == 100, 2000);
+	CHECK(s("battery_soc") == 100, "100%% is taken: %d", s("battery_soc"));
 }
 
 /* values that cannot be are not passed on */
@@ -266,6 +315,32 @@ no_address(void)
 	CHECK(logged("battery: xnuloader did not provide battery_shared_pa"), "and why is said: %s", log_text);
 }
 
+/* battery=0 is not being asked; an address of 0 is no address */
+static void
+asked_for_none(void)
+{
+	static char arguments[96];
+
+	phone("phone-cmd");
+	snprintf(arguments, sizeof(arguments), "battery=0 battery_shared_pa=%#llx", CACHE_PA);
+	boot_args = arguments;
+	publish(VALID, 50, 0, 0, 20);
+	hakios_battery_init();
+	usleep(150 * 1000);
+	CHECK(mapped == 0 && s("battery_soc") == -1 && !logged("battery:"), "battery=0: nothing mapped, nothing said");
+}
+
+static void
+address_zero(void)
+{
+	phone("phone-cmd");
+	boot_args = "battery=1 battery_shared_pa=0";
+	hakios_battery_init();
+	usleep(150 * 1000);
+	CHECK(mapped == 0 && mapped_elsewhere == 0, "nothing mapped at 0");
+	CHECK(logged("battery: xnuloader did not provide battery_shared_pa"), "said: %s", log_text);
+}
+
 static void
 off_by_default(void)
 {
@@ -307,7 +382,8 @@ from_the_dsp(void)
 	CHECK(s("battery_soc") == 83 && s("battery_voltage_mv") == 4201 && s("battery_current_ma") == -512 &&
 	    s("battery_temperature_c") == 31, "rounded to what the sysctls carry: %d%%, %d mV, %d mA, %d C", s("battery_soc"),
 	    s("battery_voltage_mv"), s("battery_current_ma"), s("battery_temperature_c"));
-	CHECK(s("battery_charging") == 1 && s("battery_charger_present") == 1 && s("battery_from_dsp") == 1, "its state");
+	CHECK(s("battery_charging") == 1 && s("battery_charger_present") == 1 && s("battery_from_dsp") == 1 && s("battery_present") == 1,
+	    "its state");
 	CHECK(s("battery_full_uah") == 4100000 && s("battery_design_uah") == 4250000 && s("battery_cycles") == 212,
 	    "what the gauge has learnt");
 	CHECK(reported == 1 && reported_size == sizeof(state), "handed on whole to the power source Darwin reads");
@@ -315,6 +391,19 @@ from_the_dsp(void)
 	state.full_uah = 0;
 	hakios_battery_report(&state);
 	CHECK(s("battery_soc") == 100 && s("battery_full_uah") == 4100000, "never above 100%%; a value not known yet keeps the last");
+	state.design_uah = 0;
+	state.cycles = 0;
+	state.present = 0;
+	state.external = 0;
+	state.status = 2;
+	state.percent_hundredths = -100;        /* (a gauge that has lost its way: under nothing) */
+	hakios_battery_report(&state);
+	CHECK(s("battery_design_uah") == 4250000 && s("battery_cycles") == 212, "nor the design's charge, nor the cycles");
+	CHECK(s("battery_present") == 0 && s("battery_charger_present") == 0 && s("battery_charging") == 0, "no battery, no charger: said");
+	CHECK(s("battery_soc") == 0, "never under 0%%: %d", s("battery_soc"));
+	state.percent_hundredths = 10000;
+	hakios_battery_report(&state);
+	CHECK(s("battery_soc") == 100, "100%% is 100%%: %d", s("battery_soc"));
 }
 
 int
@@ -322,9 +411,10 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "read_and_followed", read_and_followed }, { "estimated_and_without_voltage", estimated_and_without_voltage },
-		{ "torn_update", torn_update }, { "impossible_values", impossible_values }, { "not_a_cache", not_a_cache }, { "shorter_cache", shorter_cache }, { "goes_bad_later", goes_bad_later },
+		{ "torn_update", torn_update }, { "updated_while_copied", updated_while_copied }, { "empty_and_full", empty_and_full }, { "impossible_values", impossible_values }, { "not_a_cache", not_a_cache }, { "shorter_cache", shorter_cache }, { "goes_bad_later", goes_bad_later },
 		{ "another_version", another_version }, { "no_address", no_address }, { "off_by_default", off_by_default },
-		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp },
+		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp }, { "asked_for_none", asked_for_none },
+		{ "address_zero", address_zero },
 	};
 
 	if (argc < 2) {
