@@ -128,18 +128,17 @@ static void
 audio_record(const int16_t *frames, uint32_t count)
 {
 	struct rec_header *header = (struct rec_header *)rec_base;
-	struct rec_block *block;
+	struct rec_block block = { .frames = count };
 	uint64_t bytes = (uint64_t)count * HAKIOS_AUDIO_FRAME;
 
-	if (rec_base == NULL || rec_frames >= rec_frames_max || rec_used + sizeof(*block) + bytes > rec_size) {
+	if (rec_base == NULL || rec_frames >= rec_frames_max || rec_used + sizeof(block) + bytes > rec_size) {
 		return;
 	}
-	block = (struct rec_block *)(rec_base + rec_used);
-	absolutetime_to_nanoseconds(mach_absolute_time(), &block->nanoseconds);
-	block->frames = count;
-	block->reserved = 0;
-	memcpy(block + 1, frames, bytes);
-	rec_used += sizeof(*block) + bytes;
+	/* (copied in: after a write of an odd number of frames a block starts on a 4-byte boundary only) */
+	absolutetime_to_nanoseconds(mach_absolute_time(), &block.nanoseconds);
+	memcpy(rec_base + rec_used, &block, sizeof(block));
+	memcpy(rec_base + rec_used + sizeof(block), frames, bytes);
+	rec_used += sizeof(block) + bytes;
 	rec_frames += count;
 	header->blocks++;
 	loader_sound[1] = rec_used;
