@@ -474,7 +474,7 @@ serve(void)
 		say("torch: /dev/hakios-torch cannot be made\n");
 		return;
 	}
-	say("torch: THE LIGHT IS IOS'S (/dev/hakios-torch) from here on, until the run ends: at most Android's %u mA, at most %u s "
+	say("torch: THE LIGHT IS DARWIN'S (/dev/hakios-torch) from here on, until the run ends: at most Android's %u mA, at most %u s "
 	    "at a time\n", ANDROID_TORCH_MA, max_secs);
 	while (!broken) {
 		uint32_t want = wanted;

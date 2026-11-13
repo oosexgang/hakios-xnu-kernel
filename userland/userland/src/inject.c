@@ -519,7 +519,7 @@ my_function_uniform(void *context, unsigned index, size_t components, size_t cou
  *	assert(metallib_url != nil);					ogl-metal.mm:3308 -- here
  *
  * The bundle is found; the resource is not, because QuartzCore.framework/default.metallib is not in
- * this image (ios165/select-system.py drops every .metallib under the framework directories). That is
+ * this image (darwin165/select-system.py drops every .metallib under the framework directories). That is
  * fourteen aborts in one boot with launchd restarting the server after each -- logs/135751-run.log --
  * and the window server is the one process that must not crash-loop: nothing is drawn at all while it
  * is down. The road that works here is the other one: renderer() falls back to

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Apply darwin-renoir/ios165/select-system.py's choice (wanted_file, imported unchanged) to the
+"""Apply darwin-renoir/darwin165/select-system.py's choice (wanted_file, imported unchanged) to the
 extracted Darwin 26 root filesystem and cryptexes; size the result raw and as mkapfs -z stores it."""
 import os, sys, zlib, importlib.util, collections, pickle
 from multiprocessing import Pool
 
 DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
 spec = importlib.util.spec_from_file_location(
-    'sel', os.environ.get('DR', DK + '/darwin-renoir') + '/ios165/select-system.py')
+    'sel', os.environ.get('DR', DK + '/darwin-renoir') + '/darwin165/select-system.py')
 sel = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sel)
 
-I = os.environ.get('IOS', DK + '/ios26')
+I = os.environ.get('DARWIN_FW', DK + '/darwin26')
 ROOT = I + '/rootfs'
 PIECE, BS, XMAX = 65536, 4096, 3804
 

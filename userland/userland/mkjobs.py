@@ -15,7 +15,7 @@ What "there at run time" means is the recipe, not what happens to be unpacked on
 two recipes differ. With the system image as the root, it is what select-system.py chose, and a daemon it
 left out as too big really is absent. With the Darwin volume on the phone's flash as the root (build.sh
 FLASHBOOT=1), the root is Apple's whole volume: --root-volume names the technical listing of its image
-(ios165/rootfs.slt) and a program counts as there if Apple ships it. Seven jobs turn on that --
+(darwin165/rootfs.slt) and a program counts as there if Apple ships it. Seven jobs turn on that --
 fairplayd, identityservicesd, passd, assistantd, callservicesd, lskdd, searchpartyd -- and were being
 refused on a flash boot for a reason true only of the thinned copy here. (fairplayd now runs on the phone
 and is never missed from a lookup again, but it does not stay: it exits 0 the moment it starts, says nothing,
@@ -224,11 +224,11 @@ DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'loca
         # waits for; it now runs through a session.)
         'homed', 'routined', 'duetexpertd', 'com.apple.dmd', 'syncdefaultsd', 'photoanalysisd', 'avconferenced')
 
-# Darwin 26 (IOS=.../ios26): its own list, not Darwin 16.5's. Only what has no hardware here or must not run
+# Darwin 26 (DARWIN_FW=.../darwin26): its own list, not Darwin 16.5's. Only what has no hardware here or must not run
 # (baseband, Bluetooth, NFC, biometrics, the Secure Enclave, cameras, Wi-Fi until there is a driver,
 # firmware updates, restore and erase, the system watchdog); the 16.5 list's crash-loopers are let through
 # -- leaving com.apple.dmd out had appprotectiond and ScreenTimeAgent look it up 3000 times a minute each.
-if os.path.basename(os.environ.get('IOS', '').rstrip('/')).startswith('ios26'):
+if os.path.basename(os.environ.get('DARWIN_FW', '').rstrip('/')).startswith('darwin26'):
     # (bluetoothd is allowed: with it denied, audiomxd looked up com.apple.bluetooth.xpc and
     # com.apple.BTAudioHALPlugin.xpc some 16000 times a second, all session long, and the home screen crawled;
     # syncdefaultsd and osanalyticshelper out again: 32 and 39 crashes in four minutes)

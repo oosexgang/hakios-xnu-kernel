@@ -3,7 +3,7 @@
 # (common/userland.exclude) instead, and only the files named here belong to it.
 /*
 !/userland/
-!/ios165/
+!/darwin165/
 !/prebuilt/
 !/tools/
 !/docs/
@@ -38,6 +38,6 @@ __pycache__/
 !/userland/libmini/
 !/userland/var/
 
-/ios165/*
-!/ios165/fetch.sh
-!/ios165/*.py
+/darwin165/*
+!/darwin165/fetch.sh
+!/darwin165/*.py

@@ -1,18 +1,18 @@
 #!/bin/bash
 # The small image (/hakios) for a Darwin 26 boot towards SpringBoard: darwin-renoir's root with our
 # arm64e libraries; and the launchd jobs, made from Darwin 26's own plists (darwin-renoir's mkjobs.py: the
-# named jobs as they are, every other job with Mach services on demand only) into ios26/jobs26, for
+# named jobs as they are, every other job with Mach services on demand only) into darwin26/jobs26, for
 # the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): Darwin 26's launchd takes a job for a system
 # service only when its plist is on the system volume.
-# Writes $IOS/root26-darwin.apfs and $IOS/jobs26 (IOS=.../ios27 for Darwin 27, with OBJ=.../obj27).
+# Writes $DARWIN_FW/root26-darwin.apfs and $DARWIN_FW/jobs26 (DARWIN_FW=.../darwin27 for Darwin 27, with OBJ=.../obj27).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py.
 set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, darwin-renoir and ios26/ios27
+DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, darwin-renoir and darwin26/darwin27
 DR=${DR:-$DK/darwin-renoir}
-IOS=${IOS:-$DK/ios26}            # the extracted IPSW (ios26: 23G90, ios27: 24B119); the outputs go there
+DARWIN_FW=${DARWIN_FW:-$DK/darwin26}            # the extracted IPSW (darwin26: 23G90, darwin27: 24B119); the outputs go there
 OBJ=${OBJ:-$RN/userland/obj26}   # our arm64e libraries (inj26.sh), built for that IPSW's addresses
-T=$IOS/root26-darwin-tree
+T=$DARWIN_FW/root26-darwin-tree
 JOBS=${JOBS-"
 	com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.apple.logd
 	com.apple.syslogd com.apple.distnoted.xpc.daemon com.apple.diagnosticd com.apple.fseventsd
@@ -23,14 +23,14 @@ JOBS=${JOBS-"
 	com.apple.SpringBoard
 "}
 
-# mkjobs.py looks for the cryptexes beside the root filesystem, as ios165/ has them
-S=$IOS/jobsrc
+# mkjobs.py looks for the cryptexes beside the root filesystem, as darwin165/ has them
+S=$DARWIN_FW/jobsrc
 rm -rf $S; mkdir -p $S
-ln -s $IOS/rootfs $S/rootfs
-ln -s $IOS/cryptex/os $S/cryptex
-ln -s $IOS/cryptex/app $S/cryptex-app
+ln -s $DARWIN_FW/rootfs $S/rootfs
+ln -s $DARWIN_FW/cryptex/os $S/cryptex
+ln -s $DARWIN_FW/cryptex/app $S/cryptex-app
 
-J=$IOS/jobs26
+J=$DARWIN_FW/jobs26
 rm -rf $T $J; cp -a $DR/userland/root $T
 mkdir -p $J; cp $T/LaunchDaemons/com.hakios.demo.plist $J/
 rm -f $T/LaunchDaemons/*.plist
@@ -98,7 +98,7 @@ for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServi
 done
 # The last migration: darwin-renoir's skeleton says 20F66 (16.5), so Darwin 26 took itself for just updated
 # and ran DataMigrator, a progress bar on the screen in place of the lock screen. It is this build's own.
-python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
+python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$DARWIN_FW/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
 import plistlib, sys
 build = plistlib.load(open(sys.argv[2], 'rb'))['ProductBuildVersion']
 with open(sys.argv[1], 'wb') as f:
@@ -127,7 +127,7 @@ printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/p
 # -[MTTimerStorage coreDataReady] is always false, every request fails with MTTimerStorage error 4 and
 # nothing is kept; on, the store loads (seen with 24B119: a 10-second timer ran and fired).
 mkdir -p $T/var/preferences/FeatureFlags/Domain
-python3 - "$T/var/preferences/FeatureFlags/Domain" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
+python3 - "$T/var/preferences/FeatureFlags/Domain" "$DARWIN_FW/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
 import plistlib, sys
 try:
     with open(sys.argv[2], 'rb') as f:
@@ -154,7 +154,7 @@ echo "/hakios/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/hakios/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
-python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
+python3 - "$T/etc/inject.conf" "$DARWIN_FW/rootfs" <<'PY'
 import pathlib, plistlib, sys
 conf, root = map(pathlib.Path, sys.argv[1:])
 names = set()
@@ -212,5 +212,5 @@ fi
 cd $DR/userland
 # the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie
 plain=(); for d in "$T"/fw*/; do if [ -d "$d" ]; then plain+=(--plain "$(basename "$d")"); fi; done
-python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-darwin.apfs hakios=$T | tail -1
-ls -la $IOS/root26-darwin.apfs
+python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $DARWIN_FW/root26-darwin.apfs hakios=$T | tail -1
+ls -la $DARWIN_FW/root26-darwin.apfs

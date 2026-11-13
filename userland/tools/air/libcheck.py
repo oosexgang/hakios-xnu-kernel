@@ -66,7 +66,7 @@ AIR_RUN = os.environ.get(
     os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/air_run"))
 CPUREF = os.path.join(ROOT, "tools/air/cpuref.py")
 
-LIBS = ["ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/"
+LIBS = ["darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/"
         "portrait_filters.metallib"]
 
 # The air.* operations whose result is exactly defined, by the family name in

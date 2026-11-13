@@ -11,17 +11,17 @@
 #   tools/air/check.sh -q         only the numbers, write nothing
 set -e
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
-IOS=${IOS:-$ROOT/ios165}
+DARWIN_FW=${DARWIN_FW:-$ROOT/darwin165}
 QUIET=0
 [ "${1:-}" = "-q" ] && QUIET=1
 
 # The corpus: the MTLB libraries of the device image. The five are named rather
 # than searched for, so a missing one is an error and not a smaller corpus.
 LIBS=(
-	"$IOS/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
-	"$IOS/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
-	"$IOS/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
-	"$IOS/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
+	"$DARWIN_FW/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
+	"$DARWIN_FW/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
+	"$DARWIN_FW/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
+	"$DARWIN_FW/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
 )
 # SafariSharedUI's default.metallib is in the corpus list of docs/air.md and is
 # deliberately not here: it is 118 bytes and holds no functions at all.
@@ -166,7 +166,7 @@ echo "== Metal's packed 16-bit colour formats: which field became which channel"
 AMT=$ROOT/build/mesa-host/build/src/gallium/drivers/freedreno/air_metal_test
 if [ -x "$AMT" ]; then
 	"$AMT" --pixel-formats \
-		"$IOS/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib" \
+		"$DARWIN_FW/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib" \
 		texturedFragment2DFloat 2>&1 | grep -E "^pixfmt" | tail -22
 	pixfmt_rc=${PIPESTATUS[0]}
 else
@@ -202,7 +202,7 @@ echo "== colour blending: the equation, and what each way of being wrong would h
 # what this cannot reach at all (the Adreno, Min/Max with a factor other than
 # One, dither), which is the half a count cannot say.
 if [ -x "$AMT" ]; then
-	"$AMT" --draw-blend 		"$IOS/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib" 		texturedFragment2DFloat 2>&1 |
+	"$AMT" --draw-blend 		"$DARWIN_FW/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib" 		texturedFragment2DFloat 2>&1 |
 		grep -a -E '^blend: (FAIL|WRONG|NOT REFUSED|[0-9]+ (cases|way)|the expectations|what each|nothing here)|^blend:   [^ ]' |
 		tail -14
 	blend_rc=${PIPESTATUS[0]}
@@ -257,7 +257,7 @@ echo "== vertex attributes: the shader's half of an MTLVertexDescriptor"
 # twenty lines in a clean run and more when a real module disagrees, so a
 # smaller tail would scroll the FAIL off and leave the summary saying 13 of 14
 # with nothing to say which.
-IOS="$IOS" python3 "$ROOT/tools/air/vattrcheck.py" 2>&1 | tail -40
+DARWIN_FW="$DARWIN_FW" python3 "$ROOT/tools/air/vattrcheck.py" 2>&1 | tail -40
 vattr_rc=${PIPESTATUS[0]}
 
 echo
@@ -323,7 +323,7 @@ echo "== the kernels the driver ran on the phone, against softpipe here"
 # frontend. What it must never do is report a pass having compared nothing, so a
 # missing rootfs, a broken air_run or a grid that drifted fail it as loudly as a
 # wrong word does.
-IOS="$IOS" python3 "$ROOT/tools/air/metalcheck.py" --newest 2>&1 | tail -28
+DARWIN_FW="$DARWIN_FW" python3 "$ROOT/tools/air/metalcheck.py" --newest 2>&1 | tail -28
 metal_rc=${PIPESTATUS[0]}
 
 exit $((reader_rc | cpu_rc | intrin_rc | run_rc | atomic_rc | texop_rc | samp_rc \

@@ -28,7 +28,7 @@ source "$HERE/../xnu-env.sh"
 cd "$XNUDEPS"
 JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
-IOS_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+DARWIN_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 MACOS_SDK_URL=https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz
 MACOS_SDK_SHA256=518e35eae6039b3f64e8025f4525c1c43786cc5cf39459d609852faf091e34be
 
@@ -66,7 +66,7 @@ stage1() {
 	done
 	[ -z "$missing" ] || die "not installed:$missing"
 	[ -x "$CCTOOLS/ld" ] || die "no cctools in $CCTOOLS: install theos with its Linux toolchain (or set THEOS)"
-	[ -d "$IOS_SDK/usr/include" ] || die "no $IOS_SDK (the SDKs of github.com/theos/sdks go to \$THEOS/sdks)"
+	[ -d "$DARWIN_SDK/usr/include" ] || die "no $DARWIN_SDK (the SDKs of github.com/theos/sdks go to \$THEOS/sdks)"
 
 	# --- sources -------------------------------------------------------------------------------
 	fetch AvailabilityVersions https://github.com/apple-oss-distributions/AvailabilityVersions.git \
@@ -130,9 +130,9 @@ stage1() {
 	# The makefiles ask xcrun (ours: host/bin/xcrun) for an SDK and a platform directory.
 	mkdir -p sdk/Platforms/iPhoneOS.platform
 	if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then
-		log "making the SDK: links to $IOS_SDK"
+		log "making the SDK: links to $DARWIN_SDK"
 		rm -rf "$XNU_SDK_PATH"
-		cp -rs "$(cd "$IOS_SDK" && pwd)" "$XNU_SDK_PATH"
+		cp -rs "$(cd "$DARWIN_SDK" && pwd)" "$XNU_SDK_PATH"
 	fi
 	local sdk_local=$XNU_SDK_PATH/usr/local
 	mkdir -p $sdk_local/include/kernel/os $sdk_local/include/os $sdk_local/lib/kernel $sdk_local/libexec

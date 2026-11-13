@@ -25,26 +25,26 @@ draws with materials (an alert's text). These are drawn with the GPU, and the GP
 
 ## Build
 
-All in WSL. `ios26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `dyld/`, `bin/ipsw`).
+All in WSL. `darwin26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `dyld/`, `bin/ipsw`).
 
 ```
 tools/device.py add renoir             # Renoir's package, from the devices branch
 kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
 cc -O2 -o darwin/tools/pacstrip darwin/tools/pacstrip.c -lcrypto
-darwin/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
-python3 darwin/tools/fips26.py ios26/dyld-strip
+darwin/tools/pacstrip cache darwin26/dyld-strip darwin26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
+python3 darwin/tools/fips26.py darwin26/dyld-strip
 darwin/userland/inj26.sh                      # our libraries, arm64e
-darwin/userland/root26-darwin.sh                 # /hakios image ios26/root26-darwin.apfs, and the jobs ios26/jobs26
-LAUNCHDAEMONS=ios26/jobs26 WORK=ios26/image-tree-prune \
-    python3 darwin/tools/mkimage26.py --prune ios26/system26-prune.apfs
+darwin/userland/root26-darwin.sh                 # /hakios image darwin26/root26-darwin.apfs, and the jobs darwin26/jobs26
+LAUNCHDAEMONS=darwin26/jobs26 WORK=darwin26/image-tree-prune \
+    python3 darwin/tools/mkimage26.py --prune darwin26/system26-prune.apfs
 ```
 
 Boot, with the phone in its stock fastboot (nothing is flashed or erased; a reboot brings Android back):
 
 ```
 python3 darwin/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
-    --system "$HOME/darwin_kernel/ios26/system26-prune.apfs" \
-    --root "$HOME/darwin_kernel/ios26/root26-darwin.apfs"
+    --system "$HOME/darwin_kernel/darwin26/system26-prune.apfs" \
+    --root "$HOME/darwin_kernel/darwin26/root26-darwin.apfs"
 ```
 
 It boots darwin-renoir's resident loader, stages `system26-prune.apfs` (136 s over USB), then a payload with
@@ -122,17 +122,17 @@ Host verification of the cleaned build:
 
 ```
 cd "$HOME/darwin_kernel/hakios-arm64e-renoir"
-export IOS="$HOME/darwin_kernel/ios27"
+export DARWIN_FW="$HOME/darwin_kernel/darwin27"
 export OBJ="$PWD/darwin/userland/obj27"
 bash kernel/build.sh
-darwin/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
-python3 darwin/tools/fips26.py "$IOS/dyld-strip" \
+darwin/tools/pacstrip cache "$DARWIN_FW/dyld-strip" "$DARWIN_FW"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+python3 darwin/tools/fips26.py "$DARWIN_FW/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1
 BUILD=24B119 bash darwin/userland/inj26.sh
 bash darwin/userland/root26-darwin.sh
-LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
-    python3 darwin/tools/mkimage26.py --prune "$IOS/system27-prune.apfs"
+LAUNCHDAEMONS="$DARWIN_FW/jobs26" WORK="$DARWIN_FW/image-tree-prune" \
+    python3 darwin/tools/mkimage26.py --prune "$DARWIN_FW/system27-prune.apfs"
 python3 darwin/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
 ```
 

@@ -3,7 +3,7 @@
  * guest (/dev/rvblk0).  Only with boot-arg virtio_blk=1: the bus address is QEMU's and
  * means nothing on the phone.
  *
- * This exists for the APFS driver.  The volume in ios165/rootfs.dmg is 5.6 GB, which is
+ * This exists for the APFS driver.  The volume in darwin165/rootfs.dmg is 5.6 GB, which is
  * too much to hold in guest memory as a RAM disk the way this port's own images are held, and the
  * point of reading APFS is to read a real image rather than one cut down to fit.  QEMU
  * serves it straight off the host's disk:

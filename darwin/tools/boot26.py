@@ -17,7 +17,7 @@ from pathlib import Path
 
 DK = Path(__file__).resolve().parents[3]
 DR = DK / 'darwin-renoir'
-IOS = DK / 'ios27'                      # Darwin 27.2 (24B119); ios26 (23G90) takes --system/--root
+DARWIN_FW = DK / 'darwin27'                      # Darwin 27.2 (24B119); darwin26 (23G90) takes --system/--root
 sys.path.insert(0, str(DR / 'recovery'))
 from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
@@ -33,8 +33,8 @@ p.add_argument('--board', default=os.environ.get('HAKIOS_BOARD'),
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
 p.add_argument('--kernel', type=Path,
                default=DK / 'xnu-12377-hakios/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
-p.add_argument('--system', type=Path, default=IOS / 'system27-prune.apfs')
-p.add_argument('--root', type=Path, default=IOS / 'root26-darwin.apfs')
+p.add_argument('--system', type=Path, default=DARWIN_FW / 'system27-prune.apfs')
+p.add_argument('--root', type=Path, default=DARWIN_FW / 'root26-darwin.apfs')
 p.add_argument('--boot-arg', action='append', default=[], metavar='NAME[=VALUE]',
                help='add (or replace) one boot argument, e.g. cpus=1; repeatable')
 p.add_argument('--return-after', type=int, metavar='SECONDS',
@@ -87,7 +87,7 @@ boot_args = boards.boot_arguments(board, options.boot_arg + (
 if not any(arg.startswith('identity=') for arg in boot_args):
     boot_args.append(f'identity={identity.seed_of(options.board):016x}')
 loader = DR / f'prebuilt/{options.board}/resident-usb.img'
-share = DR / f'recovery/assets/{options.board}-ios-share.bin'
+share = DR / f'recovery/assets/{options.board}-darwin-share.bin'
 for path in (options.kernel, options.system, options.root, loader, share):
     if not path.is_file():
         raise SystemExit(f'Missing {path} (docs/darwin26-boot.md says how it is made)')
@@ -118,7 +118,7 @@ cmd('oem', 'ramdisk', serial='xnuloader')
 print(f'Uploading the Darwin system image ({options.system.stat().st_size / 1e9:.2f} GB)...', flush=True)
 cmd('stage', file(options.system), serial='xnuloader', timeout=900, live=True)
 data = prepare(data, time.time())                       # the clock again, after the long upload
-run = IOS / 'run26-current.bin'
+run = DARWIN_FW / 'run26-current.bin'
 run.write_bytes(data)
 cmd('stage', file(run), serial='xnuloader', timeout=180, live=True)
 cmd('oem', 'run', serial='xnuloader')

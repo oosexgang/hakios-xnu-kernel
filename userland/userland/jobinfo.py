@@ -3,7 +3,7 @@
 With -s, find the jobs that provide a Mach service whose name contains SERVICE.
 The jobs are those of System/Library/LaunchDaemons and LaunchAngels."""
 import glob, json, os, plistlib, sys
-ROOTFS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ios165/rootfs')
+ROOTFS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'darwin165/rootfs')
 DIRS = [ROOTFS + '/System/Library/LaunchDaemons', ROOTFS + '/System/Library/LaunchAngels']
 def show(path):
     d = plistlib.load(open(path, 'rb'))

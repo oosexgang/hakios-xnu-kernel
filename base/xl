@@ -119,7 +119,7 @@ run() { # run <oem command> <label>
 		# The resident image: whose it is and how big, when the last upload was not from here.
 		# Both values and not just "not from here", because a foreign image of the same kind
 		# changes nothing, while a foreign one of another kind makes the boot fail in a way that
-		# names neither it nor its owner -- /sbin/launchd.ios: No such file or directory, with a
+		# names neither it nor its owner -- /sbin/launchd.darwin: No such file or directory, with a
 		# perfectly good image on this side. The warning is not a refusal: relying on another
 		# copy's upload is legitimate when you know what it is, and this says what it is.
 		if [ -s $PHONE.ramdisk ]; then

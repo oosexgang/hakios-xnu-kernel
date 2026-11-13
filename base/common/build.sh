@@ -9,7 +9,7 @@
 #                                                                  otherwise prebuilt/ is used
 #   2. loader   xnuloader/build.sh                              -- only with clang + lld-link
 #   3. images   userland/build.sh (REST=1 and the profile's USERLAND_VARS)
-#                                                               -- needs ios165/fetch.sh to have run
+#                                                               -- needs darwin165/fetch.sh to have run
 #   4. boot     mkxnuimg.py -> out/<device>-boot.img             -- phones: the UEFI image for `fastboot boot`
 #
 #   SKIP="kernel loader images boot"   leave steps out
@@ -45,7 +45,7 @@ fi
 
 if ! skip images; then
 	have_userland
-	[ -d ios165/rootfs ] || die "no Darwin files yet: run ios165/fetch.sh first (it downloads them from Apple to this machine)"
+	[ -d darwin165/rootfs ] || die "no Darwin files yet: run darwin165/fetch.sh first (it downloads them from Apple to this machine)"
 	env REST=1 $USERLAND_VARS "$@" userland/build.sh
 fi
 

@@ -58,9 +58,9 @@ if [ ! -x "$RD/host/bin/migcom" ] || [ ! -x "$RD/host/bin/tcsh" ] || [ ! -d "$RD
 fi
 # The Mach-O tools: theos' cctools (TOOLCHAIN=cctools), or LLVM's beside the clang the kernel is compiled
 # with (TOOLCHAIN=llvm: ld64.lld and its fellows in XNU_CLANG_DIR, through kernel/host/llvm). Unset: theos'
-# when it is there, else LLVM's when they are. The SDK's headers are theos' unless IOS_SDK says where.
+# when it is there, else LLVM's when they are. The SDK's headers are theos' unless DARWIN_SDK says where.
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
-IOS_SDK=${IOS_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
+DARWIN_SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
 export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}
 if [ -z "${TOOLCHAIN:-}" ]; then
 	if [ -x "$CCTOOLS/ld" ]; then
@@ -69,7 +69,7 @@ if [ -z "${TOOLCHAIN:-}" ]; then
 		TOOLCHAIN=llvm
 	fi
 fi
-[ -d "$IOS_SDK/usr/include" ] || die "no iPhoneOS16.5.sdk at $IOS_SDK (theos' sdks/, or IOS_SDK=DIR)"
+[ -d "$DARWIN_SDK/usr/include" ] || die "no iPhoneOS16.5.sdk at $DARWIN_SDK (theos' sdks/, or DARWIN_SDK=DIR)"
 mkdir -p "$XNUDEPS/host/bin" "$XNUDEPS/build/firehose" "$XNUDEPS/build/pthread" "$XNUDEPS/sdk/Platforms/iPhoneOS.platform"
 cd "$XNUDEPS"
 for d in AvailabilityVersions libdispatch libpthread MacOSX13.3.sdk; do link "$RD/$d" $d; done
@@ -130,9 +130,9 @@ llvm)
 	;;
 esac
 if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then
-	log "making the SDK: links to $IOS_SDK"
+	log "making the SDK: links to $DARWIN_SDK"
 	rm -rf "$XNU_SDK_PATH"
-	cp -rs "$(cd "$IOS_SDK" && pwd)" "$XNU_SDK_PATH"
+	cp -rs "$(cd "$DARWIN_SDK" && pwd)" "$XNU_SDK_PATH"
 fi
 SL=$XNU_SDK_PATH/usr/local
 mkdir -p $SL/include/kernel/os $SL/include/os $SL/lib/kernel $SL/libexec

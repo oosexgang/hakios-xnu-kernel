@@ -127,7 +127,7 @@ alignment). That ABI is the runtime's, not the compiler's, and it is not impleme
 is this project's own calling convention, invented to make the bodies runnable.
 
 **And what the 456 itself is not: the number of shaders on the device.** It is the number of
-modules in the `.metallib` *files* under `ios165/rootfs`. A library can also be a blob inside a
+modules in the `.metallib` *files* under `darwin165/rootfs`. A library can also be a blob inside a
 dylib — `GPUCompiler`'s own `GNR.videoprocessor` carries one in `__DATA`, found while looking for
 something else — so every statement here of the form "the corpus contains no X" is bounded by how
 the corpus was collected, not by what the system contains. Where that distinction matters, this
@@ -1564,7 +1564,7 @@ only flag:
 
 What each `air.*` name means was a guess until this was read, and one of the guesses was wrong.
 `AGXCompilerCore` — the back end of Apple's own shader compiler, in **this device's** shared
-cache (`ios165/20F66__iPhone10,3_6`, never another device's) — carries its whole operation
+cache (`darwin165/20F66__iPhone10,3_6`, never another device's) — carries its whole operation
 vocabulary as a run of C strings at file offsets `0x16cf9f`–`0x16d400`, which is virtual
 `0x1bbf43f9f`–`0x1bbf44400` (`__cstring` begins at file 1 482 768 for `0x1bbf41010`). 137 names,
 and they are suffixes: the full function is `air.` + name + `.` + a type suffix, which is why
@@ -1884,7 +1884,7 @@ above, and the six-line listing of `clearFragment01` in `docs/metal.md` section 
 substitutes for the thing it came from, and both carry the analysis they exist to support. Nothing
 committed anywhere is corpus bytes as an input: `docs/air-report.md` holds module names, counts and
 error strings, which are facts about Apple's shaders and not Apple's shaders, and no test here has
-a fixture — `tools/air/check.sh` reads `ios165/rootfs`, which is not in the repository and cannot
+a fixture — `tools/air/check.sh` reads `darwin165/rootfs`, which is not in the repository and cannot
 be.
 
 The part needing a decision rather than a convention: whether that line is the right one, and what
@@ -2296,7 +2296,7 @@ Three references, each independent of the translator:
    not hiding a disagreement, it was hiding the fact that nothing had been asked.
 
    What it says now, which was invisible before: **14 of the 128 `.metallib` files under
-   `ios165/rootfs` cannot be read at all,** and the reasons are four different things:
+   `darwin165/rootfs` cannot be read at all,** and the reasons are four different things:
 
    - **nine are not LLVM bitcode** — no `BC` 0xC0DE magic, so a container this reader does not
      know rather than a parse failure. Five are AGXMetalA11's ray-tracing runtime (`ei_rt`,
@@ -2654,8 +2654,8 @@ the SPIR-V frontend does) and **I/O lowering** (variables with locations, then `
 The corpus report (`tools/air/corpus.py report`) is the progress meter: every number below comes
 out of it, and it runs from `tools/air/check.sh` (section 6). Two corpora:
 
-- **the device image** — the five `.metallib` files the port installs (`ios165/rootfs` +
-  `ios165/cryptex`): 456 modules. This is the corpus the milestones are stated against.
+- **the device image** — the five `.metallib` files the port installs (`darwin165/rootfs` +
+  `darwin165/cryptex`): 456 modules. This is the corpus the milestones are stated against.
 - **the full IPSW** — all 134 MTLB libraries of the Darwin 16.5 root filesystem and cryptexes,
   16 841 functions, extracted from `rootfs.dmg` with 7-Zip. Reported alongside, because the
   device image is a selection and the system's own shaders are this set.

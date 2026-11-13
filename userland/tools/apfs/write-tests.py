@@ -809,9 +809,9 @@ def test_real_images():
         rc, out = run(TOOL, 'writable', path)
         say(rc == 0, '%s: %s' % (rel, out.strip().splitlines()[0].split(': ', 1)[-1]))
 
-    dmg = os.path.join(ROOT, 'ios165', 'rootfs.dmg')
+    dmg = os.path.join(ROOT, 'darwin165', 'rootfs.dmg')
     if not os.path.exists(dmg):
-        print('[skip] ios165/rootfs.dmg is not here')
+        print('[skip] darwin165/rootfs.dmg is not here')
         return
     c = apfs.Container(dmg)
     try:

@@ -3,7 +3,7 @@
  * unpacked out of it again.
  *
  * /private/var is a memory filesystem (bsd/miscfs/ramfs), mounted empty by init at every boot and
- * given the directories of the template Darwin ships with (ios165/mkvarskel.py), so nothing Darwin keeps
+ * given the directories of the template Darwin ships with (darwin165/mkvarskel.py), so nothing Darwin keeps
  * there outlives the boot that wrote it: no home screen layout, no application data, no baked
  * wallpaper. The kernel's APFS driver reads and does not write, and writing APFS is not the point
  * here -- what is needed is that the bytes come back. So the tree is packed into a plain archive

@@ -478,7 +478,7 @@ def collect_declarations():
     air2nir = os.environ.get(
         "AIR2NIR", os.path.join(ROOT, "build/mesa-host/build/src/compiler/air/air2nir"))
     out = set()
-    for dirpath, _, names in os.walk(os.path.join(ROOT, "ios165/rootfs")):
+    for dirpath, _, names in os.walk(os.path.join(ROOT, "darwin165/rootfs")):
         for n in sorted(names):
             if not n.endswith(".metallib"):
                 continue

@@ -6,7 +6,7 @@
  *     a system expects there;
  *   - checks what the kernel can do for user space, one line per check;
  *   - runs the commands listed in etc/rc of its image: usually just
- *     "exec /sbin/launchd.ios", which turns process 1 into the Darwin launchd;
+ *     "exec /sbin/launchd.darwin", which turns process 1 into the Darwin launchd;
  *   - halts the machine if it is still process 1 after that.
  *
  * Started with a file name by anything else, it is a command runner: that is
@@ -36,7 +36,7 @@ in_image(const char *path)
 
 /* ---- the Darwin root volume on the phone's flash as the root (boot-arg root_apfs=DEV) ---- */
 
-/* the root is the Darwin volume: its /sbin/launchd is Apple's, there is no launchd.ios */
+/* the root is the Darwin volume: its /sbin/launchd is Apple's, there is no launchd.darwin */
 static int flash_root_mode;
 
 static void check(int ok, const char *what);
@@ -838,7 +838,7 @@ mount_writable(void)
 	}
 	check(ok, "mount a memory filesystem on /private/var");
 
-	/* the directories of the data volume, as listed in the template that ships with Darwin (ios165/mkvarskel.py) */
+	/* the directories of the data volume, as listed in the template that ships with Darwin (darwin165/mkvarskel.py) */
 	read_whole(in_image("/etc/var.skel"), skeleton, sizeof(skeleton));
 	for (char *line = skeleton; ok && *line;) {
 		char *end = strchr(line, '\n'), *f[6];
@@ -1295,7 +1295,7 @@ run_command(char *line)
 				close(null);
 			}
 		}
-		if (flash_root_mode && strcmp(argv[1], "/sbin/launchd.ios") == 0) {
+		if (flash_root_mode && strcmp(argv[1], "/sbin/launchd.darwin") == 0) {
 			argv[1] = "/sbin/launchd";      /* the root is Darwin's own volume: its launchd is that */
 		}
 		execve(argv[1], argv + 1, envp);

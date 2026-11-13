@@ -14,7 +14,7 @@ the phone's memory, made from the files themselves (nothing of them is in the re
       matches REGEX, and only the tables they use.
 
 Both write a TrueType collection that CoreText reads as it reads the original; DST may be SRC.
-ios165/fetch.sh makes both for the system image this way.
+darwin165/fetch.sh makes both for the system image this way.
 """
 import os
 import re

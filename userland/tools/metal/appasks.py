@@ -30,7 +30,7 @@ a colon, and those declared by a Metal protocol and nothing else) from the bare
 words, and counts them apart.
 
 usage:
-  C=ios165/20F66__iPhone10,3_6/dyld_shared_cache_arm64
+  C=darwin165/20F66__iPhone10,3_6/dyld_shared_cache_arm64
   for i in /System/Library/Frameworks/Metal.framework/Metal \
            /System/Library/Extensions/AGXMetalA11.bundle/AGXMetalA11 \
            /System/Library/PrivateFrameworks/IOGPU.framework/IOGPU \

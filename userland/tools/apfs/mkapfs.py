@@ -7,7 +7,7 @@ Each NAME=DIR becomes one volume of the container (volume 0 first), case-sensiti
 normalization-insensitive like the Darwin volumes, unencrypted, read-only content laid out once.
 Permission bits and symbolic links are taken from DIR; everything is owned by root:wheel
 unless a manifest says otherwise (lines of: mode in octal with the type bits, uid, gid, path,
-[link target]; ios165/system.manifest is one; a directory or symbolic link that is only in the
+[link target]; darwin165/system.manifest is one; a directory or symbolic link that is only in the
 manifest is made). With -z a regular file is stored compressed when that makes it smaller,
 as Apple stores most of the Darwin root volume: a small one whole in its decmpfs attribute (type
 3, no block of its own at all), a bigger one in 64 KB zlib pieces in its resource fork (type 4); but not what is under a --plain DIR (relative to the volume's root), which stays as

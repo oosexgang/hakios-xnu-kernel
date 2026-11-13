@@ -62,14 +62,14 @@ MISSING=0
 need python3 "everywhere"
 need git "everywhere"
 need curl "to fetch Darwin, XNU and dependencies"
-need 7z "by ios165/fetch.sh (7-Zip 23+, reads APFS)"
+need 7z "by darwin165/fetch.sh (7-Zip 23+, reads APFS)"
 # 7-Zip before 23 does not read APFS: it lists the image as raw partitions and fetch.sh finds no files
 if command -v 7z >/dev/null 2>&1; then
 	v=$(7z 2>&1 | grep -m1 -oE '[0-9]+\.[0-9]+' || true)
 	[ "${v%%.*}" -ge 23 ] 2>/dev/null ||
-		{ printf '  %-22s %s -- needed 23 or newer by ios165/fetch.sh (reads APFS)\n' 7z "${v:-unknown version}"; MISSING=1; }
+		{ printf '  %-22s %s -- needed 23 or newer by darwin165/fetch.sh (reads APFS)\n' 7z "${v:-unknown version}"; MISSING=1; }
 fi
-need gcc "by ios165/fetch.sh (builds the LZBITMAP decoder)"
+need gcc "by darwin165/fetch.sh (builds the LZBITMAP decoder)"
 need qemu-system-aarch64 "to run in QEMU (DEVICE=qemu-virt)"
 need fastboot "to boot a phone"
 need adb "to take a phone's own firmware off it"
@@ -81,7 +81,7 @@ need lld-link "to build the loader (not needed with prebuilt/)"
 cat <<EOF
 
 Next:
-  ios165/fetch.sh                   # once: takes Darwin 16.5 out of Apple's IPSW onto this machine (7.4 GB download)
+  darwin165/fetch.sh                   # once: takes Darwin 16.5 out of Apple's IPSW onto this machine (7.4 GB download)
   common/build.sh qemu-virt         # images (+ kernel and loader when the toolchain is there)
   common/run.sh qemu-virt           # Darwin in a QEMU window
 See README.md; porting to another device: docs/PORTING.md and common/new-device.sh.

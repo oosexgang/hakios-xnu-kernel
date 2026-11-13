@@ -7,7 +7,7 @@ Reads the "ustacks:" (boot-args ustacks=NAME ustacks_at=SECONDS [ustacks_ms=PERI
 "userabort:" lines of a console log (and, before a "userabort:", the "First throw call stack" of the exception
 that led to it), subtracts the shared cache slide and looks every address up in the Darwin dyld
 shared cache with "ipsw dyld a2s". Lookups take a few seconds each, so the answers are kept
-in ios165/a2s.json. Addresses outside the cache (the program itself) are shown as they are.
+in darwin165/a2s.json. Addresses outside the cache (the program itself) are shown as they are.
 """
 import json
 import os
@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ios165')
+BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'darwin165')
 CACHE = os.path.join(BASE, '20F66__iPhone10,3_6/dyld_shared_cache_arm64')
 KNOWN = os.path.join(BASE, 'a2s.json')
 CACHE_LOW, CACHE_HIGH = 0x180000000, 0x280000000        # unslid addresses of the shared cache

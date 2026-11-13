@@ -29,10 +29,10 @@ AIR2NIR=${AIR2NIR:-$ROOT/build/mesa-host/build/src/compiler/air/air2nir}
 LIBS=("$@")
 if [ ${#LIBS[@]} = 0 ]; then
 	LIBS=(
-		"$ROOT/ios165/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
-		"$ROOT/ios165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
-		"$ROOT/ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
-		"$ROOT/ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
+		"$ROOT/darwin165/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
+		"$ROOT/darwin165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
+		"$ROOT/darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
+		"$ROOT/darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
 	)
 fi
 

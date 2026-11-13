@@ -12,7 +12,7 @@
 	  UISupportedInterfaceOrientations
 		the least LaunchServices needs to register a bundle at all, in the same
 		spelling Applications/MusicRecognition.app and Applications/Jellyfish.app
-		of ios165/rootfs use.
+		of darwin165/rootfs use.
 
 	  UILaunchScreen = { UILaunchScreen = {} }
 		the launch screen in a plist and not in a storyboard. Darwin 16 wants one of the

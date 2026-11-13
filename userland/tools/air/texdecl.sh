@@ -25,7 +25,7 @@
 # usage: texdecl.sh [FILE.metallib ...]
 set -u
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
-IOS=${IOS:-$ROOT/ios165}
+DARWIN_FW=${DARWIN_FW:-$ROOT/darwin165}
 TEST=${AIR_METAL_TEST:-$ROOT/build/mesa-host/build/src/gallium/drivers/freedreno/air_metal_test}
 [ -x "$TEST" ] || { echo "texdecl.sh: run tools/air/mk-host.sh first"; exit 1; }
 
@@ -36,11 +36,11 @@ if [ ${#LIBS[@]} = 0 ]; then
 	# 118 bytes and holds no functions at all, which is why it is last and
 	# why its line below says so rather than failing the run.
 	LIBS=(
-		"$IOS/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
-		"$IOS/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
-		"$IOS/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
-		"$IOS/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
-		"$IOS/cryptex/System/Library/PrivateFrameworks/SafariSharedUI.framework/default.metallib"
+		"$DARWIN_FW/rootfs/System/Library/VideoDecoders/AV1SW.metallib"
+		"$DARWIN_FW/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib"
+		"$DARWIN_FW/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
+		"$DARWIN_FW/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib"
+		"$DARWIN_FW/cryptex/System/Library/PrivateFrameworks/SafariSharedUI.framework/default.metallib"
 	)
 	for f in "${LIBS[@]}"; do
 		[ -f "$f" ] || { echo "texdecl.sh: missing $f"; exit 1; }

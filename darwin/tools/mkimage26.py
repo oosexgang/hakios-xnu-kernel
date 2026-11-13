@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """The Darwin 26 system image (the RAM disk /dev/md0 the loader stages), arm64e code made runnable on a
 phone's ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
-pacstrip rewrote (ios26/dyld-strip).
+pacstrip rewrote (darwin26/dyld-strip).
 
-usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracted IPSW, default ios26)
+usage: [DARWIN_FW=DIR] mkimage26.py [--min | --prune] OUT.apfs      (DARWIN_FW: the extracted IPSW, default darwin26)
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
-  (default) the files darwin-renoir/ios165/select-system.py chooses, applied to Darwin 26
+  (default) the files darwin-renoir/darwin165/select-system.py chooses, applied to Darwin 26
   --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
 
 /sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /hakios and runs its init), the
-real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (darwin/userland/root26-darwin.sh writes ios26/jobs26)
+real one /sbin/launchd.darwin. With LAUNCHDAEMONS=DIR (darwin/userland/root26-darwin.sh writes darwin26/jobs26)
 the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
 System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /hakios/LaunchDaemons,
 as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
@@ -29,7 +29,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
-I = os.environ.get('IOS', DK + '/ios26')         # the extracted IPSW: ios26 (23G90) or ios27 (24B119)
+I = os.environ.get('DARWIN_FW', DK + '/darwin26')         # the extracted IPSW: darwin26 (23G90) or darwin27 (24B119)
 ROOT = I + '/rootfs'
 CACHE = I + '/dyld-strip'
 DR = DK + '/darwin-renoir'
@@ -161,7 +161,7 @@ def selection(minimal):
                 if os.path.isfile(full) and not os.path.islink(full):
                     chosen.append((full[len(ROOT) + 1:], full))
         return chosen
-    spec = importlib.util.spec_from_file_location('sel', DR + '/ios165/select-system.py')
+    spec = importlib.util.spec_from_file_location('sel', DR + '/darwin165/select-system.py')
     sel = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sel)
     # A launchd job is not usable without its executable. Framework-hosted daemons and large
@@ -299,8 +299,8 @@ def main():
         chosen = [(rel, src) for rel, src in chosen if not pruned(rel)]
     with ThreadPoolExecutor(os.cpu_count()) as pool:
         stripped = sum(pool.map(place, chosen))
-    # launchd: ours first (stage0), Apple's as launchd.ios
-    os.replace(os.path.join(WORK, 'sbin/launchd'), os.path.join(WORK, 'sbin/launchd.ios'))
+    # launchd: ours first (stage0), Apple's as launchd.darwin
+    os.replace(os.path.join(WORK, 'sbin/launchd'), os.path.join(WORK, 'sbin/launchd.darwin'))
     shutil.copy2(STAGE0, os.path.join(WORK, 'sbin/launchd'))
     for rel, target in links(minimal):
         dst = os.path.join(WORK, rel)

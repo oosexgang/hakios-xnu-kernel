@@ -90,7 +90,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 AIR2NIR = os.environ.get(
     "AIR2NIR", os.path.join(ROOT, "build/mesa-host/build/src/compiler/air/air2nir"))
 
-LIB = "ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
+LIB = "darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
 ON_DEVICE = "/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib"
 
 # The harness this input is built for: userland/src/metal_drv_test.m makes

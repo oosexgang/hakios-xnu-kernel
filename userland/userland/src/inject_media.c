@@ -513,7 +513,7 @@ static struct replacement {
  * answers in every process, and in mediaserverd the first to ask is the capture stack: CMCapture's
  * FigPreloadShadersInternal reaches -[_MTLDevice newLibraryWithURL:error:] through three functions of
  * AppleCVAPhoto, asking for System/Library/PrivateFrameworks/AppleCVAPhoto.framework/Resources/
- * cvadepth-Darwin.metallib. That file is not in this image (ios165/select-system.py drops .metallib under
+ * cvadepth-Darwin.metallib. That file is not in this image (darwin165/select-system.py drops .metallib under
  * the framework directories), so the URL is nil and Metal aborts on `url must not be nil' -- twenty-eight
  * times in one boot, launchd restarting the daemon after each (logs/135751-run.log, docs/metal.md 10.38).
  * AppleCVAPhoto itself survives a library it cannot make: it checks the result and logs "Error creating

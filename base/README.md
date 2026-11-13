@@ -31,7 +31,7 @@ This repository is half of the project:
 | **hakios-xnu-kernel** (this one) | XNU patches, the EFI loader, the UEFI port, Wi-Fi, QEMU scripts, `xl`, prebuilt kernel/loader/UEFI, `common/` scripts |
 | [hakios-xnu-userland](https://github.com/oosexgang/hakios-xnu-kernel) | our init, injected libraries, launchd jobs, the APFS image builder, the scripts that take Darwin out of Apple's IPSW, Metal/Mesa work |
 
-> **No Apple files are in either repository.** `ios165/fetch.sh` downloads the Darwin 16.5 IPSW from Apple's own CDN
+> **No Apple files are in either repository.** `darwin165/fetch.sh` downloads the Darwin 16.5 IPSW from Apple's own CDN
 > to *your* machine and extracts what is needed there. HakiOS is an independent research project by OOSEX GANG and
 > is not affiliated with, authorised or endorsed by Apple Inc. Darwin, iPhone and Apple are trademarks of Apple Inc.
 
@@ -80,7 +80,7 @@ reads APFS.)
 git clone https://github.com/oosexgang/hakios-xnu-kernel.git hakios
 cd hakios
 common/setup.sh               # brings hakios-xnu-userland into the same tree, checks the host
-ios165/fetch.sh               # downloads 7.4 GB from Apple's CDN and extracts what is needed (5-15 min)
+darwin165/fetch.sh               # downloads 7.4 GB from Apple's CDN and extracts what is needed (5-15 min)
 common/build.sh qemu-virt     # builds the APFS images (and the kernel, if the toolchain is there)
 common/run.sh qemu-virt       # a 20-minute session in a QEMU window
 ```
@@ -229,7 +229,7 @@ From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
 
 ## Licenses
 
-- No Darwin files are in the repositories: `ios165/fetch.sh` downloads them from Apple's CDN to your machine.
+- No Darwin files are in the repositories: `darwin165/fetch.sh` downloads them from Apple's CDN to your machine.
 - `xnu/` is a derivative work of XNU and is distributed under APSL 2.0, like XNU itself; `prebuilt/mach.*` is the
   kernel built from it. It also contains ath11k (BSD-3-Clause-Clear) and FreeBSD LinuxKPI code (BSD-2-Clause):
   see [prebuilt/NOTICES.md](prebuilt/NOTICES.md).

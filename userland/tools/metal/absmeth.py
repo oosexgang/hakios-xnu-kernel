@@ -39,7 +39,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CACHE = os.environ.get(
-    "DSC", os.path.join(ROOT, "ios165/20F66__iPhone10,3_6/dyld_shared_cache_arm64"))
+    "DSC", os.path.join(ROOT, "darwin165/20F66__iPhone10,3_6/dyld_shared_cache_arm64"))
 METAL = "/System/Library/Frameworks/Metal.framework/Metal"
 # addresses and names are stable for one cache, and ipsw pays for the whole cache
 # on every invocation, so remember what it said

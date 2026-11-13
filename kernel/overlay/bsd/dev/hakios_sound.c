@@ -1381,7 +1381,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		thread_deallocate(feeder);
 		watcher_runs = true;
 		hakios_audio_set_sink("the speakers (the audio DSP, hakios_sound.c)", darwin_sink);
-		say("sound: WHAT IOS PLAYS GOES TO THE SPEAKERS from here on, %u.%03u dB under Android's level, until the run ends\n",
+		say("sound: WHAT DARWIN PLAYS GOES TO THE SPEAKERS from here on, %u.%03u dB under Android's level, until the run ends\n",
 		    below / 8, below % 8 * 125);
 		say("sound: through the guard (hakios_guard.c): %u.%03u dB of gain first (sound_gain), then high-pass at 200 Hz; peaks "
 		    "3 dB, the 0.2 s/3 s/60 s power 6/9/12 dB under full scale at Android's level\n", gain / 8, gain % 8 * 125);

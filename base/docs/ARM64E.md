@@ -53,7 +53,7 @@ regardless (milestone 3).
 ## What milestone 3 took
 
 The iPhone XS (A12) arm64e Darwin 16.5 is fetched and the user space is built for arm64e
-(`ios165/fetch.sh` and `userland/build.sh`, both now parameterised by device/arch; see the
+(`darwin165/fetch.sh` and `userland/build.sh`, both now parameterised by device/arch; see the
 hakios-xnu-userland side). Booting it on the arm64e kernel took three signing fixes, each found by
 tracing the fault PC under `qemu/run-darwin.sh ... -d int` and disassembling the cache:
 
@@ -418,6 +418,6 @@ kernel code*: the extracted Darwin 26 root filesystem and its 84-subcache arm64e
 not on disk (a previous session's scratch).  Re-acquiring them means re-downloading the iPhone 17
 Pro Max Darwin 26.6.2 IPSW (~12 GB, Apple CDN -- the `/etc/hosts` unblock needs the user's sudo),
 AEA-decrypting the root/cryptex (`/usr/bin/aea` + the FCS key from Apple), re-extracting the cache,
-and writing an `ios26/` selection config (the analog of `ios165/select-system.py`).  Then
+and writing an `darwin26/` selection config (the analog of `darwin165/select-system.py`).  Then
 `userland/build.sh` assembles `system.apfs`/`root.apfs` and `qemu/run-darwin.sh` boots it -- pointed at
 the xnu-12377 kernel (it currently hardcodes the xnu-8796 path).

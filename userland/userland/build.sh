@@ -54,9 +54,9 @@
 #                                   mounted). Not beside GL=1: the two do not fit the 64 MB the loader takes with
 #                                   the kernel. adsp=1 needs none of it: the system image has the firmware in /fw.
 #   system.apfs      the system image, the root filesystem (the resident RAM disk, /dev/md0), an
-#                    APFS container: the part of Darwin 16.5 chosen by ../ios165/select-system.py at
+#                    APFS container: the part of Darwin 16.5 chosen by ../darwin165/select-system.py at
 #                    its real paths, the dyld shared cache, and src/stage0.c as /sbin/launchd (the
-#                    real one is /sbin/launchd.ios). 2.5 GB; upload once per loader session with
+#                    real one is /sbin/launchd.darwin). 2.5 GB; upload once per loader session with
 #                    `xl ramdisk userland/system.apfs`. Rebuilt when missing, when its inputs
 #                    (stage0, the manifest, the cryptex files) are newer, or with SYSTEM=1 (after
 #                    changing the recipe below).
@@ -90,26 +90,26 @@ fi
 
 # ARCH is the architecture of our own user-space code and of the Darwin it runs: arm64 (iPhone X, the
 # default) or arm64e (iPhone XS, the pointer-authentication work -- docs/ARM64E.md).  CACHE and the
-# dyld-cache file names below follow it; set CACHE to the matching ios165 directory for the device.
+# dyld-cache file names below follow it; set CACHE to the matching darwin165 directory for the device.
 ARCH=${ARCH:-arm64}
 CC="xnu-clang -arch $ARCH -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra"
 LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
 # The Darwin SDK the dynamic (framework-linking) programs build against: theos's on Linux, and on
 # macOS without theos, Xcode's current iPhoneOS SDK (its .tbd stubs resolve against the 16.5 cache
-# at run time). Override with IOS_SDK.
-IOS_SDK=${IOS_SDK:-${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk}
-[ -d "$IOS_SDK" ] || { [ -n "$XNU_HOST_DARWIN" ] && IOS_SDK=$(/usr/bin/xcrun --sdk iphoneos --show-sdk-path); }
-DYN="xnu-clang -arch $ARCH -isysroot $IOS_SDK -O1"
-IOS=${IOS:-../ios165}   # IOS=../ios26 for the Darwin 26 system (ios26/fetch.sh)
-CACHE=${CACHE:-$IOS/20F66__iPhone10,3_6}
-# ios165/rootfs and ios165/cryptex must be this copy's own directories of hard links, the way
+# at run time). Override with DARWIN_SDK.
+DARWIN_SDK=${DARWIN_SDK:-${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk}
+[ -d "$DARWIN_SDK" ] || { [ -n "$XNU_HOST_DARWIN" ] && DARWIN_SDK=$(/usr/bin/xcrun --sdk iphoneos --show-sdk-path); }
+DYN="xnu-clang -arch $ARCH -isysroot $DARWIN_SDK -O1"
+DARWIN_FW=${DARWIN_FW:-../darwin165}   # DARWIN_FW=../darwin26 for the Darwin 26 system (darwin26/fetch.sh)
+CACHE=${CACHE:-$DARWIN_FW/20F66__iPhone10,3_6}
+# darwin165/rootfs and darwin165/cryptex must be this copy's own directories of hard links, the way
 # tools/new-workspace.sh makes them. A symlink to another copy's tree makes sysroot a symlink too, because
 # cp -a does not follow one, and then every rm -rf and mv below edits the shared extraction in place. That
 # happened on 19 October 2026: 491 LaunchDaemons, NanoLaunchDaemons, LaunchAngels, xpc/launchd.plist and
 # private/var went out of the main copy's tree, and only the hard links in the other copies still held them.
 for d in rootfs cryptex cryptex-app; do
-	[ -L $IOS/$d ] || continue
-	echo "build.sh: ios165/$d is a symlink to $(readlink $IOS/$d)" >&2
+	[ -L $DARWIN_FW/$d ] || continue
+	echo "build.sh: darwin165/$d is a symlink to $(readlink $DARWIN_FW/$d)" >&2
 	echo "build.sh: it has to be a directory of this copy's own: rm it and cp -al the original over," >&2
 	echo "build.sh: as tools/new-workspace.sh does. Building against a link damages the shared tree." >&2
 	exit 1
@@ -146,7 +146,7 @@ SILEO_BIN="chmod cp mkdir mv rm"
 # ours -- Settings, where a tweak's own pane belongs. Add a program's name to have tweaks in it.)
 # Darwin 26: only src/inject26.c, in backboardd (the touch screen and the buttons); the Darwin 16.5 libraries
 # patch 16.5's addresses
-case "$(basename "$IOS")" in ios26*) IOS26=1 ;; *) IOS26=0 ;; esac
+case "$(basename "$DARWIN_FW")" in darwin26*) IOS26=1 ;; *) IOS26=0 ;; esac
 if [ "$IOS26" = 1 ]; then
 	INJECT=${INJECT-"/hakios/lib/libhakios26.dylib backboardd SpringBoard PosterBoard"}
 fi
@@ -210,7 +210,7 @@ for d in $EXTRA_SHARE; do
 	[ -d "$d" ] || { echo "build.sh: EXTRA_SHARE: $d is not a directory"; exit 1; }
 	cp -rL "$d" root/share/
 done
-if [ -d $IOS/rootfs/usr/lib ]; then
+if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 	if [ -z "$PREBUILT" ]; then
 		# ordinary dynamically linked programs of our own, built against the Darwin SDK
 		$DYN -o obj/hello_dyn src/hello_dyn.c
@@ -545,7 +545,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		*) echo "$library $names" ;;
 		esac
 	done > root/etc/inject.conf
-	cp $IOS/var.skel root/etc/var.skel              # the directories init creates in /private/var
+	cp $DARWIN_FW/var.skel root/etc/var.skel              # the directories init creates in /private/var
 	# time zones: the template's links go in a circle until the time zone daemon has run (/usr/share/zoneinfo
 	# points back into /var); point them at the data that ships with the system, and use this machine's zone
 	zone=$(timedatectl show -p Timezone --value 2>/dev/null || readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##' || true); zone=${zone:-UTC}
@@ -570,7 +570,7 @@ PY
 	# the data migration is marked done for the build in the image, not for Darwin 16.5's: with another
 	# LastSystemVersion Darwin 26 runs every migration plugin at boot, and SpringBoard waits for them
 	# (BKSSystemShellService ... waitForDataMigration); Darwin 26 also reads it as com.apple.DataMigration
-	build=$(python3 -c "import plistlib; print(plistlib.load(open('$IOS/BuildManifest.plist','rb'))['ProductBuildVersion'])" 2>/dev/null)
+	build=$(python3 -c "import plistlib; print(plistlib.load(open('$DARWIN_FW/BuildManifest.plist','rb'))['ProductBuildVersion'])" 2>/dev/null)
 	if [ -n "$build" ]; then
 		p=root/var/mobile/Library/Preferences
 		sed -i -e "s/20F66/$build/g" $p/com.apple.migration.plist
@@ -632,8 +632,8 @@ PY
 	# fairplayd among them).
 	cp com.hakios.demo.plist com.hakios.wifi.plist com.hakios.thermald.plist root/LaunchDaemons/
 	VOLUME=""
-	[ -n "$FLASHBOOT" ] && [ -f $IOS/rootfs.slt ] && VOLUME="--root-volume $IOS/rootfs.slt"
-	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $IOS/rootfs root/LaunchDaemons $DARWIN_JOBS
+	[ -n "$FLASHBOOT" ] && [ -f $DARWIN_FW/rootfs.slt ] && VOLUME="--root-volume $DARWIN_FW/rootfs.slt"
+	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $DARWIN_FW/rootfs root/LaunchDaemons $DARWIN_JOBS
 fi
 # firmware of the phone's own hardware, where somebody has pulled it from the phone's Android into ../fw-gpu
 # (it is the vendor's and never in the repository): the kernel's GPU bring-up, bsd/dev/hakios_adreno.c, finds it in fw/
@@ -716,7 +716,7 @@ fi
 # LaunchDaemons) and the audio server's plug-in directory with only our device in it.
 mkdir -p root/empty root/xpc root/hal
 for f in extensions.plist extensions.plist.sig; do
-	[ -f $IOS/rootfs/System/Library/xpc/$f ] && cp $IOS/rootfs/System/Library/xpc/$f root/xpc/
+	[ -f $DARWIN_FW/rootfs/System/Library/xpc/$f ] && cp $DARWIN_FW/rootfs/System/Library/xpc/$f root/xpc/
 done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /hakios/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
 # Darwin 26's dyld loads no arm64e code without a code signature ("missing code signature"), whatever
@@ -772,7 +772,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	# built and thrown away unused. The guard ends with the cache: everything after it goes
 	# into the boot volume, which every recipe carries, flash cryptexes included
 	if [ "$CRYPTEXES" != flash ]; then
-		if [ -d $IOS/cryptex ]; then cp -al $IOS/cryptex flashboot.os; else mkdir -p flashboot.os; fi
+		if [ -d $DARWIN_FW/cryptex ]; then cp -al $DARWIN_FW/cryptex flashboot.os; else mkdir -p flashboot.os; fi
 		D=flashboot.os/System/Library/Caches/com.apple.dyld
 		mkdir -p $D
 		for f in $CACHE/dyld_shared_cache_$ARCH*; do
@@ -809,7 +809,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	[ -z "$CHECK" ] || ../tools/apfs/check-image.sh flashboot.boot.apfs Boot=flashboot
 	# the third container: Apple's App cryptex as it is (10 MB; fetch.sh), for the boot volume's Cryptexes/App
 	APP=""
-	[ -f $IOS/cryptex-app.dmg ] && APP=$IOS/cryptex-app.dmg
+	[ -f $DARWIN_FW/cryptex-app.dmg ] && APP=$DARWIN_FW/cryptex-app.dmg
 	if [ "$CRYPTEXES" = flash ]; then
 		mv flashboot.boot.apfs flashboot.apfs
 	elif [ -n "$CRYPTEX_IMAGE" ]; then
@@ -825,14 +825,14 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 fi
 
 # --- the system image -----------------------------------------------------------------------------
-if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
-	{ [ ! -f system.apfs ] || [ obj/stage0 -nt system.apfs ] || [ $IOS/system.manifest -nt system.apfs ] ||
-	  [ $IOS/cryptex -nt system.apfs ] || [ $IOS/cryptex-app -nt system.apfs ] || [ -n "$SYSTEM" ]; }; then
-	# what ios165/select-system.py has chosen since ios165/rootfs was extracted is not in it, and would not be
+if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
+	{ [ ! -f system.apfs ] || [ obj/stage0 -nt system.apfs ] || [ $DARWIN_FW/system.manifest -nt system.apfs ] ||
+	  [ $DARWIN_FW/cryptex -nt system.apfs ] || [ $DARWIN_FW/cryptex-app -nt system.apfs ] || [ -n "$SYSTEM" ]; }; then
+	# what darwin165/select-system.py has chosen since darwin165/rootfs was extracted is not in it, and would not be
 	# in the image either (so it was once with the audio plug-ins and the system's sounds: Darwin found no
 	# speaker and played nothing, though our device was there and the kernel's side worked)
-	if [ -f $IOS/.done-rootfs ] && [ $IOS/select-system.py -nt $IOS/.done-rootfs ]; then
-		echo "build.sh: ios165/select-system.py has changed since ios165/rootfs was extracted: run KEEP=1 ios165/fetch.sh" >&2
+	if [ -f $DARWIN_FW/.done-rootfs ] && [ $DARWIN_FW/select-system.py -nt $DARWIN_FW/.done-rootfs ]; then
+		echo "build.sh: darwin165/select-system.py has changed since darwin165/rootfs was extracted: run KEEP=1 darwin165/fetch.sh" >&2
 		exit 1
 	fi
 	# outside ~/Desktop: iCloud Drive syncs the Desktop, and its file provider stalls a hundred thousand hard links
@@ -844,7 +844,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 		rm -f "$SYSROOT_DIR/.clone-complete"
 	else
 		rm -rf "$SYSROOT_DIR"
-		/bin/cp -cR $IOS/rootfs "$SYSROOT_DIR"
+		/bin/cp -cR $DARWIN_FW/rootfs "$SYSROOT_DIR"
 	fi
 	ln -s "$SYSROOT_DIR" sysroot
 	# launchd must load our choice of jobs, not all 500 that Darwin has
@@ -852,7 +852,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 		sysroot/System/Library/LaunchAngels sysroot/System/Library/xpc/launchd.plist
 	# Darwin 26's launchd counts a job as the system's only when its file is on the system volume: one read
 	# through the symlink into /hakios is "non-system" and may claim no host port or event stream. So
-	# there the jobs are copied in (JOBS_IN_SYSTEM=1, the default for ../ios26), and a change to them
+	# there the jobs are copied in (JOBS_IN_SYSTEM=1, the default for ../darwin26), and a change to them
 	# means a new system image.
 	if [ "${JOBS_IN_SYSTEM:-$([ "$IOS26" = 1 ] && echo 1)}" = 1 ]; then
 		cp -R root/LaunchDaemons sysroot/System/Library/LaunchDaemons
@@ -868,7 +868,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 		mv sysroot/private/var/staged_system_apps/* sysroot/Applications/
 		rm -rf sysroot/private/var
 	fi
-	mv sysroot/sbin/launchd sysroot/sbin/launchd.ios
+	mv sysroot/sbin/launchd sysroot/sbin/launchd.darwin
 	cp obj/stage0 sysroot/sbin/launchd
 	# the audio DSP's firmware, the phone's own from ../fw-audio (never in the repository), where the kernel reads
 	# it once the root is mounted (bsd/dev/hakios_adsp.c, adsp=1): 20 MB that do not fit beside GL=1 in the small image
@@ -945,15 +945,15 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld
 	# shared cache (dyld looks there first) and a few libraries and resources outside the cache.
 	mkdir -p sysroot/System/Cryptexes
-	if [ -d $IOS/cryptex ]; then cp -al $IOS/cryptex sysroot/System/Cryptexes/OS; fi
+	if [ -d $DARWIN_FW/cryptex ]; then cp -al $DARWIN_FW/cryptex sysroot/System/Cryptexes/OS; fi
 	# the App cryptex, the same way: Safari's daemons (eight launchd jobs run them from there), its settings and
 	# the bundles around it, which the root's links reach (System/Library/PreferenceBundles/MobileSafariSettings.bundle...)
-	if [ -d $IOS/cryptex-app ]; then cp -al $IOS/cryptex-app sysroot/System/Cryptexes/App; fi
+	if [ -d $DARWIN_FW/cryptex-app ]; then cp -al $DARWIN_FW/cryptex-app sysroot/System/Cryptexes/App; fi
 	# Darwin 26: what of the ExclaveOS cryptex the system reads from where it is mounted at boot, the secure
-	# indicators' assets (ios26/fetch.sh): without them SpringBoard throws CASecureIndicatorLayerInvalidName
-	if [ -d $IOS/exclave/root ]; then
+	# indicators' assets (darwin26/fetch.sh): without them SpringBoard throws CASecureIndicatorLayerInvalidName
+	if [ -d $DARWIN_FW/exclave/root ]; then
 		mkdir -p sysroot/private/preboot/Cryptexes/ExclaveOS
-		cp -R $IOS/exclave/root/. sysroot/private/preboot/Cryptexes/ExclaveOS/
+		cp -R $DARWIN_FW/exclave/root/. sysroot/private/preboot/Cryptexes/ExclaveOS/
 	fi
 	D=sysroot/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld
 	mkdir -p $D
@@ -964,7 +964,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	done
 	# zlib where it saves room, as Apple keeps the root (a small file whole in its attribute): 5.4 GB of
 	# files in 2.5 GB, what fits into the phone's RAM beside Darwin
-	python3 ../tools/apfs/mkapfs.py -z -o system.apfs System=$(cd sysroot && pwd -P),manifest=$IOS/system.manifest | tail -1
-	[ -z "$CHECK" ] || ../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$IOS/system.manifest
+	python3 ../tools/apfs/mkapfs.py -z -o system.apfs System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest | tail -1
+	[ -z "$CHECK" ] || ../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$DARWIN_FW/system.manifest
 	rm -rf sysroot
 fi

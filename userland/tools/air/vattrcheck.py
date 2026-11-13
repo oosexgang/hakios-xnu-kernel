@@ -61,9 +61,9 @@ AIR2NIR = os.environ.get(
 IR3 = os.environ.get(
     "IR3", os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/ir3_compiler"))
 CHIP_ID = os.environ.get("AIR_CHIP_ID", "0x007506030500")
-IOS = os.environ.get("IOS", os.path.join(ROOT, "ios165"))
+DARWIN_FW = os.environ.get("DARWIN_FW", os.path.join(ROOT, "darwin165"))
 QUARTZCORE = os.path.join(
-    IOS, "rootfs/System/Library/Frameworks/QuartzCore.framework/default.metallib")
+    DARWIN_FW, "rootfs/System/Library/Frameworks/QuartzCore.framework/default.metallib")
 
 # VERT_ATTRIB_GENERIC0 (shader_enums.h): the number ir3 prints as `slot=`.
 GENERIC0 = 15

@@ -110,7 +110,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 /*
  * MTLAddDevice is not exported, so it is reached by its distance from one that is -- the
  * same two numbers src/metal_drv_test.m uses, from the same cache
- * (ios165/20F66__iPhone10,3_6/dyld_shared_cache_arm64).
+ * (darwin165/20F66__iPhone10,3_6/dyld_shared_cache_arm64).
  */
 #define MTL_CREATE_DEVICE_UNSLID 0x181a34b3cUL
 #define MTL_ADD_DEVICE_UNSLID    0x181a1875cUL

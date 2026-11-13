@@ -22,7 +22,7 @@
  * here there is no Metal, so tools/metallib.py does what the container reader does there):
  *
  *   python3 tools/metallib.py dump \
- *       ios165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib /tmp/bc
+ *       darwin165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib /tmp/bc
  *   /tmp/picture_host /tmp/bc /tmp/picture.ppm
  *
  * What it must print, which is what the phone must print too:

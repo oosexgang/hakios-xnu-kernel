@@ -56,7 +56,7 @@ Requirements:
     `llvm-nm` ...: on Ubuntu, `lld-20` and `llvm-20`), with the SDK's directory alone: theos keeps it
     in its `sdks` repository, and `git clone --depth 1 --filter=blob:none --sparse
     https://github.com/theos/sdks && git -C sdks sparse-checkout set iPhoneOS16.5.sdk` fetches that one
-    directory (233 MB). `IOS_SDK` says where it is. `kernel/host/llvm` makes up for what LLVM's linker
+    directory (233 MB). `DARWIN_SDK` says where it is. `kernel/host/llvm` makes up for what LLVM's linker
     and libtool take differently. **The kernel this makes is not one to boot**: `ld64.lld` does not
     implement `-image_base`, `-segaddr` and `-segment_order`, with which XNU lays the kernel out, and
     says so. What it shows is that every file compiles and the whole kernel links, on any Linux
@@ -71,7 +71,7 @@ Requirements:
   ```sh
   sudo apt-get install build-essential git curl clang lld python3 perl xz-utils flex bison m4 autoconf \
       automake gawk clang-20 lld-20 llvm-20
-  XNU_CLANG_DIR=/usr/lib/llvm-20/bin IOS_SDK=$PWD/../sdks/iPhoneOS16.5.sdk kernel/build.sh
+  XNU_CLANG_DIR=/usr/lib/llvm-20/bin DARWIN_SDK=$PWD/../sdks/iPhoneOS16.5.sdk kernel/build.sh
   ```
 
 The kernel is built with a table of the boards whose device packages are present. The repository
@@ -113,7 +113,7 @@ what depends on them. Work done in the tree is never overwritten ([kernel/README
 | `XNUDEPS` | `$XNU_SRC-deps` | Fetched sources, host tools, the SDK copy. |
 | `THEOS` | `~/theos` | theos. |
 | `TOOLCHAIN` | theos' if there, else LLVM's | `cctools` (theos) or `llvm` (`ld64.lld` and the rest beside clang in `XNU_CLANG_DIR`). |
-| `IOS_SDK` | `$THEOS/sdks/iPhoneOS16.5.sdk` | The SDK whose headers the build uses. |
+| `DARWIN_SDK` | `$THEOS/sdks/iPhoneOS16.5.sdk` | The SDK whose headers the build uses. |
 | `XNU_WARNINGS` | `0` | `1`: the compiler's warnings are shown, and at the end those in HakiOS' own files are listed (`$XNUDEPS/warnings-ours.txt`), of the files that build compiled. |
 | `XNU_CLANG_DIR` | `/usr/bin` | The directory of the clang the kernel is compiled with (`kernel/host/xnu-clang`): 19 or newer. |
 | `DARWIN_RENOIR` | `../darwin-renoir` | Optional. If this checkout exists and has its `xnu-deps` built, its host tools are used and step 2 fetches less. |

@@ -1,6 +1,6 @@
 # RAM budget: does Darwin 26 fit renoir's 6 GB as an in-RAM APFS image?
 
-Date: 2026-10-30. Inputs: `darwin-renoir` (Darwin 16.5 port, read only), `ios26/` (23G90, iPhone12,1).
+Date: 2026-10-30. Inputs: `darwin-renoir` (Darwin 16.5 port, read only), `darwin26/` (23G90, iPhone12,1).
 No phone involved. All sizes are MiB (2^20) unless a line says GB (10^9).
 
 ## Verdict
@@ -48,7 +48,7 @@ SpringBoard working set of the dyld cache.
 
 ## 1. How the Darwin 16.5 image is chosen (darwin-renoir)
 
-`ios165/select-system.py` reads `7z l -slt rootfs.dmg` and writes `system.files` (what to extract)
+`darwin165/select-system.py` reads `7z l -slt rootfs.dmg` and writes `system.files` (what to extract)
 and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapfs.py`). Rules (`wanted_file`):
 
 - Taken whole: `usr/{libexec,sbin,bin,lib,share}`, `sbin`, `bin`, `private/etc`, `System/Library`,
@@ -73,7 +73,7 @@ and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapf
 - Fonts: those ≤ 25 MB, plus AppleColorEmoji and PingFang, which are trimmed afterwards
   (`userland/tools/font_trim.py`).
 
-`ios165/fetch.sh` adds the OS cryptex. It leaves out the dyld cache and DriverKit, then adds the dyld
+`darwin165/fetch.sh` adds the OS cryptex. It leaves out the dyld cache and DriverKit, then adds the dyld
 cache separately without `.symbols`. `userland/build.sh` (system image section) does the rest:
 
 - hard-links the selection into `sysroot`;
@@ -180,8 +180,8 @@ planning number and "broad" if every shipped program must still run.
 
 ## 4. Minimal rootfs: the 16.5 selection applied to Darwin 26
 
-`rootfs_select.py` imports `wanted_file` from `darwin-renoir/ios165/select-system.py` unchanged. It
-walks `ios26/rootfs` (staged apps → `/Applications`, rest of `private/var` left out), adds
+`rootfs_select.py` imports `wanted_file` from `darwin-renoir/darwin165/select-system.py` unchanged. It
+walks `darwin26/rootfs` (staged apps → `/Applications`, rest of `private/var` left out), adds
 `cryptex/os` without the dyld cache and DriverKit, adds `cryptex/app` whole, and compresses every
 file the way mkapfs does (16 processes, 45 s). Hard-link copies are counted separately, as mkapfs
 does with the 7-Zip extraction for 16.5.
@@ -257,7 +257,7 @@ The scenarios B–D at the top subtract the measured savings from A:
 Run in WSL. Scripts are in `darwin/tools/ram-budget/`; intermediate files go to `/tmp`.
 
 ```
-cd /home/wannq/darwin_kernel/ios26/dyld
+cd /home/wannq/darwin_kernel/darwin26/dyld
 python3 .../zchunks.py /tmp/rb_dyld26.pkl $(ls $PWD/dyld_shared_cache_arm64e* | grep -v -E '\.(symbols|atlas)$')
 python3 .../cache_images.py /tmp/rb_dyld26.pkl jobs|apps|broad
 python3 .../rootfs_select.py            # writes /tmp/rb_rootfs26.pkl

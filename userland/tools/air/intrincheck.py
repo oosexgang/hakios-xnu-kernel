@@ -2123,7 +2123,7 @@ def main(argv):
         decls = [l.strip() for l in open(decls_file) if l.strip()]
     else:
         libs = []
-        for dirpath, _, names in os.walk(os.path.join(ROOT, "ios165/rootfs")):
+        for dirpath, _, names in os.walk(os.path.join(ROOT, "darwin165/rootfs")):
             for n in names:
                 if n.endswith(".metallib"):
                     libs.append(os.path.join(dirpath, n))

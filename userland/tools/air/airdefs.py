@@ -421,7 +421,7 @@ if __name__ == "__main__":
         sys.path.insert(0, os.path.join(ROOT, "tools"))
         import metallib
         libs = []
-        for dp, _, ns in os.walk(os.path.join(ROOT, "ios165/rootfs")):
+        for dp, _, ns in os.walk(os.path.join(ROOT, "darwin165/rootfs")):
             for n in ns:
                 if n.endswith(".metallib"):
                     libs.append(os.path.join(dp, n))

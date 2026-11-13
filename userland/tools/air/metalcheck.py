@@ -19,9 +19,9 @@ The two sides:
                Everything here is therefore keyed on the kernel's name, and a
                name that shows up twice with two different results is named as
                such rather than resolved by taking the first.
-  the host     air_run --zero on softpipe, on the metallib of ios165/rootfs that
+  the host     air_run --zero on softpipe, on the metallib of darwin165/rootfs that
                the log names (the on-device path is the same string without the
-               ios165/rootfs prefix).
+               darwin165/rootfs prefix).
 
 Both sides must be the same computation before the numbers mean anything:
 
@@ -78,7 +78,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-IOS = os.environ.get("IOS", os.path.join(ROOT, "ios165"))
+DARWIN_FW = os.environ.get("DARWIN_FW", os.path.join(ROOT, "darwin165"))
 AIR2NIR = os.environ.get(
     "AIR2NIR", os.path.join(ROOT, "build/mesa-host/build/src/compiler/air/air2nir"))
 AIR_RUN = os.environ.get(
@@ -483,13 +483,13 @@ ROWS = [
             "only reference these have"),
     ("hostfail", "not compared: the host reference could not be produced"),
     ("harness", "not compared: air_run did not run the device's grid on the device's input"),
-    ("nolib", "not compared: the log's metallib is not under ios165/rootfs"),
+    ("nolib", "not compared: the log's metallib is not under darwin165/rootfs"),
     ("twice", "not compared: the log reports the kernel twice with different results"),
     ("refused", "not compared: the driver refused the dispatch, so no kernel ran -- not a "
                 "result about the kernel"),
 ]
 # What makes this check fail: the two sides disagreeing, and -- just as much --
-# the check not having been made. A wrong IOS, an air_run that does not work or a
+# the check not having been made. A wrong DARWIN_FW, an air_run that does not work or a
 # grid that drifted would otherwise leave check.sh green while comparing nothing,
 # which is the failure mode this whole suite is built against. nir_to_tgsi
 # refusing a shader is not in here: that one is a known limit of softpipe's, it
@@ -683,9 +683,9 @@ def draw_section(path):
 
     target = int(pixel.group(3))
     device = [int(w) for w in pixel.group(4).split()]
-    path = os.path.join(IOS, "rootfs") + lib
+    path = os.path.join(DARWIN_FW, "rootfs") + lib
     if not os.path.exists(path):
-        print("    not compared: %s is not under ios165/rootfs" % lib)
+        print("    not compared: %s is not under darwin165/rootfs" % lib)
         return True
     host_rt, host, _row, why = host_pixel(path, shader)
     if host is None:
@@ -855,13 +855,13 @@ def position_dependent(lib, name):
 
 
 def sweep_library(path):
-    """The library the sweep drew, as the test's own line names it, under ios165/rootfs."""
+    """The library the sweep drew, as the test's own line names it, under darwin165/rootfs."""
     raw = open(path, "rb").read()
     text = raw.decode("utf-8", errors="replace").replace("\x00", "")
     m = re.search(r"drvtest: (\S+\.metallib), \d+ bytes", text)
     if not m:
         return None
-    return os.path.join(IOS, "rootfs") + m.group(1)
+    return os.path.join(DARWIN_FW, "rootfs") + m.group(1)
 
 
 # The sweep's own reason table. Ten reasons were already named on the dispatch
@@ -911,7 +911,7 @@ def drawall_section(path, library_hint):
 
     lib = library_hint
     if lib is None or not os.path.exists(lib):
-        print("metalcheck: the sweep's library is not under ios165/rootfs, so no reference "
+        print("metalcheck: the sweep's library is not under darwin165/rootfs, so no reference "
               "can be produced for it")
         return True
 
@@ -1244,7 +1244,7 @@ def main(argv):
         if len(libs) != 1:
             rows["nolib"].append((name, "the log names %d libraries for it" % len(libs)))
             continue
-        host_lib = os.path.join(IOS, "rootfs", libs[0].lstrip("/"))
+        host_lib = os.path.join(DARWIN_FW, "rootfs", libs[0].lstrip("/"))
         if not os.path.exists(host_lib):
             rows["nolib"].append((name, "missing %s" % host_lib))
             continue
@@ -1279,7 +1279,7 @@ def main(argv):
         print("  %3d  %s" % (len(rows[key]), what))
     # The rows that make this fail are printed whether or not --list was asked
     # for, because check.sh reads the tail of this and nothing else. Capped: a
-    # wrong IOS puts every kernel in one of them and the summary matters more.
+    # wrong DARWIN_FW puts every kernel in one of them and the summary matters more.
     shown = [(k, n, w) for k in BAD for n, w in sorted(rows[k])]
     for key, name, why in shown[:6]:
         print("       %-12s %-40s %s" % (key.upper(), name, why))

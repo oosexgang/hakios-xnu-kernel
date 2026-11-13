@@ -48,10 +48,10 @@ AIR2NIR = os.environ.get(
     "AIR2NIR", os.path.join(ROOT, "build/mesa-host/build/src/compiler/air/air2nir"))
 
 LIBS = [
-    "ios165/rootfs/System/Library/VideoDecoders/AV1SW.metallib",
-    "ios165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib",
-    "ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib",
-    "ios165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib",
+    "darwin165/rootfs/System/Library/VideoDecoders/AV1SW.metallib",
+    "darwin165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib",
+    "darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib",
+    "darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib",
 ]
 
 DEPTH = 6   # how far back a value is traced; the shapes of interest are shallow

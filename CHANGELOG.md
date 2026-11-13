@@ -89,7 +89,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   not been exported.
 - **The kernel builds without theos' toolchain.** `kernel/build.sh` takes LLVM's own Mach-O linker and
   tools (`ld64.lld`, `llvm-libtool-darwin` ...) when theos is not installed, with the Darwin SDK's headers
-  alone (`IOS_SDK`): `kernel/host/llvm` makes up for the two places they differ from cctools. It needs
+  alone (`DARWIN_SDK`): `kernel/host/llvm` makes up for the two places they differ from cctools. It needs
   clang 19 or newer and GNU awk, which the build now says when they are missing. LLVM's linker does not
   lay the kernel out as cctools' does (`-image_base`, `-segaddr`): such a kernel is a check that every
   file compiles and links, not one to boot.

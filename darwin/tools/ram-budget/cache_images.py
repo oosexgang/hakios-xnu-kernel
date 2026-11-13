@@ -11,7 +11,7 @@ Static closure over LC_LOAD/WEAK/REEXPORT/UPWARD_DYLIB only: dlopen() is not see
 import os, sys, struct, pickle, plistlib, glob, collections
 
 DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
-I = os.environ.get('IOS', DK + '/ios26')
+I = os.environ.get('DARWIN_FW', DK + '/darwin26')
 D = I + '/dyld/'
 ROOT = I + '/rootfs'
 CRYPTEXES = [I + '/cryptex/os', I + '/cryptex/app']

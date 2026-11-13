@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """corecrypto's FIPS self test passing again on the rewritten dyld shared cache.
 
-usage: fips26.py CACHE_DIR [STORED COMPUTED]   (ios26/dyld-strip, after pacstrip cache)
+usage: fips26.py CACHE_DIR [STORED COMPUTED]   (darwin26/dyld-strip, after pacstrip cache)
 
 At boot launchd runs /usr/libexec/cc_fips_test (boot task "fips", RequireSuccess: a failure stops the
 system). Its integrity test computes an HMAC over corecrypto's code and compares it with the value

@@ -17,7 +17,7 @@
 # That said, one boot here did need it and the reason is not settled: with a loader left resident by
 # another copy, the kernel got no ufs_shared_pa= on its command line, so its UFS driver never came up,
 # /dev/ufs_darwin never appeared ("mount /dev/ufs_darwin: No such file or directory") and the boot fell
-# back to /sbin/launchd.ios, which exists only in the RAM image. `./xl reload` with this copy's prebuilt
+# back to /sbin/launchd.darwin, which exists only in the RAM image. `./xl reload` with this copy's prebuilt
 # loader fixed it immediately. So either that particular resident loader was not the persist one, or the
 # "any kernel" claim does not hold for a prebuilt kernel. Check the command line in the log for
 # ufs_shared_pa= before reaching for reload. Then
