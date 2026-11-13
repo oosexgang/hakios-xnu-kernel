@@ -1,14 +1,16 @@
 #!/bin/bash
 # The kernel booted in QEMU as a phone boots it, to its first process: the loader under a real UEFI, the
-# kernel's own start on two processors, the emulator's board found, its virtio network card and input
-# devices taken, the root mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's),
-# and /sbin/launchd run. Its shell then answers on the console with the kernel's values; pings QEMU's
-# gateway and serves this machine a page over TCP; reads a second disk on the virtio block device; plays a
-# tone on the virtio sound device (QEMU writes it to a WAV file); reads a button and a touch from QEMU's
-# keyboard and tablet; starts a process and waits for it; reads the kernel's messages; sends itself Mach
-# messages; tells the date; ends a process with a signal; reads what a child writes into a pipe;
-# writes, reads and removes a file in the kernel's file system in memory; runs threads on both processors
-# at once; maps a file; and waits for events through kqueue.
+# kernel's own start on two processors, the emulator's board found, its virtio devices taken, the root
+# mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's), and /sbin/launchd run.
+# What is typed on its shell then tries the rest of the kernel:
+#   - the network: pings to QEMU's gateway; a page served to this computer and one asked of it (TCP both
+#     ways); a datagram answered (workbench/qemu_host.py is this computer's side)
+#   - the devices: a second disk (virtio block, APFS); a tone (virtio sound, which QEMU writes to a WAV
+#     file); a button and a touch from QEMU's keyboard and tablet
+#   - processes: one started and waited for, one ended by a signal, a pipe between two; threads on both
+#     processors at once; Mach messages; kqueue's timer and a pipe's readiness
+#   - files and memory: a file written, read and removed in ramfs; a program's file mapped; the kernel's
+#     messages read; the date
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -35,12 +37,17 @@ XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { ec
 mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
 python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
+# what it asks this computer for (workbench/qemu_host.py serves it)
+mkdir -p "$W/www"
+echo "a page from the computer QEMU runs on" > "$W/www/page.txt"
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'sysctl hw.ncpu hw.board.name kern.ostype'
 	'ifconfig en0 10.0.2.15'
 	'ping 10.0.2.2 2'
 	'serve 1'
+	'get 10.0.2.2 18081 /page.txt'
+	'udp 10.0.2.2 18082 a datagram'
 	'mount apfs /dev/rvblk0 /mnt'
 	'cat /mnt/hello.txt'
 	'tone 440 1'
@@ -65,7 +72,7 @@ typed=(
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
-	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25" \
+	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
 	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
@@ -84,6 +91,9 @@ check "en0 takes an address and comes up" bash -c "tr -d '\\r' < '$log' | grep -
 check "QEMU's gateway answers its pings, through the virtio network driver" grep -aq "2 sent, 2 answered" "$log"
 check "its TCP serves a page to this machine, through QEMU's forwarded port" grep -q "^Served by /sbin/launchd" "$W/page"
 check "... which it saw asked for" grep -aq "GET /test HTTP" "$log"
+check "it asks this computer for a page over TCP, as a client" bash -c "tr -d '\\r' < '$log' | grep -q '^get: HTTP/1.0 200 OK, 38 bytes of body' &&
+	tr -d '\\r' < '$log' | grep -qx 'a page from the computer QEMU runs on'"
+check "a datagram goes to this computer and its answer comes back" grep -aq "^udp: 18 bytes back from 10.0.2.2: echoed: a datagram" "$log"
 check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
 check "its sound device plays a tone of 440 Hz, through the virtio sound driver" \
