@@ -49,7 +49,7 @@ W=$(mktemp -d)
 trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
 mkdir -p "$W/esp/EFI/BOOT"
 cp "$HERE/loader/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
-cmdline="$verbose cpus=$cpus $args"
+cmdline="$verbose cpus=$cpus console_screen=1 $args"
 python3 "$HERE/loader/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
 	"--cmdline=${cmdline# }" > /dev/null || die "no payload"
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"

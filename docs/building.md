@@ -134,8 +134,15 @@ tools/qemu-kernel.sh --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.deve
 QEMU's `virt` machine with a real UEFI starts the loader, which takes the kernel from a payload and
 gives it the emulator's board (`devices/qemu-virt`), as a phone's firmware does. The kernel's console
 goes to the serial port (kept in `qemu-kernel.log`) and, with `-v`, to the screen (ramfb). With no root
-it gets as far as waiting for one ("Waiting on ... Apple_HFS"), which is where the script stops;
-`--ramdisk FILE --boot-args rd=md0` gives it one. Needs `qemu-system-arm` and `qemu-efi-aarch64`.
+it gets as far as waiting for one ("Waiting on ... Apple_HFS"), which is where the script stops. A
+root of nothing of Apple's, whose first process says what the kernel says of itself:
+
+```sh
+tools/qemu-root.sh root.img
+tools/qemu-kernel.sh --ramdisk root.img --boot-args rd=md0 --until 'all is well' --screen screen.png KERNEL
+```
+
+Needs `qemu-system-arm` and `qemu-efi-aarch64`.
 
 ## What has been verified, and where
 
