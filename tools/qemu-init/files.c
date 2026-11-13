@@ -271,3 +271,63 @@ command_mmap(int argc, char **argv)
 	say(" bytes: ");
 	say(all == st.size && by_pages == by_reads ? "its pages and its reads agree\n" : "its pages and its reads DIFFER\n");
 }
+
+/* ---- memory: pages of its own ---- */
+
+#define PROT_WRITE              2
+#define MAP_ANON                0x1000
+
+/* the kernel's free memory, in megabytes (vm.page_free_count pages of hw.pagesize) */
+static uint64_t
+free_megabytes(void)
+{
+	uint64_t pages = 0, page_size = 0;
+
+	sysctl_number("vm.page_free_count", &pages);
+	sysctl_number("hw.pagesize", &page_size);
+	return pages * page_size >> 20;
+}
+
+/* MB: that much memory of its own (anonymous, mmap), every page written and read back, then given back */
+void
+command_memory(int argc, char **argv)
+{
+	unsigned megabytes = argc > 1 ? parse_number(argv[1]) : 0;
+
+	if (megabytes < 1 || megabytes > 1024) {
+		say("memory MB: 1 to 1024\n");
+		return;
+	}
+	uint64_t size = (uint64_t)megabytes << 20, before = free_megabytes();
+	long mapped = syscall6(SYS_mmap, 0, (long)size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (mapped < 0) {
+		say("memory: not given, error ");
+		say_number((uint64_t)-mapped);
+		say("\n");
+		return;
+	}
+	volatile uint64_t *words = (volatile uint64_t *)mapped;
+	uint64_t count = size / sizeof(uint64_t), wrong = 0;
+	int64_t start = now_us();
+	for (uint64_t i = 0; i < count; i += 512) {             /* (a word every 4 KB: every page) */
+		words[i] = i * 0x9e3779b97f4a7c15ull;
+	}
+	uint64_t during = free_megabytes();
+	for (uint64_t i = 0; i < count; i += 512) {
+		wrong += words[i] != i * 0x9e3779b97f4a7c15ull;
+	}
+	int64_t took = now_us() - start;
+	syscall6(SYS_munmap, mapped, (long)size, 0, 0, 0, 0);
+	say("memory: ");
+	say_number(megabytes);
+	say(" MB written and read back in ");
+	say_number((uint64_t)took / 1000);
+	say(wrong == 0 ? " ms, all as written" : " ms, SOME NOT AS WRITTEN");
+	say("; free: ");
+	say_number(before);
+	say(" MB before, ");
+	say_number(during);
+	say(" MB with it, ");
+	say_number(free_megabytes());
+	say(" MB after\n");
+}

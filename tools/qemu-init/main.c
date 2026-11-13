@@ -129,6 +129,7 @@ static const struct {
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
 	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
+	{ "memory", "MB that much memory of its own, written and read back", command_memory },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 };
 
