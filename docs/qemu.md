@@ -59,6 +59,7 @@ line at a time:
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
 | `date`, `sleep SECONDS` | The time of day, UTC, as the kernel has it from QEMU's clock; and a pause. |
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended. |
+| `fork [PROGRAM [ARGUMENTS]]` | A copy of this process: the child writes a value of its memory, which the parent's copy must not see; or, given a program, becomes it (execve). |
 | `crash null`, `illegal`, `breakpoint` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint; the shell sees the signal the kernel made of it. |
 | `unix FILE` | FILE opened, its descriptor sent over a socket pair with a word (sendmsg, SCM_RIGHTS), and the file read through the descriptor that comes out. |
 | `alarm [COUNT]` | A timer of a tenth of a second (setitimer) whose SIGALRM a handler of its own catches, and sigreturn puts the thread back. |
@@ -80,7 +81,8 @@ APFS disk on the virtio block device is mounted and read; a tone played on the v
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
-port and come back unchanged; the date is this year's; a signal ends a process in the background, and a process's
+port and come back unchanged; the date is this year's; a forked child's memory is its own and it can become another
+program; a signal ends a process in the background, and a process's
 mistakes end it with the signal they should; a timer's signals reach a handler on time; a pipe
 carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; a mapped
 file is what reading it gives; memory of its own holds what is written and is all given back; a descriptor
