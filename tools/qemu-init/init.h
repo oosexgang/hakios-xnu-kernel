@@ -61,6 +61,7 @@ unsigned parse_number(const char *text);
 int split(char *text, char **words);
 int64_t now_us(void);
 void sleep_us(int64_t us);
+void copy_bytes(void *to, const void *from, size_t n);
 
 /* main.c: a value of the kernel's by its name (sysctlbyname); whether there is one */
 int sysctl_string(const char *name, char *out, size_t size);
@@ -73,6 +74,7 @@ void command_cat(int argc, char **argv);
 void command_crash(int argc, char **argv);
 void command_date(int argc, char **argv);
 void command_dmesg(int argc, char **argv);
+void command_draw(int argc, char **argv);
 void command_echo(int argc, char **argv);
 void command_fork(int argc, char **argv);
 void command_get(int argc, char **argv);

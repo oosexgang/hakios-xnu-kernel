@@ -132,3 +132,15 @@ sleep_us(int64_t us)
 
 	syscall6(SYS_select, 0, 0, 0, 0, (long)tv, 0);
 }
+
+/* N bytes from FROM to TO (no libc here; volatile, or the compiler makes the loop a call to the memcpy there is not) */
+void
+copy_bytes(void *to, const void *from, size_t n)
+{
+	volatile uint8_t *t = to;
+	const uint8_t *f = from;
+
+	for (size_t i = 0; i < n; i++) {
+		t[i] = f[i];
+	}
+}
