@@ -34,7 +34,7 @@ $DYN -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$US/src/audio_plugin
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-app.dylib -lobjc -o "$O/libhakios-app.dylib" "$O/src/inject_app.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-console.dylib -o "$O/libhakios-console.dylib" "$RN/userland/console_log.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/userland/inject_poster.c"
-$DYN -dynamiclib -install_name /redwood/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/userland/inject_wallpaper.m"
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/userland/inject_wallpaper.m"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-backlight.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-backlight.dylib" "$RN/userland/inject_backlight.c"
 # the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: ios/userland/inject_brightness.c)
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/userland/inject_brightness.c"
