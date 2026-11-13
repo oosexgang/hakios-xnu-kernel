@@ -237,7 +237,19 @@ LLVM=$HERE/../kernel/host/llvm
 XNU_CLANG_DIR=$L XNU_SDK_VERSION=16.5 "$LLVM/ld" -arch arm64 -alias_list "$W/aliases.exp" -o kernel a.o > "$W/ld.args"
 check "the linker is told the platform first" test "$(head -4 "$W/ld.args" | tr '\n' ' ')" = "-platform_version 2 16.5 16.5 "
 check "an alias list becomes one -alias a line, in order, and the rest is passed on" \
-	test "$(tail -n +5 "$W/ld.args" | tr '\n' ' ')" = "-arch arm64 -alias _vm_map_external _vm_map -alias _IOMallocData_external _IOMallocData -o kernel a.o "
+	test "$(tail -n +5 "$W/ld.args" | tr '\n' ' ')" = "-arch arm64 -alias _vm_map_external _vm_map -alias _IOMallocData_external _IOMallocData a.o -o kernel "
+# the kernel's link (it says -image_base): what lld does not implement is not given to it, the segments are
+# named so that lld orders them as XNU wants, and what lld writes is laid out by place-kernel.py
+(cd "$W" && XNU_CLANG_DIR=$L "$LLVM/ld" -arch arm64 -static -image_base 0xfffffff007004000 -segaddr __PRELINK_TEXT 0x1000 \
+	-segment_order __TEXT:__DATA_CONST -headerpad 152 -o kernel a.o > "$W/kernel-ld.args" 2> "$W/kernel-ld.err")
+args=$(tr '\n' ' ' < "$W/kernel-ld.args")
+check "the kernel's link: no -static, -image_base, -segaddr or -segment_order for lld" \
+	sh -c "! echo '$args' | grep -qE -- '-static|-image_base|-segaddr|-segment_order'"
+check "... __TEXT_EXEC linked as __DATA, after __DATA_CONST, and __DATA as __DATX" \
+	sh -c "echo '$args' | grep -qF -- '-rename_segment __DATA __DATX -rename_segment __TEXT_EXEC __DATA'"
+check "... room for a kernel's load commands, rebase information instead of chained fixups, into kernel.lld" \
+	sh -c "echo '$args' | grep -qF -- '-headerpad 0x4000 -o kernel.lld -no_fixup_chains'"
+check "... which place-kernel.py takes (here there is none, and it says so)" grep -q "place-kernel\|No such file" "$W/kernel-ld.err"
 XNU_CLANG_DIR=$L "$LLVM/libtool" -ca -filelist f -o out.a > "$W/libtool.args"
 check "a static archive asked for as -ca is asked for as -static" test "$(tr '\n' ' ' < "$W/libtool.args")" = "-static -filelist f -o out.a "
 refuses "a tool the kernel's build does not use says so when it is called" "not part of a build with LLVM" "$LLVM/unused" -x

@@ -63,6 +63,7 @@ loader is built. What is not installed is left out, and said.
 | `boards_test.py` | `tools/boards.py` and `tools/devicetree.py` | What a board file may say and what is refused, with the reason; what is read from a device tree; where packages are found; the tables written. |
 | `device_test.py` | `tools/device.py`, in a repository of its own | A package is brought in from a branch or a directory, listed, exported and removed; work that is not the tool's is left alone. |
 | `porting_test.sh` | `docs/porting.md`, on a made-up phone with a made-up SoC | The guide's tool and data steps work for a device nobody has described, with none of the addresses of the phones the code was written on. |
+| `place_kernel_test.py` | `kernel/host/llvm/place-kernel.py` on a Mach-O shaped as `ld64.lld` makes the kernel | The image moves to the kernel's address with its pointers, its symbols and nothing else; the segments get their names and protections back; the entry is a thread state; what only dyld reads is gone; what cannot be a kernel is refused. |
 | `kernel_tools_test.sh` | `kernel/assemble.sh`, `export.sh`, `verify.sh`, `import-patch.sh`, `syntax-check.sh`, on a small made-up release | A tree is what the repository says; work in a tree is never run over; an export brings it back. |
 | `bootargs_test.py` | `tools/bootargs.py` | Every boot argument the kernel reads is found and described; `docs/boot-args.md` is current. |
 | `tools_test.py` | `tools/check-links.py`, `tools/components.py` | The repository's own checks find what they are for. |

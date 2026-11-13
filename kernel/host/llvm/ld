@@ -1,20 +1,37 @@
 #!/bin/bash
 # LLVM's Mach-O linker in the place of cctools' ld64, for a build without theos' toolchain
-# (kernel/build.sh: TOOLCHAIN=llvm). Two differences matter to XNU's link and are made up for here:
-# ld64.lld wants the platform said where ld64 takes it from the objects, and it takes aliases one by
-# one (-alias OLD NEW) where XNU gives ld64 a file of them (-alias_list FILE: vm_map for
-# vm_map_external and the like).
+# (kernel/build.sh: TOOLCHAIN=llvm). What differs from ld64 is made up for here:
+# - ld64.lld wants the platform said where ld64 takes it from the objects;
+# - it takes aliases one by one (-alias OLD NEW) where XNU gives ld64 a file of them (-alias_list FILE:
+#   vm_map for vm_map_external and the like);
+# - it does not implement -image_base, -segment_order or -static, with which XNU lays the kernel out. For
+#   the kernel's link (the one that says -image_base) the segments are named so that lld orders them as
+#   XNU asserts, and place-kernel.py beside this file then moves the image to its address and gives it a
+#   kernel's load commands (its own head says how).
 # (the platform by its number in mach-o/loader.h: 2, the one the phones' SDK builds for)
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 args=(-platform_version 2 "${XNU_SDK_VERSION:-16.5}" "${XNU_SDK_VERSION:-16.5}")
+out='' base='' headerpad=()
 while [ $# -gt 0 ]; do
-	if [ "$1" = -alias_list ]; then
+	case $1 in
+	-alias_list)
 		while read -r from to _; do
 			[ -n "$from" ] && args+=(-alias "$from" "$to")
 		done < "${2:?-alias_list needs a file}"
-		shift 2
-	else
-		args+=("$1")
-		shift
-	fi
+		shift 2 ;;
+	-o) out=$2; shift 2 ;;
+	-image_base) base=$2; shift 2 ;;
+	-headerpad) headerpad=(-headerpad "$2"); shift 2 ;;
+	-segment_order) shift 2 ;;
+	-segaddr) shift 3 ;;                            # (the kernel's: its empty prelink segments)
+	-static) shift ;;
+	*) args+=("$1"); shift ;;
+	esac
 done
-exec "${XNU_CLANG_DIR:?XNU_CLANG_DIR: the directory of clang and ld64.lld}/ld64.lld" "${args[@]}"
+LLD=${XNU_CLANG_DIR:?XNU_CLANG_DIR: the directory of clang and ld64.lld}/ld64.lld
+[ -n "$base" ] || exec "$LLD" "${args[@]}" "${headerpad[@]}" ${out:+-o "$out"}
+# the kernel: __TEXT_EXEC linked as __DATA (right after __DATA_CONST), __DATA as __DATX (after it), with room
+# for the load commands place-kernel.py writes (the link asks for 152 bytes)
+"$LLD" "${args[@]}" -headerpad 0x4000 -o "$out.lld" -no_fixup_chains \
+	-rename_segment __DATA __DATX -rename_segment __TEXT_EXEC __DATA -segprot __DATA r-x r-x -segprot __DATX rw- rw- || exit
+python3 "$HERE/place-kernel.py" "$out.lld" "$out" "$base" && rm -f "$out.lld"
