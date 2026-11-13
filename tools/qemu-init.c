@@ -1066,6 +1066,93 @@ command_run(int argc, char **argv)
 	say("\n");
 }
 
+/* ---- mach: a message to itself through a port of its own ---- */
+
+/* osfmk/kern/syscall_sw.c: Mach's traps are the negative numbers; they return a kern_return_t in x0 */
+#define TRAP_port_allocate      -16
+#define TRAP_port_mod_refs      -19
+#define TRAP_task_self          -28
+#define TRAP_mach_msg2          -47
+#define MACH_PORT_RIGHT_RECEIVE 1
+#define MACH_MSG_TYPE_MAKE_SEND 20
+#define MACH64_SEND_MSG         0x1ull
+#define MACH64_RCV_MSG          0x2ull
+#define MACH64_SEND_MQ_CALL     0x400000000ull  /* (mach_msg2: what the destination is, a message queue) */
+
+static long
+trap8(long number, long a, long b, long c, long d, long e, long f, long g, long h)
+{
+	register long x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c, x3 __asm__("x3") = d;
+	register long x4 __asm__("x4") = e, x5 __asm__("x5") = f, x6 __asm__("x6") = g, x7 __asm__("x7") = h;
+	register long x16 __asm__("x16") = number;
+
+	__asm__ volatile ("svc #0x80"
+	    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
+	    : "r"(x16)
+	    : "memory", "cc");
+	return x0;
+}
+
+struct mach_message {
+	uint32_t bits, size, remote_port, local_port, voucher_port;
+	int32_t id;
+	uint64_t number;
+	uint8_t trailer[200];           /* what the kernel adds on receiving */
+};
+
+/* [COUNT]: COUNT messages (1000 if not said) sent to a port and received from it, and the time each took */
+static void
+command_mach(int argc, char **argv)
+{
+	unsigned count = argc > 1 ? parse_number(argv[1]) : 1000;
+	uint32_t self = (uint32_t)trap8(TRAP_task_self, 0, 0, 0, 0, 0, 0, 0, 0), port = 0;
+	static struct mach_message message;
+
+	if (count < 1 || count > 1000000) {
+		say("mach [COUNT]: 1 to 1000000 messages\n");
+		return;
+	}
+	long kr = trap8(TRAP_port_allocate, self, MACH_PORT_RIGHT_RECEIVE, (long)&port, 0, 0, 0, 0, 0);
+	if (kr != 0) {
+		say("mach: no port (error ");
+		say_number((uint64_t)kr);
+		say(")\n");
+		return;
+	}
+	int64_t start = now_us();
+	unsigned done = 0;
+	const uint32_t size = 32;       /* the header and the number */
+
+	for (; done < count; done++) {
+		message.bits = MACH_MSG_TYPE_MAKE_SEND;         /* (the remote port's right, made from the receive right) */
+		message.size = size;
+		message.remote_port = port;
+		message.local_port = message.voucher_port = 0;
+		message.id = (int32_t)done;
+		message.number = 0x6d616368ull * done;
+		kr = trap8(TRAP_mach_msg2, (long)&message, (long)(MACH64_SEND_MSG | MACH64_RCV_MSG | MACH64_SEND_MQ_CALL),
+		    (long)(MACH_MSG_TYPE_MAKE_SEND | (uint64_t)size << 32), port, (long)((uint64_t)done << 32),
+		    (long)((uint64_t)port << 32), sizeof(message), 0);
+		if (kr != 0 || message.id != (int32_t)done || message.number != 0x6d616368ull * done) {
+			say("mach: message ");
+			say_number(done);
+			say(kr != 0 ? " was not sent or received (error " : " came back other than it went (");
+			say_number((uint64_t)kr);
+			say(")\n");
+			break;
+		}
+	}
+	int64_t took = now_us() - start;
+	trap8(TRAP_port_mod_refs, self, port, MACH_PORT_RIGHT_RECEIVE, -1, 0, 0, 0, 0);
+	if (done == count) {
+		say("mach: ");
+		say_number(count);
+		say(" messages to itself through a port, ");
+		say_number((uint64_t)(took * 1000 / count));
+		say(" ns each\n");
+	}
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1096,6 +1183,7 @@ static const struct {
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
+	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
 };
 
 static void
