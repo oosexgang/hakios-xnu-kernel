@@ -845,10 +845,11 @@ static void
 command_mount(int argc, char **argv)
 {
 	if (argc != 4) {
-		say("mount TYPE DEVICE DIRECTORY, read only: mount apfs /dev/rvblk0 /mnt\n");
+		say("mount TYPE DEVICE DIRECTORY: mount apfs /dev/rvblk0 /mnt (read only), mount ramfs ramfs /tmp\n");
 		return;
 	}
-	long error = syscall6(SYS_mount, (long)argv[1], (long)argv[3], MNT_RDONLY, (long)argv[2], 0, 0);
+	/* (a disk read only; ramfs, the kernel's file system in memory, to be written) */
+	long error = syscall6(SYS_mount, (long)argv[1], (long)argv[3], same(argv[1], "ramfs") ? 0 : MNT_RDONLY, (long)argv[2], 0, 0);
 	if (error < 0) {
 		say("mount: not mounted, error ");
 		say_number((uint64_t)-error);
@@ -1325,6 +1326,80 @@ command_pipe(int argc, char **argv)
 	say(text);
 }
 
+/* ---- files written: mkdir, write, rm ---- */
+
+#define SYS_unlink              10
+#define SYS_mkdir               136
+#define SYS_rmdir               137
+#define O_CREAT                 0x200
+#define O_TRUNC                 0x400
+
+static void
+say_failed(const char *what, const char *path, long error)
+{
+	say(what);
+	say(": ");
+	say(path);
+	say(": error ");
+	say_number((uint64_t)-error);
+	say("\n");
+}
+
+/* DIR...: new directories */
+static void
+command_mkdir(int argc, char **argv)
+{
+	for (int i = 1; i < argc; i++) {
+		long error = syscall6(SYS_mkdir, (long)argv[i], 0755, 0, 0, 0, 0);
+		if (error != 0) {
+			say_failed("mkdir", argv[i], error);
+		}
+	}
+}
+
+/* FILE WORDS...: the words, and a new line, as all of FILE */
+static void
+command_write(int argc, char **argv)
+{
+	if (argc < 2) {
+		say("write FILE WORDS...\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0, 0);
+	if (fd < 0) {
+		say_failed("write", argv[1], fd);
+		return;
+	}
+	long written = 0;
+	for (int i = 2; i < argc; i++) {
+		long n = (long)length(argv[i]);
+
+		written += syscall6(SYS_write, fd, (long)argv[i], n, 0, 0, 0) == n ? n : 0;
+		written += syscall6(SYS_write, fd, (long)(i + 1 < argc ? " " : "\n"), 1, 0, 0, 0) == 1;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	say("write: ");
+	say_number((uint64_t)written);
+	say(" bytes to ");
+	say(argv[1]);
+	say("\n");
+}
+
+/* PATH...: files, or empty directories, gone */
+static void
+command_rm(int argc, char **argv)
+{
+	for (int i = 1; i < argc; i++) {
+		long error = syscall6(SYS_unlink, (long)argv[i], 0, 0, 0, 0, 0);
+		if (error != 0) {
+			error = syscall6(SYS_rmdir, (long)argv[i], 0, 0, 0, 0, 0);
+		}
+		if (error != 0) {
+			say_failed("rm", argv[i], error);
+		}
+	}
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1350,7 +1425,7 @@ static const struct {
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
-	{ "mount", "TYPE DEVICE DIR a disk's file system, read only", command_mount },
+	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
 	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
@@ -1362,6 +1437,9 @@ static const struct {
 	{ "kill", "PID [SIGNAL] a signal to a process (PID !: the one spawned last)", command_kill },
 	{ "wait", "the next of its processes to end", command_wait },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
+	{ "mkdir", "DIR... new directories", command_mkdir },
+	{ "write", "FILE WORDS... the words as all of a file", command_write },
+	{ "rm", "PATH... files, or empty directories, gone", command_rm },
 };
 
 static void
