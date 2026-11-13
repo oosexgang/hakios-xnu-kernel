@@ -13,7 +13,7 @@
 #   3. apfs-tool lookupnames IMAGE LIST   looks them up through apfs_lookup
 #
 # What a lookup must give is worked out from the directory's own names: on a case-sensitive,
-# normalization-insensitive volume (iOS) a name matches the entry whose NFD is the same; another
+# normalization-insensitive volume (Darwin) a name matches the entry whose NFD is the same; another
 # composition of a stored name (NFC of an NFD name, say) finds that entry; a case variant finds
 # only an entry with exactly that name; the name with "#" after it, nothing.
 

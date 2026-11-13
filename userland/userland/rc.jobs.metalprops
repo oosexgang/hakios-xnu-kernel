@@ -1,6 +1,6 @@
 # Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalprops).
 #
-# The first boot where iOS's own daemons can reach our Metal device. metal_props puts the two
+# The first boot where Darwin's own daemons can reach our Metal device. metal_props puts the two
 # properties Metal reads on the IOAcceleratorES service; from that moment every process that
 # asks Metal composes /System/Library/Extensions/HakiosMetal.bundle, takes our class and
 # gets HakiosMetalDevice -- all five steps of discovery, done by Metal itself (10.14, and

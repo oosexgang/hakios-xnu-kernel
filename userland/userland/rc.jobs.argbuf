@@ -41,7 +41,7 @@
 #     private class symbol that does not bind is a dylib that does not LOAD, which would
 #     take the whole driver down for every Metal client rather than just this selector.
 #
-#     Apple's shaders declare NO argument buffer (0 of the 456 modules of iOS 16.5's
+#     Apple's shaders declare NO argument buffer (0 of the 456 modules of Darwin 16.5's
 #     corpus), so nil is still the right answer here. What the boot measures is WHOSE nil
 #     it is: the driver's sentence says how many sets the function has, and Metal's does
 #     not. If the line with "this function declares 0" is missing, the replacement did not

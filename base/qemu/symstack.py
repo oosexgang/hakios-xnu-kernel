@@ -5,7 +5,7 @@ usage: symstack.py LOG [PROCESS]
 
 Reads the "ustacks:" (boot-args ustacks=NAME ustacks_at=SECONDS [ustacks_ms=PERIOD]), "usertrap:" and
 "userabort:" lines of a console log (and, before a "userabort:", the "First throw call stack" of the exception
-that led to it), subtracts the shared cache slide and looks every address up in the iOS dyld
+that led to it), subtracts the shared cache slide and looks every address up in the Darwin dyld
 shared cache with "ipsw dyld a2s". Lookups take a few seconds each, so the answers are kept
 in ios165/a2s.json. Addresses outside the cache (the program itself) are shown as they are.
 """

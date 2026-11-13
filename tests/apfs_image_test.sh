@@ -4,7 +4,7 @@
 # --plain left as it is), and the kernel's own reader (bsd/miscfs/apfs/apfs_lib.c, as apfs-tool) has to read
 # every entry back as it was (tools/apfs/check-image.py); then the drivers' lookup of firmware in the RAM
 # disks (hakios_image.c) runs on them (tests/image_file_test.c). Before that, the steps of the APFS suite
-# (userland/tools/apfs/run-tests.sh) that need no image of iOS. apfsck, the third reader check-image.sh
+# (userland/tools/apfs/run-tests.sh) that need no image of Darwin. apfsck, the third reader check-image.sh
 # adds, is not built here: it is fetched from elsewhere.
 #
 #   tests/apfs_image_test.sh
@@ -44,7 +44,7 @@ PY
 ln -s ../etc/small "$in/sys/fw/link"
 
 failed=0
-# the APFS suite's own steps that need no image of iOS: the on-disk layout against apfs.py, holes in files,
+# the APFS suite's own steps that need no image of Darwin: the on-disk layout against apfs.py, holes in files,
 # reading contents without the lock (the steps that need an IPSW's image say they were skipped)
 if "$APFS/run-tests.sh" > "$WORK/suite.txt" 2>&1; then
 	grep -E "^OK|cases, [0-9]+ failed" "$WORK/suite.txt"

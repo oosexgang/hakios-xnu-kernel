@@ -1,5 +1,5 @@
 # A whitelist: the working tree also holds gigabytes of downloads, build output, logs, third-party
-# clones, files of iOS and the hakios-xnu-userland checkout (common/setup.sh), none of which belongs
+# clones, files of Darwin and the hakios-xnu-userland checkout (common/setup.sh), none of which belongs
 # in this repository. Nothing is tracked unless it is named here.
 /*
 !/.gitignore

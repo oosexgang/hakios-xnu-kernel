@@ -1,5 +1,5 @@
 /*
- * Where the loader finds the iOS system image on the phone (loader/src/dsu_extents.c, dsu_place.c),
+ * Where the loader finds the Darwin system image on the phone (loader/src/dsu_extents.c, dsu_place.c),
  * compiled as it is into a host program. The image is stored the way Android stores a "DSU" system:
  * as a partition, system_gsi, described by Android's lp_metadata in the metadata partition and lying
  * in pieces (extents) inside userdata. The loader reads that description from the phone -- and with

@@ -14,7 +14,7 @@
  *
  * Decompression of file contents (the com.apple.decmpfs attribute) is not part of APFS
  * and is not in the reference; it is at the end of this file, from bsd/sys/decmpfs.h and
- * from what the iOS 16.5 root file system actually contains.
+ * from what the Darwin 16.5 root file system actually contains.
  */
 
 #ifndef _MISCFS_APFS_APFS_FORMAT_H_
@@ -531,7 +531,7 @@ struct apfs_j_inode_val {
 #define APFS_INODE_IS_SYNC_ROOT          0x00200000
 #define APFS_INODE_SNAPSHOT_COW_EXEMPTION 0x00400000
 
-/* directory entry.  iOS uses the hashed key; the hash is of the name, case-folded. */
+/* directory entry.  Darwin uses the hashed key; the hash is of the name, case-folded. */
 struct apfs_j_drec_key {
 	struct apfs_j_key hdr;
 	uint16_t name_len;          /* including the trailing zero byte */
@@ -722,7 +722,7 @@ struct apfs_x_field {
  * themselves are depends on the type.  The header is little-endian.
  *
  * XNU (bsd/sys/decmpfs.h) names only type 1; the rest live in Apple's closed
- * AppleFSCompression.  The types below are the ones the iOS 16.5 root file system
+ * AppleFSCompression.  The types below are the ones the Darwin 16.5 root file system
  * actually uses -- see tools/apfs/apfs.py, which counts them over the whole volume.
  *
  * In the attribute (types 3 and 4 the common pair): the bytes after the header are a

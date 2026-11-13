@@ -1,9 +1,9 @@
 /*
- * MiniIOSurface: a stand-in for Apple's closed IOSurface.kext, enough of it for the iOS
+ * MiniIOSurface: a stand-in for Apple's closed IOSurface.kext, enough of it for the Darwin
  * window server and its clients to share pixel buffers on a machine without Apple hardware.
  *
  * The protocol (user client selectors, traps and the layout of the structures the kernel
- * hands to IOSurface.framework) was worked out from the user-space side of iOS 16.5.
+ * hands to IOSurface.framework) was worked out from the user-space side of Darwin 16.5.
  */
 #ifndef _IOKIT_MINIIOSURFACE_H
 #define _IOKIT_MINIIOSURFACE_H

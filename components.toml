@@ -95,7 +95,7 @@ what = "the Mach-O linker and tools (cctools) and iPhoneOS16.5.sdk"
 source = "https://theos.dev/docs/installation-linux"
 pins = ["iPhoneOS16.5.sdk"]
 pinned_in = "kernel/build.sh"
-used_for = "kernel build, iOS libraries"
+used_for = "kernel build, Darwin libraries"
 licence = "various (installed by you)"
 note = "not fetched by this repository: install it as theos documents"
 
@@ -114,16 +114,16 @@ what = "freedreno and the AIR-to-NIR shader frontend patches, for OpenGL ES and 
 source = "https://archive.mesa3d.org/"
 pins = ["25.0.7", "592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6"]
 pinned_in = "userland/tools/mk-mesa.sh"
-used_for = "user space graphics (iOS 16.5 generation)"
+used_for = "user space graphics (Darwin 16.5 generation)"
 licence = "MIT"
 
 [[component]]
 id = "mesa-26"
-what = "the same for the arm64e iOS 26 user space"
+what = "the same for the arm64e Darwin 26 user space"
 source = "https://archive.mesa3d.org/"
 pins = ["26.2.5", "794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5"]
 pinned_in = "userland/tools/mk-mesa26.sh"
-used_for = "user space graphics (iOS 26/27)"
+used_for = "user space graphics (Darwin 26/27)"
 licence = "MIT"
 
 [[component]]

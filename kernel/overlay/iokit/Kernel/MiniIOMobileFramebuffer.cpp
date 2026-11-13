@@ -7,7 +7,7 @@
  * surfaces of its layers into that memory, and "vsync" is a timer.
  *
  * The protocol (selectors and the layout of the swap request) was worked out from the
- * user-space side of iOS 16.5. Everything not implemented is logged once.
+ * user-space side of Darwin 16.5. Everything not implemented is logged once.
  */
 
 #include <IOKit/IOLib.h>
@@ -45,7 +45,7 @@ extern "C" void hakios_tl(const char * format, ...) __printflike(1, 2);
 #define IOLog(...) hakios_tl(__VA_ARGS__)
 
 
-/* IOConnectCallMethod selectors of the framebuffer user client (iOS 16.5) */
+/* IOConnectCallMethod selectors of the framebuffer user client (Darwin 16.5) */
 enum {
 	kFBMethodGetLayerDefaultSurface = 3,
 	kFBMethodSwapBegin              = 4,
@@ -78,7 +78,7 @@ enum {
 #define SWAP_DEST(layer)        (0xc4 + 16 * (layer))   /* x, y, width, height on the display */
 #define SWAP_LAYERS_SET         0x104                   /* bit per layer given in this swap */
 #define SWAP_LAYERS_CLEARED     0x108
-#define SWAP26_SIZE             0x588                   /* iOS 26's request ... */
+#define SWAP26_SIZE             0x588                   /* Darwin 26's request ... */
 #define SWAP26_SHIFT            0x48                    /* ... with these fields that much further on */
 #define SWAP_LAYERS             4
 
@@ -100,7 +100,7 @@ static uint8_t  gFBCalls[128];          /* how many calls of each selector were 
 
 /*
  * The display user space is told about. The system carries the identity of the iPhone X
- * (see the loader), and iOS knows what screen that phone has: with any other size
+ * (see the loader), and Darwin knows what screen that phone has: with any other size
  * MobileGestalt reports an unknown screen class and the user interface has no layout for it.
  * So the display is always the iPhone's, and a swap scales the picture to the panel that is
  * really there (in QEMU the loader makes the panel exactly this size and nothing is scaled).
@@ -143,7 +143,7 @@ static TUNABLE(uint32_t, gFBTrace, "fbtrace", 3);
  * frames to be matched with what the window server's per-frame lines (glframes=1,
  * userland/src/eagl.c) say. rec_step=N (2 to 8, default 3) keeps one pixel of every N instead of 3:
  * N = 4 holds 1.8 times as many frames, 6 four times. The memory is taken from the system's for the
- * whole run: 640 MB of it under a long session of applications had iOS killing processes for
+ * whole run: 640 MB of it under a long session of applications had Darwin killing processes for
  * memory, SpringBoard and the window server among them (two respring in one run); 256 did not.
  */
 static TUNABLE(uint32_t, gRecSeconds, "rec_secs", 0);
@@ -546,10 +546,10 @@ void
 IOMobileFramebuffer::publishModes(void)
 {
 	/*
-	 * iOS 26 takes the modes the way a real phone's display driver lays them out (an M1's AppleCLCD2,
+	 * Darwin 26 takes the modes the way a real phone's display driver lays them out (an M1's AppleCLCD2,
 	 * read with ioreg, is the model here): besides the attributes, each element carries its binary
 	 * description (ElementData), and the timing says it is the preferred one. With only the attributes
-	 * iOS 16.5 was content; iOS 26 found no preferred mode ("preferred mode (0 x 0)", current mode
+	 * Darwin 16.5 was content; Darwin 26 found no preferred mode ("preferred mode (0 x 0)", current mode
 	 * 16383 x 16383) and never drew. The porches are made up, the pixel clock follows from them.
 	 */
 	const uint32_t hz = refreshHz();
@@ -2029,7 +2029,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 		}
 		if (args->structureInputSize >= SWAP26_SIZE) {
 			/*
-			 * iOS 26's request (0x588 bytes) is iOS 16.5's with 0x48 bytes more ahead of the swap's own
+			 * Darwin 26's request (0x588 bytes) is Darwin 16.5's with 0x48 bytes more ahead of the swap's own
 			 * fields: the ID, the layers' surfaces, source rectangles, flags, destination rectangles and the
 			 * masks of the layers set and cleared all sit 0x48 further on (kern_SwapBegin/SwapSetLayer in
 			 * IOMobileFramebuffer.framework). Seen from there it is the old one.

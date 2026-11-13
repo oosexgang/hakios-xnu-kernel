@@ -14,7 +14,7 @@
  *
  * The network the kernel was given in a file is a standing request: joined at the start, and
  * again whenever the radio is turned back on (Settings' switch), until somebody asks for
- * another network -- as iOS itself rejoins the networks it knows. If that other network cannot
+ * another network -- as Darwin itself rejoins the networks it knows. If that other network cannot
  * be joined (a wrong passphrase), the standing one is joined again.
  */
 #include <kern/kalloc.h>

@@ -27,7 +27,7 @@ static bool looked;
 /*
  * Is this the board the loader named (/chosen/darwin-board, a string with its end)? The name is the
  * loader's word and nothing else is: a board is never inferred from hw.machine, which is an iPhone's
- * for iOS's sake, and a machine whose loader named none is no board at all -- which is not permission
+ * for Darwin's sake, and a machine whose loader named none is no board at all -- which is not permission
  * to touch anything of a phone.
  */
 static bool

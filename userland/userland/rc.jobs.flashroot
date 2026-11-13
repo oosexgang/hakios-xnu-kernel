@@ -1,5 +1,5 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# The iOS root volume on the phone's flash as the root (flashboot.apfs resident,
+# The Darwin root volume on the phone's flash as the root (flashboot.apfs resident,
 # root_apfs=ufs_darwin ufs=2 bootcpu=7; src/init.c, flash_root), seen from user space: what
 # is mounted where, the root's own files read through read(2) and through a mapping.
 # The host's hashes: SystemVersion.plist 47687daabd864929, usr/lib/dyld 602fba9751ad6aa7,

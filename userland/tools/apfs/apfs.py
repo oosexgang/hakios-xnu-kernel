@@ -628,7 +628,7 @@ class Volume:
         """(name, file_id, d_type) for each entry of a directory."""
         out = []
         for k, v in self.records(obj_id, TYPE_DIR_REC):
-            # iOS volumes use the hashed key: a 32-bit field holding the name length and
+            # Darwin volumes use the hashed key: a 32-bit field holding the name length and
             # a hash of the name, then the name itself
             nlh = struct.unpack_from("<I", k, 8)[0]
             name_len = nlh & J_DREC_LEN_MASK
@@ -857,7 +857,7 @@ def decmpfs_attr(ctype, attr, usize):
     The contents sit in the com.apple.decmpfs attribute itself, right after the header.
 
     Type 9 means they were stored as they are, with one marker byte in front.  All 23947
-    type-9 files in the iOS 16.5 root file system have 0xcc there and exactly usize bytes
+    type-9 files in the Darwin 16.5 root file system have 0xcc there and exactly usize bytes
     after it, which is how the marker's length was settled -- the attribute is taken as
     bare only if it is already exactly usize bytes long.
     """

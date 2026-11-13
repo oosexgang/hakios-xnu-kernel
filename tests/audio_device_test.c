@@ -1,7 +1,7 @@
 /*
- * /dev/hakios-audio (kernel/overlay/bsd/dev/hakios_audio.c), run as a host program: what iOS plays goes to
+ * /dev/hakios-audio (kernel/overlay/bsd/dev/hakios_audio.c), run as a host program: what Darwin plays goes to
  * the driver that plays it, a recording keeps it with its time and never runs past its memory, a line says
- * what was played once the writer stops, and the volume iOS sets is kept for the speakers' driver.
+ * what was played once the writer stops, and the volume Darwin sets is kept for the speakers' driver.
  *
  *   audio_device_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
@@ -172,7 +172,7 @@ many_small_writes(void)
 	CHECK(loader_sound[1] > size - 20, "and fills it: %llu of %llu", (unsigned long long)loader_sound[1], (unsigned long long)size);
 }
 
-/* the volume iOS sets is kept for the speakers' driver, with how many times it was set */
+/* the volume Darwin sets is kept for the speakers' driver, with how many times it was set */
 static void
 volume(void)
 {

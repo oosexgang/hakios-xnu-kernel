@@ -6,7 +6,7 @@
  * (tests/backlight_test.c), so what is tested there is what runs here.
  *
  * Units, everywhere below:
- *   level      0 to 1000, the slider's position (iOS's DisplayBrightness, 0.0 to 1.0, times 1000). The
+ *   level      0 to 1000, the slider's position (Darwin's DisplayBrightness, 0.0 to 1.0, times 1000). The
  *              slider is perceptual: equal steps look like equal steps, which on a panel whose light
  *              grows in proportion to the number it is given means a power of about 2.2 between the two
  *   raw        the number the panel is given (a DSI panel's DBV, for example 1 to 2047)
@@ -43,7 +43,7 @@ bl_light_q16(uint32_t level)
 }
 
 /*
- * The number for the panel: its least at level 0 (iOS's lowest brightness is dim, not dark), its most
+ * The number for the panel: its least at level 0 (Darwin's lowest brightness is dim, not dark), its most
  * at 1000, and the light in between growing as the eye expects it to.
  */
 static inline uint32_t

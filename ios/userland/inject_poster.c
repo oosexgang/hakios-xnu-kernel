@@ -7,7 +7,7 @@
  * ([[PBFWallpaperKitBridge defaultBridge] defaultWallpaperIdentifier], which the image builder makes
  * Stripe, drawn by CoreAnimation: ios/tools/mkimage26.py default_wallpaper()); on every other one
  * com.apple.MercuryPoster, whose 3D scene is drawn with Metal, which this phone has not got: black.
- * (Without the hero poster PosterBoard makes a legacy poster from the wallpaper of an older iOS, and on a
+ * (Without the hero poster PosterBoard makes a legacy poster from the wallpaper of an older Darwin, and on a
  * new device there is none: black as well.)
  *
  * That function is plain C, called from inside the shared cache, and cannot be replaced from here. What

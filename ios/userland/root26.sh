@@ -10,7 +10,7 @@ cp $RN/userland/obj26/*.dylib $T/lib/
 cp $RN/userland/obj26/gl_test $T/bin/gl_test
 mkdir -p $RN/userland
 cat > $RN/userland/rc.jobs.ios26-probe <<'EOF'
-# iOS 26, first boots: what runs (to the console, read back from the loader's log)
+# Darwin 26, first boots: what runs (to the console, read back from the loader's log)
 /usr/bin/uname -a
 /usr/bin/sw_vers
 /bin/ps -A

@@ -2,7 +2,7 @@
 # Stand-in for Apple's closed-source iig (DriverKit interface generator).
 #
 # It now PREFERS the real iig from the active Xcode, passing through the exact arguments the build
-# gives (including the clang args after `--`).  That matters for xnu-12377/iOS 26, whose IOService
+# gives (including the clang args after `--`).  That matters for xnu-12377/Darwin 26, whose IOService
 # and IOUserServer .iig files added kernel methods (Panic, SetPowerOverride, CreatePMAssertion, ...)
 # that no pre-generated SDK header carries, so the real iig is the only way to get a matching
 # kernel-side dispatch header and implementation.

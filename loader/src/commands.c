@@ -149,7 +149,7 @@ fb_command(char *cmd)
 			}
 			/*
 			 * "oem ramdisk append": the next download goes after what the resident area holds already.
-			 * A fastboot download is at most 4 GB (its size is 32 bits), and an iOS system image may be
+			 * A fastboot download is at most 4 GB (its size is 32 bits), and a Darwin system image may be
 			 * sent in pieces.
 			 */
 			download_ramdisk_append = starts_with(cmd, "oem ramdisk append");
@@ -289,7 +289,7 @@ fb_command(char *cmd)
 			}
 		} else if (starts_with(cmd, "oem ufs") && !busy) {
 			/* read only: the storage's units, the GPT partitions and super's liblp metadata into the
-			   log (then "oem log" and fetch it) -- for choosing where the iOS system image can live */
+			   log (then "oem log" and fetch it) -- for choosing where the Darwin system image can live */
 			log_len = 0;
 			ufs_survey();
 			fb_reply("OKAY", "");

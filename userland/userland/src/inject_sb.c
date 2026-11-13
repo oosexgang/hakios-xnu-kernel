@@ -134,7 +134,7 @@ static uintptr_t slide;
 
 /*
  * Replace -[CLASS SELECTOR] (or +[CLASS SELECTOR]: `kind` is that first character), whose code must now
- * be at the unslid address `expected` (iOS 16.5, 20F66: what a replacement does depends on what the
+ * be at the unslid address `expected` (Darwin 16.5, 20F66: what a replacement does depends on what the
  * original did). Returns the original.
  * (dyld interposing of the C functions underneath does not reach calls made from inside the
  * shared cache: there one library branches straight into the other.)
@@ -190,12 +190,12 @@ set_setup_required_reason(id self, SEL selector, long reason)
 /*
  * +[XBApplicationSnapshotManifestImpl _outputFormatForSnapshot:] chooses the file format of the picture
  * SpringBoard takes of an application that leaves the screen: 0 = PNG, 1 and 2 = ATX (an ASTC texture),
- * 3 = JPEG. A device with a wide colour display that can decode ASTC gets ATX, and iOS compresses it on
+ * 3 = JPEG. A device with a wide colour display that can decode ASTC gets ATX, and Darwin compresses it on
  * the processor: fast with the vector code of Apple's cores, but here it takes one core more than ten
  * seconds per picture (under QEMU; seconds on the phone) -- and all that time the application waits for
  * the answer, until the watchdog for scene updates (10 s, there is no setting to scale it) kills it:
  * no application survived going to the background. JPEG takes a fraction of a second; it has no
- * transparency, so a picture that needs it becomes a PNG (which is what iOS itself does on a device
+ * transparency, so a picture that needs it becomes a PNG (which is what Darwin itself does on a device
  * without ASTC).
  */
 #define SNAPSHOT_FORMAT_PNG             0
@@ -216,17 +216,17 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
 /* ---- battery state from the Qualcomm charger stack --------------------------------------------------- */
 
 /*
- * iOS reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
+ * Darwin reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
  * status bar reads it the same way via SBBatteryController. Where the battery has no power source
  * of its own in the kernel (battery=1, the loader's way through Qualcomm's UEFI charger protocols),
  * we hook the UIDevice accessors to return what XNU publishes as kern.hakios.battery_soc (0..100)
  * and kern.hakios.battery_charging.
  * When the sysctl is missing (battery=1 not in boot-args, or the driver never started) we hand
- * back the value the real implementation computed; the status bar then shows whatever iOS last
+ * back the value the real implementation computed; the status bar then shows whatever Darwin last
  * knew, which is better than crashing.
  * With adsp=1 the battery is a power source (the service HakiosBattery, an IOPMPowerSource:
- * iokit/Kernel/HakiosBattery.cpp), which powerd reads like an iPhone's own, and from it iOS knows
- * everything by itself; once that service is there, the hooks hand everything to iOS's own code.
+ * iokit/Kernel/HakiosBattery.cpp), which powerd reads like an iPhone's own, and from it Darwin knows
+ * everything by itself; once that service is there, the hooks hand everything to Darwin's own code.
  */
 static float  (*original_battery_level)(id self, SEL sel);
 static long   (*original_battery_state)(id self, SEL sel);
@@ -247,7 +247,7 @@ sysctl_int(const char *name)
 	return value;
 }
 
-/* Is the battery a power source that iOS reads by itself (see above)? Once it is, it stays one. */
+/* Is the battery a power source that Darwin reads by itself (see above)? Once it is, it stays one. */
 static bool
 battery_power_source(void)
 {
@@ -292,7 +292,7 @@ battery_state(id self, SEL sel)
 
 /*
  * UIKitCore's status-bar view has its own presentation policy, separate from UIDevice. With the power
- * source it is iOS's own again: the switch Battery Percentage in Settings > Battery, which the image
+ * source it is Darwin's own again: the switch Battery Percentage in Settings > Battery, which the image
  * turns on (SBShowBatteryPercentage in userland/var/mobile/Library/Preferences/com.apple.springboard.plist).
  */
 static BOOL
@@ -325,7 +325,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 
 /*
  * The actual number the status bar draws. _UIBatteryView keeps the fill fraction (0.0..1.0) in
- * chargePercent; it is set through setChargePercent: and read back for layout. iOS feeds it from
+ * chargePercent; it is set through setChargePercent: and read back for layout. Darwin feeds it from
  * BatteryCenter / IOPowerSources, which is empty on this phone, so without us it sits near zero
  * (the "1%" the user saw). We override both sides: setChargePercent: so the stored value is ours
  * no matter who writes it, and the getter so any layout path that reads it agrees.
@@ -518,7 +518,7 @@ unlock(void)
 }
 
 /*
- * The poster switcher: on iOS 16 a long press on the lock screen's wallpaper shrinks it into a
+ * The poster switcher: on Darwin 16 a long press on the lock screen's wallpaper shrinks it into a
  * row of posters to choose from or customize. The row is PosterBoard's, an application scene of
  * that process which the lock screen hosts (CSPosterSwitcherViewController, a CALayerHost of the
  * context of PosterBoard's window over an opaque black layer). PosterBoard does lay it out -- its
@@ -580,7 +580,7 @@ text_of(id object)
  * shadow one expects to see. Only the wash is left out, because a wash of a colour that is not the
  * wallpaper's is worse than no wash at all. When something here can give PaperBoardUI a real
  * picture of the wallpaper, this hook is what should go -- and until then switcher_wallpaper=1
- * among the boot-args puts it back as iOS asks for it, so that whoever works on the wallpaper can
+ * among the boot-args puts it back as Darwin asks for it, so that whoever works on the wallpaper can
  * see at once whether their picture arrives, without rebuilding an image to find out.
  */
 static void (*original_switcher_wallpaper_overlay)(id self, SEL selector);
@@ -601,7 +601,7 @@ switcher_wallpaper_overlay(id self, SEL selector)
 	}
 	if (told++ == 0) {
 		say("hakios: the switcher's wash of wallpaper is %s\n", wanted ?
-		    "drawn as iOS asks (switcher_wallpaper=1)" : "left out: there is no picture of the wallpaper for it");
+		    "drawn as Darwin asks (switcher_wallpaper=1)" : "left out: there is no picture of the wallpaper for it");
 	}
 	if (wanted) {
 		original_switcher_wallpaper_overlay(self, selector);
@@ -924,7 +924,7 @@ layers(void)
 /*
  * The switcher of running applications, on the notification com.hakios.switcher (rwtouch notify).
  * A drag up from the bottom edge is the way to it on a phone, but the touches a script puts in do
- * not reach iOS's system gestures -- nothing comes of such a drag, not even going home -- and two
+ * not reach Darwin's system gestures -- nothing comes of such a drag, not even going home -- and two
  * presses of the home button only go home (there is no home button on a phone of this shape, and
  * what is sent as one goes home and no more). SpringBoard opens it itself for anything that is
  * not a gesture (a hardware keyboard, accessibility): SBMainSwitcherControllerCoordinator, which
@@ -980,7 +980,7 @@ switcher(void)
  * and Focus came in only when the springs had settled, at the end of the presentation. (On an iPhone
  * they are whole all along.) So in Control Center's window an opacity animation is replaced with an
  * eased-out fade of cc_fade=MS between the same values: the modules still fade in and out, and are at
- * full opacity, glyphs whole, after a few frames. Off by default (iOS's own animations stay as they
+ * full opacity, glyphs whole, after a few frames. Off by default (Darwin's own animations stay as they
  * are; the real fix belongs in the drawing, not in the animations): a workaround, for checks only.
  */
 #define CC_FADE_MS      0
@@ -1141,7 +1141,7 @@ hakios_springboard_init(void)
 	/*
 	 * Battery hooks on UIDevice: these are the methods every app and SpringBoard itself calls, so
 	 * hooking them here in the SpringBoard process covers both the status bar and any app that
-	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for iOS 16.5 (20F66).
+	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for Darwin 16.5 (20F66).
 	 */
 	original_battery_level = (float (*)(id, SEL))replace_method("UIDevice", "batteryLevel", 0x1897021b0UL, (IMP)battery_level);
 	original_battery_state = (long (*)(id, SEL))replace_method("UIDevice", "batteryState", 0x189209794UL, (IMP)battery_state);
@@ -1225,7 +1225,7 @@ hakios_springboard_init(void)
 	 * failed, or the panel is a FocalTech and the firmware upload is still chewing through
 	 * ~114 KB of SPI (that takes a hot second during bring-up), the user ends up staring at a
 	 * dark lock screen with nothing to swipe. So we just forcibly dismiss it after 10 seconds
-	 * so iOS always lands on the home screen even in the worst case. Harmless if touch is
+	 * so Darwin always lands on the home screen even in the worst case. Harmless if touch is
 	 * already working: the user just doesn't need to swipe themselves.
 	 * With autounlock=0 among the kernel's arguments the lock screen stays until it is swiped away
 	 * (to show the phone starting the way an iPhone does).

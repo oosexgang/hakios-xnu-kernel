@@ -1,11 +1,11 @@
 /*
- * en0: a network interface that is Ethernet as far as the rest of the kernel and iOS can tell.
+ * en0: a network interface that is Ethernet as far as the rest of the kernel and Darwin can tell.
  *
- * iOS expects its interfaces from IONetworkingFamily, which this kernel does not have; the BSD
+ * Darwin expects its interfaces from IONetworkingFamily, which this kernel does not have; the BSD
  * half of the kernel does not need it. The interface is made with the kernel's own interface
  * KPI, the way bsd/net/if_fake.c makes its "feth": family Ethernet, the stock Ethernet framing
  * and demultiplexing, one function that is given a frame to send and one call to hand a frame
- * that has arrived to the stack. What iOS's user space makes of an interface that has no
+ * that has arrived to the stack. What Darwin's user space makes of an interface that has no
  * IOKit object behind it is another matter: see userland/src/net_test.m.
  *
  * What carries the frames is a link driver's business; sys/hakios_net.h is all that the two
@@ -191,7 +191,7 @@ net_ioctl(ifnet_t ifp, u_long command, void *data)
 	if (net_link->wireless && net_ioctls_said < 80) {
 		char who[32] = "?";
 
-		/* (while iOS's Wi-Fi side is being got to talk to this: who asks the interface what) */
+		/* (while Darwin's Wi-Fi side is being got to talk to this: who asks the interface what) */
 		proc_selfname(who, sizeof(who));
 		if (strcmp(who, "configd") != 0) {
 			net_ioctls_said++;
@@ -231,7 +231,7 @@ net_ioctl(ifnet_t ifp, u_long command, void *data)
 	case SIOCDELMULTI:
 		break;                          /* the link hands us everything anyway */
 	default:
-		/* what iOS's Wi-Fi side asks of a radio's interface: bsd/dev/hakios_apple80211.c */
+		/* what Darwin's Wi-Fi side asks of a radio's interface: bsd/dev/hakios_apple80211.c */
 		error = net_link->wireless ? hakios_apple80211_ioctl(command, data) : EOPNOTSUPP;
 		break;
 	}
@@ -355,7 +355,7 @@ hakios_net_attach(const struct hakios_net_link *link)
 		net_link_event(ifp, KEV_DL_LINK_ON);
 	}
 	if (link->wireless) {
-		/* (a radio's address is the phone's own: not for the log; and iOS's Wi-Fi side finds the interface by a service) */
+		/* (a radio's address is the phone's own: not for the log; and Darwin's Wi-Fi side finds the interface by a service) */
 		printf("net: en0 attached on %s (a radio), link %s\n", link->name, net_link_up ? "up" : "down");
 		HakiosWLANStart("en0", address);
 	} else {

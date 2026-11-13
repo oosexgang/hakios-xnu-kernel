@@ -292,7 +292,7 @@ board_without_it(void)
 	CHECK(!logged("battery:"), "and says nothing: %s", log_text);
 }
 
-/* what the audio DSP's battery manager reports instead: kept for the sysctls, handed on to iOS's power source */
+/* what the audio DSP's battery manager reports instead: kept for the sysctls, handed on to Darwin's power source */
 static void
 from_the_dsp(void)
 {
@@ -310,7 +310,7 @@ from_the_dsp(void)
 	CHECK(s("battery_charging") == 1 && s("battery_charger_present") == 1 && s("battery_from_dsp") == 1, "its state");
 	CHECK(s("battery_full_uah") == 4100000 && s("battery_design_uah") == 4250000 && s("battery_cycles") == 212,
 	    "what the gauge has learnt");
-	CHECK(reported == 1 && reported_size == sizeof(state), "handed on whole to the power source iOS reads");
+	CHECK(reported == 1 && reported_size == sizeof(state), "handed on whole to the power source Darwin reads");
 	state.percent_hundredths = 10160;       /* (a gauge above its own full charge: 102%) */
 	state.full_uah = 0;
 	hakios_battery_report(&state);

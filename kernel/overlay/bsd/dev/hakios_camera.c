@@ -2957,10 +2957,10 @@ capture_sensor(void)
 	hakios_cache_clean(frames, frames + CAM_HEADER_BYTES);
 }
 
-/* ---- cam=5: the wide camera for iOS (/dev/hakios-camera) ------------------------------------------- */
+/* ---- cam=5: the wide camera for Darwin (/dev/hakios-camera) ------------------------------------------- */
 
 /*
- * The sensor's frames for a program (iOS's camera stack in mediaserverd, libhakios-media.dylib), for
+ * The sensor's frames for a program (Darwin's camera stack in mediaserverd, libhakios-media.dylib), for
  * as long as it holds /dev/hakios-camera open (sys/hakios_camera.h): the sensor powered up and
  * streaming at the first read after the open, everything down again at the last close, after
  * IDLE_MS without a read, and on any fault (and then for the rest of the run). The sequence is
@@ -3145,7 +3145,7 @@ ios_stop(const char *why)
 	titan_down();
 	power_down();
 	ring_free();
-	say("camera: the frames for iOS stopped (%s): %llu done, %llu given, %llu written over\n", why, ios_frames_done, ios_given,
+	say("camera: the frames for Darwin stopped (%s): %llu done, %llu given, %llu written over\n", why, ios_frames_done, ios_given,
 	    ios_writes_late);
 }
 
@@ -3178,7 +3178,7 @@ ios_start(void)
 		ios_now.gain = ios_next.gain = GAIN_UNITY;
 		ios_now.frame_lines = ios_next.frame_lines = ios_mode->frame_length;
 		ios_next.from = 0;
-		say("camera: the frames for iOS: the CSID's colour bars, %ux%u (no sensor)\n", ios_mode->width, ios_mode->height);
+		say("camera: the frames for Darwin: the CSID's colour bars, %ux%u (no sensor)\n", ios_mode->width, ios_mode->height);
 		return true;
 	}
 	if (!power_up() || !healthy() || !read_chip_id() || !sensor_table("init") || !sensor_table(ios_res()) || !healthy() ||
@@ -3211,7 +3211,7 @@ ios_start(void)
 	ios_now.gain = ios_next.gain = gain;
 	ios_now.frame_lines = ios_next.frame_lines = frame_lines;
 	ios_next.from = 0;
-	say("camera: the frames for iOS: mode %u, %ux%u, %u lines of %u ns a frame at the shortest; exposure %u lines, gain %#x, "
+	say("camera: the frames for Darwin: mode %u, %ux%u, %u lines of %u ns a frame at the shortest; exposure %u lines, gain %#x, "
 	    "frame %u lines\n", ios_mode_n, ios_mode->width, ios_mode->height, ios_mode->frame_length, ios_line_ns, lines, gain, frame_lines);
 	return true;
 }
@@ -3434,7 +3434,7 @@ fake_session(void)
 	ios_streaming = true;
 	ios_last_read = ios_ms();
 	lck_mtx_unlock(&ios_lock);
-	say("camera: the frames for iOS: cam_fake's colour chart, %ux%u in %s's order, %u a second\n", ios_mode->width, ios_mode->height,
+	say("camera: the frames for Darwin: cam_fake's colour chart, %ux%u in %s's order, %u a second\n", ios_mode->width, ios_mode->height,
 	    hw->chip, fps);
 	while (ios_open && ios_switch_to == 0) {
 		int p = -1;
@@ -3491,7 +3491,7 @@ fake_session(void)
 	lck_mtx_unlock(&ios_lock);
 	wakeup(&ios_frames_done);
 	ring_free();
-	say("camera: the frames for iOS stopped (%s): %llu done, %llu given\n", !ios_open ? "closed" : ios_switch_to != 0 ?
+	say("camera: the frames for Darwin stopped (%s): %llu done, %llu given\n", !ios_open ? "closed" : ios_switch_to != 0 ?
 	    "another sensor asked for" : "nobody reads", ios_frames_done, ios_given);
 }
 
@@ -3650,14 +3650,14 @@ keep_picture(const struct hakios_camera_command *c, struct uio *uio)
 	h->bayer = c->d == 1 ? hw->bayer : 0;
 	h->frame_bytes = c->bytes;
 	h->source = 2;
-	strlcpy(h->sensor, "iOS", sizeof(h->sensor));
+	strlcpy(h->sensor, "Darwin", sizeof(h->sensor));
 	int error = uiomove((caddr_t)(keep + CAM_HEADER_BYTES), (int)MIN((uint64_t)c->bytes, (uint64_t)uio_resid(uio)), uio);
 	h->frames = error == 0 ? 1 : 0;
 	hakios_cache_clean(keep, keep + want);
 	loader_recording[0] = kvtophys(keep);
 	loader_recording[1] = want;
 	loader_recording[2] = (uint64_t)keep;
-	say("camera: a picture from iOS for the host: %ux%u, format %u, %u bytes\n", c->a, c->b, c->d, c->bytes);
+	say("camera: a picture from Darwin for the host: %ux%u, format %u, %u bytes\n", c->a, c->b, c->d, c->bytes);
 	return error;
 }
 
@@ -3898,7 +3898,7 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 	}
 	if (fake) {
-		say("camera: cam=5 cam_fake=1: the %s camera's frames for iOS are a chart made here; nothing of the phone is touched\n",
+		say("camera: cam=5 cam_fake=1: the %s camera's frames for Darwin are a chart made here; nothing of the phone is touched\n",
 		    hw->name);
 		serve_ios();
 		say("camera: done\n");
@@ -3912,7 +3912,7 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 		say("camera: PMIC arbiter version %#x, not 5: the PM8008i's reset GPIO is left alone\n", arb.version);
 		arb.channels = 0;       /* (no channel is looked for, so nothing of a PMIC is read or written) */
 	}
-	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for iOS" :
+	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for Darwin" :
 	    level == 4 ? ": its frames through its CSIPHY and RDI 0 into memory" :
 	    level == 3 ? ": the CSID's test pattern through RDI 0 into memory" :
 	    level == 2 ? ": powered up, its chip ID read, powered down" : ": a look, reading only");

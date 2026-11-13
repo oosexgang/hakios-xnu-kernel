@@ -1,7 +1,7 @@
 /*
  * Move the status bar's leading region past a hole-punch camera at the top left, by the points the
  * board's file gives (screen { } statusbar_leading_shift; nothing is done on a board that gives none).
- * iOS 27's live status bar uses STUIStatusBarVisualProvider, not UIKit's
+ * Darwin 27's live status bar uses STUIStatusBarVisualProvider, not UIKit's
  * retained _UIStatusBarVisualProvider classes. Both use leadingCenteringOffset.
  * Keep native layout and apply the offset once across superclass calls.
  */

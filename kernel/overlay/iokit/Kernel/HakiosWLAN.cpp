@@ -1,8 +1,8 @@
 /*
- * HakiosWLAN: the registry entries by which iOS finds the Wi-Fi interface.
+ * HakiosWLAN: the registry entries by which Darwin finds the Wi-Fi interface.
  *
  * en0 is made with the BSD interface KPI (bsd/dev/hakios_net.c) and has no IOKit object behind
- * it of its own; iOS looks for two, as IO80211Family would have made them:
+ * it of its own; Darwin looks for two, as IO80211Family would have made them:
  *
  *   - wifid's device is whatever service has the property IO80211InterfaceRole =
  *     "Infrastructure", and IO80211.framework binds to an interface through a service whose

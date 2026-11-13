@@ -6,9 +6,9 @@
 #   the store at the start, and how much room the volume has;
 #   the line every run before this one left, and the keychain item an earlier boot wrote ("keep"
 #   writes one only if there is none, so every later boot reads the first boot's);
-#   the containers iOS gives its applications -- the same identifiers boot after boot, or new ones;
+#   the containers Darwin gives its applications -- the same identifiers boot after boot, or new ones;
 #   the home screen's layout by hash and by the second it was written;
-#   and, after two minutes of iOS left to itself, the same again, with the process list.
+#   and, after two minutes of Darwin left to itself, the same again, with the process list.
 /hakios/bin/var_store show
 /hakios/bin/vol_ls fs /private/var
 /hakios/bin/vol_ls cat /private/var/hakios-stamp 4096

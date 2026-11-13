@@ -143,7 +143,7 @@ apfs_write_volume_ok(struct apfs_vol *vol, const char **why)
 		reason = "the volume has snapshots, which share its blocks";
 	} else if (vol->role == APFS_VOL_ROLE_SYSTEM || vol->role == APFS_VOL_ROLE_PREBOOT) {
 		/*
-		 * Not an APFS rule but this port's: the system volume of iOS is not ours to
+		 * Not an APFS rule but this port's: the system volume of Darwin is not ours to
 		 * change.  It is worth saying out loud because the gates above do not catch it --
 		 * on an iPhone that volume is sealed, but the copy this port boots from was
 		 * unpacked out of an IPSW and is not, so it would otherwise pass every check
@@ -151,7 +151,7 @@ apfs_write_volume_ok(struct apfs_vol *vol, const char **why)
 		 * loader's BLOCK_WRITE_FIRST and a kernel whose block devices refuse every
 		 * write); this is one more fence in front of that, not instead of it.
 		 */
-		reason = "the volume is iOS's own system or preboot volume";
+		reason = "the volume is Darwin's own system or preboot volume";
 	} else if (vol->extentref_oid == 0) {
 		reason = "no extent-reference tree: nothing can say a block is not shared";
 	}

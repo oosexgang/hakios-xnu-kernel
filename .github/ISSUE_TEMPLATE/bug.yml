@@ -26,9 +26,9 @@ body:
   - type: input
     id: versions
     attributes:
-      label: iOS build and kernel commit
-      description: "The iOS version with its build number, and the commit of this repository the kernel was built from."
-      placeholder: "iOS 27.2 (24B119), commit 0123abc"
+      label: Darwin build and kernel commit
+      description: "The Darwin version with its build number, and the commit of this repository the kernel was built from."
+      placeholder: "Darwin 27.2 (24B119), commit 0123abc"
   - type: textarea
     id: boot-args
     attributes:

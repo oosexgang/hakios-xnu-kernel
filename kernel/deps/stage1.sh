@@ -84,7 +84,7 @@ if [ ! -x "$D/host/bin/tcsh" ]; then
 		die "tcsh did not build, see $D/tcsh-build.log"
 	cp "$D/tcsh/tcsh" "$D/host/bin/tcsh"
 fi
-# what 7z leaves undone when it extracts files of the iOS images (deps/build/lzbitmap/unzbm.c)
+# what 7z leaves undone when it extracts files of the Darwin images (deps/build/lzbitmap/unzbm.c)
 if [ ! -x "$D/host/bin/unzbm" ]; then
 	cc -O2 -w -o "$D/host/bin/unzbm" "$HERE/build/lzbitmap/unzbm.c" "$HERE/build/lzbitmap/libzbitmap.c"
 fi

@@ -14,7 +14,7 @@
  * Reads, and -- with ufs_write=1 on the command line -- writes into one partition and nowhere
  * else: the port's own darwin, proved by its GPT entry (name, both GUIDs, first and last LBA, its
  * logical unit), and in it only past everything the build writes from the computer, so that no
- * answer to the kernel can reach Android's partitions, the iOS volume or the cryptexes. The
+ * answer to the kernel can reach Android's partitions, the Darwin volume or the cryptexes. The
  * refusals are here, in the kernel (bsd/dev/hakios_ufs.c) and in UEFI's own driver, which gives
  * out a partition's BlockIo and bounds it: a request has to pass all three.
  *
@@ -37,8 +37,8 @@
 /*
  * The one partition a write may reach, and from which of its blocks. darwin is the port's own
  * 20 GiB at the end of logical unit 0 (README, "The port's partition"); what the build puts there
- * from the computer (tools/darwin-write.py) is the iOS volume at its start and the two cryptexes
- * behind it, and nothing of this port reads or writes the rest -- so the data of iOS lives there
+ * from the computer (tools/darwin-write.py) is the Darwin volume at its start and the two cryptexes
+ * behind it, and nothing of this port reads or writes the rest -- so the data of Darwin lives there
  * and a write is refused before that block. The identity is the whole of darwin-write.py's: the
  * same partition, named the same, of the same size, in the same place, on logical unit 0.
  */

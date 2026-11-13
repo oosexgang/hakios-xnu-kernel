@@ -5,7 +5,7 @@ DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository and
 DR=${DR:-$DK/darwin-renoir}
 cd $DR/userland
 source ../xnu-env.sh
-# BUILD: the iOS build the libraries are for (23G90 = 26.6.2, 24B119 = 27.2); OBJ: where they go
+# BUILD: the Darwin build the libraries are for (23G90 = 26.6.2, 24B119 = 27.2); OBJ: where they go
 BUILD=${BUILD:-23G90}
 O=${OBJ:-$RN/userland/obj26}; mkdir -p $O $O/src
 # what does not depend on the build (Mesa, our GL library, gl_test: mesa26e.sh, gl26.sh) comes from obj26

@@ -40,7 +40,7 @@ enum air_ptr_class {
    AIR_PTR_ARGBUF,
 };
 
-/* the binding of iOS 26's null texture (air.get_null_texture_*) and read sampler (air.get_read_sampler) */
+/* the binding of Darwin 26's null texture (air.get_null_texture_*) and read sampler (air.get_read_sampler) */
 #define AIR_NULL_BINDING        0xfffffffeu
 
 struct air_ptr {

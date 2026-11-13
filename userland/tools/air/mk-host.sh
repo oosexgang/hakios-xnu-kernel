@@ -4,7 +4,7 @@
 # without the phone) and softpipe (so it can be run without a GPU at all).
 #
 # This is the frontend's development and test build. The one that goes on the
-# phone is tools/mk-mesa.sh, which cross-compiles for iOS; both take the
+# phone is tools/mk-mesa.sh, which cross-compiles for Darwin; both take the
 # frontend from tools/mesa/air, so what is tested here is what runs there.
 #
 # Nothing of Mesa is in the repository: the pinned release is fetched, patched
@@ -52,7 +52,7 @@ if [ ! -d "$SRC" ] || [ "$(cat "$SRC/.air-patches" 2>/dev/null)" != "$PATCHES" ]
 
 	# glibc 2.43 and later declare C11's once_flag and call_once in <stdlib.h>,
 	# which clashes with Mesa 25.0's own definitions in src/c11/threads.h. Only
-	# this host build hits it; the iOS cross build has its own libc.
+	# this host build hits it; the Darwin cross build has its own libc.
 	python3 - "$SRC" <<-'PY'
 		import sys
 		root = sys.argv[1]

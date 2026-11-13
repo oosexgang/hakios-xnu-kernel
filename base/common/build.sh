@@ -45,7 +45,7 @@ fi
 
 if ! skip images; then
 	have_userland
-	[ -d ios165/rootfs ] || die "no iOS files yet: run ios165/fetch.sh first (it downloads them from Apple to this machine)"
+	[ -d ios165/rootfs ] || die "no Darwin files yet: run ios165/fetch.sh first (it downloads them from Apple to this machine)"
 	env REST=1 $USERLAND_VARS "$@" userland/build.sh
 fi
 

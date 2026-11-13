@@ -467,7 +467,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = is_float ? nir_fmax(&c->b, a[0], a[1])
                    : (is_signed ? nir_imax(&c->b, a[0], a[1]) : nir_umax(&c->b, a[0], a[1]));
    } else if (!strcmp(op, "fast_fmax3") || !strcmp(op, "fmax3") || !strcmp(op, "max3")) {
-      /* iOS 26's Metal: max3/min3/median3 of three, which the uber shader calls */
+      /* Darwin 26's Metal: max3/min3/median3 of three, which the uber shader calls */
       r = is_float ? nir_fmax(&c->b, nir_fmax(&c->b, a[0], a[1]), a[2])
                    : (is_signed ? nir_imax(&c->b, nir_imax(&c->b, a[0], a[1]), a[2])
                                 : nir_umax(&c->b, nir_umax(&c->b, a[0], a[1]), a[2]));
@@ -652,7 +652,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
                                            : nir_pack_snorm_4x8(&c->b, f);
    } else if (!strcmp(op, "pack") && n->num >= 3 && !strcmp(n->part[1], "unorm") &&
               !strcmp(n->part[2], "rgb565") && a[0]->num_components == 3) {
-      /* iOS 26 RenderBox's resolve shaders: three channels into one 16-bit word, 5, 6 and
+      /* Darwin 26 RenderBox's resolve shaders: three channels into one 16-bit word, 5, 6 and
        * 5 bits. Component 0 is the LOW field, as in unorm4x8 -- and the module says so
        * itself: it hands this (b, g, r) for a B5G6R5Unorm target, whose red is the high
        * field, and turns the result into 5-5-5 as ((x >> 1) & 0x7fe0) | (x & 31), which
@@ -1814,7 +1814,7 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          return false;
       arg++;
    }
-   /* iOS 26's AIR passes a read a sampler as well, the one air.get_read_sampler()
+   /* Darwin 26's AIR passes a read a sampler as well, the one air.get_read_sampler()
     * returns, and an offset after the coordinate:
     *   { <4 x half>, i8 } air.read_texture_2d.v4f16(ptr as(1) tex, ptr as(2) sampler,
     *                                                 <2 x i32> coord, <2 x i32> offset,
@@ -2227,16 +2227,16 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
       return atomic_op(c, in, &n);
    if (!strcmp(n.part[0], "discard_fragment"))
       return discard_op(c, in);
-   /* iOS 26: the sampler handed to every texel read (texture_op passes it over). A
+   /* Darwin 26: the sampler handed to every texel read (texture_op passes it over). A
     * sampler class with no binding: anything else that tried to sample through it would
     * find no sampler behind it, and nothing seen does.
     */
-   /* iOS 26: the "null texture" a shader puts where a texture its function constants leave
+   /* Darwin 26: the "null texture" a shader puts where a texture its function constants leave
     * out would be (QuartzCore's fixed_frag_*: phi [null, the parameter] on fc_has_attachment_N).
     * A texture with no binding (AIR_NULL_BINDING): the phi takes the other side
     * (resolve_pointer_phi), and anything that does read it reads zero (texture_op).
     */
-   /* iOS 26: a function out of a visible function table (RenderBox's uber_fragment,
+   /* Darwin 26: a function out of a visible function table (RenderBox's uber_fragment,
     * behind its has_function_table constant). A table the pipeline's constants leave out
     * is the null pointer (translate_input), and what comes out of it is a null function,
     * which a call through then answers with undef (air_to_nir.c, AIR_OP_CALL): that code
@@ -2258,7 +2258,7 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
                                                              .binding = AIR_NULL_BINDING }));
       return true;
    }
-   /* iOS 26: whether a texture parameter is the null one. Every texture here is
+   /* Darwin 26: whether a texture parameter is the null one. Every texture here is
     * resolved while translating, so the answer is a constant: true of the null
     * texture (get_null_texture), false of anything bound.
     */

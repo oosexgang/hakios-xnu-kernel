@@ -34,7 +34,7 @@
 #include <stdio.h>
 
 /* MTLGPUFamily and MTLFeatureSet, by name, because the answer is only worth reading next to
- * the name of what was asked. The feature sets are iOS's own block, 0 to 18: Metal's table
+ * the name of what was asked. The feature sets are Darwin's own block, 0 to 18: Metal's table
  * that maps them to a minimum feature profile has exactly 19 entries (0x181b5bc90), and the
  * last two are named by strings in Metal and not by the 16.5 SDK header. */
 static const struct { const char *name; NSUInteger value; } families[] = {
@@ -148,7 +148,7 @@ main(int argc, char **argv)
 		       ask_bool_u(dev, "supportsFamily:", families[i].value) ? "yes" : "no");
 	}
 
-	printf("caps: -- supportsFeatureSet: over iOS's block, and two values outside it --\n");
+	printf("caps: -- supportsFeatureSet: over Darwin's block, and two values outside it --\n");
 	for (NSUInteger i = 0; i < sizeof(feature_sets) / sizeof(feature_sets[0]); i++) {
 		printf("caps:   supportsFeatureSet(%2lu %-20s) %s\n", (unsigned long) i,
 		       feature_sets[i],

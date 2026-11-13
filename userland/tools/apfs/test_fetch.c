@@ -1,6 +1,6 @@
 /*
  * stream_fetch() -- the part of reading a file's contents that runs without the volume's
- * lock -- against made-up runs, since the iOS 16.5 root volume has no sparse file and so
+ * lock -- against made-up runs, since the Darwin 16.5 root volume has no sparse file and so
  * never gives it a hole: holes at the front, between runs and at the end, runs that start
  * and end inside a block, a run inside one block, no runs at all.  apfs_lib.c is included
  * whole, so that its static functions can be called.  The device is 64 blocks of memory,

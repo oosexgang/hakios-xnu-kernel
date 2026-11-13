@@ -1733,9 +1733,9 @@ apfs_check_runner(void *arg, wait_result_t wr)
 /*
  * sysctl kern.hakios_switch_root="INCOMING OUTGOING": the volume mounted on INCOMING
  * becomes the root, and what was the root until now is mounted on OUTGOING inside it (a
- * path without a leading slash, which must be a directory there -- on the iOS volume, a
+ * path without a leading slash, which must be a directory there -- on the Darwin volume, a
  * synthetic one).  devfs stays on /dev (vfs_switch_root() keeps it there).  This is how
- * the iOS root volume on the phone's flash becomes the root: the kernel starts from the
+ * the Darwin root volume on the phone's flash becomes the root: the kernel starts from the
  * small image, whose init mounts the volume, puts in place what the system needs on it
  * and then asks for this (userland/src/init.c, boot-arg root_apfs=).  Process 1 only, once.
  */
@@ -1784,15 +1784,15 @@ SYSCTL_PROC(_kern, OID_AUTO, hakios_switch_root, CTLTYPE_STRING | CTLFLAG_RW | C
 
 /*
  * apfs_volume=DEV: a volume for user space in an ordinary boot.  Mounted read only (and
- * nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/iOS, which the system image
+ * nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/Darwin, which the system image
  * has for it (userland/build.sh) -- right here, after the root and devfs and before launchd,
- * so that all of user space sees it from the start.  apfs_volume=ufs_darwin is the iOS root
+ * so that all of user space sees it from the start.  apfs_volume=ufs_darwin is the Darwin root
  * container on the phone's flash (ufs=2 for the loader, bootcpu=7).
  */
 static void
 apfs_volume_mount(void)
 {
-	char dev[48], at[256] = "/System/Volumes/iOS", path[64];
+	char dev[48], at[256] = "/System/Volumes/Darwin", path[64];
 	vfs_context_t ctx = vfs_context_kernel();
 	uint64_t t0, ns = 0;
 	vnode_t vp = NULLVP;

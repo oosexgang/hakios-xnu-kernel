@@ -81,7 +81,7 @@
  *
  * wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that
  * only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask
- * (sys/hakios_sta.h: iOS's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network
+ * (sys/hakios_sta.h: Darwin's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network
  * of fw/network joined if the small image has that file, and everything left running while the
  * system does -- on a thread of its own, so that the system's start does not wait for it, and
  * without a word in the log but the outcome (what the steps say is kept, and shown if the radio
@@ -2954,7 +2954,7 @@ static void radio_space_faults(void);
  * CCMP), authenticates, associates (20 MHz, HT and VHT, two streams) and answers the access
  * point's handshake; 130 ms after the association both keys are with the firmware and frames
  * pass. With wifi_keep=1 and the system started on top, configd's DHCP has an address in 4 to
- * 6 s, names resolve, and pages are fetched over HTTPS: iOS on the network through the
+ * 6 s, names resolve, and pages are fetched over HTTPS: Darwin on the network through the
  * phone's own radio. 20 MB come down in 10.5 s (15 Mbit/s) with one processor, the rings
  * looked at by a thread and the radio's buffers not behind the processor's cache; what of
  * that holds the rate down was not taken apart. With four processors the network works as
@@ -3773,7 +3773,7 @@ steps_over(uint32_t done)
 }
 
 /*
- * The network of the file, joined the way anybody joins one: by asking the station. iOS's Wi-Fi
+ * The network of the file, joined the way anybody joins one: by asking the station. Darwin's Wi-Fi
  * side may ask for another later, or for none.
  */
 static void

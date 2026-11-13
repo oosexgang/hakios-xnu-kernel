@@ -1,5 +1,5 @@
 /*
- * hakios: symbols that iOS 26 (xnu-12377) moved out of the open source into the per-SoC closed
+ * hakios: symbols that Darwin 26 (xnu-12377) moved out of the open source into the per-SoC closed
  * KernelSupport library (lib<MACHINE>.os.<CONFIG>.a).  A non-Apple board (BCM2837) has no such
  * library, so provide minimal definitions here.  Values are either set later by the kernel
  * (master_cpu) or chosen as the safe default for a development board.

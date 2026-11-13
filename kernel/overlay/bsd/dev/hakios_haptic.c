@@ -29,15 +29,15 @@
  *   haptic=3   ... and Android's configuration written (every write read back), Android's
  *              waveforms loaded into its RAM and read back; then standby. Nothing moves.
  *   haptic=4   ... and one short effect played (haptic_effect=N, default 1: Android's effect 0)
- *   haptic=5   ... configured and loaded as for 3, and instead of the effect the motor for iOS until
- *              the run ends: what iOS plays on its "Actuator" device (the HAL plug-in's,
+ *   haptic=5   ... configured and loaded as for 3, and instead of the effect the motor for Darwin until
+ *              the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's,
  *              userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics'
  *              patterns, UIKit's feedbacks) is written to /dev/hakios-haptic as samples of one
- *              channel, and the motor plays Android's waveforms by it: each waveform of iOS's (a
+ *              channel, and the motor plays Android's waveforms by it: each waveform of Darwin's (a
  *              stretch of samples after a pause) a short tap (waveform 1), and one that goes on for
  *              longer than a tap the waveform Android loops for vibrations (11), until it ends -- or
  *              for HAPTIC_MAX_MS at most, after which the motor rests for as long before it plays
- *              again. The gain follows how loud iOS's waveform is: Android's own (0x80) from a third
+ *              again. The gain follows how loud Darwin's waveform is: Android's own (0x80) from a third
  *              of full scale up, five eighths of it for the softest, never above it (gain_for()).
  *
  * Limits, whatever asks: Android's own values only (its gain 0x80, its boost and drive levels, its
@@ -523,19 +523,19 @@ play_effect(unsigned effect)
 	return healthy("after playing");
 }
 
-/* ---- haptic=5: the motor for iOS ------------------------------------------------------------------- */
+/* ---- haptic=5: the motor for Darwin ------------------------------------------------------------------- */
 
 #define ACTIVE_US               30000           /* a write that was not silence counts for this long */
 #define SILENT_BELOW            256             /* of 32768: samples no larger are silence */
 #define TAP_US                  60000           /* longer than this, and it is a vibration, not a tap */
-#define SETTLE_US               8000            /* how long iOS's waveform is listened to before a tap: its loudness */
-#define FOLLOW_US               20000           /* how often a vibration's strength follows iOS's */
+#define SETTLE_US               8000            /* how long Darwin's waveform is listened to before a tap: its loudness */
+#define FOLLOW_US               20000           /* how often a vibration's strength follows Darwin's */
 
 #define TOLD_EVENTS             24              /* the first so many taps and vibrations are each said */
 
 static volatile uint64_t heard_us;              /* when the last write that was not silence came */
 static volatile uint64_t quiet_us;              /* when the last write that was silence came */
-static volatile uint64_t onset_us;              /* when iOS's last waveform began: the first write not silence after a pause */
+static volatile uint64_t onset_us;              /* when Darwin's last waveform began: the first write not silence after a pause */
 static volatile uint32_t heard_peak;            /* the largest sample of that waveform, or since the service last looked */
 static uint64_t written_frames;
 static unsigned taps, loops, capped;            /* what has been played, for the run's end */
@@ -583,9 +583,9 @@ haptic_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 }
 
 /*
- * A test's stand-in for iOS's waveform (hakios_mic.c, mic_tap=1: the microphone hears the motor): as if
+ * A test's stand-in for Darwin's waveform (hakios_mic.c, mic_tap=1: the microphone hears the motor): as if
  * a write of this loudness (of 32767) had just come, or silence for 0. The service plays it with all its
- * own limits, as it plays iOS's.
+ * own limits, as it plays Darwin's.
  */
 void
 hakios_haptic_pretend(uint32_t peak)
@@ -657,7 +657,7 @@ chip_state(void)
 }
 
 /*
- * How strong to play what iOS plays. iOS drives its Taptic Engine with waveforms far under full
+ * How strong to play what Darwin plays. Darwin drives its Taptic Engine with waveforms far under full
  * scale for most feedbacks (a tap's peak anywhere from 1000 to 33000 of 32768, a vibration's
  * about 17000), and followed in proportion (gain = Android's * peak / full scale) most of them came
  * out at a tenth of Android's gain or less: not felt at all. Android plays its own clicks and
@@ -696,7 +696,7 @@ serve(void)
 		case IDLE:
 		case TAP:
 			/*
-			 * A waveform of iOS's that has begun (after a pause: a tap of a series is a tap of its own) is
+			 * A waveform of Darwin's that has begun (after a pause: a tap of a series is a tap of its own) is
 			 * a tap -- once its first milliseconds are heard: a waveform begins softly, and they say how
 			 * loud it is; one that goes on without a pause, a vibration.
 			 */
@@ -715,7 +715,7 @@ serve(void)
 				taps++;
 				if (taps + loops <= TOLD_EVENTS) {
 					wait_ms(4);
-					say("haptic: tap %u: iOS's waveform peaks at %u of 32768: Android's waveform 1 at gain %#04x; the "
+					say("haptic: tap %u: Darwin's waveform peaks at %u of 32768: Android's waveform 1 at gain %#04x; the "
 					    "chip's state %u\n", taps, peak, gain ? gain : 1, chip_state());
 				}
 				break;
@@ -733,7 +733,7 @@ serve(void)
 					heard_peak = 0;
 					if (taps + loops <= TOLD_EVENTS) {
 						wait_ms(4);
-						say("haptic: vibration %u: iOS goes on playing (peak %u): Android's waveform 11 over and over at "
+						say("haptic: vibration %u: Darwin goes on playing (peak %u): Android's waveform 11 over and over at "
 						    "gain %#04x, %u ms at most; the chip's state %u\n", loops, peak, gain ? gain : 1,
 						    HAPTIC_MAX_MS, chip_state());
 					}
@@ -743,7 +743,7 @@ serve(void)
 			}
 			break;
 		case LOOP:
-			/* as strong as iOS's waveform is now (Android's gain at full scale, never more) */
+			/* as strong as Darwin's waveform is now (Android's gain at full scale, never more) */
 			if (active && now - followed >= FOLLOW_US) {
 				followed = now;
 				heard_peak = 0;
@@ -766,7 +766,7 @@ serve(void)
 					state = rest_until > now ? REST : IDLE;
 					if (taps + loops <= TOLD_EVENTS + 1) {
 						say("haptic: vibration %u: %s after %llu ms (its strength changed %u times, last to gain %#04x); "
-						    "the chip is in standby\n", loops, cut ? "CUT at the limit" : "iOS stopped, and so does the motor",
+						    "the chip is in standby\n", loops, cut ? "CUT at the limit" : "Darwin stopped, and so does the motor",
 						    (now - since) / 1000, follows, playing_gain);
 					}
 				}
@@ -796,7 +796,7 @@ haptic_thread(__unused void *parameter, __unused wait_result_t result)
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	say("haptic: level %u: %s\n", level, level == 1 ? "a look, reading only" : level == 2 ? "the reset released, registers read" :
 	    level == 3 ? "the chip configured and its waveforms loaded, nothing played" : level == 4 ? "one effect played" :
-	    "the motor for iOS");
+	    "the motor for Darwin");
 	show_pins();
 	if (level >= 2 && !((rd(GPIO_CFG(PIN_RESET)) & CFG_OUTPUT) && (rd(GPIO_IO(PIN_RESET)) & 2))) {
 		/* (Android's driver: the pin low, 5 ms, high, and the chip ready for I2C 8 ms later) */
@@ -872,7 +872,7 @@ hakios_haptic_quiesce(void)
 		leaving = true;
 		reset_pin(false);
 		if (level == 5) {
-			say("haptic: at the run's end: %u taps and %u vibrations played (%u cut at %u ms), from %llu frames iOS "
+			say("haptic: at the run's end: %u taps and %u vibrations played (%u cut at %u ms), from %llu frames Darwin "
 			    "wrote; the chip is held in reset\n", taps, loops, capped, HAPTIC_MAX_MS, written_frames);
 		}
 	}

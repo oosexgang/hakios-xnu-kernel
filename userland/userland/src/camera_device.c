@@ -1,12 +1,12 @@
 /*
- * The phone's cameras as iOS's capture stack wants them: a FigCaptureDevice with two FigCaptureStreams,
+ * The phone's cameras as Darwin's capture stack wants them: a FigCaptureDevice with two FigCaptureStreams,
  * the wide camera as the back camera and the front one as the front camera, made for mediaserverd's
  * BWFigCaptureDeviceVendor in place of the device Apple's H10ISP.mediacapture makes of the iPhone's ISP
  * (part of libhakios-media.dylib; inject_media.c gives the vendor our device's create function when
  * the kernel has a camera: cam=5).
  *
  * Both are CoreMedia "derived objects" (CMDerivedObjectCreate): a table of functions for the base
- * class (properties) and one for the device or stream class, as H10ISP's are laid out in iOS 16.5:
+ * class (properties) and one for the device or stream class, as H10ISP's are laid out in Darwin 16.5:
  *   device  RequestStreams, RelinquishStreams (and a processing session and Pearl calibration, not here)
  *   stream  Start, Stop, AddAttachmentsToSampleBuffer
  * A stream's frames go to the capture graph through the blocks it is given in its property
@@ -69,7 +69,7 @@ hakios_camera_say(const char *format, ...)
 }
 #define say hakios_camera_say
 
-/* ---- CoreMedia's derived objects, as iOS 16.5 lays them out ---------------------------------------- */
+/* ---- CoreMedia's derived objects, as Darwin 16.5 lays them out ---------------------------------------- */
 
 typedef struct OpaqueCMBaseObject *CMBaseObjectRef;
 typedef const void *CMBaseClassID;

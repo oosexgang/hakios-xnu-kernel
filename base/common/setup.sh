@@ -6,7 +6,7 @@
 #   hakios-xnu-kernel     (this one)  the XNU kernel patches, the EFI loader, the UEFI port, Wi-Fi,
 #                                      QEMU scripts, xl and these common scripts
 #   hakios-xnu-userland               our init, injected libraries, launchd jobs, the image builder,
-#                                      the scripts that take iOS out of Apple's IPSW, Metal/Mesa work
+#                                      the scripts that take Darwin out of Apple's IPSW, Metal/Mesa work
 #
 # Their scripts refer to each other by path (userland/build.sh uses the kernel's cross toolchain in
 # xnu-deps/, the kernel's APFS code is tested with tools/apfs/...). So the userland repository is
@@ -61,7 +61,7 @@ echo "setup: checking the host"
 MISSING=0
 need python3 "everywhere"
 need git "everywhere"
-need curl "to fetch iOS, XNU and dependencies"
+need curl "to fetch Darwin, XNU and dependencies"
 need 7z "by ios165/fetch.sh (7-Zip 23+, reads APFS)"
 # 7-Zip before 23 does not read APFS: it lists the image as raw partitions and fetch.sh finds no files
 if command -v 7z >/dev/null 2>&1; then
@@ -81,8 +81,8 @@ need lld-link "to build the loader (not needed with prebuilt/)"
 cat <<EOF
 
 Next:
-  ios165/fetch.sh                   # once: takes iOS 16.5 out of Apple's IPSW onto this machine (7.4 GB download)
+  ios165/fetch.sh                   # once: takes Darwin 16.5 out of Apple's IPSW onto this machine (7.4 GB download)
   common/build.sh qemu-virt         # images (+ kernel and loader when the toolchain is there)
-  common/run.sh qemu-virt           # iOS in a QEMU window
+  common/run.sh qemu-virt           # Darwin in a QEMU window
 See README.md; porting to another device: docs/PORTING.md and common/new-device.sh.
 EOF

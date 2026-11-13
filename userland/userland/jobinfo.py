@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show stock iOS launchd jobs: jobinfo.py [-s SERVICE | LABEL...]
+"""Show stock Darwin launchd jobs: jobinfo.py [-s SERVICE | LABEL...]
 With -s, find the jobs that provide a Mach service whose name contains SERVICE.
 The jobs are those of System/Library/LaunchDaemons and LaunchAngels."""
 import glob, json, os, plistlib, sys

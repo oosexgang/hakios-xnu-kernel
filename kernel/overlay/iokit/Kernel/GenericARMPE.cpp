@@ -300,7 +300,7 @@ GenericARMPE::start(IOService * provider)
 	/* BSD looks the platform expert up by class (IOSecureBSDRoot). */
 	registerService();
 
-	/* Stand-ins for the closed graphics drivers that the iOS window server talks to. */
+	/* Stand-ins for the closed graphics drivers that the Darwin window server talks to. */
 	MiniIOSurfaceStart(this);
 	MiniIOMobileFramebufferStart(this);
 	MiniAppleKeyStoreStart();
@@ -386,7 +386,7 @@ GenericARMPE::excludeList(void)
 
 /*
  * hw.machine. On Apple's devices it is the product type ("iPhone10,3"), from the device tree's
- * "model", and iOS decides from it what kind of device it is on: with anything it does not know
+ * "model", and Darwin decides from it what kind of device it is on: with anything it does not know
  * MobileGestalt settles for an iPod touch.
  */
 bool

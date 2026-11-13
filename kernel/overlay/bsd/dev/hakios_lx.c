@@ -366,7 +366,7 @@ lx_os_net_attach(const unsigned char *address)
 }
 
 /*
- * With wifi=1 the interface is made when the kernel starts, before the radio is up: iOS's Wi-Fi
+ * With wifi=1 the interface is made when the kernel starts, before the radio is up: Darwin's Wi-Fi
  * side looks for it and for its registry entry as soon as it runs, once, and a radio that
  * turns up twelve seconds later is one it has already failed to open.
  */

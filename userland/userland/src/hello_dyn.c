@@ -1,5 +1,5 @@
 /*
- * The first ordinary program: dynamically linked against the real iOS
+ * The first ordinary program: dynamically linked against the real Darwin
  * libSystem, loaded by the real dyld out of the dyld shared cache.
  */
 #include <stdio.h>

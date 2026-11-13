@@ -1,2 +1,2 @@
-# Experiment: hand process 1 over to the real iOS launchd.
+# Experiment: hand process 1 over to the real Darwin launchd.
 exec /sbin/launchd.ios

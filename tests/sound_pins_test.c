@@ -66,7 +66,7 @@ struct fake_lock hakios_smmu_lock = { PTHREAD_MUTEX_INITIALIZER };
 #undef get
 #undef printf
 
-/* (the audio DSP's driver, the amplifiers', the guard's and iOS's audio device: these scenarios reach none of them) */
+/* (the audio DSP's driver, the amplifiers', the guard's and Darwin's audio device: these scenarios reach none of them) */
 bool
 hakios_adsp_apr(uint8_t service __unused, uint16_t port __unused, uint32_t token __unused, uint32_t opcode __unused,
     const void *payload __unused, uint32_t length __unused, uint32_t wait_ms __unused, struct hakios_apr_answer *answer __unused)

@@ -21,7 +21,7 @@
  *                                   would have to implement
  * and exit(), with a walk up the frame pointers, which says where it decides to leave.
  *
- * The fault reporter is here as well: an Objective-C exception ends in abort(), and iOS answers a
+ * The fault reporter is here as well: an Objective-C exception ends in abort(), and Darwin answers a
  * crash in a stock daemon with "Failed to send exception EXC_CORPSE_NOTIFY" and nothing else.
  *
  * WHAT IT ANSWERED, and it says the obvious next step would have been the wrong one. Over three runs:
@@ -47,7 +47,7 @@
  * com_apple_driver_FairPlayIOKit in the kernel, which was the plan after the last finding, would not
  * be reached at all: the daemon gives up before that. (Its entitlement does name
  * com_apple_driver_FairPlayIOKitUserClient, which is what made the driver look like the next step.)
- * One guess checked and killed before it cost a run: not the platform-binary flag. iOS's own
+ * One guess checked and killed before it cost a run: not the platform-binary flag. Darwin's own
  * binaries are ad hoc signed and this kernel marks exactly those as platform binaries
  * (bsd/kern/kern_minimac.c), so fairplayd is one here.
  * Two warnings for whoever reads this next.

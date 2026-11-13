@@ -162,7 +162,7 @@ apfs_device_held(dev_t rdev)
 }
 
 /*
- * Which volume kern.apfs_stats is about: the root's, when the root is APFS (the iOS volume on
+ * Which volume kern.apfs_stats is about: the root's, when the root is APFS (the Darwin volume on
  * the flash, once init has switched to it); else the one mounted last.
  */
 extern vnode_t rootvnode;

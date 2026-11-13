@@ -292,7 +292,7 @@ step_out(int which, unsigned n, bool got_something)
 }
 
 /*
- * The fault reporter, as in inject.c: iOS answers a crash in a stock daemon with
+ * The fault reporter, as in inject.c: Darwin answers a crash in a stock daemon with
  * "Failed to send exception EXC_CORPSE_NOTIFY" and nothing else, so a fault in here would be a
  * silent exit. This turns one into an address, unslid, which "ipsw dyld a2s" turns into a name.
  */
@@ -1338,7 +1338,7 @@ late_report(__unused void *ignored)
 {
 	/*
 	 * Every fifteen seconds, to the end of the run. The loader keeps the first 256 KB and the last
-	 * 1 MB of a run's log and drops everything between, and with iOS and REST=1 the middle is most
+	 * 1 MB of a run's log and drops everything between, and with Darwin and REST=1 the middle is most
 	 * of it: a report once a minute still fell inside the hole, twice in a row, which is why these
 	 * measurements kept looking missing when nothing was wrong with them. Often enough that one
 	 * lands in the last megabyte is the only thing that works, so the long dumps happen once and the

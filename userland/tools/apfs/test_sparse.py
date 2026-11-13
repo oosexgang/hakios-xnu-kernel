@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# The iOS 16.5 root file system has no sparse file in it -- a walk over all 318098 entries
+# The Darwin 16.5 root file system has no sparse file in it -- a walk over all 318098 entries
 # finds no inode with INODE_IS_SPARSE or a sparse-bytes extended field -- so the hole
 # handling in read_stream cannot be checked against that image.  This checks it against
 # made-up extent lists instead: a gap between two extents, an extent whose physical block

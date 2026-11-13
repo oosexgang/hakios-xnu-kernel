@@ -133,7 +133,7 @@
 #
 # The panel must be: an ORANGE TRIANGLE filling the LOWER LEFT HALF of the screen, over PURE
 # BLUE, with the straight edge running from the TOP LEFT corner to the BOTTOM RIGHT corner. No
-# status bar (UIStatusBarHidden), no home indicator, nothing of iOS's own.
+# status bar (UIStatusBarHidden), no home indicator, nothing of Darwin's own.
 #
 # Why that half and not another, so that the prediction is derived and not hoped for. The
 # pipeline is asked for with NO vertex function, which makes the compiler library supply its own

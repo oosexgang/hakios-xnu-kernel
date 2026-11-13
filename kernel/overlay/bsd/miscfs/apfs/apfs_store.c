@@ -3,7 +3,7 @@
  *
  * What this is instead of
  * -----------------------
- * The data of iOS survives a boot today by being packed into an archive and written into the
+ * The data of Darwin survives a boot today by being packed into an archive and written into the
  * phone's flash at a number in a comment: two slots of two gigabytes each at byte 8589934592 of
  * the partition darwin, straight onto a character device (userland/src/var_store.c,
  * bsd/dev/hakios_ufs.c).  It works, and its weakness is not the writing but the addressing --

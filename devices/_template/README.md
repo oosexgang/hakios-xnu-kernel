@@ -4,7 +4,7 @@
 | --- | --- |
 | Device | MAKER MODEL |
 | SoC | CHIP (SOC); `soc/SOC.dtsi` on the main branch |
-| State | One sentence: how far it boots, with which iOS build, and when that was last seen on the phone. |
+| State | One sentence: how far it boots, with which Darwin build, and when that was last seen on the phone. |
 
 Nothing in the procedure writes to the phone's storage. It is started with `fastboot boot` and runs
 from RAM; a reboot brings Android back. It needs an unlocked bootloader.
@@ -12,7 +12,7 @@ from RAM; a reboot brings Android back. It needs an unlocked bootloader.
 ## State
 
 Say what was seen on the phone and what was not. "Compiles", "passes the host tests" and "seen working
-on the phone" are three different statements: give the date and the iOS build for the last one.
+on the phone" are three different statements: give the date and the Darwin build for the last one.
 
 | What | Feature / boot argument | State |
 | --- | --- | --- |

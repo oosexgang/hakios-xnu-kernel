@@ -1,6 +1,6 @@
 # What can be run from a checkout. `make` alone lists it.
 #
-# Everything under "check" needs no phone, no iOS files and no kernel toolchain: a C compiler,
+# Everything under "check" needs no phone, no Darwin files and no kernel toolchain: a C compiler,
 # Python 3.11 or newer and git. The aarch64 half of the driver tests also wants
 # gcc-aarch64-linux-gnu and qemu-user, and is left out without them.
 

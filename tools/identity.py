@@ -8,7 +8,7 @@
 The loader (loader/src/unit.c) takes all of a unit's identity from one 64-bit seed: the serial number (10
 characters, digits and capitals without I and O, as Apple's randomised ones), the logic board's serial (17),
 the ECID (52 bits), the Wi-Fi and Bluetooth addresses (unicast, locally administered) and the boot manifest's
-hash. Given the same seed at every boot, the phone stays the same device to iOS; without one it is another at
+hash. Given the same seed at every boot, the phone stays the same device to Darwin; without one it is another at
 each. A seed is kept per phone in $XDG_CONFIG_HOME/hakios/identity/NAME (~/.config/... by default), outside
 any checkout: it is this phone's own, and not for a repository.
 """

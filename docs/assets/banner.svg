@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="t">
-  <title id="t">hakios: Apple's XNU and iOS on Qualcomm phones</title>
+  <title id="t">hakios: Apple's XNU and Darwin on Qualcomm phones</title>
   <defs>
     <radialGradient id="g" cx="50%" cy="42%" r="75%">
       <stop offset="0" stop-color="#666d4b"/>
@@ -14,6 +14,6 @@
       <path d="M0 44V214M0 164a50 50 0 0 1 100 0V214M246 164a50 50 0 1 1 -100 0a50 50 0 1 1 100 0M246 114V214M292 44V214M376 114L292 184M332 153L380 214M426 114V214M572 164a50 50 0 1 1 -100 0a50 50 0 1 1 100 0M696 128C680 110 624 108 624 140C624 166 700 160 700 188C700 220 640 218 622 200" fill="none" stroke="#ece5d0" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
       <circle cx="426" cy="62" r="19" fill="#d8392b"/>
     </g>
-    <text x="600.0" y="298" text-anchor="middle" fill="#ece5d0" fill-opacity=".72" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="25" letter-spacing="3">XNU + iOS ON QUALCOMM PHONES</text>
+    <text x="600.0" y="298" text-anchor="middle" fill="#ece5d0" fill-opacity=".72" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="25" letter-spacing="3">XNU + Darwin ON QUALCOMM PHONES</text>
   </g>
 </svg>

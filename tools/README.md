@@ -21,5 +21,5 @@ The tools need Python 3.11 or newer and git, nothing else. They are tested in `t
 their own.
 
 The kernel's own tools (assembling the tree, taking work back, verifying, the syntax check, the
-build) are in `kernel/`; the loader's build is `loader/build.sh`; what builds iOS images and starts a
+build) are in `kernel/`; the loader's build is `loader/build.sh`; what builds Darwin images and starts a
 phone is in `ios/tools/`.

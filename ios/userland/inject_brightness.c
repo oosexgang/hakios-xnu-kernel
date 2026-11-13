@@ -1,5 +1,5 @@
 /*
- * libhakios-brightness.dylib: iOS's brightness slider and its automatic brightness switch, to the kernel's
+ * libhakios-brightness.dylib: Darwin's brightness slider and its automatic brightness switch, to the kernel's
  * backlight (hw.backlight.*: kernel/overlay/bsd/dev/hakios_backlight.c).
  *
  * On an iPhone the slider of Control Center and of Settings, and the switch of Auto-Brightness, are
@@ -21,7 +21,7 @@
  * whose framework is loaded later (a Control Center module's) is looked for again as each image is loaded.
  *
  * Boot-arg bl_trace=1: every key set or asked for through these methods, with its value, on standard error
- * (to find the keys of a newer iOS).
+ * (to find the keys of a newer Darwin).
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <objc/message.h>

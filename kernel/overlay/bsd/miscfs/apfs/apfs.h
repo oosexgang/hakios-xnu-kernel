@@ -47,7 +47,7 @@ struct apfs_node;
 #define APFS_SYNTH_NAMELEN 96
 /*
  * Object ids from here up are synthetic: the last few of the 60 bits an id has.  (Not
- * 0x0FFFFFFF00000000: the iOS root volume numbers its own objects from there.)
+ * 0x0FFFFFFF00000000: the Darwin root volume numbers its own objects from there.)
  */
 #define APFS_SYNTH_BASE    0x0FFFFFFFFFFFF000ULL
 

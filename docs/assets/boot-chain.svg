@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="t">
-  <title id="t">The boot chain: stock fastboot, UEFI, loader, kernel, iOS user space. Nothing is flashed; a reboot brings Android back.</title>
+  <title id="t">The boot chain: stock fastboot, UEFI, loader, kernel, Darwin user space. Nothing is flashed; a reboot brings Android back.</title>
   <defs>
     <radialGradient id="g" cx="50%" cy="42%" r="75%">
       <stop offset="0" stop-color="#666d4b"/>
@@ -26,7 +26,7 @@
         <text x="230" y="245">UEFI</text>
         <text x="230" y="361">loader</text>
         <text x="230" y="477">kernel</text>
-        <text x="230" y="593">iOS user space</text>
+        <text x="230" y="593">Darwin user space</text>
       </g>
 
       <path fill="none" stroke="#ece5d0" stroke-width="3.5" stroke-linecap="round" d="M230 161V181M230 277V297M230 393V413M230 509V529"/>

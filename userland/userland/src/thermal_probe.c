@@ -1,6 +1,6 @@
 /*
  * thermal_probe: a root of its own for a short run on the phone that checks the kernel's thermal service
- * and lists the audio DSP's services, with no iOS needed (XL_RAMDISK=userland/thermal_probe, as with hello).
+ * and lists the audio DSP's services, with no Darwin needed (XL_RAMDISK=userland/thermal_probe, as with hello).
  * Every ten seconds for a minute and a half it prints kern.hakios.thermal and, once, the DSP's QMI
  * services (kern.hakios.adsp_services); between prints it keeps one core busy, so the governor has heat
  * to see. Then it waits for the kernel's run to end (loader_return_after / XL_SECS).

@@ -5,7 +5,7 @@
  * -[BLSHOSDisplayInterface transitionToDisplayMode:withDuration:didChangeAlwaysOnBrightnessCurve:])
  * and waits for -[BLSHOSDisplayInterface didCompleteTransitionToDisplayMode:withError:]. That answer
  * comes from the display driver through CoreBrightness, and this phone's panel has no such driver:
- * the panel is on all the time and nothing ever answers. iOS 27's backlight watchdog then aborts
+ * the panel is on all the time and nothing ever answers. Darwin 27's backlight watchdog then aborts
  * SpringBoard ("BLS CB_DM watchdog: OSDI:...:LCD transitionToDisplayMode:ActiveOn withDuration:0.167400s"),
  * over and over, and the screen stays black.
  *
@@ -20,7 +20,7 @@
  *
  * The panel follows the display mode as well, through the kernel's backlight (hw.backlight.power,
  * docs/backlight.md): a mode named Off makes the panel dark when its ramp is over, one with Dim in
- * its name dims it, any other lights it at once. The names are iOS's own (its function that names a mode,
+ * its name dims it, any other lights it at once. The names are Darwin's own (its function that names a mode,
  * the one the watchdog's "ActiveOn" comes from), so no number of Apple's enumeration is assumed; where that
  * function is not found the panel is left as it is. Boot-arg bl_trace=1 logs every mode asked for.
  *
@@ -93,7 +93,7 @@ set_power(int power)
 	sysctlbyname("hw.backlight.power", NULL, NULL, &power, sizeof(power));
 }
 
-/* what a display mode means for the panel, by iOS's name for it: -1 when it cannot be told */
+/* what a display mode means for the panel, by Darwin's name for it: -1 when it cannot be told */
 static int
 power_for(long long mode)
 {
@@ -133,7 +133,7 @@ transition(id self, SEL selector, long long mode, double duration, id curve_chan
 	});
 }
 
-/* iOS's function that names a display mode, by the names it has had */
+/* Darwin's function that names a display mode, by the names it has had */
 static void
 mode_name_init(void)
 {

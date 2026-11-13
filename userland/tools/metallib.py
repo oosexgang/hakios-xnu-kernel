@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Take a .metallib apart: the MTLB container, its function list, and each function's LLVM bitcode.
 
-The container was worked out by hand against the files of iOS 16.5; what is in it, and what the
+The container was worked out by hand against the files of Darwin 16.5; what is in it, and what the
 numbers below mean, is written down in docs/metal.md (section 9). Every module of every .metallib
 in the extracted system is ordinary LLVM bitcode in the standard 0x0B17C0DE wrapper, so after
 "metallib.py dump" an ordinary llvm-dis reads them.
@@ -21,7 +21,7 @@ TYPES = {0: 'vertex', 1: 'fragment', 2: 'kernel', 3: 'unqualified', 4: 'visible'
 
 
 def air_slice(b):
-    """iOS 26 ships some libraries as a fat file: an AIR slice (cpu type 0x01000017) and a precompiled
+    """Darwin 26 ships some libraries as a fat file: an AIR slice (cpu type 0x01000017) and a precompiled
     AGX one (0x01000013). Only the AIR slice is ours to read."""
     if b[:4] != b'\xca\xfe\xba\xbe':
         return b

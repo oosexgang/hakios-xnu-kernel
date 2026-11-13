@@ -1,5 +1,5 @@
 /*
- * libhakios26.dylib: the touch screen and the buttons for iOS 26's backboardd.
+ * libhakios26.dylib: the touch screen and the buttons for Darwin 26's backboardd.
  *
  * backboardd is the HID event server, and without Apple's multitouch driver it has no touch
  * screen. This library (inserted by the kernel, see kern.exec_inject and build.sh's INJECT) gives
@@ -8,7 +8,7 @@
  * driver would have sent, and a consumer-control service for the buttons.
  *
  * Only public-ish IOKit HID calls are used (IOHIDVirtualServiceClient*, IOHIDEvent*), no address
- * inside the shared cache: nothing here depends on a build of iOS. (src/inject.c is the iOS 16.5
+ * inside the shared cache: nothing here depends on a build of Darwin. (src/inject.c is the Darwin 16.5
  * library, whose window server patches are 16.5's addresses; the input code is the same.)
  * Lines go to stderr and to the console, "hakios26: ...".
  */
@@ -76,7 +76,7 @@ static dispatch_semaphore_t input_services_made;
 
 /* ---- backboardd: the touch screen and the buttons ---------------------------------------------- */
 
-/* IOKit's HID event system, the part that has no public header on iOS (prototypes checked against 20F66) */
+/* IOKit's HID event system, the part that has no public header on Darwin (prototypes checked against 20F66) */
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 typedef struct __IOHIDServiceClient *IOHIDServiceClientRef;
@@ -806,8 +806,8 @@ caenv_from_bootargs(void)
  *     driven by the purplebuddy state): forced to 0, "no reason".
  * Without these, unlocking launches Setup.app, whose first screen the software renderer cannot draw --
  * backboardd runs out of stack in CoreAnimation's render tree and SpringBoard respawns with it (the
- * "log out"). Swizzled by selector name only, so nothing here depends on a build of iOS. (src/inject_sb.c
- * does the same for iOS 16.5, by hard-coded address.)
+ * "log out"). Swizzled by selector name only, so nothing here depends on a build of Darwin. (src/inject_sb.c
+ * does the same for Darwin 16.5, by hard-coded address.)
  */
 static BOOL
 sb_is_activated(__unused id self, __unused SEL sel)
@@ -846,7 +846,7 @@ swizzle(const char *class_name, const char *selector, IMP replacement, IMP *orig
 }
 
 /*
- * The wallpaper. iOS 26's wallpaper is a "poster" of PosterBoard's, and the first ones are made when the setup
+ * The wallpaper. Darwin 26's wallpaper is a "poster" of PosterBoard's, and the first ones are made when the setup
  * assistant finishes -- which never runs here (refused above). PosterBoard itself will not make a default one on an
  * iPhone ("Hello NOT iPad, trying to restoreDefaultWallpaperForAllVariantsAndNotify? not today."), so the lock and
  * home screens stayed black. What Settings' "restore the default wallpaper" asks for is asked here, once SpringBoard

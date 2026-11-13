@@ -1,6 +1,6 @@
-/* Part of the loader (included by loader.c, not compiled alone): the iOS system image as an Android DSU image ("oem dsu"). */
+/* Part of the loader (included by loader.c, not compiled alone): the Darwin system image as an Android DSU image ("oem dsu"). */
 /* ------------------------------------------------------------------------ */
-/* The iOS system image as an Android DSU image ("oem dsu")                  */
+/* The Darwin system image as an Android DSU image ("oem dsu")                  */
 
 /*
  * Android's Dynamic System Updates keep an installed image in userdata as a pinned file, written

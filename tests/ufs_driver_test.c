@@ -376,7 +376,7 @@ writes_only_past_the_build(void)
 	CHECK(fake_dev_pread("rufs_darwin", back, sizeof(back), AT(WRITE_FIRST), &done) == 0 && memcmp(back, data, sizeof(data)) == 0, "and they read back");
 	/* the last block of the partition */
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(DARWIN_BLOCKS - 1), &done) == 0 && done == 4096, "the last block");
-	/* the block before the first one allowed is the build's: the iOS volume and the cryptexes */
+	/* the block before the first one allowed is the build's: the Darwin volume and the cryptexes */
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST - 1), &done) == EROFS && done == 0, "the block before: refused");
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 8192, AT(WRITE_FIRST - 1), &done) == EROFS && done == 0, "nor a write that begins there and goes on into what is allowed");
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, 0, &done) == EROFS, "the partition's first block: refused");

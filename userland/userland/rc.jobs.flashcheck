@@ -1,8 +1,8 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# The iOS root volume on the phone's flash as the root, everything in RAM as APFS (flashboot.apfs resident,
+# The Darwin root volume on the phone's flash as the root, everything in RAM as APFS (flashboot.apfs resident,
 # root.apfs with the kernel, built with GL=1; root_apfs=ufs_darwin ufs=2 ufs_native=1 gpu=1 adsp=1 sound=4
 # rec_sound=12 wifi=1, and no battery=1, which keeps the battery from the audio DSP off): what is mounted
-# from where, the firmware on /fw, the battery as iOS has it, something to hear (a tone of three seconds,
+# from where, the firmware on /fw, the battery as Darwin has it, something to hear (a tone of three seconds,
 # the lock sound, a click, a fanfare: ./xl sound), the network over the phone's Wi-Fi (an address by
 # DHCP, a name, a page over HTTPS), and Safari opening a page with its daemons from the App cryptex
 # (Apple's image as it is, the third container of flashboot.apfs, through the volume's own

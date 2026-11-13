@@ -151,7 +151,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	int more_cores = 0, battery_requested = 0, ufs_requested = 0;
 	/* "torch=N" (not 0) there too: the phone's flashlight is the kernel's (bsd/dev/hakios_torch.c) */
 	int torch_requested = 0;
-	/* "cam=5" there too: the phone's wide camera is iOS's (bsd/dev/hakios_camera.c) */
+	/* "cam=5" there too: the phone's wide camera is Darwin's (bsd/dev/hakios_camera.c) */
 	int camera_requested = 0;
 	/* (the loader stays for run after run: what the last run's arguments said must not hold for this one) */
 	gamut_p3 = 0;
@@ -350,7 +350,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t cntfrq = READ_SYSREG(CNTFRQ_EL0);
 	uint64_t ranges[3] = { 0, plat->io_base, plat->io_size };
 	uint64_t reg2[2];
-	/* iOS 26 (xnu-12377) asks the bootloader for 4*SHA512 = 256 entropy bytes (prng_random.c);
+	/* Darwin 26 (xnu-12377) asks the bootloader for 4*SHA512 = 256 entropy bytes (prng_random.c);
 	 * xnu-8796 only read the first 64, so a larger seed stays compatible with both. */
 	uint8_t seed[256];
 	struct unit_identity unit;
@@ -367,7 +367,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 
 	dt_begin(&w, "device-tree");
 	/*
-	 * The identity is the iPhone's (model, compatible, target-type ...): iOS user space looks
+	 * The identity is the iPhone's (model, compatible, target-type ...): Darwin user space looks
 	 * its device up by these, and its files -- the dyld shared cache to begin with -- are
 	 * those of that phone. XNU itself does not care; the hardware is described further down.
 	 */
@@ -471,9 +471,9 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_begin(&w, "product");
 	dt_identity(&w, identity_product, sizeof(identity_product) / sizeof(identity_product[0]), identity_product_data);
 	/*
-	 * and its haptics: "closed-loop" (MobileGestalt's DeviceSupportsClosedLoopHaptics) makes iOS play
+	 * and its haptics: "closed-loop" (MobileGestalt's DeviceSupportsClosedLoopHaptics) makes Darwin play
 	 * its vibrations and feedbacks as waveforms on the "Actuator" audio device (the audio plug-in
-	 * hands them to the kernel's motor driver); without it iOS looks for an IOKit vibration motor
+	 * hands them to the kernel's motor driver); without it Darwin looks for an IOKit vibration motor
 	 * that the iPhone X does not have, and nothing vibrates.
 	 */
 	dt_begin(&w, "haptics");
@@ -495,7 +495,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 
 	/*
 	 * The buttons, as the iPhone 17 Pro's own device tree has them (DeviceTree.v53ap): home-button-type 2,
-	 * no home button but the gesture -- MobileGestalt's HomeButtonType. Without the node iOS 26 took the
+	 * no home button but the gesture -- MobileGestalt's HomeButtonType. Without the node Darwin 26 took the
 	 * phone for one with a home button ("Press home to open" on the lock screen, instead of swiping up).
 	 * No compatible: no driver matches it; the phone's real keys are the kernel's (bsd/dev/hakios_buttons.c).
 	 */

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot iOS 27 (default), or iOS 26 with --system/--root, on a phone from RAM (--board NAME: the phone's
+"""Boot Darwin 27 (default), or Darwin 26 with --system/--root, on a phone from RAM (--board NAME: the phone's
 package, brought in with tools/device.py add; not needed when only one phone's package is here).
 No flashing, erasing or storage commands: stock fastboot boots the resident loader,
 which receives the system image, kernel and root image over USB. Reboot restores Android.
@@ -17,7 +17,7 @@ from pathlib import Path
 
 DK = Path(__file__).resolve().parents[3]
 DR = DK / 'darwin-renoir'
-IOS = DK / 'ios27'                      # iOS 27.2 (24B119); ios26 (23G90) takes --system/--root
+IOS = DK / 'ios27'                      # Darwin 27.2 (24B119); ios26 (23G90) takes --system/--root
 sys.path.insert(0, str(DR / 'recovery'))
 from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
@@ -115,7 +115,7 @@ else:
     raise SystemExit('Resident loader did not appear; do not flash anything')
 check('xnuloader', 'board', options.board)
 cmd('oem', 'ramdisk', serial='xnuloader')
-print(f'Uploading the iOS system image ({options.system.stat().st_size / 1e9:.2f} GB)...', flush=True)
+print(f'Uploading the Darwin system image ({options.system.stat().st_size / 1e9:.2f} GB)...', flush=True)
 cmd('stage', file(options.system), serial='xnuloader', timeout=900, live=True)
 data = prepare(data, time.time())                       # the clock again, after the long upload
 run = IOS / 'run26-current.bin'

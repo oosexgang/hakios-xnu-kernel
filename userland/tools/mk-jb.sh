@@ -1,12 +1,12 @@
 #!/bin/bash
 # Fetch what Sileo needs into jb/ (never in the repository, like fw-*): the Procursus bootstrap for
-# iOS and the Sileo package, both for arm64 and both "rootless" -- everything under /var/jb.
+# Darwin and the Sileo package, both for arm64 and both "rootless" -- everything under /var/jb.
 #
 # Rootless is what fits this port: / is an APFS image that cannot be written to, and /private/var
 # is the only writable filesystem there is (a memory filesystem, made afresh at every boot), so the
 # whole prefix has to live under /var. The binaries of the rootless distribution are built for
-# iOS 15 and up (dpkg 1.22.6, apt 2.9.4) and Sileo for iOS 11 and up; the "1800" in the path is the
-# name of the distribution, not a demand for iOS 18.
+# Darwin 15 and up (dpkg 1.22.6, apt 2.9.4) and Sileo for Darwin 11 and up; the "1800" in the path is the
+# name of the distribution, not a demand for Darwin 18.
 #
 # What is left behind in jb/:
 #   root/var/jb/...      the bootstrap with Sileo unpacked into it, as the phone will have it
@@ -158,14 +158,14 @@ for package in shshd libkrw0 libdimentio0; do
 done
 
 # The dependency on "firmware" is taken out of the records of the packages that carry it. That
-# package is not a package: usr/libexec/firmware writes it straight into dpkg's database (the iOS
+# package is not a package: usr/libexec/firmware writes it straight into dpkg's database (the Darwin
 # version, "firmware 16.5"), no repository has it and nothing provides it. apt on the command line
 # is content with that -- but Sileo asks apt with an index of its own making (it writes a reduced
 # Packages file into var/lib/apt/sileolists and runs "apt-get -sqf ... -oDir::State::lists=
 # sileolists/"), and against that index apt calls the same firmware "not installable" and reports
 # org.coolstar.sileo and snaputil as broken. Sileo then shows those as errors and refuses to install
-# anything at all. What the dependency says -- "this iOS is new enough" -- is true here by
-# construction: the system is iOS 16.5 and cannot be anything else.
+# anything at all. What the dependency says -- "this Darwin is new enough" -- is true here by
+# construction: the system is Darwin 16.5 and cannot be anything else.
 python3 - "$OUT/root/var/jb/Library/dpkg/status" <<'EOF'
 import re, sys
 
@@ -191,14 +191,14 @@ EOF
 # What the bootstrap's own prep_bootstrap.sh does, less what this port has no use for: it asks for a
 # terminal password through a window of its own, and sets login shells in an /etc that is made anew
 # at every boot anyway. What is left matters: usr/libexec/firmware puts a package named "firmware"
-# in dpkg's database with the iOS version in it, which is what every other package depends on
+# in dpkg's database with the Darwin version in it, which is what every other package depends on
 # (Sileo: "firmware (>= 11.0)"), and the few postinst scripts settle the shells and apt's own state.
 cat > "$OUT/root/var/jb/prep.sh" <<'PREP'
 #!/var/jb/bin/sh
 # Run once per boot, after the prefix has been grafted onto /var/jb (rc.jobs.sileo does it).
 /var/jb/usr/libexec/firmware
 # The prefix's applications: in the system image they are in /Applications already (userland/build.sh),
-# where LaunchServices finds them by itself; with the iOS volume on the flash as the root they are not,
+# where LaunchServices finds them by itself; with the Darwin volume on the flash as the root they are not,
 # and are registered from the prefix as a rootless jailbreak does it (uikittools' uicache) -- by where the
 # bundle really is, as there: in /var/jb, grafted, its files are links into the boot volume
 # (/private/preboot/jb), and LaunchServices refuses a bundle made of links ("Unable to register").

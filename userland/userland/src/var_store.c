@@ -1,14 +1,14 @@
 /*
- * The data volume of iOS between two boots: /private/var packed into the phone's flash and
+ * The data volume of Darwin between two boots: /private/var packed into the phone's flash and
  * unpacked out of it again.
  *
  * /private/var is a memory filesystem (bsd/miscfs/ramfs), mounted empty by init at every boot and
- * given the directories of the template iOS ships with (ios165/mkvarskel.py), so nothing iOS keeps
+ * given the directories of the template Darwin ships with (ios165/mkvarskel.py), so nothing Darwin keeps
  * there outlives the boot that wrote it: no home screen layout, no application data, no baked
  * wallpaper. The kernel's APFS driver reads and does not write, and writing APFS is not the point
  * here -- what is needed is that the bytes come back. So the tree is packed into a plain archive
  * and the archive is written into the one place on the phone's flash this port owns and nothing of
- * it uses: the partition darwin, past the iOS volume and both cryptexes. The kernel takes those
+ * it uses: the partition darwin, past the Darwin volume and both cryptexes. The kernel takes those
  * writes on /dev/rufs_darwin alone and refuses anything else (bsd/dev/hakios_ufs.c, ufs_write=1).
  *
  *   var_store save          pack /private/var into the store
@@ -63,7 +63,7 @@
 #define ROOT            "/private/var"
 #define MAX_PATH        1024
 #define MAX_DEPTH       32
-#define MAX_XATTR       (256u << 10)            /* one attribute's value; iOS keeps small ones */
+#define MAX_XATTR       (256u << 10)            /* one attribute's value; Darwin keeps small ones */
 #define XPACK           (512u << 10)            /* all the attributes of one file, packed */
 #define LINKS           8192                    /* names remembered for hard links */
 #define LINK_PATH       256
@@ -309,7 +309,7 @@ out_flush(int last)
 	}
 	/*
 	 * What is already there is read first, and if it is what we were about to write, it is not
-	 * written. A volume that iOS has stopped touching packs to the very same bytes -- measured:
+	 * written. A volume that Darwin has stopped touching packs to the very same bytes -- measured:
 	 * two saves a minute apart came out with the same checksum -- and the slots hold alternate
 	 * copies of it, so a save that changes nothing then costs reads and no writes at all. Reads
 	 * of this storage are several times cheaper than writes, and flash wears by writing.
@@ -489,7 +489,7 @@ newest(struct head *out_head)
  * How much of this save is new since the last one: an entry whose time of writing is later than
  * the second the previous generation was saved at. It costs nothing to count -- the walk has every
  * entry's time in hand anyway -- and it is what says whether saving only the difference would be
- * worth building, or whether iOS rewrites the volume faster than any such thing could help.
+ * worth building, or whether Darwin rewrites the volume faster than any such thing could help.
  */
 static uint64_t last_saved_at, changed_entries, changed_bytes;
 
@@ -530,7 +530,7 @@ link_name(uint64_t ino, const char *relative)
 }
 
 /*
- * The extended attributes of path -- iOS keeps container metadata and much else in them -- packed
+ * The extended attributes of path -- Darwin keeps container metadata and much else in them -- packed
  * into a buffer of their own, because the entry's head says how many there are and has to go out
  * before them. One that does not fit is left out and counted.
  */
@@ -1255,7 +1255,7 @@ save_once(void)
 	 * The device is opened for the save and closed again, not held: while a write is in flight
 	 * this kernel's own transfer list is out of the controller, and it goes back in when the
 	 * device is closed (bsd/dev/hakios_ufs.c, ufs_cclose). A watcher that kept the device open
-	 * would leave iOS reading the flash through the loader for the rest of the run.
+	 * would leave Darwin reading the flash through the loader for the rest of the run.
 	 */
 	fd = open(DEVICE, O_RDWR, 0);
 	if (fd < 0) {

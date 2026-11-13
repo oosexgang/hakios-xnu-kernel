@@ -1,5 +1,5 @@
 /*
- * A block device over an image holding only some of its blocks: how the real iOS root
+ * A block device over an image holding only some of its blocks: how the real Darwin root
  * volume is read on the phone, which cannot hold all of it.  Only with boot-arg
  * apfs_sparse=<offset in md0>.  See bsd/dev/hakios_sparse.c.
  */

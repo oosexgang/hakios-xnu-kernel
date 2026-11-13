@@ -1,10 +1,10 @@
 #!/bin/bash
-# The small image (/hakios) for an iOS 26 boot towards SpringBoard: darwin-renoir's root with our
-# arm64e libraries; and the launchd jobs, made from iOS 26's own plists (darwin-renoir's mkjobs.py: the
+# The small image (/hakios) for a Darwin 26 boot towards SpringBoard: darwin-renoir's root with our
+# arm64e libraries; and the launchd jobs, made from Darwin 26's own plists (darwin-renoir's mkjobs.py: the
 # named jobs as they are, every other job with Mach services on demand only) into ios26/jobs26, for
-# the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): iOS 26's launchd takes a job for a system
+# the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): Darwin 26's launchd takes a job for a system
 # service only when its plist is on the system volume.
-# Writes $IOS/root26-ios.apfs and $IOS/jobs26 (IOS=.../ios27 for iOS 27, with OBJ=.../obj27).
+# Writes $IOS/root26-ios.apfs and $IOS/jobs26 (IOS=.../ios27 for Darwin 27, with OBJ=.../obj27).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py.
 set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -42,7 +42,7 @@ if [ -f $OBJ/HakiosAudio ]; then
 	cp $OBJ/HakiosAudio $T/lib/HakiosAudio.driver/HakiosAudio
 	cp "$(dirname "$RN")/userland/userland/src/audio_plugin.plist" $T/lib/HakiosAudio.driver/Info.plist
 fi
-# iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
+# Darwin 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
 # ("unexpected exec of non-platform binary: /hakios/sbin/init"); the kernel's AMFI stand-in takes a
 # signature marked ad hoc (CodeDirectory flag CS_ADHOC) for one. darwin-renoir's programs are either
 # unsigned or signed by ldid -S, which leaves the flags 0: every Mach-O here is signed again with
@@ -66,7 +66,7 @@ PY
 	echo "  signed ad hoc: ${f#$T/}"
 done
 rm -f "$ENT"
-# The audio server (audiomxd, iOS 26's) with its output device above: volume, the slider in Control Center and the
+# The audio server (audiomxd, Darwin 26's) with its output device above: volume, the slider in Control Center and the
 # sound of a timer depend on it. bluetoothd stays enabled: without it audiomxd asks for com.apple.bluetooth.xpc
 # thousands of times a second.
 (cd $DR/userland && ALLOW="audio bluetooth ${ALLOW:-}" ./mkjobs.py --rest $S/rootfs $J $JOBS)
@@ -76,7 +76,7 @@ done
 # No EDR here: backboardd's job names com.apple.libEDR.Notification, whose server (EDRServerStartService)
 # CoreBrightness starts, and CoreBrightness has no display to run here. launchd kept the port and queued
 # every request: CoreAnimation in backboardd asks EDR at each display state change while holding the lock
-# its display thread needs, and waited out libEDR's timeout, about 40 s: one frame in 40 s on iOS 27.
+# its display thread needs, and waited out libEDR's timeout, about 40 s: one frame in 40 s on Darwin 27.
 # Without the name a lookup fails at once and libEDR answers that there is no EDR.
 python3 - "$J/com.apple.backboardd.plist" <<'PY'
 import plistlib, sys
@@ -88,7 +88,7 @@ if job.get('MachServices', {}).pop('com.apple.libEDR.Notification', None) is not
     print('  backboardd: no com.apple.libEDR.Notification')
 PY
 # Jobs that cost the phone more than they give it: ScreenTimeAgent (Screen Time) keeps a core busy all the
-# time on iOS 27 here (ustacks=top: ~90 % of a core, touched or not) while the window server draws in
+# time on Darwin 27 here (ustacks=top: ~90 % of a core, touched or not) while the window server draws in
 # software. Without the job its Mach services are unknown and their clients fail at once.
 # airplayd: the audio server starts it to look for AirPlay routes, and it dies at once (SIGSEGV), every 5 s.
 # PerfPowerServices is refused by the kernel (its busy loop does not work here). Do not leave its
@@ -96,7 +96,7 @@ PY
 for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServices; do
 	rm -f "$J/$job.plist" && echo "  no job $job"
 done
-# The last migration: darwin-renoir's skeleton says 20F66 (16.5), so iOS 26 took itself for just updated
+# The last migration: darwin-renoir's skeleton says 20F66 (16.5), so Darwin 26 took itself for just updated
 # and ran DataMigrator, a progress bar on the screen in place of the lock screen. It is this build's own.
 python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
 import plistlib, sys
@@ -108,7 +108,7 @@ PY
 # The persona manifest. usermanagerd reads /private/var/keybags/persona.kb as it starts and aborts without
 # it ("Daemon failed to load persona manifest."), and every daemon that asks it for the user's personas
 # waits (runningboardd, so backboardd and SpringBoard). On an iPhone the file is left by the restore; this
-# /private/var is new every boot. An empty manifest of the version iOS 26 writes (1: a dictionary with
+# /private/var is new every boot. An empty manifest of the version Darwin 26 writes (1: a dictionary with
 # UsePersonaManifestVersion, UsePersonaGenerationID and UserPersonaDictionary) has usermanagerd take its
 # own way for a user without personas: "creating new set of default personas", in the kernel as well.
 mkdir -p $T/var/keybags
@@ -120,10 +120,10 @@ with open(sys.argv[1], 'wb') as f:
 PY
 printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/persona.kb\t/var/keybags/persona.kb\n' >> $T/etc/var.skel
 # Feature flags (/Library/Preferences/FeatureFlags is /private/var/preferences/FeatureFlags; Domain/NAME.plist,
-# {feature: {Enabled: bool}}). MobileTimerFlags/core_data, on iOS 26: off. With it, mobiletimerd keeps alarms
+# {feature: {Enabled: bool}}). MobileTimerFlags/core_data, on Darwin 26: off. With it, mobiletimerd keeps alarms
 # and timers in a Core Data store that never finishes loading here, and answers every request "System isn't
 # ready..." -- the Clock's start button and Control Center's timer do nothing. Off, it keeps them in its
-# defaults, as before. On iOS 27: on. There the timers have no other store: with core_data off
+# defaults, as before. On Darwin 27: on. There the timers have no other store: with core_data off
 # -[MTTimerStorage coreDataReady] is always false, every request fails with MTTimerStorage error 4 and
 # nothing is kept; on, the store loads (seen with 24B119: a 10-second timer ran and fired).
 mkdir -p $T/var/preferences/FeatureFlags/Domain
@@ -201,7 +201,7 @@ if [ -n "${RC_JOBS:-}" ]; then
 	cp "$RC_JOBS" $T/etc/rc.jobs
 else
 cat > $T/etc/rc.jobs <<'EOF'
-# iOS 26: towards SpringBoard
+# Darwin 26: towards SpringBoard
 /bin/ps -A
 /hakios/bin/net_test waitaddr en0 60
 /bin/ps -A

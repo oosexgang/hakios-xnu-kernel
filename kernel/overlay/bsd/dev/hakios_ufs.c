@@ -1,7 +1,7 @@
 /*
  * The phone's storage: one block device and one character device for every GPT partition of its
  * UFS (/dev/ufs_NAME and /dev/rufs_NAME, NAME as the partition table has it). Read only, but for
- * the one place the data of iOS lives (ufs_write=1, below).
+ * the one place the data of Darwin lives (ufs_write=1, below).
  *
  * There is no UFS driver here, and none is needed. UEFI never exits on this port: Qualcomm's own
  * UFS driver (UFSDxe) has brought up the controller, its PHY, its clocks and power, and stays
@@ -15,9 +15,9 @@
  * Read only wherever a write could do harm, by construction. The block devices never write: the
  * strategy routine refuses, so no filesystem mounted from one can write, and opening one for
  * writing is refused. With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin,
- * the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the iOS
+ * the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the Darwin
  * volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that
- * is where the data volume of iOS is kept between runs (userland/src/var_store.c). The partition
+ * is where the data volume of Darwin is kept between runs (userland/src/var_store.c). The partition
  * has to be the one the port was set up with (its name, size, place and logical unit here; its
  * GUIDs as well on the loader's side), and the loader refuses the same things over again and reads
  * every write back before it answers. Without ufs_write=1 nothing writes at all.
@@ -69,7 +69,7 @@
 
 /*
  * Where a write may go, and nowhere else: darwin, the port's own 20 GiB at the end of logical
- * unit 0, and in it only past what the build puts there from the computer -- the iOS volume
+ * unit 0, and in it only past what the build puts there from the computer -- the Darwin volume
  * and the cryptexes behind it. Which partition that is on a phone, and from which block, is the
  * board file's storage { } (hakios_board.h); a board that names none takes no write at all. The loader
  * keeps the same bounds from the same file, and the GUIDs of the partition besides
@@ -602,7 +602,7 @@ ufs_read(uint32_t part, uint64_t offset, uint8_t *dst, uint64_t len)
  * the loader. This kernel's own driver never writes -- its whitelist of commands has no write in
  * it -- so for the length of a write its transfer list goes out and UEFI's driver, which the
  * loader calls, has the controller again; reads meanwhile go through the loader too (ufs_read),
- * which is slower and right. Nothing of iOS waits on this but the writer itself: the data volume
+ * which is slower and right. Nothing of Darwin waits on this but the writer itself: the data volume
  * is in memory (ramfs) and only its copy for the next boot is written here.
  */
 static int
@@ -621,7 +621,7 @@ ufs_write(uint32_t part, uint64_t offset, const uint8_t *src, uint64_t len)
 	}
 	if (offset / nbs < UFS_WRITE_FIRST || offset > ufs_part_bytes(part) ||
 	    len > ufs_part_bytes(part) - offset) {
-		/* the iOS volume, the cryptexes, and anything past the partition's end: never */
+		/* the Darwin volume, the cryptexes, and anything past the partition's end: never */
 		ufs_write_refused++;
 		return EROFS;
 	}
@@ -1539,7 +1539,7 @@ hakios_ufs_init(void)
 	    "through the loader's page at %llx and its %u KB buffer\n", made, pa, ufs_buffer_size >> 10);
 
 	/*
-	 * ufs_write=1: /dev/rufs_darwin takes writes, past the iOS volume and the cryptexes. darwin
+	 * ufs_write=1: /dev/rufs_darwin takes writes, past the Darwin volume and the cryptexes. darwin
 	 * has to be the partition the port was set up with, in everything the loader's table says of
 	 * it; the loader looks at its GUIDs besides, and refuses the same bounds of its own accord.
 	 */

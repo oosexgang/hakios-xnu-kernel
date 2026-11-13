@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""iOS 26 dyld cache: per-image segments, dependency closure of the boot-to-SpringBoard programs,
+"""Darwin 26 dyld cache: per-image segments, dependency closure of the boot-to-SpringBoard programs,
 and how much of the zlib-compressed cache belongs to images outside that closure.
 
 usage: cache_images.py PIECES.pkl MODE   (PIECES.pkl from zchunks.py over the cache files)

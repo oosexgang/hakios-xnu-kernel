@@ -9,7 +9,7 @@
  *   off              the flashlight off (level 0, then AVFlashlight's turnPowerOff)
  *   state            what the kernel says is lit now (thousandths of Android's current)
  *
- * Says first whether iOS believes there is a flashlight (AVFlashlight's hasFlashlight: MobileGestalt's
+ * Says first whether Darwin believes there is a flashlight (AVFlashlight's hasFlashlight: MobileGestalt's
  * camera-flash) and whether it is available.
  */
 #include <CoreFoundation/CoreFoundation.h>

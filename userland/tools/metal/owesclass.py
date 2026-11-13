@@ -177,7 +177,7 @@ PROBES = {
 
 # The runtime functions that take a selector in a register, and what a selector
 # reaching one of them means. objc_opt_respondsToSelector is here because it is
-# how clang has compiled -respondsToSelector: since iOS 13, and it takes the
+# how clang has compiled -respondsToSelector: since Darwin 13, and it takes the
 # probed selector in x1 -- exactly where objc_msgSend takes the message. Reading
 # the register without reading the callee would call every probe a send.
 HELPERS = {

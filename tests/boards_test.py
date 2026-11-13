@@ -745,7 +745,7 @@ class Generate(Sandbox):
         self.assertIn("pmic-reset is a PMIC's GPIO", self.problems())         # (a peripheral, not a GPIO's)
         path.write_text(camera(wide, front, head=head.replace('"wide"', '"tele"')))
         self.assertIn("ios-sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
-        # iOS's front camera, and a sensor whose pictures are upside down
+        # Darwin's front camera, and a sensor whose pictures are upside down
         path.write_text(camera(wide, front.replace('csiphy = <0>;', 'csiphy = <0>;\n\t\t\tupside-down;'),
                                head=head + '\t\tios-front = "front";\n'))
         self.assertEqual(self.problems(), '')

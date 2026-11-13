@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mesa 26.2.5 (softpipe + freedreno, OSMesa) for arm64e iOS 26 processes on renoir: darwin-renoir's
+# Mesa 26.2.5 (softpipe + freedreno, OSMesa) for arm64e Darwin 26 processes on renoir: darwin-renoir's
 # tools/mk-mesa.sh with -arch arm64e, then pacstrip (pointer authentication made the identity).
 set -eo pipefail
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

@@ -3,7 +3,7 @@
 # plus a table saying where each of them went.
 #
 # Why: the phone has no driver for its own storage, so a volume there has to live in a RAM
-# disk, and the whole iOS root volume is 5368 MB against the 4288 MB the phone's firmware
+# disk, and the whole Darwin root volume is 5368 MB against the 4288 MB the phone's firmware
 # leaves usable.  Most of those blocks are never read by a given walk, though, so this
 # writes out the ones that are and the driver cannot tell the difference -- every block it
 # asks for is there.

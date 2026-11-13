@@ -20,7 +20,7 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `touch-ft3658u` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-supply` | `touchscreen=1` |
 | `speaker-aw88261` | `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }`: `audio-stream` | `speaker { }`: `sda`, `scl`, `addresses`, `interrupts`, `sound-pins`, `sound-function` | `speaker_probe=N looks; sound=N with adsp=1` |
 | `haptic-aw86927` | `pins { }` | `haptic { }`: `sda`, `scl`, `reset`, `interrupt`, `f0-calibration` | `haptic=N` |
-| `torch-pm8350c` | `spmi { }`: `channels` | `torch { }`: `flash`, `alarm` | `torch=1 looks; torch=3 is the light for iOS` |
+| `torch-pm8350c` | `spmi { }`: `channels` | `torch { }`: `flash`, `alarm` | `torch=1 looks; torch=3 is the light for Darwin` |
 | `camera-sm7325` | `spmi { }`: `channels`; `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }`: `camera-stream`; `camera { }` | `camera { }`: `pmic-pins`, `pmic-reset`, `sensors` | `cam=N` |
 | `wifi-wcn6750` | `rpmh { }`; `pins { }`; `spmi { }`; `ipc { }`; `smmu { }`: `wifi-stream` | `wifi { }`: `radio-model`, `dsp-memory`, `dsp-memory-size` | `wifi=1` |
 | `mic-wcd938x` | `pins { }`; `lpass { }` | `mic { }`: `codec-reset` | `mic=N with adsp=1` |

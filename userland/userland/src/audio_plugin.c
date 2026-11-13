@@ -1,5 +1,5 @@
 /*
- * HakiosAudio.driver: the output device of iOS on this machine.
+ * HakiosAudio.driver: the output device of Darwin on this machine.
  *
  * Audio devices reach the audio server's hardware layer (the "HAL" of CoreAudio, inside
  * mediaserverd) in two ways: kernel drivers through IOAudio2 -- that is how an iPhone's own
@@ -7,11 +7,11 @@
  * /System/Library/Audio/Plug-Ins/HAL, which is how Bluetooth, AirPlay, CarPlay and USB audio
  * arrive. This is such a plug-in. Its interface is the one macOS documents for user-space
  * audio drivers (AudioServerPlugIn: a CFPlugIn with one COM-style table of functions; the HAL
- * asks for objects and their properties, then runs the I/O); the iOS SDK has no header for it,
+ * asks for objects and their properties, then runs the I/O); the Darwin SDK has no header for it,
  * so what is needed of it is declared below.
  *
  * Above the HAL sits the virtual audio device (/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin),
- * through which everything in iOS is routed. It knows an iPhone's own devices by their names
+ * through which everything in Darwin is routed. It knows an iPhone's own devices by their names
  * (their UIDs) and makes a port of each: "Speaker" becomes the speaker port, the route an iPhone
  * with nothing plugged in plays through, with a volume, the volume display and the place in
  * Control Center that go with it. So this presents four devices under those names:
@@ -23,7 +23,7 @@
  *               speaker route without a second virtual device of its own (its type 'vhaw', a
  *               mandatory companion of the default one in the iPhone X's routing tables) whose
  *               only port is this input; without it everything stays on the null port.
- *   "Actuator"  one output of one channel: the iPhone's Taptic Engine, on which iOS plays its
+ *   "Actuator"  one output of one channel: the iPhone's Taptic Engine, on which Darwin plays its
  *               haptics as waveforms (through the chain 'd22_actuator_general'); its samples go to
  *               the kernel's motor driver, /dev/hakios-haptic (see actuator_write())
  *   "Codec"     one input of one channel: on an iPhone, the audio codec that the built-in
@@ -37,7 +37,7 @@
  *
  * What is played through the speaker port passes the iPhone X's chain of effects for its own
  * speakers first ('d22_speaker_general', from /Library/Audio/Tunings/D22: equalisers,
- * compressors, speaker protection), at the volume iOS has set.
+ * compressors, speaker protection), at the volume Darwin has set.
  *
  * The device has no clock but the system's: it claims to play exactly HAKIOS_AUDIO_RATE frames
  * a second of mach_absolute_time(), and the HAL's I/O thread paces itself by that.
@@ -45,7 +45,7 @@
  * The speaker's output has a volume control, as the iPhone's own speaker has: what is set on it
  * goes to the kernel (ioctl HAKIOS_AUDIO_SET_VOLUME), which sets the amplifiers' level by it -- on
  * the phone, so far under the loudest it allows. Its scale is 48 dB in a straight line of
- * decibels, 3 dB for each of iOS's sixteen steps; 0 is silence. What iOS does with it (the phone,
+ * decibels, 3 dB for each of Darwin's sixteen steps; 0 is silence. What Darwin does with it (the phone,
  * 15 October): the virtual audio device sets it once, to its top (0 dB), when it takes the
  * device, and leaves it there -- its routing tables keep the iPhone X's speaker in software volume
  * mode, so the volume buttons and Control Center scale the samples themselves, and at 0 what is
@@ -241,7 +241,7 @@ static int sink = -1;                   /* /dev/hakios-audio */
 static Float64 ticks_per_frame;
 static UInt64 written, refused;         /* frames since the speaker's I/O started */
 static Boolean inactive[OBJECT_LAST + 1];       /* streams the HAL has switched off */
-static Float32 volume = 1.0f;           /* the speaker's volume control, 0 to 1 (iOS sets it once it routes there) */
+static Float32 volume = 1.0f;           /* the speaker's volume control, 0 to 1 (Darwin sets it once it routes there) */
 
 static void
 say(const char *format, ...)
@@ -964,10 +964,10 @@ begin_end_io_operation(__unused AudioServerPlugInDriverRef driver, __unused Audi
 }
 
 /*
- * What iOS plays on the actuator -- the haptics: the system's feedbacks and the ringer's vibration,
+ * What Darwin plays on the actuator -- the haptics: the system's feedbacks and the ringer's vibration,
  * CoreHaptics' patterns, UIKit's feedbacks, as waveforms of one channel -- goes to the kernel's motor
  * driver (/dev/hakios-haptic, bsd/dev/hakios_haptic.c, haptic=5), which plays Android's own
- * waveforms on the phone's motor by it. (iOS plays on this device at all only because the device
+ * waveforms on the phone's motor by it. (Darwin plays on this device at all only because the device
  * tree says the phone's haptics are "closed-loop": see mkidentity.py.) Said the first times, with
  * how loud.
  */

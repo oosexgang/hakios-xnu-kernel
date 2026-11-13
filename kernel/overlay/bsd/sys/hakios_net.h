@@ -1,7 +1,7 @@
 /*
  * en0, and what stands behind it.
  *
- * The network interface iOS uses here is made in bsd/dev/hakios_net.c with the kernel's own
+ * The network interface Darwin uses here is made in bsd/dev/hakios_net.c with the kernel's own
  * interface KPI: Ethernet as far as the rest of the kernel and user space can tell. What carries
  * the frames is a "link", a driver of its own that knows nothing about interfaces: QEMU's virtio
  * network device today (bsd/dev/hakios_virtio_net.c), the phone's radio or frames carried over

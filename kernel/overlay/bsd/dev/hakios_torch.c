@@ -20,7 +20,7 @@
  * read back, and any surprise ends all writing for the run. Transfers through the arbiter are made
  * one at a time with the buttons' driver (hakios_spmi_lock()): two at once, and it drops one.
  *
- * What iOS's flashlight is on this machine: the loader says the camera has a flash (with torch=N,
+ * What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N,
  * /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and
  * libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device
  * of ours whose torch level is written to /dev/hakios-torch (userland/src/inject_media.c).
@@ -31,7 +31,7 @@
  *              through it, the module's type, its registers, the PMIC's temperature alarm
  *   torch=2    ... and the light on once at Android's torch current for torch_secs (default 2),
  *              then off, every write read back
- *   torch=3    ... no light at the start; the light for iOS until the run ends: /dev/hakios-torch
+ *   torch=3    ... no light at the start; the light for Darwin until the run ends: /dev/hakios-torch
  *              takes a level of 0 to 1000 (a 32-bit number; thousandths of Android's current, 0
  *              off) and the module is set to it -- never above Android's 125 mA; a read gives
  *              what is lit now
@@ -408,7 +408,7 @@ dark(void)
 	return ok;
 }
 
-/* ---- torch=3: the light for iOS --------------------------------------------------------------------- */
+/* ---- torch=3: the light for Darwin --------------------------------------------------------------------- */
 
 static volatile uint32_t wanted;                /* the level asked for last, 0 to 1000 */
 static volatile uint32_t asked;                 /* how many times one was */
@@ -467,7 +467,7 @@ serve(void)
 {
 	uint32_t applied = 0, times = 0, cut = 0;
 	uint64_t since = 0, last_look = 0;
-	bool waiting_for_off = false;           /* cut at the limit: dark until iOS asks for 0 */
+	bool waiting_for_off = false;           /* cut at the limit: dark until Darwin asks for 0 */
 	int major = cdevsw_add(-1, &torch_cdevsw);
 
 	if (major < 0 || devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-torch") == NULL) {
@@ -493,9 +493,9 @@ serve(void)
 					times++;
 				}
 				if (want == 0) {
-					note("off (iOS asked for 0)");
+					note("off (Darwin asked for 0)");
 				} else {
-					note("ON (iOS asked for %u of 1000; the battery %d C)", wanted, hakios_battery_temperature());
+					note("ON (Darwin asked for %u of 1000; the battery %d C)", wanted, hakios_battery_temperature());
 				}
 				applied = want;
 				shown = want;
@@ -505,7 +505,7 @@ serve(void)
 		}
 		if (applied != 0 && now - since >= max_secs * 1000ull) {
 			cut++;
-			note("on for %u s, the limit: off until iOS asks again", max_secs);
+			note("on for %u s, the limit: off until Darwin asks again", max_secs);
 			waiting_for_off = true;
 			if (!dark()) {
 				break;
@@ -542,7 +542,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 	uint8_t id[2] = { 0, 0 }, revision = 0, alarm_status = 0;
 
 	say("torch: level %u: %s\n", level, level == 1 ? "a look, reading only" : level == 2 ? "the light on once" :
-	    "the light for iOS");
+	    "the light for Darwin");
 	if (!hakios_spmi_map(&arb)) {
 		say("torch: PMIC arbiter version %#x, not 5: nothing done\n", arb.version);
 		goto out;

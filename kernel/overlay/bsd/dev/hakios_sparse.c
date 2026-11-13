@@ -2,7 +2,7 @@
  * A block device over an image that holds only some of its blocks (/dev/rsp0).  Only with
  * boot-arg apfs_sparse=<offset>.
  *
- * This exists so that the real iOS root volume can be read on the phone.  The phone has
+ * This exists so that the real Darwin root volume can be read on the phone.  The phone has
  * no driver for its own storage, so a volume there has to live in a RAM disk, and that
  * volume is 5368 MB against the 4288 MB its firmware leaves usable.  But a given walk
  * reads only some of those blocks, so tools/apfs/mksparse.py writes out the ones it reads

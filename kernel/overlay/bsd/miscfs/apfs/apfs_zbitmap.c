@@ -1,5 +1,5 @@
 /*
- * LZBITMAP, Apple's method for the files of the iOS 16 cryptexes (decmpfs types 13 and 14:
+ * LZBITMAP, Apple's method for the files of the Darwin 16 cryptexes (decmpfs types 13 and 14:
  * the OS cryptex of the IPSW keeps its dyld shared cache this way), so that a cryptex image
  * can be mounted as Apple ships it.  The same file is built into the kernel and into
  * tools/apfs/apfs-tool.

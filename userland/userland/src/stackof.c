@@ -17,7 +17,7 @@
 
 #define FRAMES 40
 
-/* (not in the iOS SDK's headers; in libSystem all the same) */
+/* (not in the Darwin SDK's headers; in libSystem all the same) */
 extern kern_return_t mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t,
     mach_vm_size_t *);
 extern int proc_listallpids(void *buffer, int size);

@@ -36,8 +36,8 @@ needs its feature in the board's `features`.
 | `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **data** (`display-scan`, `display { }` intf1) |
 | `iokit/Kernel/MiniIOSurface.cpp` | IOSurface. | any |
 | `iokit/Kernel/MiniAppleKeyStore.cpp` | AppleKeyStore: a device without a passcode. | any |
-| `iokit/Kernel/MiniIONetworkStack.cpp`, `HakiosWLAN.cpp` | The registry entries by which iOS finds network interfaces. | any |
-| `iokit/Kernel/HakiosBattery.cpp` | The battery as iOS looks for it (IOPMPowerSource). Fed by `hakios_battery.c` or the audio DSP. | any |
+| `iokit/Kernel/MiniIONetworkStack.cpp`, `HakiosWLAN.cpp` | The registry entries by which Darwin finds network interfaces. | any |
+| `iokit/Kernel/HakiosBattery.cpp` | The battery as Darwin looks for it (IOPMPowerSource). Fed by `hakios_battery.c` or the audio DSP. | any |
 | `iokit/Kernel/HakiosGPU.cpp` | The GPU for user space: the interface of Linux's msm DRM driver, as Mesa's freedreno speaks it. | any Adreno the kernel has started |
 | `libkern/amfi/`, `bsd/kern/kern_minimac.c` | AMFI and Sandbox policies. | any |
 | `osfmk/minicrypto/` | corecrypto. | any |
@@ -71,13 +71,13 @@ needs its feature in the board's `features`.
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
 | `bsd/dev/hakios_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `adsp { }` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`adsp { }`); the DSP's own addresses are the 7-series' |
-| `bsd/dev/hakios_audio.c` | `/dev/hakios-audio`: what iOS plays, to whichever sink is there. | — | any |
+| `bsd/dev/hakios_audio.c` | `/dev/hakios-audio`: what Darwin plays, to whichever sink is there. | — | any |
 | `bsd/dev/hakios_sound.c`, `hakios_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part; the sound's pins, its TDM interface and the DSP's stream are data (`speaker { }`, `smmu { }`) |
 | `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`mic { }`), and so are the LPASS blocks and the SoundWire pins (`lpass { }`) |
 | `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`speaker { }`) |
 | `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`haptic { }`) |
 | `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`spmi { }`, `torch { }`) |
-| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part; each sensor's wiring and supplies, and which is iOS's back and front camera, are data (`camera { }`) |
+| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part; each sensor's wiring and supplies, and which is Darwin's back and front camera, are data (`camera { }`) |
 | `bsd/dev/hakios_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 
 ## Wi-Fi, network
@@ -89,7 +89,7 @@ Qualcomm EDL_PATCH_GETVER, and logs raw events plus product/patch/ROM/SoC versio
 Every poll has a bound. Failure powers down; loader return lowers BT_EN, stops UART commands, restores
 pins/RCG and removes only the GCC bits it added, then drops RF and rail enable votes in reverse order.
 Use dedicated Bluetooth VRM resources; the helper cannot recover another client's prior RPMh voltage vote.
-There is no firmware download, baud switch, iOS interface or claim of a working Bluetooth stack.
+There is no firmware download, baud switch, Darwin interface or claim of a working Bluetooth stack.
 
 Validated against host register models only, including both wrapper sampling rates and H4 event forms.
 SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects
@@ -103,15 +103,15 @@ comments; hardware behavior and the controller's actual version-event variant re
 | `bsd/dev/hakios_bt_uart.c` | Qualcomm Bluetooth power and H4 identification only. | `bluetooth-wcn-uart` / `bt=-1`, `bt=1` | data (`bluetooth { }`, `pins { }`, `clocks { }`, `rpmh { }`, `spmi { }`); shared SPMI v5/v6 |
 | `bsd/dev/hakios_wifi.c`, `hakios_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`wifi { }`) |
 | `bsd/dev/hakios_lx.c`, `hakios_qmi.c`, `hakios_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
-| `bsd/dev/hakios_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
-| `bsd/dev/hakios_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
+| `bsd/dev/hakios_apple80211.c` | Apple80211 requests of Darwin's Wi-Fi daemon, answered in the kernel. | — | any |
+| `bsd/dev/hakios_net.c` | `en0`, an Ethernet interface as far as Darwin can tell. | — | any |
 | `bsd/dev/hakios_virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
 
 ## Storage, file systems
 
 | File | What | Portability |
 | --- | --- | --- |
-| `bsd/miscfs/apfs/` | APFS: reads the iOS images in RAM; writes for the data volume. | any |
+| `bsd/miscfs/apfs/` | APFS: reads the Darwin images in RAM; writes for the data volume. | any |
 | `bsd/miscfs/ramfs/` | The RAM file system for `/private/var`. | any |
 | `bsd/dev/hakios_image.c` | A file of one of the RAM disks by path, for drivers that need firmware before there is a root. | any |
 | `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `platform { }` of the SoC file), the controller is taken to be Qualcomm's, as on the SM7325 and SM7350 |

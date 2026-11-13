@@ -1,7 +1,7 @@
 # Brightness and Auto-Brightness
 
 The panel's brightness and automatic brightness, for any device. Kernel: `kernel/overlay/bsd/dev/hakios_backlight.c`
-(`bsd/dev/hakios_backlight.c`, the arithmetic in `bsd/dev/hakios_backlight_core.h`). iOS side:
+(`bsd/dev/hakios_backlight.c`, the arithmetic in `bsd/dev/hakios_backlight_core.h`). Darwin side:
 `ios/userland/inject_brightness.c` (`libhakios-brightness.dylib`).
 
 ## How it fits together
@@ -21,8 +21,8 @@ Auto-Brightness switch ────────────┤  ("DisplayBrightn
      backend soft: the display driver darkens each pixel on its way to the panel (QEMU, unknown panels)
 ```
 
-The display mode follows iOS too. `libhakios-backlight.dylib` already completes SpringBoard's display-mode
-transitions; it now also looks up iOS's own name for each mode, using the function behind the watchdog's
+The display mode follows Darwin too. `libhakios-backlight.dylib` already completes SpringBoard's display-mode
+transitions; it now also looks up Darwin's own name for each mode, using the function behind the watchdog's
 "ActiveOn":
 - a mode with "Off" in its name makes the panel dark once the ramp is over;
 - a mode with "Dim" in its name dims it;
@@ -47,7 +47,7 @@ values, and the slider follows the light when brightness is automatic.
 | `bl_min=`, `bl_max=` | per board | Panel values for the lowest and highest brightness |
 | `bl_bytes=1/2`, `bl_le=1` | per board | Width of the 0x51 parameter; `bl_le=1` sends the least significant byte first |
 | `bl_floor=N` | 24 | `soft` backend: share of each pixel kept at level 0, out of 256 |
-| `bl_trace=1` | 0 | The library logs every CoreBrightness key it sees (to find the keys of a newer iOS) |
+| `bl_trace=1` | 0 | The library logs every CoreBrightness key it sees (to find the keys of a newer Darwin) |
 
 ## sysctl `hw.backlight`
 
@@ -55,7 +55,7 @@ values, and the slider follows the light when brightness is automatic.
 | --- | --- | --- |
 | `level` | any user, rw | Slider position, 0 to 1000. Written while brightness is automatic, it shifts the curve by the difference |
 | `auto` | any user, rw | Automatic brightness |
-| `power` | any user, rw | Display: 1 on, 0 off (panel dark), 2 dimmed (at most level 150). `inject_backlight.c` sets it from iOS's display modes |
+| `power` | any user, rw | Display: 1 on, 0 off (panel dark), 2 dimmed (at most level 150). `inject_backlight.c` sets it from Darwin's display modes |
 | `lux` | any user, rw | Ambient light in thousandths of a lux. Writing it feeds the "virtual" sensor |
 | `shown` | ro | Level on the panel now (it ramps towards the target) |
 | `raw` | ro | Last value sent to the panel (`dcs`) |

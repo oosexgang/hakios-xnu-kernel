@@ -128,7 +128,7 @@ diff --git a/src/freedreno/fdl/fd6_layout.c b/src/freedreno/fdl/fd6_layout.c
 -         if (layout->cpp > 4)
 +         /* (hakios) not for an imported image: its pitch is its maker's, and
 +          * the extra alignment is only gallium's for gmem stores into it.
-+          * iOS hands RGBA16F icons over at 64-byte pitches (71 pixels, 576
++          * Darwin hands RGBA16F icons over at 64-byte pitches (71 pixels, 576
 +          * bytes), which the sampler reads as they are. */
 +         if (layout->cpp > 4 && !explicit_layout)
              layout->pitchalign = fdl_cpp_shift(layout) - 2;

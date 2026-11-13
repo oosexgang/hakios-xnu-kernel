@@ -1,5 +1,5 @@
 /*
- * Qualcomm Bluetooth on a QUP GENI UART, H4 identification only. No firmware loader or iOS device.
+ * Qualcomm Bluetooth on a QUP GENI UART, H4 identification only. No firmware loader or Darwin device.
  * Wiring and resource names come from bluetooth { } and the SoC file. Register layouts and HCI
  * framing: Linux drivers/tty/serial/qcom_geni_serial.c, drivers/soc/qcom/qcom-geni-se.c,
  * drivers/pinctrl/qcom/pinctrl-spmi-gpio.c and drivers/bluetooth/btqca.{c,h}.

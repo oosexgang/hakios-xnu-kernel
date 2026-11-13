@@ -26,17 +26,17 @@
  *            up, started once the clock runs, faded in to sound_below eighths of a dB under
  *            Android's own level (default 160: 20 dB under, the least it may be is 0), faded
  *            out and powered down at the end. Audible.
- *   sound=4  what iOS plays (/dev/hakios-audio, hakios_audio.c), until the run ends: the port
- *            and the stream as above, kept running (silence when iOS writes nothing); the
+ *   sound=4  what Darwin plays (/dev/hakios-audio, hakios_audio.c), until the run ends: the port
+ *            and the stream as above, kept running (silence when Darwin writes nothing); the
  *            amplifiers set up once and powered down, started and faded in (the driver's quick
  *            fade) whenever a write is not silence, stopped after three seconds of silence; their
  *            level is what is set on the plug-in's volume control (ioctl HAKIOS_AUDIO_SET_VOLUME):
- *            so far under sound_below, which stays the loudest, and at 0 they stay off. (iOS sets
+ *            so far under sound_below, which stays the loudest, and at 0 they stay off. (Darwin sets
  *            that control only once, to the top, and applies its volume to the samples itself --
  *            see userland/src/audio_plugin.c --; at its volume 0 it writes silence, and the
  *            amplifiers stay off for that too.) On their way the samples go through the speakers'
  *            guard (hakios_guard.c), in place of the DSP's speaker protection that Android has:
- *            sound_gain eighths of a dB of gain (default and most 96, 12 dB: iOS's own processing
+ *            sound_gain eighths of a dB of gain (default and most 96, 12 dB: Darwin's own processing
  *            keeps its top that far under full scale), a high-pass filter, three averages of the
  *            power at the speakers and a peak limiter. sound_guard_as=N, for a test: the guard
  *            reckons the amplifiers N eighths of a dB under Android's level (louder than they are)
@@ -1011,7 +1011,7 @@ play(uint32_t ms, bool amplifiers)
 	return ok;
 }
 
-/* ---- sound=4: what iOS plays ------------------------------------------------------------------------------ */
+/* ---- sound=4: what Darwin plays ------------------------------------------------------------------------------ */
 
 /*
  * /dev/hakios-audio's writer (the audio server's real-time thread, hakios_audio.c) puts frames
@@ -1157,7 +1157,7 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 		sleep_ms(2);
 	}
 	say("sound: the feeder stops: %u periods written (%u could not be sent), %u given back (%u with an error), %u underflows; "
-	    "from iOS %llu frames came, %llu went to the DSP, %llu of silence filled in\n", sent, failed, written_done, write_errors,
+	    "from Darwin %llu frames came, %llu went to the DSP, %llu of silence filled in\n", sent, failed, written_done, write_errors,
 	    underflows, ios_frames, fed_frames, silent_frames);
 	feeder_runs = false;
 	thread_terminate(current_thread());
@@ -1174,7 +1174,7 @@ guard_level(uint32_t level_below)
  * The amplifiers are off. The guard goes on at their level all the same: what it lets through now reaches them
  * 160 ms later, behind the periods queued at the DSP, and if that is sound, they will have been started by then
  * (70 ms after it comes). While they are off nothing but silence comes, and the averages fall as a speaker cools.
- * Only when nothing can be heard at all -- iOS's volume at 0, the amplifiers given up on -- is the guard told so.
+ * Only when nothing can be heard at all -- Darwin's volume at 0, the amplifiers given up on -- is the guard told so.
  */
 static void
 guard_off(bool unheard)
@@ -1186,8 +1186,8 @@ guard_off(bool unheard)
 }
 
 /*
- * The amplifiers on while there is sound, at the volume iOS has set (hakios_audio_volume(): how
- * far under the loudest, sound_below under Android's level), and off while iOS's volume is 0;
+ * The amplifiers on while there is sound, at the volume Darwin has set (hakios_audio_volume(): how
+ * far under the loudest, sound_below under Android's level), and off while Darwin's volume is 0;
  * their status looked at every 200 ms while they are on. On the sound's thread.
  */
 static void
@@ -1209,7 +1209,7 @@ watch(void)
 			extra = extra_now;
 			muted = muted_now;
 			changes++;
-			say("sound: iOS sets the volume: %s%u.%03u dB under the loudest, which is %u.%03u dB under Android's level%s\n",
+			say("sound: Darwin sets the volume: %s%u.%03u dB under the loudest, which is %u.%03u dB under Android's level%s\n",
 			    muted ? "muted (0), " : "", extra / 8, extra % 8 * 125, below / 8, below % 8 * 125,
 			    on ? (muted ? ": the amplifiers are stopped" : ": the amplifiers follow") : "");
 			if (muted) {
@@ -1227,11 +1227,11 @@ watch(void)
 			}
 		}
 		if (!on && !given_up && !muted && sounded != 0 && now - sounded < 100000) {
-			say_when("iOS plays: the amplifiers are started");
+			say_when("Darwin plays: the amplifiers are started");
 			starts++;
 			ios_peak = 0;
 			if (!hakios_speaker_start() || !hakios_speaker_volume(below + extra, 1)) {
-				say("sound: THE AMPLIFIERS DID NOT START; iOS's sound goes on to the DSP, unheard\n");
+				say("sound: THE AMPLIFIERS DID NOT START; Darwin's sound goes on to the DSP, unheard\n");
 				guard_off(true);
 				given_up = true;
 			} else {
@@ -1247,7 +1247,7 @@ watch(void)
 			}
 		} else if (on && now - sounded > QUIET_BEFORE_OFF_US) {
 			say_when("three seconds of silence: the amplifiers are stopped");
-			say("sound: what iOS wrote while they were on peaked at %u%% of full scale (%u)\n", ios_peak * 100 / 32768,
+			say("sound: what Darwin wrote while they were on peaked at %u%% of full scale (%u)\n", ios_peak * 100 / 32768,
 			    ios_peak);
 			guard_off(false);
 			hakios_speaker_stop();
@@ -1275,7 +1275,7 @@ watch(void)
 		sleep_ms(5);
 	}
 	guard_off(true);
-	say("sound: the watcher stops; the amplifiers were started %u times, iOS set the volume %u times%s\n", starts, changes,
+	say("sound: the watcher stops; the amplifiers were started %u times, Darwin set the volume %u times%s\n", starts, changes,
 	    given_up ? ", and the amplifiers were then given up on" : "");
 	watcher_runs = false;
 }
@@ -1323,7 +1323,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		thread_terminate(current_thread());
 	}
 	if (level == 4) {
-		say("sound: level 4: what iOS plays, through the port, a stream and the amplifiers, until the run ends\n");
+		say("sound: level 4: what Darwin plays, through the port, a stream and the amplifiers, until the run ends\n");
 	} else {
 		say("sound: level %u: %s, for %u s\n", level, level == 1 ? "the speakers' TDM port" : level == 2 ?
 		    "the port and a stream with a test tone, the amplifiers off" :
@@ -1366,7 +1366,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	if (level == 4) {
 		thread_t feeder;
 
-		announce("the amplifiers, set up from Android's Music profile, powered down until iOS plays");
+		announce("the amplifiers, set up from Android's Music profile, powered down until Darwin plays");
 		if (!hakios_speaker_prepare(acf, acf_size)) {
 			goto out;
 		}

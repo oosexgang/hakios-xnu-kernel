@@ -1,6 +1,6 @@
 /*
  * A look at a mounted volume from user space, on a system that has no ls of its own (the
- * iOS root has df and ps in /bin and nothing else): what ls -l and cat would show, how
+ * Darwin root has df and ps in /bin and nothing else): what ls -l and cat would show, how
  * the volume is mounted, and a hash of a file read both ways.
  *
  * usage: vol_ls fs PATH              the file system PATH is on: type, device, mount point, flags

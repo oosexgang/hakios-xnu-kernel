@@ -95,7 +95,7 @@ block_start(void)
 		block_bios[block_shared.parts++] = units[u].bio;
 	}
 	/*
-	 * The iOS system image installed as an Android DSU image, as one more partition: "dsu", its
+	 * The Darwin system image installed as an Android DSU image, as one more partition: "dsu", its
 	 * blocks those of the image, wherever on userdata its extents put them (block_poll). Read only.
 	 */
 	{

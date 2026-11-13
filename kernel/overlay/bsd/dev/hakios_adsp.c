@@ -2316,7 +2316,7 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
  * good). Only gets are sent from here: nothing is set, no limit, no current, no notice asked for.
  * With adsp=1 (battmgr=0: not) it is asked every BATTMGR_SECONDS while the DSP runs, and what it says
  * goes to bsd/dev/hakios_battery.c (hakios_battery_report()), and from there to the power source
- * that iOS reads (iokit/Kernel/HakiosBattery.cpp). battmgr=2: every property once, for the log.
+ * that Darwin reads (iokit/Kernel/HakiosBattery.cpp). battmgr=2: every property once, for the log.
  * Units: capacity in hundredths of a percent, voltage in uV, current in uA (more than 0 while the
  * battery takes charge), the temperature in hundredths of a degree, charges in uAh.
  * The properties' numbers are this phone's firmware's, read with battmgr=2 and checked against what

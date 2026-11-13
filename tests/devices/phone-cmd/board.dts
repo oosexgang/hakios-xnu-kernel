@@ -84,14 +84,14 @@
 		early-pool-mb = <80>;           // ath11k's pool, in one piece
 	};
 
-	// What iOS's interface is told of the screen: this phone's front camera is a hole at the top left.
+	// What Darwin's interface is told of the screen: this phone's front camera is a hole at the top left.
 	screen {
 		statusbar-leading-shift = <24>; // points: the status bar's clock and what follows it move right, past the camera
 	};
 
 	// How the boot tool starts this phone (ios/tools/boot26.py --board NAME): what stock fastboot must say it
 	// is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
-	// CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their iOS 27 ports
+	// CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their Darwin 27 ports
 	// land (docs/ios26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
 	boot {
 		fastboot-product = "phone-cmd";

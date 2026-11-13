@@ -1,5 +1,5 @@
 /*
- * mg_test: what MobileGestalt says about this device (the answers iOS builds its idea of the
+ * mg_test: what MobileGestalt says about this device (the answers Darwin builds its idea of the
  * hardware from).   usage: mg_test [KEY...]
  * A key may also be one of the obfuscated names programs ask by; "MGGetProductType" gives the number
  * MGGetProductType() returns (what programs tell the models apart by).

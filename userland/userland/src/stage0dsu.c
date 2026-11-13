@@ -3,7 +3,7 @@
  * system image in memory): the first program the kernel runs, for a root read from the phone's
  * storage as it is needed.
  *
- * The iOS system volume is the Android DSU image on the phone's storage, which
+ * The Darwin system volume is the Android DSU image on the phone's storage, which
  * the loader serves block by block as the partition "dsu" (ufs=2; the kernel's /dev/ufs_dsu,
  * bsd/dev/hakios_ufs.c): only what is read comes off the storage, so the system can be as big as
  * the DSU slot (15 GiB) instead of what fits in the kernel's memory window. This program mounts that

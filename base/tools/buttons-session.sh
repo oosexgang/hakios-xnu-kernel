@@ -1,6 +1,6 @@
 #!/bin/bash
-# A session for somebody with a hand on the phone's keys: one run of iOS with the buttons' driver
-# on (boot-arg buttons=1), in which everything the driver sees and everything iOS makes of it is
+# A session for somebody with a hand on the phone's keys: one run of Darwin with the buttons' driver
+# on (boot-arg buttons=1), in which everything the driver sees and everything Darwin makes of it is
 # collected, and a summary at the end.
 #
 #   tools/buttons-session.sh [SECONDS]        (default 120)
@@ -57,7 +57,7 @@ echo
 echo "=== what the driver saw (the kernel's log, $out/run.log) ==="
 grep -a -E '^buttons: (power-on block|volume up.s pin|step 5|.*(PRESSED|released at)|so far|reading|a key reads|more than half)' "$out/run.log" | cut -c1-230
 echo
-echo "=== what iOS's event system made of it (backboardd) ==="
+echo "=== what Darwin's event system made of it (backboardd) ==="
 grep -a -E '\[Button\] [A-Za-z]+ page|Set Blanked' "$out/run.log" | sed -E 's/^[0-9-]+ //; s/\+0[0-9]+ backboardd\[[0-9:]+\]//' | cut -c1-120
 echo
 for key in power "volume up" "volume down"; do

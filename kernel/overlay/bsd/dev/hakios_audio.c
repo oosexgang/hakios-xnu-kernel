@@ -1,5 +1,5 @@
 /*
- * /dev/hakios-audio: the sound that iOS plays (see sys/hakios_audio.h).
+ * /dev/hakios-audio: the sound that Darwin plays (see sys/hakios_audio.h).
  *
  * What is written goes two ways:
  *
@@ -253,7 +253,7 @@ audio_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	return error;
 }
 
-/* the speakers' volume, as iOS sets it (sys/hakios_audio.h): kept for the sink's driver to look at */
+/* the speakers' volume, as Darwin sets it (sys/hakios_audio.h): kept for the sink's driver to look at */
 static uint32_t volume_below, volume_generation;
 static bool volume_muted;
 

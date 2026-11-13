@@ -36,7 +36,7 @@ body:
         - "4. First boot: nothing but the display"
         - "5. Turning hardware on, one piece at a time"
         - "6. Parts that need a driver"
-        - "7. iOS user space"
+        - "7. Darwin user space"
         - "8. Sent back"
     validations:
       required: true

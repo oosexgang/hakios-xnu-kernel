@@ -603,7 +603,7 @@ rwd_texture_for_surface(struct rwa_device *mesa_device, void *iosurface, unsigne
 		return NULL;
 	}
 	/*
-	 * iOS 26's CoreAnimation makes the display's surfaces in the lossless formats when the
+	 * Darwin 26's CoreAnimation makes the display's surfaces in the lossless formats when the
 	 * device is a GPU at all: '&BGA' (kCVPixelFormatType_Lossless_32BGRA) for a BGRA8 layer,
 	 * '&RhA' for RGBA16Float, '&w3r' for the wide-gamut 10-bit one. The '&' is a request to
 	 * Apple's GPU to keep the pixels compressed; the surfaces this kernel makes are plain

@@ -1,5 +1,5 @@
 /*
- * Stand-ins for Apple's closed kernel extensions: just enough of each for the stock iOS
+ * Stand-ins for Apple's closed kernel extensions: just enough of each for the stock Darwin
  * user space to work on a machine without Apple hardware. The platform expert
  * (GenericARMPE) starts them once the registry is up.
  *

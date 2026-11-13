@@ -342,7 +342,7 @@ format_named(const char *name)
 		{ "rgba32sint", MTLPixelFormatRGBA32Sint },
 		{ "r32float", MTLPixelFormatR32Float },
 		{ "r32uint", MTLPixelFormatR32Uint },
-		/* the depth attachment formats iOS has, for --draw-depth. Depth24Unorm_Stencil8
+		/* the depth attachment formats Darwin has, for --draw-depth. Depth24Unorm_Stencil8
 		 * is absent because Metal's own header marks it API_UNAVAILABLE(ios) and the
 		 * device answers NO to -isDepth24Stencil8PixelFormatSupported. */
 		{ "depth16unorm", MTLPixelFormatDepth16Unorm },
@@ -6598,7 +6598,7 @@ tm_slots(id<MTLCommandQueue> queue)
  *   - THE PRESENT IS PAID ONCE A FRAME, and it is not Metal's: this port shows a frame by
  *     reading the attachment back and handing it to the kernel's row copy. A game that never
  *     shows anything saves it.
- *   - NOTHING ELSE RUNS. These were measured with the panel to ourselves; with iOS's own
+ *   - NOTHING ELSE RUNS. These were measured with the panel to ourselves; with Darwin's own
  *     daemons alive the GPU and the one core doing all this are shared.
  *   - THE COMPILES ARE NOT IN THE FRAME. They are counted separately, as what a game pays
  *     before its first frame and again whenever it meets a shader it has not met.
@@ -6770,7 +6770,7 @@ time_path(id<MTLDevice> dev, const char *metallib, unsigned repeats)
  * WHAT EVERY CLASS OF THE DRIVER OWES, COUNTED ON EVERY RUN.
  *
  * 10.17 counted this for the device object and found nothing owed; the objects below it
- * were never counted, and the first boot in which iOS's own daemons could reach them
+ * were never counted, and the first boot in which Darwin's own daemons could reach them
  * (logs/130132-run.log, metal=1 with launchd alive) answered why that mattered: 88 aborts
  * in a hundred seconds, all of them -[HakiosMetalCommandQueue setGPUPriority:] and
  * -setCompletionQueue:, each followed by launchd restarting the daemon.
@@ -7306,7 +7306,7 @@ main(int argc, char **argv)
 	/*
 	 * --sweep: ask Metal for the system's device and count what every class of the driver
 	 * owes, then stop. Nothing is dlopen'd and MTLAddDevice is not called, so this is the
-	 * road iOS's own daemons take -- which makes it the one form of this program that can
+	 * road Darwin's own daemons take -- which makes it the one form of this program that can
 	 * be added to a boot with metal=1 and launchd alive (rc.jobs.metalprops) to put the
 	 * numbers in that log beside whatever the daemons then do.
 	 */
@@ -7622,7 +7622,7 @@ have_device:
 	}
 
 	/* (the same count for every other class of the driver, sweep_every_class(), is --sweep's
-	 * alone now: on iOS 26 it ends in a pointer-authentication kill, reason namespace 28) */
+	 * alone now: on Darwin 26 it ends in a pointer-authentication kill, reason namespace 28) */
 
 	/* The first resource. A buffer here is a GEM allocation of the kernel's own gpu
 	 * driver, so this checks the whole path: the kernel gave memory, the GPU has an

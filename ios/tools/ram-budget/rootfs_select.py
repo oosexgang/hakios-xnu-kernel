@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Apply darwin-renoir/ios165/select-system.py's choice (wanted_file, imported unchanged) to the
-extracted iOS 26 root filesystem and cryptexes; size the result raw and as mkapfs -z stores it."""
+extracted Darwin 26 root filesystem and cryptexes; size the result raw and as mkapfs -z stores it."""
 import os, sys, zlib, importlib.util, collections, pickle
 from multiprocessing import Pool
 

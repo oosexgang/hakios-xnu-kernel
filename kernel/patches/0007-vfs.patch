@@ -79,7 +79,7 @@ diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
 -	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
 +	/*
 +	 * check entitlement -- hakios: or process 1, the port's own init, unsigned, which binds
-+	 * its choice of launchd jobs and the like onto the read-only iOS root volume before it
++	 * its choice of launchd jobs and the like onto the read-only Darwin root volume before it
 +	 * hands over to launchd (userland/src/init.c, root_apfs=)
 +	 */
 +	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT) && proc_getpid(current_proc()) != 1) {
@@ -95,7 +95,7 @@ diff --git a/bsd/miscfs/devfs/devfs_vfsops.c b/bsd/miscfs/devfs/devfs_vfsops.c
  	}
 +	/*
 +	 * hakios: readable by everyone. Every launchd job here has the console as its standard output
-+	 * and error, and iOS 26's launchd opens them read-write after taking on the job's user: with
++	 * and error, and Darwin 26's launchd opens them read-write after taking on the job's user: with
 +	 * 0622 every daemon that is not root (logd, distnoted, ...) failed to spawn with EACCES.
 +	 */
  	devfs_make_node(makedev(0, 0), DEVFS_CHAR,
@@ -181,7 +181,7 @@ diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
  
 +/*
 + * hakios: with ATTR_CMN_FULLPATH, which this layer builds for any filesystem (attrlist_build_path).
-+ * iOS 27's CoreServicesInternal reads the root volume's ATTR_VOL_ATTRIBUTES once and drops from
++ * Darwin 27's CoreServicesInternal reads the root volume's ATTR_VOL_ATTRIBUTES once and drops from
 + * every URL resource property's attribute group what the volume does not list as valid: without
 + * it the canonical path (NSURLCanonicalPathKey) was never asked for, LaunchServices could not make
 + * a node for any bundle and registered no application, and SpringBoard died of "Got nil for

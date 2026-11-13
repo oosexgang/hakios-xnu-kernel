@@ -1,5 +1,5 @@
 /*
- * iOS's Wi-Fi requests (kernel/overlay/bsd/dev/hakios_apple80211.c), run as a host program: SIOCGA80211 and
+ * Darwin's Wi-Fi requests (kernel/overlay/bsd/dev/hakios_apple80211.c), run as a host program: SIOCGA80211 and
  * SIOCSA80211 as wifid sends them, answered from the station layer -- here a model of it that answers as a
  * scenario says, and whose records come from a radio's driver built outside this tree, so may say more
  * than there is room for. What goes back into the caller's buffer never passes the length it gave, and
@@ -176,7 +176,7 @@ scan_results(void)
 		CHECK(result.rssi == -55 && result.bssid[5] == 12, "how strongly and from where");
 	}
 	CHECK(request(false, 11, &result, sizeof(result), NULL) == EIO, "that was all");
-	/* a scan that is over starts the list again, and iOS is told */
+	/* a scan that is over starts the list again, and Darwin is told */
 	hakios_apple80211_event(HAKIOS_STA_SCAN_DONE, 0);
 	CHECK(fake_events == 1 && fake_last_event.kev_class == KEV_IEEE80211_CLASS && fake_last_event.kev_subclass == 1 &&
 	    fake_last_event.event_code == EVENT_SCAN_DONE && fake_last_event.dv[0].data_length == 16,

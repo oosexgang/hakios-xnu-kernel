@@ -126,7 +126,7 @@ comes back through the loader. Look for, in this order:
 | --- | --- |
 | `board: mido (Maker Model, sm7325): no features listed` | The kernel found its row. If it says `not one of the N this kernel knows`, the loader passed another name or the kernel was built without the phone's package present. |
 | `MiniIOMobileFramebuffer: display … on a panel of …` | The UEFI's framebuffer is the display. |
-| launchd, then SpringBoard | iOS is up, drawn in software. |
+| launchd, then SpringBoard | Darwin is up, drawn in software. |
 
 Start with one core (`cpus=1`), then all of them. A hang at the second core is PSCI: check `psci` and
 `core-shift` in the SoC file.
@@ -146,7 +146,7 @@ what each feature needs written down before it can be listed, key by key, in [fe
 | Temperature | `thermal { }` in both files | `thermal=1` | `thermal: hottest sensor NN.N C` with plausible numbers. Compare with Android's. [thermal.md](thermal.md) |
 | CPU frequency | `cpufreq-epss`, `cpufreq { }` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
 | Memory bandwidth | `ddr-rpmh`, `rpmh { }` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
-| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `gpu { }`, `adreno { }` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
+| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `gpu { }`, `adreno { }` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: Darwin draws in software without it. [metal-glass.md](metal-glass.md) |
 | Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
 | Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
@@ -178,7 +178,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   `hakios_board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
   and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
   two of them, the PMICs, RPMh. `hakios_fts.c` beside `hakios_goodix.c` shows two parts of a kind:
-  two touch controllers, one interface to iOS (`/dev/hakios-touch`, `bsd/sys/hakios_input.h`).
+  two touch controllers, one interface to Darwin (`/dev/hakios-touch`, `bsd/sys/hakios_input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.
@@ -186,17 +186,17 @@ Touch first: without it the phone is a picture.
 A driver asked for on a board that does not list its feature prints which line is missing and does
 nothing. That is deliberate: these drivers write to pins and PMIC registers.
 
-## 7. iOS user space
+## 7. Darwin user space
 
 The user-space side is the same for every phone: the libraries in `ios/userland/` and the images
 built by `ios/tools/`. What depends on the device is small:
 
-- which iPhone iOS is told it is (`loader/identity.h`), and through that the screen layout;
+- which iPhone Darwin is told it is (`loader/identity.h`), and through that the screen layout;
 - the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
   of `screen { }` in the board file, in points (`ios/userland/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `boot { }` section.
 
-How the images are built and what iOS needed on the way to the home screen: [ios26-boot.md](ios26-boot.md).
+How the images are built and what Darwin needed on the way to the home screen: [ios26-boot.md](ios26-boot.md).
 
 ## 8. Send it back
 
@@ -253,8 +253,8 @@ Stated plainly, so nobody finds out the hard way:
   amplifiers that is all: a phone with one of those parts wired differently needs its section of the
   board file filled in and no change to the driver. [features.md](features.md) lists what each
   feature needs.
-- **iOS's camera** (`userland/userland/src/camera_device.c`, of the iOS 16.5 generation) presents two
-  cameras the way an iPhone X has them (optics and formats, which iOS's capture stack matches its
+- **Darwin's camera** (`userland/userland/src/camera_device.c`, of the Darwin 16.5 generation) presents two
+  cameras the way an iPhone X has them (optics and formats, which Darwin's capture stack matches its
   presets to). Which of the phone's sensors is the back and which the front camera, and whether a
   sensor's pictures are upside down, is the board's (`camera { }` `ios-sensor`, `ios-front`, a sensor's
   `upside-down`); a sensor's colour tuning is found by its chip (`fw/camera-CHIP.isp`, made by

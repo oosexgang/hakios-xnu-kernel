@@ -71,7 +71,7 @@ hakios_drivers_init(void)
 	hakios_adsp_init();            /* boot-arg adsp=1: the audio DSP; sound, the microphones and the battery's details follow it */
 
 	/* sound, and the parts that are looked at or switched by hand */
-	hakios_audio_init();           /* /dev/hakios-audio: what iOS plays, to a sink */
+	hakios_audio_init();           /* /dev/hakios-audio: what Darwin plays, to a sink */
 	hakios_virtio_sound_init();    /* boot-arg virtio_sound=1: QEMU's sound device */
 	hakios_speaker_init();         /* boot-arg speaker_probe=N: a look at the speaker amplifiers */
 	hakios_haptic_init();          /* boot-arg haptic=N: the vibration motor */

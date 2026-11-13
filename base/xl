@@ -11,7 +11,7 @@
 #   xl recording [F]    fetch the screen recording the last run made (rec_secs=N among XL_CMDLINE) and
 #                       make a video of it (default logs/recording.mp4)
 #   xl sound [F]        fetch the sound the last run recorded (rec_sound=N among XL_CMDLINE: the first N
-#                       seconds of what iOS played) and make a WAV file of it (default logs/sound.wav)
+#                       seconds of what Darwin played) and make a WAV file of it (default logs/sound.wav)
 #   xl camera [P]       fetch the frames the last run's camera left (cam=3 and up among XL_CMDLINE) and make
 #                       pictures of them (P-0.png, ...; default prefix logs/camera)
 #   xl selftest         exercise only the kernel->loader return path

@@ -5,7 +5,7 @@
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components.toml pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
-#   - the copies of the kernel's device interfaces that the iOS side compiles against
+#   - the copies of the kernel's device interfaces that the Darwin side compiles against
 #     (userland/userland/src/hakios_*.h of kernel/overlay/bsd/sys/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
 set -uo pipefail

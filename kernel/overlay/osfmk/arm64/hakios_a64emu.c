@@ -2,7 +2,7 @@
  * The instructions of arm64e user code that a Cortex-A78/A55 (ARMv8.2) does not have, done
  * here when one of them traps (undefined instruction from EL0).
  *
- * iOS 26 user space is arm64e only. ios/tools/pacstrip rewrites the code sections of the dyld
+ * Darwin 26 user space is arm64e only. ios/tools/pacstrip rewrites the code sections of the dyld
  * shared cache and of the programs we ship so that pointer authentication is the identity: a
  * signature is never made and never checked (RETAB -> RET, BLRAA -> BLR, PACIA/AUTIA -> NOP,
  * PACGA -> EOR, ...). What it could not rewrite, or does not know about (code outside the sections

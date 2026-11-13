@@ -830,7 +830,7 @@ This is the biggest commitment of the project, so both sides in full.
   stock `llvm-dis` 22.1.8 without a failure; day one would be spent on translation, not parsing.
 - It comes with passes. If a shader ever needs SROA, inlining or `mem2reg` before translation, LLVM
   has them, and a hand-written reader means hand-written equivalents (or NIR's, after translation).
-- Future AIR versions (iOS 17, 18…) come from newer Apple LLVMs; LLVM's reader follows them for
+- Future AIR versions (Darwin 17, 18…) come from newer Apple LLVMs; LLVM's reader follows them for
   free, ours must be extended.
 
 **Against it, and for our own reader:**
@@ -840,8 +840,8 @@ This is the biggest commitment of the project, so both sides in full.
   touches Metal. On this port that is every app: CoreAnimation, CoreImage and UIKit all link
   Metal. The port's Mesa is built with `-Dllvm=disabled` (`tools/mk-mesa.sh`) for exactly this
   reason today.
-- **It would have to be cross-built for iOS** with the port's toolchain (the `xnu-clang` wrapper,
-  the iOS SDK, ld64). That is a multi-hour build and a second large dependency to keep building
+- **It would have to be cross-built for Darwin** with the port's toolchain (the `xnu-clang` wrapper,
+  the Darwin SDK, ld64). That is a multi-hour build and a second large dependency to keep building
   — the project's experience with V8 on musl says what such a build costs to keep alive.
 - **Apple already has an LLVM in the shared cache** (MTLCompiler, AGXCompilerCore — 3.6 MB). Ours
   would be a second one in the same process, of a different version. Two-level namespaces keep the
@@ -887,7 +887,7 @@ metadata, fast-math flags, alignments, calling conventions, linkage — comes ba
 
 What would reverse this: if a later AIR (a newer `.metallib` corpus) turned out to need large
 parts of LLVM's auto-upgrade machinery, or if translation turned out to need LLVM's own passes
-before NIR. Neither is true of iOS 16.5.
+before NIR. Neither is true of Darwin 16.5.
 
 ## 3. What a translation unit is
 
@@ -1611,7 +1611,7 @@ guessing at them later would be the same mistake again.
 `air.convert.u.i1.f.f32` is in the vocabulary only as `convert`, and the two readings — round
 toward zero and keep a bit, or compare with zero — give different answers for every `|x| < 1`.
 What settles it is Apple's emitted code rather than Apple's strings: all four calls in the device
-image (two in QuartzCore's `default.metallib`, two in AppleCVAPhoto's `cvadepth-iOS.metallib`)
+image (two in QuartzCore's `default.metallib`, two in AppleCVAPhoto's `cvadepth-Darwin.metallib`)
 feed a `br i1` directly, which is an `if (x)` on a float, and under the truncating reading that
 branch is a branch on poison by LLVM's own rule for `fptoui float to i1`. So it is `x != 0`, C's
 rule, which MSL inherits — the lowering had it right and this check's own reference had it wrong
@@ -2045,7 +2045,7 @@ Three references, each independent of the translator:
      `x != 0`, and MSL inherits it through C++11, so the specification outside both Apple and Mesa
      that item 4 rests on says what the answer is. Apple's own compiler settles it without even
      that: all four calls in the device image — two in QuartzCore's `default.metallib`, two in
-     AppleCVAPhoto's `cvadepth-iOS.metallib` — put the result straight into a branch,
+     AppleCVAPhoto's `cvadepth-Darwin.metallib` — put the result straight into a branch,
 
      ```
      %590 = fpext half %336 to float
@@ -2410,7 +2410,7 @@ Three references, each independent of the translator:
 
    The other 98 of the 100 modules carried did not run, because the job list ended with
    `/bin/sh /hakios/share/airops/run.sh` and the answer was
-   **`/bin/sh: No such file or directory`, status 127. iOS 16.5's own root has no shell at all**
+   **`/bin/sh: No such file or directory`, status 127. Darwin 16.5's own root has no shell at all**
    — `/bin` holds `df` and `ps`, and nothing else. The `/var/jb/bin/sh` that `rc.jobs.jb` and
    `rc.jobs.sileo` run belongs to the package manager's prefix, which only a `JB=1` image carries.
    This was asserted, not checked: a `grep` for `bin/sh` matched six `rc.jobs*` files and the
@@ -2437,7 +2437,7 @@ Three references, each independent of the translator:
 
    The second is a property of the loader's log and will catch anything verbose:
    **the log keeps the first 256 KB and the last 1 MB and drops the middle**, saying so in one
-   line. With `XL_SECS=120` and `REST=1`, iOS wrote more than a megabyte of `os_log` after the
+   line. With `XL_SECS=120` and `REST=1`, Darwin wrote more than a megabyte of `os_log` after the
    suite had finished, so the suite's own output was in the dropped middle — 27 modules survived,
    at the front. `XL_FOLLOW`'s intermediate log does not help, because the drop has already
    happened by the time it is fetched, and a filter removes lines that are already gone. Two levers
@@ -2451,10 +2451,10 @@ Three references, each independent of the translator:
 
    **How much room is left is worth knowing before the suite grows.** In the run that worked, at
    `XL_SECS=30`, `air_run`'s own output was 93 459 bytes for 225 modules — 415 bytes each — and the
-   other 1 092 137 bytes, 92% of the log, was iOS booting *with* `QUIET=1` already on. So the
+   other 1 092 137 bytes, 92% of the log, was Darwin booting *with* `QUIET=1` already on. So the
    headroom is about 280 KB, or roughly 650 more modules if they cost nothing in time, and fewer
    because each one adds 22 ms of further boot noise. `--cases 8` should still fit; past that it
-   will not, and the answer then is not a bigger cap but to stop booting iOS for a measurement at
+   will not, and the answer then is not a bigger cap but to stop booting Darwin for a measurement at
    all: `init` runs programs itself, before `launchd`, where the log is nearly empty and nothing
    can push the output out of it (`RC=<file>`, as `rc.ios` does it). The GPU is up by then, since
    the kernel brings it up, and a question about what the hardware does to a number does not need
@@ -2656,7 +2656,7 @@ out of it, and it runs from `tools/air/check.sh` (section 6). Two corpora:
 
 - **the device image** — the five `.metallib` files the port installs (`ios165/rootfs` +
   `ios165/cryptex`): 456 modules. This is the corpus the milestones are stated against.
-- **the full IPSW** — all 134 MTLB libraries of the iOS 16.5 root filesystem and cryptexes,
+- **the full IPSW** — all 134 MTLB libraries of the Darwin 16.5 root filesystem and cryptexes,
   16 841 functions, extracted from `rootfs.dmg` with 7-Zip. Reported alongside, because the
   device image is a selection and the system's own shaders are this set.
 
@@ -2912,7 +2912,7 @@ the Mesa already on the phone rather than being built from nothing:
   `osmesa_create_gpu_screen()` in `tools/mesa/freedreno-darwin.patch` opens the kernel's `msm`
   driver through `tools/mesa/hakios-drm` and calls `fd_drm_screen_create_renderonly()`. It also
   already has `osmesa_surface_resource()`, which wraps an IOSurface as a `pipe_resource`. So the
-  Gallium layer is reachable inside the library CoreAnimation already draws iOS through.
+  Gallium layer is reachable inside the library CoreAnimation already draws Darwin through.
 - **freedreno takes NIR natively** (`PIPE_SHADER_CAP_SUPPORTED_IRS` includes
   `PIPE_SHADER_IR_NIR`; `ir3_gallium.c` handles `cso->ir_type == PIPE_SHADER_IR_NIR`), so nothing
   has to go through GLSL on the way.
@@ -2933,7 +2933,7 @@ got (`air_run: clearFragment01 on softpipe` here), and that line must be read be
 below it is believed. `AIR_RUN_SOFTWARE=1` forces software even on the phone, for comparing the
 two on the same device.
 
-**It runs on iOS, and the numbers are exact there.** In QEMU (`CMDLINE="cpus=4
+**It runs on Darwin, and the numbers are exact there.** In QEMU (`CMDLINE="cpus=4
 RC_JOBS=rc.jobs.air" qemu/run-ios.sh 420`, a clean boot: 72 `[ ok ]` lines, SpringBoard up),
 `air_run` translated `clearFragment01`, found no `msm` device, fell back to softpipe as designed,
 drew the quad and read back
@@ -2949,7 +2949,7 @@ ir3 on the Adreno — and that needs the phone.
 
 **On the phone, with the root on the flash, it runs and is exact — and it ran on softpipe.** The
 first run of it (19 October, `logs/232842-run.log`) booted the flash-root recipe properly (both
-`[ ok ] mount the iOS volume read only` and `[ ok ] the iOS volume is the root, the RAM part of
+`[ ok ] mount the Darwin volume read only` and `[ ok ] the Darwin volume is the root, the RAM part of
 the boot on /private/preboot`), translated `clearFragment01` and read back the same four exact
 floats as everywhere else. But its first line said `on softpipe`, and the kernel said why:
 
@@ -2989,7 +2989,7 @@ dereferences it; this program handed it a zeroed struct. The port's own
 day — is now what `air_run` uses. **A machine with no `msm` device never reaches that code**, so
 no amount of running it here would have found it; it took the first contact with real hardware.
 
-Without the fault handler there would have been nothing at all to go on: iOS answers a crash here
+Without the fault handler there would have been nothing at all to go on: Darwin answers a crash here
 with "Failed to send exception EXC_CORPSE_NOTIFY" and no report. Four lines of borrowed code
 turned a silent exit into an exact address.
 
@@ -3029,7 +3029,7 @@ path produced it:
 ### And the driver takes work that is not the window server's
 
 `logs/000739-run.log`, `rc.jobs.air2`: the same draw after SpringBoard is up — 287 mentions of it
-in the log, the ringer sounding at 29 s, the window server holding the GPU and drawing iOS through
+in the log, the ringer sounding at 29 s, the window server holding the GPU and drawing Darwin through
 `src/eagl.c`. `air_run` still got `Adreno 7c+ Gen 3` and still read back the same four floats.
 
 So the kernel's GPU driver serves a second process while CoreAnimation is drawing. That question
@@ -3414,7 +3414,7 @@ back to software, so a run that looks fine can be a run on no GPU.
 Needed on this machine: meson, ninja, bison, flex, python3 with venv, and LLVM's `llvm-as` /
 `llvm-dis` for the reader check (22.1.8 here). The host build also patches Mesa 25.0's
 `src/c11/threads.h`, because glibc 2.43 and later declare C11's `once_flag` and `call_once` in
-`<stdlib.h>` and Mesa defines them again; the iOS cross build has its own libc and does not.
+`<stdlib.h>` and Mesa defines them again; the Darwin cross build has its own libc and does not.
 
 ## 6a. Handing this to a runtime: what it has to do, and what it gets for free
 
@@ -3517,7 +3517,7 @@ reports.
 1. **Compilation happens at pipeline creation, not at `newLibraryWithData:`.** Function constants
    (`newFunctionWithName:constantValues:`), vertex/fragment varying linking and visible-function
    linking are only known then. The library step can translate eagerly and cache NIR; the ir3
-   step cannot run before the pipeline. (On real iOS the compile also leaves the process, for
+   step cannot run before the pipeline. (On real Darwin the compile also leaves the process, for
    `MTLCompilerService`; whether this runtime does the same is a decision for (2), and NIR
    serialization — `nir_serialize` — makes either possible.)
 2. **Buffers are bound per stage by index, as UBOs (constant) and SSBOs (device).**
@@ -3898,7 +3898,7 @@ numbers are the whole claim:
 
 | corpus | read | translate | through ir3 |
 | --- | --- | --- | --- |
-| iOS 16.5's system libraries, 456 modules | 456 | **321** | **321** |
+| Darwin 16.5's system libraries, 456 modules | 456 | **321** | **321** |
 | Resident Evil 4, 7 879 modules | 7 879 | **2 990** | **2 978** |
 
 The system corpus did not move, and "did not move" is stated module for module rather than as a
@@ -4521,7 +4521,7 @@ the difference is this file and nothing else:
 
 | corpus | read | translate | through ir3 |
 | --- | --- | --- | --- |
-| iOS 16.5's system libraries, 456 modules | 456 | **321** | **321** |
+| Darwin 16.5's system libraries, 456 modules | 456 | **321** | **321** |
 | Resident Evil 4, 7 879 modules, before | 7 879 | **2 990** | 2 978 |
 | Resident Evil 4, 7 879 modules, after | 7 879 | **4 447** | **4 435** |
 
@@ -4735,7 +4735,7 @@ the work was deciding that it is **one** case:
 
 | corpus | read | translate | through ir3 |
 | --- | --- | --- | --- |
-| iOS 16.5's system libraries, 456 modules | 456 | **321** | **321** |
+| Darwin 16.5's system libraries, 456 modules | 456 | **321** | **321** |
 | Resident Evil 4, 7 879 modules, before | 7 879 | **4 447** | 4 435 |
 | Resident Evil 4, 7 879 modules, after | 7 879 | **6 057** | **6 032** |
 

@@ -296,14 +296,14 @@ struct apfs_vol {
 	 * Whether directory-entry keys carry a hash of the name.  Apple's reference
 	 * describes both shapes of the key but never says which a volume uses; the hash it
 	 * defines (CRC-32C of the name decomposed and widened) is only of use for looking
-	 * a name up without regard to case or normalization, and the iOS 16.5 volume, which
+	 * a name up without regard to case or normalization, and the Darwin 16.5 volume, which
 	 * is normalization-insensitive, does carry it.  So: hashed when either of those two
 	 * features is on.  A wrong guess does not go unnoticed -- the name length would not
 	 * fit the key and the record is refused.
 	 */
 	bool              hashed_names;
 	/*
-	 * A sealed volume (the iOS 16 cryptexes) keeps its files' extents in a tree of their own,
+	 * A sealed volume (the Darwin 16 cryptexes) keeps its files' extents in a tree of their own,
 	 * keyed by stream and offset, rather than among the file-system tree's records.
 	 */
 	struct apfs_btree fext;

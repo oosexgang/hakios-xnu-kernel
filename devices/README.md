@@ -4,7 +4,7 @@ A device is described by data, in two places:
 
 | What | Where | What it says |
 | --- | --- | --- |
-| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what iOS's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
+| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what Darwin's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
 | A **SoC file** | `soc/SOC.dtsi` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), its SCMI performance mailbox (`scmi-perf { }`), and an emulator's virtio transports (`virtio { }`). |
 
 `devices/_template/board.dts` and `devices/_template/soc.dtsi` explain every key;
@@ -104,7 +104,7 @@ tools/boards.py compare renoir --dts device-tree.dts        # a board and its So
   that is not in the table gets no feature: nothing of a phone is touched on a machine nobody described.
 - `platforms.h`, the loader's, for the boards with a `loader { }` section. The loader tells them apart by
   the framebuffer address their UEFI reports.
-- `hakios_boards.h`, what the libraries injected into iOS's processes know of a board (`screen { }`).
+- `hakios_boards.h`, what the libraries injected into Darwin's processes know of a board (`screen { }`).
   They read the board's name from `/chosen/darwin-board` in the registry.
 
 None of the three is kept in the repository. The builds make them (`kernel/build.sh`,

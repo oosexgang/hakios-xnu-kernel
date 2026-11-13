@@ -63,7 +63,7 @@ struct ramfs_dirent {
 	uint32_t           rd_namelen;
 };
 
-/* An extended attribute: iOS keeps container metadata, ACLs and much else in them. */
+/* An extended attribute: Darwin keeps container metadata, ACLs and much else in them. */
 struct ramfs_xattr {
 	TAILQ_ENTRY(ramfs_xattr) rx_link;
 	char   *rx_name;                        /* rx_namelen bytes and a terminator */
@@ -149,7 +149,7 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
 	node->rn_type = type;
 	node->rn_mode = type == VLNK ? 0755 : (type == VDIR ? 0755 : 0644);
 	/*
-	 * hakios: a protection class for every file, D (none) unless one is asked for. iOS 26 checks the
+	 * hakios: a protection class for every file, D (none) unless one is asked for. Darwin 26 checks the
 	 * class of what it stores (PosterBoard's data store must be NSFileProtectionNone throughout, and
 	 * migrates it there when it is not); without one the check fails, setting it fails, and the
 	 * wallpaper store is never made. The class is kept and told, nothing is encrypted.
@@ -229,7 +229,7 @@ ramfs_say_ranges(void)
 
 /*
  * A page of file data. It is mapped in the kernel's shared data range (KMA_DATA_SHARED), and in the
- * private one (KMA_DATA) only once that has no room left. Kept in the private range alone, an iOS session
+ * private one (KMA_DATA) only once that has no room left. Kept in the private range alone, a Darwin session
  * with a 4 GB system image filled it (KERN_NO_SPACE with free pages to spare: the addresses, not the memory, ran
  * out), and the code-signature blobs that also live there could no longer be allocated -- launchd then
  * stops the system on "unexpected exec of non-platform binary". Both ranges are as large and hold bags
@@ -1022,7 +1022,7 @@ out:
 }
 
 /*
- * renamex_np(2): RENAME_SWAP exchanges two names, RENAME_EXCL refuses an existing target. iOS writes
+ * renamex_np(2): RENAME_SWAP exchanges two names, RENAME_EXCL refuses an existing target. Darwin writes
  * files "atomically" by swapping a new copy in -- usermanagerd's user sessions and persona manifest in
  * /private/var/keybags among them, and with ENOTSUP here it never saved them and aborted at every start.
  */
@@ -1485,7 +1485,7 @@ ramfs_readlink(struct vnop_readlink_args *ap)
 }
 
 /*
- * hakios: APFS's "mark purgeable" (APFSIOC_MARK_PURGEABLE, _IOWR('J', 68, uint64_t)), which iOS 26's
+ * hakios: APFS's "mark purgeable" (APFSIOC_MARK_PURGEABLE, _IOWR('J', 68, uint64_t)), which Darwin 26's
  * PosterBoard asks of every directory and file of its wallpaper store and fails the store without
  * (errno -1, no poster is ever made). Purgeable files are what APFS may delete when space runs short;
  * this RAM disk deletes nothing on its own, so the mark is taken and nothing more is done.

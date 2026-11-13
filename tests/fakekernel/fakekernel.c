@@ -805,7 +805,7 @@ set(const char *name, uint32_t value)
 	struct sysctl_req req = { &value, sizeof(value), NULL, 0, 0 };
 
 	if (!(oid->flags & CTLFLAG_ANYBODY)) {
-		fprintf(stderr, "sysctl %s is not writable by iOS's processes\n", name);
+		fprintf(stderr, "sysctl %s is not writable by Darwin's processes\n", name);
 		exit(2);
 	}
 	oid->handler(oid, oid->arg1, oid->arg2, &req);

@@ -74,7 +74,7 @@ air_val_ptr_select(struct air_ctx *c, nir_def *cond,
                    struct air_val *a, struct air_val *b)
 {
    /* A condition that is a constant -- a function constant's, once the pipeline has given
-    * it a value, which is how iOS 26's QuartzCore chooses between its inline sampler and the
+    * it a value, which is how Darwin 26's QuartzCore chooses between its inline sampler and the
     * one it was given (`select i1 %fc, @__air_sampler_state, %sampler`) -- chooses now. */
    if (nir_src_is_const(nir_src_for_ssa(cond)))
       return nir_src_as_bool(nir_src_for_ssa(cond)) ? a : b;
@@ -434,7 +434,7 @@ air_constant_val(struct air_ctx *c, const struct air_constant *k)
          struct air_val *v = air_val_agg(c, n);
          /* Scalar fields stay NONE until insertvalue puts something there; a field that is
           * itself a struct or an array gets its own skeleton, so that a nested insertvalue
-          * into a poison value -- `insertvalue [2 x %Image] poison, i8 %x, 0, 0` in iOS 26's
+          * into a poison value -- `insertvalue [2 x %Image] poison, i8 %x, 0, 0` in Darwin 26's
           * QuartzCore -- has somewhere to go. */
          for (unsigned i = 0; i < n; i++) {
             const struct air_type *et = t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem;
@@ -691,7 +691,7 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
          return air_error(c, "interface: a function constant of %u components of %u bits, "
                              "which does not fit the four words air_constant_value carries",
                           comps, bits), NULL;
-      /* iOS 26's RenderBox declares uint4 and float4 constants (128 bits), which is why
+      /* Darwin 26's RenderBox declares uint4 and float4 constants (128 bits), which is why
        * the value is four words now and no longer one */
       nir_def *fields[NIR_MAX_VEC_COMPONENTS];
       for (unsigned i = 0; i < comps; i++) {
@@ -713,7 +713,7 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
        */
       return air_error(c, "instruction: a load of bytes out of an argument buffer"), NULL;
    case AIR_PTR_NONE:
-      /* Through null. iOS 26's QuartzCore passes null for a buffer its function constants
+      /* Through null. Darwin 26's QuartzCore passes null for a buffer its function constants
        * say is absent (`select i1 %fc, ptr null, ptr %weights`) to a helper whose only call
        * of it is behind the same constant -- dead code that is translated all the same.
        * Metal leaves the read undefined; zero is what it reads here, and nothing reads it. */
@@ -1605,7 +1605,7 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
  * bound at one buffer index, which is how a Vulkan descriptor set reaches
  * Metal through SPIRV-Cross and how an MSL `[[id(n)]]` struct reaches it from
  * Metal itself. 7 620 of Resident Evil 4's 7 879 modules have one and 0 of
- * iOS 16.5's 671 do, so this is the one interface word that is invisible from
+ * Darwin 16.5's 671 do, so this is the one interface word that is invisible from
  * Apple's own libraries and is 97% of a game (docs/air.md section 8.2).
  *
  * The parameter does not become a buffer to read: it becomes a pointer of its
@@ -1831,7 +1831,7 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type)
 
 /* -- numbers the pipeline decides --------------------------------------- */
 
-/* iOS 26's RenderBox names its colour attachments by EXPRESSION: `[[color(e)]]` where e is
+/* Darwin 26's RenderBox names its colour attachments by EXPRESSION: `[[color(e)]]` where e is
  * computed from a function constant, and the metadata carries a pointer where the target
  * number used to be:
  *
@@ -2022,7 +2022,7 @@ eval_global(struct air_ctx *c, struct air_eval_env *env, const struct air_value 
 }
 
 /*
- * A program-scope variable's value, when the static initializers alone decide it: iOS 26's
+ * A program-scope variable's value, when the static initializers alone decide it: Darwin 26's
  * QuartzCore keeps every function constant of its uber shader in such a variable
  * (`@_ZL19fc_has_attachment_0 = internal addrspace(2) global i8 undef`, stored in
  * _GLOBAL__sub_I_ogl_metal_uber.metal), and every branch on one was a load until inlining and
@@ -2145,7 +2145,7 @@ air_const_global_offset(struct air_ctx *c, const struct air_value *v, const stru
    return true;
 }
 
-/* A FIELD of a program-scope struct the static initializers fill one field at a time: iOS 26
+/* A FIELD of a program-scope struct the static initializers fill one field at a time: Darwin 26
  * QuartzCore's fc_fragment_shader_config, which fixed_frag reads through `select has_config,
  * @config, %buffer` -- its color opcodes decide whether the twelve apply_color_opcode calls
  * run at all, and unknown they were all translated and folded away again afterwards (42 000
@@ -2472,7 +2472,7 @@ air_eval(struct air_ctx *c, struct air_eval_env *env, const struct air_value *v,
    }
 }
 
-/* operand i of `node` as a number: an integer, as it always was, or (iOS 26) a pointer to
+/* operand i of `node` as a number: an integer, as it always was, or (Darwin 26) a pointer to
  * a global the constructor computes from function constants */
 static bool
 md_int_or_eval(struct air_ctx *c, const struct air_md *node, unsigned i, uint64_t *out)
@@ -3424,7 +3424,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       if (!v || !x || !i)
          return false;
       if (!nir_src_is_const(nir_src_for_ssa(i))) {
-         /* a run-time index (iOS 26's QuartzCore uber shader): NIR's bcsel per component */
+         /* a run-time index (Darwin 26's QuartzCore uber shader): NIR's bcsel per component */
          air_set(c, &in->base, air_val_ssa(c, nir_vector_insert(&c->b, v, x, air_u32(&c->b, i))));
          return true;
       }
@@ -3904,7 +3904,7 @@ val_holds_ptr(const struct air_val *v)
    return false;
 }
 
-/* An aggregate passed BY VALUE ([2 x %Image], [3 x i8] in iOS 26's QuartzCore): NIR's parameters
+/* An aggregate passed BY VALUE ([2 x %Image], [3 x i8] in Darwin 26's QuartzCore): NIR's parameters
  * are scalars and vectors, so it travels as its leaves, depth first, one parameter each. */
 static bool
 type_is_value_aggregate(const struct air_type *t)
@@ -4190,7 +4190,7 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
       /* A pointer at a byte offset the caller computed: the offset is a def of the CALLER's
        * impl, so it goes in as a parameter of its own (after the value parameters, in argument
        * order; callee_offset_args below and emit_module_call agree on it), and the callee's
-       * resolution of the argument is the caller's with that parameter for its offset. iOS
+       * resolution of the argument is the caller's with that parameter for its offset. Darwin
        * 26's QuartzCore needs it: its glass, path-stroke and uber fragment shaders hand
        * helpers a `getelementptr` into a constant buffer. */
       /* The same reason, for the two pointers that are values: a chosen
@@ -4455,7 +4455,7 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
  * -- nothing dispatched a kernel until there was something to dispatch it with.
  */
 /* The call itself, with the arguments resolved in argv, its return written to the locals the
- * caller made (tmp, or fields for a struct). A pointer argument CHOSEN at run time -- iOS 26's
+ * caller made (tmp, or fields for a struct). A pointer argument CHOSEN at run time -- Darwin 26's
  * QuartzCore passes `select i1 %fc, @__air_sampler_state, %sampler` to its sampling helpers --
  * cannot specialise the callee to one binding, so the call is made twice, under an if on the
  * choice's condition, one specialised to each side; both write the same locals. The condition is a
@@ -5028,7 +5028,7 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *re
                              "%s", v && v->kind == AIR_VAL_PTR_SELECT
                                       ? "itself a pointer chosen at run time between two places"
                                       : "not a resolved pointer");
-      /* iOS 26's null texture beside a real one: the real one. Where the null one is
+      /* Darwin 26's null texture beside a real one: the real one. Where the null one is
        * the side taken, the function constant that chose it also guards every use (see
        * air.get_null_texture in air_intrinsics.c), so what is bound there is never read. */
       if (v->ptr.class == AIR_PTR_TEXTURE && v->ptr.binding == AIR_NULL_BINDING) {
@@ -5488,9 +5488,9 @@ plan_globals(struct air_ctx *c)
          pl->class = AIR_PTR_SAMPLER;
          pl->binding = next;
 
-         /* The state word. iOS 26's compiler writes it as [2 x i64] -- the 64-bit word
-          * of before, then a second one (0 in all 62 of QuartzCore's iOS 26 modules that
-          * declare one) -- where iOS 16.5's wrote a plain i64. The first element is the word
+         /* The state word. Darwin 26's compiler writes it as [2 x i64] -- the 64-bit word
+          * of before, then a second one (0 in all 62 of QuartzCore's Darwin 26 modules that
+          * declare one) -- where Darwin 16.5's wrote a plain i64. The first element is the word
           * air_decode_sampler_state knows; a second one that is not 0 is something this
           * reading does not cover, and is refused by name rather than dropped.
           */
@@ -5512,7 +5512,7 @@ plan_globals(struct air_ctx *c)
             }
             if (second != 0) {
                air_error(c, "interface: an inline sampler with a second state word %#llx "
-                            "(iOS 26's [2 x i64] form; only 0 is understood)",
+                            "(Darwin 26's [2 x i64] form; only 0 is understood)",
                          (unsigned long long)second);
                return;
             }
@@ -5547,7 +5547,7 @@ plan_globals(struct air_ctx *c)
                   (g->value_type->kind == AIR_TYPE_VECTOR &&
                    g->value_type->elem->kind != AIR_TYPE_POINTER))) {
          /* A program-scope SCALAR or VECTOR in the constant address space that the static
-          * initializer writes: iOS 26's QuartzCore keeps each of its 60 function constants in
+          * initializer writes: Darwin 26's QuartzCore keeps each of its 60 function constants in
           * one (`@_ZL15fc_has_image_0A = internal addrspace(2) global i8 undef`, stored from
           * the real constant in _GLOBAL__sub_I_ogl_metal_uber.metal). In scratch memory NIR
           * cannot see through the store to the loads, so not one branch on them folded and

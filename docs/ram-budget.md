@@ -1,16 +1,16 @@
-# RAM budget: does iOS 26 fit renoir's 6 GB as an in-RAM APFS image?
+# RAM budget: does Darwin 26 fit renoir's 6 GB as an in-RAM APFS image?
 
-Date: 2026-10-30. Inputs: `darwin-renoir` (iOS 16.5 port, read only), `ios26/` (23G90, iPhone12,1).
+Date: 2026-10-30. Inputs: `darwin-renoir` (Darwin 16.5 port, read only), `ios26/` (23G90, iPhone12,1).
 No phone involved. All sizes are MiB (2^20) unless a line says GB (10^9).
 
 ## Verdict
 
-**Not with the iOS 16.5 recipe as it is. It does fit once you prune hard.**
+**Not with the Darwin 16.5 recipe as it is. It does fit once you prune hard.**
 
 | scenario | image | RAM left for kernel + processes |
 |---|---|---|
-| iOS 16.5 port today (measured) | 2429 MiB = 2.55 GB | 3.40 GB (runs fine) |
-| **A** iOS 26, same `select-system.py` rules, full dyld cache | 4430 MiB = 4.64 GB | **1.30 GB: no** |
+| Darwin 16.5 port today (measured) | 2429 MiB = 2.55 GB | 3.40 GB (runs fine) |
+| **A** Darwin 26, same `select-system.py` rules, full dyld cache | 4430 MiB = 4.64 GB | **1.30 GB: no** |
 | **B** A, plus loctables cut to en/Base, poster apps dropped, 9 big apps dropped, AppFonts dropped | 3761 MiB = 3.94 GB | 2.00 GB: marginal |
 | **C** B, plus the cache pages of images no boot or app uses zero-filled (closure "apps") | 3283 MiB = 3.44 GB | 2.50 GB: workable |
 | C' same as C, closure "jobs" (boot to SpringBoard only) | 3156 MiB = 3.31 GB | 2.64 GB |
@@ -22,7 +22,7 @@ resident image larger than `window − 128 MiB − 768 MiB` (`RESIDENT_RD_OFFSET
 That limit is 5248 MiB for a full 6 GiB window and about 4775 MiB for a 5.95 GB window. Even A
 passes the loader check. The real problem is what is left over.
 
-Why about 2.5–3 GB left is the bar: iOS 26's smallest supported devices are the iPhone SE 2 (3 GB)
+Why about 2.5–3 GB left is the bar: Darwin 26's smallest supported devices are the iPhone SE 2 (3 GB)
 and the iPhone 11 (4 GB). Those totals include the kernel and the page cache [INFERENCE: Apple's
 support list, not measured here]. Our kernel and processes get the RAM left after the image, and the
 page cache is part of that. Every page a process touches from the compressed image is decompressed
@@ -46,7 +46,7 @@ SpringBoard working set of the dyld cache.
 6. If 3.4 GB free is required as on 16.5, go further: keep about 10 applications and prune asset
    catalogs (539 MiB of `.car` files in the selection).
 
-## 1. How the iOS 16.5 image is chosen (darwin-renoir)
+## 1. How the Darwin 16.5 image is chosen (darwin-renoir)
 
 `ios165/select-system.py` reads `7z l -slt rootfs.dmg` and writes `system.files` (what to extract)
 and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapfs.py`). Rules (`wanted_file`):
@@ -92,20 +92,20 @@ Measured from `userland/system.apfs` (2,546,769,920 B; `7z l -slt`, "Packed Size
 | dyld cache `.dyldlinkedit` | 2 | 337.5 | 77.5 |
 | dyld cache `.dylddata` | 2 | 275.7 | 55.3 |
 | **dyld cache total** (43 files, no `.dyldreadonly` in 16.5) | 43 | **2596.4** | **947.7** |
-| iOS files without the cache | 44,400 | 2786.0 | 1380.7 |
+| Darwin files without the cache | 44,400 | 2786.0 | 1380.7 |
 | `/jb` (Procursus + Sileo) | 5,258 | 114.1 | 41.6 |
 | `fw-audio-renoir` (stored plain) | 37 | 20.9 | 21.0 |
 | sum of files | 49,738 | 5517.4 | 2390.9 |
 | APFS metadata (image − sum) | | | 37.9 |
 
-## 2. iOS 26 dyld cache, raw and as mkapfs stores it
+## 2. Darwin 26 dyld cache, raw and as mkapfs stores it
 
 Method: `ios/tools/ram-budget/zchunks.py` reproduces `compressed_fork`/`zlib_rsrc` from `mkapfs.py`
 exactly. It was checked byte-exact against three files in the 16.5 image (SpringBoard
 112048 → 16384, `dyld_shared_cache_arm64.35` 115834880 → 48005120, `.32` 606208 → 159744). It runs as
 16 processes over 4 MB spans: 24 s for 5.2 GB.
 
-| iOS 26 cache part | files | raw MiB | stored MiB | ratio |
+| Darwin 26 cache part | files | raw MiB | stored MiB | ratio |
 |---|---:|---:|---:|---:|
 | main + numbered code subcaches (.01–.32, .36–.69, .73–.80) | 75 | 3760.5 | 1483.4 | 39.4 % |
 | `.dylddata` (.33 .70 .81) | 3 | 494.7 | 84.1 | 17.0 % |
@@ -133,7 +133,7 @@ Header of `dyld_shared_cache_arm64e` (parsed by `cache_images.py`):
 So the main file and all 83 subcaches must be present at full length. dyld opens every listed
 subcache, checks its UUID, and hands all their mappings to the kernel as one shared region
 [INFERENCE from dyld's SharedCacheRuntime, not re-read here]. With `dylibsExpectedOnDisk` off on
-iOS, a missing or short file leaves no fallback. `.symbols` and `.atlas` can be left out (16.5
+Darwin, a missing or short file leaves no fallback. `.symbols` and `.atlas` can be left out (16.5
 already leaves out `.symbols`).
 
 Mappings by kind (MiB):
@@ -178,7 +178,7 @@ The static closure misses dlopen'd frameworks and bundles. A real keep-list shou
 boot plus a session using the apps (a dyld/kernel log of mapped images on QEMU). Use "apps" as the
 planning number and "broad" if every shipped program must still run.
 
-## 4. Minimal rootfs: the 16.5 selection applied to iOS 26
+## 4. Minimal rootfs: the 16.5 selection applied to Darwin 26
 
 `rootfs_select.py` imports `wanted_file` from `darwin-renoir/ios165/select-system.py` unchanged. It
 walks `ios26/rootfs` (staged apps → `/Applications`, rest of `private/var` left out), adds
@@ -186,7 +186,7 @@ walks `ios26/rootfs` (staged apps → `/Applications`, rest of `private/var` lef
 file the way mkapfs does (16 processes, 45 s). Hard-link copies are counted separately, as mkapfs
 does with the 7-Zip extraction for 16.5.
 
-| category | 16.5 stored MiB | iOS 26 files | iOS 26 raw MiB | iOS 26 stored MiB |
+| category | 16.5 stored MiB | Darwin 26 files | Darwin 26 raw MiB | Darwin 26 stored MiB |
 |---|---:|---:|---:|---:|
 | System/Library/PrivateFrameworks | 525.4 | 30,257 | 1898.7 | 913.1 |
 | Applications | 300.9 | 6,649 | 1316.8 | 710.3 |

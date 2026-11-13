@@ -1,5 +1,5 @@
 /*
- * The battery as iOS sees it: the kernel's power source (the IOPMPowerSource that powerd reads,
+ * The battery as Darwin sees it: the kernel's power source (the IOPMPowerSource that powerd reads,
  * iokit/Kernel/HakiosBattery.cpp) and what powerd has made of it (the power sources list that
  * the status bar, the lock screen and Settings get through IOPS), side by side with the kernel's
  * own numbers (kern.hakios.battery_*).
@@ -9,7 +9,7 @@
  *   battery_test open URL   have SpringBoard open a URL, such as prefs:root=BATTERY_USAGE (Settings >
  *                           Battery): for screenshots of a page that is hard to reach by touches alone
  *                           (needs the entitlement in battery_test.entitlements, which build.sh signs in)
- *   battery_test powerlog   what iOS's power log (aggregated, CurrentPowerlog.PLSQL) has collected: every
+ *   battery_test powerlog   what Darwin's power log (aggregated, CurrentPowerlog.PLSQL) has collected: every
  *                           table with rows, how many and over what time; one row of each of the accounting
  *                           tables Settings > Battery reads (the energy per application comes from them)
  */

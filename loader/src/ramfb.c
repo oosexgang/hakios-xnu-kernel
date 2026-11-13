@@ -5,7 +5,7 @@
  * QEMU's "ramfb" display shows whatever guest memory it is told to, in any size; the firmware
  * only offers a few small landscape modes of it. So we point it at memory of our own with the
  * shape of the iPhone's screen, through the fw_cfg file "etc/ramfb" (the firmware's own mode
- * is simply replaced). In QEMU the display is then exactly what iOS expects; on the real phone
+ * is simply replaced). In QEMU the display is then exactly what Darwin expects; on the real phone
  * the kernel's display driver scales that picture to the panel.
  */
 #define PHONE_WIDTH     1125            /* the screen of the iPhone X, whose identity we carry */

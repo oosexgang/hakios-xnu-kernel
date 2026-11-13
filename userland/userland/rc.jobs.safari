@@ -1,5 +1,5 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# Safari (RC_JOBS=rc.jobs.safari, with wifi=1): whether iOS takes the screen for one of extended colour (it must
+# Safari (RC_JOBS=rc.jobs.safari, with wifi=1): whether Darwin takes the screen for one of extended colour (it must
 # not: WebKit then draws into surfaces of ten bits a colour that come out black), then yandex.ru and example.com
 # opened the way a link opens them (battery_test open URL: SpringBoard is asked to open it), for screenshots of what
 # Safari shows; Safari's layers, application state and web views are said in between (com.hakios.layers, when

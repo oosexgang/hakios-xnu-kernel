@@ -1,5 +1,5 @@
 /*
- * libhakios-gl.dylib: an OpenGL ES implementation behind iOS's EAGLContext, inside the window
+ * libhakios-gl.dylib: an OpenGL ES implementation behind Darwin's EAGLContext, inside the window
  * server (backboardd; libhakios.dylib loads this when the image has it: build.sh GL=1).
  *
  * CoreAnimation's render server draws with Metal, or else with OpenGL ES, or else with its own
@@ -10,7 +10,7 @@
  *   -API                       3
  *   -setParameter:to:          noted
  *   -getMacroContextPrivate    a table of functions, called as entry(table[0], arguments...) at
- *                              the offsets of iOS's own OpenGLES (src/eagl_slots.txt); ours is
+ *                              the offsets of Darwin's own OpenGLES (src/eagl_slots.txt); ours is
  *                              made by mkeagl.py: each entry counts the call and passes it on,
  *                              except the ones written by hand below (my_gl...)
  *   -texImageIOSurface:target:internalFormat:width:height:format:type:plane:invert:
@@ -28,7 +28,7 @@
  * (glFlush, glFinish), with nothing but OpenGL ES calls. Either way this file does not know
  * what draws: the library is reached through its gl* functions and the functions of hakios_gl.h.
  *
- * Where CoreAnimation relies on iOS's library being what it is, this stands in between:
+ * Where CoreAnimation relies on Darwin's library being what it is, this stands in between:
  * blue-first pixels into a texture called GL_RGBA (internal_format()), shaders that read
  * textures at coordinates in pixels (my_glShaderSource()), and draws made with no program
  * (plain_draw_begin()).
@@ -209,7 +209,7 @@ now_us(void)
 
 /* ---- a context -------------------------------------------------------------------------------- */
 
-#define SLOTS           0x440           /* entries of the table: more than iOS's has (checked below) */
+#define SLOTS           0x440           /* entries of the table: more than Darwin's has (checked below) */
 
 /* (a vibrant layer inside a group: see group_draw_begin()) */
 #define GROUP_TEXTURES  8192
@@ -1603,7 +1603,7 @@ triangles_of(GLenum mode, GLsizei count)
 /*
  * CoreAnimation's OpenGL ES renderer draws the last of its ninety "functions" (0x59, "cst" in the
  * table its Metal renderer names its shaders by; no textures of its own by that table) with no
- * program at all: glUseProgram(0), and then the draw. On iOS's library that may have meant
+ * program at all: glUseProgram(0), and then the draw. On Darwin's library that may have meant
  * something; in OpenGL ES it draws nothing, and what goes that way is missing from the picture:
  * the lock screen's wallpaper, and the clock that is that wallpaper seen through its digits.
  * Here such a draw is made with a program of ours, the plainest there could be: CoreAnimation's
@@ -3248,7 +3248,7 @@ my_glGetString(void *context, GLenum name)
 	const GLubyte *string;
 
 	EAGL_ENTER(e, 0x3b0);
-	/* 0x8a1e is no name of OpenGL ES's; iOS's library answers it (the constructor of CA::OGL::GLESContext asks) */
+	/* 0x8a1e is no name of OpenGL ES's; Darwin's library answers it (the constructor of CA::OGL::GLESContext asks) */
 	string = name == 0x8a1e ? (const GLubyte *)"" : glGetString(name);
 	if (name == GL_EXTENSIONS && string != NULL && !fetch_offered) {
 		static char without[8192];      /* (the list less that extension: see fetch_offered) */
@@ -3269,7 +3269,7 @@ my_glGetString(void *context, GLenum name)
 	}
 	/* The list of extensions is longer than a line of the log, and it was being cut at 900
 	   characters -- which is where one looks to see whether the driver takes a compressed
-	   texture of iOS's kind (ASTC). In pieces, then, so that none of it is lost. */
+	   texture of Darwin's kind (ASTC). In pieces, then, so that none of it is lost. */
 	if (name == GL_EXTENSIONS && string != NULL) {
 		size_t length = strlen((const char *)string);
 
@@ -3574,7 +3574,7 @@ my_glDeleteFramebuffers(void *context, GLsizei n, const GLuint *framebuffers)
 	EAGL_LEAVE(e, 0x1510);
 }
 
-/* A private entry of iOS's library (CA::OGL::GLESContext::set_surface calls it); nobody else has it. */
+/* A private entry of Darwin's library (CA::OGL::GLESContext::set_surface calls it); nobody else has it. */
 static void
 my_glFramebufferParameteriAPPLE(void *context, GLenum target, GLenum name, GLint value)
 {
@@ -3788,7 +3788,7 @@ my_glLinkProgram(void *context, GLuint program)
 	EAGL_LEAVE(e, 0x12c0);
 }
 
-/* iOS's library has one entry for deleting a program and deleting a shader. */
+/* Darwin's library has one entry for deleting a program and deleting a shader. */
 static void
 my_glDeleteProgram(void *context, GLuint name)
 {
@@ -3854,7 +3854,7 @@ my_API(id self, SEL selector)
 /*
  * -[EAGLContext sharegroup]. CoreAnimation never asks for it, but CoreImage does: a CIContext made
  * over an EAGLContext goes +[CIContext contextWithEAGLContext:] -> internalContextWithEAGLContext:
- * -> CI::GLContext::GLContext -> wrapEAGLContextCreate -> -[EAGLContext sharegroup], and iOS's own
+ * -> CI::GLContext::GLContext -> wrapEAGLContextCreate -> -[EAGLContext sharegroup], and Darwin's own
  * accessor reads ivars of an EAGLContext that my_initWithAPI never filled in (it keeps its state in
  * `struct eagl` beside the object and does not call through to Apple's init). On the phone that
  * crashed in -[EAGLContext sharegroup]+4 touching address 0x8. Nothing here shares a context with
@@ -3982,7 +3982,7 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	 * there is in the black ones, and the one sign with colours in it, blue in the software
 	 * renderer's picture, comes out orange if red is taken to follow the opacity). Read
 	 * blue-first, like the surfaces that are drawn into, the black ones have no opacity at all
-	 * and are not seen. iOS's library has the order from the surface; here it is taken from
+	 * and are not seen. Darwin's library has the order from the surface; here it is taken from
 	 * there being no pixel format.
 	 */
 	image->wrapped = image->alpha_first = pixels == 0;

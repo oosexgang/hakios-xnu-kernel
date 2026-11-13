@@ -10,7 +10,7 @@ diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
 +	case 8:
 +		/*
 +		 * (hakios) Not in the open source: what os_workgroup_interval_start(), _update() and
-+		 * _finish() of iOS send, for the performance controller, which is not here either.
++		 * _finish() of Darwin send, for the performance controller, which is not here either.
 +		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
 +		 * lines a second from the audio server's real-time thread. For its threads, and only
 +		 * for them, there is nothing to do and nothing wrong. (The window server asks for its
@@ -128,8 +128,8 @@ diff --git a/osfmk/ipc/ipc_policy.c b/osfmk/ipc/ipc_policy.c
  
 +/*
 + * hakios: boot-arg ipc_legacy=1 switches the enforced IPC security policies off, so that an older
-+ * iOS user space (one that predates them, e.g. iOS 16's launchd and its OOL port arrays) can be run
-+ * on this kernel to test the platform. Off by default; the iOS 26 user space does not need it.
++ * Darwin user space (one that predates them, e.g. Darwin 16's launchd and its OOL port arrays) can be run
++ * on this kernel to test the platform. Off by default; the Darwin 26 user space does not need it.
 + */
 +__startup_func
 +static void
@@ -172,7 +172,7 @@ diff --git a/osfmk/ipc/mach_port.c b/osfmk/ipc/mach_port.c
 +	/*
 +	 * hakios: the message filter (its callbacks) is the Sandbox kext's, and there is none here. Without
 +	 * it no service port carries a sandbox label, which is the "nothing to check" answer below -- give
-+	 * that, not KERN_NOT_SUPPORTED: iOS 26's libxpc asks this of every peer that checks in with a
++	 * that, not KERN_NOT_SUPPORTED: Darwin 26's libxpc asks this of every peer that checks in with a
 +	 * listener, and on KERN_NOT_SUPPORTED every service dropped every client as a "bogus check-in"
 +	 * (cfprefsd, usermanagerd, containermanagerd ... nothing could talk to anything).
 +	 */

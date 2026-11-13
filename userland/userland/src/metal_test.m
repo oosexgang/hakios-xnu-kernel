@@ -1,7 +1,7 @@
 /*
- * metal_test: what iOS here believes about Metal, and what it does with the answer.
+ * metal_test: what Darwin here believes about Metal, and what it does with the answer.
  *
- * Nothing in iOS says a word when Metal is missing. A program asks for the system's device with
+ * Nothing in Darwin says a word when Metal is missing. A program asks for the system's device with
  * MTLCreateSystemDefaultDevice(); if there is none it gets nil, with no log line, no error and no
  * reason, and whatever the caller does next -- fall back, draw nothing, or stop at an assertion --
  * is all that is ever seen. This prints the whole chain instead, so that a failure somewhere above
@@ -21,7 +21,7 @@
  *      an empty list is an answer given once and kept, silently, for the life of the process.
  *
  * So the question "is there Metal" has exactly one answer, and no capability bit anywhere stands
- * in for it. What iOS publishes about graphics besides -- MobileGestalt's GraphicsFeatureSetClass
+ * in for it. What Darwin publishes about graphics besides -- MobileGestalt's GraphicsFeatureSetClass
  * and GraphicsFeatureSetFallbacks, from the device tree's "graphics-featureset-class" and
  * "graphics-featureset-fallbacks" -- is read by CoreUI and CoreThemeDefinition to choose which
  * compiled artwork to take out of an asset catalog, not by anything that decides how to draw; it
@@ -310,7 +310,7 @@ the_device(void)
 	    (int)[device supportsFamily:MTLGPUFamilyApple1], (int)[device supportsFamily:MTLGPUFamilyApple4]);
 }
 
-/* What iOS publishes about graphics besides: artwork, not rendering (see the note above). */
+/* What Darwin publishes about graphics besides: artwork, not rendering (see the note above). */
 static void
 gestalt(void)
 {
@@ -347,7 +347,7 @@ static NSDictionary *coreimage_options;
 static int coreimage_over_eagl;
 
 /*
- * The way back for CoreImage, if there is one. iOS 16.5's CoreImage carries a whole second back
+ * The way back for CoreImage, if there is one. Darwin 16.5's CoreImage carries a whole second back
  * end on OpenGL ES -- CI::GLContext, CI::GLMainProgram, CI::GLTextureManager beside the
  * CI::MetalContext family -- it is linked against OpenGLES, it compiles its shaders as GLSL (not
  * AIR), and CIGLIsUsable() is compiled to "return 1". The public way in is
@@ -369,7 +369,7 @@ make_eagl(void)
 	 * the way it does it -- replacing methods of EAGLContext through the ObjC runtime -- is local
 	 * to a process. The library installs itself from a constructor, so loading it is enough; what
 	 * it replaced it says itself in lines "hakios-gl:". Without this, EAGLContext here would be
-	 * iOS's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
+	 * Darwin's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
 	 */
 	if (access(HAKIOS_GL, R_OK) != 0) {
 		printf("metal_test:   %s is not in this image: build it with GL=1\n", HAKIOS_GL);
@@ -438,7 +438,7 @@ coreimage(void)
 			return;
 		}
 		/*
-		 * Which of CoreImage's two backends the default context took. iOS 16.5 has both:
+		 * Which of CoreImage's two backends the default context took. Darwin 16.5 has both:
 		 * CI::GLContext (with CI::GLMainProgram, CI::GLTextureManager) and CI::MetalContext
 		 * (with CI::MetalDAG, CI::MetalKernel); -[CIContext initWithOptions:] chooses between
 		 * them by CIGLIsUsable(). -isOpenGLBased and -device are private, so they are asked for
@@ -545,7 +545,7 @@ main(int argc, char **argv)
 	gpu_services();
 	printf("metal_test: the device a program gets\n");
 	the_device();
-	printf("metal_test: what iOS publishes about graphics (artwork, not rendering)\n");
+	printf("metal_test: what Darwin publishes about graphics (artwork, not rendering)\n");
 	gestalt();
 	printf("metal_test: CoreImage, which has a path without Metal\n");
 	/*

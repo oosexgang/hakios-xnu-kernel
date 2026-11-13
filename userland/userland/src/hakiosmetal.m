@@ -581,7 +581,7 @@ rw_print(const char *fmt, ...)
 /*
  * A selector this driver does not know, answered instead of thrown. Metal's own classes
  * grow private methods with every release, and CoreAnimation calls them without asking
- * -respondsToSelector: first: iOS 26's -[MTLCommandBuffer setResponsibleTaskIDs:count:]
+ * -respondsToSelector: first: Darwin 26's -[MTLCommandBuffer setResponsibleTaskIDs:count:]
  * ended backboardd 29 times in one boot, each one a reboot's worth of finding out. So every
  * class of this driver takes an unknown message, says once which one it was, and returns 0
  * (nil, NO). A method that matters will show up in the log as the first thing to implement;
@@ -1075,7 +1075,7 @@ _Static_assert(sizeof(struct MTLTargetDeviceArch) == 24 &&
 	BOOL _assertions;                   /* Metal's own assertion switch, stored for it */
 	struct MTLTargetDeviceArch _target;     /* answered by pointer; see -targetDeviceInfo */
 	char _targetName[96];               /* the bytes _target.name points at, inside the object */
-	id _architecture;                   /* iOS 26: -targetDeviceArchitecture's object, made once */
+	id _architecture;                   /* Darwin 26: -targetDeviceArchitecture's object, made once */
 }
 /* Not part of any Metal protocol: how this driver's own objects reach the compiler. */
 - (struct rwa_device *)mesaDevice;
@@ -2487,7 +2487,7 @@ static NSData *rw_function_air(id function);
 							      fromModule:NO];
 }
 
-/* The iOS 16 form, which takes a reflection object (MTLBufferBinding) instead of
+/* The Darwin 16 form, which takes a reflection object (MTLBufferBinding) instead of
  * descriptors. Declined by name: every reflection object in this process comes from
  * Metal's own compiler, which is nil here (docs/metal.md 10.7), so an application that
  * has one did not get it from us and this driver has nothing to read out of it. */
@@ -2773,7 +2773,7 @@ static NSData *rw_function_air(id function);
  *
  * Depth24Unorm_Stencil8 stays NO now that there IS a depth path, and it is not a leftover:
  * Metal's own header marks that format API_UNAVAILABLE(ios), the compiler library refuses it
- * by name for the same reason, and iOS depth is Depth16Unorm, Depth32Float or
+ * by name for the same reason, and Darwin depth is Depth16Unorm, Depth32Float or
  * Depth32Float_Stencil8 -- which this device does answer for. A yes here would offer a
  * format no texture could be made of. */
 - (BOOL)isDepth24Stencil8PixelFormatSupported { return NO; }
@@ -3129,7 +3129,7 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
  * -newRenderPipelineStateWithDescriptor: and AIR.
  */
 /*
- * iOS 26's Metal asks this in the place where 16.5 asked -targetDeviceInfo: +[MTLLoader
+ * Darwin 26's Metal asks this in the place where 16.5 asked -targetDeviceInfo: +[MTLLoader
  * sliceIDForDevice:legacyDriverVersion:airntDriverVersion:] sends -targetDeviceArchitecture and
  * asserts "Target device architecture is nil" when it gets nil -- the first thing backboardd's
  * CoreAnimation did with this device, 117 ms into its life. The answer is Metal's own
@@ -3845,7 +3845,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
  * which used to be dropped. It is how a pass reads one level of a texture while it renders into the next:
  * the window server's variable blur downsamples level n-1 into level n of one texture with the clamp at
  * n-1, and without it the sample took its level from the derivatives -- the level being written -- and
- * the blur under iOS 26's navigation bars came out in stair-stepped blocks (runs glass3, glass4).
+ * the blur under Darwin 26's navigation bars came out in stair-stepped blocks (runs glass3, glass4).
  */
 - (struct rwa_sampler *)mesaSamplerWithLodMin:(float)lodMin max:(float)lodMax
 {
@@ -4199,7 +4199,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
  * pays at -dealloc instead, which is the case Apple's flag exists for.
  *
  * Both are done through the runtime by ivar NAME, and a name that is not there is said out
- * loud rather than worked around: on an iOS whose Metal keeps this differently, the right
+ * loud rather than worked around: on a Darwin whose Metal keeps this differently, the right
  * answer is to find out, not to run with a queue that silently blocks at 64.
  */
 static dispatch_semaphore_t
@@ -4518,7 +4518,7 @@ enum {
 }
 
 /*
- * iOS 26: CA::OGL::MetalContext::start_command_buffer names the tasks a command buffer's
+ * Darwin 26: CA::OGL::MetalContext::start_command_buffer names the tasks a command buffer's
  * GPU time is to be billed to (memory and energy accounting, Apple's GPU driver). There is
  * no accounting here; every command buffer of the window server gets this.
  */

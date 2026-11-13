@@ -1,6 +1,6 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The App Store and the thing it is actually waiting for (RC_JOBS=rc.jobs.store, built with
-# FLASHBOOT=1 so that the root is the iOS volume on the flash, QUIET=1, and wifi=1 among XL_CMDLINE).
+# FLASHBOOT=1 so that the root is the Darwin volume on the flash, QUIET=1, and wifi=1 among XL_CMDLINE).
 #
 # A SIM-less, never-signed-in iPhone gets its storefront from the bag server: AppleMediaServices asks
 # for https://bag.itunes.apple.com/bag.xml with no storefront, the server picks one from the request's

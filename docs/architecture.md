@@ -5,7 +5,7 @@ anything; [porting.md](porting.md) is the step-by-step guide for a new device.
 
 ## The boot chain
 
-![The boot chain: stock fastboot, the UEFI, the loader, the kernel, iOS user space](assets/boot-chain.svg)
+![The boot chain: stock fastboot, the UEFI, the loader, the kernel, Darwin user space](assets/boot-chain.svg)
 
 In more detail:
 
@@ -26,7 +26,7 @@ stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the pho
                            - the root file system and /var live in RAM
                                       │
                                       ▼
-                         iOS user space, unmodified apart from pointer authentication
+                         Darwin user space, unmodified apart from pointer authentication
                            - launchd → backboardd → SpringBoard → apps
                            - small libraries of ours are inserted into a few processes (ios/userland/)
 ```
@@ -40,7 +40,7 @@ A reboot brings Android back.
 | --- | --- | --- |
 | **Device data** | A device package per phone (`NAME/board.dts`, kept on the `devices` branch), `soc/SOC.dtsi` on the main branch | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
-| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `ios/` | Apple's kernel or iOS changes, or the port learns something new. Same for every device. |
+| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `ios/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
 
 The aim is that a new phone on a known SoC is a change to the first row only, and a new SoC adds one
 file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
@@ -114,7 +114,7 @@ What the overlay provides, in the order a boot meets it:
 2. **Stand-ins for Apple's closed kernel extensions** (`iokit/Kernel/`, `libkern/amfi/`,
    `osfmk/minicrypto/`): the platform expert, IOSurface, IOMobileFramebuffer, AppleKeyStore, the
    network stack's registry side, code-signing policy, crypto.
-3. **File systems** (`bsd/miscfs/apfs/`, `ramfs/`): an APFS implementation that reads the iOS images
+3. **File systems** (`bsd/miscfs/apfs/`, `ramfs/`): an APFS implementation that reads the Darwin images
    from RAM, and the RAM file system for `/private/var`.
 4. **Drivers** (`bsd/dev/`): display and GPU, touch, buttons, battery, sound, camera, Wi-Fi, storage,
    CPU frequency, backlight, thermal. Each does nothing until its boot argument asks. All of them
@@ -145,9 +145,9 @@ is read through the firmware's Qualcomm charger protocols (`uefi-charger`), is i
 `loader { }` section.
 More: [loader/README.md](../loader/README.md).
 
-## iOS user space
+## Darwin user space
 
-iOS's own programs and frameworks are used as Apple ships them, with one transformation: on CPUs
+Darwin's own programs and frameworks are used as Apple ships them, with one transformation: on CPUs
 without pointer authentication, `ios/tools/pacstrip.c` rewrites PAC instructions to their plain
 equivalents and re-signs the pages.
 
@@ -158,7 +158,7 @@ equivalents and re-signs the pages.
 | `ios/tools/` | `pacstrip`, the system image builder (`mkimage26.py`), the FIPS self-test fix, the RAM budget tools, the boot tool (`boot26.py`). |
 | `userland/` | The earlier generation's user-space sources that are still used or still being ported: `init`, the audio plug-in, the Metal device, the AIR-to-NIR shader compiler for Mesa, the APFS image tools. |
 
-How iOS 26 and 27 were brought to the home screen, step by step: [ios26-boot.md](ios26-boot.md).
+How Darwin 26 and 27 were brought to the home screen, step by step: [ios26-boot.md](ios26-boot.md).
 
 ## What is not in this repository
 
@@ -170,7 +170,7 @@ against the scripts that fetch).
 | What | Why not here | Where it comes from |
 | --- | --- | --- |
 | Apple's XNU release | It is Apple's; only the pin is kept. | `kernel/assemble.sh` fetches it. |
-| iOS itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
+| Darwin itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
 | The phone's firmware (GPU, DSP, touch) | The vendor's; taken from the same phone it runs on. | `adb pull` from its Android. |
 | theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `ios/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
 | The UEFI for a phone | A port of Mu-Silicium per device. | `base/uefi/` has the changes every port needs; a phone's own port is in its package. |
@@ -184,7 +184,7 @@ brings it into a checkout from the `devices` branch ("Device data" above).
 
 ## Legacy
 
-`base/` is the workspace of the first generation: iOS 16.5 on the first phone and QEMU, with
+`base/` is the workspace of the first generation: Darwin 16.5 on the first phone and QEMU, with
 its own README, scripts and porting notes. Parts of it are still the only place for something (the
 UEFI port, the Wi-Fi compatibility layer, the QEMU scripts) and are waiting to be brought to the
 current kernel. What in it was one phone's own -- its xnu-8796 kernel, superseded by `kernel/`, its UEFI

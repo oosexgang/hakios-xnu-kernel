@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The iOS 26 system image (the RAM disk /dev/md0 the loader stages), arm64e code made runnable on a
+"""The Darwin 26 system image (the RAM disk /dev/md0 the loader stages), arm64e code made runnable on a
 phone's ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (ios26/dyld-strip).
 
@@ -7,7 +7,7 @@ usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracte
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
-  (default) the files darwin-renoir/ios165/select-system.py chooses, applied to iOS 26
+  (default) the files darwin-renoir/ios165/select-system.py chooses, applied to Darwin 26
   --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
@@ -61,7 +61,7 @@ MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname'
 PRUNED_APPS = ('Podcasts', 'Maps', 'Freeform', 'Music', 'Books', 'Setup', 'Journal', 'Bridge', 'Fitness',
                'SOSBuddy', 'Diagnostics', 'DiagnosticsService', 'SequoiaTranslator', 'Games', 'AppleTV', 'News',
                'ContinuityCaptureShieldUI')
-# What cannot work on this phone and is big (iOS 27's image is 4.59 GB with the rules above, over the
+# What cannot work on this phone and is big (Darwin 27's image is 4.59 GB with the rules above, over the
 # 4 GiB - 1 that fastboot can send in one download): the RAW camera's neural networks, Metal portrait
 # filters, the A13 camera ISP's firmware, DriverKit
 # drivers (this kernel loads none), and frameworks whose code is in the shared cache while their resources
@@ -76,7 +76,7 @@ PRUNED_FRAMEWORK_RESOURCES = ('System/Library/PrivateFrameworks/iWorkImport.fram
                               'System/Library/PrivateFrameworks/IntelligenceFlowPlannerSupport.framework/',
                               'System/Library/PrivateFrameworks/CameraEffectsKit.framework/')
 EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
-# What select-system.py (16.5's rules: framework resources up to SMALL) leaves out and iOS 27 cannot
+# What select-system.py (16.5's rules: framework resources up to SMALL) leaves out and Darwin 27 cannot
 # do without: linkd dies at its start without the App Intents schema database ("AppIntentSchemas/
 # Database.swift:80: Fatal error: Failed to open database connection: databaseFileMissing"); and
 # QuartzCore's shader resource stays beside its bundle, even with hardware graphics disabled.
@@ -238,8 +238,8 @@ def place(item):
 
 def default_wallpaper():
     """
-    The wallpaper iOS gives a new device, one it can draw here. DefaultWallpapers~iphone.plist names
-    7565 (collection "iOS 17"), whose files are for the iPhone 11's screen class (414w-896h@2x) only,
+    The wallpaper Darwin gives a new device, one it can draw here. DefaultWallpapers~iphone.plist names
+    7565 (collection "Darwin 17"), whose files are for the iPhone 11's screen class (414w-896h@2x) only,
     and pictures in HEIC; the display here is 375w-812h@3x, WallpaperKit finds "no compatible
     wallpaper" and PosterBoard falls back to a Mercury poster, which draws with Metal: a black screen.
     Stripe Blue (7390) is drawn by CoreAnimation layers for any screen class. (The file in WORK is a
@@ -320,7 +320,7 @@ def main():
             shutil.rmtree(path)
         elif os.path.lexists(path):
             os.remove(path)
-    # LAUNCHDAEMONS=DIR: the jobs go into the system volume itself. iOS 26's launchd counts a job as a
+    # LAUNCHDAEMONS=DIR: the jobs go into the system volume itself. Darwin 26's launchd counts a job as a
     # system service (one that may claim an event stream: notifyd's com.apple.notifyd.matching) only when
     # its plist was loaded from there; through the link to /hakios (another volume) none of them is.
     ld = os.path.join(WORK, 'System/Library/LaunchDaemons')

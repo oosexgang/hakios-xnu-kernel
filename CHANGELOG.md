@@ -40,7 +40,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     Wi-Fi DSP's memory, the radio's pins and its supplies' names), `mic { }` (the codec's reset pin),
     `camera { }` (the sensors' PMIC bus, and one `sensor@N { }` table a sensor: its chip, CCI
     master and pins, reset, MCLK, CSI receiver, supplies and lens motor's supply; the driver's table of
-    four is gone; `ios-sensor` and `ios-front` say which sensors are iOS's back and front cameras, and
+    four is gone; `ios-sensor` and `ios-front` say which sensors are Darwin's back and front cameras, and
     `upside-down` a sensor whose pictures come out turned half round), `touch { }` `coordinates` (the controller's range), `wifi { }` `board-data` and
     `regdb` (the radio's files),
     `screen { }` (the status bar's shift past the camera), `loader { }` (framebuffer base,
@@ -88,7 +88,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   the tree into the overlay and the topic patches. An update never overwrites work in a tree that has
   not been exported.
 - **The kernel builds without theos' toolchain.** `kernel/build.sh` takes LLVM's own Mach-O linker and
-  tools (`ld64.lld`, `llvm-libtool-darwin` ...) when theos is not installed, with the iOS SDK's headers
+  tools (`ld64.lld`, `llvm-libtool-darwin` ...) when theos is not installed, with the Darwin SDK's headers
   alone (`IOS_SDK`): `kernel/host/llvm` makes up for the two places they differ from cctools. It needs
   clang 19 or newer and GNU awk, which the build now says when they are missing. LLVM's linker does not
   lay the kernel out as cctools' does (`-image_base`, `-segaddr`): such a kernel is a check that every
@@ -161,7 +161,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **Pinned inputs in one place.** `components.toml` lists the sixteen things fetched from elsewhere at
   their exact versions, and the lint checks it against the scripts that fetch. The macOS SDK archive is
   checked against its SHA-256 before unpacking.
-- **Build scripts run on any machine.** The iOS image scripts named one home directory. They take their
+- **Build scripts run on any machine.** The Darwin image scripts named one home directory. They take their
   directories from where the checkout lies or from the environment.
 
 ### What you will notice
@@ -213,7 +213,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **An APFS image of several volumes shows all of them.** `mkapfs.py` wrote a container's limit of
   volumes from its size alone, so a small image of two volumes said it held one, and the kernel's reader
   saw only the first.
-- **The iOS image tool does not stop on a file that only looks like a Mach-O.** A Java class file
+- **The Darwin image tool does not stop on a file that only looks like a Mach-O.** A Java class file
   begins with the fat Mach-O magic; the tool read past what it had read of it and ended on an error.
 - **The crash line of a process gives its ESR and slide whole**: they were printed 32 bits wide.
 - **A loader's storage page that no request could be made with is not used.** A buffer that is not
@@ -243,11 +243,11 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 ### Checks
 
-- **`make check`** runs everything that needs no phone, no iOS files and no kernel toolchain: the lint,
+- **`make check`** runs everything that needs no phone, no Darwin files and no kernel toolchain: the lint,
   the validation of the board and SoC files, whether `docs/boot-args.md` is current, the host tests.
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components.toml`, looks
-  for files that must never be published, and holds the iOS side's copies of the kernel's device
+  for files that must never be published, and holds the Darwin side's copies of the kernel's device
   interfaces (`userland/userland/src/hakios_*.h`) to what the kernel's say.
 - **The host tests** (`tests/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
@@ -255,8 +255,8 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   flashlight, the battery, the vibration motor, the speaker amplifiers, the wiring of the touch
   controllers, the cameras, the sound's pins and the microphones' blocks (the last two on a board and a
   chip unlike the first phones', which is how the sound driver was found watching that phone's pins), the sparse image and the storage driver, whose test holds that the loader is never asked for a write
-  the port may not make, and iOS's Wi-Fi requests, whose test holds that nothing a radio reports goes
-  back to iOS past the room Apple's layouts and the caller's buffer have. What the drivers share
+  the port may not make, and Darwin's Wi-Fi requests, whose test holds that nothing a radio reports goes
+  back to Darwin past the room Apple's layouts and the caller's buffer have. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
   porting guide, and build the loader. They use stand-in phones in `tests/devices/` and a made-up chip in
@@ -285,7 +285,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   Tested on the host and under `qemu-aarch64`. Not yet verified on a phone. The default, `thermal=1`,
   only logs the hottest sensor; `thermal=2` holds back.
 - **The Metal plug-in gate** is back in the 12377 kernel, behind `metal=1`. It is one step of the plan
-  in [docs/metal-glass.md](docs/metal-glass.md). The Metal device plug-in is not packaged for iOS 27.
+  in [docs/metal-glass.md](docs/metal-glass.md). The Metal device plug-in is not packaged for Darwin 27.
 
 ### Not changed, and not yet verified
 
@@ -296,7 +296,7 @@ Not changed:
   wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
-- The first phone has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.
+- The first phone has not been booted with Darwin 26/27. The emulator's board is not set up for this kernel.
 
 Not yet verified ([docs/building.md](docs/building.md) has the table):
 
@@ -323,8 +323,8 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
 
 ## Before the restructuring
 
-The first generation ran iOS 16.5 on the first phone and in QEMU. Its workspace is kept in
+The first generation ran Darwin 16.5 on the first phone and in QEMU. Its workspace is kept in
 `base/`, and [base/README.md](base/README.md) describes it. Parts of it are still the only place for
 something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
-by `kernel/`. The notes on how iOS 26 and 27 were brought to the home screen on Renoir, written before
+by `kernel/`. The notes on how Darwin 26 and 27 were brought to the home screen on Renoir, written before
 the restructuring, are in [docs/ios26-boot.md](docs/ios26-boot.md).

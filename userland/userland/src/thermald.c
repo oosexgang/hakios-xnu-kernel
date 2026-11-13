@@ -1,12 +1,12 @@
 /*
- * thermald: the phone's heat, as iOS hears about it.
+ * thermald: the phone's heat, as Darwin hears about it.
  *
  * The kernel's thermal service (bsd/dev/hakios_thermal.c in hakios-xnu-kernel) reads the SoC's
  * sensors, slows the cores when they get hot, and keeps a pressure level in kern.hakios.thermal_pressure:
- * iOS's own scale, 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping. On an iPhone it is
+ * Darwin's own scale, 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping. On an iPhone it is
  * thermalmonitord that says how hot the phone is; here nobody would, so apps would never hear of it --
  * ProcessInfo.thermalState would stay "nominal" while the cores are being slowed down. This daemon
- * passes the level on the way iOS passes it: as the state of the Darwin notification
+ * passes the level on the way Darwin passes it: as the state of the Darwin notification
  * com.apple.system.thermalpressurelevel (OSThermalNotification.h, which ProcessInfo reads), posted
  * whenever it changes.
  *
@@ -59,7 +59,7 @@ show(void)
 	return 0;
 }
 
-/* tell iOS: the level as the notification's state, then the notification itself */
+/* tell Darwin: the level as the notification's state, then the notification itself */
 static void
 post(int token, int level)
 {
@@ -87,7 +87,7 @@ serve(void)
 		printf("thermald: cannot register %s\n", PRESSURE_NAME);
 		return 1;
 	}
-	printf("thermald: passing the kernel's thermal pressure to iOS (%s)\n", PRESSURE_NAME);
+	printf("thermald: passing the kernel's thermal pressure to Darwin (%s)\n", PRESSURE_NAME);
 	for (;;) {
 		level = kernel_level();
 		if (level >= 0 && level != last) {

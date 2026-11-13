@@ -70,7 +70,7 @@
         <text x="980" y="400">for the injected libraries</text>
         <text x="220" y="528">XNU + overlay + patches</text>
         <text x="600" y="528">a UEFI application</text>
-        <text x="980" y="528">in a few of iOS's processes</text>
+        <text x="980" y="528">in a few of Darwin's processes</text>
         <text x="220" y="550">by kernel/build.sh</text>
         <text x="600" y="550">by loader/build.sh</text>
         <text x="980" y="550">by ios/userland/inj26.sh</text>

@@ -1,7 +1,7 @@
 /*
  * /sbin/launchd of the big system image: the first program the kernel runs.
  *
- * The system image (the iOS files and the dyld shared cache) takes a minute
+ * The system image (the Darwin files and the dyld shared cache) takes a minute
  * and a half to upload to the phone, so nothing that changes often lives in
  * it. All of that - the real init, its tests, the list of launchd jobs - is
  * in the small image that travels with the kernel (the second RAM disk,

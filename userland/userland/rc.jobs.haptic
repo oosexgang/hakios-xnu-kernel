@@ -1,5 +1,5 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# The vibration motor for iOS (RC_JOBS=rc.jobs.haptic, with haptic=5): the system's haptic feedbacks -- peek (1519),
+# The vibration motor for Darwin (RC_JOBS=rc.jobs.haptic, with haptic=5): the system's haptic feedbacks -- peek (1519),
 # pop (1520), "nope" (1521: three short ones) -- and the vibration of the ringer (4095), each played the way a program
 # plays a system sound; then haptics the way an application plays them (CoreHaptics: a tap, a vibration, three taps),
 # once with a vibration longer than the kernel's limit of 1 s, which the kernel cuts; then the feedback of the home

@@ -1,7 +1,7 @@
 /*
  * HakiOS: Apple80211, answered in the kernel.
  *
- * iOS's Wi-Fi side -- wifid, and through it Settings and the status bar -- talks to a Wi-Fi
+ * Darwin's Wi-Fi side -- wifid, and through it Settings and the status bar -- talks to a Wi-Fi
  * driver in requests that were once ioctls and are, where the driver offers no user client,
  * ioctls still: SIOCGA80211 and SIOCSA80211 on any socket, with a struct apple80211req that
  * names the interface, a request type, a value, and a buffer in the caller's memory
@@ -11,7 +11,7 @@
  *
  * What is asked is answered from the station boundary (sys/hakios_sta.h): the radio's power,
  * its channels, a scan and what it heard, the network joined. What happens there by itself is
- * told to iOS the way a driver tells it: kernel events of class 6 (IEEE 802.11), subclass 1,
+ * told to Darwin the way a driver tells it: kernel events of class 6 (IEEE 802.11), subclass 1,
  * whose code is Apple80211's own event number and whose data begins with the interface's name
  * in 16 bytes (IO80211.framework reads them from a PF_SYSTEM socket and compares the name).
  *
@@ -20,7 +20,7 @@
  * a network's name or its key may be in there.
  *
  * The request types and the layouts are Apple's. The old ones are as the headers of its open
- * IO80211 sources once described them (apple80211_ioctl.h, apple80211_var.h); where iOS 16.5
+ * IO80211 sources once described them (apple80211_ioctl.h, apple80211_var.h); where Darwin 16.5
  * differs the layout was read out of IO80211.framework of 16.5, which fills and reads the same
  * structures on the other side (Apple80211GetWithIOCTL, _getScanData, _addScanResultToList,
  * _performAssociation, _dispatchAsyncAssocEvent, _dispatchLinkChangedEvent).
@@ -178,18 +178,18 @@ struct apple80211_link_changed {
 };
 
 _Static_assert(sizeof(struct apple80211_assoc) == 592 && offsetof(struct apple80211_assoc, key) == 0x48,
-    "the association request as iOS 16.5 has it");
+    "the association request as Darwin 16.5 has it");
 _Static_assert(sizeof(struct apple80211_link_changed) == 32 && offsetof(struct apple80211_link_changed, reason) == 0x14,
-    "the link event as iOS 16.5 reads it");
-_Static_assert(sizeof(struct apple80211_channels) == 4824, "the channel list as iOS 16.5 has it");
+    "the link event as Darwin 16.5 reads it");
+_Static_assert(sizeof(struct apple80211_channels) == 4824, "the channel list as Darwin 16.5 has it");
 _Static_assert(sizeof(struct apple80211_channels_info) == 10016 && offsetof(struct apple80211_channels_info, number) == 0x32e &&
-    offsetof(struct apple80211_channels_info, flags) == 0x12d0, "the channels' description as iOS 16.5 has it");
+    offsetof(struct apple80211_channels_info, flags) == 0x12d0, "the channels' description as Darwin 16.5 has it");
 _Static_assert(sizeof(struct apple80211_scan_request) == 5456 && offsetof(struct apple80211_scan_request, channels) == 0x48 &&
     offsetof(struct apple80211_scan_request, flags) == 0x1308 && offsetof(struct apple80211_scan_request, names) == 0x1318,
-    "the scan request as iOS 16.5 has it");
+    "the scan request as Darwin 16.5 has it");
 _Static_assert(sizeof(struct apple80211_scan_result) == 1164 && offsetof(struct apple80211_scan_result, ssid_length) == 0x60 &&
     offsetof(struct apple80211_scan_result, age_ms) == 0x84 && offsetof(struct apple80211_scan_result, elements) == 0x8c,
-    "a scan's result as iOS 16.5 has it");
+    "a scan's result as Darwin 16.5 has it");
 
 /* Apple80211's events (APPLE80211_M_...) */
 enum { EVENT_POWER_CHANGED = 1, EVENT_SSID_CHANGED = 2, EVENT_BSSID_CHANGED = 3, EVENT_LINK_CHANGED = 4, EVENT_ASSOC_DONE = 9,
@@ -234,7 +234,7 @@ channel_fill(struct apple80211_channel *channel, unsigned frequency, unsigned fl
 
 /*
  * A network's name and information elements as long as the record says, but never past it: the record comes
- * from the radio's driver, which is built outside this tree, and what is taken from it goes out to iOS.
+ * from the radio's driver, which is built outside this tree, and what is taken from it goes out to Darwin.
  */
 static unsigned
 bss_ssid_length(const struct hakios_sta_bss *bss)
@@ -331,7 +331,7 @@ get(struct apple80211req *request)
 		return give(request, bits, sizeof(bits));
 	}
 	case 19: {                              /* the radio's power: one radio. Until the driver is up it counts as on: it */
-		struct {                        /* is being brought up, and iOS asks this once, early */
+		struct {                        /* is being brought up, and Darwin asks this once, early */
 			uint32_t version, radios, state[4];
 		} answer = { .version = 1, .radios = 1, .state = { !hakios_sta_present() || hakios_sta_powered() } };
 
@@ -478,7 +478,7 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	unsigned unknown = 0;
 	int error = 0;
 
-	/* iOS 26's wifid sends 5528 bytes (72 more than the layout above, iOS 16's): the fields above are read from its start */
+	/* Darwin 26's wifid sends 5528 bytes (72 more than the layout above, Darwin 16's): the fields above are read from its start */
 	if (request->req_len < sizeof(*asked)) {
 		return EINVAL;
 	}

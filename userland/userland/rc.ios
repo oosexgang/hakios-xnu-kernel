@@ -1,5 +1,5 @@
 # Commands init runs after its own checks: one per line, words separated by blanks.
-# Our own program first, then programs taken unmodified from iOS 16.5.
+# Our own program first, then programs taken unmodified from Darwin 16.5.
 /hakios/bin/hello_dyn one two
 /bin/df
 /sbin/mount

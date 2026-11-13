@@ -1,7 +1,7 @@
 /*
  * A virtio sound device as the sink of /dev/hakios-audio (see sys/hakios_audio.h).
  *
- * Under QEMU's "virt" machine a "virtio-sound-device" plays what iOS plays: through the host's
+ * Under QEMU's "virt" machine a "virtio-sound-device" plays what Darwin plays: through the host's
  * sound system, or into a file ("-audiodev wav"), whichever back end QEMU is given. Like the
  * input devices (hakios_virtio_input.c) it sits on the machine's virtio-mmio bus, which must
  * be the current one, not "legacy". Only with boot-arg virtio_sound=1: the bus address is

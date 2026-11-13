@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Make the function table of src/eagl.c: one function of ours for every entry of the table that
-iOS's OpenGLES hands out through -[EAGLContext getMacroContextPrivate] (src/eagl_slots.txt).
+Darwin's OpenGLES hands out through -[EAGLContext getMacroContextPrivate] (src/eagl_slots.txt).
 
   mkeagl.py SLOTS GL.XML EXPORTED EAGL.C > obj/eagl_gen.h
 

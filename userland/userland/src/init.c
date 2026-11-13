@@ -6,7 +6,7 @@
  *     a system expects there;
  *   - checks what the kernel can do for user space, one line per check;
  *   - runs the commands listed in etc/rc of its image: usually just
- *     "exec /sbin/launchd.ios", which turns process 1 into the iOS launchd;
+ *     "exec /sbin/launchd.ios", which turns process 1 into the Darwin launchd;
  *   - halts the machine if it is still process 1 after that.
  *
  * Started with a file name by anything else, it is a command runner: that is
@@ -34,9 +34,9 @@ in_image(const char *path)
 	return buf;
 }
 
-/* ---- the iOS root volume on the phone's flash as the root (boot-arg root_apfs=DEV) ---- */
+/* ---- the Darwin root volume on the phone's flash as the root (boot-arg root_apfs=DEV) ---- */
 
-/* the root is the iOS volume: its /sbin/launchd is Apple's, there is no launchd.ios */
+/* the root is the Darwin volume: its /sbin/launchd is Apple's, there is no launchd.ios */
 static int flash_root_mode;
 
 static void check(int ok, const char *what);
@@ -114,22 +114,22 @@ synthetic_dir(const char *path)
 }
 
 /*
- * root_apfs=DEV: the root is to be the iOS root volume on /dev/DEV -- the phone's flash, read
+ * root_apfs=DEV: the root is to be the Darwin root volume on /dev/DEV -- the phone's flash, read
  * only.  The kernel has started off the boot volume of flashboot.apfs (the resident image, md0,
  * its first container: stage0, firmware, mount points; the OS cryptex with the dyld shared cache
- * is its second container) and stage0 has mounted this image on /hakios.  What the big system image changes in iOS (userland/build.sh) is put in place on
+ * is its second container) and stage0 has mounted this image on /hakios.  What the big system image changes in Darwin (userland/build.sh) is put in place on
  * the volume instead, without writing to it:
- *   - our choice of launchd jobs instead of iOS's 500 (this image's LaunchDaemons, and
+ *   - our choice of launchd jobs instead of Darwin's 500 (this image's LaunchDaemons, and
  *     nothing for NanoLaunchDaemons, LaunchAngels, nor xpc's launchd.plist, which launchd
  *     would read instead of the directory);
  *   - only our audio device among the audio server's plug-ins;
- *   - the applications iOS installs on its first boot (private/var/staged_system_apps)
+ *   - the applications Darwin installs on its first boot (private/var/staged_system_apps)
  *     among the system's own in /Applications: another name for each there (a synthetic
  *     entry of the volume -- not a mount, which whatever registers the system's
  *     applications passed over), made before /private/var is covered by a memory
  *     filesystem.
  * Then the volume becomes the root (sysctl kern.hakios_switch_root) and the boot volume
- * goes to its /private/preboot, the cryptexes onto that volume's Cryptexes/OS and App: the iOS
+ * goes to its /private/preboot, the cryptexes onto that volume's Cryptexes/OS and App: the Darwin
  * volume's /System/Cryptexes/OS and App point to /private/preboot/Cryptexes/OS and App, and the
  * kernel takes a shared cache from the first.  This
  * image goes along with it, to /private/preboot/hakios, and is bound back on /hakios, a
@@ -143,7 +143,7 @@ synthetic_dir(const char *path)
 /*
  * Mount a cryptex on /private/preboot/Cryptexes/NAME: container C (",c=N") of md0, or, when md0 has
  * no such container (EINVAL: the RAM part of the boot is the boot volume alone), the same container
- * of the device the iOS volume came from.  Neither: said, and a check fails.
+ * of the device the Darwin volume came from.  Neither: said, and a check fails.
  */
 static void
 mount_cryptex(const char *name, const char *container, const char *flashdev)
@@ -182,13 +182,13 @@ flash_root(const char *dev)
 	ssize_t n;
 	int fd, ok, apps = 0, bound = 0;
 
-	printf("\n-- the iOS root volume on /dev/%s as the root --\n", dev);
+	printf("\n-- the Darwin root volume on /dev/%s as the root --\n", dev);
 	strcpy(devpath, join("/dev/", dev, ""));
 	ok = mount("apfs", "/flash", MNT_RDONLY, devpath) == 0;
 	if (!ok) {
 		printf("  mount %s: %s\n", devpath, strerror(errno));
 	}
-	check(ok, "mount the iOS volume read only");
+	check(ok, "mount the Darwin volume read only");
 	if (!ok) {
 		return;
 	}
@@ -196,7 +196,7 @@ flash_root(const char *dev)
 	check(bind_dir(in_image("/LaunchDaemons"), "/flash/System/Library/LaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/NanoLaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/LaunchAngels") &&
-	    bind_dir(in_image("/xpc"), "/flash/System/Library/xpc"), "our launchd jobs, not iOS's");
+	    bind_dir(in_image("/xpc"), "/flash/System/Library/xpc"), "our launchd jobs, not Darwin's");
 	check(bind_dir(in_image("/hal"), "/flash/System/Library/Audio/Plug-Ins/HAL"),
 	    "our audio device, not Apple's plug-ins");
 	if (stat("/fw", &fw_st) == 0) {
@@ -206,7 +206,7 @@ flash_root(const char *dev)
 	if (stat("/jb-bin", &fw_st) == 0) {
 		/*
 		 * The package manager's prefix is in the boot volume (/jb), and Sileo runs mv, cp, rm, mkdir
-		 * and chmod from /bin, where iOS has df and ps alone (userland/build.sh, SILEO_BIN): the boot
+		 * and chmod from /bin, where Darwin has df and ps alone (userland/build.sh, SILEO_BIN): the boot
 		 * volume's jb-bin -- those five, links into the prefix -- over the volume's /bin as a union
 		 * mount, through which what it does not have is found in the /bin below.
 		 */
@@ -251,17 +251,17 @@ flash_root(const char *dev)
 	if (!ok) {
 		printf("  switching the root: %s\n", strerror(errno));
 	}
-	check(ok, "the iOS volume is the root, the RAM part of the boot on /private/preboot");
+	check(ok, "the Darwin volume is the root, the RAM part of the boot on /private/preboot");
 	if (!ok) {
 		return;
 	}
 	chdir("/");
 	/*
-	 * The cryptexes, where iOS grafts them: the boot volume's empty Cryptexes/OS and Cryptexes/App,
-	 * now /private/preboot/Cryptexes/OS and App, where the iOS volume's /System/Cryptexes/OS and App
+	 * The cryptexes, where Darwin grafts them: the boot volume's empty Cryptexes/OS and Cryptexes/App,
+	 * now /private/preboot/Cryptexes/OS and App, where the Darwin volume's /System/Cryptexes/OS and App
 	 * point (and the kernel takes a shared cache from the first, bsd/vm/vm_unix.c).  Each from md0 when
 	 * the RAM part of the boot has it (flashboot.apfs: the second and third containers), else from
-	 * the flash -- darwin, where Apple's images lie as they are after the iOS volume (containers 1 and 2
+	 * the flash -- darwin, where Apple's images lie as they are after the Darwin volume (containers 1 and 2
 	 * of the root's own device).
 	 */
 	mount_cryptex("OS", ",c=1", devpath);
@@ -503,7 +503,7 @@ test_processes(void)
 }
 
 /*
- * Present only in the image that carries the iOS dyld and shared cache:
+ * Present only in the image that carries the Darwin dyld and shared cache:
  * an ordinary dynamically linked program.
  */
 static void
@@ -568,7 +568,7 @@ parse_number(const char *text, int radix)
 /*
  * /private/var is an empty directory of the read-only root: give it a
  * memory-backed filesystem and the directories a system expects there.
- * (/tmp is a symlink to /private/var/tmp, as on iOS.)
+ * (/tmp is a symlink to /private/var/tmp, as on Darwin.)
  */
 static int
 copy_file(const char *from, const char *to, int mode, int uid, int gid)
@@ -838,7 +838,7 @@ mount_writable(void)
 	}
 	check(ok, "mount a memory filesystem on /private/var");
 
-	/* the directories of the data volume, as listed in the template that ships with iOS (ios165/mkvarskel.py) */
+	/* the directories of the data volume, as listed in the template that ships with Darwin (ios165/mkvarskel.py) */
 	read_whole(in_image("/etc/var.skel"), skeleton, sizeof(skeleton));
 	for (char *line = skeleton; ok && *line;) {
 		char *end = strchr(line, '\n'), *f[6];
@@ -958,7 +958,7 @@ mount_writable(void)
 
 	/*
 	 * and the package manager's prefix, when the image was built with one (tools/mk-jb.sh): /jb of
-	 * the system image in RAM, or, with the iOS volume on the flash as the root, /private/preboot/jb
+	 * the system image in RAM, or, with the Darwin volume on the flash as the root, /private/preboot/jb
 	 * -- the boot volume, where a rootless jailbreak on an iPhone keeps its Procursus too
 	 * (/var/jb leads into /private/preboot there)
 	 */
@@ -1007,14 +1007,14 @@ mount_writable(void)
 		}
 		grafted = own_tree("/private/var/jb/var/mobile", 501) && grafted;
 		/*
-		 * The prefix's own user database. Its programs do not ask iOS who a user is: they are
+		 * The prefix's own user database. Its programs do not ask Darwin who a user is: they are
 		 * built against libiosexec, which carries an ie_getpwnam of its own and reads
 		 * /var/jb/etc/pwd.db -- a Berkeley database that pwd_mkdb makes from master.passwd and
 		 * that the bootstrap does not ship, only the text it is made from. Without it every
 		 * program of the prefix answers "no such user": an sshd from here refused every login
-		 * with "Invalid user root" while iOS's own /bin/ps resolved users perfectly -- and the
-		 * asymmetry is exactly this, not anything about iOS's own database or the launchd domain
-		 * its server sits in, because a program of the prefix never asks iOS at all. The
+		 * with "Invalid user root" while Darwin's own /bin/ps resolved users perfectly -- and the
+		 * asymmetry is exactly this, not anything about Darwin's own database or the launchd domain
+		 * its server sits in, because a program of the prefix never asks Darwin at all. The
 		 * writable copy of the prefix is new at every boot, so the database is made at every
 		 * boot; it takes milliseconds.
 		 */
@@ -1040,9 +1040,9 @@ mount_writable(void)
 
 /*
  * What the last boot left in /private/var, back out of the phone's flash (var_store=1): the
- * memory filesystem is empty at every boot, so everything iOS writes -- the home screen's layout,
+ * memory filesystem is empty at every boot, so everything Darwin writes -- the home screen's layout,
  * the applications' own data, the snapshots and the baked wallpaper -- would otherwise be new
- * again every time. userland/src/var_store.c keeps a copy in the partition darwin, past the iOS
+ * again every time. userland/src/var_store.c keeps a copy in the partition darwin, past the Darwin
  * volume and the cryptexes, and puts it back here, over the skeleton: a name the skeleton has and
  * the store has too comes out as the store has it. A store that is not there or does not check
  * out leaves what the skeleton made, and the boot goes on either way -- so a bad store cannot
@@ -1296,7 +1296,7 @@ run_command(char *line)
 			}
 		}
 		if (flash_root_mode && strcmp(argv[1], "/sbin/launchd.ios") == 0) {
-			argv[1] = "/sbin/launchd";      /* the root is iOS's own volume: its launchd is that */
+			argv[1] = "/sbin/launchd";      /* the root is Darwin's own volume: its launchd is that */
 		}
 		execve(argv[1], argv + 1, envp);
 		printf("%s: %s\n", argv[1], strerror(errno));
@@ -1455,7 +1455,7 @@ configure_inject(void)
 
 /*
  * The kernel is configured for a very small machine (the size class "xsmall" of
- * config/MASTER.arm64.bcm2837) and so stops at 1024 vnodes, whatever the memory. An iOS system
+ * config/MASTER.arm64.bcm2837) and so stops at 1024 vnodes, whatever the memory. A Darwin system
  * with an application open needs more: the table fills ("vnode: table is full"), opens wait and
  * idle daemons are killed to free vnodes. Give it what the kernel's own rule gives a bigger
  * configuration -- one for every 64 KB of memory, and 1024 -- up to MAX_VNODES.

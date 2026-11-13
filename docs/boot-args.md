@@ -242,7 +242,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for iOS until the run ends: what iOS plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /dev/ha… |
+| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for Darwin until the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /… |
 | `haptic_effect` | and one short effect played (haptic_effect=N, default 1: Android's effect 0) |
 
 ### `bsd/dev/hakios_mic.c`
@@ -278,7 +278,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `torch` | What iOS's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours whos… |
+| `torch` | What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours w… |
 | `torch_max_s` | — |
 | `torch_secs` | — |
 
@@ -307,7 +307,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/hakios_sta.h: iOS's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network of fw/network joined if… |
+| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/hakios_sta.h: Darwin's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network of fw/network joined… |
 | `wifi_again` | wifi_again=1 start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two |
 | `wifi_ask` | wifi_ask=1 step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer |
 | `wifi_dirty` | wifi_dirty=1 the DSP is not stopped: left as a kernel that died leaves it |
@@ -353,7 +353,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_store_seed` | apfs_store_seed=N which pattern (default 1); a different seed is a different payload |
 | `apfs_subtree` | apfs_subtree=/usr walk only that part of the volume |
 | `apfs_threads` | apfs_threads=N how many, for mode 5 (default 4) |
-| `apfs_volume` | apfs_volume=ufs_darwin is the iOS root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
+| `apfs_volume` | apfs_volume=ufs_darwin is the Darwin root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
 | `apfs_volume_at` | — |
 | `apfs_walkers` | apfs_walkers=N: one of N walkers; a subdirectory is left on the shared stack (par_push) |
 | `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
@@ -377,7 +377,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `ufs_native_bench` | ufs_native_bench=1 (with ufs_native=1): what the flash gives with N reads in flight -- N threads each reading at random places of darwin, a size at a time -- MB/s and microseconds a read, for 1, 2, 4, 8, 16 and 31 threads. |
 | `ufs_native_check` | ufs_native_check=1: what this kernel's own driver reads is what the loader reads, byte for byte. |
 | `ufs_shared_pa` | page (ufs_shared_pa=) with the table of partitions, a request and an answer, and a buffer; this driver writes a request -- which partition, which blocks -- and core 0 reads them with that driver's ReadBlocks into the buffer (xnuloader/loader.c, block_poll). |
-| `ufs_write` | With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin, the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the iOS volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that is where the data volume of iOS… |
+| `ufs_write` | With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin, the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the Darwin volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that is where the data volume of D… |
 | `var_save_ms` | at most this long on the way out (var_save_ms=N) |
 
 ### `bsd/dev/hakios_ufshc.c`
@@ -525,4 +525,4 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `ipc_legacy` | hakios: boot-arg ipc_legacy=1 switches the enforced IPC security policies off, so that an older iOS user space (one that predates them, e.g. iOS 16's launchd and its OOL port arrays) can be run on this kernel to test the platform. |
+| `ipc_legacy` | hakios: boot-arg ipc_legacy=1 switches the enforced IPC security policies off, so that an older Darwin user space (one that predates them, e.g. |

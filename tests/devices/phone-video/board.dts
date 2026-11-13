@@ -128,7 +128,7 @@
 
 	// The cameras (feature "camera-sm7325"). The PM8008 whose regulators feed the sensors is on the I2C bus of
 	// GPIO 4 and 5. Each sensor as Android's device tree has it (cam-sensor2, 0, 1 and 3, in this order, which
-	// is the one iOS's side numbers them in): its CCI master and that master's pins, its reset, which MCLK and
+	// is the one Darwin's side numbers them in): its CCI master and that master's pins, its reset, which MCLK and
 	// that clock's pin, the CSI receiver, and how the module file's power sequence switches its supplies.
 	camera {
 		pmic-pins = <4 5>;

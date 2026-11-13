@@ -11,7 +11,7 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | `src/` | The parts, by topic (below). `src/platform.h` has `struct platform`, which says what the loader needs to know of a machine. |
 | `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`loader { }` of `devices/NAME/board.dts`) and `soc/SOC.dtsi` (`platform { }`). |
 | `efi.h` | The parts of UEFI it uses. |
-| `identity.h`, `mkidentity.py` | Which iPhone iOS is told it runs on, taken from that iPhone's own device tree. |
+| `identity.h`, `mkidentity.py` | Which iPhone Darwin is told it runs on, taken from that iPhone's own device tree. |
 | `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
 | `build.sh` | Makes `platforms.h`, then builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
 
@@ -53,7 +53,7 @@ as when it was one file.
 | `src/run.c` | The kernel loaded, given its device tree and boot arguments, and run. |
 | `src/usb.c` | The USB command channel: a small server of the fastboot protocol. |
 | `src/dsu_write.c` | The system image written through its extents, and nowhere else. |
-| `src/dsu.c` | The iOS system image as an Android DSU image ("oem dsu"). |
+| `src/dsu.c` | The Darwin system image as an Android DSU image ("oem dsu"). |
 | `src/download.c` | Where a download over USB goes, and how much of it fits. |
 | `src/commands.c` | The commands taken over USB. |
 | `src/ramfb.c` | QEMU's display in the shape of the phone's screen. |
@@ -107,7 +107,7 @@ if you made it:
 | Where | When | The code |
 | --- | --- | --- |
 | A partition named `logdump` | After a run, its log and the kernel's, so that a run that ends in a reset leaves something. A phone without such a partition keeps the log in RAM only. | `src/logstore.c` |
-| The iOS system image stored as an Android DSU image (`system_gsi`) | Only on `fastboot oem dsu patch OFFSET` followed by a download: into the image's own extents, read back. | `src/dsu_write.c` |
+| The Darwin system image stored as an Android DSU image (`system_gsi`) | Only on `fastboot oem dsu patch OFFSET` followed by a download: into the image's own extents, read back. | `src/dsu_write.c` |
 | The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is in every field the one the board file's `storage { }` gives. A board without `storage { }` has no such partition. | `src/ufs_service.c`, `src/own_partition.c` |
 
 Nothing else calls the firmware's `write_blocks`, and `make check` fails if a fourth place appears

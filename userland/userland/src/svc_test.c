@@ -1,5 +1,5 @@
 /*
- * A client of the first real iOS services: each call below is answered by a
+ * A client of the first real Darwin services: each call below is answered by a
  * daemon that launchd starts on demand.
  *   notifyd   - Darwin notifications (libnotify)
  *   cfprefsd  - preferences (CoreFoundation)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy stock iOS launchd job definitions into the small image, adjusted for the bring-up.
+"""Copy stock Darwin launchd job definitions into the small image, adjusted for the bring-up.
 
 usage: mkjobs.py [--rest] [--root-volume LISTING] IOS_ROOTFS DEST_DIR label...
 
@@ -13,7 +13,7 @@ The program itself must be there at run time; a warning is printed if it will no
 
 What "there at run time" means is the recipe, not what happens to be unpacked on this machine, and the
 two recipes differ. With the system image as the root, it is what select-system.py chose, and a daemon it
-left out as too big really is absent. With the iOS volume on the phone's flash as the root (build.sh
+left out as too big really is absent. With the Darwin volume on the phone's flash as the root (build.sh
 FLASHBOOT=1), the root is Apple's whole volume: --root-volume names the technical listing of its image
 (ios165/rootfs.slt) and a program counts as there if Apple ships it. Seven jobs turn on that --
 fairplayd, identityservicesd, passd, assistantd, callservicesd, lskdd, searchpartyd -- and were being
@@ -25,7 +25,7 @@ Weather were never its doing: see the network section of README.md.) Eight more,
 AuthenticationServicesAgent, hang on the App cryptex being unpacked beside it at all (see CRYPTEXES
 below); a workspace used to lose those silently, which tools/new-workspace.sh no longer does.
 
-With --rest, the other jobs of iOS follow (their standard error on the console as well, their os_log
+With --rest, the other jobs of Darwin follow (their standard error on the console as well, their os_log
 only when named in OSLOG), and with them the "launch angels" (System/Library/LaunchAngels: the
 applications without an icon that draw parts of the system's own interface in a process of their
 own -- the wallpaper, the keyboard, the now playing controls -- and are reached through a Mach
@@ -68,7 +68,7 @@ import sys
 # got (apsd -> mobileactivationd, "Device is probably unactivated"), so the push itself stays out of reach.)
 # CommCenter stays, and this is what it cost to find out. Shipping both of its plists is the stock
 # arrangement -- they carry the same label and launchd picks by the device tree, so with no "baseband" node
-# it takes com.apple.CommCenter-noncellular, the variant iOS has for a device with no modem -- and it does
+# it takes com.apple.CommCenter-noncellular, the variant Darwin has for a device with no modem -- and it does
 # pick it. It then gets a long way: it answers com.apple.commcenter.xpc and .coretelephony.xpc (85 and 18
 # failed lookups in a session become none), serves geod its policy, loads the network-extension
 # configurations. And then it dies, every time, on one of two IOKit drivers of the cellular path that this
@@ -220,11 +220,11 @@ DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'loca
         'purplebuddy', 'restore', 'usb', 'accessoryd',
         'mobileassetd', 'bird',
         # these start, crash and are asked for again, over and over. (aggregated, which was among them, is where
-        # iOS 16 keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
+        # Darwin 16 keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
         # waits for; it now runs through a session.)
         'homed', 'routined', 'duetexpertd', 'com.apple.dmd', 'syncdefaultsd', 'photoanalysisd', 'avconferenced')
 
-# iOS 26 (IOS=.../ios26): its own list, not iOS 16.5's. Only what has no hardware here or must not run
+# Darwin 26 (IOS=.../ios26): its own list, not Darwin 16.5's. Only what has no hardware here or must not run
 # (baseband, Bluetooth, NFC, biometrics, the Secure Enclave, cameras, Wi-Fi until there is a driver,
 # firmware updates, restore and erase, the system watchdog); the 16.5 list's crash-loopers are let through
 # -- leaving com.apple.dmd out had appprotectiond and ScreenTimeAgent look it up 3000 times a minute each.
@@ -245,7 +245,7 @@ DENY = tuple(word for word in DENY if word not in os.environ.get('ALLOW', '').sp
 
 args = sys.argv[1:]
 rest = '--rest' in args
-root_volume = None              # the listing of the whole iOS volume, when that volume is the root
+root_volume = None              # the listing of the whole Darwin volume, when that volume is the root
 if '--root-volume' in args:
     i = args.index('--root-volume')
     root_volume = args[i + 1]
@@ -261,7 +261,7 @@ CRYPTEXES = {'/System/Cryptexes/OS/': 'cryptex', '/System/Cryptexes/App/': 'cryp
 
 
 def volume_paths(listing, _cache={}):
-    """Every path in a 7z technical listing of the iOS root filesystem image, without a leading slash."""
+    """Every path in a 7z technical listing of the Darwin root filesystem image, without a leading slash."""
     if listing not in _cache:
         _cache[listing] = {line[len('Path = '):].strip()
                            for line in open(listing, errors='replace') if line.startswith('Path = ')}
@@ -278,7 +278,7 @@ def present(program):
     return os.path.isfile(f'{src_root}{program}')
 
 
-# os_log to standard error: OS_ACTIVITY_DT_MODE did it through iOS 16.5; iOS 26's libsystem_trace
+# os_log to standard error: OS_ACTIVITY_DT_MODE did it through Darwin 16.5; Darwin 26's libsystem_trace
 # also looks at ACTIVITY_LOG_STDERR (and CoreFoundation's CFLog at CFLOG_FORCE_STDERR)
 STDERR_LOG = {'OS_ACTIVITY_DT_MODE': 'YES', 'ACTIVITY_LOG_STDERR': '1', 'CFLOG_FORCE_STDERR': '1'}
 # OSLOG_LEVEL=debug: the info and debug messages too (OS_ACTIVITY_MODE), which is where CoreAnimation says things
@@ -310,11 +310,11 @@ for label in labels:
     # a job that is named is wanted, whatever hardware it says it is for: wifid's asks for a node "wlan" in the
     # device tree, which the loader's tree does not have yet
     job.pop('_LimitLoadToDeviceTree', None)
-    # iOS 26: launchd refuses to import a job that names a conclave unless it trusts the job, and a job of
+    # Darwin 26: launchd refuses to import a job that names a conclave unless it trusts the job, and a job of
     # ours is not one it trusts -- backboardd's and SpringBoard's were turned away ("_Conclave can only be
     # set on trusted services")
     job.pop('_Conclave', None)
-    # iOS 26's window server draws the camera/microphone indicator through a secure-indicator manager
+    # Darwin 26's window server draws the camera/microphone indicator through a secure-indicator manager
     # (exclave hardware on a real iPhone 17): there is none here, and CoreAnimation aborted at the end of
     # its first frame ("Failed to create SILManager"). QuartzCore's own switch turns that path off.
     # SpringBoard too: it makes the indicator layers ("Camera", ...), whose names are checked against assets
@@ -326,7 +326,7 @@ for label in labels:
     with open(f'{dest}/{label}.plist', 'wb') as f:
         plistlib.dump(job, f, fmt=plistlib.FMT_BINARY)
     program = job.get('Program') or job['ProgramArguments'][0]
-    missing = '' if present(program) else ('   (NOT on the iOS volume!)' if root_volume
+    missing = '' if present(program) else ('   (NOT on the Darwin volume!)' if root_volume
                                            else '   (NOT in the system image!)')
     print(f'  job {label}: {program}{missing}')
 

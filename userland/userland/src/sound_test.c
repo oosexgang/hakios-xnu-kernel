@@ -1,5 +1,5 @@
 /*
- * sound_test: make iOS play something, the way a program would.
+ * sound_test: make Darwin play something, the way a program would.
  *
  * usage: sound_test STEP...
  *   wait SECONDS
@@ -9,14 +9,14 @@
  *   tone SECONDS [LEFT_HZ RIGHT_HZ]    a sine wave in each channel (default 1000 and 440 Hz) at half of
  *                                      full scale, through an audio queue: what a music player does
  *   level PEAK                         the tones after this one at PEAK of full scale (0 to 1) instead
- *                                      (before iOS's volume, which scales the samples itself)
- *   raw SECONDS                        the same tone written straight to /dev/hakios-audio, past iOS's own
+ *                                      (before Darwin's volume, which scales the samples itself)
+ *   raw SECONDS                        the same tone written straight to /dev/hakios-audio, past Darwin's own
  *                                      processing and volume (which keep a tone more than 12 dB under full
  *                                      scale even at the top): to try what the kernel does with full scale
  *   system ID                          a system sound by its number (1100 is the lock sound,
  *                                      1104 a keyboard click), as SpringBoard plays them
  *   file PATH                          a sound file, played as a system sound
- *   route                              where iOS says its sound goes: the audio session's outputs and volume,
+ *   route                              where Darwin says its sound goes: the audio session's outputs and volume,
  *                                      and the devices of the system's output context
  *   haptic [SECONDS]                   haptics the way an application (and UIKit's feedback generators) plays
  *                                      them, through CoreHaptics: a tap, then a vibration of SECONDS (default

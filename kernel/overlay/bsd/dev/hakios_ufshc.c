@@ -27,7 +27,7 @@
  * direction in the request descriptor (from the device or none, never to it), and the command
  * UPIU's flags (never W); and the logical unit: never a well-known one (REPORT LUNS, BOOT, RPMB,
  * the device), and only those reads are allowed to go to now (ufshc_set_luns: LUN 0, where the
- * iOS volume is, unless a comparison with the loader's reads asks for more). A read's length in
+ * Darwin volume is, unless a comparison with the loader's reads asks for more). A read's length in
  * the CDB must be what the UPIU expects. It is tried at the probe on made-up commands that must
  * pass or be refused. This file builds READ(10) and TEST UNIT READY only.
  *

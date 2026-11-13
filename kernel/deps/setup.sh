@@ -14,7 +14,7 @@
 # (toolchain/linux/iphone: the cctools linker) and sdks/iPhoneOS16.5.sdk.
 #
 # What ends up where (all under xnu-deps/, none of it committed):
-#   AvailabilityVersions libdispatch libpthread     Apple open source, at the releases of iOS 16.5
+#   AvailabilityVersions libdispatch libpthread     Apple open source, at the releases of Darwin 16.5
 #   mm_bootstrap_cmds tcsh unifdef                  sources of mig, csh and unifdef
 #   MacOSX13.3.sdk                                  only Kernel.framework: the DriverKit headers
 #                                                   that Apple's closed "iig" would generate
@@ -115,7 +115,7 @@ stage1() {
 		cp tcsh/tcsh host/bin/tcsh
 	fi
 	link tcsh host/bin/csh
-	# what 7z leaves undone when it extracts files of the iOS images (see build/lzbitmap/unzbm.c)
+	# what 7z leaves undone when it extracts files of the Darwin images (see build/lzbitmap/unzbm.c)
 	if [ ! -x host/bin/unzbm ]; then
 		cc -O2 -w -o host/bin/unzbm build/lzbitmap/unzbm.c build/lzbitmap/libzbitmap.c
 	fi
@@ -145,7 +145,7 @@ stage1() {
 	log "stage 1 done"
 }
 
-# stage 1 on macOS: Xcode has the cctools, mig and the iOS SDK, the system has unifdef and csh, so
+# stage 1 on macOS: Xcode has the cctools, mig and the Darwin SDK, the system has unifdef and csh, so
 # only Apple's open sources and the DriverKit headers are fetched. The SDK is Xcode's iPhoneOS SDK
 # (as links) with the same usr/local additions as on Linux.
 stage1_darwin() {

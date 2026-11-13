@@ -40,7 +40,7 @@ static_assert(sizeof(struct minisurf_result) == 0x68, "result layout");
 static_assert(offsetof(struct minisurf_shared, attachments) == 0x30, "shared layout");
 static_assert(sizeof(struct minisurf_result) + 20 * sizeof(struct minisurf_plane) == MINISURF_RESULT_MAX, "result size");
 
-/* IOConnectCallMethod selectors of IOSurfaceRootUserClient (iOS 16.5) */
+/* IOConnectCallMethod selectors of IOSurfaceRootUserClient (Darwin 16.5) */
 enum {
 	kSurfaceMethodCreate            = 0,
 	kSurfaceMethodLookup            = 4,
@@ -511,7 +511,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 		onePlane = true;
 	}
 	/*
-	 * iOS 26: what CoreAnimation makes the screen's surfaces of once it draws with Metal --
+	 * Darwin 26: what CoreAnimation makes the screen's surfaces of once it draws with Metal --
 	 * kCVPixelFormatType_Lossless_32BGRA, BGRA that Apple's GPU keeps compressed, described in
 	 * planes (the pixels and the compression's metadata). There is no compression here: one
 	 * plane of plain BGRA, which is what the display driver copies to the panel (it skipped
@@ -1173,8 +1173,8 @@ resultSize(const MiniIOSurface * s)
 }
 
 /*
- * The description iOS 26's IOSurface.framework takes (it reserves 0xc68 bytes for it, and copies it to
- * offset 0x70 of its client object, where its getters read it): the iOS 16.5 one with the sizes widened
+ * The description Darwin 26's IOSurface.framework takes (it reserves 0xc68 bytes for it, and copies it to
+ * offset 0x70 of its client object, where its getters read it): the Darwin 16.5 one with the sizes widened
  * to 64 bits. In the header, allocSize, width, height, bytesPerRow and offset become 64-bit and what
  * follows them moves down; each plane's first six words (width, height, -, offset, bytesPerRow, size)
  * become 64-bit and the rest of the plane moves down by 0x18, so a plane is 0x98 bytes.
@@ -1182,7 +1182,7 @@ resultSize(const MiniIOSurface * s)
 #define MINISURF_RESULT26_HEADER 0x88
 #define MINISURF_PLANE26_SIZE    0x98
 #define MINISURF_RESULT26_MAX    (MINISURF_RESULT26_HEADER + 20 * MINISURF_PLANE26_SIZE)
-static_assert(MINISURF_RESULT26_MAX == 0xc68, "iOS 26 result size");
+static_assert(MINISURF_RESULT26_MAX == 0xc68, "Darwin 26 result size");
 
 static void
 put64(uint8_t * p, size_t at, uint64_t v)
@@ -1222,7 +1222,7 @@ IOSurfaceRootUserClient::returnSurface26(struct minisurf_client_ref * ref, bool 
 	put64(r, 0x40, i->offset);
 	put32(r, 0x48, i->pixelFormat);
 	put32(r, 0x58, i->planeCount);
-	/* bytesPerElement .. lockSeed, then subsampling .. protectionOptions: as in iOS 16.5, 0x20 further on */
+	/* bytesPerElement .. lockSeed, then subsampling .. protectionOptions: as in Darwin 16.5, 0x20 further on */
 	memcpy(r + 0x60, (const uint8_t *) i + 0x40, 0x88 - 0x60);
 	for (uint32_t k = 0; k < planes; k++) {
 		const struct minisurf_plane * p = &s->planes[k];
@@ -1278,7 +1278,7 @@ IOSurfaceRootUserClient::methodInit(IOExternalMethodArguments * args)
 	} reply;
 
 	/*
-	 * iOS 26 (IOSurface.framework, _iosConnectInitalize) asks for 0x28 bytes: the same limits with the
+	 * Darwin 26 (IOSurface.framework, _iosConnectInitalize) asks for 0x28 bytes: the same limits with the
 	 * maxima widened to 64 bits, a byte at 0x20 it reads in IOSurfaceClientInitDetachModeCode and
 	 * IOSurfaceClientSetIndexedTimestamp (left 0), and the version, which must be 1, at 0x22.
 	 */
@@ -1295,7 +1295,7 @@ IOSurfaceRootUserClient::methodInit(IOExternalMethodArguments * args)
 	} reply26;
 
 	static_assert(sizeof(reply) == 0x18, "init reply");
-	static_assert(sizeof(reply26) == 0x28, "init reply (iOS 26)");
+	static_assert(sizeof(reply26) == 0x28, "init reply (Darwin 26)");
 	if (args->structureOutput != NULL && args->structureOutputSize >= sizeof(reply26)) {
 		bzero(&reply26, sizeof(reply26));
 		reply26.allocAlignMask = (uint32_t) PAGE_MASK;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-font_trim.py: smaller copies of the two fonts iOS has that are too big for a system image kept in
+font_trim.py: smaller copies of the two fonts Darwin has that are too big for a system image kept in
 the phone's memory, made from the files themselves (nothing of them is in the repository).
 
   font_trim.py emoji SRC DST [PPEM,...]

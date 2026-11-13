@@ -162,7 +162,7 @@
 #    runtime is demanding a binding the API does not owe it.
 /hakios/bin/metal_drv_test --draw --vertex fixed_vert_lph_spc --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
 #
-# 4. The switch, so that iOS's own daemons take the Metal road and the window server reaches
+# 4. The switch, so that Darwin's own daemons take the Metal road and the window server reaches
 #    this driver (10.14, rc.jobs.metalprops): metal_props puts MetalPluginName and
 #    MetalPluginClassName on the IOAcceleratorES service, and from that moment every process
 #    that asks Metal composes HakiosMetal.bundle. Nothing persists -- the properties live in the

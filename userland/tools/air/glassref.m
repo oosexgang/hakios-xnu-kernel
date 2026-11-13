@@ -3,7 +3,7 @@
  *
  * The phone's driver (userland/src/hakiosmetal.m) hands each pipeline's bitcode -- -[MTLFunction
  * bitcodeData], function constants registered beside it -- to libhakios-air, which translates it and
- * draws with Mesa. This machine's Metal loads the very same iOS 26 libraries (QuartzCore's
+ * draws with Mesa. This machine's Metal loads the very same Darwin 26 libraries (QuartzCore's
  * default.metallib, AIR slice), so the same draw can be made twice: once by Apple's compiler on the
  * M-series GPU, which is the answer, and once by the host build of libhakios-air on softpipe
  * (RWA_SOFTWARE=1), which is ours. Whatever differs is a translation bug, found without the phone.

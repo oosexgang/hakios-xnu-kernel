@@ -1,5 +1,5 @@
 /*
- * HakiosBattery: the phone's battery as iOS looks for it, an IOPMPowerSource.
+ * HakiosBattery: the phone's battery as Darwin looks for it, an IOPMPowerSource.
  *
  * powerd finds every service of the class IOPMPowerSource (it calls the first "InternalBattery-0"),
  * listens for its kIOPMMessageBatteryStatusHasChanged and then reads its properties: whether a
@@ -96,7 +96,7 @@ HakiosBattery::object(const char * key, OSObject * value)
 }
 
 /*
- * What iOS calls the charger by (IOPSKeysPrivate.h's kIOPSFamilyCode*, iokit_family_err(sub_iokit_usb, n)),
+ * What Darwin calls the charger by (IOPSKeysPrivate.h's kIOPSFamilyCode*, iokit_family_err(sub_iokit_usb, n)),
  * from Linux's POWER_SUPPLY_USB_TYPE_*, as the DSP gives it.
  */
 static unsigned

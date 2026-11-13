@@ -10,7 +10,7 @@
  *   - exits boot services, turns the MMU off and jumps to the kernel entry
  */
 #include "efi.h"
-#include "identity.h"         /* who iOS shall think we are: from the iPhone's own device tree (mkidentity.py) */
+#include "identity.h"         /* who Darwin shall think we are: from the iPhone's own device tree (mkidentity.py) */
 
 
 /*
@@ -48,7 +48,7 @@
 #include "src/run.c"              /* the kernel loaded, given its device tree and boot arguments, and run */
 #include "src/usb.c"              /* the USB command channel: a small server of the fastboot protocol */
 #include "src/dsu_write.c"        /* the system image written through its extents, and nowhere else */
-#include "src/dsu.c"              /* the iOS system image as an Android DSU image ("oem dsu") */
+#include "src/dsu.c"              /* the Darwin system image as an Android DSU image ("oem dsu") */
 #include "src/download.c"         /* where a download over USB goes, and how much of it fits */
 #include "src/commands.c"         /* the commands taken over USB */
 #include "src/ramfb.c"            /* QEMU's display in the shape of the phone's screen */

@@ -1,4 +1,4 @@
-# iOS 26 and 27 on Renoir: RAM-only builds and boot notes
+# Darwin 26 and 27 on Renoir: RAM-only builds and boot notes
 
 > This is the lab notebook of the bring-up: what was done, in order, with dates and measurements.
 > For how the project is organised, start with [architecture.md](architecture.md).
@@ -16,10 +16,10 @@
 > The scripts under `ios/` expect the team's working tree (`darwin-renoir`) and an extracted IPSW beside
 > the repository; see "What is not in this repository" in the architecture document.
 
-State on 2026-10-31: iOS 26.6.2 (23G90, iPhone12,1 files) boots on renoir (Snapdragon 780G, no PAC) from
+State on 2026-10-31: Darwin 26.6.2 (23G90, iPhone12,1 files) boots on renoir (Snapdragon 780G, no PAC) from
 RAM through darwin-renoir's resident loader. launchd takes the normal (not restore) path through all of
-its boot tasks, about 110 iOS processes run, and SpringBoard shows the home screen with the status bar,
-the labels of the applications, widgets and Search. Not there yet: application icons, and whatever iOS
+its boot tasks, about 110 Darwin processes run, and SpringBoard shows the home screen with the status bar,
+the labels of the applications, widgets and Search. Not there yet: application icons, and whatever Darwin
 draws with materials (an alert's text). These are drawn with the GPU, and the GPU is off in these runs
 (`gpu=0`). Touch, Wi-Fi, sound, battery and the slow cores are off as well (the boot-args below).
 
@@ -60,14 +60,14 @@ cam=0 cam_stream_test=0 touchscreen=0 cpus=1 touch_lat=0 launchd_unsecure_cache=
 Diagnostic boot-args of the renoir patches: `trace_open=name,name` (0008: every path those processes
 look up, in the loader's log), `stacks=name,...` (up to four processes' threads when the run ends).
 
-## What stood between iOS 26 and its home screen, in order
+## What stood between Darwin 26 and its home screen, in order
 
 1. **Code signatures after the PAC rewrite.** pacstrip changes code pages, so their hashes no longer
    matched. The kernel checks a Mach-O's first page at exec; a mismatch clears `CS_VALID` and with it the
    platform-binary status. launchd's hostname write was refused (EPERM) and launchd aborted. pacstrip now
    recomputes the page hashes of every CodeDirectory it touches, both Mach-Os and shared cache files
    (`pacstrip resign FILE...` does it again after a later edit).
-2. **"Non-system service tried to claim event stream".** iOS 26's launchd treats a job as a system
+2. **"Non-system service tried to claim event stream".** Darwin 26's launchd treats a job as a system
    service only when its plist was loaded from the system volume. Behind the 16.5 port's link to
    `/hakios` no job was, and notifyd killed itself on `BUG IN LIBNOTIFY: Event publisher error`. The
    jobs are now part of the system image.
@@ -86,16 +86,16 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 7. **Personas.** usermanagerd aborts without `/private/var/keybags/persona.kb` ("Daemon failed to load
    persona manifest"), and runningboardd, then backboardd and SpringBoard, wait for it. An empty manifest
    of version 1 is enough: usermanagerd creates the default personas itself.
-8. **Data migration.** The 16.5 skeleton's `com.apple.migration.plist` names 20F66. iOS 26 then takes
+8. **Data migration.** The 16.5 skeleton's `com.apple.migration.plist` names 20F66. Darwin 26 then takes
    itself for just updated and shows the migration progress bar. root26-ios.sh writes this build's number.
 9. **Activation and setup.** libhakios-sb answers SpringBoard's activation state and refuses the setup
    assistant, as on 16.5. inj26.sh moves those two hooks to their 23G90 addresses after the methods were
    read and found unchanged. The other SpringBoard hooks still carry 16.5 addresses and are left alone.
 
-## iOS 27
+## Darwin 27
 
-Current configuration (2026-11-10): iOS 27.2 (24B119, iPhone12,1 files), with CPU/software rendering.
-There is no XNU source for iOS 27; patches 0013-0019 supply the newer userland interfaces.
+Current configuration (2026-11-10): Darwin 27.2 (24B119, iPhone12,1 files), with CPU/software rendering.
+There is no XNU source for Darwin 27; patches 0013-0019 supply the newer userland interfaces.
 Unused device-specific CPU/GPU/touch/display/camera/gauge/modem drivers and their loader profiles
 and tools have been deleted; the retained Qualcomm paths are those of the SM7325 and SM7350. No external Metal
 plug-in is packaged, and `boot26.py` defaults to `gpu=0`. The rebuilt kernel reached Renoir's home
@@ -138,9 +138,9 @@ python3 ios/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
 
 (The two FIPS values come from the first boot's log: "In variable" and "MAC generated".)
 
-What stood between iOS 27 and its home screen, in order:
+What stood between Darwin 27 and its home screen, in order:
 
-1. **4 GiB - 1.** fastboot sends a download's size in eight hex digits; iOS 27's image was 4.59 GB.
+1. **4 GiB - 1.** fastboot sends a download's size in eight hex digits; Darwin 27's image was 4.59 GB.
    mkimage26 `--prune` leaves out what cannot work here (RAW camera networks, Metal portrait filters, the
    camera ISP's firmware, DriverKit drivers, resources of frameworks for Apple Intelligence, camera effects,
    iWork previews) and trims the emoji font as 16.5 did: 4.20 GB.
@@ -149,7 +149,7 @@ What stood between iOS 27 and its home screen, in order:
 3. **`security.mac.lockdown_mode_state_public`** (0014). libsystem's os_lockdown_mode_enabled() aborts
    without it: launchd died at "Early boot complete". `trace_sysctl=1` (0015) logs every name asked for
    that the kernel has not got.
-4. **posix_spawnattr** (0016). iOS 27's struct has 8 more bytes after `psa_sec_flags` (attr_size 0x100):
+4. **posix_spawnattr** (0016). Darwin 27's struct has 8 more bytes after `psa_sec_flags` (attr_size 0x100):
    launchd's crash count became a kqworkloop limit and logd was killed at its second workloop.
 5. **Canonical paths** (0019). CoreServicesInternal drops from its URL property attributes what the root
    volume's ATTR_VOL_ATTRIBUTES does not list; the kernel's default list lacked ATTR_CMN_FULLPATH, so no
@@ -173,13 +173,13 @@ What stood between iOS 27 and its home screen, in order:
    - **ScreenTimeAgent** kept a core busy all the time; its job is left out.
    - Then: page swipes 14-29 frames a second, Search and opening Settings 10-17, a list flung up to 43;
      backboardd (CoreAnimation in software) takes most of the processor, the panel copy (kernel_task) the
-     rest. `fbscale=2` does not work with iOS 27 (it stays at the boot spinner); Reduce Transparency and
+     rest. `fbscale=2` does not work with Darwin 27 (it stays at the boot spinner); Reduce Transparency and
      Reduce Motion made no measurable difference.
    The first boot's daemons (lsd, linkd, assetsd: every boot is a first boot, /var is in RAM) take a few
    minutes of CPU.
 10. **Software graphics (2026-11-10).** Hardware graphics is disabled with `gpu=0`; the root image no
     longer includes a Metal plug-in, and the system image no longer creates a link to one.
-    CoreAnimation's software renderer does not draw iOS 27's Liquid Glass, CASDF shapes or the
+    CoreAnimation's software renderer does not draw Darwin 27's Liquid Glass, CASDF shapes or the
     large lock-screen clock. Missing effects and incomplete UI rendering are expected limitations.
     The static collections wallpaper and display-completion hooks remain. The software-only RAM boot
     reached the home screen; old hardware-GPU frame-time measurements do not describe this configuration.
@@ -196,7 +196,7 @@ What stood between iOS 27 and its home screen, in order:
 12. **Frequency checks (2026-11-07, before graphics removal).** The GPU clock counter measured 490,001,684 Hz with 490 MHz requested.
     `cpufreq=1` selects the hardware table's top rows: 1900/2208/2400 MHz. `cpu_test 0` measured dependent
     additions at about 1.7–2.2 GHz under the UI workload; this is not a pinned per-core frequency reading.
-    Seven CPUs are available to iOS in the resident-loader run. The early `membench=1` measured reads at
+    Seven CPUs are available to Darwin in the resident-loader run. The early `membench=1` measured reads at
     14,686 MB/s and copies at 6,725 MB/s; user-space copies under load were 4.96 GB/s. The slow home/lock
     frames are not evidence of CPUs left at 300 MHz. Stable 60 FPS remains open.
 13. **White widgets (2026-11-07).** Resource-size pruning had dropped executable files still referenced

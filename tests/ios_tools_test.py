@@ -1,4 +1,4 @@
-"""The parts of the iOS image tool (ios/tools/mkimage26.py) that need no IPSW: which files a pruned image
+"""The parts of the Darwin image tool (ios/tools/mkimage26.py) that need no IPSW: which files a pruned image
 leaves out, which Mach-O files are arm64e and go through pacstrip, the trimming of string tables, and
 where the stage0 it carries mounts the small image.
 

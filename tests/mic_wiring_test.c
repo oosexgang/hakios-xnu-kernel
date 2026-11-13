@@ -69,7 +69,7 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 #undef get
 #undef printf
 
-/* (the audio DSP's driver, iOS's audio device and the vibration motor's: these scenarios reach none of them) */
+/* (the audio DSP's driver, Darwin's audio device and the vibration motor's: these scenarios reach none of them) */
 bool
 hakios_adsp_apr(uint8_t service __unused, uint16_t port __unused, uint32_t token __unused, uint32_t opcode __unused,
     const void *payload __unused, uint32_t length __unused, uint32_t wait_ms __unused, struct hakios_apr_answer *answer __unused)

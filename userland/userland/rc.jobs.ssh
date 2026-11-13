@@ -3,7 +3,7 @@
 # the phone's radio joins the network named in fw-wifi/network, configd gives en0 an address, and
 # OpenSSH from the package manager's prefix lets us log in as root with the key in
 # ssh/authorized_keys, which build.sh puts on the data volume. That spares a rebuilt image and a
-# six-minute boot for every question one wants to ask a running iOS.
+# six-minute boot for every question one wants to ask a running Darwin.
 # (dropbear would be smaller, but its package in Procursus depends on libtomcrypt1 and libtommath1,
 # which are in no suite of that repository: it cannot be installed at all.)
 # The host key is made on the computer and shipped with the image (build.sh), because ssh-keygen on

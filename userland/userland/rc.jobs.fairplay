@@ -1,5 +1,5 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# What fairplayd changes (RC_JOBS=rc.jobs.fairplay, the iOS volume on the flash as the root, where the
+# What fairplayd changes (RC_JOBS=rc.jobs.fairplay, the Darwin volume on the flash as the root, where the
 # program exists: FLASHBOOT=1, mkjobs.py --root-volume). Two questions, in this order.
 #
 # First, and it needs no finger: does fairplayd stay up? It wants the IOKit user client

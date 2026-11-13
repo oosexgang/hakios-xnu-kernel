@@ -1,4 +1,4 @@
-# The function table behind -[EAGLContext getMacroContextPrivate] of iOS 16.5 (20F66) OpenGLES: the offset of
+# The function table behind -[EAGLContext getMacroContextPrivate] of Darwin 16.5 (20F66) OpenGLES: the offset of
 # each entry and the functions of OpenGLES.framework that call through it (read off their code: each loads
 # the table from thread-local storage and jumps through one offset). An entry is called as
 # entry(table[0], arguments...). '*' marks the entries QuartzCore's OpenGL ES renderer is seen to call.

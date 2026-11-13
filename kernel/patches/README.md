@@ -45,38 +45,38 @@ a comment beside it in the code. This page is the map.
 
 - Slower cores as "secondaries" (`sched_slow_secondaries`): a thread moves to a faster core as soon as
   one goes idle. Inactive while the pairing in 0002 does nothing.
-- Work-interval calls of iOS's CoreAudio answered instead of refused (50 log lines a second otherwise).
+- Work-interval calls of Darwin's CoreAudio answered instead of refused (50 log lines a second otherwise).
 - IPC: boot-arg `ipc_legacy=1` for an older user space; the sandbox message-filter query answers
-  "nothing to check" (iOS 26's libxpc drops every client otherwise).
+  "nothing to check" (Darwin 26's libxpc drops every client otherwise).
 - No trust-cache or Image4 runtime: the AMFI and Sandbox stand-ins register instead
   (`bsd/kern/kern_minimac.c` in the overlay).
 - Panics, fatal user exceptions and unrecoverable `brk` traps are written to the loader's log.
 
 ## 0005-vm: the shared region and the dyld pager
 
-- The shared region is 7 GiB: iOS 27's dyld cache with its maximum slide does not fit in 6.
+- The shared region is 7 GiB: Darwin 27's dyld cache with its maximum slide does not fit in 6.
 - The dyld pager and shared-region slide apply arm64e fixups without signing: on a CPU without PAC an
   authenticated pointer stays a plain one.
 - A cryptex image mounted as its own volume inside Preboot counts as part of it.
 
-## 0006-bsd-process: exec, signing, and what newer iOS asks of the kernel
+## 0006-bsd-process: exec, signing, and what newer Darwin asks of the kernel
 
 - Exec: arm64e binaries accepted on arm64 CPUs; libraries inserted into programs by name
   (`kern.exec_inject`, 4096 bytes); boot-arg `exec_swap=NAME:PATH` runs another file in a program's place.
 - Privileges an entitlement would grant are answered by the AMFI stand-in.
 - Memory pressure thresholds counted from the memory there is, not from a window half taken by the RAM
   disk.
-- What iOS 26 and 27 need that xnu-12377 lacks or does differently:
+- What Darwin 26 and 27 need that xnu-12377 lacks or does differently:
   - `rd=md0` hidden from `kern.bootargs` (launchd takes it for the restore environment);
   - `security.mac.lockdown_mode_state_public`;
-  - the longer `posix_spawnattr` of iOS 27.
+  - the longer `posix_spawnattr` of Darwin 27.
 - Diagnostics: `systrace=`, `trace_sysctl=1`, and who killed a process and why, in the loader's log.
 
 ## 0007-vfs: file systems
 
 - The root on a RAM disk of 4 GB or more (`memdev.c`), read in place by the APFS implementation.
 - `apfs` and `ramfs` registered (`vfs_conf.c`); `/dev/console` readable by every daemon.
-- `ATTR_CMN_FULLPATH` listed as valid on every volume: without it iOS 27 registers no application.
+- `ATTR_CMN_FULLPATH` listed as valid on every volume: without it Darwin 27 registers no application.
 - Process 1 may bind-mount without an entitlement.
 - Diagnostics: `trace_open=NAME,...` and `trace_attr=NAME` log the paths and attributes a process asks
   for.

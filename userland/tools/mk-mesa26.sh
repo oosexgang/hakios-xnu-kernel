@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Mesa 26.2.5 for the iOS 26 userland on this Mac (Xcode's iPhoneOS SDK, arm64e): the library the
+# Build Mesa 26.2.5 for the Darwin 26 userland on this Mac (Xcode's iPhoneOS SDK, arm64e): the library the
 # Metal driver compiles and draws with, libhakios-air.dylib (tools/mesa/air/air_metal.h), and its test
 # program air_run. 26.2 is the first Mesa whose freedreno knows the Adreno 830 (A8XX);
 # tools/mk-mesa.sh is the older recipe for the SM7325's Adreno on Linux (Mesa 25.0.7, with OSMesa,
@@ -76,7 +76,7 @@ ninja -C build src/gallium/drivers/freedreno/libhakios-air.dylib src/gallium/dri
 $LLVM/llvm-strip -x -o out/libhakios-air.dylib build/src/gallium/drivers/freedreno/libhakios-air.dylib
 install_name_tool -id /hakios/lib/libhakios-air.dylib out/libhakios-air.dylib 2>/dev/null
 cp build/src/gallium/drivers/freedreno/air_run out/air_run
-# an ad-hoc signature: arm64e code on iOS is not run unsigned by dyld, whatever this kernel's AMFI says
+# an ad-hoc signature: arm64e code on Darwin is not run unsigned by dyld, whatever this kernel's AMFI says
 codesign -f -s - out/libhakios-air.dylib out/air_run 2>/dev/null
 cat "$ROOT"/tools/mesa/air/* | shasum -a 256 > out/built-from-air
 echo "mk-mesa26.sh: Mesa $VERSION: $B/out/libhakios-air.dylib ($(stat -f %z out/libhakios-air.dylib) bytes," \

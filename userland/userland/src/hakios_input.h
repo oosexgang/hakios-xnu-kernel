@@ -2,7 +2,7 @@
  * /dev/hakios-touch: touch samples on their way from whoever produces them to the
  * program that turns them into HID events for the window server.
  *
- * iOS expects touches from Apple's multitouch driver through IOHIDFamily; neither exists
+ * Darwin expects touches from Apple's multitouch driver through IOHIDFamily; neither exists
  * here. Instead a producer -- a kernel driver for a real touch controller or for an emulated
  * pointer, or a user program replaying a script -- posts samples, and code of ours running
  * inside backboardd reads them and synthesizes the events. Both sides use the same record.
@@ -34,7 +34,7 @@ struct hakios_touch {
 	uint32_t finger;                /* which finger, from 0 (or which button) */
 	uint32_t x, y;                  /* position on the display, 0 = left/top edge, 65535 = right/bottom edge */
 };
-/* (posted by the kernel, read by the iOS side, built apart: its size changes in both or not at all) */
+/* (posted by the kernel, read by the Darwin side, built apart: its size changes in both or not at all) */
 _Static_assert(sizeof(struct hakios_touch) == 24, "a touch sample is 24 bytes");
 
 #ifdef KERNEL

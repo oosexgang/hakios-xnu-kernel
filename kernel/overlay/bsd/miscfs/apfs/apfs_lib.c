@@ -647,7 +647,7 @@ tree_node_addr(struct apfs_btree *tree, uint64_t oid, uint64_t *addr);
  * of the object quietly go missing instead of the read failing.
  */
 /*
- * A sealed volume (the iOS cryptexes) keeps its file-system tree in nodes without an object
+ * A sealed volume (the Darwin cryptexes) keeps its file-system tree in nodes without an object
  * header -- no Fletcher checksum -- and each parent keeps the SHA-256 of each child's whole
  * block instead.  Checked once per block the cache brings in (b->checked, which for such a
  * block means "its hash was right"); `len` is 32 on the way down, 8 when a cursor comes back
@@ -1646,7 +1646,7 @@ apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 			return 0;
 		}
 		/*
-		 * iOS uses the hashed key: a word holding the name's length and a hash of it,
+		 * Darwin uses the hashed key: a word holding the name's length and a hash of it,
 		 * then the name.  The plain key has a 16-bit length instead; both are handled
 		 * so that a volume made elsewhere still reads.
 		 */
@@ -1727,7 +1727,7 @@ lookup_cb(void *ctx, const char *name, size_t name_len, uint64_t file_id, uint8_
  * caseless form (case-folded NFD), Unicode 9.0 as APFS has it. For the decomposition and folding
  * the kernel's own (bsd/vfs/vfs_unicode.c, utf8_normalizeOptCaseFoldAndHash, which is APFS's);
  * a name of plain ASCII needs neither and is hashed directly. Checked against the hash stored
- * with every name of the iOS 16.5 root volume, ASCII and not (tools/apfs/test_namehash.py,
+ * with every name of the Darwin 16.5 root volume, ASCII and not (tools/apfs/test_namehash.py,
  * apfs-tool namehash).
  */
 static const uint32_t crc32c_nibble[16] = {
@@ -3030,7 +3030,7 @@ apfs_zfree(voidpf opaque, voidpf address)
  * zlib's 344, and on the phone 1248 ms against 3834 for one reader (856 once its Adler-32
  * is the NEON one).  It checks the stream's Adler-32 just as zlib does.  A stream it will
  * not take is handed to zlib instead and counted, so that such a thing cannot go by
- * unnoticed -- none of the pieces in either iOS volume is one.  `d` is the caller's
+ * unnoticed -- none of the pieces in either Darwin volume is one.  `d` is the caller's
  * decompressor, NULL for one made here for this call alone.
  */
 static int apfs_inflate_counted(struct apfs_nx *nx, const uint8_t *src, size_t src_len,
@@ -3126,13 +3126,13 @@ apfs_inflate_counted(struct apfs_nx *nx, const uint8_t *src, size_t src_len, uin
  * bytes after the header.
  *
  * Type 9 means they were stored as they are, with one marker byte in front.  All 23947
- * type-9 files in the iOS 16.5 root file system have 0xcc there and exactly `want` bytes
+ * type-9 files in the Darwin 16.5 root file system have 0xcc there and exactly `want` bytes
  * after it, which is how the marker's length was settled; a payload that is already
  * exactly the right length is taken whole.
  */
 /*
  * One piece of a compressed file by the file's method: zlib (types 3 and 4) as above;
- * LZBITMAP (13 and 14) -- what the iOS 16 cryptexes use -- by libzbitmap (apfs_zbitmap.c):
+ * LZBITMAP (13 and 14) -- what the Darwin 16 cryptexes use -- by libzbitmap (apfs_zbitmap.c):
  * a piece that starts with 'Z' is a stream of it, one whose first byte has its low four bits
  * set is stored after that byte.
  */

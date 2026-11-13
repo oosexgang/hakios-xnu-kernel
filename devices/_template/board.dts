@@ -68,7 +68,7 @@
 		// unique-guid = "fd6854ad-24aa-4fc3-94fe-290116858d68"; // "Partition unique GUID"
 		// first-lba = <25374720>;      // "First sector", in the storage's blocks of 4096 bytes
 		// last-lba = <30617594>;       // "Last sector"
-		// write-first = <2042368>;     // the partition's first block that is not the build's: past the iOS volume and
+		// write-first = <2042368>;     // the partition's first block that is not the build's: past the Darwin volume and
 		//                              // what follows it (tools/darwin-write.py prints where they end)
 	// };
 
@@ -116,15 +116,15 @@
 	// };
 
 	// The cameras, for the feature "camera-sm7325": the sensors on an SM7325's camera blocks, their
-	// supplies from a PM8008's regulators. Each sensor is one sensor@N { } table, in the order iOS's
+	// supplies from a PM8008's regulators. Each sensor is one sensor@N { } table, in the order Darwin's
 	// side numbers them; Android's device tree has each as a qcom,cam-sensor node (cam-sensorN).
 	// camera {
 		// pmic-pins = <4 5>;           // the PM8008's I2C bus: the pins of its qcom,i2c node's pinctrl, SDA then SCL
 		// pmic-reset = <0x28a>;        // the PMIC GPIO its reset is on (its node's reset-gpio: <&pm8350c_gpios 3 ...>),
 		//                              // as SPMI slave << 8 | the GPIO's peripheral's high byte: GPIO n is 0x88 + n - 1
 		// test-sensor = "macro";       // optional: the one cam=1 to cam=4 work on (the first, if not said)
-		// ios-sensor = "wide";         // optional: iOS's back camera, whose frames it gets with cam=5 (the first, if not said)
-		// ios-front = "front";         // optional: iOS's front camera (none, if not said)
+		// ios-sensor = "wide";         // optional: Darwin's back camera, whose frames it gets with cam=5 (the first, if not said)
+		// ios-front = "front";         // optional: Darwin's front camera (none, if not said)
 		//
 		// sensor@0 {
 			// name = "wide";       // what cam_sensor= picks it by: lower-case letters, digits and dashes
@@ -142,8 +142,8 @@
 			// focus-motor = "dw9800"; // optional: a DW9800 moves the lens (an actuator node with compatible dw9800)
 			// focus-supply = "ldoc9 2800mV"; // optional: its supply, when it is switched (the actuator's
 			//                      // cam_vaf-supply: its RPMh name, and the node's rgltr-min-voltage)
-			// upside-down;         // optional: its pictures come out turned half round from the way iOS has that
-			//                      // camera's -- seen on the phone: add it when iOS shows that camera upside down
+			// upside-down;         // optional: its pictures come out turned half round from the way Darwin has that
+			//                      // camera's -- seen on the phone: add it when Darwin shows that camera upside down
 		// };
 	// };
 
@@ -217,7 +217,7 @@
 		// regdb = "regdb_oem.bin";    // optional: its regulatory database, likewise; regdb.bin if not said
 	// };
 
-	// What iOS's interface is told of the screen (ios/userland/inject_statusbar.c). Only for a phone whose
+	// What Darwin's interface is told of the screen (ios/userland/inject_statusbar.c). Only for a phone whose
 	// front camera is a hole at the top left, where the status bar's clock would be drawn.
 	// screen {
 		// statusbar-leading-shift = <24>; // points (not pixels) the status bar's leading items move right

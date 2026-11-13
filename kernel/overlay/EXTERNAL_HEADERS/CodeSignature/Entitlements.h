@@ -1,7 +1,7 @@
 #ifndef _CODESIGNATURE_ENTITLEMENTS_H
 #define _CODESIGNATURE_ENTITLEMENTS_H
 /*
- * HakiOS stand-in for iOS 26's closed CodeSignature framework.  These are entitlement name strings
+ * HakiOS stand-in for Darwin 26's closed CodeSignature framework.  These are entitlement name strings
  * used only to gate the hardened web-browser-engine features, which this port does not host; the
  * exact values matter only for matching those entitlements, which nothing here carries.
  */

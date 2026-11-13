@@ -625,7 +625,7 @@ def ref_convert(name, retty, srcty, v):
         # Apple's own compiler says the same thing by what it does with the
         # result. Every call to air.convert.u.i1.f.f32 in the device image --
         # two in QuartzCore's default.metallib, two in AppleCVAPhoto's
-        # cvadepth-iOS.metallib -- feeds a `br i1` directly, e.g.
+        # cvadepth-Darwin.metallib -- feeds a `br i1` directly, e.g.
         #
         #     %590 = fpext half %336 to float
         #     %591 = tail call i1 @air.convert.u.i1.f.f32(float %590)
@@ -1583,7 +1583,7 @@ def emit_suite(arith, outdir, want, verbose, few=False, cases=0):
         f.write(RUNNER)
     os.chmod(run, 0o755)
     # rc.jobs: the same suite as a job list, for a device with no shell. run.sh
-    # above is for this machine; the phone cannot use it, because iOS 16.5's own
+    # above is for this machine; the phone cannot use it, because Darwin 16.5's own
     # root carries no sh at all (/bin holds df and ps, nothing else) and the
     # /var/jb/bin/sh that userland/rc.jobs.jb runs belongs to the jailbreak
     # prefix, which a flash-root image does not carry. So every module gets a

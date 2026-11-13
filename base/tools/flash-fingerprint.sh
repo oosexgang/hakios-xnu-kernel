@@ -4,7 +4,7 @@
 #   flash-fingerprint.sh android DIR       from Android (adb, root): for each logical unit sda..sdf its
 #                                           size, sha256 of its first and last 8 blocks of 4 KB and
 #                                           `sgdisk --android-dump`; sha256 of userdata's first MB, of
-#                                           darwin's first 5628755968 bytes (the iOS volume image), the
+#                                           darwin's first 5628755968 bytes (the Darwin volume image), the
 #                                           number of files under /sdcard, and whether Android is up
 #                                           (sys.boot_completed, /data mounted)  -> DIR/android.txt
 #   flash-fingerprint.sh survey LOG DIR    the loader's own survey (ufs=1 or 2) out of a run's log:

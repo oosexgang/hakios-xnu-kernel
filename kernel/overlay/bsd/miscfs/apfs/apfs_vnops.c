@@ -337,7 +337,7 @@ apfs_vnop_lookup(struct vnop_lookup_args *ap)
 	/*
 	 * A name that is not there stays not there (the volume cannot change; a synthetic
 	 * directory added later purges its parent's entries): the name cache says so from now on,
-	 * instead of asking again -- iOS asks for missing files thousands of times after a boot.
+	 * instead of asking again -- Darwin asks for missing files thousands of times after a boot.
 	 */
 	if (error == ENOENT && cnp->cn_nameiop == LOOKUP && (cnp->cn_flags & MAKEENTRY)) {
 		cache_enter(dvp, NULLVP, cnp);
@@ -1188,7 +1188,7 @@ apfs_vnop_reclaim(struct vnop_reclaim_args *ap)
 
 /*
  * No ioctl or fsctl means anything here.  ENOTTY is what callers take for "this filesystem
- * does not have that"; the default, ENOTSUP, is not -- the iOS dyld, probing the root
+ * does not have that"; the default, ENOTSUP, is not -- the Darwin dyld, probing the root
  * volume for APFS features, gives up on it.
  */
 static int

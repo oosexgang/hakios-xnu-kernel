@@ -28,8 +28,8 @@
 # Virtual memory: the shared region and the dyld pager for a cache rewritten without PAC.
 0005-vm.patch                   osfmk/vm/ osfmk/mach/shared_region.h bsd/vm/
 
-# Processes: exec, code signing, entitlements, sysctls and system calls of newer iOS user space.
+# Processes: exec, code signing, entitlements, sysctls and system calls of newer Darwin user space.
 0006-bsd-process.patch          bsd/kern/ bsd/dev/arm/ bsd/sys/spawn_internal.h
 
-# File systems: the root in memory, APFS and ramfs registered, paths and attributes iOS asks for.
+# File systems: the root in memory, APFS and ramfs registered, paths and attributes Darwin asks for.
 0007-vfs.patch                  bsd/vfs/ bsd/miscfs/ bsd/dev/memdev.c bsd/sys/disk_private.h

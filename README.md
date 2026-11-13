@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Apple's open-source XNU kernel and the iOS user space, on phones with Qualcomm chips.
+  Apple's open-source XNU kernel and the Darwin user space, on phones with Qualcomm chips.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 # HakiOS
 
-HakiOS runs Apple's open-source XNU kernel and an iOS user space on Android phones with Qualcomm
+HakiOS runs Apple's open-source XNU kernel and a Darwin user space on Android phones with Qualcomm
 chips. Nothing is flashed: a UEFI is started with `fastboot boot`, the system lives in RAM, and a
 reboot brings Android back.
 
@@ -54,7 +54,7 @@ brings it into a checkout.
 ## How it boots
 
 <p align="center">
-  <img src="docs/assets/boot-chain.svg" alt="The boot chain: stock fastboot, the UEFI, the loader, the kernel, iOS user space" width="830">
+  <img src="docs/assets/boot-chain.svg" alt="The boot chain: stock fastboot, the UEFI, the loader, the kernel, Darwin user space" width="830">
 </p>
 
 How the pieces fit together: [docs/architecture.md](docs/architecture.md).
@@ -65,7 +65,7 @@ The phones are device packages, kept apart from the code on the
 [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices): its README lists them with
 how far each is, and each package's own README says what works on that phone, what is written but not yet
 verified on it, and what is still off. This branch describes no phone; it has the QEMU `virt` board
-(`devices/qemu-virt/`), on which the iOS 16.5 generation runs and which is not yet set up for the current
+(`devices/qemu-virt/`), on which the Darwin 16.5 generation runs and which is not yet set up for the current
 kernel. SoC support is shared and lives here, in `soc/`: SM7350 and SM7325, and SM8845 (CPU levels,
 temperature sensors).
 
@@ -108,13 +108,13 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `soc/` | **One file per chip**: where its blocks are, shared by every board with that chip. |
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
-| `ios/` | What iOS 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
+| `ios/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
 | `tests/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |
-| `base/` | The first generation's workspace (iOS 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
+| `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 
 ## Porting in one paragraph
 
@@ -132,7 +132,7 @@ controller, an amplifier) need one written, from an example that is built and te
 
 ## What is not in this repository
 
-Apple's files (XNU is fetched at build time; iOS comes from Apple's IPSW on your machine), the phones'
+Apple's files (XNU is fetched at build time; Darwin comes from Apple's IPSW on your machine), the phones'
 firmware (taken from the same phone), and third-party toolchains. Also, for now, the resident loader
 and image tooling Renoir is booted with, which live in the team's unpublished working tree: until
 they are published, a Renoir boot cannot be reproduced from a clean checkout.
@@ -157,4 +157,4 @@ looks for them.
 - [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
 - Apple's open-source XNU and the Linux drivers cited in individual source files
 
-Apple, iOS and Metal are trademarks of Apple Inc. This project is not affiliated with Apple, Qualcomm or Xiaomi.
+Apple, Darwin and Metal are trademarks of Apple Inc. This project is not affiliated with Apple, Qualcomm or Xiaomi.

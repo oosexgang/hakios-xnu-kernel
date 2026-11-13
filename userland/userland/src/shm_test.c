@@ -19,7 +19,7 @@
 #include <unistd.h>
 
 extern char **environ;
-/* (the SDK's mach/mach_vm.h refuses to be included on iOS; the calls are there all the same) */
+/* (the SDK's mach/mach_vm.h refuses to be included on Darwin; the calls are there all the same) */
 extern kern_return_t mach_vm_allocate(vm_map_t, mach_vm_address_t *, mach_vm_size_t, int);
 extern kern_return_t mach_vm_map(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, mem_entry_name_port_t,
     memory_object_offset_t, boolean_t, vm_prot_t, vm_prot_t, vm_inherit_t);

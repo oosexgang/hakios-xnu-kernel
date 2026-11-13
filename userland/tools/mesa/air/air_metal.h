@@ -765,7 +765,7 @@ struct rwa_vertex_layout {
  * THE BLEND STATE: MTLRenderPipelineColorAttachmentDescriptor's other half, and the
  * second thing this contract did not have at all.
  *
- * What the absence looked like. iOS's own window server composites the home screen
+ * What the absence looked like. Darwin's own window server composites the home screen
  * through this library, and CoreAnimation composites its layers with PREMULTIPLIED
  * ALPHA: a layer's texel holds colour already multiplied by its own coverage, and the
  * pipeline is asked for source-over -- source times one, plus destination times one
@@ -1080,7 +1080,7 @@ void rwa_depth_stencil_destroy(struct rwa_depth_stencil *state);
  *     air_vertex_attribute.base_type is for, and why the frontend keeps INT and UINT
  *     apart although `int4` and `uint4` are the same <4 x i32>.
  *   - MTLVertexFormatInt1010102Normalized, UInt1010102Normalized, and the two formats
- *     the iOS 16.5 SDK has not got at all (FloatRG11B10 = 54 and FloatRGB9E5 = 55):
+ *     the Darwin 16.5 SDK has not got at all (FloatRG11B10 = 54 and FloatRGB9E5 = 55):
  *     every one of those is several channels packed into one word, and the pixel format
  *     table in air_metal.c declines packed formats for the reason spelled out there --
  *     Metal's channel order and Gallium's are two conventions and a mistake between them
@@ -1401,7 +1401,7 @@ struct rwa_draw {
 	 * `level` and `slice`; NULL is 0 for all. The pass is the level's size. The window
 	 * server's variable blur draws its pyramid into levels 1, 2, ... of one texture and
 	 * samples them back by level of detail: with the levels not passed, every one of those
-	 * passes landed on level 0 -- the stair-stepped band under iOS 26's navigation bars
+	 * passes landed on level 0 -- the stair-stepped band under Darwin 26's navigation bars
 	 * (run glass3, 28 October).
 	 */
 	const unsigned *color_level;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Make the case files tools/air/glasscase draws (on the phone: userland/rc.launchd26.glasscase), one for every
-# render pipeline of QuartzCore's iOS 26 library glassref knows how to feed, both precisions, each drawn by
+# render pipeline of QuartzCore's Darwin 26 library glassref knows how to feed, both precisions, each drawn by
 # Apple's GPU here and checked once against llvmpipe (GALLIUM_DRIVER=llvmpipe, the build-lp library) as it is
 # written. The summary of that check is DIR/host.txt.
 #

@@ -26,6 +26,6 @@ an external Wi-Fi object.
 ## Excluded from this repository
 
 Firmware and binaries of others are not repository content; `tools/check-publishable.sh` looks for them:
-Apple's iOS files and shaders, Qualcomm/Xiaomi firmware (ADSP, GPU, Wi-Fi, Bluetooth, touch), device trees,
+Apple's Darwin files and shaders, Qualcomm/Xiaomi firmware (ADSP, GPU, Wi-Fi, Bluetooth, touch), device trees,
 prebuilt UEFI drivers, and the touch firmware header `hakios_focaltech_fw.h`
 (make it from your own phone with `tools/mk-focaltech-fw.py`).

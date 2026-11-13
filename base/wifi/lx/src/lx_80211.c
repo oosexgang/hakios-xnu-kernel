@@ -19,7 +19,7 @@
  *
  * On the phone, 13 October, this scans -- 26 channels in 4.1 s, the access points around heard
  * with their channels and strengths -- and joins: the handshake is through 130 ms after the
- * association, and iOS has the network (bsd/dev/hakios_wifi.c, step_driver(), has the
+ * association, and Darwin has the network (bsd/dev/hakios_wifi.c, step_driver(), has the
  * account). What is said of other people's networks names them: it is for the log of the run.
  * The name of the network to join and its passphrase are never said, only their lengths.
  */

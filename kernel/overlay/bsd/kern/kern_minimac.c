@@ -5,7 +5,7 @@
  * __mac_syscall() and relies on what they decide.
  *
  * Neither stand-in is a security mechanism. This kernel runs whatever it is
- * given (see libkern/amfi/miniamfi.c); these only give the answers the iOS
+ * given (see libkern/amfi/miniamfi.c); these only give the answers the Darwin
  * user space needs in order to run at all:
  *
  *   AMFI     The binaries of the operating system carry ad hoc signatures
@@ -71,7 +71,7 @@ miniamfi_vnode_check_signature(__unused struct vnode *vp, __unused struct label 
  */
 #define AMFI_SYSCALL_CHECK_DYLD_POLICY  0x5a
 /*
- * (Bit 8 since iOS 17 or so: the development variables. libsystem_trace honours OS_ACTIVITY_DT_MODE,
+ * (Bit 8 since Darwin 17 or so: the development variables. libsystem_trace honours OS_ACTIVITY_DT_MODE,
  * ACTIVITY_LOG_STDERR and the like -- os_log on standard error -- only when it is set:
  * _os_trace_allow_development_env_vars.)
  */
@@ -291,7 +291,7 @@ minisandbox_policy_syscall(struct proc *p, int call, user_addr_t arg)
 /*
  * Privileges for processes that are not root. On a device the sandbox hands them out by
  * entitlement: a privilege is granted to a process whose code signature has the entitlement
- * that goes with it. The table is the same pairing: the names are the entitlements iOS's own
+ * that goes with it. The table is the same pairing: the names are the entitlements Darwin's own
  * programs carry for them (dasd "vm-pressure-level", symptomsd and aggregated
  * com.apple.private.network.statistics, mediaserverd and mDNSResponder
  * com.apple.private.network.socket-delegate -- without which NECP said "does not hold the

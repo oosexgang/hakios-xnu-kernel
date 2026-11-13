@@ -7,7 +7,7 @@ struct boot_video {
 };
 
 /*
- * xnu-12377's (iOS 26) pexpert/arm64/boot.h: 1024. This was 608, an older layout: the kernel then read bootFlags and
+ * xnu-12377's (Darwin 26) pexpert/arm64/boot.h: 1024. This was 608, an older layout: the kernel then read bootFlags and
  * memSizeActual 416 bytes past what was written and zeroed here -- whatever an earlier run left in that memory, which moved with
  * the payload's size. Some images booted; others gave max_mem_actual garbage, scale_setup a thread_max of 0x7ffff600 and
  * ulock_initialize a 16 GB hash: a panic in the first second, every boot of those images.

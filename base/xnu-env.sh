@@ -1,6 +1,6 @@
 # source this (from bash) before building XNU on Linux
 # Everything is found relative to this file. THEOS (default ~/theos) provides the cctools and the
-# iOS SDK; XNU_SRC is the kernel tree (xnu/apply.sh creates it).
+# Darwin SDK; XNU_SRC is the kernel tree (xnu/apply.sh creates it).
 HAKIOS_BASE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export HAKIOS_BASE
 export THEOS=${THEOS:-$HOME/theos}

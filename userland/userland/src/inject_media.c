@@ -10,7 +10,7 @@
  * What the daemon is wanted for meanwhile is neither sound nor the camera: it is where
  * VideoToolbox decodes for everybody else (the service com.apple.coremedia.decompressionsession),
  * and a HEIC picture is HEVC inside. Without the daemon ImageIO has "no way to decode a HEIC",
- * and the stock wallpaper of iOS 16, whose layers are four such pictures, is its gradient alone.
+ * and the stock wallpaper of Darwin 16, whose layers are four such pictures, is its gradient alone.
  * There is no hardware decoder here; VideoToolbox takes its software one (VCPHEVC.videocodec).
  *
  * The flashlight (only where the kernel has one: torch=3, /dev/hakios-torch): Control Center's
@@ -409,7 +409,7 @@ emit_sample_buffer(id self, SEL selector, CMSampleBufferRef sample_buffer)
  * (com.apple.videotoolbox.videoencoder.hevc and .hevc.gva, behind its AVE): the photo encoder node
  * failed with kVTCouldNotFindVideoEncoderErr (-12908). Apple's software HEVC codec is in the system
  * all the same, VCPHEVC.videocodec, whose decoder VideoToolbox takes here for every HEIC picture (see
- * the top), and there is an encoder in it, HEVCVideoEncoder_CreateInstance, that iOS never registers:
+ * the top), and there is an encoder in it, HEVCVideoEncoder_CreateInstance, that Darwin never registers:
  * the codec's VCPHEVCRegisterEncoder is an empty function. It is registered here, as the codec
  * registers its decoder (VTRegisterVideoDecoderWithInfo, not hardware accelerated).
  */
@@ -480,7 +480,7 @@ flashlight_classes(void)
 
 /*
  * The class methods replaced, each as soon as its class exists. `expected` is the unslid address
- * of the code in iOS 16.5 (20F66): a method that is not what it was is left alone. `original`, where
+ * of the code in Darwin 16.5 (20F66): a method that is not what it was is left alone. `original`, where
  * there is one, keeps what was there (the vendor's: given as it is wherever there is one, and where
  * there is none, ours only with the kernel's camera or flashlight).
  */
@@ -513,7 +513,7 @@ static struct replacement {
  * answers in every process, and in mediaserverd the first to ask is the capture stack: CMCapture's
  * FigPreloadShadersInternal reaches -[_MTLDevice newLibraryWithURL:error:] through three functions of
  * AppleCVAPhoto, asking for System/Library/PrivateFrameworks/AppleCVAPhoto.framework/Resources/
- * cvadepth-iOS.metallib. That file is not in this image (ios165/select-system.py drops .metallib under
+ * cvadepth-Darwin.metallib. That file is not in this image (ios165/select-system.py drops .metallib under
  * the framework directories), so the URL is nil and Metal aborts on `url must not be nil' -- twenty-eight
  * times in one boot, launchd restarting the daemon after each (logs/135751-run.log, docs/metal.md 10.38).
  * AppleCVAPhoto itself survives a library it cannot make: it checks the result and logs "Error creating
@@ -651,7 +651,7 @@ hakios_media_init(void)
 	metal_left_alone = boot_arg("mediamtl=1");
 	if (metal_left_alone) {
 		say("hakios: mediaserverd: mediamtl=1: the capture stack may have the Metal device (it "
-		    "needs AppleCVAPhoto's cvadepth-iOS.metallib in the image)\n");
+		    "needs AppleCVAPhoto's cvadepth-Darwin.metallib in the image)\n");
 	} else {
 		say("hakios: mediaserverd: the Metal device leaves this process as soon as Metal is in "
 		    "it (mediamtl=1 leaves it there)\n");

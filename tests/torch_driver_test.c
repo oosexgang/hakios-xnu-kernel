@@ -238,7 +238,7 @@ another_chip(void)
 	dark_at_the_end();
 }
 
-/* torch=3: the level iOS writes is the light, never above Android's current, and a read says what is lit */
+/* torch=3: the level Darwin writes is the light, never above Android's current, and a read says what is lit */
 static void
 for_ios(void)
 {
@@ -247,7 +247,7 @@ for_ios(void)
 	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	CHECK(logged("THE LIGHT IS IOS'S"), "the device is made: %s", log_text);
-	CHECK(!lit_now() && spmi.writes == 0, "no light, and nothing written, until iOS asks");
+	CHECK(!lit_now() && spmi.writes == 0, "no light, and nothing written, until Darwin asks");
 	ask_for(500);
 	WAIT_FOR(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, 3000);
 	CHECK(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, "half is 62.5 mA: code %u", spmi_get(&flash_model, REG_ITARGET0));
@@ -268,7 +268,7 @@ for_ios(void)
 	dark_at_the_end();
 }
 
-/* a fault while lit: off within a moment, and off for the rest of the run whatever iOS asks */
+/* a fault while lit: off within a moment, and off for the rest of the run whatever Darwin asks */
 static void
 fault_while_lit(void)
 {
@@ -383,7 +383,7 @@ battery_hot(void)
 	never();
 }
 
-/* the limit: on for torch_max_s at most, then dark until iOS has asked for 0 */
+/* the limit: on for torch_max_s at most, then dark until Darwin has asked for 0 */
 static void
 time_limit(void)
 {
@@ -397,12 +397,12 @@ time_limit(void)
 	WAIT_FOR(!lit_now() && logged("on for 1 s, the limit"), 3000);
 	CHECK(!lit_now() && logged("on for 1 s, the limit"), "cut at the limit");
 	usleep(300 * 1000);
-	CHECK(!lit_now() && times_lit == 1, "dark while iOS still asks for it");
+	CHECK(!lit_now() && times_lit == 1, "dark while Darwin still asks for it");
 	ask_for(0);
 	usleep(100 * 1000);
 	ask_for(1000);
 	WAIT_FOR(lit_now() && times_lit == 2, 3000);
-	CHECK(lit_now() && times_lit == 2, "lit again once iOS has asked for 0 and then for more");
+	CHECK(lit_now() && times_lit == 2, "lit again once Darwin has asked for 0 and then for more");
 	never();
 	dark_at_the_end();
 }

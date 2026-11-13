@@ -127,7 +127,7 @@ battery_poll(void)
 /*
  * What the audio DSP's battery manager says (bsd/dev/hakios_adsp.c, with adsp=1 unless battmgr=0):
  * the values that Android shows, from where Android takes them. They are kept here for the sysctls
- * and passed on to the power source that iOS reads (iokit/Kernel/HakiosBattery.cpp).
+ * and passed on to the power source that Darwin reads (iokit/Kernel/HakiosBattery.cpp).
  */
 static int battery_full_uah, battery_design_uah, battery_cycles, battery_source_dsp;
 

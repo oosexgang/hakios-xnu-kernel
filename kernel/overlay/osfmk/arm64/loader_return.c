@@ -832,7 +832,7 @@ STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, hv_wdt_pet_init);
 /*
  * hakios: a crash report in the loader's log. A process that dies of a signal that would dump core
  * (SIGABRT, SIGSEGV, SIGBUS, SIGTRAP, SIGILL) leaves its registers and the return addresses of its
- * frame chain here, with the shared cache's slide, so they can be named offline (ipsw dyld a2s); iOS's
+ * frame chain here, with the shared cache's slide, so they can be named offline (ipsw dyld a2s); Darwin's
  * own crash reports need daemons that are not running yet. Called on the dying thread, from postsig.
  */
 #include <kern/task.h>

@@ -108,10 +108,10 @@ enum {
 };
 
 /* MTLVertexFormat and MTLVertexStepFunction, the few --draw-attrib configures and the
- * few it expects to be refused. The numbers are Apple's own, out of the iOS 16.5 SDK's
+ * few it expects to be refused. The numbers are Apple's own, out of the Darwin 16.5 SDK's
  * MTLVertexDescriptor.h -- the same header userland/src/hakiosmetal.m asserts the
  * library's table against -- and MTLVertexFormatFloatRGB9E5 (55) is in that list
- * BECAUSE it is not in that header: iOS 17 added it, so nothing on the device can ask
+ * BECAUSE it is not in that header: Darwin 17 added it, so nothing on the device can ask
  * for it, and what this program checks about it is that the sentence names it rather
  * than printing a number.
  */
@@ -1221,7 +1221,7 @@ run_depth(const char *path, const char *func, const char *colorspec, const char 
                                               : MTL_DEPTH32_FLOAT;
    bool zs_depth = false, zs_stencil = false;
    if (!depth_format_aspects(zformat, &zs_depth, &zs_stencil)) {
-      fprintf(stderr, "air_metal_test: depth pixel format %u: iOS has Depth16Unorm (250), "
+      fprintf(stderr, "air_metal_test: depth pixel format %u: Darwin has Depth16Unorm (250), "
                       "Depth32Float (252), Stencil8 (253) and Depth32Float_Stencil8 "
                       "(260)\n", zformat);
       return 2;

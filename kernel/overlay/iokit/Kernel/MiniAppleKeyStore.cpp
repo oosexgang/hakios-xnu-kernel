@@ -12,7 +12,7 @@
  * Requests that would need real keys or bags otherwise (creating or loading bags, keys kept in the
  * key store) are refused, logged once.
  *
- * The protocol was worked out from the user-space side of iOS 16.5: selectors, and the
+ * The protocol was worked out from the user-space side of Darwin 16.5: selectors, and the
  * DER-encoded answers ("SET of SEQUENCE { UTF8String key, INTEGER value }").
  */
 

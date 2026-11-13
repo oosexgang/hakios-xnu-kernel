@@ -1,6 +1,6 @@
 # arm64e on non-Apple ARMv9: plan
 
-Goal: run arm64e user space (iOS 18 and later ship nothing else) on CPUs with the standard ARMv8.3
+Goal: run arm64e user space (Darwin 18 and later ship nothing else) on CPUs with the standard ARMv8.3
 pointer authentication, first in QEMU (`QEMU_CPU=cortex-a710`), later on Snapdragon 8 Gen 1 and
 newer. Work happens on the kernel of this repository because it links no closed Apple kext:
 switching it to arm64e touches only code we build.
@@ -11,9 +11,9 @@ switching it to arm64e touches only code we build.
 | --- | --- |
 | 0. Kernel built on macOS, `hello` (arm64) as process 1 in QEMU | done |
 | 1. arm64e kernel with a standard-PAC key backend; `hello` built `-arch arm64e` as process 1 | done: boots to `Hello from user space on Darwin! I am process 1` under `QEMU_CPU=cortex-a710`; a bent signed return address is killed at the `retab` (`userland/src/pac_test.c`) |
-| 2. A test program exercising return-address signing, signed function pointers, `pacga`, signal delivery and `thread_set_state` | done: `userland/src/pac_test.c` (return addresses), `userland/src/pac_fn.c` (signed function pointers + `pacga`); signal delivery and `thread_set_state` are exercised for real by the booting iOS daemons (milestone 3), not a standalone program |
-| 3. iOS 16.5 arm64e user space (iPhone XS image, A12): dyld shared cache, launchd, SpringBoard | done: under `QEMU_CPU=cortex-a710` the arm64e kernel boots the iPhone XS cache; dyld, launchd and ~24 daemons (backboardd, runningboardd, powerd, wifid, containermanagerd, ...) spawn, and SpringBoard reaches `job state = running`, with no PAC fault or panic (see "What milestone 3 took") |
-| 4. Port the backend to xnu-12377 (iOS 26) | **kernel done: the arm64e xnu-12377 (iOS 26) kernel boots `hello` as process 1** under `QEMU_CPU=cortex-a710` (`Hello from user space on Darwin! I am process 1`), with no PAC fault during the run. The whole hakios kernel is rebased onto xnu-12377, `mach.development.bcm2837` links as an arm64e Mach-O with the HAS_STD_PAC key block (4a), and it boots fault-by-fault to PID 1 (4b; see below). The 17 deferred userland/fs feature rejects are now also resolved and the kernel still builds (4c), so the kernel is ready for the full iOS 26 user space. Remaining: re-acquire the iOS 26 user-space data (root fs + arm64e dyld cache -- a previous session's extract is no longer on disk) and assemble/boot it as in milestone 3. |
+| 2. A test program exercising return-address signing, signed function pointers, `pacga`, signal delivery and `thread_set_state` | done: `userland/src/pac_test.c` (return addresses), `userland/src/pac_fn.c` (signed function pointers + `pacga`); signal delivery and `thread_set_state` are exercised for real by the booting Darwin daemons (milestone 3), not a standalone program |
+| 3. Darwin 16.5 arm64e user space (iPhone XS image, A12): dyld shared cache, launchd, SpringBoard | done: under `QEMU_CPU=cortex-a710` the arm64e kernel boots the iPhone XS cache; dyld, launchd and ~24 daemons (backboardd, runningboardd, powerd, wifid, containermanagerd, ...) spawn, and SpringBoard reaches `job state = running`, with no PAC fault or panic (see "What milestone 3 took") |
+| 4. Port the backend to xnu-12377 (Darwin 26) | **kernel done: the arm64e xnu-12377 (Darwin 26) kernel boots `hello` as process 1** under `QEMU_CPU=cortex-a710` (`Hello from user space on Darwin! I am process 1`), with no PAC fault during the run. The whole hakios kernel is rebased onto xnu-12377, `mach.development.bcm2837` links as an arm64e Mach-O with the HAS_STD_PAC key block (4a), and it boots fault-by-fault to PID 1 (4b; see below). The 17 deferred userland/fs feature rejects are now also resolved and the kernel still builds (4c), so the kernel is ready for the full Darwin 26 user space. Remaining: re-acquire the Darwin 26 user-space data (root fs + arm64e dyld cache -- a previous session's extract is no longer on disk) and assemble/boot it as in milestone 3. |
 | 5. arm64e on real ARMv8.3+ silicon (Snapdragon 8 Gen 1+ / 8 Elite) | not started; well scoped. Real-hardware boot already works in **arm64** on the POCO X5 Pro 5G (778G, no PAC); arm64e+standard-PAC has only run in QEMU `cortex-a710`. Milestone 5 merges the two on a PAC-capable, bootloader-unlockable device via the existing porting flow. |
 
 ## What milestone 1 took
@@ -52,7 +52,7 @@ regardless (milestone 3).
 
 ## What milestone 3 took
 
-The iPhone XS (A12) arm64e iOS 16.5 is fetched and the user space is built for arm64e
+The iPhone XS (A12) arm64e Darwin 16.5 is fetched and the user space is built for arm64e
 (`ios165/fetch.sh` and `userland/build.sh`, both now parameterised by device/arch; see the
 hakios-xnu-userland side). Booting it on the arm64e kernel took three signing fixes, each found by
 tracing the fault PC under `qemu/run-ios.sh ... -d int` and disassembling the cache:
@@ -113,14 +113,14 @@ accepted here.
 
 ## Milestone 4, where it stands
 
-The target is **iOS 26**, whose kernel is
-**xnu-12377.121.6** (Apple's year-based rename of what would have been iOS 19; it is the newest XNU
-open-sourced, after xnu-11417 = iOS 18.x).
+The target is **Darwin 26**, whose kernel is
+**xnu-12377.121.6** (Apple's year-based rename of what would have been Darwin 19; it is the newest XNU
+open-sourced, after xnu-11417 = Darwin 18.x).
 
 **Done (this session):**
 
-- **The iOS 26 image is fetched and validated as arm64e.** iPhone 17 Pro Max (iPhone18,2, A19 Pro)
-  iOS 26.6.2 (23G90), the newest 26.x. iOS 26 ships the root/cryptex filesystems as `.aea`
+- **The Darwin 26 image is fetched and validated as arm64e.** iPhone 17 Pro Max (iPhone18,2, A19 Pro)
+  Darwin 26.6.2 (23G90), the newest 26.x. Darwin 26 ships the root/cryptex filesystems as `.aea`
   (Apple Encrypted Archive); macOS `/usr/bin/aea` + the FCS key from Apple decrypts them. The
   complete **arm64e dyld shared cache** (84 subcaches `.00`-`.83` + `.atlas` + `.symbols`) lives in
   the `Cryptex1,SystemOS` cryptex and was extracted. Device identity for a profile: `v54ap`,
@@ -128,7 +128,7 @@ open-sourced, after xnu-11417 = iOS 18.x).
 - **The three milestone-3 signing fixes apply to xnu-12377.** `vm_shared_region.c`,
   `vm_dyld_pager.c`, `kern_credential.c` -- identical but for field-name churn (the `#if CONFIG_SPTM`
   non-SPTM path is ours). Present in the xnu-12377 checkout.
-- **The standard-PAC board is resurrected on xnu-12377.** iOS 26's XNU **removed `BCM2837.h`** --
+- **The standard-PAC board is resurrected on xnu-12377.** Darwin 26's XNU **removed `BCM2837.h`** --
   the only arm64 boards left are the real Apple SoCs (T6000/T8101/.../H13-H17) and `VMAPPLE`, and
   `VMAPPLE` is `HAS_PARAVIRTUALIZED_PAC` (hvc to Apple's hypervisor) + 16 KB/mixed pages, not the
   standard hardware PAC on a Cortex core we target. So our `BCM2837.h` (the standard-PAC, GICv3,
@@ -143,9 +143,9 @@ machine_routines.c,pcb.c}`), so the architecture code carries over conceptually,
 the old kernel's patch (`xnu/` in the first phone's package) must be rebased hunk by hunk across the version gap, the `xnuloader` boot-time
 signer re-pointed at xnu-12377's chained-fixup layout, and the build harness retargeted. The selected route:
 
-- **A -- iOS 26 now (the explicit target).** Rebase the arm64e + HAS_STD_PAC kernel onto xnu-12377
+- **A -- Darwin 26 now (the explicit target).** Rebase the arm64e + HAS_STD_PAC kernel onto xnu-12377
   (board done), build it (`hello` arm64e as process 1 under `QEMU_CPU=cortex-a710`, like milestone
-  1), then boot the iOS 26 arm64e user space. Large and iterative; a boot is not a one-session job.
+  1), then boot the Darwin 26 arm64e user space. Large and iterative; a boot is not a one-session job.
 
 ### Route A rebase status (in progress)
 
@@ -225,7 +225,7 @@ markers. Artifacts: `scratchpad/xnu12377-rebase-wip.patch` (76k lines, the whole
 
 `xnu-build.sh` builds xnu-12377 with `XNU_SRC=scratchpad/xnu12377 XNU_ARCH=arm64e MACHINE=BCM2837
 RC_DARWIN_KERNEL_VERSION=12377.121.6`. Four harness fixes were needed, none touching the kernel
-source: set `RC_DARWIN_KERNEL_VERSION` (the 16.5 SDK's System.kext version does not match iOS 26);
+source: set `RC_DARWIN_KERNEL_VERSION` (the 16.5 SDK's System.kext version does not match Darwin 26);
 the `iig` shim (`xnu-deps/host/bin/iig`) gained an Xcode-SDK fallback and the two new iig headers
 (`IOExtensiblePaniclog.h`, `TestDextRematch.h`) were copied into the 13.3 SDK; `BCM2837.h` was added
 to pexpert's `PRIVATE_KERNELFILES` so `board_config.h` can include it; and `proc_reg.h` got a
@@ -268,7 +268,7 @@ The 122 that remain are three bounded jobs:
   (`KMA_KOBJECT`/`KMA_DATA`) and other APIs xnu-12377 renamed or moved. Systematic driver-layer port.
 - **The AMFI / CoreEntitlements subsystem (~11): `CoreEntitlements/V2/API.h` (pulled by
   `libkern/amfi/amfi.h`) and `CodeSignature/Entitlements.h` (by `kern_exec.c`, `necp_client.c`).**
-  iOS 26 reorganized CoreEntitlements under `V2/` and added the CodeSignature framework; xnu-8796's
+  Darwin 26 reorganized CoreEntitlements under `V2/` and added the CodeSignature framework; xnu-8796's
   `EXTERNAL_HEADERS/CoreEntitlements` has the old flat layout and no CodeSignature. Needs the V2
   headers forward-ported or `amfi.h`/the miniamfi replacement reworked to the old API.
 - **`apple_arm64_cpu.h` (10): `MPIDR_CORETYPE_*` undeclared** -- an Apple-CPU header pulled into the
@@ -276,12 +276,12 @@ The 122 that remain are three bounded jobs:
 
 Build log: `scratchpad/xnu12377-build.log`.
 
-### Milestone 4a reached: the arm64e xnu-12377 (iOS 26) kernel builds
+### Milestone 4a reached: the arm64e xnu-12377 (Darwin 26) kernel builds
 
 **The kernel compiles and links.** `BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837`
 (21 MB stripped; `.unstripped` 25 MB) is a `Mach-O 64-bit executable arm64e` with `_arm_init`,
 `_kernel_bootstrap` and `_pac_std_keys`, and a `__pac_keys` section of 0x50 bytes (the five
-standard-PAC keys) -- the HAS_STD_PAC backend is in the kernel. This is the iOS-26 counterpart of
+standard-PAC keys) -- the HAS_STD_PAC backend is in the kernel. This is the Darwin-26 counterpart of
 milestone 1's "arm64e kernel builds". Full rebase+build diff: `scratchpad/xnu12377-rebase-full.patch`
 (~78k lines). Build it with:
 
@@ -294,7 +294,7 @@ The last stretch from the driver/framework layer took, beyond the earlier fixes:
 and `ramfs.c`/`kern_minimac.c`/`loader_return.c`/`user_exception_trace.c` include xnu-12377's split
 internal VM headers (`vm/vm_kern_xnu.h`, `vm/vm_map_xnu.h`, `vm/vm_shared_region_xnu.h`,
 `vm/vm_compressor_xnu.h`); `vm_map_switch` became `vm_map_switch_to`/`vm_map_switch_back` (an opaque
-context); the three `CoreEntitlements/V2/*` and `CodeSignature/Entitlements.h` headers iOS 26 made
+context); the three `CoreEntitlements/V2/*` and `CodeSignature/Entitlements.h` headers Darwin 26 made
 closed are provided as thin EXTERNAL_HEADERS shims (the flat CoreEntitlements types plus opaque
 `CEContext_t`/`CEKernelAPI_t`); the `iig` shim now runs the **real** Xcode `iig` (so IOService/
 IOUserServer's new kernel dispatch -- `Panic`, `SetPowerOverride`, ... -- is generated correctly),
@@ -302,15 +302,15 @@ falling back to SDK headers; `TrustCache/*` is carried forward from xnu-8796; th
 re-registered in `board_config.h`/`MakeInc.def`/`proc_reg.h` with a restored `MASTER.arm64.bcm2837`
 (a copy of `MASTER.arm64` with `CPU_COUNTERS_BASE` emptied, `nos_arm_pmap nos_arm_asm`,
 `mockfs ramfs apfs`, `ubsan_minimal`, no `sched_hygiene_debug`); the KernelSupport force-load and the
-Apple AMCC/CTRR files are skipped for the non-Apple board; and the handful of symbols iOS 26 moved
+Apple AMCC/CTRR files are skipped for the non-Apple board; and the handful of symbols Darwin 26 moved
 into the closed per-SoC KernelSupport library that are absent from open source (`master_cpu`,
 `ml_device_is_prod_fused`, the two `memorystatus_available_pages_critical*` thresholds) are supplied
 by a small `osfmk/arm64 kernel-support file`, with `san/memory/ubsan_minimal.c` registered to
 provide the `__ubsan_handle_*_minimal` traps.
 
-### Milestone 4b reached: the arm64e xnu-12377 (iOS 26) kernel boots `hello` as PID 1 in QEMU
+### Milestone 4b reached: the arm64e xnu-12377 (Darwin 26) kernel boots `hello` as PID 1 in QEMU
 
-Done under `QEMU_CPU=cortex-a710`: the iOS 26 arm64e kernel boots all the way to
+Done under `QEMU_CPU=cortex-a710`: the Darwin 26 arm64e kernel boots all the way to
 
 ```
 Hello from user space on Darwin!
@@ -354,16 +354,16 @@ a hakios fix the xnu-8796 tree already carried that the rebase dropped:
    `ml_unsafe_kernel_text_init()` only set the flag when the device tree `/chosen` has iBoot's
    `kernel-ctrr-to-be-enabled`; QEMU's DT has none. Added an else-branch defaulting the flag to
    initialized + "text is unsafe" -- true, since the board does no CTRR/AMCC lockdown.
-4. **`iomediaClass` assertion (`IOService.cpp`).** iOS 26's new `publishHiddenMedia()` (called from
+4. **`iomediaClass` assertion (`IOService.cpp`).** Darwin 26's new `publishHiddenMedia()` (called from
    `setRootMedia` while bringing up the md0 RAM disk) asserts the `IOMedia` metaclass, which lives in
    the IOStorageFamily kext that is not built into the bring-up kernel. Made it a safe early-return
    when the metaclass is absent (no IOMedia class -> no hidden media to publish).
 5. **`mockfs ... failed to create fictitious pages, rvalue = 5` (`disk_private.h`).** The memory
-   device sits at kernel VA `0xfffffff008824000`, whose page number does not fit in 32 bits, but iOS
+   device sits at kernel VA `0xfffffff008824000`, whose page number does not fit in 32 bits, but Darwin
    26 moved `dk_memdev_info_t` to `disk_private.h` with `mi_base` back to `uint32_t`, truncating the
    base page handed to mockfs so `pmap_find_phys` failed (`KERN_FAILURE` == 5). Widened `mi_base` to
    `uint64_t`, the xnu-8796 hakios fix.
-6. **`PAC failure with IA key while branching to x22` (`fleh_dispatch64`, `locore.s`).** iOS 26 moved
+6. **`PAC failure with IA key while branching to x22` (`fleh_dispatch64`, `locore.s`).** Darwin 26 moved
    the handler-pointer `pacia x1, sp` to the top of `fleh_dispatch64`, before the standard-PAC kernel
    key reload. Under HAS_STD_PAC an EL0-origin exception still has the process's keys loaded there, so
    the handler was signed with the user IA key but `braa x22, sp` authenticates with the kernel IA
@@ -377,12 +377,12 @@ captures the full kernel log, so it does not hide anything).
 ### Milestone 4c: the 17 userland/filesystem rejects resolved
 
 The 17 `.rej` hunks the rebase deferred are resolved and the kernel rebuilds (arm64e, exit 0).  Most
-turned out to be either fixed upstream by iOS 26 or mechanical -- the recurring pattern again being
+turned out to be either fixed upstream by Darwin 26 or mechanical -- the recurring pattern again being
 the xnu-12377 restructuring meeting the hakios features:
 
 - **8 rejects were obsolete** -- the whole `uio_stackbuf_t uio_buf[UIO_SIZEOF(n)]` sizing fix
   (`vfs_lookup/subr/vnops/syscalls/attrlist/quota.c`, `nfs_serv.c`, `security/mac_vfs_subr.c`).
-  iOS 26 replaced that idiom with a new `UIO_STACKBUF(name, niov)` macro
+  Darwin 26 replaced that idiom with a new `UIO_STACKBUF(name, niov)` macro
   (`uint64_t name[P2ROUNDUP(UIO_SIZEOF(niov), 8) / 8]`) that already does exactly the rounded-up
   sizing the hakios patch added by hand, so the code those hunks targeted no longer exists.
 - **`sched_clutch.c` was obsolete** -- its `sched_clutch_thread_avoid_processor()` target was removed
@@ -401,7 +401,7 @@ the xnu-12377 restructuring meeting the hakios features:
   `persona_proc_adopt()` / `kauth_cred_proc_update(p, PROC_SETTOKEN_SETUGID, ^{...})` API; and the
   xpcproxy identity-version elision (keep xpcproxy's idversion so RunningBoard's audit tokens match),
   adapted to 12377's retry-loop idversion assignment.
-- **`kern_memorystatus.c` (jetsam):** iOS 26 consolidated the per-cent-of-memory math into one macro
+- **`kern_memorystatus.c` (jetsam):** Darwin 26 consolidated the per-cent-of-memory math into one macro
   `MEMSTAT_PERCENT_TOTAL_PAGES(p)` plus `MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX`, so the 5-hunk
   "use `sane_size`, not `max_mem`, so the RAM-disk image is not counted as manageable memory" fix
   lands in just those two macros (`#define memstat_memory_size sane_size`).
@@ -412,11 +412,11 @@ the xnu-12377 restructuring meeting the hakios features:
   `the old kernel's object-list variable`); **`MakeInc.cmd`** (absolute -> bare tool paths) is only for non-macOS build
   hosts and is left as-is, since the absolute paths exist and the build succeeds on macOS.
 
-**What this unblocks and what it does not.** The kernel is now ready for the full iOS 26 arm64e user
+**What this unblocks and what it does not.** The kernel is now ready for the full Darwin 26 arm64e user
 space (launchd + daemons + SpringBoard, as in milestone 3).  The remaining blocker is *data, not
-kernel code*: the extracted iOS 26 root filesystem and its 84-subcache arm64e dyld shared cache are
+kernel code*: the extracted Darwin 26 root filesystem and its 84-subcache arm64e dyld shared cache are
 not on disk (a previous session's scratch).  Re-acquiring them means re-downloading the iPhone 17
-Pro Max iOS 26.6.2 IPSW (~12 GB, Apple CDN -- the `/etc/hosts` unblock needs the user's sudo),
+Pro Max Darwin 26.6.2 IPSW (~12 GB, Apple CDN -- the `/etc/hosts` unblock needs the user's sudo),
 AEA-decrypting the root/cryptex (`/usr/bin/aea` + the FCS key from Apple), re-extracting the cache,
 and writing an `ios26/` selection config (the analog of `ios165/select-system.py`).  Then
 `userland/build.sh` assembles `system.apfs`/`root.apfs` and `qemu/run-ios.sh` boots it -- pointed at

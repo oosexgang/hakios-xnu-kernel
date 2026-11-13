@@ -1,8 +1,8 @@
 #!/bin/bash
-# Build Mesa for the iOS userland: the OpenGL ES library behind userland/src/eagl.c (see there and
+# Build Mesa for the Darwin userland: the OpenGL ES library behind userland/src/eagl.c (see there and
 # userland/src/gl_osmesa.c). Mesa is fetched (a pinned release), patched with tools/mesa/*.patch and
 # built with the cross compiler of the kernel (xnu-deps/host/bin/xnu-clang, see xnu-deps/setup.sh)
-# against the iOS SDK that userland/build.sh uses; nothing of it is in the repository.
+# against the Darwin SDK that userland/build.sh uses; nothing of it is in the repository.
 #
 #   DRIVERS="softpipe,freedreno"
 #                        the gallium drivers to build. softpipe: a rasterizer in plain C; it needs no

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  在高通芯片手机上运行 Apple 开源 XNU 内核与 iOS 用户态。
+  在高通芯片手机上运行 Apple 开源 XNU 内核与 Darwin 用户态。
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 # HakiOS
 
-HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核和 iOS 用户态。不刷写任何内容：UEFI 通过
+HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核和 Darwin 用户态。不刷写任何内容：UEFI 通过
 `fastboot boot` 启动，系统只在 RAM 中运行，重启后回到 Android。
 
 > 实验性项目，需要解锁 Bootloader。本仓库的任何工具都不得刷写、擦除或写入手机存储。
@@ -49,7 +49,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 ## 启动过程
 
 <p align="center">
-  <img src="docs/assets/boot-chain.svg" alt="启动链：原厂 fastboot、UEFI、引导器、内核、iOS 用户态" width="830">
+  <img src="docs/assets/boot-chain.svg" alt="启动链：原厂 fastboot、UEFI、引导器、内核、Darwin 用户态" width="830">
 </p>
 
 各部分如何配合，见 [docs/architecture.md](docs/architecture.md)。
@@ -59,7 +59,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 手机以设备包的形式与代码分开，存放在
 [`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上：该分支的 README 列出了各部手机及其进度，
 每个设备包自己的 README 说明在该手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭。本分支不描述任何手机；
-它包含 QEMU `virt` 板（`devices/qemu-virt/`），iOS 16.5 一代可在其上运行，尚未适配当前内核。SoC 支持是共享的，
+它包含 QEMU `virt` 板（`devices/qemu-virt/`），Darwin 16.5 一代可在其上运行，尚未适配当前内核。SoC 支持是共享的，
 位于本分支的 `soc/`：目前有 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
 
 ## 快速开始
@@ -100,13 +100,13 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `soc/` | **每种芯片一个文件**：其各模块的位置，由使用该芯片的所有板型共享。 |
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
 | `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
-| `ios/` | iOS 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
+| `ios/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
 | `tests/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
 | `components.toml` | 从外部获取的所有内容及其固定版本。 |
 | `docs/` | 文档。 |
-| `base/` | 第一代工作区（iOS 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
+| `base/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
 
 ## 一段话说明移植
 
@@ -123,7 +123,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 
 ## 不在本仓库中的内容
 
-Apple 的文件（XNU 在构建时获取；iOS 来自你本机上的 Apple IPSW）、手机固件（取自同一部手机）以及第三方工具链。
+Apple 的文件（XNU 在构建时获取；Darwin 来自你本机上的 Apple IPSW）、手机固件（取自同一部手机）以及第三方工具链。
 此外，目前启动 Renoir 所用的常驻引导器和镜像工具位于团队尚未公开的工作树中：在其公开之前，
 无法从一份干净的检出复现 Renoir 的启动。详见
 [docs/architecture.md](docs/architecture.md#what-is-not-in-this-repository)。
@@ -146,4 +146,4 @@ pull request；[CONTRIBUTING.md](CONTRIBUTING.md) 说明各类修改应放在哪
 - [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
 - Apple 开源 XNU 和各源码文件中注明的 Linux 驱动
 
-Apple、iOS、Metal 是 Apple Inc. 的商标。本项目与 Apple、高通、小米均无关联。
+Apple、Darwin、Metal 是 Apple Inc. 的商标。本项目与 Apple、高通、小米均无关联。

@@ -10,8 +10,8 @@ and the boot ends with "FIPS_POST failed!". The rewrite is deterministic: the va
 computes from the rewritten code is printed by the test ("MAC generated: ..."), and put here in place
 of the stored one ("In variable: ..."); then the file's page hashes are made again (pacstrip resign).
 
-The values below belong to iOS 26.6.2 (23G90, iPhone12,1) and to the pacstrip that rewrote the cache.
-For another build (iOS 27.2, 24B119) or another pacstrip, boot once, read the two lines from the log
+The values below belong to Darwin 26.6.2 (23G90, iPhone12,1) and to the pacstrip that rewrote the cache.
+For another build (Darwin 27.2, 24B119) or another pacstrip, boot once, read the two lines from the log
 ("In variable" is STORED, "MAC generated" is COMPUTED) and give them as arguments.
 """
 import os

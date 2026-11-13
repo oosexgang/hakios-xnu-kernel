@@ -2,7 +2,7 @@
 # The switcher of running applications (RC_JOBS=rc.jobs.switcher, gpu=1): three applications are
 # started one after another (ones that ask nothing: an application that puts up a question of its
 # own -- Photos asks about notifications -- leaves a modal alert on the screen, and with one of
-# those up iOS opens no switcher at all), the first two left running by the home button and the
+# those up Darwin opens no switcher at all), the first two left running by the home button and the
 # third kept on the screen; then a drag up from the bottom edge that stops a third of the way and
 # waits opens the switcher, where the cards behind the front one are dimmed. Those of the two on
 # the left came out purple instead. (If the drag brings nothing, the notification asks SpringBoard

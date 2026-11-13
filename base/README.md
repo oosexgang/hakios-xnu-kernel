@@ -1,6 +1,6 @@
 # HakiOS — XNU kernel
 
-> **Legacy.** This directory is the workspace of the first generation: iOS 16.5 on the POCO X5 Pro
+> **Legacy.** This directory is the workspace of the first generation: Darwin 16.5 on the POCO X5 Pro
 > and QEMU. What follows describes that generation, and its paths are those of that workspace,
 > not of this repository. The current project starts at the [top-level README](../README.md).
 >
@@ -13,8 +13,8 @@
 > (`cp -R PACKAGE/legacy/. base/`) to build this generation. What is still only here: the common part of the UEFI
 > port (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
 
-**HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
-hardware and runs the **unmodified iOS 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
+**HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of Darwin 16.5) on Android phone
+hardware and runs the **unmodified Darwin 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
 apps. Our own EFI loader, our own replacements for Apple's closed drivers, a UEFI port, and a Linux Wi-Fi driver
 on a compatibility layer make that possible.
 
@@ -29,11 +29,11 @@ This repository is half of the project:
 | Repository | What |
 |---|---|
 | **hakios-xnu-kernel** (this one) | XNU patches, the EFI loader, the UEFI port, Wi-Fi, QEMU scripts, `xl`, prebuilt kernel/loader/UEFI, `common/` scripts |
-| [hakios-xnu-userland](https://github.com/oosexgang/hakios-xnu-kernel) | our init, injected libraries, launchd jobs, the APFS image builder, the scripts that take iOS out of Apple's IPSW, Metal/Mesa work |
+| [hakios-xnu-userland](https://github.com/oosexgang/hakios-xnu-kernel) | our init, injected libraries, launchd jobs, the APFS image builder, the scripts that take Darwin out of Apple's IPSW, Metal/Mesa work |
 
-> **No Apple files are in either repository.** `ios165/fetch.sh` downloads the iOS 16.5 IPSW from Apple's own CDN
+> **No Apple files are in either repository.** `ios165/fetch.sh` downloads the Darwin 16.5 IPSW from Apple's own CDN
 > to *your* machine and extracts what is needed there. HakiOS is an independent research project by OOSEX GANG and
-> is not affiliated with, authorised or endorsed by Apple Inc. iOS, iPhone and Apple are trademarks of Apple Inc.
+> is not affiliated with, authorised or endorsed by Apple Inc. Darwin, iPhone and Apple are trademarks of Apple Inc.
 
 <p>
 <img src="docs/lockscreen.jpg" width="190" alt="Lock screen">
@@ -48,7 +48,7 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 
 | Works | Does not work (yet) |
 |---|---|
-| Lock screen, swipe to unlock, home screen with all icons (two pages), stock iOS 16 wallpapers | Cellular, Bluetooth |
+| Lock screen, swipe to unlock, home screen with all icons (two pages), stock Darwin 16 wallpapers | Cellular, Bluetooth |
 | System gestures: swipe up (home, app switcher), edge swipe (back), Control Center | Charging under our kernel (the phone only discharges) |
 | Apps: Settings, Clock, Calendar, Photos, Notes, Safari and more; widgets (Weather, Calendar) on the phone | Metal for apps (in progress: 293 of 456 system shaders already run on the Adreno, see `docs/air.md` in hakios-xnu-userland) |
 | Phone touchscreen (Goodix GT9916), multitouch, wake on touch; real power and volume keys | App Store content and Apple ID sign-in (no Secure Enclave; FairPlay daemon exits) |
@@ -56,7 +56,7 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 | Adreno 642L GPU through Mesa/freedreno (`gpu=1`, OpenGL ES for CoreAnimation) | |
 | Wi-Fi (WCN6750, ath11k): join from Settings, Safari over Wi-Fi, 55–90 Mbit/s | |
 | Sound (speakers, main microphone), camera in Camera.app (front/rear, preview, focus, HEIC photos) | |
-| Data that iOS writes survives a reboot (`var_store=1 ufs_write=1`); iOS root volume on the phone's flash | |
+| Data that Darwin writes survives a reboot (`var_store=1 ufs_write=1`); Darwin root volume on the phone's flash | |
 | Sileo + Procursus (dpkg, apt), tweaks, SSH | |
 
 It is a research bench, not a ROM: a session lasts a given number of seconds, then the kernel returns to the
@@ -167,19 +167,19 @@ fastboot boot ──► UEFI (Mu-Silicium) ──► xnuloader (EFI application)
                                            ▼
             XNU (BCM2837 config as the base + our platform)
               ├─ GICv3, timer, video console, return to the loader
-              ├─ APFS (images in RAM, iOS volume on flash), ramfs (/private/var, /tmp)
+              ├─ APFS (images in RAM, Darwin volume on flash), ramfs (/private/var, /tmp)
               ├─ minicrypto instead of corecrypto, AMFI and Sandbox stand-ins (MAC policies)
               ├─ driver replacements: IOSurface, IOMobileFramebuffer, AppleKeyStore, network stack
               ├─ input: /dev/hakios-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
               ├─ GPU: Adreno 642L, Wi-Fi: WCN6750 (ath11k via LinuxKPI), sound: ADSP / virtio-sound
               ▼
-   iOS 16.5 launchd → logd, notifyd, cfprefsd, runningboardd, backboardd, SpringBoard, apps
+   Darwin 16.5 launchd → logd, notifyd, cfprefsd, runningboardd, backboardd, SpringBoard, apps
               ├─ our libraries are injected into backboardd, SpringBoard and mediaserverd
               │  (virtual HID services, a few ObjC method swaps — in memory only)
               └─ mediaserverd gets our CoreAudio output device (HakiosAudio.driver)
 ```
 
-The iOS programs, frameworks and dyld shared cache are not changed by a single byte: what they miss is done by the
+The Darwin programs, frameworks and dyld shared cache are not changed by a single byte: what they miss is done by the
 kernel (driver replacements) or by a library the kernel injects with `DYLD_INSERT_LIBRARIES` (`kern.exec_inject`).
 
 ## Layout
@@ -229,7 +229,7 @@ From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
 
 ## Licenses
 
-- No iOS files are in the repositories: `ios165/fetch.sh` downloads them from Apple's CDN to your machine.
+- No Darwin files are in the repositories: `ios165/fetch.sh` downloads them from Apple's CDN to your machine.
 - `xnu/` is a derivative work of XNU and is distributed under APSL 2.0, like XNU itself; `prebuilt/mach.*` is the
   kernel built from it. It also contains ath11k (BSD-3-Clause-Clear) and FreeBSD LinuxKPI code (BSD-2-Clause):
   see [prebuilt/NOTICES.md](prebuilt/NOTICES.md).

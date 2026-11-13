@@ -1,14 +1,14 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
-# The user database (RC_JOBS=rc.jobs.users). iOS has no flat-file user lookup left: getpwuid and
+# The user database (RC_JOBS=rc.jobs.users). Darwin has no flat-file user lookup left: getpwuid and
 # getpwnam go over Mach to com.apple.system.libinfo.muser, which usermanagerd serves, and a program
 # that cannot reach it sees every user as missing ("No user exists for uid 0" is what OpenSSH says).
 # ps is the probe already in the image: it calls getpwuid for every process and prints the bare uid
 # when there is no answer, and `ps -U NAME` is a getpwnam that fails loudly.
 #
-# How it came out, so nobody re-runs the argument. iOS's own database answers: all three questions
+# How it came out, so nobody re-runs the argument. Darwin's own database answers: all three questions
 # below succeed, usermanagerd is up serving muser, and in 112 run logs not one lookup of that name
 # has ever failed. What did not answer was OpenSSH from the package manager's prefix, and the reason
-# is that it never asks iOS: ssh-keygen and sshd import _ie_getpwnam, _ie_getpwuid and _ie_getpwent
+# is that it never asks Darwin: ssh-keygen and sshd import _ie_getpwnam, _ie_getpwuid and _ie_getpwent
 # from @rpath/libiosexec.1.dylib, Procursus's own shim, which reads /var/jb/etc/pwd.db and spwd.db --
 # the plain /var/jb/etc/passwd is not even in its string table -- and those two files are built by
 # pwd_mkdb at install time, which no hand-unpacked overlay has done. The sileo2 copy now runs

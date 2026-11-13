@@ -16,7 +16,7 @@ Blocks are darwin's own, 4096 bytes, counted from the partition's start. What it
     darwin, its type and unique GUIDs, LBA 25374720..30617594; no other entry over any of it), sda being
     logical unit 0 of the UFS controller, /dev/block/by-name/darwin being /dev/block/sda34, whose number,
     name, start and size in sysfs and whose size by blockdev say the same. Anything else: no write.
-  - the blocks lie inside darwin and after the iOS volume at its start (rootfs.apfs, blocks 0..1374207,
+  - the blocks lie inside darwin and after the Darwin volume at its start (rootfs.apfs, blocks 0..1374207,
     which is never written): BLOCK >= 1374208 and BLOCK + COUNT <= 5242875. Anything else: no write.
   - the write goes to /dev/block/by-name/darwin only, by dd with seek and count in blocks of 4096, from a
     copy of the image on the phone whose sha256 has been checked; in the same shell, right before dd,
@@ -163,7 +163,7 @@ def blocks_ok(block, count):
     if count <= 0:
         raise Refused('nothing to write (%d blocks)' % count)
     if block < PROTECTED:
-        raise Refused('block %d is inside the iOS volume (blocks 0..%d), which is never written' % (block, PROTECTED - 1))
+        raise Refused('block %d is inside the Darwin volume (blocks 0..%d), which is never written' % (block, PROTECTED - 1))
     if block + count > BLOCKS:
         raise Refused('blocks %d..%d go past darwin\'s end (%d blocks)' % (block, block + count - 1, BLOCKS))
 
@@ -269,7 +269,7 @@ def cmd_zero(block, count):
 def cmd_selftest():
     """The refusals: each must refuse, and none of them reaches the phone's dd."""
     ok = True
-    for block, count, why in ((PROTECTED - 1, 256, 'one block into the iOS volume'), (0, 1, 'the iOS volume\'s superblock'),
+    for block, count, why in ((PROTECTED - 1, 256, 'one block into the Darwin volume'), (0, 1, 'the Darwin volume\'s superblock'),
                               (BLOCKS - 100, 256, 'past darwin\'s end'), (BLOCKS, 1, 'right after darwin'),
                               (-1, 1, 'before darwin'), (PROTECTED, 0, 'nothing'), (10 ** 12, 1, 'far away')):
         try:

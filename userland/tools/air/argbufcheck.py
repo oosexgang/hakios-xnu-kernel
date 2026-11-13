@@ -2,7 +2,7 @@
 """Argument buffers: the member table, the indices it allocates, and the refusals.
 
 `air.indirect_buffer` is the one interface word that cannot be checked against
-Apple's own libraries: 0 of the 456 modules of iOS 16.5's corpus declare one and
+Apple's own libraries: 0 of the 456 modules of Darwin 16.5's corpus declare one and
 7 620 of Resident Evil 4's 7 879 do (docs/air.md section 8.2). So this is the
 stage that belongs with the implementation, as vattrcheck.py belongs with the
 vertex attributes -- the numbers in that section are re-derivable by `--census`

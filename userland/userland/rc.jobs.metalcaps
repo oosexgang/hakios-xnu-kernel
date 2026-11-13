@@ -115,7 +115,7 @@
 #   caps:   maxTessellationFactor                      0      through -limits (0x181aaba70)
 #   caps:   hasUnifiedMemory                           yes    ours, and TRUE of this SoC
 #   caps:   isLowPower / isHeadless / isRemovable      no     ours
-#   caps:   isDepth24Stencil8PixelFormatSupported      no     ours, and correct for iOS
+#   caps:   isDepth24Stencil8PixelFormatSupported      no     ours, and correct for Darwin
 #   caps:   vendorName                                 Apple
 #         `adrp; add; ret` over a constant string (0x181aaa068). We are not Apple and cannot
 #         decline: there is no vendorName of ours in the chain.

@@ -1084,7 +1084,7 @@ static const struct rwa_pixel_format rwa_pixel_formats[] = {
     * changes is which binding it can have and how its texels are read, and both of
     * those are decided from the format itself below, never from a second list.
     *
-    * The four are the ones iOS has and Gallium names the same bytes for. The depth
+    * The four are the ones Darwin has and Gallium names the same bytes for. The depth
     * aspect of each is the identity on memory -- 16-bit normalised, 32-bit float -- and
     * Z32_FLOAT_S8X24_UINT is Gallium's spelling of "32-bit depth, 8-bit stencil, the
     * rest padding", which is Metal's Depth32Float_Stencil8 exactly. What this library
@@ -1146,7 +1146,7 @@ format_is_depth_stencil(enum pipe_format f)
  * only the PURE EXCHANGE -- same field offsets, same widths -- leaves the rest of the
  * picture clean: moving the one-bit alpha as well misaligns the five-bit fields and
  * shows as visible striping across the icons, which the real screen does not have.
- * Re-rendered through the exchange, the whole page reads as iOS: a solid blue ground,
+ * Re-rendered through the exchange, the whole page reads as Darwin: a solid blue ground,
  * white labels, a blue-to-violet Weather icon with a white cloud (logs/packed.png).
  *
  * So Gallium's names and Metal's run in OPPOSITE directions over the colour channels,
@@ -1220,7 +1220,7 @@ pixel_format_refusal(unsigned f)
    if (f == 240 || f == 241)
       return "one of Metal's packed 4:2:2 video formats (GBGR422, BGRG422), where one block "
              "holds two texels and a region in texels is not a region in bytes";
-   /* The four depth and stencil formats iOS has are in the table above; these are the
+   /* The four depth and stencil formats Darwin has are in the table above; these are the
     * rest of Metal's enumeration between them, and each is declined for its own reason
     * rather than for being a depth format.
     */
@@ -1241,7 +1241,7 @@ pixel_format_refusal(unsigned f)
       return "one of Apple's extended-range XR formats, which has no Gallium equivalent at "
              "all";
    return "not a value of MTLPixelFormat this library knows: either a format newer than the "
-          "iOS 16.5 SDK's or none at all";
+          "Darwin 16.5 SDK's or none at all";
 }
 
 /* Where an imported texture's memory comes from: an IOSurface by its ID, with the offset
@@ -2164,12 +2164,12 @@ sampler_state_from_metal(const struct rwa_sampler_state *st, struct pipe_sampler
          return false;
       }
    }
-   /* iOS 26 has a third MTLSamplerMinMagFilter (2, which RenderBox's narrow blur
+   /* Darwin 26 has a third MTLSamplerMinMagFilter (2, which RenderBox's narrow blur
     * asks for, and which aborts it when the sampler comes back nil): a filter
     * smoother than linear. Linear is the nearest this GPU's sampler has. */
    if (st->min_filter > 2 || st->mag_filter > 2) {
       say(why, why_size, "filters %u and %u: MTLSamplerMinMagFilter is nearest, linear "
-                         "or iOS 26's third", st->min_filter, st->mag_filter);
+                         "or Darwin 26's third", st->min_filter, st->mag_filter);
       return false;
    }
    if (st->mip_filter > RWA_MIP_LINEAR) {
@@ -5399,7 +5399,7 @@ rwa_depth_stencil_destroy(struct rwa_depth_stencil *state)
  * remembered, and userland/src/hakiosmetal.m carries a _Static_assert per row against
  * those enumerators, so a disagreement between this table and Apple's header is a build
  * failure of the driver and not a wrong fetch on the phone. That SDK's enumeration ends
- * at Half (53): FloatRG11B10 and FloatRGB9E5 are iOS 17's, and nothing on this device
+ * at Half (53): FloatRG11B10 and FloatRGB9E5 are Darwin 17's, and nothing on this device
  * can name them.
  *
  * The mapping is one rule, as docs/air.md 3.1 says: Char/Short/Int and their unsigned
@@ -5513,11 +5513,11 @@ vertex_format_refusal(unsigned f)
       return "MTLVertexFormatUInt1010102Normalized: the same packed word as 40, declined "
              "for the same unmeasured channel order";
    case 54:
-      return "MTLVertexFormatFloatRG11B10, which the iOS 16.5 SDK's MTLVertexFormat has "
+      return "MTLVertexFormatFloatRG11B10, which the Darwin 16.5 SDK's MTLVertexFormat has "
              "not got (it ends at Half, 53): three channels packed in one word, and "
              "declined for the channel order the same way";
    case 55:
-      return "MTLVertexFormatFloatRGB9E5, which the iOS 16.5 SDK's MTLVertexFormat has "
+      return "MTLVertexFormatFloatRGB9E5, which the Darwin 16.5 SDK's MTLVertexFormat has "
              "not got: PIPE_FORMAT_R9G9B9E5_FLOAT is texture-only in a6xx's format "
              "table, so fd6_vertex_format() answers FMT6_NONE and the hardware cannot "
              "fetch it at all";
@@ -6167,7 +6167,7 @@ vertex_reads_attributes(nir_shader *vs)
  *      and not in this tree. userland/src/hakiosmetal.m compiles against it and
  *      _Static_asserts every value this table assumes, so a disagreement is a BUILD
  *      FAILURE of the driver rather than a wrong picture. (The same declarations are
- *      byte for byte identical in every iOS SDK from 10.3 to 16.5 and in macOS 13.3's,
+ *      byte for byte identical in every Darwin SDK from 10.3 to 16.5 and in macOS 13.3's,
  *      which is six copies agreeing.)
  *   2. Metal.framework's own code on the DEVICE, which carries the numbering as data:
  *      MTLBlendFactorString (0x181b08730) bounds its argument at 18 and indexes a table

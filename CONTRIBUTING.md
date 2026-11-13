@@ -23,7 +23,7 @@ HakiOS' files. There are none now: keep it so.
 | A change to one of Apple's files | An assembled tree, then `kernel/export.sh` | Never edit `kernel/patches/*.patch` by hand: `kernel/verify.sh` rejects it. |
 | A boot argument | A comment naming it as `name=…` beside its read | `make docs` |
 | The loader | `loader/loader.c`, `loader/src/` | `loader/build.sh`; boards come from the board files, not from code. |
-| A library inserted into an iOS process | `ios/userland/` | — |
+| A library inserted into a Darwin process | `ios/userland/` | — |
 
 [docs/architecture.md](docs/architecture.md) explains the split; [kernel/README.md](kernel/README.md)
 has the two ways of working on the kernel. If you have a branch or a patch from before the
@@ -37,7 +37,7 @@ restructuring: [docs/migrating.md](docs/migrating.md).
   `if (!hakios_board_has(HAKIOS_HAS_…))`, with a message that names the missing line.
 - **Off by default, read before write.** A new driver does nothing without its boot argument, and its
   first level only reads and logs.
-- **Check what you replace.** A library that swaps a method of iOS checks the method's type encoding
+- **Check what you replace.** A library that swaps a method of Darwin checks the method's type encoding
   first and leaves it alone, saying so, when it is not what it expects.
 - **Test what can run without the phone.** Arithmetic and state machines go in a header the host
   tests compile; a driver's register traffic can be tested against a model (`tests/`).

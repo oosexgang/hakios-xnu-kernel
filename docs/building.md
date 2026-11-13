@@ -7,7 +7,7 @@ What can be built, from the least setup to the most.
 | The checks | `make check` | A C compiler, Python 3.11+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
 | The loader | `loader/build.sh` | `clang`, `lld`. |
 | The kernel | `kernel/build.sh` | Linux, the system packages below with clang 19 or newer, theos or LLVM's Mach-O tools, and the device package of the phone it is for. |
-| iOS images, and a boot | [ios26-boot.md](ios26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
+| Darwin images, and a boot | [ios26-boot.md](ios26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
 
 ## The checks
 
@@ -17,7 +17,7 @@ make check
 
 Runs the lint, validates the device packages that are present and `soc/`, checks that
 `docs/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
-or iOS: the tests run against three stand-in phones in `tests/devices/`. CI runs the same on every push, plus
+or Darwin: the tests run against three stand-in phones in `tests/devices/`. CI runs the same on every push, plus
 `kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
 
 ```sh

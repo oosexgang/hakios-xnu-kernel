@@ -18,7 +18,7 @@
 #                          (it hands out an address by DHCP, answers DNS and passes connections on to
 #                          this machine's network; no privileges needed). The kernel makes en0 of it
 #                          (boot-arg virtio_net=1, added here); see userland/src/net_test.m for the rest.
-#      AUDIO=<where>       what plays the sound of iOS: a QEMU audio back end (pipewire, pa, alsa, sdl: each
+#      AUDIO=<where>       what plays the sound of Darwin: a QEMU audio back end (pipewire, pa, alsa, sdl: each
 #                          needs its QEMU module, e.g. the package qemu-audio-pipewire) or FILE.wav to
 #                          write it into a file instead. Default: nowhere (the guest plays all the same).
 #      QEMU_INSTANCE=<n>   to run several at once: each number has its own monitor and QMP ports

@@ -3,7 +3,7 @@
  *
  * On one side whatever does the scanning and the joining with a radio: the station logic over
  * ath11k on the phone (wifi/lx in the repository). On the other whoever wants a network: the
- * Apple80211 requests of iOS's Wi-Fi side, answered in bsd/dev/hakios_apple80211.c, and the
+ * Apple80211 requests of Darwin's Wi-Fi side, answered in bsd/dev/hakios_apple80211.c, and the
  * kernel's own join of the network it was given in a file (bsd/dev/hakios_wifi.c). Frames do
  * not pass here, and neither does "the link is up": those go through bsd/sys/hakios_net.h,
  * which the station side calls itself.

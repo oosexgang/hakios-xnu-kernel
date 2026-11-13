@@ -1,7 +1,7 @@
 /*
- * /dev/hakios-audio: the sound iOS plays, on its way to whatever can make it heard.
+ * /dev/hakios-audio: the sound Darwin plays, on its way to whatever can make it heard.
  *
- * iOS expects its output devices from Apple's audio drivers through IOAudio2; neither exists
+ * Darwin expects its output devices from Apple's audio drivers through IOAudio2; neither exists
  * here. Instead the audio server (mediaserverd) is given a plug-in of ours that presents one
  * stereo output device, and the plug-in writes what the server has mixed for that device
  * here. In the kernel the samples go to a sink -- a driver for something that plays them --
@@ -24,9 +24,9 @@
 #define HAKIOS_AUDIO_FRAME     4       /* bytes */
 
 /*
- * ioctl(HAKIOS_AUDIO_SET_VOLUME): the speakers' volume, as iOS sets it on the plug-in's volume
+ * ioctl(HAKIOS_AUDIO_SET_VOLUME): the speakers' volume, as Darwin sets it on the plug-in's volume
  * control -- how many eighths of a dB under the loudest they may play, and whether they are
- * muted (iOS's volume at 0). The loudest is the kernel's to say (on the phone: Android's own
+ * muted (Darwin's volume at 0). The loudest is the kernel's to say (on the phone: Android's own
  * level less sound_below, hakios_sound.c); the plug-in only says how far under it.
  */
 #include <sys/ioccom.h>
@@ -48,14 +48,14 @@ _Static_assert(sizeof(struct hakios_audio_volume) == 8, "the volume is 8 bytes (
 typedef uint32_t (*hakios_audio_sink_t)(const int16_t *frames, uint32_t count);
 
 void hakios_audio_set_sink(const char *name, hakios_audio_sink_t sink);
-/* The volume iOS has set last (HAKIOS_AUDIO_SET_VOLUME): false if it has set none; *generation counts the settings. */
+/* The volume Darwin has set last (HAKIOS_AUDIO_SET_VOLUME): false if it has set none; *generation counts the settings. */
 bool hakios_audio_volume(uint32_t *below, bool *muted, uint32_t *generation);
 void hakios_audio_init(void);
 void hakios_virtio_sound_init(void);   /* boot-arg virtio_sound=1: QEMU's virtio sound device */
 void hakios_speaker_init(void);        /* boot-arg speaker_probe=N: a look at the phone's speaker amplifiers */
 void hakios_haptic_init(void);         /* boot-arg haptic=N: the phone's vibration motor (bsd/dev/hakios_haptic.c) */
 void hakios_haptic_quiesce(void);      /* its chip back into reset: at the run's end and on a panic's way out */
-void hakios_haptic_pretend(uint32_t peak); /* a test's stand-in for iOS's waveform: as if a write of this loudness came */
+void hakios_haptic_pretend(uint32_t peak); /* a test's stand-in for Darwin's waveform: as if a write of this loudness came */
 void hakios_torch_init(void);          /* boot-arg torch=N: the phone's flashlight (bsd/dev/hakios_torch.c) */
 void hakios_torch_quiesce(void);       /* the light off: at the run's end and on a panic's way out */
 void hakios_camera_init(void);         /* boot-arg cam=N: the phone's cameras (bsd/dev/hakios_camera.c) */
@@ -95,7 +95,7 @@ void hakios_guard_monitor(uint32_t below);                     /* a reduction as
 void hakios_guard_process(int16_t *frames, uint32_t count);    /* stereo frames, in place */
 void hakios_guard_take_report(struct hakios_guard_report *report);   /* what happened since the last call */
 int hakios_guard_decibels(uint64_t ratio);                     /* 10 log10 of a Q30 ratio, in tenths of a dB */
-/* boot-arg rec_sound_fed=1: the recording (rec_sound=N) has what the guard let through instead of what iOS wrote */
+/* boot-arg rec_sound_fed=1: the recording (rec_sound=N) has what the guard let through instead of what Darwin wrote */
 bool hakios_audio_recording_fed(void);
 void hakios_audio_record_fed(const int16_t *frames, uint32_t count);
 

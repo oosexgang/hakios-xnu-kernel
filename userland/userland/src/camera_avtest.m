@@ -1,11 +1,11 @@
 /*
- * camera_avtest: what cameras iOS lists for applications, as AVFoundation gives them: the video
+ * camera_avtest: what cameras Darwin lists for applications, as AVFoundation gives them: the video
  * devices, and every format of the default one (on this machine the device is libhakios-media.dylib's
  * in mediaserverd: camera_device.c, the kernel's /dev/hakios-camera, cam=5).
  *
  * usage: camera_avtest
  *
- * Frames are for applications in the foreground, as iOS has it: a program like this one is not
+ * Frames are for applications in the foreground, as Darwin has it: a program like this one is not
  * given any (its session is interrupted at once). Camera.app is the test for those (rc.jobs.camera).
  */
 #import <AVFoundation/AVFoundation.h>
