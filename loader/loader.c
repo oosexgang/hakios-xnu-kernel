@@ -42,6 +42,7 @@
 #include "src/exception.c"        /* a fault of the loader into the log instead of onto the screen */
 #include "src/payload.c"          /* the payload: kernel, images and boot arguments, found and taken apart */
 #include "src/nvram.c"            /* the NVRAM image the kernel is given */
+#include "src/unit.c"             /* this unit's identity: serial numbers, ECID, addresses, from one seed */
 #include "src/window.c"           /* the kernel's memory: the firmware's map and the block chosen from it */
 #include "src/pac.c"              /* pointer authentication of the kernel image: keys, and the image's pointers signed */
 #include "src/run.c"              /* the kernel loaded, given its device tree and boot arguments, and run */

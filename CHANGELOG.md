@@ -267,6 +267,14 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 ### New drivers and features
 
+- **Each phone has an identity of its own, of the real forms.** The loader gave every phone the same
+  serial number (`HAKIOS000000`), ECID and addresses, some of them spelling the first phone's name. It now
+  makes them from one 64-bit seed (`loader/src/unit.c`): a serial number of 10 and an MLB serial of 17
+  characters (digits and capitals without I and O, as Apple's randomised ones), a 52-bit ECID, unicast,
+  locally administered Wi-Fi and Bluetooth addresses, a 48-byte manifest hash. `tools/identity.py NAME`
+  makes a phone's seed once and keeps it outside the checkout; `ios/tools/boot26.py` passes it
+  (`identity=`), so a phone is the same device at every boot. Without a seed the loader takes a random
+  one, from the firmware's generator where it has one, which now also fills the kernel's random seed.
 - **Brightness and Auto-Brightness** (`hakios_backlight.c`, [docs/backlight.md](docs/backlight.md)).
   Brightness is set by MIPI DCS through the Qualcomm DSI controller, or in software on boards without a
   description. The side button and the idle timer make the panel dark or dimmed. Tested on the host and

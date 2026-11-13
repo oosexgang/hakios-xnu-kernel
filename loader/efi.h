@@ -259,4 +259,11 @@ typedef struct {
 #define QCOM_CHARGER_EX_GUID     { 0x6edc8a6d, 0x2663, 0x43cd, { 0x90, 0xff, 0x46, 0x21, 0xff, 0xd1, 0x0d, 0xf5 } }
 #define QCOM_CHARGER_GUID        { 0x21bfb78b, 0x02ea, 0x4ab7, { 0x99, 0x40, 0xb5, 0x8a, 0x2a, 0xd6, 0x58, 0x29 } }
 
+/* The firmware's random number generator (UEFI 2.4 and later, where the firmware has one). */
+typedef struct efi_rng {
+	efi_status (EFIAPI *get_info)(struct efi_rng *self, uint64_t *list_size, efi_guid *list);
+	efi_status (EFIAPI *get_rng)(struct efi_rng *self, const efi_guid *algorithm, uint64_t length, uint8_t *value);
+} efi_rng;
+#define EFI_RNG_PROTOCOL_GUID    { 0x3152bca5, 0xeade, 0x433d, { 0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44 } }
+
 #endif /* XNULOADER_EFI_H */

@@ -1,5 +1,29 @@
 /* Part of the loader (included by loader.c, not compiled alone): the kernel loaded, given its device tree and boot arguments, and run. */
 /*
+ * Random bytes: the firmware's generator where it has one, mixed in any case with the counter, read
+ * anew for every eight bytes (its low bits differ from run to run by when the firmware got here).
+ */
+static void
+entropy(uint8_t *out, unsigned length)
+{
+	static const efi_guid rng_guid = EFI_RNG_PROTOCOL_GUID;
+	efi_rng *rng = NULL;
+	uint64_t state = READ_SYSREG(CNTVCT_EL0);
+
+	if (EFI_ERROR(BS->locate_protocol(&rng_guid, NULL, (void **)&rng)) || rng == NULL ||
+	    EFI_ERROR(rng->get_rng(rng, NULL, length, out))) {
+		memset(out, 0, length);
+	}
+	for (unsigned i = 0; i < length; i++) {
+		if (i % 8 == 0) {
+			state ^= READ_SYSREG(CNTVCT_EL0) << 17;
+			state = unit_next(&state);
+		}
+		out[i] ^= (uint8_t)(state >> (8 * (i % 8)));
+	}
+}
+
+/*
  * Load and run the kernel from the payload. Returns when the kernel comes
  * back (panic, checkpoint, early exception); the combined log is staged and
  * written to the log partition. Returns 0 if the kernel could not be started.
@@ -329,10 +353,17 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* iOS 26 (xnu-12377) asks the bootloader for 4*SHA512 = 256 entropy bytes (prng_random.c);
 	 * xnu-8796 only read the first 64, so a larger seed stays compatible with both. */
 	uint8_t seed[256];
+	struct unit_identity unit;
+	uint64_t unit_seed = 0;
+	int unit_given = unit_seed_from_args(pi.cmdline, &unit_seed);
 
-	for (unsigned i = 0; i < sizeof(seed); i++) {
-		seed[i] = (uint8_t)(READ_SYSREG(CNTVCT_EL0) >> (i & 7)) ^ (uint8_t)(i * 37);
+	entropy(seed, sizeof(seed));
+	if (!unit_given) {
+		entropy((uint8_t *)&unit_seed, sizeof(unit_seed));
 	}
+	unit_from_seed(unit_seed, &unit);
+	print("identity: serial number %s, ECID %x%s\n", unit.serial, unit.ecid,
+	    unit_given ? "" : " (a random one: another device at every boot; identity= keeps one, tools/identity.py)");
 
 	dt_begin(&w, "device-tree");
 	/*
@@ -343,8 +374,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_identity(&w, identity_root, sizeof(identity_root) / sizeof(identity_root[0]), identity_root_data);
 	dt_prop_str(&w, "platform-name", "t8150");   /* the A19 Pro of the iPhone 17 Pro (identity.h, from its device tree) */
 	/* what iBoot takes from the factory configuration of a real phone; fixed size fields */
-	dt_prop_padded(&w, "serial-number", "HAKIOS000000", 32);
-	dt_prop_padded(&w, "mlb-serial-number", "HAKIOS000000MLB00", 32);
+	dt_prop_padded(&w, "serial-number", unit.serial, 32);
+	dt_prop_padded(&w, "mlb-serial-number", unit.mlb, 32);
 	dt_prop_padded(&w, "model-number", "MQAC2", 32);
 	dt_prop_padded(&w, "region-info", "LL/A", 32);
 	dt_prop_padded(&w, "regulatory-model-number", "A1865", 32);
@@ -377,17 +408,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * More of what iBoot reports about the phone. MobileGestalt builds the device identifier
 	 * (UDID) from the serial number, the chip ID and the two addresses; when one is missing it
 	 * asks its helper for the factory data, is refused and waits forever (and lsd with it).
+	 * This unit's own (unit.c): from the seed of identity=, or a random one.
 	 */
-	static const uint8_t wifi_address[6] = { 0x02, 0x52, 0x44, 0x57, 0x00, 0x01 };
-	static const uint8_t bluetooth_address[6] = { 0x02, 0x52, 0x44, 0x57, 0x00, 0x02 };
-	static const uint8_t manifest_hash[48] = { 0x72, 0x65, 0x64, 0x77, 0x6f, 0x6f, 0x64 };
 	static const uint8_t no_behavior[16];
-	dt_prop_u64(&w, "unique-chip-id", 0x000052445730001ULL);
+	dt_prop_u64(&w, "unique-chip-id", unit.ecid);
 	dt_prop_u32(&w, "chip-id", 0x8015);
 	dt_prop_u32(&w, "board-id", 0x06);
-	dt_prop(&w, "mac-address-wifi0", wifi_address, sizeof(wifi_address));
-	dt_prop(&w, "mac-address-bluetooth0", bluetooth_address, sizeof(bluetooth_address));
-	dt_prop(&w, "boot-manifest-hash", manifest_hash, sizeof(manifest_hash));
+	dt_prop(&w, "mac-address-wifi0", unit.wifi_address, sizeof(unit.wifi_address));
+	dt_prop(&w, "mac-address-bluetooth0", unit.bluetooth_address, sizeof(unit.bluetooth_address));
+	dt_prop(&w, "boot-manifest-hash", unit.manifest_hash, sizeof(unit.manifest_hash));
 	dt_prop(&w, "software-behavior", no_behavior, sizeof(no_behavior));
 	dt_prop_str(&w, "firmware-version", "iBoot-8422.100.650");
 	dt_prop_u32(&w, "certificate-production-status", 1);

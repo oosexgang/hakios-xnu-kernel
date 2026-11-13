@@ -43,6 +43,7 @@ print(const char *format, ...)
 #include "src/devicetree.c"
 #include "src/nvram.c"
 #include "src/payload.c"
+#include "src/unit.c"
 
 #undef memset
 #undef memcpy
@@ -450,12 +451,64 @@ packed_payload(void)
 	CHECK(system(command) == 0, "the directory removed");
 }
 
+/* this unit's identity (src/unit.c): each value of the form a real one has, the same from the same seed, another from another */
+static void
+unit(void)
+{
+	static const char alphabet[] = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+	struct unit_identity a, b, c;
+	uint64_t seed = 0;
+
+	unit_from_seed(0x0123456789abcdefULL, &a);
+	unit_from_seed(0x0123456789abcdefULL, &b);
+	unit_from_seed(0x0123456789abcdeeULL, &c);
+	CHECK(strlen(a.serial) == 10 && strspn(a.serial, alphabet) == 10, "a serial number of 10 of the alphabet: %s", a.serial);
+	CHECK(strlen(a.mlb) == 17 && strspn(a.mlb, alphabet) == 17, "an MLB serial of 17: %s", a.mlb);
+	CHECK(a.ecid != 0 && a.ecid >> 52 == 0, "a 52-bit ECID: %llx", (unsigned long long)a.ecid);
+	CHECK((a.wifi_address[0] & 3) == 2 && (a.bluetooth_address[0] & 3) == 2, "unicast, locally administered addresses");
+	CHECK(memcmp(a.wifi_address, a.bluetooth_address, 6) != 0, "the two addresses differ");
+	CHECK(memcmp(&a, &b, sizeof(a)) == 0, "the same seed, the same identity");
+	CHECK(strcmp(a.serial, "7BN0E0VZPK") == 0 && strcmp(a.mlb, "5JTH1PNG6UYUS1AA7") == 0 && a.ecid == 0xb77554620b3ddULL &&
+	    memcmp(a.wifi_address, "\x2e\x2c\x55\x46\x7d\x6d", 6) == 0, "what tools/identity.py says of this seed (tests/identity_test.py)");
+	CHECK(strcmp(a.serial, c.serial) != 0 && a.ecid != c.ecid && memcmp(a.wifi_address, c.wifi_address, 6) != 0 &&
+	    memcmp(a.manifest_hash, c.manifest_hash, 48) != 0, "another seed, another identity");
+	/* serial numbers of many seeds: no two alike, and every character of the alphabet in use */
+	{
+		static char seen[2000][11];
+		unsigned used[34] = { 0 }, same = 0;
+
+		for (unsigned i = 0; i < 2000; i++) {
+			unit_from_seed(i, &a);
+			memcpy(seen[i], a.serial, 11);
+			for (unsigned k = 0; k < 10; k++) {
+				used[strchr(alphabet, a.serial[k]) - alphabet]++;
+			}
+			for (unsigned j = 0; j < i; j++) {
+				same += strcmp(seen[i], seen[j]) == 0;
+			}
+		}
+		CHECK(same == 0, "2000 seeds, 2000 serial numbers: %u alike", same);
+		for (unsigned k = 0; k < 34; k++) {
+			CHECK(used[k] > 300 && used[k] < 900, "character %c, %u times in 20000", alphabet[k], used[k]);
+		}
+	}
+	/* the seed among the boot arguments */
+	CHECK(unit_seed_from_args("rd=md0 identity=00112233AABBccdd debug=1", &seed) == 1 && seed == 0x00112233aabbccddULL,
+	    "identity= read: %llx", (unsigned long long)seed);
+	CHECK(unit_seed_from_args("identity=0011223344556677", &seed) == 1 && seed == 0x0011223344556677ULL, "at the start");
+	CHECK(unit_seed_from_args("rd=md0", &seed) == 0, "none given");
+	CHECK(unit_seed_from_args("identity=123", &seed) == 0, "too short");
+	CHECK(unit_seed_from_args("identity=00112233445566778", &seed) == 0, "too long");
+	CHECK(unit_seed_from_args("identity=001122334455667g", &seed) == 0, "not hex");
+	CHECK(unit_seed_from_args("myidentity=0011223344556677", &seed) == 0, "another argument whose name ends so");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "memory_and_strings", memory_and_strings }, { "device_tree", device_tree }, { "identity", identity },
-		{ "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
+		{ "unit", unit }, { "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
 	};
 
 	if (argc < 2) {

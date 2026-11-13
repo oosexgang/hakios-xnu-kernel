@@ -57,6 +57,9 @@ fi
 echo "== a serial engine's clocks out of Linux's clock driver (tools/qupclocks.py)"
 python3 "$HERE/qupclocks_test.py" 2>&1 | tail -3 || failed=1
 
+echo "== a phone's identity (tools/identity.py)"
+python3 "$HERE/identity_test.py" 2>&1 | tail -3 || failed=1
+
 echo "== the iOS image tool's helpers (ios/tools/mkimage26.py)"
 python3 "$HERE/ios_tools_test.py" 2>&1 | tail -3 || failed=1
 

@@ -23,6 +23,7 @@ from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'tools'))
+import identity  # noqa: E402  (tools/identity.py: this phone's seed)
 import boards  # noqa: E402  (devices/NAME/board.dts: what the phone must say it is, its default boot-args)
 
 p = argparse.ArgumentParser(description=__doc__)
@@ -82,6 +83,9 @@ options.board, board = boards.board_to_boot(boards.load()[1], options.board)
 boot = board['boot']
 boot_args = boards.boot_arguments(board, options.boot_arg + (
     [f'loader_return_after={options.return_after}'] if options.return_after else []))
+# this phone's identity (tools/identity.py): the same serial numbers and addresses at every boot
+if not any(arg.startswith('identity=') for arg in boot_args):
+    boot_args.append(f'identity={identity.seed_of(options.board):016x}')
 loader = DR / f'prebuilt/{options.board}/resident-usb.img'
 share = DR / f'recovery/assets/{options.board}-ios-share.bin'
 for path in (options.kernel, options.system, options.root, loader, share):
