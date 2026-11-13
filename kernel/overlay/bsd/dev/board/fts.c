@@ -703,6 +703,7 @@ hakios_fts_init(void)
 {
     uint32_t enabled = 0;
     thread_t thread;
+    /* boot-arg touchscreen=1: the controller started, its touches posted to /dev/hakios-touch */
     if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
     /* (called only on a board that lists "touch-ft3658u": bsd/dev/board/drivers.c) */
     if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
@@ -713,6 +714,11 @@ hakios_fts_init(void)
         printf("fts: disabled: the board file does not say how the controller is wired (touch { }, with analog_supply)\n");
         return;
     }
+    /*
+     * touch_flip=N: bit 0 mirrors the touches left to right, bit 1 top to bottom.
+     * fts_trace=1: the first 40 touches' positions as the controller gives them, in the log.
+     * fts_spi_hz=N: the SPI clock, 1 to 12 MHz (default 12 MHz).
+     */
     PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
     PE_parse_boot_argn("fts_trace", &trace, sizeof(trace));
     PE_parse_boot_argn("fts_spi_hz", &spi_hz, sizeof(spi_hz));
