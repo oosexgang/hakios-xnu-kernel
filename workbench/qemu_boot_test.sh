@@ -59,6 +59,7 @@ head -c 4194304 /dev/urandom > "$W/www/big.bin"
 big_hash=$(fnv1a "$W/www/big.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
+	'clear'
 	'sysctl hw.ncpu hw.board.name kern.ostype'
 	'sysctl kern.maxfiles=20000 kern.procname=shell'
 	'ifconfig en0 10.0.2.15'
@@ -164,6 +165,7 @@ check "the kernel's message buffer is read (dmesg)" bash -c "tr -d '\\r' < '$log
 check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
 check "a signal ends a process in the background, and wait says so" grep -aqE "^wait: pid [0-9]+ ended by signal 15" "$log"
+check "clear empties the screen as a VT100 does, and the shell's prompt follows" grep -aq $'\x1b\\[H\x1b\\[2J# ' "$log"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"

@@ -50,6 +50,8 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 
 | Command | What it does, and with what of the kernel |
 | --- | --- |
+| **The shell** (`main.c`) | |
+| `help`, `echo WORDS...`, `clear` | The commands, by group; words said back; the screen emptied (VT100's, which the kernel's video console takes). |
 | **The kernel** (`kernel.c`) | |
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
