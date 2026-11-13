@@ -389,6 +389,7 @@ hakios_wlfw_exchange(uint32_t step)
 	wlfw.step = step;
 	wlfw.began = now_ms();
 	PE_parse_boot_argn("wifi_cal", &calibrate, sizeof(calibrate));
+	/* boot-arg wifi_ready=N: how many seconds to wait for the firmware's "ready" (default 5) */
 	PE_parse_boot_argn("wifi_ready", &seconds, sizeof(seconds));
 	PE_parse_boot_argn("wifi_mission", &to_mission, sizeof(to_mission));
 	ret = qmi_handle_init(&handle, ATH11K_QMI_RESP_LEN_MAX, &wlfw_ops, wlfw_handlers);
