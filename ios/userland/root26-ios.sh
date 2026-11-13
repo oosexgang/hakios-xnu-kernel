@@ -49,6 +49,11 @@ $DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
 # the flashlight as an application reaches it, through AVFlashlight (rc.jobs.torch; ios/userland/torch_test.c)
 $DYN -framework CoreFoundation -lobjc -o "$OBJ/torch_test" "$RN/userland/torch_test.c"
 "$PACSTRIP" macho "$OBJ/torch_test" "$OBJ/torch_test.strip" > /dev/null && mv "$OBJ/torch_test.strip" "$OBJ/torch_test"
+# the microphone as an application records from it, through AVAudioRecorder (userland/src/record_test.c: SECONDS; no
+# sound is played), with the entitlement TCC asks of a recorder
+$DYN -framework CoreFoundation -framework Foundation -framework AVFAudio -lobjc -o "$OBJ/record_test" "$US/src/record_test.c"
+"$PACSTRIP" macho "$OBJ/record_test" "$OBJ/record_test.strip" > /dev/null && mv "$OBJ/record_test.strip" "$OBJ/record_test"
+"$LDID" -S"$US/src/record_test.entitlements" "$OBJ/record_test"
 
 # --- the tree ----------------------------------------------------------------------------------------
 rm -rf "$T"
@@ -65,6 +70,7 @@ for f in ${EXTRA_BIN:-}; do
 done
 cp "$OBJ/rwtouch" "$T/bin/rwtouch"
 cp "$OBJ/torch_test" "$T/bin/torch_test"
+cp "$OBJ/record_test" "$T/bin/record_test"
 # the SSH server and its shell, when ios/userland/ssh.sh has built them (rc.jobs.ssh starts the server); the keys of
 # this machine's ../ssh/ with them, unless SHARE=1 (an image for somebody else: no host key of ours in it). dropbear
 # refuses keys whose file or directory anyone but their owner may write: 600 and 700

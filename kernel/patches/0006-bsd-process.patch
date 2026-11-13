@@ -361,7 +361,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	return error;
  }
  
-@@ -4038,7 +4126,20 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+@@ -4038,7 +4126,36 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
  	 */
  	persona = persona_lookup(px_persona->pspi_id);
  	if (!persona) {
@@ -371,19 +371,35 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		 * What a caller asking for a persona actually wants is its credential (uid/gid/groups),
 +		 * not the persona object -- so apply that credential directly to the process instead of
 +		 * failing the spawn with ESRCH (which left callers such as a package manager waiting
-+		 * forever for a child that was never started).  persona_proc_adopt()'s per-uid process
-+		 * accounting is skipped here; boot-time daemons do not churn enough persona-less root
-+		 * spawns for the count to drift.
++		 * forever for a child that was never started).
++		 *
++		 * The count of processes per real uid follows the credential, as persona_proc_adopt()
++		 * and setuid() keep it: fork1() counted the new process under the parent's uid
++		 * (mobile's), and its exit takes it off under the one it has then (root's). Without
++		 * that, every program a package manager runs as root takes one away from root's count
++		 * that was never given, and a few dozen of them (Sileo's mv, cp, rm, apt, dpkg) bring it
++		 * to nothing: the next of root's processes to exit panics the kernel ("chgproccnt: lost
++		 * user"), as it did on iOS 16.5.
 +		 */
-+		(void)kauth_cred_proc_update(p, PROC_SETTOKEN_SETUGID,
-+		    ^bool (kauth_cred_t parent __unused, kauth_cred_t model) {
-+			return kauth_cred_model_setpersona(model, px_persona);
++		__block uid_t old_ruid = KAUTH_UID_NONE;
++		__block uid_t new_ruid = KAUTH_UID_NONE;
++		bool changed = kauth_cred_proc_update(p, PROC_SETTOKEN_SETUGID,
++		    ^bool (kauth_cred_t parent, kauth_cred_t model) {
++			bool did = kauth_cred_model_setpersona(model, px_persona);
++
++			old_ruid = posix_cred_get(parent)->cr_ruid;
++			new_ruid = posix_cred_get(model)->cr_ruid;
++			return did;
 +		});
++		if (changed && old_ruid != new_ruid && old_ruid != KAUTH_UID_NONE && new_ruid != KAUTH_UID_NONE) {
++			(void)chgproccnt(new_ruid, 1);
++			(void)chgproccnt(old_ruid, -1);
++		}
 +		return 0;
  	}
  
  	return persona_proc_adopt(p, persona,
-@@ -4333,6 +4434,7 @@ int
+@@ -4333,6 +4450,7 @@ int
  posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  {
  	proc_t p = ap;
@@ -391,7 +407,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	user_addr_t pid = uap->pid;
  	int ival[2];            /* dummy retval for setpgid() */
  	char *subsystem_root_path = NULL;
-@@ -4452,6 +4554,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+@@ -4452,6 +4570,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
  				goto bad;
  			}
@@ -420,7 +436,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  			imgp->ip_px_sa = &px_sa;
  		}
-@@ -4891,6 +5015,7 @@ do_fork1:
+@@ -4891,6 +5031,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -428,7 +444,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_file_actions(imgp,
  		    imgp->ip_px_sa != NULL ? px_sa.psa_flags : 0);
  #if CONFIG_AUDIT
-@@ -4912,6 +5037,7 @@ do_fork1:
+@@ -4912,6 +5053,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -436,7 +452,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_port_actions(imgp, &port_actions);
  #if CONFIG_AUDIT
  		/* Restore the AUE_POSIX_SPAWN audit record. */
-@@ -4953,6 +5079,7 @@ do_fork1:
+@@ -4953,6 +5095,7 @@ do_fork1:
  				goto bad;
  			}
  
@@ -444,7 +460,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_posix_cred_adopt(p, imgp->ip_px_pcred_info);
  			if (error != 0) {
  				goto bad;
-@@ -4974,6 +5101,7 @@ do_fork1:
+@@ -4974,6 +5117,7 @@ do_fork1:
  			 * to ensure that the new persona has access to the image/file
  			 * being executed.
  			 */
@@ -452,7 +468,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_persona_adopt(p, imgp->ip_px_persona);
  			if (error != 0) {
  				goto bad;
-@@ -5052,6 +5180,7 @@ do_fork1:
+@@ -5052,6 +5196,7 @@ do_fork1:
  
  #if MAC_SPAWN   /* XXX */
  	if (uap->mac_p != USER_ADDR_NULL) {
@@ -460,7 +476,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = mac_execve_enter(uap->mac_p, imgp);
  		if (error) {
  			goto bad;
-@@ -5063,6 +5192,7 @@ do_fork1:
+@@ -5063,6 +5208,7 @@ do_fork1:
  	 * Warning: If activation failed after point of no return, it returns error
  	 * as 0 and pretends the call succeeded.
  	 */
@@ -468,7 +484,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	error = exec_activate_image(imgp);
  #if defined(HAS_APPLE_PAC)
  	const uint8_t disable_user_jop = imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE;
-@@ -5219,6 +5349,10 @@ bad_px_sa:
+@@ -5219,6 +5365,10 @@ bad_px_sa:
  	}
  
  bad:
@@ -479,7 +495,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  	if (error == 0) {
  		/* reset delay idle sleep status if set */
-@@ -5282,6 +5416,7 @@ bad:
+@@ -5282,6 +5432,7 @@ bad:
  
  		/* Set task exception ports now that we can check entitlements */
  		if (imgp->ip_px_spa != NULL) {
@@ -487,7 +503,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = exec_handle_exception_port_actions(imgp, &port_actions);
  		}
  
-@@ -5358,6 +5493,7 @@ bad:
+@@ -5358,6 +5509,7 @@ bad:
  			task_set_thread_limit(new_task, (uint16_t)px_sa.psa_thread_limit);
  		}
  		if (error == 0 && imgp->ip_px_sa != NULL && px_sa.psa_conclave_mem_limit > 0) {
@@ -495,7 +511,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = task_set_conclave_mem_limit_internal(new_task, px_sa.psa_conclave_mem_limit);
  		}
  
-@@ -5411,6 +5547,7 @@ bad:
+@@ -5411,6 +5563,7 @@ bad:
  		 * exec_activate_image because task_bank_init checks entitlements that
  		 * aren't loaded until subsequent calls (including exec_resettextvp).
  		 */
@@ -503,7 +519,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = proc_transstart(p, 0, 0);
  
  		if (error == 0) {
-@@ -5473,6 +5610,7 @@ bad:
+@@ -5473,6 +5626,7 @@ bad:
  	if (error == 0 && imgp->ip_px_sa != NULL) {
  		struct _posix_spawnattr *psa = (struct _posix_spawnattr *) imgp->ip_px_sa;
  
@@ -511,7 +527,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_spawnattr_policy(p, imgp->ip_new_thread, psa->psa_apptype, psa->psa_qos_clamp,
  		    psa->psa_darwin_role, &port_actions);
  	}
-@@ -5537,6 +5675,7 @@ bad:
+@@ -5537,6 +5691,7 @@ bad:
  	 * fire.
  	 */
  	if (error == 0) {
@@ -519,7 +535,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = process_signature(p, imgp);
  
  		/*
-@@ -5765,6 +5904,9 @@ bad:
+@@ -5765,6 +5920,9 @@ bad:
  #endif
  
  	assert(spawn_no_exec || exec_failure_reason == NULL);
@@ -529,7 +545,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	return error;
  }
  
-@@ -6724,16 +6866,145 @@ bad:
+@@ -6724,16 +6882,145 @@ bad:
   * Note:	The argument and environment vectors are user space pointers
   *		to arrays of user space pointers.
   */
@@ -675,7 +691,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/*
  	 * Adjust space reserved for the path name by however much padding it
  	 * needs. Doing this here since we didn't know if this would be a 32-
-@@ -6897,6 +7168,114 @@ exec_extract_strings(struct image_params *imgp)
+@@ -6897,6 +7184,114 @@ exec_extract_strings(struct image_params *imgp)
  		imgp->ip_envc++;
  	}
  
@@ -790,7 +806,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -7789,11 +8168,25 @@ handle_mac_transition:
+@@ -7789,11 +8184,25 @@ handle_mac_transition:
  	 * Also, ensure we always see a modified identity version (rdar://129775819).
  	 */
  	int previous_pid_version = proc_get_ro(p)->p_idversion;
@@ -821,7 +837,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	task_set_uniqueid(proc_task(p));
  
  	/*
-@@ -8767,6 +9160,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -8767,6 +9176,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:

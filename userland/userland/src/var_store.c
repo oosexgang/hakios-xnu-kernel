@@ -94,6 +94,25 @@ static const char *const SKIP[] = {
 	NULL,
 };
 
+/*
+ * And by name, wherever it is: LaunchServices' database (com.apple.LaunchServices-*.csstore, in a data container
+ * whose name is a UUID). 16.5 made it at every boot by walking /Applications, which is how an application put into
+ * the system image appears; kept across boots it is the first boot's, and an application added since is never
+ * registered ("Unable to register /Applications/Sileo.app", uicache included). lsd makes it again when it is missing.
+ */
+static int
+is_launchservices_store(const char *relative)
+{
+	static const char name[] = "com.apple.LaunchServices";
+
+	for (const char *at = relative; *at != 0; at++) {
+		if ((at == relative || at[-1] == '/') && strncmp(at, name, sizeof(name) - 1) == 0) {
+			return 1;       /* (the name of the path or of a directory on it) */
+		}
+	}
+	return 0;
+}
+
 enum { ENT_DIR = 1, ENT_FILE = 2, ENT_SYMLINK = 3, ENT_HARDLINK = 4, ENT_DIRTIME = 5 };
 
 #define HEAD_MAGIC      "RDWVAR\0"
@@ -943,7 +962,9 @@ pack_tree(const char *relative)
 			} else {
 				strcpy(child, name);
 			}
-			ok = pack_tree(child);
+			if (!is_launchservices_store(child)) {
+				ok = pack_tree(child);
+			}
 			path[base] = 0;
 		}
 		arena_used = mark_a;
@@ -1112,6 +1133,10 @@ unpack_one(int make)
 			make = 0;
 			skipped_load++;
 		}
+	}
+	if (make && is_launchservices_store(relative)) {
+		make = 0;
+		skipped_load++;
 	}
 	if (make) {
 		switch (e.kind) {
