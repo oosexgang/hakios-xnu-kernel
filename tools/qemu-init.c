@@ -870,7 +870,9 @@ command_help(int argc, char **argv)
 	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
 		say("  ");
 		say(commands[i].name);
-		say(length(commands[i].name) < 8 ? "\t\t" : "\t");
+		for (size_t n = length(commands[i].name); n < 10; n++) {
+			say(" ");
+		}
 		say(commands[i].what);
 		say("\n");
 	}
