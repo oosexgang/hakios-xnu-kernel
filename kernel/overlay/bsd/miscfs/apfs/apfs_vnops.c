@@ -364,9 +364,17 @@ apfs_vnop_getattr(struct vnop_getattr_args *ap)
 
 	ino = an->an_ino;
 	size = an->an_size;
+	/*
+	 * A directory's count is of its entries (j_inode_val's nchildren): Apple's APFS says that and
+	 * "." and ".." as its links, and 32 bytes for each as its size. (Not 2 links: fts would take
+	 * that for a directory without subdirectories.)
+	 */
+	if (vnode_isdir(vp)) {
+		size = ((uint64_t)ino.nchildren + 2) * 32;
+	}
 
 	VATTR_RETURN(vap, va_rdev, (dev_t)ino.rdev);
-	VATTR_RETURN(vap, va_nlink, vnode_isdir(vp) ? 2 : (uint32_t)(ino.nchildren > 0
+	VATTR_RETURN(vap, va_nlink, vnode_isdir(vp) ? (uint32_t)ino.nchildren + 2 : (uint32_t)(ino.nchildren > 0
 	    ? ino.nchildren : 1));
 	VATTR_RETURN(vap, va_data_size, size);
 	VATTR_RETURN(vap, va_total_size, size);
