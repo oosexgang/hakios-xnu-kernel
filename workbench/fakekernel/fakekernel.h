@@ -198,6 +198,7 @@ void uio_setoffset(struct uio *uio, off_t offset);
 void uio_setresid(struct uio *uio, user_ssize_t resid);
 int uiomove(caddr_t kernel, int n, struct uio *uio);
 extern unsigned fake_uiomove_calls, fake_uiomove_fault_at;     /* (the call numbered fault_at, from 1, faults) */
+extern unsigned fake_threads_started, fake_threads_released;    /* (kernel_thread_start's references, and thread_deallocate's) */
 struct cdevsw {
 	int (*d_open)(dev_t dev, int flags, int type, struct proc *p);
 	int (*d_close)(dev_t dev, int flags, int type, struct proc *p);

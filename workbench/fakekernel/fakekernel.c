@@ -144,11 +144,25 @@ kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread)
 
 	s->fn = fn;
 	s->arg = arg;
-	*thread = NULL;
-	return pthread_create(&t, NULL, thread_main, s) == 0 ? KERN_SUCCESS : KERN_FAILURE;
+	*thread = (thread_t)(uintptr_t)0x7e57;  /* (a reference the caller is given, and must let go of) */
+	if (pthread_create(&t, NULL, thread_main, s) != 0) {
+		*thread = NULL;
+		return KERN_FAILURE;
+	}
+	__atomic_fetch_add(&fake_threads_started, 1, __ATOMIC_RELAXED);
+	return KERN_SUCCESS;
 }
 
-void thread_deallocate(thread_t thread __unused) {}
+/* threads a driver started, and the references to them it let go of: the two counts should end equal */
+unsigned fake_threads_started, fake_threads_released;
+
+void
+thread_deallocate(thread_t thread)
+{
+	if (thread != NULL) {
+		__atomic_fetch_add(&fake_threads_released, 1, __ATOMIC_RELAXED);
+	}
+}
 void thread_set_thread_name(thread_t thread __unused, const char *name __unused) {}
 
 /* ---- devices: the nodes drivers make, by name ---- */
