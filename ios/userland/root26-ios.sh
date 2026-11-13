@@ -117,6 +117,8 @@ cat > "$T/etc/inject.conf" <<'CONF'
 /redwood/lib/libhakios-sb.dylib SpringBoard
 /redwood/lib/libhakios-statusbar.dylib @apps
 CONF
+# WAITSTACK_SB=1: libhakios.dylib in SpringBoard as well, for its thread sampler (boot-arg waitstack=sb, inject.c)
+[ -z "${WAITSTACK_SB:-}" ] || echo "/redwood/lib/libhakios.dylib SpringBoard" >> "$T/etc/inject.conf"
 # the phone's own firmware, where it was taken from that phone (firmware/BOARD/fw/: the GPU's, the Wi-Fi
 # DSP's, the network to join), uncompressed in the image: the drivers read it where it lies in memory
 PLAIN=()

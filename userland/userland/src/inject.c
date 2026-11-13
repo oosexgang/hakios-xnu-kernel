@@ -30,6 +30,7 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -1597,6 +1598,117 @@ ws_frame(char *out, size_t size, uintptr_t address, uintptr_t cache, size_t cach
 	}
 }
 
+static mach_port_t ws_main;            /* the process's main thread: its outer frames kept, as CoreAnimation's are */
+
+/*
+ * waitstack=sb: SpringBoard's main thread through each turn of its run loop that lasts over WS_TURN_MS -- what a tap
+ * on an icon is followed by before the animation's first frame (some 200 ms on the phone). Every sample's whole stack
+ * is counted, each return address once a sample; when the turn ends, "hakios: sbturn:" lines say how many samples it
+ * had, the path the samples share (every address in half of them or more, from the outermost in: DEPTH:ADDRESS:COUNT)
+ * and the addresses most often below it and the innermost frames -- where the time goes, as a call tree's hot path.
+ */
+#define WS_TURN_MS 30
+#define WS_TURN_SLOTS 2048
+static bool ws_turn_on;                         /* waitstack=sb */
+static uintptr_t ws_main_lo, ws_main_hi;        /* the main thread's stack */
+static volatile uint64_t ws_turn_woke;          /* mach time the main run loop woke; 0 while it waits */
+static volatile uint32_t ws_turns;              /* turns ended */
+static struct {
+	uintptr_t pc;
+	uint32_t count, depth;
+} ws_turn_pc[WS_TURN_SLOTS], ws_turn_leaf[WS_TURN_SLOTS];
+static uint32_t ws_turn_samples, ws_turn_of;    /* samples of the turn being profiled; ws_turns + 1 at its start */
+static uint64_t ws_turn_from;
+/* the main thread's processor time (us) and the time (mach) at the turn's first and last samples: busy, or waiting
+ * for a core, or for something else */
+static uint64_t ws_turn_cpu[2], ws_turn_at[2];
+
+static void
+ws_turn_observer(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activity, __unused void *info)
+{
+	if (activity == kCFRunLoopAfterWaiting) {
+		ws_turn_woke = mach_absolute_time();
+	} else if (activity == kCFRunLoopBeforeWaiting) {
+		ws_turn_woke = 0;
+		ws_turns++;
+	}
+}
+
+static void
+ws_turn_count(uintptr_t pc, uint32_t depth, bool leaf)
+{
+	__typeof__(ws_turn_pc[0]) *table = leaf ? ws_turn_leaf : ws_turn_pc;
+	unsigned i = (unsigned)((pc >> 2) * 2654435761u % WS_TURN_SLOTS);
+
+	for (unsigned k = 0; k < WS_TURN_SLOTS; k++, i = (i + 1) % WS_TURN_SLOTS) {
+		if (table[i].count == 0 || table[i].pc == pc) {
+			table[i].pc = pc;
+			table[i].count++;
+			if (table[i].count == 1 || depth < table[i].depth) table[i].depth = depth;
+			return;
+		}
+	}
+}
+
+static void
+ws_turn_say(uintptr_t cache, size_t cache_length)
+{
+	static mach_timebase_info_data_t tb;
+	char line[960];
+	size_t used;
+	unsigned said = 0;
+
+	if (tb.denom == 0) mach_timebase_info(&tb);
+	say("hakios: sbturn: %u samples of the main thread, the turn %llu ms or more; from its first sample to its last %llu ms, "
+	    "the thread on a core %llu ms of them\n", ws_turn_samples,
+	    (unsigned long long)((mach_absolute_time() - ws_turn_from) * tb.numer / tb.denom / 1000000),
+	    (unsigned long long)((ws_turn_at[1] - ws_turn_at[0]) * tb.numer / tb.denom / 1000000),
+	    (unsigned long long)((ws_turn_cpu[1] - ws_turn_cpu[0]) / 1000));
+	/* the shared path, from the outermost in */
+	used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn path:");
+	for (uint32_t d = 0; d < 64; d++) {
+		for (unsigned i = 0; i < WS_TURN_SLOTS; i++) {
+			if (ws_turn_pc[i].count == 0 || ws_turn_pc[i].depth != d || ws_turn_pc[i].count * 2 < ws_turn_samples) continue;
+			if (used > sizeof(line) - 48) {
+				snprintf(line + used, sizeof(line) - used, "\n");
+				write(2, line, strlen(line));
+				used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn path:");
+			}
+			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", d);
+			ws_frame(line + used, sizeof(line) - used, ws_turn_pc[i].pc, cache, cache_length);
+			used += strlen(line + used);
+			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", ws_turn_pc[i].count);
+			ws_turn_pc[i].count = 0;   /* (said) */
+		}
+	}
+	snprintf(line + used, sizeof(line) - used, "\n");
+	write(2, line, strlen(line));
+	/* below it: the addresses seen most often, then the innermost frames */
+	for (int leaf = 0; leaf < 2; leaf++) {
+		__typeof__(ws_turn_pc[0]) *table = leaf ? ws_turn_leaf : ws_turn_pc;
+
+		used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn %s:", leaf ? "innermost" : "below");
+		for (said = 0; said < 24; said++) {
+			unsigned best = WS_TURN_SLOTS;
+
+			for (unsigned i = 0; i < WS_TURN_SLOTS; i++) {
+				if (table[i].count != 0 && (best == WS_TURN_SLOTS || table[i].count > table[best].count)) best = i;
+			}
+			if (best == WS_TURN_SLOTS || table[best].count * 20 < ws_turn_samples || used > sizeof(line) - 48) break;
+			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", table[best].depth);
+			ws_frame(line + used, sizeof(line) - used, table[best].pc, cache, cache_length);
+			used += strlen(line + used);
+			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", table[best].count);
+			table[best].count = 0;
+		}
+		snprintf(line + used, sizeof(line) - used, "\n");
+		write(2, line, strlen(line));
+	}
+	memset(ws_turn_pc, 0, sizeof(ws_turn_pc));
+	memset(ws_turn_leaf, 0, sizeof(ws_turn_leaf));
+	ws_turn_samples = 0;
+}
+
 static void *
 ws_sampler(void *unused)
 {
@@ -1656,17 +1768,24 @@ ws_sampler(void *unused)
 					continue;
 				}
 				if (thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) == KERN_SUCCESS) {
-					uintptr_t frames[WS_DEPTH] = { 0 }, all[64], fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st);
+					uintptr_t frames[WS_DEPTH] = { 0 }, all[160], fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st);
 					unsigned got = 0, n = 0;
 					uint64_t key = 1469598103934665603ull;
+					/* (the main thread's stack in waitstack=sb read where it lies, inside its bounds, and deeper: SpringBoard's
+					 * run past 64 frames, and a read through the kernel for each frame kept it stopped the longer) */
+					const bool direct = threads[t] == ws_main && ws_turn_on && ws_main_hi > ws_main_lo;
+					const unsigned most = direct ? 160 : 64;
 
 					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_pc(st), ptrauth_key_function_pointer);
 					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_lr(st), ptrauth_key_return_address);
-					for (int d = 0; d < 80 && n < 64 && fp != 0 && (fp & 7) == 0; d++) {
+					for (int d = 0; d < 200 && n < most && fp != 0 && (fp & 7) == 0; d++) {
 						uint64_t frame[2];
 						vm_size_t read = 0;
 
-						if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
+						if (direct) {
+							if (fp < ws_main_lo || fp + sizeof(frame) > ws_main_hi) break;
+							memcpy(frame, (const void *)fp, sizeof(frame));
+						} else if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
 						    &read) != KERN_SUCCESS || read != sizeof(frame)) {
 							break;
 						}
@@ -1677,11 +1796,37 @@ ws_sampler(void *unused)
 						}
 						fp = (uintptr_t)frame[0];
 					}
+					/* (waitstack=sb: the main thread's whole stack in a long turn, ws_turn_say) */
+					if (threads[t] == ws_main && ws_turn_on) {
+						static mach_timebase_info_data_t tb;
+						const uint64_t woke = ws_turn_woke, now = mach_absolute_time();
+
+						if (tb.denom == 0) mach_timebase_info(&tb);
+						if (woke != 0 && (now - woke) * tb.numer / tb.denom > WS_TURN_MS * 1000000ull) {
+							if (ws_turn_of != ws_turns + 1) {
+								if (ws_turn_samples != 0) ws_turn_say(cache, cache_length);
+								ws_turn_of = ws_turns + 1;
+								ws_turn_from = woke;
+								ws_turn_cpu[0] = cpu;
+								ws_turn_at[0] = now;
+							}
+							ws_turn_cpu[1] = cpu;
+							ws_turn_at[1] = now;
+							ws_turn_samples++;
+							for (unsigned i = 0; i < n; i++) {
+								bool again = false;
+
+								for (unsigned j = 0; j < i && !again; j++) again = all[j] == all[i];
+								if (!again) ws_turn_count(all[i], n - 1 - i, false);
+							}
+							ws_turn_count(all[0], 0, true);
+						}
+					}
 					ext.pth_name[0] = 0;
 					thread_info(threads[t], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &en);
 					/* CoreAnimation's threads (waitstack=1): the two innermost frames, a 0, and the outermost ones -- which
 					 * of the run loop's callouts it is in; every other thread its innermost frames */
-					if (strncmp(ext.pth_name, "com.apple.coreanim", 18) == 0 && n > WS_DEPTH) {
+					if ((strncmp(ext.pth_name, "com.apple.coreanim", 18) == 0 || threads[t] == ws_main) && n > WS_DEPTH) {
 						uint32_t before = 0;
 						vm_size_t read = 0;
 						/* in a system call (the instruction before the pc an svc): where it waits; running: anywhere, 2 */
@@ -1739,6 +1884,9 @@ ws_sampler(void *unused)
 			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
 		}
 		mach_port_deallocate(mach_task_self(), self);
+		if (ws_turn_samples != 0 && ws_turn_of != ws_turns + 1) {
+			ws_turn_say(cache, cache_length);   /* (the long turn is over) */
+		}
 		if (ticks % 2500 != 0) {
 			continue;
 		}
@@ -1784,6 +1932,7 @@ wait_stack_start(const char *arguments)
 	if (strstr(arguments, "waitstack=1") == NULL) {
 		return;
 	}
+	ws_main = mach_thread_self();   /* (called from the constructor, on the main thread) */
 	if (pthread_create(&thread, NULL, ws_sampler, NULL) == 0) {
 		pthread_detach(thread);
 	}
@@ -1802,6 +1951,26 @@ hakios_init(void)
 		return;
 	}
 	slide = (uintptr_t)cache - CACHE_BASE;
+	if (strcmp(name, "SpringBoard") == 0) {
+		char arguments[1024] = "";
+		size_t size = sizeof(arguments) - 1;
+
+		/* boot-arg waitstack=sb: the sampler in SpringBoard instead (its image made with WAITSTACK_SB=1, root26-ios.sh),
+		 * and its main thread's long run loop turns profiled (ws_turn_say) */
+		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "waitstack=sb") != NULL) {
+			const pthread_t me = pthread_self();   /* (the constructor runs on the main thread) */
+
+			ws_main_hi = (uintptr_t)pthread_get_stackaddr_np(me);
+			ws_main_lo = ws_main_hi - pthread_get_stacksize_np(me);
+			ws_turn_on = true;
+			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopAfterWaiting, true, LONG_MIN,
+			    ws_turn_observer, NULL), kCFRunLoopCommonModes);
+			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, LONG_MAX,
+			    ws_turn_observer, NULL), kCFRunLoopCommonModes);
+			wait_stack_start("waitstack=1");
+		}
+		return;
+	}
 	if (strcmp(name, "backboardd") == 0) {
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
