@@ -12,6 +12,7 @@ usage: touch.py STEP...
                               "stacks top" is something else: which processes have had the processor
                               since it was last asked ("top:" lines in the log)
   wait SECONDS
+QEMU_QMP=PATH: QEMU's QMP as a socket at PATH (tools/qemu-kernel.sh --qmp), instead of its TCP port.
 Positions are fractions of the screen: 0 0 is the top left corner, 1 1 the bottom right.
 Example, the "swipe up to open" gesture:  touch.py swipe 0.5 0.98 0.5 0.4 250
 """
@@ -35,7 +36,11 @@ KEYS = {'lock': 'l', 'home': 'h', 'volup': 'up', 'voldown': 'down', 'fivefingers
 
 class Qmp:
     def __init__(self, port=None):
-        self.sock = socket.create_connection(('127.0.0.1', port or 4445 + 10 * instance()))
+        if os.environ.get('QEMU_QMP'):
+            self.sock = socket.socket(socket.AF_UNIX)
+            self.sock.connect(os.environ['QEMU_QMP'])
+        else:
+            self.sock = socket.create_connection(('127.0.0.1', port or 4445 + 10 * instance()))
         self.file = self.sock.makefile('rw')
         self.file.readline()                        # the greeting
         self.command('qmp_capabilities')
