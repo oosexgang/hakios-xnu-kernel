@@ -1501,6 +1501,131 @@ command_threads(int argc, char **argv)
 	say(" ms\n");
 }
 
+/* ---- mmap and kevent: a file's pages, and events waited for ---- */
+
+#define SYS_munmap              73
+#define SYS_mmap                197
+#define SYS_fstat64             339
+#define SYS_kqueue              362
+#define SYS_kevent              363
+#define PROT_READ               1
+#define MAP_PRIVATE             2
+#define EVFILT_READ             (-1)
+#define EVFILT_TIMER            (-7)
+#define EV_ADD                  1
+
+/* FNV-1a, over bytes, from where it got to */
+static uint64_t
+fnv(uint64_t hash, const uint8_t *bytes, long n)
+{
+	for (long i = 0; i < n; i++) {
+		hash = (hash ^ bytes[i]) * 0x100000001b3ull;
+	}
+	return hash;
+}
+
+/* FILE: the file mapped (its pages come from its file system), checked against what read() gives */
+static void
+command_mmap(int argc, char **argv)
+{
+	static uint8_t buffer[16384];
+	struct stat64_head st;
+
+	if (argc != 2) {
+		say("mmap FILE\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_fstat64, fd, (long)&st, 0, 0, 0, 0) != 0 || st.size <= 0) {
+		say("mmap: ");
+		say(argv[1]);
+		say(fd < 0 ? ": cannot be read\n" : ": nothing to map\n");
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	long mapped = syscall6(SYS_mmap, 0, st.size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (mapped < 0) {
+		say("mmap: not mapped, error ");
+		say_number((uint64_t)-mapped);
+		say("\n");
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		return;
+	}
+	uint64_t by_pages = fnv(0xcbf29ce484222325ull, (const uint8_t *)mapped, st.size), by_reads = 0xcbf29ce484222325ull;
+	long all = 0;
+	for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += got) {
+		by_reads = fnv(by_reads, buffer, got);
+	}
+	syscall6(SYS_munmap, mapped, st.size, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	say("mmap: ");
+	say(argv[1]);
+	say(", ");
+	say_number((uint64_t)st.size);
+	say(" bytes: ");
+	say(all == st.size && by_pages == by_reads ? "its pages and its reads agree\n" : "its pages and its reads DIFFER\n");
+}
+
+struct kevent64 {                       /* bsd/sys/event.h's struct kevent, packed to 4 */
+	uint64_t ident;
+	int16_t filter;
+	uint16_t flags;
+	uint32_t fflags;
+	int64_t data;
+	uint64_t udata;
+} __attribute__((packed, aligned(4)));
+
+/* [COUNT]: a timer of 50 ms through kqueue, COUNT times (10 if not said), then a pipe seen to be readable */
+static void
+command_kevent(int argc, char **argv)
+{
+	unsigned count = argc > 1 ? parse_number(argv[1]) : 10;
+	struct kevent64 change = { .ident = 1, .filter = EVFILT_TIMER, .flags = EV_ADD, .data = 50 }, event;
+	int ends[2];
+
+	if (count < 1 || count > 1000) {
+		say("kevent [COUNT]: 1 to 1000 timer events\n");
+		return;
+	}
+	long kq = syscall6(SYS_kqueue, 0, 0, 0, 0, 0, 0);
+	if (kq < 0 || syscall6(SYS_kevent, kq, (long)&change, 1, 0, 0, 0) < 0) {
+		say("kevent: no kqueue, or it takes no timer\n");
+		return;
+	}
+	int64_t start = now_us();
+	unsigned fired = 0;
+	while (fired < count) {
+		if (syscall6(SYS_kevent, kq, 0, 0, (long)&event, 1, 0) != 1 || event.filter != EVFILT_TIMER) {
+			break;
+		}
+		fired += (unsigned)event.data;          /* (how many times it fired since it was last seen) */
+	}
+	int64_t took = now_us() - start;
+	say("kevent: ");
+	say_number(fired);
+	say(" timer events of 50 ms in ");
+	say_number((uint64_t)took / 1000);
+	say(" ms");
+	/* a pipe: nothing to read, then five bytes, which the kqueue says are there */
+	if (syscall_pipe(ends) == 0) {
+		struct kevent64 readable = { .ident = (uint64_t)ends[0], .filter = EVFILT_READ, .flags = EV_ADD };
+
+		change.flags = 2;       /* EV_DELETE: the timer is done with */
+		syscall6(SYS_kevent, kq, (long)&change, 1, 0, 0, 0);
+		syscall6(SYS_kevent, kq, (long)&readable, 1, 0, 0, 0);
+		syscall6(SYS_write, ends[1], (long)"ready", 5, 0, 0, 0);
+		if (syscall6(SYS_kevent, kq, 0, 0, (long)&event, 1, 0) == 1 && event.filter == EVFILT_READ && event.data == 5) {
+			say("; a pipe with 5 bytes in it is readable");
+		}
+		syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+		syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	}
+	say("\n");
+	syscall6(SYS_close, kq, 0, 0, 0, 0, 0);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1542,6 +1667,8 @@ static const struct {
 	{ "write", "FILE WORDS... the words as all of a file", command_write },
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
+	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
+	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 };
 
 static void
