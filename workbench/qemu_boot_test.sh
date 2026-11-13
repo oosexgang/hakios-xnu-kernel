@@ -109,7 +109,9 @@ typed=(
 	'run /sbin/launchd crash null'
 	'run /sbin/launchd crash illegal'
 	'alarm 5'
+	'vm'
 	'memory 128'
+	'vm'
 	'unix /etc/motd'
 	'fork'
 	'fork /sbin/launchd echo became'
@@ -189,6 +191,11 @@ check "a file has two names (link), one renamed, its mode changed, and a symboli
 check "extended attributes are set, replaced, listed and taken away; one taken away twice is not there (ENOATTR)" \
 	bash -c "tr -d '\\r' < '$log' | sed -n '/^# xattr \/tmp\/notes\/b\$/,/^# /p' | grep -v '^#' | tr '\\n' '|' |
 		grep -qx 'com.example.colour = green|' && grep -aq '^xattr: com.example.size: error 93' '$log'"
+# (128 MB are 8192 pages of 16 KB, each a fault the kernel fills with zeros, give or take a page the program
+# touched before: Mach's counts see them)
+check "Mach's host port counts the virtual memory's pages and faults (host_statistics64): 128 MB, some 8192 zero-filled faults" \
+	bash -c "grep -aoE '^vm: pages: free [0-9]+, .*zero filled [0-9]+' '$log' | sed 's/.* //' | tr '\\n' ' ' |
+		awk '{ exit !(NF == 2 && \$2 - \$1 >= 8192 - 64 && \$2 - \$1 < 8192 + 1000) }'"
 # (two threads on two processors take well under the time of one doing it all: they do run side by side)
 check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
 	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
