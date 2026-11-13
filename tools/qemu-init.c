@@ -402,6 +402,78 @@ command_cat(int argc, char **argv)
 	}
 }
 
+/* ---- processes, time ---- */
+
+#define SYS_gettimeofday        116
+#define SYS_proc_info           336
+#define PROC_INFO_CALL_LISTPIDS 1
+#define PROC_INFO_CALL_PIDINFO  2
+#define PROC_ALL_PIDS           1
+#define PROC_PIDTBSDINFO        3
+
+struct proc_bsdinfo {                   /* sys/proc_info.h */
+	uint32_t        flags, status, xstatus, pid, ppid, uid, gid, ruid, rgid, svuid, svgid, rfu_1;
+	char            comm[16], name[32];
+	uint32_t        nfiles, pgid, pjobc, e_tdev, e_tpgid;
+	int32_t         nice;
+	uint64_t        start_tvsec, start_tvusec;
+};
+
+static void
+command_ps(int argc, char **argv)
+{
+	int32_t pids[256];
+	(void)argc;
+	(void)argv;
+
+	long bytes = syscall6(SYS_proc_info, PROC_INFO_CALL_LISTPIDS, PROC_ALL_PIDS, 0, 0, (long)pids, sizeof(pids));
+	if (bytes < 0) {
+		say("ps: the kernel will not list its processes\n");
+		return;
+	}
+	say("  PID  PPID  UID  NAME\n");
+	for (long i = 0; i < bytes / (long)sizeof(pids[0]); i++) {
+		struct proc_bsdinfo info;
+
+		if (syscall6(SYS_proc_info, PROC_INFO_CALL_PIDINFO, pids[i], PROC_PIDTBSDINFO, 0, (long)&info, sizeof(info)) !=
+		    (long)sizeof(info)) {
+			continue;
+		}
+		say_padded(info.pid, 5);
+		say_padded(info.ppid, 6);
+		say_padded(info.uid, 5);
+		say("  ");
+		say(info.name[0] != '\0' ? info.name : info.comm);
+		say("\n");
+	}
+}
+
+static void
+command_uptime(int argc, char **argv)
+{
+	int64_t booted[2] = { 0, 0 }, now[2] = { 0, 0 };
+	size_t size = sizeof(booted);
+	(void)argc;
+	(void)argv;
+
+	if (syscall6(SYS_sysctlbyname, (long)"kern.boottime", 13, (long)booted, (long)&size, 0, 0) < 0) {
+		say("uptime: the kernel will not say when it started\n");
+		return;
+	}
+	if (syscall6(SYS_gettimeofday, (long)now, 0, 0, 0, 0, 0) != 0) {
+		say("uptime: the kernel will not say what time it is\n");
+		return;
+	}
+	uint64_t up = (uint64_t)(now[0] - booted[0]);
+	say("up ");
+	say_number(up / 60);
+	say(" min ");
+	say_number(up % 60);
+	say(" s, since ");
+	say_number((uint64_t)booted[0]);
+	say(" (seconds since 1970)\n");
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -422,6 +494,8 @@ static const struct {
 	{ "echo", "WORDS... say them", command_echo },
 	{ "ls", "[PATH...] what is in a directory", command_ls },
 	{ "cat", "FILE... what is in a file", command_cat },
+	{ "ps", "the processes", command_ps },
+	{ "uptime", "how long the kernel has run", command_uptime },
 };
 
 static void
