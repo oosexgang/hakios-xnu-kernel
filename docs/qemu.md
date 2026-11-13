@@ -60,6 +60,8 @@ line at a time:
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended. |
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
+| `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
+| `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -73,8 +75,8 @@ out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pr
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
 port and come back unchanged; the date is this year's; a signal ends a process in the background; a pipe
-carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; nothing
-panics.
+carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; a mapped
+file is what reading it gives; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
 
 ## What it is not
 

@@ -6,9 +6,9 @@
 # gateway and serves this machine a page over TCP; reads a second disk on the virtio block device; plays a
 # tone on the virtio sound device (QEMU writes it to a WAV file); reads a button and a touch from QEMU's
 # keyboard and tablet; starts a process and waits for it; reads the kernel's messages; sends itself Mach
-# messages; tells the date; ends a process with a signal; reads what a child writes into a pipe; and
-# writes, reads and removes a file in the kernel's file system in memory; and runs threads on both
-# processors at once.
+# messages; tells the date; ends a process with a signal; reads what a child writes into a pipe;
+# writes, reads and removes a file in the kernel's file system in memory; runs threads on both processors
+# at once; maps a file; and waits for events through kqueue.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -60,6 +60,8 @@ typed=(
 	'rm /tmp/notes/a'
 	'ls /tmp/notes'
 	'threads 2'
+	'mmap /sbin/launchd'
+	'kevent 10'
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
@@ -101,6 +103,9 @@ check "a file is written in the kernel's file system in memory (ramfs), read bac
 # (two threads on two processors take well under the time of one doing it all: they do run side by side)
 check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
 	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
+check "a program's file mapped (its pages from APFS) is what reading it gives" grep -aq "^mmap: /sbin/launchd, [0-9]* bytes: its pages and its reads agree" "$log"
+check "kqueue delivers a timer's events on time, and a pipe's readiness" \
+	bash -c "grep -aoE '^kevent: 10 timer events of 50 ms in [0-9]+ ms; a pipe with 5 bytes in it is readable' '$log' | awk '{ exit !(\$9 >= 450 && \$9 < 1500) }'"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
