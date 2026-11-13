@@ -730,6 +730,111 @@ command_ping(int argc, char **argv)
 	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 }
 
+/* ---- serve: a page over HTTP, the kernel's TCP from listen to close ---- */
+
+#define SYS_accept              30
+#define SYS_bind                104
+#define SYS_listen              106
+#define SOCK_STREAM             1
+#define SO_REUSEADDR            0x4
+
+static void
+put(long fd, const char *s)
+{
+	syscall6(SYS_write, fd, (long)s, (long)length(s), 0, 0, 0);
+}
+
+static void
+put_number(long fd, uint64_t n)
+{
+	char digits[24];
+	int i = (int)sizeof(digits) - 1;
+
+	digits[i] = '\0';
+	do {
+		digits[--i] = (char)('0' + n % 10);
+		n /= 10;
+	} while (n != 0 && i > 0);
+	put(fd, &digits[i]);
+}
+
+/* the page: what the kernel says of itself, as text */
+static void
+page(long fd)
+{
+	char text[256];
+	uint64_t n;
+
+	put(fd, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n");
+	put(fd, "Served by /sbin/launchd (tools/qemu-init.c) on XNU, through the kernel's TCP and its virtio network driver.\n");
+	if (sysctl_string("kern.version", text, sizeof(text))) {
+		put(fd, text);
+		put(fd, "\n");
+	}
+	if (sysctl_string("hw.board.name", text, sizeof(text))) {
+		put(fd, "board: ");
+		put(fd, text);
+		put(fd, "\n");
+	}
+	if (sysctl_number("hw.memsize", &n)) {
+		put(fd, "memory: ");
+		put_number(fd, n >> 20);
+		put(fd, " MB\n");
+	}
+}
+
+static void
+command_serve(int argc, char **argv)
+{
+	struct sockaddr_in here = { 16, AF_INET, 0x5000, { 0 }, { 0 } };     /* port 80, any address */
+	int count = argc > 1 ? argv[1][0] - '0' : 1, yes = 1;
+
+	if (count < 1 || count > 9) {
+		say("serve [COUNT 1-9]\n");
+		return;
+	}
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+	if (sock < 0) {
+		say("serve: no socket\n");
+		return;
+	}
+	syscall6(SYS_setsockopt, sock, SOL_SOCKET, SO_REUSEADDR, (long)&yes, sizeof(yes), 0);
+	if (syscall6(SYS_bind, sock, (long)&here, sizeof(here), 0, 0, 0) < 0 || syscall6(SYS_listen, sock, 4, 0, 0, 0, 0) < 0) {
+		say("serve: port 80 cannot be had\n");
+		syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+		return;
+	}
+	say("serving on port 80: ");
+	say_number((uint64_t)count);
+	say(count > 1 ? " requests\n" : " request\n");
+	for (int served = 0; served < count; served++) {
+		struct sockaddr_in from;
+		uint32_t size = sizeof(from);
+		char request[512];
+		long peer = syscall6(SYS_accept, sock, (long)&from, (long)&size, 0, 0, 0);
+
+		if (peer < 0) {
+			break;
+		}
+		long got = syscall6(SYS_read, peer, (long)request, sizeof(request) - 1, 0, 0, 0);
+		request[got > 0 ? got : 0] = '\0';
+		for (long i = 0; i < got; i++) {
+			if (request[i] == '\r' || request[i] == '\n') {
+				request[i] = '\0';
+				break;
+			}
+		}
+		say("  from ");
+		say_ipv4(from.addr);
+		say(": ");
+		say(request);
+		say("\n");
+		page(peer);
+		syscall6(SYS_close, peer, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -754,6 +859,7 @@ static const struct {
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
+	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
 };
 
 static void
