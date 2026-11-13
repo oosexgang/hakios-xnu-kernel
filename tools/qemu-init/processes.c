@@ -652,3 +652,70 @@ command_unix(int argc, char **argv)
 	append(line, at, sizeof(line), "\n");
 	say(line);
 }
+
+/* ---- fork: a copy of this process ---- */
+
+#define SYS_fork                2
+#define SYS_execve              59
+
+/* fork() answers in x0 (the other's pid) and x1 (1 in the child); -errno if it failed */
+static long
+syscall_fork(int *in_child)
+{
+	register long x0 __asm__("x0") = 0, x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = SYS_fork;
+	long failed;
+
+	__asm__ volatile ("svc #0x80\n\tcset %[failed], cs" : "+r"(x0), "+r"(x1), [failed] "=r"(failed) : "r"(x16) : "memory", "cc");
+	*in_child = !failed && x1 != 0;
+	return failed ? -x0 : x0;
+}
+
+static volatile uint64_t forked_value = 1;
+
+/*
+ * [PROGRAM [ARGUMENTS]]: a copy of this process (fork). The child changes a value of its memory, which
+ * the parent's copy must not see, and exits with what it saw; or, given a program, becomes it (execve).
+ */
+void
+command_fork(int argc, char **argv)
+{
+	char *environment[] = { NULL };
+	int in_child = 0;
+	int32_t status = 0;
+
+	forked_value = 1;
+	long pid = syscall_fork(&in_child);
+	if (pid < 0) {
+		say("fork: no copy (error ");
+		say_number((uint64_t)-pid);
+		say(")\n");
+		return;
+	}
+	if (in_child) {
+		forked_value = 2;               /* the child's page, copied on this write: not the parent's */
+		if (argc > 1) {
+			syscall6(SYS_execve, (long)argv[1], (long)(argv + 1), (long)environment, 0, 0, 0);
+			say("fork: the child cannot become ");
+			say(argv[1]);
+			say("\n");
+			syscall6(SYS_exit, 127, 0, 0, 0, 0, 0);
+		}
+		syscall6(SYS_exit, (long)(40 + forked_value), 0, 0, 0, 0, 0);
+	}
+	if (syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0) != pid) {
+		say("fork: the child was not waited for\n");
+		return;
+	}
+	char line[128];
+	size_t at = append_number(line, append(line, 0, sizeof(line), "fork: child "), sizeof(line), (uint64_t)pid);
+	if (argc > 1) {
+		at = append_number(line, append(line, at, sizeof(line), " ran it and exited with "), sizeof(line),
+		    (uint64_t)((status >> 8) & 0xff));
+	} else {
+		at = append_number(line, append(line, at, sizeof(line), " saw "), sizeof(line), (uint64_t)((status >> 8) & 0xff) - 40);
+		at = append_number(line, append(line, at, sizeof(line), " in its copy, the parent still "), sizeof(line), forked_value);
+	}
+	append(line, at, sizeof(line), "\n");
+	say(line);
+}

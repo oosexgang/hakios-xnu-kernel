@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 /* bsd/kern/syscalls.master: the calls more than one part makes (each part names its own) */
+#define SYS_exit                1
 #define SYS_read                3
 #define SYS_write               4
 #define SYS_open                5
@@ -73,6 +74,7 @@ void command_crash(int argc, char **argv);
 void command_date(int argc, char **argv);
 void command_dmesg(int argc, char **argv);
 void command_echo(int argc, char **argv);
+void command_fork(int argc, char **argv);
 void command_get(int argc, char **argv);
 void command_help(int argc, char **argv);
 void command_ifconfig(int argc, char **argv);

@@ -2,7 +2,6 @@
 #include "init.h"
 
 /* bsd/kern/syscalls.master */
-#define SYS_exit                1
 #define O_RDWR                  2
 #define O_NOCTTY                0x20000
 
@@ -115,6 +114,7 @@ static const struct {
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
+	{ "fork", "[PROGRAM [ARGUMENTS]] a copy of this process; it may become PROGRAM", command_fork },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
 	{ "date", "the date and time, UTC", command_date },
 	{ "sleep", "SECONDS nothing, for that long", command_sleep },
