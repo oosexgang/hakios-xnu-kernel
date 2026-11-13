@@ -7,7 +7,8 @@
 # tone on the virtio sound device (QEMU writes it to a WAV file); reads a button and a touch from QEMU's
 # keyboard and tablet; starts a process and waits for it; reads the kernel's messages; sends itself Mach
 # messages; tells the date; ends a process with a signal; reads what a child writes into a pipe; and
-# writes, reads and removes a file in the kernel's file system in memory.
+# writes, reads and removes a file in the kernel's file system in memory; and runs threads on both
+# processors at once.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -58,6 +59,7 @@ typed=(
 	'cat /tmp/notes/a'
 	'rm /tmp/notes/a'
 	'ls /tmp/notes'
+	'threads 2'
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
@@ -96,6 +98,9 @@ check "a signal ends a process in the background, and wait says so" grep -aqE "^
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
+# (two threads on two processors take well under the time of one doing it all: they do run side by side)
+check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
+	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
