@@ -950,6 +950,52 @@ command_tone(int argc, char **argv)
 	say(" s\n");
 }
 
+/* ---- input: what the touch screen and the buttons say (sys/board/input.h) ---- */
+
+struct touch_record {
+	uint64_t time;
+	uint32_t type, finger, x, y;
+};
+
+/* [COUNT]: the next COUNT records of /dev/hakios-touch, as they come */
+static void
+command_input(int argc, char **argv)
+{
+	static const char *const types[] = { "?", "touch down", "touch move", "touch up", "button down", "button up" };
+	static const char *const buttons[] = { "?", "lock", "volume up", "volume down", "home" };
+	unsigned count = argc > 1 ? parse_number(argv[1]) : 4;
+	struct touch_record r;
+
+	if (count < 1 || count > 1000) {
+		say("input [COUNT]: 1 to 1000 records\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)"/dev/hakios-touch", 0, 0, 0, 0, 0);
+	if (fd < 0) {
+		say("input: no input device (/dev/hakios-touch)\n");
+		return;
+	}
+	say("input: waiting for ");
+	say_number(count);
+	say(" records\n");
+	for (unsigned i = 0; i < count && syscall6(SYS_read, fd, (long)&r, sizeof(r), 0, 0, 0) == (long)sizeof(r); i++) {
+		say(r.type < 6 ? types[r.type] : "?");
+		if (r.type >= 4) {
+			say(" ");
+			say(r.finger < 5 ? buttons[r.finger] : "?");
+		} else {
+			say(" finger ");
+			say_number(r.finger);
+			say(" at ");
+			say_number(r.x);
+			say(",");
+			say_number(r.y);
+		}
+		say("\n");
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -977,6 +1023,7 @@ static const struct {
 	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
 	{ "mount", "TYPE DEVICE DIR a disk's file system, read only", command_mount },
 	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
+	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
 };
 
 static void
