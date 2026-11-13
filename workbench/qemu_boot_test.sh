@@ -1,9 +1,9 @@
 #!/bin/bash
 # The kernel booted in QEMU as a phone boots it, to its first process: the loader under a real UEFI, the
-# kernel's own start on two processors, the emulator's board found, its virtio network card and input devices taken, the
-# root mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's), and /sbin/launchd
-# run, which says what the kernel says of itself, answers on the console, pings QEMU's gateway and serves
-# this machine a page over TCP.
+# kernel's own start on two processors, the emulator's board found, its virtio network card and input
+# devices taken, the root mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's),
+# and /sbin/launchd run, which says what the kernel says of itself, answers on the console, pings QEMU's
+# gateway, serves this machine a page over TCP, and reads a second disk on the virtio block device.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -26,8 +26,12 @@ check() {
 	if "$@"; then echo "ok   $what"; else echo "FAIL $what"; failed=1; fi
 }
 XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { echo "FAIL the root does not build"; exit 1; }
-"$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
-	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\n' \
+# a second disk, on the virtio block device
+mkdir -p "$W/data"
+echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
+python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
+"$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
+	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\n' \
 	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
@@ -46,6 +50,8 @@ check "en0 takes an address and comes up" bash -c "tr -d '\\r' < '$log' | grep -
 check "QEMU's gateway answers its pings, through the virtio network driver" grep -aq "2 sent, 2 answered" "$log"
 check "its TCP serves a page to this machine, through QEMU's forwarded port" grep -q "^Served by /sbin/launchd" "$W/page"
 check "... which it saw asked for" grep -aq "GET /test HTTP" "$log"
+check "a second disk on the virtio block device is mounted, APFS, and read" \
+	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"

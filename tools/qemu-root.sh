@@ -20,7 +20,7 @@ IPHONEOS_DEPLOYMENT_TARGET=16.5 "$L/clang" -target arm64-apple-darwin -O2 -ffree
 	-fno-stack-protector -Wall -Wextra -c "$HERE/tools/qemu-init.c" -o "$W/init.o"
 "$L/ld64.lld" -arch arm64 -platform_version 2 16.5 16.5 -e _start -no_adhoc_codesign -no_fixup_chains \
 	-o "$W/init.lld" "$W/init.o"
-mkdir -p "$W/root/sbin" "$W/root/dev" "$W/root/etc"
+mkdir -p "$W/root/sbin" "$W/root/dev" "$W/root/etc" "$W/root/mnt"
 printf '%s\n' "This root was made by tools/qemu-root.sh: an APFS image of nothing of Apple's, with" \
 	"/sbin/launchd, which is tools/qemu-init.c, and /dev, where the kernel mounts devfs." > "$W/root/etc/motd"
 python3 "$HERE/kernel/host/llvm/place-kernel.py" --program "$W/init.lld" "$W/root/sbin/launchd" > /dev/null

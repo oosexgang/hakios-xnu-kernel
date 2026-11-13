@@ -835,6 +835,33 @@ command_serve(int argc, char **argv)
 	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 }
 
+/* ---- mount ---- */
+
+#define SYS_mount               167
+#define MNT_RDONLY              0x1
+
+/* TYPE DEVICE DIRECTORY, read only: what the file system takes as its data is its own (APFS: the device) */
+static void
+command_mount(int argc, char **argv)
+{
+	if (argc != 4) {
+		say("mount TYPE DEVICE DIRECTORY, read only: mount apfs /dev/rvblk0 /mnt\n");
+		return;
+	}
+	long error = syscall6(SYS_mount, (long)argv[1], (long)argv[3], MNT_RDONLY, (long)argv[2], 0, 0);
+	if (error < 0) {
+		say("mount: not mounted, error ");
+		say_number((uint64_t)-error);
+		say("\n");
+		return;
+	}
+	say(argv[2]);
+	say(" on ");
+	say(argv[3]);
+	say("\n");
+	list(argv[3]);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -860,6 +887,7 @@ static const struct {
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
+	{ "mount", "TYPE DEVICE DIR a disk's file system, read only", command_mount },
 };
 
 static void
