@@ -1094,8 +1094,10 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 	(void)PE_parse_boot_argn("apfs_meta_cluster", &am->am_nx.meta_cluster,
 	    sizeof(am->am_nx.meta_cluster));
 	/*
-	 * This RAM-only boot pipeline uses memory disks, which answer with a memory copy.
-	 * Boot-arg apfs_cheap=0/1 can override request coalescing for diagnostics.
+	 * Requests are taken one by one: the disks met so far answer about as fast as a memory copy
+	 * (memory disks; QEMU's virtio block device too, where putting neighbours together made a
+	 * read of 3 MB take twice as long). Boot-arg apfs_cheap=0 puts them together, for a disk
+	 * where each request costs.
 	 */
 	{
 		dev_t rdev = vnode_specrdev(devvp);
@@ -1106,7 +1108,7 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 			am->am_nx.cheap_requests = (cheap != 0);
 		}
 		printf("apfs: device %d,%d: requests to it %s\n", major(rdev), minor(rdev),
-		    am->am_nx.cheap_requests ? "cost next to nothing (a disk in memory)" :
+		    am->am_nx.cheap_requests ? "are taken one by one (apfs_cheap=0: put together)" :
 		    "are worth putting together");
 	}
 	apfs_pool_start();

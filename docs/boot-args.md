@@ -64,7 +64,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `apfs_cheap` | apfs_cheap=0/1 can override request coalescing for diagnostics. |
+| `apfs_cheap` | apfs_cheap=0 puts them together, for a disk where each request costs. |
 | `apfs_meta_cluster` | — |
 | `apfs_par` | apfs_par=N: at most N threads on one request, the caller's included (default: four, or the processors if fewer -- see apfs_pool_start(); 1 turns the helpers off). |
 | `apfs_root_c` | apfs_root_c=N and apfs_root_v=M say which container of the device and which volume of it (default: the first container, its first volume with a root directory). |
