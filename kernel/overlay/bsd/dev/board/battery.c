@@ -196,6 +196,7 @@ hakios_battery_init(void)
 
 	if (!hakios_board_has(HAKIOS_HAS_BATTERY_UEFI)) return;
 	if (!PE_parse_boot_argn("battery", &enabled, sizeof(enabled)) || !enabled) return;
+	/* battery_shared_pa=ADDRESS: the page the loader shares the charger's state in (the loader gives it) */
 	if (!PE_parse_boot_argn("battery_shared_pa", &shared_pa, sizeof(shared_pa)) || shared_pa == 0) {
 		printf("battery: xnuloader did not provide battery_shared_pa\n");
 		return;
