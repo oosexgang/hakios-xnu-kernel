@@ -20,6 +20,7 @@
 #include "fixtures/tri_fb_fs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
+#include "fixtures/tri_mrt_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
 
 #include "test.hpp"
@@ -307,6 +308,50 @@ TEST(a_compressed_target_is_drawn_into_sampled_and_fetched) {
             }
             CHECK_EQ(r.fake->stats().faults, 0u);
             lastFault(r);
+        }
+    }
+}
+
+// A pass of a linear attachment and a compressed one (the screen beside an offscreen target), the FS writing both: each
+// slot's own words -- FLAG_MRTS for the compressed one's bit alone, the linear one's load and store linear -- in the
+// tiles and in sysmem; what both held comes back where the draws (which the fake does not rasterize) leave it
+TEST(a_pass_draws_into_a_linear_and_a_compressed_attachment_together) {
+    using namespace a6xx;
+    const Program mrt{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+    for (int gm = 0; gm < 2; gm++) {
+        for (int first = 0; first < 2; first++) {
+            Rig r;
+            std::string why;
+            auto c = compressed(r, 320, 200, PixelFormat::kBGRA8Unorm, &why);
+            if (c == nullptr && noMesa(why)) {
+                std::printf("       (no Mesa in this build: %s; not run)\n", why.c_str());
+                return;
+            }
+            CHECK(c != nullptr);
+            if (c == nullptr) return;
+            auto l = linear(r, 320, 200, PixelFormat::kBGRA8Unorm), a = linear(r, 320, 200, PixelFormat::kBGRA8Unorm),
+                 b = linear(r, 320, 200, PixelFormat::kBGRA8Unorm);
+            fillCoords(*l, 0x80000000u);
+            fillCoords(*a);
+            RenderPass pass;
+            pass.color0 = first ? c.get() : l.get();
+            pass.more[0].texture = first ? l.get() : c.get();
+            pass.more[0].load = LoadAction::kLoad;
+            render::Options o;
+            o.gmem = gm != 0;
+            auto cb = r.queue->commandBuffer();
+            CHECK(cb->blit(*a, 0, whole(*a), *c, 0, whole(*c), false));
+            CHECK(cb->draw(mrt, pass, wholeDraw(3, 320, 200), Bindings{}, Bindings{}, o));
+            CHECK(cb->draw(mrt, pass, wholeDraw(3, 320, 200), Bindings{}, Bindings{}, o));
+            CHECK(cb->blit(*c, 0, whole(*c), *b, 0, whole(*b), false));
+            CHECK(run(*cb));
+            CHECK_EQ(r.fake->stats().faults, 0u);
+            lastFault(r);
+            CHECK_EQ(cb->counts().gmemPasses, gm ? 1u : 0u);
+            const auto d = r.fake->stats().lastDraw;
+            CHECK(d.mrtCount == 2 && d.mrtBases[first ? 0 : 1] == c->gpuAddress() && d.mrtBases[first ? 1 : 0] == l->gpuAddress());
+            CHECK_EQ(coordsWrong(*b), 0u);
+            CHECK_EQ(coordsWrong(*l, 0x80000000u), 0u);
         }
     }
 }
