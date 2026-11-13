@@ -1028,6 +1028,22 @@ command_dmesg(int argc, char **argv)
 	say("\n");
 }
 
+/* how a process ended, as wait4 says it */
+static void
+say_ended(int32_t pid, int32_t status)
+{
+	say("pid ");
+	say_number((uint64_t)pid);
+	if ((status & 0x7f) == 0) {
+		say(" exited with ");
+		say_number((uint64_t)((status >> 8) & 0xff));
+	} else {
+		say(" ended by signal ");
+		say_number((uint64_t)(status & 0x7f));
+	}
+	say("\n");
+}
+
 /* PROGRAM [ARGUMENTS]: a new process (posix_spawn) running PROGRAM, waited for; what it ended with */
 static void
 command_run(int argc, char **argv)
@@ -1054,16 +1070,8 @@ command_run(int argc, char **argv)
 		say(" was not waited for\n");
 		return;
 	}
-	say("run: pid ");
-	say_number((uint64_t)pid);
-	if ((status & 0x7f) == 0) {
-		say(" exited with ");
-		say_number((uint64_t)((status >> 8) & 0xff));
-	} else {
-		say(" ended by signal ");
-		say_number((uint64_t)(status & 0x7f));
-	}
-	say("\n");
+	say("run: ");
+	say_ended(pid, status);
 }
 
 /* ---- mach: a message to itself through a port of its own ---- */
@@ -1153,6 +1161,170 @@ command_mach(int argc, char **argv)
 	}
 }
 
+/* ---- date, sleep, and processes in the background: spawn, kill, wait ---- */
+
+#define SYS_kill                37
+#define SYS_pipe                42
+
+/* the date and time, UTC, from the seconds since 1970 (the civil calendar's days, without a library) */
+static void
+command_date(int argc, char **argv)
+{
+	int64_t seconds = now_us() / 1000000, days = seconds / 86400, of_day = seconds % 86400;
+	(void)argc;
+	(void)argv;
+
+	/* days since 1970-01-01 to a year, month and day (H. Hinnant's days_from_civil, backwards) */
+	int64_t z = days + 719468, era = z / 146097, doe = z - era * 146097;
+	int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	int64_t mp = (5 * doy + 2) / 153, day = doy - (153 * mp + 2) / 5 + 1, month = mp < 10 ? mp + 3 : mp - 9;
+	int64_t year = yoe + era * 400 + (month <= 2);
+	const int64_t parts[] = { year, month, day, of_day / 3600, of_day / 60 % 60, of_day % 60 };
+	const char *const after[] = { "-", "-", " ", ":", ":", " UTC\n" };
+
+	for (int i = 0; i < 6; i++) {
+		if (i > 0 && parts[i] < 10) {
+			say("0");
+		}
+		say_number((uint64_t)parts[i]);
+		say(after[i]);
+	}
+}
+
+/* SECONDS: nothing, for that long */
+static void
+command_sleep(int argc, char **argv)
+{
+	unsigned seconds = argc > 1 ? parse_number(argv[1]) : 0;
+
+	if (seconds < 1 || seconds > 3600) {
+		say("sleep SECONDS: 1 to 3600\n");
+		return;
+	}
+	sleep_us((int64_t)seconds * 1000000);
+}
+
+static int32_t last_spawned;           /* (kill's "!") */
+
+/* PROGRAM [ARGUMENTS]: a process of its own, not waited for (wait does, kill ends it) */
+static void
+command_spawn(int argc, char **argv)
+{
+	char *environment[] = { NULL };
+	int32_t pid = 0;
+
+	if (argc < 2) {
+		say("spawn PROGRAM [ARGUMENTS]\n");
+		return;
+	}
+	long error = syscall6(SYS_posix_spawn, (long)&pid, (long)argv[1], 0, (long)(argv + 1), (long)environment, 0);
+	if (error != 0) {
+		say("spawn: ");
+		say(argv[1]);
+		say(" does not start (error ");
+		say_number((uint64_t)-error);
+		say(")\n");
+		return;
+	}
+	last_spawned = pid;
+	say("spawn: pid ");
+	say_number((uint64_t)pid);
+	say("\n");
+}
+
+/* PID [SIGNAL]: a signal (15, SIGTERM, if not said) to a process; PID "!" is the one spawned last */
+static void
+command_kill(int argc, char **argv)
+{
+	unsigned pid = argc > 1 ? (same(argv[1], "!") ? (unsigned)last_spawned : parse_number(argv[1])) : 0;
+	unsigned signal = argc > 2 ? parse_number(argv[2]) : 15;
+
+	if (pid < 2 || signal < 1 || signal > 31) {
+		say("kill PID [SIGNAL]: a process other than this one, a signal from 1 to 31\n");
+		return;
+	}
+	long error = syscall6(SYS_kill, pid, signal, 1, 0, 0, 0);
+	if (error != 0) {
+		say("kill: error ");
+		say_number((uint64_t)-error);
+		say("\n");
+	}
+}
+
+/* the next of its processes to end */
+static void
+command_wait(int argc, char **argv)
+{
+	int32_t status = 0;
+	(void)argc;
+	(void)argv;
+
+	long pid = syscall6(SYS_wait4, -1, (long)&status, 0, 0, 0, 0);
+	if (pid <= 0) {
+		say("wait: no process of its own\n");
+		return;
+	}
+	say("wait: ");
+	say_ended((int32_t)pid, status);
+}
+
+/* pipe() gives its two ends in x0 and x1 */
+static long
+syscall_pipe(int ends[2])
+{
+	register long x0 __asm__("x0") = 0, x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = SYS_pipe;
+	long failed;
+
+	__asm__ volatile ("svc #0x80\n\tcset %[failed], cs" : "+r"(x0), "+r"(x1), [failed] "=r"(failed) : "r"(x16) : "memory", "cc");
+	ends[0] = (int)x0;
+	ends[1] = (int)x1;
+	return failed ? -x0 : 0;
+}
+
+/* WORDS...: the words through a pipe: a child (this program, "echo") writes them into it, this process reads */
+static void
+command_pipe(int argc, char **argv)
+{
+	static char text[4096];
+	char *environment[] = { NULL }, *child[WORDS + 4] = { "/sbin/launchd", NULL, "echo" }, to[16] = ">";
+	int ends[2], c = 3;
+	int32_t pid = 0, status = 0;
+
+	if (syscall_pipe(ends) != 0) {
+		say("pipe: no pipe\n");
+		return;
+	}
+	/* (">N": the child says what it says into its descriptor N, which is the pipe's end it inherits) */
+	to[1] = (char)('0' + ends[1] / 10);
+	to[2] = (char)('0' + ends[1] % 10);
+	child[1] = to;
+	for (int i = 1; i < argc && c < WORDS + 3; i++) {
+		child[c++] = argv[i];
+	}
+	child[c] = NULL;
+	long error = syscall6(SYS_posix_spawn, (long)&pid, (long)child[0], 0, (long)child, (long)environment, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);    /* (the child's copy is the one left: its end is the pipe's) */
+	long all = 0, got;
+	while (error == 0 && all < (long)sizeof(text) - 1 &&
+	    (got = syscall6(SYS_read, ends[0], (long)text + all, (long)sizeof(text) - 1 - all, 0, 0, 0)) > 0) {
+		all += got;
+	}
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	if (error != 0) {
+		say("pipe: the child does not start\n");
+		return;
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	text[all] = '\0';
+	say("pipe: ");
+	say_number((uint64_t)all);
+	say(" bytes from pid ");
+	say_number((uint64_t)pid);
+	say(": ");
+	say(text);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1184,6 +1356,12 @@ static const struct {
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
+	{ "date", "the date and time, UTC", command_date },
+	{ "sleep", "SECONDS nothing, for that long", command_sleep },
+	{ "spawn", "PROGRAM [ARGUMENTS] a process of its own, not waited for", command_spawn },
+	{ "kill", "PID [SIGNAL] a signal to a process (PID !: the one spawned last)", command_kill },
+	{ "wait", "the next of its processes to end", command_wait },
+	{ "pipe", "WORDS... the words through a pipe", command_pipe },
 };
 
 static void
@@ -1250,6 +1428,11 @@ start_with_stack(long *stack)
 	}
 	/* not the first process, with words: one command (run /sbin/launchd uptime), then the end */
 	if (syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0) != 1 && argc > 1) {
+		if (argv[1][0] == '>' && argc > 2) {      /* ">N": what it says goes to its descriptor N */
+			console = (int)parse_number(argv[1] + 1);
+			argc--;
+			argv++;
+		}
 		syscall6(SYS_exit, run_words(argc - 1, argv + 1) ? 0 : 127, 0, 0, 0, 0, 0);
 	}
 	say("\n");
