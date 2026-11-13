@@ -6,7 +6,13 @@ R=$(cd "$(dirname "$0")/.." && pwd)
 cd "$R" || exit 1
 bad=0
 say() { echo "$*"; bad=1; }
-files=$(find . -type f -not -path './.git/*')
+# what could be committed: what git tracks and what it would take (a build's output, which .gitignore names,
+# is not); outside a git checkout, every file
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+	files=$(git ls-files --cached --others --exclude-standard | sed 's|^|./|')
+else
+	files=$(find . -type f -not -path './.git/*')
+fi
 
 for f in $files; do
 	case "$f" in *.png|*.jpg|*.jpeg) continue ;; esac
