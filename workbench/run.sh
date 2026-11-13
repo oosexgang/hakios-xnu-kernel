@@ -65,6 +65,9 @@ python3 "$HERE/identity_test.py" 2>&1 | tail -3 || failed=1
 echo "== the Darwin image tool's helpers (darwin/tools/mkimage26.py)"
 python3 "$HERE/darwin_tools_test.py" 2>&1 | tail -3 || failed=1
 
+echo "== what the QEMU boot test judges with (workbench/tone_in_wav.py, workbench/screen_shows_draw.py)"
+python3 "$HERE/qemu_helpers_test.py" 2>&1 | tail -3 || failed=1
+
 echo "== boot-args reference (tools/bootargs.py)"
 python3 "$HERE/bootargs_test.py" 2>&1 | tail -3 || failed=1
 
