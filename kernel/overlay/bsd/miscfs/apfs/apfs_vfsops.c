@@ -1096,8 +1096,8 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 	/*
 	 * Requests are taken one by one: the disks met so far answer about as fast as a memory copy
 	 * (memory disks; QEMU's virtio block device too, where putting neighbours together made a
-	 * read of 3 MB take twice as long). Boot-arg apfs_cheap=0 puts them together, for a disk
-	 * where each request costs.
+	 * read of 3 MB take twice as long). Boot-arg apfs_cheap=0 puts neighbouring requests together,
+	 * for a disk where each request costs.
 	 */
 	{
 		dev_t rdev = vnode_specrdev(devvp);
