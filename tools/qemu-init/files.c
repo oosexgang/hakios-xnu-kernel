@@ -228,6 +228,40 @@ fnv(uint64_t hash, const uint8_t *bytes, long n)
 	return hash;
 }
 
+/* FILE...: each read to its end, timed, and its FNV-1a hash (a device as well as a file) */
+void
+command_hash(int argc, char **argv)
+{
+	static uint8_t buffer[65536];          /* (a multiple of any block: a raw device takes whole ones) */
+
+	for (int i = 1; i < argc; i++) {
+		long fd = syscall6(SYS_open, (long)argv[i], O_RDONLY, 0, 0, 0, 0);
+		if (fd < 0) {
+			say(argv[i]);
+			say(": cannot be read\n");
+			continue;
+		}
+		uint64_t hash = 0xcbf29ce484222325ull, all = 0;
+		int64_t start = now_us();
+		for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += (uint64_t)got) {
+			hash = fnv(hash, buffer, got);
+		}
+		int64_t took = now_us() - start;
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		char line[200], digits[17];
+		for (int d = 0; d < 16; d++) {
+			digits[d] = "0123456789abcdef"[(hash >> (60 - 4 * d)) & 15];
+		}
+		digits[16] = '\0';
+		size_t at = append(line, append(line, 0, sizeof(line), argv[i]), sizeof(line), ": ");
+		at = append_number(line, at, sizeof(line), all);
+		at = append_number(line, append(line, at, sizeof(line), " bytes in "), sizeof(line), (uint64_t)took / 1000);
+		at = append(line, append(line, at, sizeof(line), " ms, fnv1a "), sizeof(line), digits);
+		append(line, at, sizeof(line), "\n");
+		say(line);
+	}
+}
+
 /* FILE: the file mapped (its pages come from its file system), checked against what read() gives */
 void
 command_mmap(int argc, char **argv)

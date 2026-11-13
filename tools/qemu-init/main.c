@@ -102,6 +102,7 @@ static const struct {
 	{ "echo", "WORDS... say them", command_echo },
 	{ "ls", "[PATH...] what is in a directory", command_ls },
 	{ "cat", "FILE... what is in a file", command_cat },
+	{ "hash", "FILE... each read to its end, timed, hashed", command_hash },
 	{ "ps", "the processes", command_ps },
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
