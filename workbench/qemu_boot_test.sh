@@ -13,8 +13,9 @@
 #     lock; Mach messages; kqueue's timer and a pipe's readiness
 #   - IOKit: its registry walked in MIG messages, as IOKit.framework asks it; the serial number the
 #     loader made read from it; a picture drawn on a surface and swapped onto the screen
-#   - files and memory: a file written, read and removed in ramfs, linked, renamed and linked to; a program's file mapped; memory of its
-#     own taken, used and given back; the kernel's messages read; the date
+#   - files and memory: a file written, read and removed in ramfs, linked, renamed and linked to, its
+#     extended attributes set and taken away; a program's file mapped; memory of its own taken, used and
+#     given back; the kernel's messages read; the date
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -95,6 +96,12 @@ typed=(
 	'chmod 600 /tmp/notes/b'
 	'stat /tmp/notes/b /tmp/notes/d /tmp/notes/s /tmp/notes/c'
 	'cat /tmp/notes/s'
+	'xattr /tmp/notes/b com.example.colour blue'
+	'xattr /tmp/notes/b com.example.size 12'
+	'xattr /tmp/notes/b com.example.colour green'
+	'xattr -d /tmp/notes/b com.example.size'
+	'xattr /tmp/notes/b'
+	'xattr -d /tmp/notes/b com.example.size'
 	'threads 2'
 	'locks 4'
 	'mmap /sbin/launchd'
@@ -179,6 +186,9 @@ check "a file has two names (link), one renamed, its mode changed, and a symboli
 		/^# cat \/tmp\/notes\/s\$/ { cat = NR }
 		cat && NR == cat + 1 && /^six b\$/ { read = 1 }
 		END { exit !(b != \"\" && b == d && s && c && read) }'"
+check "extended attributes are set, replaced, listed and taken away; one taken away twice is not there (ENOATTR)" \
+	bash -c "tr -d '\\r' < '$log' | sed -n '/^# xattr \/tmp\/notes\/b\$/,/^# /p' | grep -v '^#' | tr '\\n' '|' |
+		grep -qx 'com.example.colour = green|' && grep -aq '^xattr: com.example.size: error 93' '$log'"
 # (two threads on two processors take well under the time of one doing it all: they do run side by side)
 check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
 	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
