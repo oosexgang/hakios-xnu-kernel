@@ -399,8 +399,14 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * the kernel has no row for gets no access to anything of a phone
 	 */
 	dt_prop_str(&w, "darwin-board", plat->name);
-	/* where the kernel is to start its other cores: the PAC keys first (secondary_cpu_entry) */
-	dt_prop_u64(&w, "hakios,secondary-entry", (uint64_t)(uintptr_t)&secondary_cpu_entry);
+	/*
+	 * where the kernel is to start its other cores: the PAC keys first (secondary_cpu_entry), when the
+	 * kernel has keys (kernel_pac_setup()). Without, its own reset vector: a core without pointer
+	 * authentication (QEMU's cortex-a76) takes the keys' instructions for undefined ones.
+	 */
+	if (g_probe_keys_pa != 0) {
+		dt_prop_u64(&w, "hakios,secondary-entry", (uint64_t)(uintptr_t)&secondary_cpu_entry);
+	}
 	/* the time now, by the firmware's clock (the kernel has no real-time clock driver) */
 	uint64_t epoch = firmware_epoch();
 	if (epoch != 0) {
