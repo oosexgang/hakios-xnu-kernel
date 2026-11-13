@@ -36,8 +36,8 @@ enum {
 	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (hakios_battery.c) */
 	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (hakios_buttons.c) */
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (hakios_adsp.c) */
-	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
-	                                         * counters, for frames without tearing (hakios_adreno.c, fb_scan) */
+	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a panel whose readout is followed on the DSI interface's counters, for
+	                                         * frames without tearing (hakios_adreno.c, fb_scan): command or video mode */
 	HAKIOS_HAS_VIRTIO       = 1u << 15,     /* an emulator's virtio devices on its MMIO transport: network, tablet
 	                                         * and keyboard (hakios_virtio_net.c, hakios_virtio_input.c) */
 	HAKIOS_HAS_GPU_A660     = 1u << 14,     /* an Adreno of the A660 family behind a GMU; what differs from one to

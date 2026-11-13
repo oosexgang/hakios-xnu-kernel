@@ -245,7 +245,10 @@ recStep(void)
  * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is
  * read from). Renoir's panel is a command-mode one: at each of its refreshes the display controller
  * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
- * rest. Two things follow from knowing when:
+ * rest. Redwood's is a video one, read out all the time but its blanking (8.23 of 8.34 ms): a band then
+ * has a refresh's time between its two readouts, the next band a line later. Without this its frames
+ * were written whenever they came, and with frames coming faster than 60 a second the panel showed
+ * bands of the frame before. Two things follow from knowing when:
  *   - the refresh told to the window server (the "vsync" of the user client below) is the panel's,
  *     not a timer of ours that drifts against it: a frame now and then shown twice and the next not
  *     at all is what such a drift looks like;
@@ -257,6 +260,7 @@ recStep(void)
  */
 extern "C" bool hakios_display_scan_start(void);
 extern "C" bool hakios_display_scan(uint32_t * frame, uint32_t * line);
+extern "C" bool hakios_display_scan_video(void);
 static TUNABLE(uint32_t, gScan, "fb_scan", 1);
 static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);   /* the first lead from a frame's start to its target */
 
@@ -1150,7 +1154,9 @@ IOMobileFramebuffer::scanCalibrate(void)
 			uint64_t ns;
 
 			absolutetime_to_nanoseconds(period, &ns);
-			if (ns < NSEC_PER_SEC / 130 || ns > NSEC_PER_SEC / 45 || gPanel.line_ticks * fPanelHeight >= period * 9 / 10) {
+			/* (a command-mode panel's readout takes half a refresh or so; a video panel's is the refresh but its blanking) */
+			if (ns < NSEC_PER_SEC / 130 || ns > NSEC_PER_SEC / 45 ||
+			    gPanel.line_ticks * fPanelHeight >= (hakios_display_scan_video() ? period : period * 9 / 10)) {
 				printf("MiniIOMobileFramebuffer: panel scan: implausible (%llu us a refresh, %llu us a readout): "
 				    "frames written at once\n", ns / 1000, micros(gPanel.line_ticks * fPanelHeight));
 				return;
@@ -1555,7 +1561,10 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	/*
 	 * The panel's readout this frame is for: the first that begins a lead after now. The lead grows
 	 * by half a millisecond after a frame with a stripe written too late for it, and shrinks by a
-	 * tenth of one after 60 frames in a row in time: as little delay as there is room for.
+	 * tenth of one after 60 frames in a row in time (a video panel: after 10): as little delay as
+	 * there is room for. (A video panel's next readout begins as this one ends; a lead grown to 4.9 ms
+	 * by 4 late frames in 1591 had every other frame miss the readout after it: the home screen's pages
+	 * at 56 frames a second, logs/103400-run.log.)
 	 */
 	fScanTarget = 0;
 	fScanLate = 0;
@@ -1666,7 +1675,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			fStatScanLate++;
 			fScanCleanFrames = 0;
 			fScanLead = fScanLead + up < ceiling ? fScanLead + up : ceiling;
-		} else if (++fScanCleanFrames >= 60) {
+		} else if (++fScanCleanFrames >= (hakios_display_scan_video() ? 10u : 60u)) {
 			fScanCleanFrames = 0;
 			fScanLead = fScanLead > floor + down ? fScanLead - down : floor;
 		}

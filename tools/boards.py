@@ -191,9 +191,6 @@ def feature_needs(feature, board, soc):
         needs.append(f'channels in [spmi] of {soc_file}')
     if feature == 'display-scan' and isinstance(display, dict) and ('intf1' not in display or 'clocks' not in soc):
         needs.append(f'intf1 in [display] and [clocks] in {soc_file}')
-    light = board.get('backlight')
-    if feature == 'display-scan' and isinstance(light, dict) and light.get('panel_mode') == 'video':
-        needs.append('a command-mode panel ([backlight] says video)')
     return needs
 
 

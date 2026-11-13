@@ -4075,7 +4075,7 @@ out:
 
 /*
  * Where the panel's own refresh is, for the display driver (iokit/Kernel/MiniIOMobileFramebuffer.cpp,
- * boot-arg fb_scan). Renoir's panel is a command-mode one (display_probe() there, 30 October: intf1's
+ * boot-arg fb_scan). Renoir's panel is a command-mode one (redwood's a video one: hakios_display_scan_video() below) (display_probe() there, 30 October: intf1's
  * timing engine off, its frame counter counting 60.0 a second): at every tearing-effect edge of the
  * panel the display controller reads the framebuffer out to it, about 8.6 ms, its line counter going
  * 1 to 2400, and stands still at line 1 in between. The same chain of checks as display_probe() comes
@@ -4083,7 +4083,19 @@ out:
  * clock of its registers -- turned on where off, exactly the two writes display_probe() makes, nothing
  * else written -- and every read after that looks again that the last of them still runs.
  */
-static bool scan_ready;
+static bool scan_ready, scan_video;
+
+/*
+ * A video panel (redwood's, display_probe() there: intf1's timing engine on, 476 clocks a line, 2432 lines a refresh at
+ * 119.93 Hz, the picture's rows on lines 12 to 2411) is read out without pause: the line counter goes 0 to 2431 and
+ * round again, a row read 12 lines after its number. What follows is the same -- a band of rows written between two
+ * readouts of it -- with the readouts back to back.
+ */
+bool
+hakios_display_scan_video(void)
+{
+	return scan_ready && scan_video;
+}
 
 bool
 hakios_display_scan_start(void)
@@ -4094,7 +4106,7 @@ hakios_display_scan_start(void)
 		return true;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_DISPLAY_SCAN) || !display_layout_known()) {
-		return false;                   /* (a video panel has no readout to follow; or the board does not say where) */
+		return false;                   /* (the board does not say where) */
 	}
 	need(&gcc);
 	need(&dispcc);
@@ -4122,7 +4134,8 @@ hakios_display_scan_start(void)
 	}
 	disp_intf = (struct block){ "intf1", display->intf_page, 0x1000 };
 	need(&disp_intf);
-	scan_ready = disp_intf.base != 0 && rd(disp_intf.base + INTF_TIMING_ENGINE_EN) == 0;
+	scan_ready = disp_intf.base != 0;
+	scan_video = scan_ready && rd(disp_intf.base + INTF_TIMING_ENGINE_EN) != 0;   /* (its own timing: a video panel) */
 	return scan_ready;
 }
 
