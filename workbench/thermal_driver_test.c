@@ -86,10 +86,35 @@ hakios_test_wr(vm_offset_t a, uint32_t v)
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_backlight_set_cap(uint32_t level) { cap = level; }
-/* the test boards have EPSS: SCMI has no domains here, and is never asked */
-static unsigned scmi_asked;
-int hakios_scmi_perf_domain(unsigned domain __unused, uint32_t *found __unused, uint32_t *top __unused) { return 0; }
-int hakios_scmi_perf_set(unsigned domain __unused, uint32_t level __unused) { scmi_asked++; return -1; }
+/*
+ * The firmware's SCMI performance domains: none unless a scenario gives some (the EPSS boards never ask);
+ * each with the level it was found at and its top, and the level last set. scmi_refusals: so many of the
+ * next sets are refused.
+ */
+static unsigned scmi_asked, scmi_domains, scmi_refusals;
+static uint32_t scmi_found[3], scmi_top[3];
+static volatile uint32_t scmi_level[3];
+int
+hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)
+{
+	if (domain >= scmi_domains) {
+		return 0;
+	}
+	*found = scmi_found[domain];
+	*top = scmi_top[domain];
+	return 1;
+}
+int
+hakios_scmi_perf_set(unsigned domain, uint32_t level)
+{
+	scmi_asked++;
+	if (domain >= scmi_domains || scmi_refusals > 0) {
+		scmi_refusals -= scmi_refusals > 0;
+		return -1;
+	}
+	scmi_level[domain] = level;
+	return 0;
+}
 
 #include "board/board.c"
 #define HAKIOS_MMIO_TEST 1
@@ -171,6 +196,53 @@ heat_and_cool(void)
 	CHECK(cap == 1000, "the panel too: %u", cap);
 	CHECK(foreign == 0, "no other register");
 	CHECK(scmi_asked == 0, "an EPSS board never asks SCMI: %u", scmi_asked);
+}
+
+/* a chip without EPSS: the groups are the firmware's SCMI domains, held back from their top to where they were found */
+static void
+scmi_phone(int tenths)
+{
+	phone(tenths);
+	board = "phone-scmi";
+	scmi_domains = 2;
+	scmi_found[0] = 2;
+	scmi_top[0] = 10;
+	scmi_found[1] = 3;
+	scmi_top[1] = 12;
+	scmi_level[0] = 10;
+	scmi_level[1] = 12;
+}
+
+static void
+scmi_heat_and_cool(void)
+{
+	scmi_phone(500);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(get("most") == 9, "the second domain from its top 12 to 3: %u", get("most"));
+	usleep(300000);
+	CHECK(get("step") == 0 && scmi_asked == 0 && writes == 0, "cool: nothing asked");
+	scmi_phone(720);
+	WAIT_FOR(get("step") == 5 && scmi_level[0] == 2 && scmi_level[1] == 3, 4000);
+	CHECK(scmi_level[0] == 2 && scmi_level[1] == 3, "hot: each at the level it was found at: %u %u", scmi_level[0], scmi_level[1]);
+	scmi_phone(550);
+	WAIT_FOR(get("step") == 0 && scmi_level[0] == 10 && scmi_level[1] == 12, 4000);
+	CHECK(scmi_level[0] == 10 && scmi_level[1] == 12, "cool again: at their tops: %u %u", scmi_level[0], scmi_level[1]);
+	CHECK(writes == 0 && foreign == 0, "no register of EPSS written: %u", writes);
+}
+
+/* a level the firmware refuses is asked for again, at the next look */
+static void
+scmi_refused(void)
+{
+	scmi_phone(500);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	scmi_refusals = 3;
+	scmi_phone(720);
+	scmi_refusals = 3;
+	WAIT_FOR(get("step") == 5 && scmi_level[0] == 2 && scmi_level[1] == 3, 4000);
+	CHECK(scmi_level[0] == 2 && scmi_level[1] == 3, "refused three times, then taken: %u %u", scmi_level[0], scmi_level[1]);
 }
 
 static void
@@ -291,7 +363,7 @@ main(int argc, char **argv)
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "critical", critical }, { "never_raises", never_raises }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
-		{ "bad_policy", bad_policy },
+		{ "bad_policy", bad_policy }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
 	};
 
 	if (argc < 2) {
