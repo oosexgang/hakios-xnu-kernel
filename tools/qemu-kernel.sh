@@ -9,7 +9,8 @@
 #     --seconds N       stop after N seconds in any case (default 300)
 #     --screen FILE     a picture of the screen, as a PNG, when it stops
 #     --type TEXT       once the --until text is there, type TEXT on the console (\n: the end of a line; the
-#                       serial port is the console's keyboard), then wait --after seconds (default 5)
+#                       serial port is the console's keyboard), a line once the shell's prompt "# " is back
+#                       after the last one, then wait --after seconds (default 5)
 #     --log FILE        the serial log (default: qemu-kernel.log in the working directory)
 #     --boot-args ARGS  added to the kernel's boot arguments (-v, the verbose console on the screen, is
 #                       there unless --quiet)
@@ -18,6 +19,10 @@
 #     --qemu ARGS       more for QEMU: devices, e.g. --qemu "-device virtio-keyboard-device" (the kernel's virtio
 #                       drivers take the MMIO transports: "-device virtio-*-device", not the PCI ones)
 #     --quiet           no -v
+#     --forward H:G     the machine's TCP port G reachable as port H of this machine (QEMU's own network)
+#     --then COMMAND    run COMMAND here while it types, and wait for it before the --after wait (its output
+#                       is printed): e.g. curl to a --forward port
+#     --monitor PATH    QEMU's monitor as a socket at PATH, for another program to ask it while it runs
 #     --no-devices      without the machine's virtio devices: by default it has a network card (QEMU's own
 #                       network behind it), a keyboard and a tablet, and the kernel is told to take them
 #
@@ -27,10 +32,8 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5
-# (the kernel's drivers speak virtio 1.0, which QEMU's MMIO transports offer when not forced to the legacy one)
-devices=(-global virtio-mmio.force-legacy=false -netdev 'user,id=net0' -device 'virtio-net-device,netdev=net0'
-	-device virtio-keyboard-device -device virtio-tablet-device)
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor=''
+with_devices=1
 while [ $# -gt 1 ]; do
 	case $1 in
 	--until) until_text=$2; shift 2 ;;
@@ -44,11 +47,18 @@ while [ $# -gt 1 ]; do
 	--cpus) cpus=$2; shift 2 ;;
 	--qemu) read -ra extra <<< "$2"; shift 2 ;;
 	--quiet) verbose=''; shift ;;
-	--no-devices) devices=(); shift ;;
+	--no-devices) with_devices=''; shift ;;
+	--forward) forward=",hostfwd=tcp:127.0.0.1:${2%%:*}-:${2##*:}"; shift 2 ;;
+	--then) then=$2; shift 2 ;;
+	--monitor) monitor=$(realpath -m "$2"); shift 2 ;;
 	*) die "unknown option $1 (the head of this file lists them)" ;;
 	esac
 done
 [ $# -eq 1 ] || die "usage: tools/qemu-kernel.sh [options] KERNEL"
+# (the kernel's drivers speak virtio 1.0, which QEMU's MMIO transports offer when not forced to the legacy one)
+devices=()
+[ -z "$with_devices" ] || devices=(-global virtio-mmio.force-legacy=false -netdev "user,id=net0$forward" -device 'virtio-net-device,netdev=net0'
+	-device virtio-keyboard-device -device virtio-tablet-device)
 kernel=$(realpath "$1") || exit 1
 command -v qemu-system-aarch64 > /dev/null || die "no qemu-system-aarch64 (apt: qemu-system-arm)"
 firmware=
@@ -62,11 +72,12 @@ W=$(mktemp -d)
 trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
 mkdir -p "$W/esp/EFI/BOOT"
 cp "$HERE/loader/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
-cmdline="$verbose cpus=$cpus console_screen=1${devices[*]:+ virtio_net=1 virtio_input=1} $args"
+# the console on the screen too only for a picture of it: in QEMU each line scrolls the whole framebuffer
+cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${devices[*]:+ virtio_net=1 virtio_input=1} $args"
 python3 "$HERE/loader/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
 	"--cmdline=${cmdline# }" > /dev/null || die "no payload"
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
-monitor=$W/monitor
+[ -n "$monitor" ] || monitor=$W/monitor
 : > "$log"
 qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp "$cpus" -m 6G -accel tcg,tb-size=384 \
 	-drive if=pflash,format=raw,readonly=on,file="$firmware" -drive if=pflash,format=raw,file="$W/vars.fd" \
@@ -86,16 +97,45 @@ while kill -0 "$qemu" 2> /dev/null && [ $((SECONDS - started)) -lt "$seconds" ];
 	sleep 1
 done
 if [ -n "$reached" ] && [ -n "$typed" ] && kill -0 "$qemu" 2> /dev/null; then
-	# a key at a time, as a person types: the console's line discipline takes them as they come
-	python3 - "$W/console" "$typed" <<'PY'
-import socket, sys, time
+	# a key at a time, as a person types, and a line only once the last one is done: the shell has said its
+	# prompt ("# ") again (keys typed while the kernel writes to the port are lost)
+	# (--then beside it: what it does may be what a typed line waits for)
+	then_pid=''
+	if [ -n "$then" ]; then
+		bash -c "$then" &
+		then_pid=$!
+	fi
+	python3 - "$W/console" "$typed" "$log" <<'PY'
+import socket, sys, threading, time
+console, typed, log = sys.argv[1:4]
+prompts = lambda: open(log, 'rb').read().count(b'\n# ')
+def wait_for(count):
+    for _ in range(1800):
+        if prompts() >= count:
+            return
+        time.sleep(0.1)
 s = socket.socket(socket.AF_UNIX)
-s.connect(sys.argv[1])
-for c in sys.argv[2].replace('\\n', '\n').encode():
-    s.sendall(bytes([c]))
-    time.sleep(1.0 if c == 10 else 0.1)
+s.connect(console)
+# what the port says comes to this socket too: it is read and let go (QEMU's log has it), or the socket
+# fills, QEMU holds the port's transmitter busy and the kernel waits on it in the middle of a line
+def drain():
+    try:
+        while s.recv(65536):
+            pass
+    except OSError:
+        pass
+threading.Thread(target=drain, daemon=True).start()
+wait_for(1)                                     # (the first prompt, which the --until text may come before)
+done = prompts()
+for text in typed.replace('\\n', '\n').splitlines(keepends=True):
+    for c in text.encode():
+        s.sendall(bytes([c]))
+        time.sleep(0.05)
+    done += 1
+    wait_for(done)
 time.sleep(0.5)
 PY
+	[ -z "$then_pid" ] || wait "$then_pid"
 	sleep "$after"
 fi
 if [ -n "$screen" ] && kill -0 "$qemu" 2> /dev/null; then
