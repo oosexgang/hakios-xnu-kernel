@@ -226,7 +226,7 @@ raises_when_asked(void)
 	hakios_scmi_perf_init();
 	CHECK(sets == 3, "one set per domain: %u", sets);
 	for (unsigned d = 0; d < 3; d++) {
-		uint32_t found, top;
+		uint32_t found = 0, top = 0;
 
 		CHECK(hakios_scmi_perf_domain(d, &found, &top) && found == 1000 + d && top == 3000 + d,
 		    "domain %u keeps its found level and top", d);
