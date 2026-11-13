@@ -115,6 +115,9 @@ check "... and waits for it to end, as it ended" grep -aqE "^run: pid [0-9]+ exi
 # (no wait for a clock that is not there: the first process starts some seconds after the kernel, not 30 more)
 check "the kernel starts its first process within 20 seconds of its own start" bash -c "tr -d '\\r' < '$log' |
 	grep -aoE '^\\[ *[0-9]+\\.[0-9]+\\]: load_init_program: attempting to load /sbin/launchd' | tr -d '[]:' | awk '{ exit !(\$1 < 20) }'"
+# (microseconds from the timebase's own frequency: QEMU's 62.5 MHz is no whole number of MHz)
+check "the kernel's timestamps have no more than a second's microseconds" bash -c "tr -d '\\r' < '$log' |
+	grep -aoE '^\\[ *[0-9]+\\.[0-9]+\\]' | awk -F. '{ n++; if (length(\$2) != 7) bad++ } END { exit !(n > 0 && bad == 0) }'"
 check "the kernel's message buffer is read (dmesg)" bash -c "tr -d '\\r' < '$log' | sed -n '/^# dmesg/,\$p' | grep -qE '^\\[ *[0-9]+\\.[0-9]+\\]: '"
 check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
