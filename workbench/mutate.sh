@@ -14,6 +14,9 @@
 #
 # Nothing of the repository is changed. Exit 0: a scenario failed (the change was caught); 1: none
 # did; 2: the change does not compile, or the arguments are wrong.
+#
+# OLD and NEW the same is no change: the test as it is, and what each scenario that fails says (exit 0:
+# all of them pass; 1: one fails). That is the first thing to run on a test being written.
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 die() { echo "mutate.sh: $*" >&2; exit 2; }
@@ -69,6 +72,14 @@ fi
 caught=
 list=$("$W/test")
 [ -n "$list" ] || die "$name lists no scenario: nothing would be run"
+if [ "$old" = "$new" ]; then
+	for scenario in $list; do
+		timeout 120 "$W/test" "$scenario" > /dev/null 2> "$W/said" || { caught="$caught $scenario"; cat "$W/said"; }
+	done
+	[ -z "$caught" ] || { echo "failed as it is:$caught"; exit 1; }
+	echo "every scenario of $name passes"
+	exit 0
+fi
 for scenario in $list; do
 	timeout 120 "$W/test" "$scenario" > /dev/null 2>&1 || caught="$caught $scenario"
 done
