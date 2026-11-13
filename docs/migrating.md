@@ -100,7 +100,7 @@ no phone. What works on which phone did not change.
 | The phones' `devices/NAME/` on the main branch | Device packages on the `devices` branch, one directory per phone at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
 | `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `darwin/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `darwin/userland/inj26.sh`, `kernel/syntax-check.sh`, `workbench/run.sh`. |
 | `tools/boards.py gen` before committing, `tools/boards.py gen --check` in `make check` | Gone: there is no committed table to compare. `make boards` validates and writes the tables if you want to look at them. |
-| Host tests against the phones' own boards | Against stand-ins in `workbench/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, and `phone-keys`, with its parts wired otherwise. |
+| Host tests against the phones' own boards | Against stand-ins in `workbench/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, `phone-keys`, with its parts wired otherwise, and `phone-scmi`, its speeds over SCMI. |
 | The loader asking whether it runs on the first phone before it reads the battery | `uefi_charger = true` in the board file's `[loader]` section. |
 
 <!-- end -->

@@ -33,7 +33,7 @@ the term is in general and, where it helps, where it shows in this repository.
 | **SoC file** | `soc.dtsi` of a device package: where the blocks of its chip are (interrupt controller, cores, clock controllers, DSI controller, sensors). Each package with that chip has a copy. Every key is explained in `devices/_template/soc.dtsi`. |
 | **Stand-in** | Code that takes the place of something closed or absent. Mostly the replacements for Apple's closed kernel extensions in `kernel/overlay/iokit/Kernel/` (files named `Mini...`); also the tests' made-up phones and the substitutes for Apple's `iig`. |
 | **System image** | The large APFS image with Darwin itself: the chosen files of the IPSW, with every arm64e Mach-O and the shared cache passed through `pacstrip`, and the launchd jobs. `darwin/tools/mkimage26.py` builds it; [ram-budget.md](ram-budget.md) is about its size. |
-| **Tests' phones** | The made-up boards in `workbench/devices` (`phone-cmd`, `phone-video`, `phone-keys`) that the host tests run against instead of real packages. Their names are not real, so a real package never collides with them. |
+| **Tests' phones** | The made-up boards in `workbench/devices` (`phone-cmd`, `phone-video`, `phone-keys`, `phone-scmi`) that the host tests run against instead of real packages. Their names are not real, so a real package never collides with them. |
 | **Topic patch** | One of the patches in `kernel/patches/` that hold the changes to Apple's own files, grouped by topic. `kernel/patches/series` says which file belongs to which patch; `kernel/export.sh` regenerates them, so they are not edited by hand. |
 
 ## Qualcomm, Android and Linux

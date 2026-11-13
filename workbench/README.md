@@ -106,6 +106,7 @@ The repository describes no phone, so the tests have their own in `workbench/dev
 | `phone-cmd` | A phone with a command-mode panel on an SM7350, with the keys, the audio DSP, a GPU profile and boot defaults. |
 | `phone-video` | A phone with a video-mode panel on an SM7325, every part driver listed, known to the loader by its framebuffer. |
 | `phone-keys` | A phone wired unlike the real ones: its keys on other PMIC peripherals, behind an arbiter at other addresses that knows this system as its third, on a made-up chip (its `soc.dtsi`). What is still written into a driver shows here. |
+| `phone-scmi` | A phone on a made-up chip without EPSS, whose cores' speeds are the firmware's, asked over SCMI (as on an SM8845): the temperature driver's other path. |
 
 The first two carry the values of real phones, so that a test computes what a phone computes; their
 names are not real, so that a real package beside them never collides. `workbench/run.sh` generates the tables the
