@@ -11,7 +11,8 @@
 #     one ended by a signal, two by their own mistakes; signals caught by a handler; a pipe between two;
 #     a descriptor sent over a socket pair; threads on both processors at once; Mach messages; kqueue's
 #     timer and a pipe's readiness
-#   - IOKit: its registry walked in MIG messages, as IOKit.framework asks it
+#   - IOKit: its registry walked in MIG messages, as IOKit.framework asks it; the serial number the
+#     loader made read from it
 #   - files and memory: a file written, read and removed in ramfs; a program's file mapped; memory of its
 #     own taken, used and given back; the kernel's messages read; the date
 #
@@ -80,6 +81,7 @@ typed=(
 	'fork'
 	'fork /sbin/launchd echo became'
 	'ioreg 3'
+	'ioprop IOService:/ IOPlatformSerialNumber'
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
@@ -146,6 +148,8 @@ check "fork copies the process: a write in the child's copy is not the parent's"
 check "... and the child becomes another program (execve)" bash -c "tr -d '\\r' < '$log' | grep -qx became && grep -aqE '^fork: child [0-9]+ ran it and exited with 0' '$log'"
 check "IOKit's registry answers MIG messages: its root, and the platform expert under it" \
 	bash -c "grep -aq '^+-o Root  <class IORegistryEntry>' '$log' && grep -aq '+-o GenericARMPE  <class GenericARMPE>' '$log'"
+check "the serial number the loader made is the one IOKit gives user space" bash -c "serial=\$(grep -aoE 'identity: serial number [A-Z0-9]+' '$log' | awk '{ print \$4 }') &&
+	[ -n \"\$serial\" ] && tr -d '\\r' < '$log' | grep -qx \"IOPlatformSerialNumber = \\\"\$serial\\\"\""
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
