@@ -21,6 +21,7 @@ help:
 	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
+	@echo "make qemu           boot the built kernel in QEMU to its first process (KERNEL=FILE; workbench/qemu_boot_test.sh)"
 
 .PHONY: check
 check: lint boards-check docs-check test
@@ -78,3 +79,9 @@ kernel:
 .PHONY: kernel-check
 kernel-check:
 	TOOLCHAIN=llvm XNU_WARNINGS=1 kernel/build.sh
+
+# the kernel kernel/build.sh made, unless told otherwise
+KERNEL ?= ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
+.PHONY: qemu
+qemu:
+	workbench/qemu_boot_test.sh $(KERNEL)
