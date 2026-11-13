@@ -373,6 +373,23 @@ diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
  #endif /* defined(ARM_LARGE_MEMORY) */
  
  typedef uint64_t tt_entry_t; /* translation table entry type */
+diff --git a/osfmk/arm/rtclock.c b/osfmk/arm/rtclock.c
+--- a/osfmk/arm/rtclock.c
++++ b/osfmk/arm/rtclock.c
+@@ -468,7 +468,12 @@ absolutetime_to_microtime(uint64_t       abstime,
+ 	*secs = t64 = abstime / rtclock_sec_divisor;
+ 	abstime -= (t64 * rtclock_sec_divisor);
+ 
+-	*microsecs = (uint32_t)(abstime / rtclock_usec_divisor);
++	/*
++	 * Not abstime / rtclock_usec_divisor: that divisor is the timebase's frequency over a million,
++	 * rounded down, which is exact for Apple's 24 MHz and not for a Qualcomm's 19.2 MHz or QEMU's
++	 * 62.5 MHz -- there the microseconds came to more than a second (up to 1008064 at 62.5 MHz).
++	 */
++	*microsecs = (uint32_t)((abstime * USEC_PER_SEC) / rtclock_sec_divisor);
+ }
+ 
+ void
 diff --git a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
 --- a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
 +++ b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
