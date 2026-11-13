@@ -204,10 +204,10 @@ command_ping(int argc, char **argv)
 {
 	struct sockaddr_in to = { 16, AF_INET, 0, { 0 }, { 0 } }, from;
 	struct { int64_t seconds; int32_t microseconds, pad; } wait = { 1, 0, 0 };
-	int count = argc > 2 ? argv[2][0] - '0' : 3, answered = 0;
+	int count = argc > 2 ? (int)parse_number(argv[2]) : 3, answered = 0;
 
-	if (argc < 2 || !parse_ipv4(argv[1], to.addr) || count < 1 || count > 9) {
-		say("ping ADDRESS [COUNT 1-9]\n");
+	if (argc < 2 || !parse_ipv4(argv[1], to.addr) || count < 1 || count > 100) {
+		say("ping ADDRESS [COUNT]: 1 to 100 echoes\n");
 		return;
 	}
 	long sock = syscall6(SYS_socket, AF_INET, SOCK_DGRAM, IPPROTO_ICMP, 0, 0, 0);
@@ -348,10 +348,10 @@ void
 command_serve(int argc, char **argv)
 {
 	struct sockaddr_in here = { 16, AF_INET, 0x5000, { 0 }, { 0 } };     /* port 80, any address */
-	int count = argc > 1 ? argv[1][0] - '0' : 1, yes = 1;
+	int count = argc > 1 ? (int)parse_number(argv[1]) : 1, yes = 1;
 
-	if (count < 1 || count > 9) {
-		say("serve [COUNT 1-9]\n");
+	if (count < 1 || count > 100) {
+		say("serve [COUNT]: 1 to 100 requests\n");
 		return;
 	}
 	long sock = syscall6(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
