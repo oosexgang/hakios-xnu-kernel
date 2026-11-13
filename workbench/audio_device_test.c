@@ -31,6 +31,7 @@ said(const char *format, ...)
 uint64_t loader_sound[3];
 uint64_t kvtophys(vm_offset_t va) { return (uint64_t)va ^ 0x8000000000000000ull; }    /* (an address the loader would be given) */
 bool hakios_audio_recording_fed(void);
+bool hakios_audio_recording_mic(void);
 void hakios_audio_record_fed(const int16_t *frames, uint32_t count);
 
 #pragma GCC diagnostic ignored "-Wformat"
@@ -172,6 +173,48 @@ many_small_writes(void)
 	CHECK(loader_sound[1] > size - 20, "and fills it: %llu of %llu", (unsigned long long)loader_sound[1], (unsigned long long)size);
 }
 
+/* rec_sound_fed=1: what the guard lets through is recorded, not what a program writes; the recording takes
+ * it until its length, and from then on says it wants no more */
+static void
+fed_recording(void)
+{
+	static int16_t frames[2 * 24000];
+
+	boot_args = "rec_sound=1 rec_sound_fed=1";
+	hakios_audio_init();
+	CHECK(logged("as the speakers' guard lets it through"), "said: %s", log_text);
+	CHECK(hakios_audio_recording_fed() && !hakios_audio_recording_mic(), "the guard's sound wanted, the microphone's not");
+	CHECK(play(4800, 1000) == 0 && loader_sound[1] == 24, "what a program writes is not recorded: %llu bytes",
+	    (unsigned long long)loader_sound[1]);
+	for (unsigned i = 0; i < 2 * 24000; i++) {
+		frames[i] = 2000;
+	}
+	hakios_audio_record_fed(frames, 24000);
+	CHECK(loader_sound[1] == 24 + 16 + 24000 * 4 && hakios_audio_recording_fed(), "half a second recorded: %llu bytes",
+	    (unsigned long long)loader_sound[1]);
+	hakios_audio_record_fed(frames, 24000);
+	CHECK(!hakios_audio_recording_fed(), "the second it was made for is full: no more wanted");
+}
+
+/* rec_sound_mic=1: the microphone's sound is the recording's */
+static void
+mic_recording(void)
+{
+	boot_args = "rec_sound=1 rec_sound_mic=1";
+	hakios_audio_init();
+	CHECK(logged("the microphone hears (in both channels)"), "said: %s", log_text);
+	CHECK(hakios_audio_recording_mic() && !hakios_audio_recording_fed(), "the microphone's sound wanted, the guard's not");
+	CHECK(play(4800, 1000) == 0 && loader_sound[1] == 24, "what a program writes is not recorded");
+}
+
+/* without a recording, neither is wanted */
+static void
+no_recording(void)
+{
+	hakios_audio_init();
+	CHECK(!hakios_audio_recording_fed() && !hakios_audio_recording_mic(), "no recording: nothing wanted");
+}
+
 /* the volume Darwin sets is kept for the speakers' driver, with how many times it was set */
 static void
 volume(void)
@@ -198,6 +241,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "played_and_said", played_and_said }, { "sink_full", sink_full }, { "whole_frames", whole_frames },
 		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume },
+		{ "fed_recording", fed_recording }, { "mic_recording", mic_recording }, { "no_recording", no_recording },
 	};
 
 	if (argc < 2) {
