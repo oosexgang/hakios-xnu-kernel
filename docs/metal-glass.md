@@ -17,14 +17,21 @@ Drawn by the GPU, as CoreAnimation means them to look:
 Four boots of 240–300 s ran with no crash of backboardd. The last one, with every fix below, had no refusal by
 the plug-in before the run's end, except an accounting setter it takes without keeping.
 
-Speed, measured with `rc.jobs.fps` and `ios/tools/frames.py` (the 0.7 s after each gesture; `logs/113822-run.log`):
+Speed, measured with `rc.jobs.fps` and `ios/tools/frames.py` (the 0.7 s after each gesture), with redwood's
+defaults (`fb_hz=120`, `atm_diagnostic_config`, `metal_gmem_binning=1` in its `board.toml`; `logs/080215-run.log`,
+`logs/081352-run.log`, `logs/082525-run.log`):
 
-| Scene | Frames a second | Within 18 ms | GPU per frame, median / 90% |
+| Scene | Frames a second | Within 18 ms | GPU per frame |
 | --- | --- | --- | --- |
 | The lock screen, its clock and glass | 60 | | |
-| The home screen's pages swiped | 51 | 65% | 9.8 / 15.2 ms |
-| Settings' list flung under the glass search field | 57 | 86% | 7.8 / 8.8 ms |
-| An app opening or closing | 12–20 | | up to 0.5 s |
+| The home screen's pages swiped | 66–70 | 87–89% | 10.1–10.6 ms |
+| Settings' list flung under the glass search field | 80–82 | 95–97% | 9.7–10.1 ms |
+| An app opening or closing (not measured again) | 12–20 | | up to 0.5 s |
+
+The day before, the same scenario gave 51 and 57. Each frame now starts while the GPU still has the one before:
+the window server's render thread used to wait for the GPU's end between frames on the plug-in's surface lock
+(next section, item 6). In a long burst a frame is made every 10.5 ms, its GPU work done 19 ms after it was made
+and on the panel at 30 ms; what paces that burst is the presenter's copy (What is next, 120 Hz).
 
 At rest the home screen's frame is 16–19 ms of GPU time, drawn when the clock icon's hand moves (10 a second). A
 week before these were 20 frames a second everywhere and 31–36 ms for the home screen's main pass alone.
@@ -124,6 +131,12 @@ What made the frames faster, in the order it was found (each commit has its meas
 4. **Specialisation**: while a pipeline's uber shader is specialised for its buffer, CoreAnimation draws with the
    uber shader itself, 17.7 ms for one full-screen draw. A specialisation took 1.3–6 s on the phone; now about
    0.3 s (the folded branches taken away early, unread scratch dropped, the front end's NIR kept per module).
+5. **Binning** in GMEM passes (the hardware gives each tile only the draws that reach it), redwood's default;
+   a pass tiled over a corner of the screen is not binned, which had left the low-battery alert out of frames.
+6. **One frame at a time no more.** The window server wraps its display's page in a texture anew every frame;
+   the plug-in opened the surface's buffer in the kernel and closed it after the frame, and the close waited for
+   the GPU's lock with the next frame's wrap waiting behind it. The last four surface buffers are kept now
+   (found with `waitstack=1`: the render thread's waits, sampled in backboardd).
 
 To measure: `metal_fps=1` (every two seconds), `metal_fps=timeline` (a heavy frame's passes), `metal_fps=draws`
 (each draw of a sysmem pass timed), `gpu_log=1 touch_lat=1` with `frames.py`. To reproduce a specialisation on
@@ -137,10 +150,13 @@ this machine: `metal_air_dump=1`, `metal/tools/airdump.py`, `sweep -a MODULE.air
 - **The small cores.** This kernel's scheduler (Clutch, without SMT) puts the window server's threads on the
   Cortex-A55s as often as on the A78s; with `cpus=4` (the big cores alone) the home screen's pages ran at 51.5
   frames a second against 47.8, with a third of the long gaps.
-- **120 Hz.** The panel already runs at 120 Hz: `display_probe=1` counts 2432 lines at 119.926 Hz. The display
-  driver presents at 60 unless told otherwise (`fb_hz`, default 60); 16.5 reached 100–118 frames a second with
-  `fb_hz=120 ca_vbl=1 anim_max=1 touch_poll_us=4000`. What stands in the way here is the presenter's copy of each
-  frame to the panel, 10–12 ms on the processor: enough for 60, not for 8.3 ms.
+- **120 Hz.** The panel runs at 120 Hz (`display_probe=1`: 2432 lines at 119.926 Hz) and the window server is
+  told so (`fb_hz=120`, redwood's default). 16.5 reached 100–118 frames a second. What stands in the way now is the
+  presenter's copy of each frame to the panel: scaled 828x1792 to 1080x2400 on the processor, in stripes behind
+  the panel's readout so that no picture tears, it takes 10.7–11 ms a frame however few frames come -- a ceiling
+  near 92 a second; at 69 a second 271 of 346 swaps waited for the frame before. Past it: the display block
+  scanning the surface out itself, scaled by its own scaler, with no copy. (`xl screenshot` reads the panel's
+  memory while a copy writes it, so a screenshot in motion holds rows of two frames; the recording does not.)
 - **Compiled stages across boots.** `/private/var` starts empty at every boot of iOS 27 here. The stages a run
   compiled are taken off the phone over SSH (`ios/tools/metal-cache-pull.sh`) into the next small image, where
   the plug-in reads them after its own cache (`/redwood/share/hakios-metal-cache`).
