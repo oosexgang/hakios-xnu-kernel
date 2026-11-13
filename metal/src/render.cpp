@@ -2183,7 +2183,8 @@ uint32_t alignUp(uint32_t v, uint32_t a) { return (v + a - 1) / a * a; }
 uint32_t divUp(uint32_t v, uint32_t d) { return (v + d - 1) / d; }
 }  // namespace
 
-bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
+bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why, uint32_t likely) {
+    likely |= 1u;   // (attachment 0: every pass draws into it)
     if (pass.color0 == nullptr || pass.depth != nullptr || pass.stencil != nullptr) {
         return refuse(why, "a pass without colour attachment 0, or with depth or stencil: sysmem");
     }
@@ -2215,16 +2216,21 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
             start + uint64_t(alignUp(H, kGmemAlignH)) * L.pitch > t.buffer()->length()) {
             return refuse(why, which + ": rows without room for the event blit's granules past the edge");
         }
-        bytes += f.bytesPerPixel;
+        if ((likely >> i) & 1) bytes += f.bytesPerPixel;
     }
     // GMEM below the colour cache in shares by bytes a pixel, each 16 KiB aligned (bins of whole 32 x 16 granules fit
-    // their share whatever the bins' shape)
+    // their share whatever the bins' shape), among the likely attachments; an unlikely one has none (its base 0, inside
+    // the bins: a stray write there would show, not hang the colour cache above them)
     GmemPlan p;
     uint32_t before = 0;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
         if (a.texture == nullptr) continue;
         p.bpp[i] = a.texture->info().bytesPerPixel;
+        if (((likely >> i) & 1) == 0) {
+            p.unplanned |= 1u << i;
+            continue;
+        }
         p.base[i] = uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu;
         before += p.bpp[i];
         p.room[i] = (uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu) - p.base[i];
@@ -2251,7 +2257,7 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     }
     uint32_t fit = kTileMaxH;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
-        if (p.bpp[i] != 0) fit = std::min(fit, p.room[i] / (p.binW * p.bpp[i]) / kTileAlignH * kTileAlignH);
+        if (p.bpp[i] != 0 && ((p.unplanned >> i) & 1) == 0) fit = std::min(fit, p.room[i] / (p.binW * p.bpp[i]) / kTileAlignH * kTileAlignH);
     }
     if (fit < kTileAlignH) return false;
     p.rows = divUp(h, fit);
@@ -2266,7 +2272,8 @@ bool gmemShare(GmemPlan* plan, uint32_t touched) {
     bool changed = false;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         if (plan->bpp[i] == 0) continue;
-        if (((touched >> i) & 1) == 0) {
+        // (an unplanned one is untouched: a draw that needed it ended the pass before it, CommandBuffer::draw)
+        if (((touched >> i) & 1) == 0 || ((plan->unplanned >> i) & 1) != 0) {
             plan->bpp[i] = 0;
             plan->room[i] = 0;
             changed = true;
@@ -2275,7 +2282,7 @@ bool gmemShare(GmemPlan* plan, uint32_t touched) {
         // (up to the next touched attachment's bin: the bases rise with the index, gmemPlan's shares in order)
         uint32_t end = top;
         for (uint32_t j = i + 1; j < kMaxColorOutputs; j++) {
-            if (plan->bpp[j] != 0 && ((touched >> j) & 1) != 0) {
+            if (plan->bpp[j] != 0 && ((touched >> j) & 1) != 0 && ((plan->unplanned >> j) & 1) == 0) {
                 end = plan->base[j];
                 break;
             }
@@ -2340,6 +2347,14 @@ bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]) {
     if (x0 > x1 || y0 > y1) return false;
     area[0] = x0, area[1] = y0, area[2] = x1, area[3] = y1;
     return true;
+}
+
+uint32_t gmemNeeds(const Program& program, const RenderPass& pass) {
+    uint32_t mask = drawnAttachments(program, pass);
+    for (uint32_t i = 0; i < kMaxTextureSlots && i < program.fs.k.numTextureSlots; i++) {
+        if (program.fs.k.textures[i].fbTarget != 0) mask |= 1u << (program.fs.k.textures[i].fbTarget - 1u);
+    }
+    return mask;
 }
 
 uint32_t drawnAttachments(const Program& program, const RenderPass& pass) {
@@ -2898,6 +2913,15 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // encodeInPass). A draw a tile cannot replay ends a GMEM pass and opens a sysmem one of its own.
     std::string gmemWhy;
     const bool tileable = options.gmem && gmem_ && render::gmemDrawOk(program, pass, d, *vsb, *fsb, &gmemWhy);
+    // (a draw into an attachment the pass's like did not touch, which has no bin: the tiles end before it, as before a
+    // draw they cannot replay, and the pass goes on in a pass of its own planned anew; its like's next time has a bin
+    // for it -- closePass notes it as touched)
+    const uint32_t needs = render::gmemNeeds(program, pass);
+    const bool missed = tileable && joins && open_->gmem && (needs & open_->plan.unplanned) != 0;
+    if (missed) {
+        open_->missed |= needs & open_->plan.unplanned;
+        gmemWhy = "a draw into attachments " + std::to_string(needs & open_->plan.unplanned) + ", which the pass's like had not touched: no bin";
+    }
     if (joins && open_->dual && !tileable) {
         // (recorded both ways: the pass goes on in sysmem, what it has so far onto the stream)
         gmemWhy_ = gmemWhy;
@@ -2906,7 +2930,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         open_->bodies.clear();
         open_->dual = open_->gmem = false;
     }
-    if (joins && open_->gmem && !tileable) {
+    if (joins && open_->gmem && (!tileable || missed)) {
         gmemWhy_ = gmemWhy;
         joins = false;
         open_->goesOn = true;
@@ -2957,6 +2981,21 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const uint32_t cls = last <= 1 ? 0 : last < 16 ? 1 : last < 64 ? 2 : last < 128 ? 3 : 4;
             tuneKey = (kind * 0x100000001b3ull ^ (uint64_t(ordinal) << 8 | cls)) | 1;
             gmem = queue_.preferGmem(tuneKey);
+        }
+        // GMEM shared among the attachments the pass's like has touched lately, and those this draw needs and the pass
+        // clears, rather than among all it has (gmemPlan's LIKELY): CoreAnimation's main pass in 38 bins, not 56
+        if (gmem && kind != 0 && !(gmemOff_ & (kGmemEveryAttachment | kGmemNoLikely))) {
+            uint32_t likely = queue_.likelyTouched(kind, ordinal), attached = 0;
+            for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+                const Texture* t = i == 0 ? pass.color0 : pass.more[i - 1].texture;
+                if (t == nullptr) continue;
+                attached |= 1u << i;
+                if ((i == 0 ? pass.load : pass.more[i - 1].load) == LoadAction::kClear) likely |= 1u << i;
+            }
+            likely |= needs;
+            render::GmemPlan narrow;
+            std::string unused;
+            if ((attached & ~likely) != 0 && render::gmemPlan(pass, &narrow, &unused, likely)) plan = narrow;
         }
     }
     Piece passTable;
@@ -3314,6 +3353,8 @@ void CommandBuffer::closePass() {
     }
     const uint32_t weight = gmemWeight(open_->draws, open_->fetches);
     if (open_->kind != 0) queue_.noteDraws(open_->kind, open_->ordinal, weight);
+    // what it touched, for its like's GMEM next time (gmemPlan's LIKELY): known of a pass drawn for tiles, either way
+    if (open_->kind != 0 && open_->gmem) queue_.noteTouched(open_->kind, open_->ordinal, open_->written | open_->read | open_->clears | open_->missed);
     if (open_->dual) {
         // recorded both ways: tiles for a pass of enough draws (gmemWeight), else the sysmem words, head and all
         if (weight >= gmemMinDraws_) {

@@ -165,9 +165,11 @@ public:
     // kGmemSysmemUnordered: a fetching draw in sysmem with the barrier alone, its own primitives unordered
     // (render::Options::fbReadOrderedSysmem off: a wrong picture wherever one draw's primitives overlap)
     // kGmemAlwaysDual: a pass whose like cleared the bar last time recorded both ways all the same, as before
+    // kGmemNoLikely: GMEM shared among all of a pass's attachments as it opens, not those its like touched, as before
+    // (render::gmemPlan's LIKELY)
     enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128,
                       kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024, kGmemNoShare = 8192, kGmemSysmemUnordered = 16384,
-                      kGmemAlwaysDual = 32768 };
+                      kGmemAlwaysDual = 32768, kGmemNoLikely = 65536 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
@@ -316,6 +318,7 @@ private:
         uint64_t kind = 0;          // render::tuneKeyOf the pass and its ordinal in the buffer among passes of that kind
         uint32_t ordinal = 0, draws = 0;
         uint32_t fetches = 0;       // its draws that read their attachments (a framebuffer fetch): gmemWeight
+        uint32_t missed = 0;        // attachments a draw needed that the plan had no bin for (GmemPlan::unplanned): it ended here
         bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)
     };
     void closePass();
@@ -433,6 +436,12 @@ public:
     // only now and then (CoreAnimation's: light frames between the heavy ones of an animation) counts as heavy
     uint32_t peakDraws(uint64_t kind, uint32_t ordinal);
     void noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws);
+    // ...and the attachments it touched (a mask) in any of its last kLikelyTimes times drawn for tiles: those its GMEM is
+    // shared among as it opens (render::gmemPlan's LIKELY). ~0u when not seen yet: all of them. An attachment touched
+    // now and then keeps its bin, and one touched for the first time ends its pass there once (GmemPlan::unplanned).
+    static constexpr uint32_t kLikelyTimes = 16;
+    uint32_t likelyTouched(uint64_t kind, uint32_t ordinal);
+    void noteTouched(uint64_t kind, uint32_t ordinal, uint32_t touched);
 
 
 private:
@@ -463,6 +472,10 @@ private:
     std::unordered_map<uint64_t, uint32_t> lastDraws_;   // (under lock_) noteDraws', by kind and ordinal
     struct Peak { uint32_t draws = 0, below = 0; };
     std::unordered_map<uint64_t, Peak> peakDraws_;        // (under lock_) noteDraws' too: peakDraws'
+    // (under lock_) noteTouched's, by kind and ordinal: how many times noted, and for each attachment the count at the
+    // last time it was touched (0: never)
+    struct Touched { uint32_t times = 0; uint32_t at[kMaxColorOutputs] = {}; };
+    std::unordered_map<uint64_t, Touched> touched_;
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;

@@ -503,6 +503,9 @@ struct GmemPlan {
     // the CCU's colour cache shared out by bytes a pixel. Fixed when the pass opens -- the draws are encoded with it --
     // while the bins' size waits for the render area at its end (gmemTiles).
     uint32_t base[kMaxColorOutputs] = {}, room[kMaxColorOutputs] = {}, bpp[kMaxColorOutputs] = {};
+    // the attachments given no share (a mask): gmemPlan's LIKELY left them out. A draw that would write or read one
+    // cannot be drawn in these tiles (gmemNeeds); its pass ends there, as at any draw a tile cannot replay.
+    uint32_t unplanned = 0;
     // the render area, X0 Y0 X1 Y1 inclusive (what the draws can touch), the grid's corner (aligned to the tile
     // alignment) and the bins over it
     uint32_t area[4] = {}, x0 = 0, y0 = 0;
@@ -511,9 +514,15 @@ struct GmemPlan {
 };
 // whether PASS can be drawn in GMEM and how: its colour attachments the window's size, linear, single-sampled, 4 or 8
 // bytes a pixel, their rows with room for the event blit's 16 x 4 granules past the edges; no depth or stencil. A bin
-// holds every attachment's pixels (CoreAnimation's main pass draws into two screens at once). False with *why
-// otherwise (the pass then runs in sysmem, as before).
-bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why);
+// holds the pixels of every attachment in LIKELY (a mask; attachment 0's always): GMEM shared among those alone, by bytes
+// a pixel, the others unplanned. The bases are fixed as the pass opens, so what a pass will touch is guessed then: by
+// its like's last frames (CommandQueue::likelyTouched). CoreAnimation's main pass has three attachments, the screen
+// (4 bytes a pixel), an RGBA16Float one and the path mask (8 and 4), and draws into the first two: shared among all
+// three, the first screen's bin was a quarter of GMEM and the bins 32 rows tall, 56 of them, where a third and 48 rows
+// do -- 38. False with *why otherwise (the pass then runs in sysmem, as before).
+bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why, uint32_t likely = ~0u);
+// the attachments a draw of PROGRAM writes or reads in PASS (drawnAttachments and its framebuffer fetches), as a mask
+uint32_t gmemNeeds(const Program& program, const RenderPass& pass);
 // PLAN's bins over the render area AREA (X0 Y0 X1 Y1 inclusive, inside the window): turnip's tiling of a render area
 // (tu_tiling_config_update_tile_layout) -- the grid's corner at the area's aligned down, the bins as wide as the plan's
 // (gmemPlan picks the width; a fetch's descriptor holds it), as tall as every attachment's room holds. A pass whose draws touch a corner of the screen is drawn in the

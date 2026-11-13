@@ -5669,6 +5669,88 @@ TEST(gmem_goes_to_the_attachments_the_tiles_touch) {
     CHECK(q.rows * q.binH >= 1792 && q.binH * 832 * 4 <= top);
 }
 
+// GMEM shared among the attachments a pass's like touched (gmemPlan's LIKELY, CommandQueue::likelyTouched). The bases
+// are fixed as a pass opens, so CoreAnimation's main pass -- the screen, an RGBA16Float one and the R32Float path mask,
+// drawn into the first two -- had the quarter of GMEM the three-way share gave the first: 56 bins of 32 rows on the
+// phone (828 x 1792) where 38 of 48 do. Its like's last frames say which it draws into. A draw into one the like did
+// not touch ends the pass there (it has no bin) and the next pass goes on, everything kept: the fake draws nothing,
+// so each target comes back as its coordinates only if every tile loaded and stored the right rows in its own bin.
+TEST(gmem_is_shared_among_the_attachments_a_passs_like_touched) {
+    Rig r;
+    const Program mrt{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+    const Program flat = flatProgram();
+    // the phone's main pass, planned: 56 bins among all three, 38 among the two drawn into
+    {
+        auto t = target(r, 828, 1792, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        auto u = target(r, 828, 1792, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kRGBA16Float);
+        auto w = target(r, 828, 1792, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kR32Float);
+        RenderPass a;
+        a.color0 = t.get();
+        a.more[0].texture = u.get();
+        a.more[1].texture = w.get();
+        const uint32_t whole[4] = {0, 0, 827, 1791};
+        render::GmemPlan all, two;
+        CHECK(render::gmemPlan(a, &all, nullptr) && render::gmemPlan(a, &two, nullptr, 3));
+        CHECK(all.unplanned == 0 && two.unplanned == 4);
+        render::gmemShare(&all, 3);
+        render::gmemShare(&two, 3);
+        CHECK(render::gmemTiles(&all, whole) && render::gmemTiles(&two, whole));
+        CHECK(all.tiles() == 56 && all.binH == 32);
+        CHECK(two.tiles() == 38 && two.binH == 48);
+        CHECK(two.room[0] >= two.binW * two.binH * 4 && two.room[1] >= two.binW * two.binH * 8 && two.base[0] + two.room[0] <= two.base[1]);
+    }
+    auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    auto u = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kRGBA16Float);
+    auto w = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kR32Float);
+    fillCoords(*t);
+    fillCoords(*u, 0x80000000u);
+    fillCoords(*w, 0x40000000u);
+    RenderPass a;
+    a.color0 = t.get();
+    a.more[0].texture = u.get();
+    a.more[0].load = LoadAction::kLoad;
+    a.more[1].texture = w.get();
+    a.more[1].load = LoadAction::kLoad;
+    uint32_t tilesBefore = 0;
+    auto frame = [&](std::initializer_list<const Program*> draws, uint32_t gmemOff) {
+        auto cb = r.queue->commandBuffer();
+        cb->setGmemMinDraws(1);   // (as the plug-in's 56: a pass's like known by its kind and place)
+        cb->setGmemOff(gmemOff);
+        for (const Program* p : draws) CHECK(cb->draw(*p, a, wholeDraw(3, 1125, 2436), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        const auto s = r.fake->stats();
+        CHECK_EQ(s.faults, 0u);
+        if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+        const uint32_t tiles = s.tiles - tilesBefore;
+        tilesBefore = s.tiles;
+        return std::make_pair(cb->counts(), tiles);
+    };
+    // the first time, no like: shared among all three (102 bins of 48 rows); then among the two it drew into (78 of 64)
+    auto [c1, tiles1] = frame({&mrt, &mrt}, 0);
+    auto [c2, tiles2] = frame({&mrt, &mrt}, 0);
+    CHECK(c1.gmemPasses == 1 && c2.gmemPasses == 1 && c2.passes == 1);
+    CHECK_EQ(tiles1, 102u);
+    CHECK_EQ(tiles2, 78u);
+    // ...as before with metal_gmem_off 65536
+    auto [c3, tiles3] = frame({&mrt, &mrt}, CommandBuffer::kGmemNoLikely);
+    CHECK_EQ(tiles3, 102u);
+    // a like that drew into the screen alone for a while (kLikelyTimes), then a draw into the second: the pass ends at it
+    for (uint32_t i = 0; i < CommandQueue::kLikelyTimes; i++) frame({&flat, &flat}, 0);
+    auto [c4, tiles4] = frame({&flat, &mrt, &mrt}, 0);
+    CHECK_EQ(c4.passes, 2u);
+    CHECK_EQ(c4.gmemPasses, 2u);
+    // ...and its like's next time has a bin for it: one pass
+    auto [c5, tiles5] = frame({&flat, &mrt, &mrt}, 0);
+    CHECK_EQ(c5.passes, 1u);
+    CHECK_EQ(tiles5, 78u);
+    CHECK_EQ(coordsWrong(*t), 0u);
+    CHECK_EQ(coordsWrong(*u, 0x80000000u), 0u);
+    CHECK_EQ(coordsWrong(*w, 0x40000000u), 0u);
+    (void)tiles4;
+}
+
 // A pass whose draws touch a corner is tiled over that corner alone: tri_flat at a 100 x 50 viewport at (300, 1000)
 // and another at (350, 1010) -- one tile, its loads and stores over the area's granules, the rest of the target left as
 // it was (here the coordinates throughout: the fake draws nothing, so a store anywhere puts back what was loaded).

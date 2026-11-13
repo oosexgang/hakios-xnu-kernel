@@ -382,6 +382,26 @@ void CommandQueue::noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws) {
     if (draws >= p.draws || ++p.below >= 16) p.draws = draws, p.below = 0;
 }
 
+uint32_t CommandQueue::likelyTouched(uint64_t kind, uint32_t ordinal) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = touched_.find(kindKey(kind, ordinal));
+    if (it == touched_.end() || it->second.times == 0) return ~0u;
+    uint32_t mask = 0;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (it->second.at[i] != 0 && it->second.times - it->second.at[i] < kLikelyTimes) mask |= 1u << i;
+    }
+    return mask;
+}
+
+void CommandQueue::noteTouched(uint64_t kind, uint32_t ordinal, uint32_t touched) {
+    std::lock_guard<std::mutex> g(lock_);
+    Touched& t = touched_[kindKey(kind, ordinal)];
+    t.times++;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if ((touched >> i) & 1) t.at[i] = t.times;
+    }
+}
+
 uint32_t CommandQueue::peakDraws(uint64_t kind, uint32_t ordinal) {
     std::lock_guard<std::mutex> g(lock_);
     auto it = peakDraws_.find(kindKey(kind, ordinal));
