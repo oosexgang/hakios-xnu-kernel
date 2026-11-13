@@ -288,6 +288,40 @@ def default_wallpaper():
         plistlib.dump(defaults, f)
 
 
+JB = os.environ.get('JB') or REPO + '/userland/jb/root/var/jb'
+# what Sileo moves, copies and removes files with as root, from /bin (userland/build.sh's SILEO_BIN)
+SILEO_BIN = ('chmod', 'cp', 'mkdir', 'mv', 'rm')
+
+
+def package_prefix():
+    """
+    The package manager's prefix, when userland/tools/mk-jb.sh has fetched one (JB=DIR for another, JB=0 for none):
+    the Procursus bootstrap with Sileo and ElleKit in it, as /jb, which init grafts onto /private/var/jb at every
+    boot (userland/userland/src/init.c; var_store leaves it out). Its applications are system applications here, in
+    /Applications, where LaunchServices finds them by itself; and /bin gets the five programs Sileo runs from
+    there as root, which iOS's /bin (df and ps) has not: without them every package Sileo downloaded stopped
+    short of apt's archives ("Unable to fetch some archives"), as on 16.5.
+    """
+    if os.environ.get('JB') == '0' or not os.path.isdir(JB):
+        return
+    import glob
+
+    dst = os.path.join(WORK, 'jb')
+    shutil.copytree(JB, dst, symlinks=True)
+    apps = []
+    for app in sorted(glob.glob(os.path.join(dst, 'Applications', '*.app'))):
+        shutil.copytree(app, os.path.join(WORK, 'Applications', os.path.basename(app)), symlinks=True)
+        apps.append(os.path.basename(app))
+    os.makedirs(os.path.join(WORK, 'bin'), exist_ok=True)
+    for name in SILEO_BIN:
+        link = os.path.join(WORK, 'bin', name)
+        if not os.path.lexists(link):
+            os.symlink('/var/jb/usr/bin/' + name, link)
+    files = sum(len(f) + len(d) for _, d, f in os.walk(dst))
+    print(f'mkimage26: the package manager\'s prefix as /jb ({files} entries), {", ".join(apps) or "no applications"} '
+          f'in /Applications, /bin/{{{",".join(SILEO_BIN)}}} into it')
+
+
 def angels_placed():
     """
     The names of the jobs that are launch angels (System/Library/LaunchAngels of the IPSW), which go back to that
@@ -402,6 +436,8 @@ def main():
         default_wallpaper()
     if PRUNE:
         trim_emoji()
+    if not minimal:
+        package_prefix()
     for name in sorted(os.listdir(CACHE)):
         if name.endswith(('.symbols', '.atlas')):
             continue

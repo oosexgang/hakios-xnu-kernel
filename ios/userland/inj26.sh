@@ -41,6 +41,11 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios-statusbar.dylib -framework
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
 $DYN -DHAKIOS_IOS27 -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$US/src/audio_plugin.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-app.dylib -lobjc -o "$O/libhakios-app.dylib" "$O/src/inject_app.c"
+# the tweak loader of the package manager's prefix (userland/src/inject_tweaks.c, as on 16.5): SpringBoard's library
+# opens it when there is a /var/jb (inject_sb.c, load_tweaks), and etc/inject.conf names it for Settings
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-tweaks.dylib" "$O/src/inject_tweaks.c"
+# ... and a tweak to check that path with (ios/userland/tweak_test.c: Settings, hooked through ElleKit)
+$DYN -dynamiclib -install_name /var/jb/usr/lib/TweakInject/hakios-tweaktest.dylib -lobjc -o "$O/hakios-tweaktest.dylib" "$RN/userland/tweak_test.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-console.dylib -o "$O/libhakios-console.dylib" "$RN/userland/console_log.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/userland/inject_poster.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/userland/inject_wallpaper.m"

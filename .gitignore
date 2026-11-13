@@ -23,6 +23,9 @@ ios/userland/obj27/
 !/devices/_template/
 !/devices/qemu-virt/
 
+# the package manager's prefix userland/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages
+/userland/jb/
+
 # a phone's own files, taken from it or built from its firmware (loader/mkboot.py, docs/porting.md): never published
 /firmware/
 

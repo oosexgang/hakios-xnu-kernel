@@ -90,6 +90,8 @@ if [ -d "$SEED" ] && [ -n "$(ls "$SEED"/*.stage 2> /dev/null)" ]; then
 	echo "  Metal: $(ls "$SEED"/*.stage | wc -l) compiled stages from an earlier boot ($(du -sh "$SEED" | cut -f1))"
 fi
 cp "$OBJ"/*.dylib "$T/lib/"
+# (the test tweak's filter beside it: a scenario copies both into /var/jb/usr/lib/TweakInject, ios/userland/tweak_test.c)
+cp "$RN/userland/tweak_test.plist" "$T/lib/hakios-tweaktest.plist"
 cp "$US/rc.launchd" "$T/etc/rc"
 # (init reads it back and looks for "Darwin" at its start: one of its checks)
 python3 -c "import plistlib, sys; m = plistlib.load(open(sys.argv[1], 'rb')); print('Darwin with iOS', m['ProductVersion'], m['ProductBuildVersion'], 'user space, HakiOS')" \
@@ -127,7 +129,11 @@ cat > "$T/etc/inject.conf" <<'CONF'
 /redwood/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
 /redwood/lib/libhakios-sb.dylib SpringBoard
 /redwood/lib/libhakios-statusbar.dylib @apps
+/redwood/lib/libhakios-tweaks.dylib Preferences
+/redwood/lib/libhakios-app.dylib Sileo
 CONF
+# (libhakios-tweaks: the package manager's tweaks, in Settings, where a tweak's own pane belongs; SpringBoard's
+# library opens it by itself. libhakios-app: what killed Sileo, the prefix's application. As on 16.5.)
 # WAITSTACK_SB=1: libhakios.dylib in SpringBoard as well, for its thread sampler (boot-arg waitstack=sb, inject.c)
 [ -z "${WAITSTACK_SB:-}" ] || echo "/redwood/lib/libhakios.dylib SpringBoard" >> "$T/etc/inject.conf"
 # the phone's own firmware, where it was taken from that phone (firmware/BOARD/fw/: the GPU's, the Wi-Fi
