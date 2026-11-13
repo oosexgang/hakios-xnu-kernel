@@ -61,7 +61,8 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 手机以设备包的形式与代码分开，存放在
 [`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上：该分支的 README 列出了各部手机及其进度，
 每个设备包自己的 README 说明在该手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭。本分支不描述任何手机；
-它包含 QEMU `virt` 板（`devices/qemu-virt/`），Darwin 16.5 一代可在其上运行，尚未适配当前内核。每个设备包都带有其芯片的
+它包含 QEMU `virt` 板（`devices/qemu-virt/`），当前内核可在其上启动到它自己的 shell，并在那里测试网络、磁盘、声音、
+输入、进程、线程、文件、IOKit 和屏幕（[docs/qemu.md](docs/qemu.md)）。每个设备包都带有其芯片的
 SoC 文件；目前的设备包涵盖 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
 
 ## 快速开始
