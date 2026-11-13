@@ -1029,10 +1029,25 @@ root_file(const char *name, uint64_t *size)
 
 static bool from_root;                  /* the image is in memory of ours (root_file()), to be given back once written */
 
-/* For the sound (hakios_sound.c): a file of /fw on the root, read whole into memory of ours, and given back. */
+/* For the sound (hakios_sound.c): a file of fw/ in the small image or of /fw on the root, in memory of ours, and given back. */
+extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 const uint8_t *
 hakios_adsp_fw_file(const char *name, uint64_t *size)
 {
+	/*
+	 * fw/ of the small image first, where iOS 26/27's boots have the phone's firmware (firmware/BOARD/fw/;
+	 * their system image has no /fw): a copy, so that the caller gives back what it was given either way
+	 * (hakios_adsp_fw_free()). Then the root's, as on 16.5.
+	 */
+	uint64_t found = 0;
+	const uint8_t *in_image = hakios_image_file("fw", name, &found, NULL);
+	uint8_t *copy;
+
+	if (in_image != NULL && found != 0 && (copy = kalloc_data(found, Z_WAITOK)) != NULL) {
+		memcpy(copy, in_image, found);
+		*size = found;
+		return copy;
+	}
 	return root_file(name, size);
 }
 
@@ -1046,7 +1061,6 @@ hakios_adsp_fw_free(const uint8_t *data, uint64_t size)
 
 /* A file of fw/ in the small image (ADSP=1 userland/build.sh puts fw-audio/ there), else of the board's firmware
  * directory on the root (above). */
-extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 static const uint8_t *
 image_file(const char *name, uint64_t *size)
 {
@@ -3205,6 +3219,7 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 		tell("adsp: THE AUDIO DSP IS UP AND LINKED, its audio services up (APR), %llu ms after the kernel began on it (the "
 		    "root's waited for included): node %u, %u services; it stays on\n", (now_us() - began) / 1000, qrtr_peer, services);
 		hakios_sound_dsp_up();         /* (boot-arg sound=N: the speakers' path, hakios_sound.c) */
+		hakios_mic_dsp_up();           /* (boot-arg mic=N: the microphones' path, hakios_mic.c) */
 		battmgr_start();                /* (how the battery is, from the DSP; battmgr=0: not asked) */
 	} else {
 		tell("adsp: THE AUDIO DSP DID NOT COME UP: step %u failed (%s); see the kernel's own log for the steps\n", step + 1,

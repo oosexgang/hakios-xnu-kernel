@@ -1377,8 +1377,8 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	if (level >= 3) {
 		acf = hakios_adsp_fw_file("aw882xx_acf.bin", &acf_size);
 		if (acf == NULL) {
-			say("sound: no /fw/aw882xx_acf.bin: put the phone's /vendor/etc/aw882xx_acf.bin into fw-audio/ and run SYSTEM=1 "
-			    "userland/build.sh\n");
+			say("sound: no aw882xx_acf.bin in fw/ of the small image nor /fw of the root: put the phone's "
+			    "/vendor/firmware/aw882xx_acf.bin into firmware/BOARD/fw/ (iOS 26/27) or fw-audio/ (16.5)\n");
 			goto out;
 		}
 	}
