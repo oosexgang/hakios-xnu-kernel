@@ -96,7 +96,7 @@ kernel/build.sh
 
 ```sh
 make kernel-check                                      # ядро инструментами LLVM (THEOS не нужен)
-make qemu                                              # загрузка в QEMU и все проверки (workbench/qemu_boot_test.sh)
+make qemu                                              # загрузка в QEMU, проверки из оболочки и собственные тесты XNU (kernPOST=1)
 tools/qemu-root.sh root.img                            # корень из программ этого репозитория
 tools/qemu-kernel.sh --cpus 2 --ramdisk root.img --boot-args rd=md0 --until 'a shell on the console' \
     --type 'help\nioreg 3\nthreads\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
