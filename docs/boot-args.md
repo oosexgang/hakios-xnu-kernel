@@ -217,7 +217,7 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `adsp` | Once everything is up with adsp=1, the sound's path takes over (board/sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
 | `adsp_apr_wait` | — |
-| `adsp_listen` | Down for adsp_listen seconds (default 3) |
+| `adsp_listen` | adsp_listen=N: for how many seconds (default 3) the services the DSP tells of are written down |
 | `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
 | `adsp_pause` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
 | `adsp_step` | adsp_step=N performs steps 1 to N and stops; as with wifi_step, a step says what it is about to touch before it touches it, and a step that does not find what it needs ends the sequence. adsp=1 is all of them, on a thread beside the system's start. |
@@ -372,7 +372,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_subtree` | apfs_subtree=/usr walk only that part of the volume |
 | `apfs_threads` | apfs_threads=N how many, for mode 5 (default 4) |
 | `apfs_volume` | apfs_volume=ufs_darwin is the Darwin root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
-| `apfs_volume_at` | Nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/Darwin, which the system image has for it (userland/build.sh) -- right here, after the root and devfs and before launchd, so that all of user space sees it from the start. apfs_volume=ufs_darwin is the Darwin root container on the phone'… |
+| `apfs_volume_at` | apfs_volume_at=DIR: where apfs_volume is mounted (default /System/Volumes/Darwin) |
 | `apfs_walkers` | apfs_walkers=N: one of N walkers; a subdirectory is left on the shared stack (par_push) |
 | `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
 | `apfs_write_byte` | apfs_write_byte=N what to fill them with (default 0xa5) |

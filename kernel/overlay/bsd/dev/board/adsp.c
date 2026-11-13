@@ -2732,6 +2732,7 @@ step_qrtr(void)
 	if (!glink.channel[CHANNEL_QRTR].open) {
 		return false;
 	}
+	/* boot-arg adsp_listen=N: for how many seconds (default 3) the services the DSP tells of are written down */
 	PE_parse_boot_argn("adsp_listen", &listen_seconds, sizeof(listen_seconds));
 	announce("listen to QRTR on the channel: the DSP's hello (answered from the link's thread), and the services it tells of");
 	for (unsigned ms = 0; ms < listen_seconds * 1000; ms++) {
