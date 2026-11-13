@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 32 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 18 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -149,7 +149,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `battery` | — |
+| `battery` | The battery, as the phone's resident UEFI reports it (feature battery-uefi). |
 | `battery_shared_pa` | — |
 
 ### `bsd/dev/board/bench.c`
@@ -217,7 +217,7 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `adsp` | Once everything is up with adsp=1, the sound's path takes over (board/sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
 | `adsp_apr_wait` | — |
-| `adsp_listen` | — |
+| `adsp_listen` | Down for adsp_listen seconds (default 3) |
 | `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
 | `adsp_pause` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
 | `adsp_step` | adsp_step=N performs steps 1 to N and stops; as with wifi_step, a step says what it is about to touch before it touches it, and a step that does not find what it needs ends the sequence. adsp=1 is all of them, on a thread beside the system's start. |
@@ -239,10 +239,10 @@ beside the code, so the file named in each heading has the full explanation.
 | `cam` | sensors, modes and frame headers are cam=5's, from the same tables in fw/, but nothing of the phone is touched: the frames are a colour chart made here -- eight bars (white, beige, red, yellow, green, cyan, blue, 18 % grey) over a grey ramp -- in RAW10 in the sensor's own Bayer order, as bright as t… |
 | `cam_after` | — |
 | `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/hakios-camera without the phone's camera. |
-| `cam_fake_fps` | — |
+| `cam_fake_fps` | cam_fake_fps: frames a second (default 5: QEMU's processor is slow). |
 | `cam_frames` | — |
 | `cam_gain` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
-| `cam_keep_mb` | — |
+| `cam_keep_mb` | Memory in one piece for the host (cam_keep_mb, default 24: a 12-megapixel NV12 picture of cam=5, or two frames of cam=3 and cam=4 up to 12 MB each), taken now, while the system's memory still is in large pieces. |
 | `cam_mode` | table ("resN": boot-arg cam_mode=N, or the mode with the fewest pixels: the macro's 1600x1200 RAW10 on one lane at 665.6 Mbit/s, 30 frames a second; the wide one's 1920x1080 RAW10 on three C-PHY trios at 3.11 Gbit/s each, 120 frames a second); the sensor's CSIPHY, CSID-lite 0's RX from that PHY and… |
 | `cam_pattern` | The OV02B10's own colour bars (cam_pattern=1) are still taken for GBRG, as before: the module file says nothing of them. |
 | `cam_sensor` | cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra"); without it, the board's test-sensor, and for cam=5 its darwin-sensor (the back camera; darwin-front, the front one). |
@@ -265,7 +265,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `mic_adc` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
 | `mic_input` | mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) |
 | `mic_main` | clipped tone at about the bus clock / 560, whatever the microphone hears (mic_main=1 shows it). |
-| `mic_secs` | — |
+| `mic_secs` | The main microphone listened to for mic_secs seconds (default 10, at most 600) the way Android records from it: the codec set up as wcd938x_bind() and wcd938x_init_reg() set it up (its interrupts as edges, the mic biases' 2750 mV, its bias and sleep registers); the DSP's side (a stream read through… |
 | `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's 175.5 Hz in the samples) |
 | `mic_test` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
 
@@ -275,10 +275,10 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `sound` | unless boot-arg sound=N asks for it, with adsp=1 (board/adsp.c), which starts the DSP and calls hakios_sound_dsp_up() once its audio services are up. |
 | `sound_below` | and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
-| `sound_gain` | — |
+| `sound_gain` | sound_gain eighths of a dB of gain (default and most 96, 12 dB: Darwin's own processing keeps its top that far under full scale), a high-pass filter, three averages of the power at the speakers and a peak limiter. sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under… |
 | `sound_guard_as` | sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under Android's level (louder than they are) and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
 | `sound_pause` | — |
-| `sound_secs` | — |
+| `sound_secs` | Held for sound_secs (default 3), then everything stopped and put back |
 
 ### `bsd/dev/board/speaker.c`
 
@@ -291,8 +291,8 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `torch` | What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours w… |
-| `torch_max_s` | — |
-| `torch_secs` | — |
+| `torch_max_s` | The light on for torch_max_s at a time at most (default 30, never more than 120), after which it stays off until it is asked for anew (0, then more); while it is on, ten times a second, the module's fault and over-temperature flags, the PMIC's temperature alarm and the battery's temperature (at most… |
+| `torch_secs` | The light on once at Android's torch current for torch_secs (default 2), then off, every write read back |
 
 ### `bsd/dev/board/virtio_sound.c`
 
@@ -358,7 +358,7 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `apfs_check` | apfs_check=7 the one mode that writes: replace bytes inside a file of the container on apfs_dev where they lie, with the kernel's own bsd/miscfs/apfs/apfs_write.c, and read them back out of a container opened again from nothing (apfs_write_check below) |
-| `apfs_chunk` | — |
+| `apfs_chunk` | How much each read asks for: 64 KB, one compressed piece, unless boot-arg apfs_chunk says otherwise (up to 4 MB) -- a bigger read is one request whose pieces the driver can decompress on several processors at once. |
 | `apfs_contents` | apfs_contents=0: no file is read at all, only looked up and stat'ed -- how long the walk itself takes, the directories and the inodes. |
 | `apfs_depth` | apfs_depth=N go no deeper than N levels below where the walk starts (1 = only the entries of that directory; 0 = no limit). |
 | `apfs_dev` | apfs_dev=md1 the store volume (default rvblk0); its name must be HakiosStore |
@@ -372,7 +372,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_subtree` | apfs_subtree=/usr walk only that part of the volume |
 | `apfs_threads` | apfs_threads=N how many, for mode 5 (default 4) |
 | `apfs_volume` | apfs_volume=ufs_darwin is the Darwin root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
-| `apfs_volume_at` | — |
+| `apfs_volume_at` | Nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/Darwin, which the system image has for it (userland/build.sh) -- right here, after the root and devfs and before launchd, so that all of user space sees it from the start. apfs_volume=ufs_darwin is the Darwin root container on the phone'… |
 | `apfs_walkers` | apfs_walkers=N: one of N walkers; a subdirectory is left on the shared stack (par_push) |
 | `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
 | `apfs_write_byte` | apfs_write_byte=N what to fill them with (default 0xa5) |
@@ -456,7 +456,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `exec_log` | exec_log=NAME: the whole path each program of that file name is started from (which binary runs) |
 | `exec_swap` | exec_swap=NAME:PATH: a program of that file name is run from PATH instead -- for a job whose definition is on the system image (BlueTool: Apple's knows no Qualcomm chip, "result 10", run w83o2; ours, /hakios/bin/bluetool, answers for the chip the kernel brought up) |
 | `inject_print` | inject_print=1: and dyld says what it loads (does it take our library?) |
-| `systrace` | — |
+| `systrace` | Bring-up aid: with boot-arg systrace set, say which stage of an exec refused the image. |
 | `xpcproxy_idversion` | xpcproxy_idversion=1: a new version, as XNU. |
 
 ### `bsd/kern/kern_minimac.c`
@@ -507,13 +507,13 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `hakios_prof` | A sampling profiler for one process (boot-arg hakios_prof=NAME, e.g. backboardd): about 1000 times a second each other CPU running a thread of that process is interrupted (cpu_xcall) and the PC it was at is counted -- the user PC, or the kernel PC when the thread was in the kernel. |
-| `hakios_prof_secs` | — |
+| `hakios_prof_secs` | Every hakios_prof_secs (default 10) the log gets the 60 commonest PCs ("dprof: PC count", user ones first marked u, kernel ones k) and the process's images outside the shared cache with their load addresses and the cache's slide, so the PCs can be named on the host (ipsw dyld a2s for the cache, nm f… |
 
 ### `osfmk/arm64/user_exception_trace.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `systrace` | — |
+| `systrace` | Bring-up aid: with boot-arg systrace set, describe every fatal-looking exception a user thread takes, before it is delivered. |
 | `ustacks` | ustacks=NAME ustacks_at=SECONDS [ustacks_ms=MILLISECONDS]: that long after boot (and then periodically) print where every thread of every process called NAME is -- pc, lr and the return addresses up the stack. |
 | `ustacks_at` | ustacks=NAME ustacks_at=SECONDS [ustacks_ms=MILLISECONDS]: that long after boot (and then periodically) print where every thread of every process called NAME is -- pc, lr and the return addresses up the stack. |
 | `ustacks_count` | ustacks_count=N: so many times, then no more (0: for ever) |

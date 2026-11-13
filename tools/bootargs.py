@@ -35,37 +35,56 @@ def comment_lines(text):
     return lines
 
 
+def sentence(name, lines, index, rows_end=False):
+    """The sentence of comment line `index` (with the lines that carry on its entry) that names `name`;
+    `rows_end`: a row of a table of levels ("11  talks APR") is another entry, not more of this one."""
+    line = lines[index]
+    indent = len(line) - len(line.lstrip())
+    text = line.strip()
+    for more in lines[index + 1:index + 6]:
+        if more.strip() == '' or re.match(r'\s*[A-Za-z0-9_]+=\S', more) or rows_end and re.match(r'\s*\d+\s{2,}\S', more):
+            break
+        # a table of arguments: its continuation lines are indented further than the entry itself
+        if re.match(r'^\s*' + re.escape(name) + r'=\S*\s{2,}', line) and len(more) - len(more.lstrip()) <= indent:
+            break
+        text += ' ' + more.strip()
+    text = re.sub(r'\s+', ' ', text)
+    # the sentence that names the argument, and no more
+    start = text.find(name)
+    before = max(text.rfind('. ', 0, start), text.rfind('): ', 0, start))
+    text = text[before + 2 if before >= 0 else 0:].lstrip(': ')
+    end = re.search(r'[.;](?= [A-Z(]|$)', text[text.find(name):])
+    if end:
+        text = text[:text.find(name) + end.end()]
+    return re.sub(r'^\(?[Bb]oot-args? ', '', text).strip()
+
+
 def describe(name, lines):
     """What a comment says of `name=`: from the line that names it to the end of that entry -- the next
-    blank line, the next line that starts another argument, or the end of the sentence."""
+    blank line, the next line that starts another argument, or the end of the sentence. With no `name=`
+    anywhere, the first sentence that names the argument at all ("held for sound_secs (default 3)")."""
     named = re.compile(r'(?<![\w-])' + re.escape(name) + r'(?:=|\b(?= *(?:\[|:|and\b|,)))')
     best = ''
     for index, line in enumerate(lines):
         match = named.search(line)
         if match is None or '=' not in line[match.start():match.start() + len(name) + 1] and 'oot-arg' not in line:
             continue
-        indent = len(line) - len(line.lstrip())
-        text = line.strip()
-        for more in lines[index + 1:index + 6]:
-            if more.strip() == '' or re.match(r'\s*[A-Za-z0-9_]+=\S', more):
-                break
-            # a table of arguments: its continuation lines are indented further than the entry itself
-            if re.match(r'^\s*' + re.escape(name) + r'=\S*\s{2,}', line) and len(more) - len(more.lstrip()) <= indent:
-                break
-            text += ' ' + more.strip()
-        text = re.sub(r'\s+', ' ', text)
-        # the sentence that names the argument, and no more
-        start = text.find(name)
-        before = max(text.rfind('. ', 0, start), text.rfind('): ', 0, start))
-        text = text[before + 2 if before >= 0 else 0:].lstrip(': ')
-        end = re.search(r'[.;](?= [A-Z(]|$)', text[text.find(name):])
-        if end:
-            text = text[:text.find(name) + end.end()]
-        text = re.sub(r'^\(?[Bb]oot-args? ', '', text).strip()
+        text = sentence(name, lines, index)
         if len(text) > len(best) and len(text) > len(name) + 4:
             best = text
             if 'oot-arg' in line:
                 break                   # (a comment written to say what the argument is wins)
+    if not best:
+        mentioned = re.compile(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])')
+        for index, line in enumerate(lines):
+            if mentioned.search(line):
+                text = sentence(name, lines, index, rows_end=True)
+                # (from the clause that names it: not "looked at; held for ...", nor "and the main ...")
+                cut = text.rfind('; ', 0, text.find(name))
+                text = re.sub(r'^(?:\.\.\. |and |or |then )+', '', text[cut + 2 if cut >= 0 else 0:])
+                if len(text) > len(name) + 4:
+                    best = text if text.startswith(name) else text[0].upper() + text[1:]
+                    break
     return best[:300].rstrip() + ('…' if len(best) > 300 else '')
 
 
