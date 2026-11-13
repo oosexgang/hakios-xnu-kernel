@@ -5054,9 +5054,10 @@ int main(int argc, char** argv) {
                         // UBWC render targets (what metal_ubwc_rt=1 makes of CoreAnimation's offscreen ones). The screen's
                         // coordinates (gt's pattern) copied by the 2D engine into a compressed BGRA8 1125x2436 target and into
                         // a linear one; over each the five blended triangles of 3g in GMEM (every tile loaded from the target
-                        // and stored back through its flag buffer) and in sysmem (the RB writing it compressed), and a Clear
-                        // and one triangle in the tiles and by the 2D engine's fill; each result copied out into linear rows.
-                        // Compressed and linear must agree byte for byte in all four, and the twin -- the compressed GMEM pass
+                        // and stored back through its flag buffer), binned as CoreAnimation's passes are (metal_gmem_binning=1)
+                        // and not, and in sysmem (the RB writing it compressed), and a Clear and one triangle in the tiles and
+                        // by the 2D engine's fill; each result copied out into linear rows.
+                        // Compressed and linear must agree byte for byte in all five, and the twin -- the compressed GMEM pass
                         // without its loads -- must not (else agreeing says nothing of the loads). Then what it saves: the
                         // eight full-screen source-over draws of 3g into each, in GMEM and in sysmem, by the GPU's counter.
                         {
@@ -5073,14 +5074,16 @@ int main(int argc, char** argv) {
                             } else {
                                 const render::BlitRect all{0, 0, 1125, 2436};
                                 // KIND 0 the triangles in GMEM, 1 in sysmem, 2 a Clear and a triangle in the tiles, 3 the same
-                                // in sysmem, 4 the GMEM triangles without their loads; what came out, copied into outT
+                                // in sysmem, 4 the triangles in GMEM binned, 5 in GMEM without their loads; what came out,
+                                // copied into outT
                                 auto scene = [&](Texture& t, int kind) -> std::vector<uint8_t> {
                                     pattern();
                                     fillBo(*outT, 0xcdcdcdcdu);
-                                    const bool gm = kind == 0 || kind == 2 || kind == 4;
+                                    const bool gm = kind != 1 && kind != 3;
                                     render::Options o;
                                     o.gmem = gm;
-                                    o.gmemLoad = kind != 4;
+                                    o.gmemLoad = kind != 5;
+                                    o.gmemBinning = kind == 4;
                                     auto c = queue->commandBuffer();
                                     c->setGmem(gm);
                                     bool ok = c->blit(*gt, 0, all, t, 0, all, false);
@@ -5107,16 +5110,17 @@ int main(int argc, char** argv) {
                                     }
                                     return textureBo(*outT);
                                 };
-                                static const char* const kScene[4] = {"triangles in GMEM", "triangles in sysmem", "a Clear in the tiles", "a Clear by the fill"};
+                                static const char* const kScene[5] = {"triangles in GMEM", "triangles in sysmem", "a Clear in the tiles", "a Clear by the fill",
+                                                                      "triangles in GMEM binned"};
                                 std::string line = "UBWC render target, BGRA8 1125x2436, pixels differing from linear:";
                                 bool agree = true;
-                                for (int kind = 0; kind < 4; kind++) {
+                                for (int kind = 0; kind < 5; kind++) {
                                     const std::vector<uint8_t> a = scene(*lin, kind), b = scene(*comp, kind);
                                     const uint64_t n = !a.empty() && !b.empty() ? pixelsDiffer(a, b) : ~0ull;
                                     agree = agree && n == 0;
                                     line += std::string(kind ? "," : "") + " " + kScene[kind] + " " + (n == ~0ull ? std::string("(not run)") : std::to_string(n));
                                 }
-                                const std::vector<uint8_t> a0 = scene(*lin, 0), twin = scene(*comp, 4);
+                                const std::vector<uint8_t> a0 = scene(*lin, 0), twin = scene(*comp, 5);
                                 const uint64_t twinOff = !a0.empty() && !twin.empty() ? pixelsDiffer(a0, twin) : 0;
                                 line += "; the twin without loads " + std::to_string(twinOff) + " (must not be 0)";
                                 report(agree && twinOff != 0, line + (rwhy.empty() ? std::string() : " (" + rwhy + ")"));

@@ -148,11 +148,12 @@ TEST(a_compressed_target_gives_back_through_copies_what_was_copied_in) {
 }
 
 // A GMEM pass over a compressed attachment loads each tile from the UBWC image and stores it back (the event blit told
-// the layout and the flag buffer): what was copied in comes out after two draws the fake does not rasterize. Its twin,
-// the same pass without its loads (gmemLoad off), stores what GMEM held instead, and every pixel is wrong
+// the layout and the flag buffer): what was copied in comes out after two draws the fake does not rasterize -- binned
+// too (the binning pass first, each tile given its streams), as the phone runs CoreAnimation's passes. Its twin, the
+// same pass without its loads (gmemLoad off), stores what GMEM held instead, and every pixel is wrong
 TEST(a_gmem_pass_loads_and_stores_a_compressed_attachment) {
     for (const PixelFormat f : {PixelFormat::kRGBA8Unorm, PixelFormat::kBGRA8Unorm}) {
-        for (const auto& [w, h] : {std::pair<uint32_t, uint32_t>{301, 70}, {832, 1792}}) {
+        for (const auto& [w, h, binned] : {std::tuple<uint32_t, uint32_t, bool>{301, 70, false}, {832, 1792, false}, {832, 1792, true}}) {
             for (int loads = 1; loads >= 0; loads--) {
                 Rig r;
                 std::string why;
@@ -171,6 +172,7 @@ TEST(a_gmem_pass_loads_and_stores_a_compressed_attachment) {
                 CHECK(render::gmemPlan(pass, &plan, &why));
                 render::Options o;
                 o.gmemLoad = loads != 0;
+                o.gmemBinning = binned;
                 auto cb = r.queue->commandBuffer();
                 CHECK(cb->blit(*a, 0, whole(*a), *c, 0, whole(*c), false));
                 CHECK(cb->draw(flatProgram(), pass, wholeDraw(3, w, h), Bindings{}, Bindings{}, o));
@@ -181,6 +183,7 @@ TEST(a_gmem_pass_loads_and_stores_a_compressed_attachment) {
                 CHECK_EQ(s.faults, 0u);
                 lastFault(r);
                 CHECK_EQ(cb->counts().gmemPasses, 1u);
+                CHECK_EQ(cb->counts().binnedPasses, binned ? 1u : 0u);
                 CHECK_EQ(s.ubwcLoads, loads ? plan.tiles() : 0u);
                 CHECK_EQ(s.ubwcStores, plan.tiles());
                 CHECK_EQ(s.ubwcDraws, 2 * plan.tiles());
