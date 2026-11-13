@@ -11,6 +11,7 @@ first lines; `make` lists the common ones.
 | `device.py` | Device packages: brings a phone's package into the checkout from the `devices` branch or a directory (`add`), lists what there is (`available`, `list`), takes one out (`remove`), sends one made here to where packages are kept (`export`). |
 | `qemu-kernel.sh KERNEL` | Boots a kernel of this repository in QEMU's `virt` machine through the loader, as a phone boots it, and keeps what it says on the serial port and, with `--screen FILE`, a picture of its screen. Stops when the kernel waits for its root or panics. |
 | `qemu-root.sh OUT.img` | A root for the kernel in QEMU made of nothing of Apple's: an APFS image with `/dev` and `/sbin/launchd`, which is `qemu-init.c` built as a static program. The kernel runs it as its first process; it says what the kernel says of itself. |
+| `analyze-userland.sh [--why]` | clang's static analyzer on the Darwin side's libraries and programs (`userland/userland/src`, `darwin/userland`) against the SDK; what it finds is listed for a person to judge. The kernel's side is `kernel/syntax-check.sh --analyze [--why]`. |
 | `bootargs.py` | Finds every boot argument the kernel reads, with the comment that describes it, and writes `docs/boot-args.md` (`--write`; `--check` says whether it is current). |
 | `components.py` | Checks that `components` pins what the fetching scripts pin. |
 | `check-links.py` | Checks that every link and every repository path in the documentation points at something. |

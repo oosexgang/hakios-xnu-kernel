@@ -19,6 +19,7 @@ help:
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"
 	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
+	@echo "make analyze-userland the same analyzer on the Darwin side's libraries and programs (DARWIN_SDK=DIR)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
 	@echo "make qemu           boot the built kernel in QEMU to its first process (KERNEL=FILE; workbench/qemu_boot_test.sh)"
@@ -71,6 +72,10 @@ syntax-kernel:
 .PHONY: analyze-kernel
 analyze-kernel:
 	kernel/syntax-check.sh --analyze $(if $(TREE),--tree $(TREE))
+
+.PHONY: analyze-userland
+analyze-userland:
+	tools/analyze-userland.sh
 
 .PHONY: kernel
 kernel:
