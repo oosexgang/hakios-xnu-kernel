@@ -300,6 +300,11 @@ Not changed:
 
 Not yet verified ([docs/building.md](docs/building.md) has the table):
 
+- **The Mesa builds and `libhakios26` without Apple's platform word.** Meson's cross files say no
+  subsystem, and `libhakios26` links without the framebuffer framework's stub, its five calls left to
+  be found in backboardd (`-Wl,-U`). Neither has been built on a Mac nor run on a phone since; if the
+  build or the display's swap fails, the commit "To try on a Mac: the Mesa builds and libhakios26
+  without Apple's platform word" is the one to revert.
 - **A build with Apple's toolchain and a boot have not been repeated since the restructuring.** They were
   last done by the team before it; `make kernel-check` compiles and links the kernel with LLVM's tools
   after every change, which is a check and not a kernel to boot. Renoir's boot to the home screen was verified on the phone on 2026-11-10.
