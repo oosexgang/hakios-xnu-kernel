@@ -54,6 +54,7 @@ line at a time:
 | `input [COUNT]` | What the touch screen and the buttons say (`/dev/hakios-touch`), as the kernel's input path hands it on. |
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
+| `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -65,7 +66,8 @@ gateway answers its pings, and its TCP serves this machine a page through a forw
 APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
-shell runs as its child and is waited for; the kernel's message buffer is read; nothing panics.
+shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
+port and come back unchanged; nothing panics.
 
 ## What it is not
 

@@ -2,10 +2,11 @@
 # The kernel booted in QEMU as a phone boots it, to its first process: the loader under a real UEFI, the
 # kernel's own start on two processors, the emulator's board found, its virtio network card and input
 # devices taken, the root mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's),
-# and /sbin/launchd run, which says what the kernel says of itself, answers on the console, pings QEMU's
-# gateway, serves this machine a page over TCP, reads a second disk on the virtio block device, and plays
-# a tone through the virtio sound device (which QEMU writes to a WAV file), and reads a button and a touch
-# that QEMU's keyboard and tablet make, starts a process and waits for it, and reads the kernel's messages.
+# and /sbin/launchd run. Its shell then answers on the console with the kernel's values; pings QEMU's
+# gateway and serves this machine a page over TCP; reads a second disk on the virtio block device; plays a
+# tone on the virtio sound device (QEMU writes it to a WAV file); reads a button and a touch from QEMU's
+# keyboard and tablet; starts a process and waits for it; reads the kernel's messages; and sends itself
+# Mach messages.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -33,7 +34,7 @@ mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
 python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
-	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\ntone 440 1\ninput 4\nrun /sbin/launchd ps\ndmesg 3\n' \
+	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\ntone 440 1\ninput 4\nrun /sbin/launchd ps\ndmesg 3\nmach 200\n' \
 	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25" \
 	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
@@ -63,6 +64,7 @@ check "... and a touch on the virtio tablet, where it was made" grep -aq "touch 
 check "it starts a process of its own (posix_spawn), which runs as its child" grep -aqE "^ +[0-9]+ +1 +0  launchd" "$log"
 check "... and waits for it to end, as it ended" grep -aqE "^run: pid [0-9]+ exited with 0" "$log"
 check "the kernel's message buffer is read (dmesg)" bash -c "tr -d '\\r' < '$log' | sed -n '/^# dmesg/,\$p' | grep -qE '^\\[ *[0-9]+\\.[0-9]+\\]: '"
+check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
