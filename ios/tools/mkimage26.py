@@ -322,6 +322,29 @@ def package_prefix():
           f'in /Applications, /bin/{{{",".join(SILEO_BIN)}}} into it')
 
 
+def modem_firmware():
+    """
+    MODEM_FW=DIR: the phone's modem firmware as /fw of the image, where the modem driver (boot-arg modem=1,
+    kernel/overlay/bsd/dev/hakios_mpss.c) reads it: DIR/image is the phone's /vendor/firmware_mnt/image (with
+    /vendor/firmware's yupik_ipa_fws.* put in it), served to the modem over TFTP as /fw/image, and the modem's own
+    image, modem.mdt and its segments, is /fw/modem.* as well (85 MB: too much for the small image). The phone's
+    own files (firmware/BOARD/, never published).
+    """
+    src = os.environ.get('MODEM_FW')
+    if not src:
+        return
+    image = os.path.join(src, 'image')
+    if not os.path.isfile(os.path.join(image, 'modem.mdt')):
+        raise SystemExit(f'mkimage26: MODEM_FW={src} has no image/modem.mdt (the phone\'s /vendor/firmware_mnt/image)')
+    dst = os.path.join(WORK, 'fw')
+    shutil.copytree(image, os.path.join(dst, 'image'))
+    for name in sorted(os.listdir(image)):
+        if name.startswith('modem.'):
+            shutil.copy2(os.path.join(image, name), os.path.join(dst, name))
+    size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(dst) for f in fs)
+    print(f'mkimage26: the modem\'s firmware as /fw ({size / 1e6:.0f} MB)')
+
+
 def angels_placed():
     """
     The names of the jobs that are launch angels (System/Library/LaunchAngels of the IPSW), which go back to that
@@ -438,6 +461,7 @@ def main():
         trim_emoji()
     if not minimal:
         package_prefix()
+        modem_firmware()
     for name in sorted(os.listdir(CACHE)):
         if name.endswith(('.symbols', '.atlas')):
             continue
