@@ -52,7 +52,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     `wifi-stream`, `camera-stream` (the SMMU streams the parts' DMA comes in on), `lpass { }`
     `swr-tx-pins` and `swr-tx-slew` (the microphones' SoundWire pins), `camera { }` (the camera's blocks,
     and where its clock controller has the power domain, the PLLs and each clock the driver switches:
-    the MCLKs and the CSI receivers' clocks one each, as many as the SoC has).
+    the MCLKs and the CSI receivers' clocks one each, as many as the SoC has; how the PLLs are configured,
+    and which RCG source each output is: the driver works the dividers out of them).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
   `board.dts`, `soc.dtsi` and README on the `devices` branch. `tools/device.py`
@@ -296,8 +297,8 @@ Not changed:
 
 - Sound, microphones, camera and Wi-Fi are still written for the first phone's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
-  wired are board data now, and so is where the camera's clocks are; how each part is spoken to is not, nor
-  how the camera's PLLs are set up and its clocks divided. They are the largest share of the work on a new phone.
+  wired are board data now, and so are the camera's clocks and PLL configurations; how each part is spoken
+  to is not, nor the kind of PLL the camera's clock controller has (Lucid, Zonda). They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
 - The first phone has not been booted with Darwin 26/27. The emulator's board is not set up for this kernel.

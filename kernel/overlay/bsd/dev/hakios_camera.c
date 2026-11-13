@@ -694,11 +694,12 @@ static uint32_t found_mclk_cfg_rcgr, found_mclk_cbcr, found_gdscr, found_mclk_mn
 static bool gdsc_switched, mclk_switched, pll2_switched;
 
 /*
- * camcc's PLL2 (Zonda), for the 24 MHz MCLK the ultra-wide sensor's module file asks for (where it is: the
- * SoC file's camera { } pll2): camcc-yupik.c's cam_cc_pll2_config ("1440MHz Configuration"), set as clk_zonda_pll_configure()
- * and started as clk_zonda_pll_enable() do it; the MCLK RCG takes its early output (source 5)
- * divided by 10 and by M/N 1/6 (ftbl_cam_cc_mclk0_clk_src's 24 MHz). Taken down as
- * clk_zonda_pll_disable() does, with the MCLK.
+ * camcc's PLL2 (Zonda), for the 24 MHz MCLK the ultra-wide sensor's module file asks for. Where it is and
+ * how it is configured are the SoC file's camera { } (pll2, pll2-config: camcc-CODENAME.c's cam_cc_pll2_config;
+ * on an SM7325 its "1440MHz Configuration"); it is set as clk_zonda_pll_configure() and started as
+ * clk_zonda_pll_enable() do it. The MCLK RCG takes its early output (camera { } pll2-source) divided by 10 and
+ * by M/N 1/n, n what makes 24 MHz of the PLL's rate (6 of 1440 MHz: ftbl_cam_cc_mclk0_clk_src's 24 MHz).
+ * Taken down as clk_zonda_pll_disable() does, with the MCLK.
  */
 #define PLL2_BASE               (CAMERA.pll2)
 #define PLL2_MODE               0x00            /* [0] outputs, [1] out of bypass, [2] out of reset, [20] voted, [29] frequency locked, [31] locked */
@@ -710,6 +711,27 @@ static bool gdsc_switched, mclk_switched, pll2_switched;
 #define PLL2_TEST_CTL           0x1c            /* [16] stays in CFA (then the frequency lock is what to wait for) */
 #define PLL2_OPMODE             0x28            /* 0 standby, 1 run */
 #define PLL2_STATUS             0x38
+#define XO_KHZ                  19200           /* the crystal the PLLs multiply */
+
+/* PLL2's rate: L times the crystal (a Zonda PLL here has no fraction) */
+static uint32_t
+pll2_khz(void)
+{
+	return CAMERA.pll2_config[0] * XO_KHZ;
+}
+
+/* n of the M/N 1/n that makes a 24 MHz MCLK of PLL2 after a divider of 10; 0 (and said why) when none does */
+static uint32_t
+mclk_24mhz_n(void)
+{
+	uint32_t n = pll2_khz() / 10 / 24000;
+
+	if (n < 2 || n > 255 || n * 10 * 24000 != pll2_khz()) {
+		say("camera: PLL2 at %u kHz (the SoC file's pll2-config) makes no 24 MHz by 10 and a whole 1/n\n", pll2_khz());
+		return 0;
+	}
+	return n;
+}
 
 static void
 show_clocks(void)
@@ -796,9 +818,11 @@ pll2_up(void)
 	}
 	pll2_switched = true;
 	/* clk_zonda_pll_configure() */
-	if (!camcc_put(PLL2_BASE + PLL2_L_VAL, 0x4b, ~0u) || !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL, 0x08200800, ~0u) ||
-	    !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL_U, 0x05022011, ~0u) || !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL_U1, 0x08000000, ~0u) ||
-	    !camcc_put(PLL2_BASE + PLL2_USER_CTL, 0x00000301, ~0u) ||
+	const uint32_t *config = CAMERA.pll2_config;      /* L, config, config_u, config_u1, user */
+
+	if (!camcc_put(PLL2_BASE + PLL2_L_VAL, config[0], ~0u) || !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL, config[1], ~0u) ||
+	    !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL_U, config[2], ~0u) || !camcc_put(PLL2_BASE + PLL2_CONFIG_CTL_U1, config[3], ~0u) ||
+	    !camcc_put(PLL2_BASE + PLL2_USER_CTL, config[4], ~0u) ||
 	    !camcc_put(PLL2_BASE + PLL2_MODE, rd(camcc + PLL2_BASE + PLL2_MODE) & ~2u, 2) ||
 	    !camcc_put(PLL2_BASE + PLL2_MODE, rd(camcc + PLL2_BASE + PLL2_MODE) & ~1u, 1) ||
 	    !camcc_put(PLL2_BASE + PLL2_OPMODE, 0, 1) ||
@@ -824,7 +848,7 @@ pll2_up(void)
 	    !camcc_put(PLL2_BASE + PLL2_MODE, rd(camcc + PLL2_BASE + PLL2_MODE) | 1u, 1)) {
 		return false;
 	}
-	say("camera: camcc's PLL2 locked at 1440 MHz (mode %#x, user_ctl %#x)\n", rd(camcc + PLL2_BASE + PLL2_MODE),
+	say("camera: camcc's PLL2 locked at %u MHz (mode %#x, user_ctl %#x)\n", pll2_khz() / 1000, rd(camcc + PLL2_BASE + PLL2_MODE),
 	    rd(camcc + PLL2_BASE + PLL2_USER_CTL));
 	return true;
 }
@@ -848,6 +872,12 @@ static bool
 mclk_on(uint32_t khz)
 {
 	bool pll = khz == 24000;
+	uint32_t n = pll ? mclk_24mhz_n() : 0;
+
+	if (pll && n == 0) {
+		give_up("an MCLK the PLL cannot make");
+		return false;
+	}
 
 	found_mclk_cfg_rcgr = rd(camcc + MCLK_CFG_RCGR);
 	found_mclk_cbcr = rd(camcc + MCLK_CBCR);
@@ -859,16 +889,16 @@ mclk_on(uint32_t khz)
 		return false;
 	}
 	if (pll) {
-		/* __clk_rcg2_configure(): M 1, N as ~(n - m), D as ~2d (2d = n), then source 5, divider 2 * 10 - 1, dual-edge M/N */
+		/* __clk_rcg2_configure(): M 1, N as ~(n - m), D as ~2d (2d = n), then PLL2's source, divider 2 * 10 - 1, dual-edge M/N */
 		if (!pll2_up() || !camcc_put(MCLK_M, (found_mclk_mnd[0] & ~0xffu) | 1, 0xff) ||
-		    !camcc_put(MCLK_N, (found_mclk_mnd[1] & ~0xffu) | (~(6u - 1) & 0xff), 0xff) ||
-		    !camcc_put(MCLK_D, (found_mclk_mnd[2] & ~0xffu) | (~6u & 0xff), 0xff)) {
+		    !camcc_put(MCLK_N, (found_mclk_mnd[1] & ~0xffu) | (~(n - 1) & 0xff), 0xff) ||
+		    !camcc_put(MCLK_D, (found_mclk_mnd[2] & ~0xffu) | (~n & 0xff), 0xff)) {
 			mclk_switched = true;
 			return false;
 		}
 	}
 	mclk_switched = true;
-	if (!camcc_put(MCLK_CFG_RCGR, (found_mclk_cfg_rcgr & ~0x371fu) | (pll ? 5u << 8 | 2u << 12 | 19u : 0u << 8 | 1u), 0x371f) ||
+	if (!camcc_put(MCLK_CFG_RCGR, (found_mclk_cfg_rcgr & ~0x371fu) | (pll ? (uint32_t)CAMERA.pll2_source << 8 | 2u << 12 | 19u : 0u << 8 | 1u), 0x371f) ||
 	    !camcc_put(MCLK_CMD_RCGR, rd(camcc + MCLK_CMD_RCGR) | CMD_UPDATE, 0)) {
 		return false;
 	}
@@ -1170,7 +1200,7 @@ power_down(void)
 		chip_enable_switched = false;
 	}
 	if (leaving && pgpio_changed) {
-		uint8_t now[5];
+		uint8_t now[5] = { 0 };
 		bool all = pgpio_read_all(now);
 
 		for (int i = 4; all && i >= 0; i--) {
@@ -1489,7 +1519,7 @@ look_around(void)
  *          votes are, and given back (position 0) at the end: DRV 2 holds no other vote on them
  *          (cam=1 looks: none of its TCSs has a command for either)
  *   GCC    camera_hf_axi, camera_sf_axi (where each is: the SoC file's camera { }, as all the clocks below)
- *   camcc  PLL0 (Lucid, 1200 MHz: L 0x3e, alpha 0x8000, its config and user values), then the RCGs
+ *   camcc  PLL0 (Lucid, as the SoC file's pll0-config: 1200 MHz on an SM7325), then the RCGs
  *          slow_ahb 80 MHz, camnoc_axi 150, cphy_rx 400, csiNphytimer 300, ife_lite_0_csid 400,
  *          ife_lite_0 400 (all from PLL0's even (600) or odd (400) output) and the branches
  *          cpas_ahb, camnoc_axi, csiphyN, csiNphytimer, ife_lite_0_csid, ife_lite_0_cphy_rx,
@@ -1605,6 +1635,26 @@ rails(bool on)
 
 static bool pll_on;
 
+/* PLL0's rate: L and the fraction alpha / 2^16 times the crystal (pll0-config's first and third values) */
+static uint32_t
+pll0_khz(void)
+{
+	return CAMERA.pll0_config[0] * XO_KHZ + (uint32_t)(((uint64_t)CAMERA.pll0_config[2] * XO_KHZ) >> 16);
+}
+
+/*
+ * ... and of its even and odd outputs, divided as USER_CTL's [11:8] and [15:12] say (clk-alpha-pll.c's Lucid
+ * post-dividers: the even one's field is the divider less one, the odd one's the divider itself; 2 and 3 on
+ * an SM7325)
+ */
+static uint32_t
+pll0_output_khz(bool odd)
+{
+	uint32_t field = (CAMERA.pll0_config[6] >> (odd ? 12 : 8)) & 0xf;
+
+	return pll0_khz() / (odd ? (field ? field : 1) : field + 1);
+}
+
 static bool
 camcc_any(uint32_t offset, uint32_t value, uint32_t check)
 {
@@ -1620,21 +1670,19 @@ camcc_any(uint32_t offset, uint32_t value, uint32_t check)
 static bool
 pll0_up(void)
 {
-	const struct {
-		uint32_t offset, value;
-	} config[] = {                  /* camcc-yupik.c: cam_cc_pll0_config ("1200MHz Configuration"); CAL_L as clk-alpha-pll.c's default */
-		{ PLL0 + PLL_L_VAL, 0x3e }, { PLL0 + PLL_CAL_L_VAL, 0x44 }, { PLL0 + PLL_ALPHA_VAL, 0x8000 },
-		{ PLL0 + PLL_CONFIG_CTL, 0x20485699 }, { PLL0 + PLL_CONFIG_CTL_U, 0x00002261 },
-		{ PLL0 + PLL_CONFIG_CTL_U1, 0x329a299c }, { PLL0 + PLL_USER_CTL, 0x00003101 },
-		{ PLL0 + PLL_USER_CTL_U, 0x00000805 }, { PLL0 + PLL_USER_CTL_U1, 0x00000000 },
-	};
+	/* the SoC file's camera { } pll0-config, in this order (camcc-CODENAME.c's cam_cc_pll0_config) */
+	static const uint32_t config[] = { PLL_L_VAL, PLL_CAL_L_VAL, PLL_ALPHA_VAL, PLL_CONFIG_CTL, PLL_CONFIG_CTL_U,
+	                                   PLL_CONFIG_CTL_U1, PLL_USER_CTL, PLL_USER_CTL_U, PLL_USER_CTL_U1 };
+
+	_Static_assert(sizeof(config) / sizeof(config[0]) == sizeof(CAMERA.pll0_config) / sizeof(CAMERA.pll0_config[0]),
+	    "a value each");
 
 	if (rd(camcc + PLL0 + PLL_MODE) & 1) {
 		give_up("camcc's PLL0 is running already (somebody else's)");
 		return false;
 	}
 	for (unsigned i = 0; i < sizeof(config) / sizeof(config[0]); i++) {
-		if (!camcc_any(config[i].offset, config[i].value, ~0u)) {
+		if (!camcc_any(PLL0 + config[i], CAMERA.pll0_config[i], ~0u)) {
 			return false;
 		}
 	}
@@ -1658,7 +1706,7 @@ pll0_up(void)
 	    !camcc_any(PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) | 1, 1)) {
 		return false;
 	}
-	say("camera: camcc's PLL0 locked at 1200 MHz (mode %#x, user_ctl %#x)\n", rd(camcc + PLL0 + PLL_MODE),
+	say("camera: camcc's PLL0 locked at %u MHz (mode %#x, user_ctl %#x)\n", pll0_khz() / 1000, rd(camcc + PLL0 + PLL_MODE),
 	    rd(camcc + PLL0 + PLL_USER_CTL));
 	return true;
 }
@@ -1678,21 +1726,47 @@ pll0_down(void)
 	say("camera: camcc's PLL0 off (mode %#x)\n", rd(camcc + PLL0 + PLL_MODE));
 }
 
-/* An RCG set (source, divider field 2n - 1, no M/N) and updated; then branches on. */
+/*
+ * An RCG set (source, divider field 2n - 1, no M/N) and updated; then branches on. The rates are the
+ * device tree's at the "svs" level; the source is one of PLL0's outputs (camera { } pll0-even-source,
+ * pll0-odd-source) and the divider what makes the rate of it, in halves.
+ */
 struct rcg {
 	const char *    name;
+	uint32_t        khz;
+	bool            odd;            /* from PLL0's odd output, not its even one */
 	uint32_t        cmd, source, divider;
 	uint32_t        found_cfg;
 	bool            set;
 };
 static struct rcg rcgs[] = {                    /* (where each is: the SoC file's camera { }, in clocks_up()) */
-	{ "slow_ahb 80 MHz", 0, 2, 14 },                /* PLL0 even (600) / 7.5 */
-	{ "camnoc_axi 150 MHz", 0, 2, 7 },              /* / 4 */
-	{ "cphy_rx 400 MHz", 0, 2, 2 },                 /* / 1.5 */
-	{ "csiNphytimer 300 MHz", 0, 2, 3 },            /* / 2 (the sensor's CSIPHY's) */
-	{ "ife_lite_0_csid 400 MHz", 0, 2, 2 },         /* / 1.5 */
-	{ "ife_lite_0 400 MHz", 0, 3, 1 },              /* PLL0 odd (400) / 1 */
+	{ .name = "slow_ahb", .khz = 80000, .odd = false },            /* (an SM7325's PLL0 even, 600 MHz, / 7.5) */
+	{ .name = "camnoc_axi", .khz = 150000, .odd = false },         /* / 4 */
+	{ .name = "cphy_rx", .khz = 400000, .odd = false },            /* / 1.5 */
+	{ .name = "csiNphytimer", .khz = 300000, .odd = false },       /* / 2 (the sensor's CSIPHY's) */
+	{ .name = "ife_lite_0_csid", .khz = 400000, .odd = false },    /* / 1.5 */
+	{ .name = "ife_lite_0", .khz = 400000, .odd = true },          /* (PLL0 odd, 400 MHz, / 1) */
 };
+
+/* each RCG's source and divider, of PLL0's outputs; false (and said which) when a rate is not to be had */
+static bool
+rcg_plan(void)
+{
+	for (unsigned i = 0; i < sizeof(rcgs) / sizeof(rcgs[0]); i++) {
+		struct rcg *r = &rcgs[i];
+		uint32_t parent = pll0_output_khz(r->odd), halves = 2 * parent / r->khz;
+
+		r->source = r->odd ? CAMERA.pll0_odd_source : CAMERA.pll0_even_source;
+		if (halves < 2 || halves > 32 || halves * r->khz != 2 * parent) {
+			say("camera: %s at %u kHz is no whole number of halves of PLL0's %s output (%u kHz)\n", r->name, r->khz,
+			    r->odd ? "odd" : "even", parent);
+			return false;
+		}
+		r->divider = halves - 1;
+	}
+	return true;
+}
+
 struct branch {
 	const char *    name;
 	bool            gcc;
@@ -1700,9 +1774,9 @@ struct branch {
 	bool            set;
 };
 static struct branch branches[] = {            /* (the same) */
-	{ "gcc camera_hf_axi", true, 0 }, { "gcc camera_sf_axi", true, 0 },
-	{ "cpas_ahb", false, 0 }, { "camnoc_axi", false, 0 }, { "csiphyN", false, 0 }, { "csiNphytimer", false, 0 },
-	{ "ife_lite_0_csid", false, 0 }, { "ife_lite_0_cphy_rx", false, 0 }, { "ife_lite_0", false, 0 },
+	{ .name = "gcc camera_hf_axi", .gcc = true }, { .name = "gcc camera_sf_axi", .gcc = true },
+	{ .name = "cpas_ahb" }, { .name = "camnoc_axi" }, { .name = "csiphyN" }, { .name = "csiNphytimer" },
+	{ .name = "ife_lite_0_csid" }, { .name = "ife_lite_0_cphy_rx" }, { .name = "ife_lite_0" },
 };
 
 static bool
@@ -1716,6 +1790,10 @@ clocks_up(void)
 
 	_Static_assert(sizeof(rcg_at) / sizeof(rcg_at[0]) == sizeof(rcgs) / sizeof(rcgs[0]), "an RCG's place each");
 	_Static_assert(sizeof(branch_at) / sizeof(branch_at[0]) == sizeof(branches) / sizeof(branches[0]), "a branch's each");
+	if (!rcg_plan()) {
+		give_up("a clock the PLL cannot make");
+		return false;
+	}
 	for (unsigned i = 0; i < sizeof(rcgs) / sizeof(rcgs[0]); i++) {
 		rcgs[i].cmd = rcg_at[i];
 	}
@@ -1733,7 +1811,7 @@ clocks_up(void)
 		r->set = true;
 		wr(camcc + r->cmd, rd(camcc + r->cmd) | CMD_UPDATE);
 		if (!wait_bits(r->cmd, CMD_UPDATE, 0, 500)) {
-			say("camera: the RCG %s does not take its configuration (cmd %#x)\n", r->name, rd(camcc + r->cmd));
+			say("camera: the RCG %s (%u kHz) does not take its configuration (cmd %#x)\n", r->name, r->khz, rd(camcc + r->cmd));
 			give_up("an RCG that does not update");
 			return false;
 		}

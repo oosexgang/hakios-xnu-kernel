@@ -56,6 +56,13 @@
 		top-gdsc = <0xc194>;            // titan_top_gdsc
 		pll0 = <0x0000>;                // cam_cc_pll0 (Lucid)
 		pll2 = <0x2000>;                // cam_cc_pll2 (Zonda)
+		// cam_cc_pll0_config ("1200MHz Configuration"; CAL_L as clk-alpha-pll.c's default) and
+		// cam_cc_pll2_config ("1440MHz Configuration"); their outputs' places in cam_cc_parent_map_*
+		pll0-config = <0x3e 0x44 0x8000 0x20485699 0x00002261 0x329a299c 0x00003101 0x00000805 0x00000000>;
+		pll2-config = <0x4b 0x08200800 0x05022011 0x08000000 0x00000301>;
+		pll0-even-source = <2>;
+		pll0-odd-source = <3>;
+		pll2-source = <5>;
 		mclk-rcg = <0xe000 0xe01c 0xe038 0xe054>;       // cam_cc_mclkN_clk_src
 		mclk-branch = <0xe018 0xe034 0xe050 0xe06c>;    // cam_cc_mclkN_clk
 		csiphy-branch = <0xe0c8 0xe0ec 0xe110 0xe138>;  // cam_cc_csiphyN_clk

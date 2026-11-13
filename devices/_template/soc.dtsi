@@ -77,6 +77,17 @@
 		top-gdsc = <0xc194>;            // titan_top_gdsc: the camera's top power domain
 		pll0 = <0x0000>;                // cam_cc_pll0: the camera's clocks come from it
 		pll2 = <0x2000>;                // cam_cc_pll2: an MCLK that is not the crystal's 19.2 MHz comes from it
+		// How the two PLLs are configured, as cam_cc_pll0_config and cam_cc_pll2_config have it: PLL0's l, cal_l (if
+		// the file has none, clk-alpha-pll.c's default for the PLL type: 0x44), alpha, config_ctl_val,
+		// config_ctl_hi_val, config_ctl_hi1_val, user_ctl_val, user_ctl_hi_val, user_ctl_hi1_val; PLL2's l,
+		// config_ctl_val, config_ctl_hi_val, config_ctl_hi1_val, user_ctl_val. The driver works out the rates
+		// from them (19.2 MHz times L and alpha / 65536; PLL0's even and odd outputs divided as user_ctl_val says)
+		// and divides its clocks to the rates it wants.
+		pll0-config = <0x3e 0x44 0x8000 0x20485699 0x00002261 0x329a299c 0x00003101 0x00000805 0x00000000>;
+		pll2-config = <0x4b 0x08200800 0x05022011 0x08000000 0x00000301>;
+		pll0-even-source = <2>;         // which source of an RCG PLL0's even output is (its place in the parent map)
+		pll0-odd-source = <3>;          // ... its odd output
+		pll2-source = <5>;              // ... PLL2's early output, for an MCLK (in the MCLKs' parent map)
 		mclk-rcg = <0xe000 0xe01c 0xe038 0xe054>;       // cam_cc_mclkN_clk_src, one for each MCLK (a sensor's mclk)
 		mclk-branch = <0xe018 0xe034 0xe050 0xe06c>;    // cam_cc_mclkN_clk, in the same order
 		csiphy-branch = <0xe0c8 0xe0ec 0xe110 0xe138>;  // cam_cc_csiphyN_clk, one for each CSI receiver (a sensor's csiphy)

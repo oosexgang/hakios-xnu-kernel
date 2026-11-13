@@ -77,7 +77,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`speaker { }`) |
 | `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`haptic { }`) |
 | `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`spmi { }`, `torch { }`) |
-| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part; each sensor's wiring and supplies, and which is Darwin's back and front camera, are data (`camera { }`), as is where the camera's clocks are in its clock controller (the SoC file's `camera { }`) |
+| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part; each sensor's wiring and supplies, and which is Darwin's back and front camera, are data (`camera { }`), as are where the camera's clocks are in its clock controller and how its PLLs are configured (the SoC file's `camera { }`) |
 | `bsd/dev/hakios_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 
 ## Wi-Fi, network

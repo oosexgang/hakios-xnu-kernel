@@ -70,6 +70,9 @@ CAMCC_OFFSETS = ('top_gdsc', 'pll0', 'pll2', 'slow_ahb_rcg', 'camnoc_axi_rcg', '
                  'cpas_ahb_branch', 'camnoc_axi_branch', 'ife_csid_branch', 'ife_cphy_rx_branch', 'ife_branch',
                  'gcc_ahb_branch', 'gcc_xo_branch', 'gcc_hf_axi_branch', 'gcc_sf_axi_branch')
 CAMCC_LISTS = ('mclk_rcg', 'mclk_branch', 'csiphy_branch', 'csiphy_timer_rcg', 'csiphy_timer_branch')
+# ... and how its PLLs are configured (cam_cc_pllN_config: how many values each), and which RCG source each output is
+CAMCC_PLLS = {'pll0_config': 9, 'pll2_config': 5}
+CAMCC_SOURCES = ('pll0_even_source', 'pll0_odd_source', 'pll2_source')
 
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
@@ -91,7 +94,8 @@ SOC_SCHEMA = {
     'smmu': {'apps': (int, True), 'audio_stream': ([int], False), 'wifi_stream': ([int], False),
              'camera_stream': ([int], False)},
     'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True),
-               **{key: (int, True) for key in CAMCC_OFFSETS}, **{key: ([int], True) for key in CAMCC_LISTS}},
+               **{key: (int, True) for key in CAMCC_OFFSETS + CAMCC_SOURCES},
+               **{key: ([int], True) for key in CAMCC_LISTS + tuple(CAMCC_PLLS)}},
     'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
               'lpi': (int, True), 'lpi_slew': (int, True), 'swr_tx_pins': ([int], True), 'swr_tx_slew': ([int], True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
@@ -518,6 +522,11 @@ def load_soc(path, problems):
                          f'csiphy_timer_rcg and csiphy_timer_branch one each of the CSI receivers: 1 to {CAMERA_CLOCKS} of each')
         offsets = [camera[key] for key in CAMCC_OFFSETS if isinstance(camera.get(key), int)] + \
             [v for key in CAMCC_LISTS for v in camera[key]]
+        if any(isinstance(camera.get(key), list) and len(camera[key]) != count for key, count in CAMCC_PLLS.items()):
+            problems.add(f'{shown(path)} [camera]', 'pll0_config is PLL0\'s L, CAL_L, alpha, three config words and three user words; '
+                         'pll2_config PLL2\'s L, three config words and its user word (camcc-CODENAME.c\'s cam_cc_pllN_config)')
+        if any(isinstance(camera.get(key), int) and not 0 <= camera[key] <= 7 for key in CAMCC_SOURCES):
+            problems.add(f'{shown(path)} [camera]', 'pll0_even_source, pll0_odd_source and pll2_source are an RCG\'s sources, 0 to 7')
         if any(not 0 <= v < 0x100000 or v & 3 for v in offsets):
             problems.add(f'{shown(path)} [camera]', 'the clocks\' places are registers\' offsets in their clock controller: '
                          'multiples of 4, below 0x100000')
@@ -861,7 +870,8 @@ def table_text(socs, boards):
                     f'.csid = {camera["csid"]:#010x}, .csiphy = {camera["csiphy"]:#010x},',
                     '\t\t\t' + ', '.join(f'.{key} = {camera[key]:#x}' for key in CAMCC_OFFSETS) + ',',
                     f'\t\t\t.mclk_count = {len(camera["mclk_rcg"])}, .csiphy_count = {len(camera["csiphy_branch"])},',
-                    *(f'\t\t\t.{key} = {{ {", ".join(f"{v:#x}" for v in camera[key])} }},' for key in CAMCC_LISTS),
+                    *(f'\t\t\t.{key} = {{ {", ".join(f"{v:#x}" for v in camera[key])} }},' for key in CAMCC_LISTS + tuple(CAMCC_PLLS)),
+                    '\t\t\t' + ', '.join(f'.{key} = {camera[key]}' for key in CAMCC_SOURCES) + ',',
                     '\t\t},']
         lpass = soc.get('lpass')
         if lpass:

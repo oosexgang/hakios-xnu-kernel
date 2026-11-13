@@ -158,6 +158,11 @@ struct hakios_board {
 		/* where the clock controller has what the driver switches: offsets in camcc, as Linux's
 		 * camcc-CODENAME.c has them (a GDSC's register, a PLL's first, an RCG's command register, a branch's) */
 		uint32_t top_gdsc, pll0, pll2;
+		/* how the PLLs are configured (camcc-CODENAME.c's cam_cc_pllN_config): PLL0's L, CAL_L, alpha, config
+		 * (three words), user (three words); PLL2's L, config (three words), user. And which source of an
+		 * RCG each output is: PLL0's even and odd ones, PLL2's early one (the parent maps' positions) */
+		uint32_t pll0_config[9], pll2_config[5];
+		uint8_t pll0_even_source, pll0_odd_source, pll2_source;
 		uint8_t mclk_count, csiphy_count;
 		uint32_t mclk_rcg[HAKIOS_CAMERA_CLOCKS], mclk_branch[HAKIOS_CAMERA_CLOCKS];
 		uint32_t csiphy_branch[HAKIOS_CAMERA_CLOCKS], csiphy_timer_rcg[HAKIOS_CAMERA_CLOCKS],

@@ -4,7 +4,8 @@
  * the driver works on is put together from the board's camera { } and its sensor@N nodes, with its chip's
  * ways and the SoC's clock registers for its MCLK and CSI receiver; for the test phone that has the first
  * phone's cameras that is, field for field, the table the driver used to carry; and a board that names a
- * chip or a clock the driver does not know, or no sensor, is refused with the reason.
+ * chip or a clock the driver does not know, or no sensor, is refused with the reason; and the clocks' rates
+ * and dividers the driver works out of the SoC file's PLL configurations are the ones it had written in.
  *
  *   camera_wiring_test SCENARIO
  */
@@ -134,6 +135,32 @@ no_such_clock(void)
 	CHECK(logged("the board's macro camera is on an MCLK or a CSIPHY the SoC has not"), "said: %s", log_text);
 }
 
+/* the clocks of the SoC file's PLL configurations: the rates, dividers and sources the driver had written in */
+static void
+clock_plan(void)
+{
+	static const uint32_t dividers[] = { 14, 7, 2, 3, 2, 1 }, sources[] = { 2, 2, 2, 2, 2, 3 };
+	struct hakios_board *board;
+
+	CHECK(pll0_khz() == 1200000 && pll0_output_khz(false) == 600000 && pll0_output_khz(true) == 400000,
+	    "PLL0 %u kHz, even %u, odd %u", pll0_khz(), pll0_output_khz(false), pll0_output_khz(true));
+	CHECK(pll2_khz() == 1440000 && mclk_24mhz_n() == 6, "PLL2 %u kHz, MCLK n %u", pll2_khz(), mclk_24mhz_n());
+	CHECK(rcg_plan(), "planned: %s", log_text);
+	for (unsigned i = 0; i < sizeof(rcgs) / sizeof(rcgs[0]); i++) {
+		CHECK(rcgs[i].divider == dividers[i] && rcgs[i].source == sources[i], "%s: source %u, divider %u", rcgs[i].name,
+		    rcgs[i].source, rcgs[i].divider);
+	}
+	CHECK(accesses == 0, "no register touched: %u", accesses);
+	/* a PLL0 that makes none of those rates, and a PLL2 that makes no 24 MHz: refused, with the rate */
+	board = board_to_change();
+	board->camera.pll0_config[0] = 0x30;
+	board->camera.pll0_config[2] = 0;
+	CHECK(!rcg_plan() && logged("slow_ahb at 80000 kHz is no whole number of halves of PLL0's even output (460800 kHz)"),
+	    "refused: %s", log_text);
+	board->camera.pll2_config[0] = 0x4c;
+	CHECK(mclk_24mhz_n() == 0 && logged("PLL2 at 1459200 kHz"), "refused: %s", log_text);
+}
+
 /* camera { } without a sensor: nothing to work on, and said so */
 static void
 no_sensor(void)
@@ -148,6 +175,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "as_before", as_before }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
+		{ "clock_plan", clock_plan },
 	};
 
 	if (argc < 2) {
