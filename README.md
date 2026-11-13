@@ -40,14 +40,17 @@ brings it into a checkout.
 - **One kernel for every board.** The board is found at boot; a driver starts only where the board's
   file lists it, so a machine nobody described is never written to.
 - **Boards are data.** A phone is one file and its chip another, written as a device tree source is
-  (`board.dts`, `SOC.dtsi`). Addresses, pins, firmware
+  (`board.dts`, `soc.dtsi`). Addresses, pins, firmware
   directories and boot defaults live there, not in the drivers. A tool starts both files from the
   phone's Android device tree and says what can be turned on next.
 - **Device packages.** Phones are kept apart from the code. The kernel, the loader and the libraries
   are built for the packages that are present.
-- **Checks that need no phone.** The drivers run on the host against models of the hardware, the
-  porting guide is run on a made-up phone, the kernel sources are verified against Apple's release and
-  compiled for syntax, types and the formats of what they print, on every push.
+- **Checks that need no phone.** The drivers run on the host against models of the hardware, under the
+  sanitizers, the porting guide is run on a made-up phone, the kernel sources are verified against
+  Apple's release and compiled for syntax, types and the formats of what they print, on every push.
+- **The kernel in QEMU.** It boots on the emulator as on a phone, to a shell of its own, and its
+  network, disks, sound, input, processes, threads, IOKit and screen are tried there
+  ([docs/qemu.md](docs/qemu.md), `make qemu`).
 - **Pinned inputs.** Everything taken from elsewhere is in [`components`](components), at an
   exact version.
 
