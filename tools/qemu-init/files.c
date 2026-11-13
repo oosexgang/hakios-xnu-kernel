@@ -1,4 +1,4 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, mmap */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, mmap */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -208,6 +208,101 @@ command_rm(int argc, char **argv)
 		}
 		if (error != 0) {
 			say_failed("rm", argv[i], error);
+		}
+	}
+}
+
+#define SYS_link                9
+#define SYS_chmod               15
+#define SYS_symlink             57
+#define SYS_readlink            58
+#define SYS_rename              128
+
+/* PATH...: what lstat says of each: its kind and permissions, its links, its inode and its size, and where a
+ * symbolic link points */
+void
+command_stat(int argc, char **argv)
+{
+	for (int i = 1; i < argc; i++) {
+		struct stat64_head st;
+		char target[256];
+		long error = syscall6(SYS_lstat64, (long)argv[i], (long)&st, 0, 0, 0, 0), n;
+
+		if (error != 0) {
+			say_failed("stat", argv[i], error);
+			continue;
+		}
+		say(argv[i]);
+		say(": ");
+		say_mode(st.mode);
+		say(" ");
+		say_number(st.nlink);
+		say(st.nlink == 1 ? " link, inode " : " links, inode ");
+		say_number(st.ino);
+		say(", ");
+		say_number((uint64_t)st.size);
+		say(" bytes");
+		if ((st.mode & 0170000) == 0120000 &&
+		    (n = syscall6(SYS_readlink, (long)argv[i], (long)target, sizeof(target) - 1, 0, 0, 0)) >= 0) {
+			target[n] = '\0';
+			say(" -> ");
+			say(target);
+		}
+		say("\n");
+	}
+}
+
+/* [-s] TARGET NAME: another name for a file (a hard link), or with -s a symbolic link to TARGET */
+void
+command_ln(int argc, char **argv)
+{
+	int symbolic = argc == 4 && same(argv[1], "-s");
+	long error;
+
+	if (argc != 3 && !symbolic) {
+		say("ln [-s] TARGET NAME\n");
+		return;
+	}
+	error = syscall6(symbolic ? SYS_symlink : SYS_link, (long)argv[argc - 2], (long)argv[argc - 1], 0, 0, 0, 0);
+	if (error != 0) {
+		say_failed("ln", argv[argc - 1], error);
+	}
+}
+
+/* OLD NEW: a file or directory renamed (in place of NEW, if that is there) */
+void
+command_mv(int argc, char **argv)
+{
+	long error;
+
+	if (argc != 3) {
+		say("mv OLD NEW\n");
+		return;
+	}
+	error = syscall6(SYS_rename, (long)argv[1], (long)argv[2], 0, 0, 0, 0);
+	if (error != 0) {
+		say_failed("mv", argv[1], error);
+	}
+}
+
+/* MODE PATH...: the permissions, MODE in octal */
+void
+command_chmod(int argc, char **argv)
+{
+	unsigned mode = 0;
+	const char *c;
+
+	for (c = argc > 1 ? argv[1] : ""; *c >= '0' && *c <= '7'; c++) {
+		mode = mode * 8 + (unsigned)(*c - '0');
+	}
+	if (argc < 3 || *c != '\0' || c == argv[1] || mode > 07777) {
+		say("chmod MODE PATH... (MODE in octal)\n");
+		return;
+	}
+	for (int i = 2; i < argc; i++) {
+		long error = syscall6(SYS_chmod, (long)argv[i], mode, 0, 0, 0, 0);
+		if (error != 0) {
+			say_failed("chmod", argv[i], error);
 		}
 	}
 }
