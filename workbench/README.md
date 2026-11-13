@@ -7,9 +7,11 @@ make check          # the lint, the board files, the generated reference, and wo
 workbench/run.sh        # the tests alone
 ```
 
-They need a C compiler, Python 3.11 or newer and git. With `gcc-aarch64-linux-gnu` and `qemu-user`
-the driver tests are also built for arm64 and run under `qemu-aarch64`; with `clang` and `lld` the
-loader is built. What is not installed is left out, and said.
+They need a C compiler, Python 3.11 or newer and git. On the host the driver tests run under the
+address and undefined-behaviour sanitizers where the compiler has them (a read or write past a buffer,
+or an unaligned load, fails the scenario). With `gcc-aarch64-linux-gnu` and `qemu-user` they are also
+built for arm64 and run under `qemu-aarch64`; with `clang` and `lld` the loader is built. What is not
+installed is left out, and said.
 
 ## What is tested
 
