@@ -6,7 +6,7 @@ be checked against the device, and what it could not find it says in its notes.
 
 The trees it is written for are what a porter has: the live tree of a running Android
 (dtc -I dtb -O dts /sys/firmware/fdt), a dumped dtbo, or a vendor's .dts and .dtsi sources. The parser
-keeps what it needs of the syntax and skips the rest (/directives/, deletions); tests/boards_test.py
+keeps what it needs of the syntax and skips the rest (/directives/, deletions); workbench/boards_test.py
 has trees of each kind.
 """
 import re

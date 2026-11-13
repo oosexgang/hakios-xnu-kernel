@@ -1,0 +1,223 @@
+/dts-v1/;
+
+// A test phone with a video-mode panel and every part driver listed: the second stand-in of the host
+// tests (see workbench/devices/phone-cmd). Its values are those of a real SM7325 phone.
+/ {
+	name = "phone-video";
+	description = "Test phone, video-mode panel";
+	soc = "sm7325";
+
+	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750", "mic-wcd938x", "gpu-a660", "bluetooth-wcn-uart";
+
+	// A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
+	backlight {
+		type = "dcs";
+		panel-mode = "video";
+		min = <8>;                      // qcom,mdss-dsi-bl-min-level
+		max = <2047>;                   // of qcom,mdss-dsi-bl-max-level 4095: 2047 and up is its high brightness mode
+		restore = <307>;                // qcom,mdss-brightness-init-level
+		bytes = <2>;
+		byte-order = "msb-first";       // qcom,mdss-dsi-bl-inverted-dbv
+	};
+
+	thermal {
+		floor-mhz = <1000 1100 1100>;
+	};
+
+	// The keys on the PMICs: a peripheral is SPMI slave << 8 | the high byte of its registers.
+	buttons {
+		pon = <0x013>;                  // pon_hlos@1300 of the PMK8350 (slave 0): power, and volume down on RESIN_N
+		pon-name = "the PMK8350's power-on block";
+		volume-up = <0x18d>;            // gpio_keys: GPIO6 of the PM7325 (slave 1)
+		volume-up-name = "GPIO6 of the PM7325";
+	};
+
+	// The audio DSP, and the battery manager behind it.
+	// Its radio is on the SoC's own Wi-Fi DSP, whose image goes into the DSP's reserved memory (wlan@9ae00000).
+	wifi {
+		radio-model = <0>;
+		dsp-memory = <0x9ae00000>;
+		dsp-memory-size = <0x01900000>;
+		pins = <84 85 86>;              // the radio's enable, Bluetooth's reset, Bluetooth's sw-ctrl
+		supplies = "smpb7", "smpb1", "smpb8"; // PM7325 S7, S1, S8: vdd-cx-mx, vdd-1.8-xo, vdd-1.3-rfa
+		board-data = "bd_m20gl.elf";            // what the phone's Android sends the radio
+		regdb = "regdb_xiaomi.bin";
+	};
+
+	// The port's own partition on its storage, "darwin": the one a write may reach, from the block past what the
+	// build puts there. Its GPT entry as the phone's partition table prints it.
+	storage {
+		type-guid = "7c3457ef-0000-11aa-aa11-00306543ecac";
+		unique-guid = "fd6854ad-24aa-4fc3-94fe-290116858d68";
+		first-lba = <25374720>;
+		last-lba = <30617594>;
+		write-first = <2042368>;
+	};
+
+	// Its touch controller: on serial engine 13 (SPI), with that engine's clocks; reset, interrupt, the pin that
+	// switches its analog supply on and the two straps that say whose controller is fitted.
+	touch {
+		serial-engine = <0x00a94000>;
+		clocks = <0x18004 0x18008 0x185fc>;
+		vote-register = <0x52008>;
+		votes = <18 19 20 21 27>;
+		bus-pins = <52 53 54 55>;
+		interrupt = <81>;
+		reset = <105>;
+		io-supply = "ldoc2";
+		analog-enable = <107>;
+		vendor-pins = <68 96>;
+		coordinates = <10800 24000>;            // goodix,panel-max-x and -y
+	};
+
+	// Its speaker's two amplifiers: their I2C bus on GPIO 12/13, at 0x35 and 0x34, interrupts on GPIO 102 and 45.
+	speaker {
+		sda = <12>;
+		scl = <13>;
+		addresses = <0x35 0x34>;
+		interrupts = <102 45>;
+		sound-pins = <97 100 98 99>;
+		sound-function = <1>;
+	};
+
+	// The microphones' codec (a WCD938x on the SoC's SoundWire): the one pin of the SoC it has, its reset.
+	mic {
+		codec-reset = <83>;
+	};
+
+	// Its vibration motor's chip: on GPIO 36/37, reset on 35, as Android calibrated this motor.
+	haptic {
+		sda = <36>;
+		scl = <37>;
+		reset = <35>;
+		interrupt = <18>;
+		f0-calibration = <0x0d>;
+	};
+
+	// Its flashlight: the flash LED module and the temperature alarm of the PM8350C, which is slave 2 here.
+	torch {
+		flash = <0x2ee>;
+		alarm = <0x20a>;
+	};
+
+	adsp {
+		firmware = "fw-audio-video";
+		memory = <0x86700000>;          // the DSP's reserved memory (adsp@86700000)
+		memory-size = <0x04000000>;     // 64 MiB of the DSP's reserved memory (adsp@86700000)
+	};
+
+	// The GPU. Sources: yupik-gpu.dtsi, Linux's adreno-gpulist.h and adreno_a6xx_gmu.c.
+	gpu {
+		model = "Adreno 642L";
+		alt-model = "Adreno 643";       // qcom,gpu-models: what the parts with these speed bins are sold as
+		alt-bins = <0xac 0xbe>;
+		chip-id = <0x06030500>;
+		firmware = "fw-video";
+		gmem-kb = <512>;
+		primitive-fifo = <0x00200000>;
+		hang-cycles = <0x1fffff>;
+		speed-fuse = <0x1e9>;
+		gaming-fuse = <0x1f5>;
+		highest-bank-bit = <14>;        // LPDDR4X (a6xx_init)
+		gcc-debug-gpucc = <0x146>;
+		// (not zap-must-authenticate: this phone's firmware leaves a zap shader loaded, which is used when ours is refused)
+		speeds-khz = <315000 450000 550000>;
+		speed-levels = <64 128 192>;
+		default-speed = <3>;
+	};
+
+	// The cameras (feature "camera-sm7325"). The PM8008 whose regulators feed the sensors is on the I2C bus of
+	// GPIO 4 and 5. Each sensor as Android's device tree has it (cam-sensor2, 0, 1 and 3, in this order, which
+	// is the one Darwin's side numbers them in): its CCI master and that master's pins, its reset, which MCLK and
+	// that clock's pin, the CSI receiver, and how the module file's power sequence switches its supplies.
+	camera {
+		pmic-pins = <4 5>;
+		pmic-reset = <0x28a>;           // the PM8350C's (SPMI slave 2) GPIO 3
+		test-sensor = "macro";
+		darwin-sensor = "wide";
+		darwin-front = "front";
+
+		sensor@0 {
+			name = "macro";
+			chip = "OV02B10";
+			cci = <1 0>;
+			pins = <73 74>;
+			reset = <77>;
+			mclk = <2>;
+			mclk-pin = <66>;
+			csiphy = <2>;
+			vana = "ldo7 2800mV";
+			vdig = "ldo6 1800mV";
+		};
+
+		sensor@1 {
+			name = "wide";
+			chip = "S5KHM2SD";
+			cci = <0 1>;
+			pins = <71 72>;
+			reset = <21>;
+			mclk = <1>;
+			mclk-pin = <65>;
+			csiphy = <1>;
+			vana = "gpio106 2800mV 135us"; // camera_wide_vana_ldo: a fixed regulator from BOB
+			vdig = "ldo1 1000mV";
+			vio = "ldo5 1800mV";
+			focus-motor = "dw9800";
+			focus-supply = "ldoc9 2800mV";  // cam_vaf: the PM8350C's L9
+		};
+
+		sensor@2 {
+			name = "front";
+			chip = "OV16A1Q";
+			cci = <0 0>;
+			pins = <69 70>;
+			reset = <20>;
+			mclk = <0>;
+			mclk-pin = <64>;
+			csiphy = <0>;
+			vana = "ldo3 2800mV";
+			vdig = "ldo2 1200mV";
+			vio = "ldo5 1800mV";
+			upside-down;
+		};
+
+		sensor@3 {
+			name = "ultra-wide";
+			chip = "S5K4H7";
+			cci = <1 1>;
+			pins = <75 76>;
+			reset = <78>;
+			mclk = <3>;
+			mclk-pin = <67>;
+			csiphy = <3>;
+			vana = "ldo4 2800mV";
+			vdig = "gpio108 1200mV 135us"; // camera_ultra_dvdd_ldo: a fixed regulator from the PM7325's S8
+			vio = "ldo5 1800mV";
+		};
+	};
+
+	// The loader knows this one by its framebuffer, as it knows a phone under its UEFI.
+	loader {
+		fb-base = <0x9B000000>;         // (no phone's: a real package beside this one must not look the same to the loader)
+		log-other-cpu;
+		uefi-charger;                   // the UEFI's Qualcomm charger protocols give the battery's state
+	};
+
+	// Bluetooth H4: synthetic register-model fixture; no hardware verification.
+	// Feature "bluetooth-wcn-uart": bt=-1 inspects, bt=1 powers and identifies only.
+	bluetooth {
+		serial-engine = <0x898000>;     // UART SE register page
+		wrapper = <0x8c0000>;           // QUP wrapper common registers (HW_VER at +4)
+		clocks = <0x23298 0x2329c 0x1e76c>; // GCC halt offsets: m_ahb, s_ahb, SE
+		clock-source = <0x1e77c>;       // GCC CMD_RCGR offset, independent of SE halt
+		vote-register = <0x52010>;      // GCC application processor votes
+		votes = <3 0 2 1 10>;           // core_2x, core, m_ahb, s_ahb, SE bit numbers
+		uart-pins = <24 25 26 27>;      // TLMM CTS, RTS, TX, RX, in that order
+		uart-function = <1>;           // TLMM alternate function
+		enable-ppid = <0x38a>;          // PMIC GPIO: (sid << 8) | (base >> 8)
+		sw-ctrl = <18>;                // TLMM input, controller ready
+		supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
+		supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
+		rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
+	};
+};

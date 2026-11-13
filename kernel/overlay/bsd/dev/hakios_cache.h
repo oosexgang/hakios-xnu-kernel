@@ -4,7 +4,7 @@
  * these SoCs have; each is followed by a barrier, so that what follows comes after it. And that
  * barrier alone: every access before it has reached its device, or memory, before anything after it.
  *
- * On a host (the tests, tests/fakekernel) there is no other master: only the compiler is held.
+ * On a host (the tests, workbench/fakekernel) there is no other master: only the compiler is held.
  */
 #ifndef _HAKIOS_CACHE_H
 #define _HAKIOS_CACHE_H

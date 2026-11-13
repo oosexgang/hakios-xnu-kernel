@@ -23,7 +23,7 @@
  *   channels    0x200 per channel, the same registers as above
  *
  * The file that includes this one defines rd(address) and wr(address, value) first, as functions or
- * as macros: a driver's test puts a model of the arbiter behind them (tests/spmi_model.h).
+ * as macros: a driver's test puts a model of the arbiter behind them (workbench/spmi_model.h).
  */
 #ifndef HAKIOS_SPMI_H
 #define HAKIOS_SPMI_H

@@ -110,7 +110,7 @@ tools/boards.py compare renoir --dts device-tree.dts        # a board and its So
 None of the three is kept in the repository. The builds make them (`kernel/build.sh`,
 `loader/build.sh`, `darwin/userland/inj26.sh`), so what is built knows exactly the boards whose packages
 were present: bring the package in, then build. The tests make their own, with three stand-in phones
-(`tests/devices`).
+(`workbench/devices`).
 
 `sysctl hw.board` shows what the running kernel found: `name`, `soc`, `description`, `features`.
 
@@ -151,13 +151,13 @@ small example to copy; each step is one place:
    `FEATURE_NEEDS_OF_BOARD`; values that can be wrong in a way worth catching get a check in `load()`.
 3. **The table.** A line in `table_text()` that writes the field.
 4. **The files.** The key explained in `devices/_template/`, the values in the tests' phones
-   (`tests/devices`) where a test needs them, and in the packages that have them, on the `devices`
+   (`workbench/devices`) where a test needs them, and in the packages that have them, on the `devices`
    branch, each with a comment naming where in the device tree or in Linux it is from.
 5. **The device tree**, if the value is in one: `from_dts()` in `tools/devicetree.py`, so that
    `tools/boards.py new --dts` fills it in for the next phone.
 6. **The driver** reads `hakios_board()->…` and says so in its log when the data is missing, rather
    than falling back to one phone's value.
-7. **Tests.** `tests/boards_test.py` for what the tool takes and refuses, `tests/board_test.c` for what
+7. **Tests.** `workbench/boards_test.py` for what the tool takes and refuses, `workbench/board_test.c` for what
    the kernel sees. `make check` also fails while the template does not explain a key the schema has.
 
 A key that a feature needs is a change the packages have to follow: say so in the pull request, so

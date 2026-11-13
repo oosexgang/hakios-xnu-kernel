@@ -60,7 +60,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   The kernel, the loader and the libraries know the boards whose packages were present when built.
 - **A porting guide.** [docs/porting.md](docs/porting.md) goes from the device tree to sending the
   package back in eight steps, with the log line that shows each piece worked, and ends with what is
-  still tied to the first two phones. `tests/porting_test.sh` runs its tool and data steps (1, 3, 8 and
+  still tied to the first two phones. `workbench/porting_test.sh` runs its tool and data steps (1, 3, 8 and
   the data side of 4 and 5) on a made-up phone with a made-up SoC, on every push.
 - **What each feature needs, key by key.** [docs/features.md](docs/features.md) is written by
   `tools/boards.py features` from the tables the checker uses: for every feature, the sections and keys
@@ -119,7 +119,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   same byte for byte.
 - **The loader's plain-C parts run on the host**: its memory functions, the device tree's writer, the
   NVRAM image, the payload's directory, the choice of the kernel's memory from a firmware's map, and
-  the reader of Android's partition description (`tests/loader_test.c`, `loader_window_test.c`,
+  the reader of Android's partition description (`workbench/loader_test.c`, `loader_window_test.c`,
   `loader_dsu_test.c`). A port's own memory map can be tried there.
 - **One list starts every driver.** The starts were spread over the touch queue's file, the audio
   device's and `bsd_init()`; they are `bsd/dev/hakios_drivers.c` now, in the same order, and a new
@@ -145,7 +145,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **The speaker amplifiers' driver runs on the host.** Two modelled amplifiers on a modelled bus and a
   configuration file built in the test: what is written and in which order, the volume's steps, the
   monitor, and that both are powered down at once on a missing clock, a fault or a write that does
-  not read back (`tests/speaker_driver_test.c`, 22 scenarios, on the host and under qemu-aarch64).
+  not read back (`workbench/speaker_driver_test.c`, 22 scenarios, on the host and under qemu-aarch64).
 - **A guide to writing a driver**, with an example driver and its test that `make check` builds and
   runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
@@ -232,7 +232,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | The single kernel patch, `apply.sh`, the numbered patches | `kernel/overlay/`, `kernel/patches/`, `kernel/assemble.sh` |
 | `renoir/kernel/build.sh` and its environment script | `kernel/build.sh`, `kernel/env.sh` |
 | `renoir/userland/`, `renoir/tools/` | `darwin/userland/`, `darwin/tools/` |
-| `renoir/docs/`, `renoir/tests/` | `docs/`, `tests/` |
+| `renoir/docs/`, `renoir/workbench/` | `docs/`, `workbench/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
 | Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `soc/*.dtsi`; the first phone's package lists every former name |
@@ -249,7 +249,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   link and repository path in the documentation exists, checks the pins of `components.toml`, looks
   for files that must never be published, and holds the Darwin side's copies of the kernel's device
   interfaces (`userland/userland/src/hakios_*.h`) to what the kernel's say.
-- **The host tests** (`tests/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
+- **The host tests** (`workbench/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
   flashlight, the battery, the vibration motor, the speaker amplifiers, the wiring of the touch
@@ -259,9 +259,9 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   back to Darwin past the room Apple's layouts and the caller's buffer have. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
-  porting guide, and build the loader. They use stand-in phones in `tests/devices/` and a made-up chip in
-  `tests/soc/`.
-  [tests/README.md](tests/README.md) lists each test.
+  porting guide, and build the loader. They use stand-in phones in `workbench/devices/` and a made-up chip in
+  `workbench/soc/`.
+  [workbench/README.md](workbench/README.md) lists each test.
 - **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
   request. The kernel is not built or linked there.
 

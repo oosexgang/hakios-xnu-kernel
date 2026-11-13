@@ -82,7 +82,7 @@ git diff                                         # review, commit
 ```sh
 kernel/verify.sh            # the release assembles and exports back unchanged
 kernel/syntax-check.sh      # the files HakiOS adds compile (syntax, types, formats), with any clang
-tests/run.sh                # host tests of drivers, also under qemu-aarch64
+workbench/run.sh                # host tests of drivers, also under qemu-aarch64
 ```
 
 `verify.sh --from DIR` takes the release from a clone on this machine instead of the network.

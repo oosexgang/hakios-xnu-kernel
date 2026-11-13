@@ -16,7 +16,7 @@ first lines; `make` lists the common ones.
 | `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, the three checks above. `make lint`. |
 | `mk-focaltech-fw.py` | Makes the header one touch driver includes from a firmware file of your own phone. The firmware is not in the repository. |
 
-The tools need Python 3.11 or newer and git, nothing else. They are tested in `tests/`
+The tools need Python 3.11 or newer and git, nothing else. They are tested in `workbench/`
 (`boards_test.py`, `device_test.py`, `bootargs_test.py`, `tools_test.py`), in small repositories of
 their own.
 

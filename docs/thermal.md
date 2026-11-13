@@ -52,7 +52,7 @@ told so and nothing is read. Without `cpufreq { }` in its SoC file the limiter o
 
 ## Testing
 
-`tests/run.sh` runs:
+`workbench/run.sh` runs:
 - `thermal_test.c`: the arithmetic (sensor word, hottest reading, steps, hysteresis, rows, panel cap).
 - `thermal_driver_test.c`: the driver itself, unchanged, against a model of two TSENS controllers and three EPSS
   groups. Scenarios:

@@ -12,7 +12,7 @@ help:
 	@echo "make check          lint + boards + docs + test: everything that needs no phone (what CI runs)"
 	@echo "make device DEVICE=NAME   bring a phone's package in from the devices branch (tools/device.py add)"
 	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
-	@echo "make test           host tests of kernel drivers and of the tools (tests/run.sh)"
+	@echo "make test           host tests of kernel drivers and of the tools (workbench/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
 	@echo "make boards         validate the device packages and soc/, write the tables the code is built with (build/boards)"
 	@echo "make docs           regenerate docs/boot-args.md from the sources"
@@ -27,7 +27,7 @@ check: lint boards-check docs-check test
 
 .PHONY: test
 test:
-	tests/run.sh
+	workbench/run.sh
 
 .PHONY: lint
 lint:

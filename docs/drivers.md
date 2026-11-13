@@ -121,7 +121,7 @@ comments; hardware behavior and the controller's actual version-event variant re
 
 These drivers are compiled unchanged into a host program and run against a model of their hardware
 by `make check`, on the host and under qemu-aarch64. Changing one of them, or moving one of its
-constants into the board file, can be tried without a phone. [tests/README.md](../tests/README.md)
+constants into the board file, can be tried without a phone. [workbench/README.md](../workbench/README.md)
 says what each test covers and what it leaves out.
 
 | Driver | Test | The hardware's model |

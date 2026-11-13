@@ -392,10 +392,10 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +			 * count became a kqworkloop limit and logd was killed at its second workloop, over and
 +			 * over. The two new fields mean nothing to this kernel and are not kept.
 +			 */
-+			if (px_args.attr_size == PSA_IOS27_SIZE && IS_64BIT_PROCESS(p)) {
++			if (px_args.attr_size == PSA_DARWIN27_SIZE && IS_64BIT_PROCESS(p)) {
 +				uint32_t tail[5];
 +
-+				if ((error = copyin(px_args.attrp + PSA_IOS27_TAIL, tail, sizeof(tail))) != 0) {
++				if ((error = copyin(px_args.attrp + PSA_DARWIN27_TAIL, tail, sizeof(tail))) != 0) {
 +					goto bad;
 +				}
 +				px_sa.psa_crash_count = tail[0];
@@ -1119,8 +1119,8 @@ diff --git a/bsd/sys/spawn_internal.h b/bsd/sys/spawn_internal.h
 + * psa_kqworkloop_soft_limit, psa_kqworkloop_hard_limit and psa_conclave_mem_limit follow from 0xb4.
 + * posix_spawn() reads them from there (bsd/kern/kern_exec.c).
 + */
-+#define PSA_IOS27_SIZE  0x100
-+#define PSA_IOS27_TAIL  0xb4
++#define PSA_DARWIN27_SIZE  0x100
++#define PSA_DARWIN27_TAIL  0xb4
 +
  /*
   * Task Sec flags, psa_sec_flags

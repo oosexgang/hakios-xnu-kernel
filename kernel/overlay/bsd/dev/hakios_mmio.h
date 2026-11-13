@@ -20,7 +20,7 @@
  *
  * A test of a driver on a host builds it with HAKIOS_MMIO_TEST defined and provides
  * hakios_test_rd() and hakios_test_wr(), behind which it puts a model of the registers
- * (tests/README.md); the driver's code is the same either way.
+ * (workbench/README.md); the driver's code is the same either way.
  */
 #ifndef HAKIOS_MMIO_H
 #define HAKIOS_MMIO_H

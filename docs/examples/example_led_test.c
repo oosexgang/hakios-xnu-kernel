@@ -1,7 +1,7 @@
 /*
  * The example driver's test (example_led.c): the driver's own file, compiled as a host program on the
- * fake kernel (tests/fakekernel/) against the model of the SoC's pins (tests/tlmm_model.h).
- * tests/run.sh builds and runs it for the host and, where the tools are there, for aarch64 under
+ * fake kernel (workbench/fakekernel/) against the model of the SoC's pins (workbench/tlmm_model.h).
+ * workbench/run.sh builds and runs it for the host and, where the tools are there, for aarch64 under
  * qemu-aarch64. Copy it with the driver.
  *
  *   example_led_test SCENARIO      one scenario a process: a driver keeps its state in statics
@@ -136,7 +136,7 @@ main(int argc, char **argv)
 		{ "no_pins", no_pins },
 	};
 
-	/* (run without an argument a test lists its scenarios, which tests/run.sh then runs one a process) */
+	/* (run without an argument a test lists its scenarios, which workbench/run.sh then runs one a process) */
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			printf("%s\n", scenarios[i].name);

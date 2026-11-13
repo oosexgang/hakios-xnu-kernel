@@ -1,0 +1,69 @@
+/dts-v1/;
+
+// A chip that is nobody's: the PMIC arbiter and the CPU frequency block at addresses unlike any real
+// SoC's, this system as the arbiter's third (ee = 2), two groups of cores. For the tests of what must
+// come from the SoC file and not from the code (workbench/buttons_driver_test.c, cpufreq_driver_test.c,
+// mic_wiring_test.c);
+// workbench/run.sh takes this directory with --soc.
+/ {
+	name = "soc-test";
+	description = "A made-up chip for the tests";
+
+	// (two groups of cores, and the frequency block where no real chip has it, in larger steps)
+	cpufreq {
+		epss = <0x05591000>;
+		epss-domain-size = <0x2000>;
+		domain-cores = <6 2>;
+	};
+
+	// (the CPU performance protocol's channel over SCMI, where no real chip has it)
+	scmi-perf {
+		shmem = <0x80a40000>;
+		mailbox = <0x1c900000>;
+		doorbell = <0x208>;
+	};
+
+	// (the microphones' blocks where no real chip has them; three SoundWire pins, not an SM7325's four, with other
+	// slew fields; the hardware control register at another offset in its page)
+	lpass {
+		tx-macro = <0x04220000>;
+		va-macro = <0x04370000>;
+		tx-swr = <0x04230000>;
+		tx-swr-hctl = <0x042a90b0>;
+		lpi = <0x043c0000>;
+		lpi-slew = <0x0455a000>;
+		swr-tx-pins = <3 4 5>;
+		swr-tx-slew = <8 10 12>;
+	};
+
+	// (RPMh's command database and sequencer elsewhere too, the slot sets further into the sequencer)
+	rpmh {
+		cmd-db = <0x90860000>;
+		cmd-db-size = <0x2000>;
+		rsc = <0x07220000>;
+		tcs-offset = <0x1c00>;
+	};
+
+	// (the SoC's own pins elsewhere as well)
+	pins {
+		tlmm = <0x01100000>;
+	};
+
+	// (what the part drivers ask for besides: the clock controller and the SMMU, elsewhere too)
+	clocks {
+		gcc = <0x02100000>;
+	};
+
+	smmu {
+		apps = <0x16000000>;
+		audio-stream = <0x1801 0x0>;
+	};
+
+	spmi {
+		core = <0x04440000>;
+		cnfg = <0x0440a000>;
+		observer = <0x06600000>;
+		channels = <0x04600000>;
+		ee = <2>;
+	};
+};

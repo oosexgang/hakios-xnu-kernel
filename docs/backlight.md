@@ -117,11 +117,11 @@ When the kernel returns to the loader, the panel goes back to the profile's init
 
 ## Testing
 
-`tests/run.sh` covers three things:
+`workbench/run.sh` covers three things:
 - `backlight_test.c`: the arithmetic (10k checks).
-- `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`tests/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
+- `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`workbench/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
 - The scenarios:
-  - a command-mode and a video-mode panel, on two of the tests' stand-in phones (`tests/devices/`)
+  - a command-mode and a video-mode panel, on two of the tests' stand-in phones (`workbench/devices/`)
   - `backlight=1` reads only
   - off by default
   - an unpowered display block

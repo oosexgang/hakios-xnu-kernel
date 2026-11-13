@@ -25,7 +25,7 @@ Each is one place in the example, but the one about waiting.
 ## What a driver has at hand
 
 Headers in `kernel/overlay/bsd/dev/`. Each says in its first lines what it is for; each that touches
-hardware has a test of its own in `tests/`.
+hardware has a test of its own in `workbench/`.
 
 | Header | What it gives | Where the data is |
 | --- | --- | --- |
@@ -65,13 +65,13 @@ needs it.
    kernel/syntax-check.sh --tree ../xnu-12377-hakios bsd/dev/NAME.c
    ```
 
-4. **Test it on the host.** Copy the example's test to `tests/NAME_driver_test.c` and add its name to
-   the list in `tests/run.sh`. The test puts a model of the hardware behind `rd()` and `wr()`,
+4. **Test it on the host.** Copy the example's test to `workbench/NAME_driver_test.c` and add its name to
+   the list in `workbench/run.sh`. The test puts a model of the hardware behind `rd()` and `wr()`,
    includes the driver's own file, and runs one scenario a process. Models that exist:
-   `tests/tlmm_model.h` (pins), `tests/spmi_model.h` (the PMIC arbiter), `tests/rsc_model.h` (RPMh's
-   sequencer), `tests/cmd_db_image.h` (the command database). Write first the scenarios of what the
+   `workbench/tlmm_model.h` (pins), `workbench/spmi_model.h` (the PMIC arbiter), `workbench/rsc_model.h` (RPMh's
+   sequencer), `workbench/cmd_db_image.h` (the command database). Write first the scenarios of what the
    driver must never do. Then break the driver on purpose, one line at a time, and see that a
-   scenario fails each time (`tests/mutate.sh` does it in a copy and says which scenario caught the
+   scenario fails each time (`workbench/mutate.sh` does it in a copy and says which scenario caught the
    change): a test that passes whatever the driver does tests nothing.
 5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
    as one more line of the list in `bsd/dev/hakios_drivers.c`, after what it needs (the list is

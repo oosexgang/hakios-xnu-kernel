@@ -1,7 +1,7 @@
 /*
  * The panel's light, for any device: one driver; what differs between devices is the board's data
  * (hakios_board.h, from devices/NAME/board.dts), and the arithmetic is hakios_backlight_core.h
- * (tested on the host: tests/backlight_test.c, and the driver itself: tests/backlight_driver_test.c).
+ * (tested on the host: workbench/backlight_test.c, and the driver itself: workbench/backlight_driver_test.c).
  *
  * What Darwin sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
  * darwin/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and

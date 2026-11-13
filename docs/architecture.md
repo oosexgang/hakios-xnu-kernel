@@ -80,12 +80,12 @@ soc/sm7350.dtsi, soc/… ────────────┘  (run by the bu
   (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
   a directory of their own: `kernel/build.sh` (which puts the kernel's table
   into the assembled tree as `bsd/dev/hakios_board_table.h`, only when it changed), `loader/build.sh`,
-  `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `tests/run.sh`. So the kernel, the loader and
+  `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `workbench/run.sh`. So the kernel, the loader and
   the libraries know the boards whose packages were present when they were built, and the data and the
   code cannot drift apart. Built with no package, they know only the emulator's board.
-- The host tests do not use real phones. They run against three stand-ins in `tests/devices/`:
+- The host tests do not use real phones. They run against three stand-ins in `workbench/devices/`:
   `phone-cmd` (a command-mode panel on sm7350), `phone-video` (a video-mode panel on sm7325, every
-  part driver listed) and `phone-keys` (on a chip of its own, `tests/soc`, with its parts on other pins
+  part driver listed) and `phone-keys` (on a chip of its own, `workbench/soc`, with its parts on other pins
   and buses than the first two: the test of a part's driver runs it there too, so a value of one phone
   left in the code shows).
 - At boot the kernel finds its row by `/chosen/darwin-board`. A driver asks

@@ -102,7 +102,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
 | `darwin/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
-| `tests/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
+| `workbench/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
 | `components.toml` | 从外部获取的所有内容及其固定版本。 |
 | `docs/` | 文档。 |

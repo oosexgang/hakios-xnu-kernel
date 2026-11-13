@@ -3,7 +3,7 @@
  * the brightness slider is on a panel, what the light around the phone asks for, how the light follows,
  * and the command that tells a DSI panel its brightness. Integers only (the kernel has no floating
  * point), no state, nothing of the kernel's: the same file is compiled by the host tests
- * (tests/backlight_test.c), so what is tested there is what runs here.
+ * (workbench/backlight_test.c), so what is tested there is what runs here.
  *
  * Units, everywhere below:
  *   level      0 to 1000, the slider's position (Darwin's DisplayBrightness, 0.0 to 1.0, times 1000). The

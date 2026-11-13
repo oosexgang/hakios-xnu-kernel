@@ -10,7 +10,7 @@ described (`soc/sm7325.dtsi`, `soc/sm7350.dtsi`) needs the least; a new SoC adds
 Nothing in this procedure writes to the phone's storage. The UEFI is started with `fastboot boot`,
 everything runs from RAM, and a reboot brings Android back.
 
-Steps 1, 3, 8 and the data side of 4 and 5 are run on every push by `tests/porting_test.sh`: a made-up
+Steps 1, 3, 8 and the data side of 4 and 5 are run on every push by `workbench/porting_test.sh`: a made-up
 phone on a made-up SoC, with none of the addresses the two real phones have, is taken through them in
 a copy of the repository. What that cannot show is the hardware answering; for that the guide gives
 the log line to look for at each step.
@@ -171,7 +171,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   speaker amplifiers' bus and addresses in `speaker { }`:
   [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. Those
   drivers are the example of how that is kept safe: the test of each runs it on a second phone
-  with the part elsewhere (`tests/torch_driver_test.c`, `haptic_driver_test.c`,
+  with the part elsewhere (`workbench/torch_driver_test.c`, `haptic_driver_test.c`,
   `speaker_driver_test.c`), so a value of the first phone left in the code shows as a part that
   does not answer.
 - If it has **another part**, write a driver next to the existing one and add a feature for it in

@@ -2,7 +2,7 @@
  * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver; what differs
  * between devices is the board's data (hakios_board.h: thermal { } of devices/NAME/board.dts, thermal { } and
  * cpufreq { } of its SoC's file), and the arithmetic is hakios_thermal_core.h (tested on the host:
- * tests/thermal_test.c, and the driver itself: tests/thermal_driver_test.c).
+ * workbench/thermal_test.c, and the driver itself: workbench/thermal_driver_test.c).
  *
  * Every second the SoC's temperature sensors are read (every TSENS controller, every sensor that has a
  * reading: Linux's tsens-v2.c; read only, never written), and from the hottest of them:

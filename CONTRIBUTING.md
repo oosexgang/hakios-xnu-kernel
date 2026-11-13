@@ -40,7 +40,7 @@ restructuring: [docs/migrating.md](docs/migrating.md).
 - **Check what you replace.** A library that swaps a method of Darwin checks the method's type encoding
   first and leaves it alone, saying so, when it is not what it expects.
 - **Test what can run without the phone.** Arithmetic and state machines go in a header the host
-  tests compile; a driver's register traffic can be tested against a model (`tests/`).
+  tests compile; a driver's register traffic can be tested against a model (`workbench/`).
 - **What two drivers need is written once.** Registers, waits, the log, the SoC's pins, the PMICs and
   RPMh have a header each in `kernel/overlay/bsd/dev/` (`hakios_*.h`), with a test.
   [docs/writing-a-driver.md](docs/writing-a-driver.md) lists them, and has an example driver to
@@ -70,5 +70,5 @@ its source named in a comment.
 
 C in the kernel follows the files around it: tabs, the comment above the code explains *why*, a
 driver starts with a comment that says what the hardware is and where each number comes from. Shell
-scripts in `kernel/`, `tests/` and `tools/` pass `shellcheck`. Python needs nothing outside the
+scripts in `kernel/`, `workbench/` and `tools/` pass `shellcheck`. Python needs nothing outside the
 standard library.

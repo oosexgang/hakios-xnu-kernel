@@ -110,7 +110,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
-| `tests/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
+| `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |

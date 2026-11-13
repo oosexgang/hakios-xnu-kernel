@@ -17,7 +17,7 @@
  * no feature: nothing of a phone is touched on a machine that was not described. Adding a device is a
  * directory under devices/ (docs/porting.md), not a change to the drivers.
  *
- * Compiled by the host tests as well (tests/), so nothing of the kernel's is included here.
+ * Compiled by the host tests as well (workbench/), so nothing of the kernel's is included here.
  */
 #ifndef _HAKIOS_BOARD_H
 #define _HAKIOS_BOARD_H

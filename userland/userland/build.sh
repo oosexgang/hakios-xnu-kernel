@@ -146,8 +146,8 @@ SILEO_BIN="chmod cp mkdir mv rm"
 # ours -- Settings, where a tweak's own pane belongs. Add a program's name to have tweaks in it.)
 # Darwin 26: only src/inject26.c, in backboardd (the touch screen and the buttons); the Darwin 16.5 libraries
 # patch 16.5's addresses
-case "$(basename "$DARWIN_FW")" in darwin26*) IOS26=1 ;; *) IOS26=0 ;; esac
-if [ "$IOS26" = 1 ]; then
+case "$(basename "$DARWIN_FW")" in darwin26*) DARWIN26=1 ;; *) DARWIN26=0 ;; esac
+if [ "$DARWIN26" = 1 ]; then
 	INJECT=${INJECT-"/hakios/lib/libhakios26.dylib backboardd SpringBoard PosterBoard"}
 fi
 INJECT=${INJECT-"/hakios/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
@@ -559,7 +559,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 	# (SetupDone, SetupFinishedAllSteps, SetupVersion, SetupLastExit -- the keys in their binaries). With Darwin
 	# 16.5's file (SetupVersion 11, no SetupFinishedAllSteps) unlocking started Setup.app, whose screen the
 	# software renderer cannot draw: backboardd ran out of stack in CoreAnimation and SpringBoard went with it.
-	if [ "$IOS26" = 1 ]; then
+	if [ "$DARWIN26" = 1 ]; then
 		python3 - root/var/mobile/Library/Preferences/com.apple.purplebuddy.plist <<'PY'
 import datetime, plistlib, sys
 p = sys.argv[1]
@@ -856,7 +856,7 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	# through the symlink into /hakios is "non-system" and may claim no host port or event stream. So
 	# there the jobs are copied in (JOBS_IN_SYSTEM=1, the default for ../darwin26), and a change to them
 	# means a new system image.
-	if [ "${JOBS_IN_SYSTEM:-$([ "$IOS26" = 1 ] && echo 1)}" = 1 ]; then
+	if [ "${JOBS_IN_SYSTEM:-$([ "$DARWIN26" = 1 ] && echo 1)}" = 1 ]; then
 		cp -R root/LaunchDaemons sysroot/System/Library/LaunchDaemons
 	else
 		ln -s /hakios/LaunchDaemons sysroot/System/Library/LaunchDaemons
