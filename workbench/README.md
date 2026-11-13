@@ -138,4 +138,9 @@ tests are built with from these and the repository's own boards.
   workbench/mutate.sh ddr_driver_test board/ddr.c 'level == 0 ||' ''
   # caught by: not_listed_not_asked
   ```
+
+  `workbench/mutants.py TEST SOURCE` makes the simple changes itself -- each comparison turned the other
+  way or made inclusive, each `&&` made `||` -- runs every one, and prints those no scenario noticed.
+  Some of those change nothing (a `>` that may as well be `>=` when two equal values give the same
+  result); the rest are scenarios to write.
 - Add it to `workbench/run.sh`.
