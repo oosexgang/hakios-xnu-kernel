@@ -502,3 +502,74 @@ command_crash(int argc, char **argv)
 	}
 	say("crash KIND: null, illegal or breakpoint\n");
 }
+
+/* ---- signals caught: alarm ---- */
+
+#define SYS_sigaction           46
+#define SYS_setitimer           83
+#define SYS_sigreturn           184
+#define SIGALRM                 14
+#define ITIMER_REAL             0
+
+/*
+ * Where the kernel sends a caught signal (sa_tramp): x0 the handler, x1 the context's kind, x2 the
+ * signal, x3 its information, x4 the context, x5 the token sigreturn must be shown. The handler runs,
+ * then sigreturn puts the thread back where the signal took it.
+ */
+__asm__(".globl _signal_trampoline\n_signal_trampoline:\n"
+        "\tmov x19, x0\n\tmov x20, x1\n\tmov x21, x4\n\tmov x22, x5\n"
+        "\tmov x0, x2\n\tmov x1, x3\n\tmov x2, x4\n\tblr x19\n"
+        "\tmov x0, x21\n\tmov x1, x20\n\tmov x2, x22\n\tmov x16, #184\n\tsvc #0x80\n\tbrk #1\n");
+void signal_trampoline(void);
+
+struct sigaction_in {                   /* bsd/sys/signal.h's struct __sigaction */
+	void (*handler)(int);
+	void (*trampoline)(void);
+	uint32_t mask;
+	int32_t flags;
+};
+
+struct itimerval {
+	struct { int64_t seconds; int32_t microseconds, pad; } interval, value;
+};
+
+static volatile uint32_t alarms;
+
+static void
+on_alarm(int signal)
+{
+	(void)signal;
+	alarms++;
+}
+
+/* [COUNT]: a timer of a tenth of a second (setitimer) whose SIGALRM a handler catches, COUNT times */
+void
+command_alarm(int argc, char **argv)
+{
+	unsigned count = argc > 1 ? parse_number(argv[1]) : 10;
+	struct sigaction_in action = { on_alarm, signal_trampoline, 0, 0 }, none = { 0, 0, 0, 0 };
+	struct itimerval every = { { 0, 100000, 0 }, { 0, 100000, 0 } }, stop = { { 0, 0, 0 }, { 0, 0, 0 } };
+
+	if (count < 1 || count > 100) {
+		say("alarm [COUNT]: 1 to 100\n");
+		return;
+	}
+	if (syscall6(SYS_sigaction, SIGALRM, (long)&action, 0, 0, 0, 0) != 0) {
+		say("alarm: the signal cannot be caught\n");
+		return;
+	}
+	alarms = 0;
+	int64_t start = now_us();
+	syscall6(SYS_setitimer, ITIMER_REAL, (long)&every, 0, 0, 0, 0);
+	for (int waited = 0; alarms < count && waited < (int)count * 4; waited++) {
+		syscall6(SYS_sigsuspend, 0, 0, 0, 0, 0, 0);     /* (until a signal is caught) */
+	}
+	syscall6(SYS_setitimer, ITIMER_REAL, (long)&stop, 0, 0, 0, 0);
+	int64_t took = now_us() - start;
+	syscall6(SYS_sigaction, SIGALRM, (long)&none, 0, 0, 0, 0);
+	say("alarm: ");
+	say_number(alarms);
+	say(" SIGALRM caught by a handler in ");
+	say_number((uint64_t)took / 1000);
+	say(" ms\n");
+}

@@ -24,6 +24,7 @@
 #define SYS_open                5
 #define SYS_close               6
 #define SYS_getpid              20
+#define SYS_sigsuspend          111
 #define SYS_gettimeofday        116
 #define SYS_sysctlbyname        274
 #define SYS_proc_info           336
@@ -64,6 +65,7 @@ int sysctl_number(const char *name, uint64_t *value);
 
 /* the commands: argc words, the command's name first (main.c lists them for the shell) */
 void command_about(int argc, char **argv);
+void command_alarm(int argc, char **argv);
 void command_cat(int argc, char **argv);
 void command_crash(int argc, char **argv);
 void command_date(int argc, char **argv);
