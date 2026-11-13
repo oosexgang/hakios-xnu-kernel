@@ -8,8 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 0 arguments have no comment naming them yet and show "—". To document one, write a comment with
-  `name=` in it next to where it is read, then run `make docs`.
+- To document an argument, write a comment with `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
 ## Display, graphics and input
