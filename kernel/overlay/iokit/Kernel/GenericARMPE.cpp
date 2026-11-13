@@ -267,32 +267,33 @@ GenericARMPE::start(IOService * provider)
 		 */
 		uint32_t later = 28;
 		static thread_call_t later_call;
+		static bool held;               /* (some core waits for that: not on a machine whose cores are all alike) */
 
 		PE_parse_boot_argn("small_cores_after", &later, sizeof(later));
 		cpus[master_cpu]->run();
 		for (unsigned int number = 0; number < MAX_CPUS; number++) {
 			if (cpus[number] != NULL && number != (unsigned int)master_cpu) {
 				if (later != 0 && ml_get_topology_info()->cpus[number].l2_access_penalty != 0) {
+					held = true;
 					continue;
 				}
 				cpus[number]->run();
 			}
 		}
-		if (later != 0) {
-			uint64_t deadline;
+		/* the slower cores' start, if any wait; and, a moment after the last has started, how many run */
+		uint64_t deadline;
 
-			later_call = thread_call_allocate([](thread_call_param_t, thread_call_param_t) {
-				for (unsigned int number = 0; number < MAX_CPUS; number++) {
-					if (cpus[number] != NULL && ml_get_topology_info()->cpus[number].l2_access_penalty != 0) {
-						cpus[number]->run();
-					}
+		later_call = thread_call_allocate([](thread_call_param_t, thread_call_param_t) {
+			for (unsigned int number = 0; held && number < MAX_CPUS; number++) {
+				if (cpus[number] != NULL && ml_get_topology_info()->cpus[number].l2_access_penalty != 0) {
+					cpus[number]->run();
 				}
-				IOLog("GenericARMPE: the slower cores started too: %u processor%s running\n", processor_avail_count,
-				    processor_avail_count == 1 ? "" : "s");
-			}, NULL);
-			clock_interval_to_deadline(later, NSEC_PER_SEC, &deadline);
-			thread_call_enter_delayed(later_call, deadline);
-		}
+			}
+			IOLog("GenericARMPE: %s%u processor%s running\n", held ? "the slower cores started too: " : "all started: ",
+			    processor_avail_count, processor_avail_count == 1 ? "" : "s");
+		}, NULL);
+		clock_interval_to_deadline(held ? later : 1, NSEC_PER_SEC, &deadline);
+		thread_call_enter_delayed(later_call, deadline);
 		if (count > 1) {
 			IOLog("GenericARMPE: %u of %u processors are running\n", processor_avail_count, count);
 		}
