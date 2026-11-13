@@ -839,15 +839,15 @@ codec_put(uint16_t reg, uint8_t value, uint8_t check)
 	write_id = write_id < 14 ? write_id + 1 : 0;
 	swr_write(codec_device, reg, value, write_id);
 	if (check == 0) {
-		note("mic: the codec's %#06x <- %#04x\n", reg, value);
+		note("mic: the codec's 0x%04x <- 0x%02x\n", reg, value);
 		return true;
 	}
 	if (!swr_read(codec_device, reg, &back) || (back & check) != (value & check)) {
-		say("mic: the codec's %#06x <- %#04x, but it reads %#04x: STOPPING HERE\n", reg, value, back);
+		say("mic: the codec's 0x%04x <- 0x%02x, but it reads 0x%02x: STOPPING HERE\n", reg, value, back);
 		broken = true;
 		return false;
 	}
-	note("mic: the codec's %#06x <- %#04x, reads back\n", reg, value);
+	note("mic: the codec's 0x%04x <- 0x%02x, reads back\n", reg, value);
 	return true;
 }
 
@@ -868,7 +868,7 @@ static void
 broadcast(uint16_t reg, uint8_t value)
 {
 	swr_write(0xf, reg, value, 0xf);
-	note("mic: SoundWire, to all: %#06x <- %#04x\n", reg, value);
+	note("mic: SoundWire, to all: 0x%04x <- 0x%02x\n", reg, value);
 	sleep_ms(10);           /* ("10 ms for the broadcast to complete", swrm_cmd_fifo_wr_cmd()) */
 }
 
@@ -878,7 +878,7 @@ to_all(uint16_t reg, uint8_t value)
 {
 	write_id = write_id < 14 ? write_id + 1 : 0;
 	swr_write(0xf, reg, value, write_id);
-	note("mic: SoundWire, to all: %#06x <- %#04x\n", reg, value);
+	note("mic: SoundWire, to all: 0x%04x <- 0x%02x\n", reg, value);
 }
 
 /* wcd938x_bind(), wcd938x_set_micbias_data(), wcd938x_init_reg() */
