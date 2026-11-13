@@ -111,7 +111,7 @@ KIND = {0: "constant buffer", 1: "device buffer", 2: "threadgroup buffer",
 
 HEAD = '''source_filename = "%s"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-target triple = "air64-apple-ios14.0.0"
+target triple = "air64-apple-darwin14.0.0"
 
 %%"struct.metal::sampler" = type { ptr addrspace(2) }
 %%"struct.metal::texture2d" = type { ptr addrspace(1) }
@@ -328,7 +328,7 @@ def cases():
 # buffer 0, 1, 2, 3 -- so set 1's member 0 is buffer 2 and not buffer 0.
 TWO_SETS = '''source_filename = "argbuf_two_sets"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-target triple = "air64-apple-ios14.0.0"
+target triple = "air64-apple-darwin14.0.0"
 
 %struct.spvDescriptorSetBuffer0 = type { ptr addrspace(1), ptr addrspace(2) }
 %struct.spvDescriptorSetBuffer1 = type { ptr addrspace(1), ptr addrspace(2) }
@@ -382,7 +382,7 @@ define void @argbuf_two_sets(ptr addrspace(2) %0, ptr addrspace(2) %1, i32 %2) l
 
 
 CONTROL = '''source_filename = "two_direct_textures"
-target triple = "air64-apple-ios14.0.0"
+target triple = "air64-apple-darwin14.0.0"
 
 declare { <4 x float>, i8 } @air.read_texture_2d.v4f32(ptr addrspace(1), <2 x i32>, i32, i32) local_unnamed_addr
 

@@ -61,7 +61,7 @@ LOADED = 7            # what sits in [4] for every thread to read
 
 KERNEL = r'''source_filename = "atomics"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-target triple = "air64-apple-ios16.5.0"
+target triple = "air64-apple-darwin16.5.0"
 
 declare i32 @air.atomic.global.add.s.i32(ptr addrspace(1), i32, i32, i32, i1) local_unnamed_addr
 declare i32 @air.atomic.global.load.i32(ptr addrspace(1), i32, i32, i1) local_unnamed_addr
@@ -131,7 +131,7 @@ define void @atomics(ptr addrspace(1) %0, ptr addrspace(1) %1, i32 %2) local_unn
 #   thread that ran ahead, and names that one instead.
 LOCAL_KERNEL = r"""source_filename = "local_atomics"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-target triple = "air64-apple-ios16.5.0"
+target triple = "air64-apple-darwin16.5.0"
 
 @tg = internal addrspace(3) global [2 x i32] undef
 
