@@ -225,6 +225,7 @@ struct hakios_worked {
 #define GPU_BUFFER_MAX          (256u << 20)
 #define GPU_SUBMIT_CMDS         128
 #define GPU_SUBMIT_BOS          8192
+#define GPU_SHOWN_WAIT_MS       30              /* a submission waits for the display's copy of its surface this long at most */
 #define GPU_SUBMIT_BO_TRACK     0x8000u         /* a submission's buffer flag (Turnip's darwin transport): named for the surface's
                                                  * "drawn" mark only, not to be pushed out of the cache here (the plugin does) */
 #define GPU_PATIENCE_MS         5000            /* for a buffer or a submission that somebody waits for without a limit */
@@ -253,6 +254,7 @@ static struct {
 	uint32_t submissions, commands, buffers, surfaces, waits, over;
 	uint32_t made, given_again;             /* buffers of their own made for programs, and of those kept ones given again */
 	uint64_t making;                        /* ... and the time it took to make the others */
+	uint32_t shownWaits;                    /* submissions that waited for the display's copy of a surface they draw into */
 } gGPUStat;
 
 /* Wait for the 3D core to be done with submission `fence`; with the lock held, which is let go of while waiting. */
@@ -1352,6 +1354,31 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		goto out;
 	}
 	IOLockLock(gGPULock);
+	/*
+	 * A surface this submission draws into that the display's driver is copying to the panel right now: waited for, the
+	 * lock let go meanwhile (MiniIOSurface shownReading). A copy takes some 10 ms at most; past GPU_SHOWN_WAIT_MS the
+	 * submission goes on all the same, as before.
+	 */
+	for (uint32_t waited = 0; waited < GPU_SHOWN_WAIT_MS * 10; waited++) {
+		bool reading = false;
+
+		for (uint32_t i = 0; i < request->nr_bos && !reading; i++) {
+			struct gpu_buffer * b = buffer(bos[i].handle);
+			uint32_t flags = bos[i].flags;
+
+			reading = b != NULL && b->surface != NULL && b->surface->shownReading != 0 &&
+			    ((flags & MSM_SUBMIT_BO_WRITE) != 0 || (flags & (MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE)) == 0);
+		}
+		if (!reading) {
+			break;
+		}
+		if (waited == 0) {
+			gGPUStat.shownWaits++;
+		}
+		IOLockUnlock(gGPULock);
+		delay_for_interval(100, NSEC_PER_USEC);
+		IOLockLock(gGPULock);
+	}
 	if (gGPUFairMs != 0 && fYields && fLastFence != 0 && !hakios_gpu_done(fLastFence)) {
 		uint64_t waited = mach_absolute_time();
 
@@ -1528,13 +1555,14 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		IOLog("HakiosGPU: %u submissions in %llu ms: %u command buffers and %u buffers named, %llu KB out of the cache "
 		    "in %llu us a submission; the GPU worked %llu us on each of %u (%u under 0.1 ms, %u under 0.25, %u under 0.5, "
 		    "%u under 1, %u under 2, %u under 4, %u longer; %llu ms in all); %u waits of %llu us, %u over before they "
-		    "began; %u IOSurfaces taken as buffers in %llu us each; %u buffers, %llu MB\n",
+		    "began; %u IOSurfaces taken as buffers in %llu us each; %u buffers, %llu MB; %u submissions waited for the display's "
+		    "copy of a surface they draw into\n",
 		    gGPUStat.submissions, nanos / NSEC_PER_MSEC, gGPUStat.commands, gGPUStat.buffers,
 		    (gGPUStat.flushed >> 10) / gGPUStat.submissions, flushing / NSEC_PER_USEC / gGPUStat.submissions,
 		    timed ? worked / timed : 0, timed, by[0], by[1], by[2], by[3], by[4], by[5], by[6], worked / 1000,
 		    gGPUStat.waits, gGPUStat.waits ? waiting / NSEC_PER_USEC / gGPUStat.waits : 0, gGPUStat.over,
 		    gGPUStat.surfaces, gGPUStat.surfaces ? taking / NSEC_PER_USEC / gGPUStat.surfaces : 0, fBufferCount,
-		    fBufferBytes >> 20);
+		    fBufferBytes >> 20, gGPUStat.shownWaits);
 		if (gGPUFairMs != 0) {
 			uint64_t waited;
 

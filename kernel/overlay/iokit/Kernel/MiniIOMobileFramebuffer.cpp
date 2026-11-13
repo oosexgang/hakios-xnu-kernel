@@ -1648,7 +1648,9 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 				PE_initialize_console(NULL, kPEGraphicsMode);
 				PE_initialize_console(NULL, kPEReleaseScreen);
 			}
+			OSIncrementAtomic((volatile SInt32 *) &s->shownReading);
 			drawLayer(s, src, dst);
+			OSDecrementAtomic((volatile SInt32 *) &s->shownReading);
 			if (layer == 0) {
 				recorded = s;   /* (recorded once the frame is in the panel's memory: see below) */
 			}
