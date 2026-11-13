@@ -64,6 +64,7 @@ line at a time:
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
+| `memory MB` | That much memory of its own (anonymous mmap), a word on every page written and read back; the kernel's free memory before, with it and after. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
@@ -81,7 +82,7 @@ shell runs as its child and is waited for; the kernel's message buffer is read; 
 port and come back unchanged; the date is this year's; a signal ends a process in the background, and a process's
 mistakes end it with the signal they should; a timer's signals reach a handler on time; a pipe
 carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; a mapped
-file is what reading it gives; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
+file is what reading it gives; memory of its own holds what is written and is all given back; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
 
 ## What it is not
 
