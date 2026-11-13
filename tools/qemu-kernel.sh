@@ -15,6 +15,7 @@
 #     --boot-args ARGS  added to the kernel's boot arguments (-v, the verbose console on the screen, is
 #                       there unless --quiet)
 #     --ramdisk FILE    a disk image the kernel gets as /dev/md0 (its root: --boot-args rd=md0)
+#     --disk FILE       a disk image on a virtio disk, read only, which the kernel gets as the block device /dev/rvblk0
 #     --cpus N          processors (default 1)
 #     --qemu ARGS       more for QEMU: devices, e.g. --qemu "-device virtio-keyboard-device" (the kernel's virtio
 #                       drivers take the MMIO transports: "-device virtio-*-device", not the PCI ones)
@@ -32,7 +33,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor=''
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' disk=''
 with_devices=1
 while [ $# -gt 1 ]; do
 	case $1 in
@@ -44,6 +45,7 @@ while [ $# -gt 1 ]; do
 	--log) log=$(realpath -m "$2"); shift 2 ;;
 	--boot-args) args=$2; shift 2 ;;
 	--ramdisk) ramdisk=$(realpath "$2"); shift 2 ;;
+	--disk) disk=$(realpath "$2"); shift 2 ;;
 	--cpus) cpus=$2; shift 2 ;;
 	--qemu) read -ra extra <<< "$2"; shift 2 ;;
 	--quiet) verbose=''; shift ;;
@@ -59,6 +61,10 @@ done
 devices=()
 [ -z "$with_devices" ] || devices=(-global virtio-mmio.force-legacy=false -netdev "user,id=net0$forward" -device 'virtio-net-device,netdev=net0'
 	-device virtio-keyboard-device -device virtio-tablet-device)
+if [ -n "$disk" ]; then
+	[ -n "$with_devices" ] || devices=(-global virtio-mmio.force-legacy=false)
+	devices+=(-drive "file=$disk,format=raw,if=none,id=disk0,readonly=on" -device 'virtio-blk-device,drive=disk0')
+fi
 kernel=$(realpath "$1") || exit 1
 command -v qemu-system-aarch64 > /dev/null || die "no qemu-system-aarch64 (apt: qemu-system-arm)"
 firmware=
@@ -73,7 +79,7 @@ trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
 mkdir -p "$W/esp/EFI/BOOT"
 cp "$HERE/loader/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
 # the console on the screen too only for a picture of it: in QEMU each line scrolls the whole framebuffer
-cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${devices[*]:+ virtio_net=1 virtio_input=1} $args"
+cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${with_devices:+ virtio_net=1 virtio_input=1}${disk:+ virtio_blk=1} $args"
 python3 "$HERE/loader/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
 	"--cmdline=${cmdline# }" > /dev/null || die "no payload"
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
