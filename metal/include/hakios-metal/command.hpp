@@ -180,9 +180,15 @@ public:
     // what a pass weighs against that bar: its draws, and kFetchWeight more for each that reads its attachments -- in
     // sysmem each such draw waits for the colour cache's flush and reads the target from memory (render::encodeInPass's
     // barrier), in GMEM it reads the tile. CoreAnimation's paths, path_blit cut to its mask (ca_paths.h), left 47 draws
-    // and 12 fetches in the home screen's main pass: 19 ms in sysmem while the page moved (logs/080158-run.log).
+    // and 12 fetches in the home screen's main pass: 19 ms in sysmem while the page moved (logs/080158-run.log). And a
+    // pass with any fetch weighs the bar at least: the rasterized wallpaper drawn again into its 896x1856 texture as an
+    // app opened, its stripes by the path renderer -- 9 draws, 2 of them fetches, weighing 25 -- took 293 ms in sysmem,
+    // a frame of a third of a second (logs/113822-run.log).
     static constexpr uint32_t kFetchWeight = 8;
-    uint32_t gmemWeight(uint32_t draws, uint32_t fetches) const { return draws + ((gmemOff_ & kGmemFetchWeight) ? 0 : kFetchWeight * fetches); }
+    uint32_t gmemWeight(uint32_t draws, uint32_t fetches) const {
+        if ((gmemOff_ & kGmemFetchWeight) || fetches == 0) return draws;
+        return std::max(draws + kFetchWeight * fetches, gmemMinDraws_);
+    }
     // render::Options::gmemBinning for this buffer's draws besides each draw's own (either asks for it)
     void setGmemBinning(bool on) { gmemBinning_ = on; }
     // every fragment texture the null texture (1x1, always in the texture cache): wrong pictures, but a draw's time then

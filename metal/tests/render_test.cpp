@@ -5819,8 +5819,9 @@ TEST(a_pass_of_fetching_draws_weighs_more_toward_gmem) {
     RenderPass a;
     a.color0 = t.get();
     const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+    // (and one fetch among few draws is enough: the path renderer's passes of a handful of draws, 293 ms in sysmem)
     for (const auto& [plain, fetching, off, want] :
-         {std::tuple<int, int, bool, uint32_t>{35, 12, false, 1}, {35, 0, false, 0}, {35, 12, true, 0}}) {
+         {std::tuple<int, int, bool, uint32_t>{35, 12, false, 1}, {35, 0, false, 0}, {35, 12, true, 0}, {7, 2, false, 1}, {7, 2, true, 0}, {9, 0, false, 0}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(56);
         cb->setGmemOff(CommandBuffer::kGmemAlwaysDual | (off ? CommandBuffer::kGmemFetchWeight : 0u));
