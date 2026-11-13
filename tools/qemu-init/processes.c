@@ -46,20 +46,21 @@ command_ps(int argc, char **argv)
 #define SYS_wait4               7
 #define SYS_posix_spawn         244
 
-/* how a process ended, as wait4 says it */
+/* how a process ended, as wait4 says it, after WHO ("run: "), in one line */
 static void
-say_ended(int32_t pid, int32_t status)
+say_ended(const char *who, int32_t pid, int32_t status)
 {
-	say("pid ");
-	say_number((uint64_t)pid);
+	char line[96];
+	size_t at = append(line, 0, sizeof(line), who);
+
+	at = append_number(line, append(line, at, sizeof(line), "pid "), sizeof(line), (uint64_t)pid);
 	if ((status & 0x7f) == 0) {
-		say(" exited with ");
-		say_number((uint64_t)((status >> 8) & 0xff));
+		at = append_number(line, append(line, at, sizeof(line), " exited with "), sizeof(line), (uint64_t)((status >> 8) & 0xff));
 	} else {
-		say(" ended by signal ");
-		say_number((uint64_t)(status & 0x7f));
+		at = append_number(line, append(line, at, sizeof(line), " ended by signal "), sizeof(line), (uint64_t)(status & 0x7f));
 	}
-	say("\n");
+	append(line, at, sizeof(line), "\n");
+	say(line);
 }
 
 /* PROGRAM [ARGUMENTS]: a new process (posix_spawn) running PROGRAM, waited for; what it ended with */
@@ -88,8 +89,7 @@ command_run(int argc, char **argv)
 		say(" was not waited for\n");
 		return;
 	}
-	say("run: ");
-	say_ended(pid, status);
+	say_ended("run: ", pid, status);
 }
 
 /* osfmk/kern/syscall_sw.c: Mach's traps are the negative numbers; they return a kern_return_t in x0 */
@@ -253,8 +253,7 @@ command_wait(int argc, char **argv)
 		say("wait: no process of its own\n");
 		return;
 	}
-	say("wait: ");
-	say_ended((int32_t)pid, status);
+	say_ended("wait: ", (int32_t)pid, status);
 }
 
 /* pipe() gives its two ends in x0 and x1 */
