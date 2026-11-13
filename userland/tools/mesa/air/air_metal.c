@@ -1226,7 +1226,7 @@ pixel_format_refusal(unsigned f)
     */
    if (f == 255)
       return "MTLPixelFormatDepth24Unorm_Stencil8, which Metal's own header marks "
-             "API_UNAVAILABLE(ios) -- this device answers NO to "
+             "unavailable on this platform by its declaration -- this device answers NO to "
              "-isDepth24Stencil8PixelFormatSupported, and a format the device says it "
              "does not have must not be allocatable through it";
    if (f == 261 || f == 262)

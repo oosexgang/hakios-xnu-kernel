@@ -235,7 +235,7 @@ done
 printf ' _vm_map_external  _vm_map\n _IOMallocData_external _IOMallocData\n\n' > "$W/aliases.exp"
 LLVM=$HERE/../kernel/host/llvm
 XNU_CLANG_DIR=$L XNU_SDK_VERSION=16.5 "$LLVM/ld" -arch arm64 -alias_list "$W/aliases.exp" -o kernel a.o > "$W/ld.args"
-check "the linker is told the platform first" test "$(head -4 "$W/ld.args" | tr '\n' ' ')" = "-platform_version ios 16.5 16.5 "
+check "the linker is told the platform first" test "$(head -4 "$W/ld.args" | tr '\n' ' ')" = "-platform_version 2 16.5 16.5 "
 check "an alias list becomes one -alias a line, in order, and the rest is passed on" \
 	test "$(tail -n +5 "$W/ld.args" | tr '\n' ' ')" = "-arch arm64 -alias _vm_map_external _vm_map -alias _IOMallocData_external _IOMallocData -o kernel a.o "
 XNU_CLANG_DIR=$L "$LLVM/libtool" -ca -filelist f -o out.a > "$W/libtool.args"

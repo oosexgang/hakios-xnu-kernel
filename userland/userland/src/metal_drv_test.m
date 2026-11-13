@@ -343,7 +343,7 @@ format_named(const char *name)
 		{ "r32float", MTLPixelFormatR32Float },
 		{ "r32uint", MTLPixelFormatR32Uint },
 		/* the depth attachment formats Darwin has, for --draw-depth. Depth24Unorm_Stencil8
-		 * is absent because Metal's own header marks it API_UNAVAILABLE(ios) and the
+		 * is absent because Metal's own header marks it unavailable on this platform and the
 		 * device answers NO to -isDepth24Stencil8PixelFormatSupported. */
 		{ "depth16unorm", MTLPixelFormatDepth16Unorm },
 		{ "depth32float", MTLPixelFormatDepth32Float },

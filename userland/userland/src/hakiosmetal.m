@@ -2772,7 +2772,7 @@ static NSData *rw_function_air(id function);
 /* Declined rather than claimed: no sparse textures, and a yes here would be acted on.
  *
  * Depth24Unorm_Stencil8 stays NO now that there IS a depth path, and it is not a leftover:
- * Metal's own header marks that format API_UNAVAILABLE(ios), the compiler library refuses it
+ * Metal's own header marks that format unavailable on this platform, the compiler library refuses it
  * by name for the same reason, and Darwin depth is Depth16Unorm, Depth32Float or
  * Depth32Float_Stencil8 -- which this device does answer for. A yes here would offer a
  * format no texture could be made of. */

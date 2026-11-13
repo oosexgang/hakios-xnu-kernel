@@ -32,7 +32,7 @@
 
 /*
  * The call itself, under a name of ours. IOKit's header marks IORegistryEntrySetCFProperties
- * API_UNAVAILABLE(ios), which is a statement about the declaration and not about the code: Darwin
+ * unavailable on this platform (API_UNAVAILABLE), which is a statement about the declaration and not about the code: Darwin
  * 16.5's IOKit exports _IORegistryEntrySetCFProperties all the same (the SDK's own IOKit.tbd
  * lists it), so the symbol is reached by an asm label and the link finds it. Redeclaring it by
  * its own name does not work -- the header's attribute stays attached to that name.

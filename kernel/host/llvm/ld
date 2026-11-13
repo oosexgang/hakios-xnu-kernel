@@ -4,7 +4,8 @@
 # ld64.lld wants the platform said where ld64 takes it from the objects, and it takes aliases one by
 # one (-alias OLD NEW) where XNU gives ld64 a file of them (-alias_list FILE: vm_map for
 # vm_map_external and the like).
-args=(-platform_version ios "${XNU_SDK_VERSION:-16.5}" "${XNU_SDK_VERSION:-16.5}")
+# (the platform by its number in mach-o/loader.h: 2, the one the phones' SDK builds for)
+args=(-platform_version 2 "${XNU_SDK_VERSION:-16.5}" "${XNU_SDK_VERSION:-16.5}")
 while [ $# -gt 0 ]; do
 	if [ "$1" = -alias_list ]; then
 		while read -r from to _; do
