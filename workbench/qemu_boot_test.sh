@@ -4,7 +4,8 @@
 # devices taken, the root mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's),
 # and /sbin/launchd run, which says what the kernel says of itself, answers on the console, pings QEMU's
 # gateway, serves this machine a page over TCP, reads a second disk on the virtio block device, and plays
-# a tone through the virtio sound device (which QEMU writes to a WAV file).
+# a tone through the virtio sound device (which QEMU writes to a WAV file), and reads a button and a touch
+# that QEMU's keyboard and tablet make.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -32,8 +33,9 @@ mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
 python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
-	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\ntone 440 1\n' \
-	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'" --after 8 \
+	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\ntone 440 1\ninput 4\n' \
+	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25" \
+	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
 check "the loader takes the kernel and jumps to it" grep -aq "jumping to" "$log"
@@ -55,6 +57,9 @@ check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
 check "its sound device plays a tone of 440 Hz, through the virtio sound driver" \
 	bash -c "python3 '$HERE/tone_in_wav.py' '$W/sound.wav' 440 > /dev/null"
+check "a button pressed on the virtio keyboard reaches the input device" \
+	bash -c "tr -d '\\r' < '$log' | grep -qx 'button down home' && tr -d '\\r' < '$log' | grep -qx 'button up home'"
+check "... and a touch on the virtio tablet, where it was made" grep -aq "touch down finger 0 at 3276[0-9],1638[0-9]" "$log"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"

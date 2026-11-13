@@ -21,7 +21,8 @@ make qemu                                           # all of that, checked (work
 the console (`--type`, a line once the shell's prompt is back), takes the screen as a PNG (`--screen`),
 attaches a disk image to the virtio block device (`--disk`), writes what the virtio sound device plays to
 a WAV file (`--audio`), forwards a TCP port of the machine to this
-one (`--forward H:G`), and runs a command here while it types (`--then`). Its head lists every option.
+one (`--forward H:G`), opens QEMU's QMP on a socket (`--qmp`, for `base/qemu/touch.py` to touch the screen
+and press the buttons), and runs a command here while it types (`--then`). Its head lists every option.
 
 ## The machine
 
@@ -50,6 +51,7 @@ line at a time:
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. |
 | `mount apfs DEVICE DIR` | A disk's APFS volume, read only. |
+| `input [COUNT]` | What the touch screen and the buttons say (`/dev/hakios-touch`), as the kernel's input path hands it on. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -59,7 +61,8 @@ The loader jumps to the kernel; the kernel starts on two processors and finds th
 `/sbin/launchd` runs as pid 1 and its shell answers what is typed; `en0` takes an address, QEMU's
 gateway answers its pings, and its TCP serves this machine a page through a forwarded port; a second
 APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
-out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); nothing panics.
+out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
+and a touch on its tablet reach the input device, the touch where it was made; nothing panics.
 
 ## What it is not
 
