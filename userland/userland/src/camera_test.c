@@ -114,10 +114,20 @@ cycle(int frames)
 		}
 		size_t want = sizeof(head) + (size_t)head.stride * head.height;
 
+		if (head.stride == 0 || head.height == 0 || want <= sizeof(head) || head.height > SIZE_MAX / head.stride) {
+			printf("camera_test: sensor %u: a header of %u rows of %u bytes: no picture in that\n", n, head.height, head.stride);
+			failures++;
+			continue;
+		}
 		if (want > size) {
 			free(buffer);
 			buffer = malloc(want);
-			size = want;
+			size = buffer != NULL ? want : 0;
+			if (buffer == NULL) {
+				printf("camera_test: no memory for a frame of %zu bytes\n", want);
+				failures++;
+				break;
+			}
 		}
 		double changed_ms = ms_since(asked);
 		struct isp_stats s;
@@ -343,6 +353,11 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	    head.exposure_lines, head.gain, head.gain_unity);
 	bytes = sizeof(head) + (size_t)head.stride * head.height;
 	f = malloc(bytes);
+	if (f == NULL) {
+		printf("camera_test: no memory for a frame of %zu bytes\n", bytes);
+		close(device);
+		return 1;
+	}
 	isp_init(&isp);
 	isp_set_ccm(&isp, ccm);
 	while (got < frames && failures < 5) {
@@ -377,6 +392,8 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 		previous = f->time;
 	}
 	if (got == 0) {
+		free(f);
+		close(device);
 		return 1;
 	}
 	printf("camera_test: %d frames of %llu (%llu skipped) in %.1f s\n", got, f->sequence - first_seq + 1,
