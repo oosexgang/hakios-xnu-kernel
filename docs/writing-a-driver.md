@@ -68,11 +68,14 @@ needs it.
 4. **Test it on the host.** Copy the example's test to `workbench/NAME_driver_test.c` and add its name to
    the list in `workbench/run.sh`. The test puts a model of the hardware behind `rd()` and `wr()`,
    includes the driver's own file, and runs one scenario a process. Models that exist:
-   `workbench/tlmm_model.h` (pins), `workbench/spmi_model.h` (the PMIC arbiter), `workbench/rsc_model.h` (RPMh's
+   `workbench/tlmm_model.h` (pins), `workbench/spmi_model.h` (the PMIC arbiter, which can also drop
+   transfers), `workbench/i2c_device_model.h` (a chip on a bus of two pins), `workbench/rsc_model.h` (RPMh's
    sequencer), `workbench/cmd_db_image.h` (the command database). Write first the scenarios of what the
    driver must never do. Then break the driver on purpose, one line at a time, and see that a
    scenario fails each time (`workbench/mutate.sh` does it in a copy and says which scenario caught the
-   change): a test that passes whatever the driver does tests nothing.
+   change; `workbench/mutants.py TEST SOURCE` makes the simple changes itself and prints those nothing
+   caught): a test that passes whatever the driver does tests nothing. On the host the tests run under
+   the address and undefined-behaviour sanitizers: a read past a table, or an unaligned load, fails.
 5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
    as one more line of the list in `bsd/dev/board/drivers.c`, after what it needs (the list is
    where every driver is started, in order; a driver decides for itself whether it has anything
