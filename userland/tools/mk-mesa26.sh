@@ -56,7 +56,6 @@ pkg-config = 'false'
 
 [host_machine]
 system = 'darwin'
-subsystem = 'ios'
 cpu_family = 'aarch64'
 cpu = 'arm64'
 endian = 'little'

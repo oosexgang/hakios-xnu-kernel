@@ -326,7 +326,9 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
 			-o obj/libhakios-sb.dylib src/inject_sb.c
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios26.dylib -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
-			-o obj/libhakios26.dylib src/inject26.c src/IOMobileFramebuffer.tbd &&
+			-Wl,-U,_IOMobileFramebufferSwapBegin -Wl,-U,_IOMobileFramebufferSwapEnd -Wl,-U,_IOMobileFramebufferSwapSetLayer \
+			-Wl,-U,_IOMobileFramebufferSwapSetEventWait -Wl,-U,_IOMobileFramebufferSwapSetEventSignal \
+			-o obj/libhakios26.dylib src/inject26.c &&   # (the framework's five calls: dyld finds them in backboardd, which has it)
 			/usr/bin/codesign -f -s - obj/libhakios26.dylib   # Darwin 26's dyld: "missing code signature" otherwise
 		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
