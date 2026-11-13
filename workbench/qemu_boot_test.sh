@@ -3,8 +3,8 @@
 # kernel's own start on two processors, the emulator's board found, its virtio devices taken, the root
 # mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's), and /sbin/launchd run.
 # What is typed on its shell then tries the rest of the kernel:
-#   - the network: pings to QEMU's gateway; a page served to this computer and one asked of it (TCP both
-#     ways); a datagram answered (workbench/qemu_host.py is this computer's side)
+#   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way
+#     (TCP both ways); a datagram answered (workbench/qemu_host.py is this computer's side)
 #   - the devices: a second disk (virtio block, APFS); a tone (virtio sound, which QEMU writes to a WAV
 #     file); a button and a touch from QEMU's keyboard and tablet
 #   - processes: one started and waited for, one forked (its memory copied) and made another program,
@@ -56,7 +56,7 @@ typed=(
 	'sysctl kern.maxfiles=20000 kern.procname=shell'
 	'ifconfig en0 10.0.2.15'
 	'ping 10.0.2.2 2'
-	'serve 1'
+	'serve 2'
 	'get 10.0.2.2 18081 /page.txt'
 	'get 10.0.2.2 18081 /big.bin'
 	'udp 10.0.2.2 18082 a datagram'
@@ -95,7 +95,7 @@ typed=(
 # machine: curl tries again until the shell's serve is there)
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
-	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & for try in \$(seq 90); do curl -s -m 10 http://127.0.0.1:18080/test > '$W/page'; [ -s '$W/page' ] && break; sleep 1; done; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
+	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & for try in \$(seq 90); do curl -s -m 10 http://127.0.0.1:18080/test > '$W/page'; [ -s '$W/page' ] && break; sleep 1; done; curl -s -m 120 -o '$W/sent.bin' http://127.0.0.1:18080/bytes/4194304; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
 	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
@@ -115,6 +115,9 @@ check "the kernel takes values set: a number, and its own name for the process" 
 check "en0 takes an address and comes up" bash -c "tr -d '\\r' < '$log' | grep -qx $'\\tinet 10.0.2.15'"
 check "QEMU's gateway answers its pings, through the virtio network driver" grep -aq "2 sent, 2 answered" "$log"
 check "its TCP serves a page to this machine, through QEMU's forwarded port" grep -q "^Served by /sbin/launchd" "$W/page"
+check "... and sends this computer 4 MB, every byte as it should be" python3 -c 'import sys
+data = open(sys.argv[1], "rb").read()
+sys.exit(not (len(data) == 4194304 and all(b == i * 7 % 251 for i, b in enumerate(data))))' "$W/sent.bin"
 check "... which it saw asked for" grep -aq "GET /test HTTP" "$log"
 check "it asks this computer for a page over TCP, as a client" bash -c "tr -d '\\r' < '$log' | grep -q '^get: HTTP/1.0 200 OK, 38 bytes of body' &&
 	tr -d '\\r' < '$log' | grep -qx 'a page from the computer QEMU runs on'"

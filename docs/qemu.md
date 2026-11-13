@@ -49,7 +49,7 @@ line at a time:
 | `ps`, `uptime` | The processes (proc_info) and the time since boot. |
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
-| `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. |
+| `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. `GET /bytes/N` gets N bytes made up as they go (byte i is i * 7 mod 251), for TCP to send a lot. |
 | `get ADDRESS PORT [PATH]`, `udp ADDRESS PORT WORDS...` | A page asked for over HTTP (TCP's connect, as a client): its size, the time it took and its FNV-1a hash, and the page itself if it is short; a datagram sent and its answer read. 10.0.2.2 is this computer. |
 | `mount apfs DEVICE DIR`, `mount ramfs ramfs DIR` | A disk's APFS volume, read only; or the kernel's file system in memory, to be written. |
 | `mkdir DIR...`, `write FILE WORDS...`, `rm PATH...` | Directories and files made and removed (where a file system takes writing: ramfs). |
@@ -78,7 +78,7 @@ The loader jumps to the kernel; the kernel starts on two processors and finds th
 starts its first process within 20 seconds of its own start (in QEMU's emulation, about 7);
 `en0` attaches with its link up and both input devices are found; the root mounts from the RAM disk;
 `/sbin/launchd` runs as pid 1 and its shell answers what is typed; `en0` takes an address, QEMU's
-gateway answers its pings, its TCP serves this machine a page through a forwarded port and asks this
+gateway answers its pings, its TCP serves this machine a page and 4 MB through a forwarded port and asks this
 machine for one (and for 4 MB, which arrive whole), and a datagram to this machine is answered (`workbench/qemu_host.py`); a second
 APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
