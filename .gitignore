@@ -22,3 +22,4 @@ darwin/userland/obj27/
 /devices/*/
 !/devices/_template/
 !/devices/qemu-virt/
+qemu-kernel.log
