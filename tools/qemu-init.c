@@ -270,6 +270,138 @@ command_echo(int argc, char **argv)
 	say("\n");
 }
 
+/* ---- files ---- */
+
+#define SYS_lstat64             340
+#define SYS_getdirentries64     344
+#define O_RDONLY                0
+#define O_DIRECTORY             0x100000
+
+struct stat64_head {                    /* the start of Darwin's struct stat64, up to st_size */
+	int32_t         dev;
+	uint16_t        mode, nlink;
+	uint64_t        ino;
+	uint32_t        uid, gid, rdev, pad;
+	int64_t         times[8];       /* access, modification, change, birth: seconds and nanoseconds */
+	int64_t         size;
+	char            rest[64];
+};
+
+/* the kind and permissions as ls -l writes them */
+static void
+say_mode(uint16_t mode)
+{
+	static const char kinds[16] = { '?', 'p', 'c', '?', 'd', '?', 'b', '?', '-', '?', 'l', '?', 's', '?', 'w', '?' };
+	char text[11];
+
+	text[0] = kinds[(mode >> 12) & 0xf];
+	for (int i = 0; i < 9; i++) {
+		text[1 + i] = (mode >> (8 - i)) & 1 ? "rwxrwxrwx"[i] : '-';
+	}
+	text[10] = '\0';
+	say(text);
+}
+
+static void
+say_padded(uint64_t n, int width)
+{
+	char digits[24];
+	int i = (int)sizeof(digits) - 1;
+
+	digits[i] = '\0';
+	do {
+		digits[--i] = (char)('0' + n % 10);
+		n /= 10;
+	} while (n != 0 && i > 0);
+	for (int pad = width - ((int)sizeof(digits) - 1 - i); pad > 0; pad--) {
+		say(" ");
+	}
+	say(&digits[i]);
+}
+
+static void
+list(const char *path)
+{
+	char buffer[4096], full[512];
+	int64_t base = 0;
+	long fd = syscall6(SYS_open, (long)path, O_RDONLY | O_DIRECTORY, 0, 0, 0, 0);
+
+	if (fd < 0) {
+		say(path);
+		say(": cannot be listed\n");
+		return;
+	}
+	for (;;) {
+		long got = syscall6(SYS_getdirentries64, fd, (long)buffer, sizeof(buffer), (long)&base, 0, 0);
+		if (got <= 0) {
+			break;
+		}
+		for (long at = 0; at < got;) {
+			/* struct direntry: d_ino, d_seekoff, d_reclen, d_namlen, d_type, d_name */
+			uint16_t reclen = *(uint16_t *)(buffer + at + 16);
+			const char *name = buffer + at + 21;
+			struct stat64_head st;
+			size_t n = 0;
+
+			for (const char *c = path; *c != '\0' && n < sizeof(full) - 2; c++) {
+				full[n++] = *c;
+			}
+			if (n > 0 && full[n - 1] != '/') {
+				full[n++] = '/';
+			}
+			for (const char *c = name; *c != '\0' && n < sizeof(full) - 1; c++) {
+				full[n++] = *c;
+			}
+			full[n] = '\0';
+			if (syscall6(SYS_lstat64, (long)full, (long)&st, 0, 0, 0, 0) == 0) {
+				say_mode(st.mode);
+				say_padded((uint64_t)st.size, 10);
+				say("  ");
+			} else {
+				say("?????????? ?         ");
+			}
+			say(name);
+			say("\n");
+			at += reclen;
+		}
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+}
+
+static void
+command_ls(int argc, char **argv)
+{
+	if (argc < 2) {
+		list("/");
+	}
+	for (int i = 1; i < argc; i++) {
+		if (argc > 2) {
+			say(argv[i]);
+			say(":\n");
+		}
+		list(argv[i]);
+	}
+}
+
+static void
+command_cat(int argc, char **argv)
+{
+	char buffer[1024];
+
+	for (int i = 1; i < argc; i++) {
+		long fd = syscall6(SYS_open, (long)argv[i], O_RDONLY, 0, 0, 0, 0);
+		if (fd < 0) {
+			say(argv[i]);
+			say(": cannot be read\n");
+			continue;
+		}
+		for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0;) {
+			syscall6(SYS_write, console, (long)buffer, got, 0, 0, 0);
+		}
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -288,6 +420,8 @@ static const struct {
 	{ "about", "what the kernel says of itself", command_about },
 	{ "sysctl", "NAME... the kernel's value of each", command_sysctl },
 	{ "echo", "WORDS... say them", command_echo },
+	{ "ls", "[PATH...] what is in a directory", command_ls },
+	{ "cat", "FILE... what is in a file", command_cat },
 };
 
 static void
