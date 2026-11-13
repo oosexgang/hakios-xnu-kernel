@@ -119,8 +119,11 @@ hakios_board_init(void)
 
 	features_text(board, features, sizeof(features));
 	if (board != NULL) {
-		snprintf(line, sizeof(line), "board: %s (%s, %s): %s\n", board->name, board->description, board->soc,
-		    features[0] ? features : "no features listed");
+		/* (the SoC only when it is named apart from the board: a package's soc.dtsi takes the board's name) */
+		bool soc_of_its_own = strcmp(board->soc, board->name) != 0;
+
+		snprintf(line, sizeof(line), "board: %s (%s%s%s): %s\n", board->name, board->description,
+		    soc_of_its_own ? ", " : "", soc_of_its_own ? board->soc : "", features[0] ? features : "no features listed");
 	} else {
 		snprintf(line, sizeof(line), "board: not one of the %u this kernel knows (/chosen/darwin-board): no device "
 		    "of a phone is touched\n", hakios_board_count);
