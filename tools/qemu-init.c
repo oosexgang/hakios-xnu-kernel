@@ -1400,6 +1400,107 @@ command_rm(int argc, char **argv)
 	}
 }
 
+/* ---- threads: work on every processor ---- */
+
+#define SYS_bsdthread_create    360
+#define SYS_bsdthread_terminate 361
+#define SYS_bsdthread_register  366
+#define PTHREAD_START_CUSTOM    0x01000000      /* the stack and the thread's memory are the caller's */
+#define THREADS_MAX             8
+#define THREAD_STACK            (64 * 1024)
+
+/*
+ * Where the kernel starts a thread (bsdthread_register): x0 its memory, x1 its port, x2 the function,
+ * x3 the function's argument, sp its stack. The function runs, then the thread ends, giving back the
+ * port's right (bsdthread_terminate).
+ */
+__asm__(".globl _thread_entry\n_thread_entry:\n"
+        "\tmov x19, x1\n\tmov x0, x3\n\tblr x2\n"
+        "\tmov x0, #0\n\tmov x1, #0\n\tmov x2, x19\n\tmov x3, #0\n\tmov x16, #361\n\tsvc #0x80\n\tbrk #1\n");
+void thread_entry(void);
+
+static volatile uint64_t threads_total;
+static volatile uint32_t threads_done;
+static uint32_t thread_rounds;
+
+/* a share of the work: count, then say so */
+static void
+thread_work(void *argument)
+{
+	uint64_t mine = 0;
+	(void)argument;
+
+	for (uint32_t i = 0; i < thread_rounds; i++) {
+		mine += i & 1;
+		__asm__ volatile ("" : "+r"(mine));     /* (not to be folded into one sum) */
+	}
+	__atomic_fetch_add(&threads_total, mine, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&threads_done, 1, __ATOMIC_RELEASE);
+}
+
+/* COUNT threads doing ROUNDS each; how long, against one doing all of it alone; -1 if they did not all end */
+static int64_t
+threads_run(unsigned count, uint32_t rounds)
+{
+	static uint8_t stacks[THREADS_MAX][THREAD_STACK] __attribute__((aligned(16)));
+	static uint8_t memory[THREADS_MAX][4096] __attribute__((aligned(16)));
+	int64_t start = now_us();
+
+	threads_total = 0;
+	threads_done = 0;
+	thread_rounds = rounds;
+	for (unsigned i = 0; i < count; i++) {
+		if (syscall6(SYS_bsdthread_create, (long)thread_work, 0, (long)(stacks[i] + THREAD_STACK), (long)memory[i],
+		    PTHREAD_START_CUSTOM, 0) < 0) {
+			say("threads: a thread does not start\n");
+			return -1;
+		}
+	}
+	for (int waited = 0; __atomic_load_n(&threads_done, __ATOMIC_ACQUIRE) < count; waited++) {
+		if (waited == 6000) {           /* a minute */
+			return -1;
+		}
+		sleep_us(10000);
+	}
+	return now_us() - start;
+}
+
+/* [COUNT]: COUNT threads (as many as processors, if not said) share some counting; how long it took them */
+static void
+command_threads(int argc, char **argv)
+{
+	static int registered;
+	uint32_t processors = 1;
+	size_t size = sizeof(processors);
+	const uint32_t work = 1u << 26;
+
+	syscall6(SYS_sysctlbyname, (long)"hw.ncpu", 7, (long)&processors, (long)&size, 0, 0);
+	unsigned count = argc > 1 ? parse_number(argv[1]) : processors;
+	if (count < 1 || count > THREADS_MAX) {
+		say("threads [COUNT]: 1 to 8\n");
+		return;
+	}
+	if (!registered && syscall6(SYS_bsdthread_register, (long)thread_entry, 0, 0, 0, 0, 0) < 0) {    /* (it says its features) */
+		say("threads: the kernel takes no threads from this process\n");
+		return;
+	}
+	registered = 1;
+	int64_t alone = threads_run(1, work), shared = threads_run(count, work / count);
+	if (alone < 0 || shared < 0 || threads_total != (uint64_t)(work / count / 2) * count) {
+		say("threads: the work was not all done\n");
+		return;
+	}
+	say("threads: ");
+	say_number(count);
+	say(count == 1 ? " thread on " : " threads on ");
+	say_number(processors);
+	say(processors == 1 ? " processor did in " : " processors did in ");
+	say_number((uint64_t)shared / 1000);
+	say(" ms what one does in ");
+	say_number((uint64_t)alone / 1000);
+	say(" ms\n");
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1440,6 +1541,7 @@ static const struct {
 	{ "mkdir", "DIR... new directories", command_mkdir },
 	{ "write", "FILE WORDS... the words as all of a file", command_write },
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
+	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
 };
 
 static void
