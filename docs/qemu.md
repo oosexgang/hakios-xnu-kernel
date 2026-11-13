@@ -59,6 +59,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `hash FILE...` | Each file or device read to its end, timed, and its FNV-1a hash, for this machine to compare. |
 | `mount apfs DEVICE DIR`, `mount ramfs ramfs DIR` | A disk's APFS volume, read only; or the kernel's file system in memory, to be written. |
 | `mkdir DIR...`, `write FILE WORDS...`, `rm PATH...` | Directories and files made and removed (where a file system takes writing: ramfs). |
+| `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
 | `memory MB` | That much memory of its own (anonymous mmap), a word on every page written and read back; the kernel's free memory before, with it and after. |
 | **The network** (`net.c`) | |
@@ -110,8 +111,10 @@ on its shell and checks what comes back:
   Mach messages go through a port and come back unchanged;
   kqueue's timer keeps time and it sees a pipe become readable.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
-  removed; a mapped file is what reading it gives; memory of its own holds what is written and is all
-  given back; values are set through sysctl; the kernel's messages are read; the date is this year's.
+  removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
+  symbolic link to it is read through; a mapped file is what reading it gives; memory of its own holds
+  what is written and is all given back; values are set through sysctl; the kernel's messages are
+  read; the date is this year's.
 - **IOKit.** Its registry answers in MIG messages, and the serial number the loader made is the one it
   gives user space; a picture drawn on a surface and swapped onto the screen is what QEMU's screen shows
   (`workbench/screen_shows_draw.py`).
