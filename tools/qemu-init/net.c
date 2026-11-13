@@ -280,6 +280,45 @@ put_number(long fd, uint64_t n)
 	put(fd, &digits[i]);
 }
 
+/*
+ * GET /bytes/N: N bytes made up as they go (byte i is i * 7 mod 251, which the asker can make too), for
+ * the kernel's TCP to send a lot of; at most 64 MB
+ */
+static int
+bytes_page(long fd, const char *request)
+{
+	static uint8_t chunk[65536];
+	const char *prefix = "GET /bytes/";
+	uint64_t total = 0, sent = 0;
+
+	for (int i = 0; prefix[i] != '\0'; i++) {
+		if (request[i] != prefix[i]) {
+			return 0;
+		}
+	}
+	for (const char *c = request + length(prefix); *c >= '0' && *c <= '9'; c++) {
+		total = total * 10 + (uint64_t)(*c - '0');
+	}
+	if (total > (64u << 20)) {
+		total = 64u << 20;
+	}
+	put(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ");
+	put_number(fd, total);
+	put(fd, "\r\nConnection: close\r\n\r\n");
+	while (sent < total) {
+		uint64_t n = total - sent < sizeof(chunk) ? total - sent : sizeof(chunk);
+
+		for (uint64_t i = 0; i < n; i++) {
+			chunk[i] = (uint8_t)((sent + i) * 7 % 251);
+		}
+		if (syscall6(SYS_write, fd, (long)chunk, (long)n, 0, 0, 0) != (long)n) {
+			break;
+		}
+		sent += n;
+	}
+	return 1;
+}
+
 /* the page: what the kernel says of itself, as text */
 static void
 page(long fd)
@@ -351,7 +390,9 @@ command_serve(int argc, char **argv)
 		say(": ");
 		say(request);
 		say("\n");
-		page(peer);
+		if (!bytes_page(peer, request)) {
+			page(peer);
+		}
 		syscall6(SYS_close, peer, 0, 0, 0, 0, 0);
 	}
 	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);

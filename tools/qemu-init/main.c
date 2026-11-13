@@ -106,7 +106,7 @@ static const struct {
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
-	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
+	{ "serve", "[COUNT] a page over HTTP on port 80 (or /bytes/N: N bytes)", command_serve },
 	{ "get", "ADDRESS PORT [PATH] a page asked for over HTTP", command_get },
 	{ "udp", "ADDRESS PORT WORDS... a datagram, and its answer", command_udp },
 	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
