@@ -512,9 +512,9 @@ power_down_now(const char *why)
 		}
 		value |= SYSCTRL_PWDN | SYSCTRL_AMPPD | SYSCTRL_HMUTE;
 		if (!register_write(a->address, AW_SYSCTRL, value) || !register_read(a->address, AW_SYSCTRL, &after)) {
-			say("speaker: the amplifier %s: 0x04 <- %#06x NOT ACKNOWLEDGED\n", a->where, value);
+			say("speaker: the amplifier %s: 0x04 <- 0x%04x NOT ACKNOWLEDGED\n", a->where, value);
 		} else {
-			say("speaker: the amplifier %s: 0x04 <- %#06x, reads %#06x\n", a->where, value, after);
+			say("speaker: the amplifier %s: 0x04 <- 0x%04x, reads 0x%04x\n", a->where, value, after);
 		}
 		a->started = false;
 	}
@@ -530,16 +530,16 @@ put(struct amplifier *a, uint8_t reg, uint16_t value)
 		return false;
 	}
 	if (!register_write(a->address, reg, value)) {
-		say("speaker: the amplifier %s: %#04x <- %#06x NOT ACKNOWLEDGED\n", a->where, reg, value);
+		say("speaker: the amplifier %s: 0x%02x <- 0x%04x NOT ACKNOWLEDGED\n", a->where, reg, value);
 		power_down_now("a write was not acknowledged");
 		return false;
 	}
 	if (!register_read(a->address, reg, &after)) {
-		say("speaker: the amplifier %s: %#04x <- %#06x, NOT READ BACK\n", a->where, reg, value);
+		say("speaker: the amplifier %s: 0x%02x <- 0x%04x, NOT READ BACK\n", a->where, reg, value);
 		power_down_now("a register could not be read back");
 		return false;
 	}
-	say("speaker: the amplifier %s: %#04x <- %#06x, reads %#06x%s\n", a->where, reg, value, after, after == value ? "" :
+	say("speaker: the amplifier %s: 0x%02x <- 0x%04x, reads 0x%04x%s\n", a->where, reg, value, after, after == value ? "" :
 	    ": NOT AS WRITTEN");
 	if (after != value) {
 		power_down_now("a register did not read back as written");
@@ -552,7 +552,7 @@ static bool
 get(struct amplifier *a, uint8_t reg, uint16_t *value)
 {
 	if (!register_read(a->address, reg, value)) {
-		say("speaker: the amplifier %s: %#04x NOT READ\n", a->where, reg);
+		say("speaker: the amplifier %s: 0x%02x NOT READ\n", a->where, reg);
 		return false;
 	}
 	return true;
@@ -633,7 +633,7 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 			power_down_now("an amplifier does not answer");
 			return false;
 		}
-		say("speaker: the amplifier %s: chip ID %#06x, %s\n", a->where, id, amplifier_name(id));
+		say("speaker: the amplifier %s: chip ID 0x%04x, %s\n", a->where, id, amplifier_name(id));
 		if (id != AW_ID_AW88261) {
 			return false;
 		}
@@ -655,7 +655,7 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 			return false;
 		}
 		vcalb = (uint16_t)(8192 * icalk / vcalk);
-		say("speaker: the amplifier %s: fuses %#06x %#06x %#06x %#06x: icalk %d, vcalk %d, so 0x50 is to be %#06x\n", a->where,
+		say("speaker: the amplifier %s: fuses 0x%04x 0x%04x 0x%04x 0x%04x: icalk %d, vcalk %d, so 0x50 is to be 0x%04x\n", a->where,
 		    h4, h3, l4, l3, icalk, vcalk, vcalb);
 
 		say("speaker: the amplifier %s: soft reset (0x00 <- 0x55aa), as the driver does it first\n", a->where);
@@ -727,7 +727,7 @@ hakios_speaker_start(void)
 			}
 			wait_ms(2);
 		}
-		say("speaker: the amplifier %s: status %#06x: its PLL %s\n", a->where, status, tries < STATUS_TRIES ?
+		say("speaker: the amplifier %s: status 0x%04x: its PLL %s\n", a->where, status, tries < STATUS_TRIES ?
 		    "IS LOCKED to the bit clock" : "DOES NOT LOCK: no clock?");
 		if (tries == STATUS_TRIES) {
 			power_down_now("an amplifier's PLL does not lock");
@@ -747,7 +747,7 @@ hakios_speaker_start(void)
 			}
 			wait_ms(2);
 		}
-		say("speaker: the amplifier %s: status %#06x\n", a->where, status);
+		say("speaker: the amplifier %s: status 0x%04x\n", a->where, status);
 		if ((status & SYSST_FAULTS) != 0 || (status & SYSST_CHECK) != SYSST_CHECK) {
 			power_down_now((status & SYSST_FAULTS) ? "an amplifier reports a fault" : "an amplifier's status is not as "
 			    "the driver wants it");
@@ -762,11 +762,11 @@ hakios_speaker_start(void)
 			return false;
 		}
 		if (faulty(a, &status)) {
-			say("speaker: the amplifier %s: status %#06x\n", a->where, status);
+			say("speaker: the amplifier %s: status 0x%04x\n", a->where, status);
 			power_down_now("an amplifier reports a fault");
 			return false;
 		}
-		say("speaker: THE AMPLIFIER %s RUNS, unmuted at the lowest volume (status %#06x)\n", a->where, status);
+		say("speaker: THE AMPLIFIER %s RUNS, unmuted at the lowest volume (status 0x%04x)\n", a->where, status);
 	}
 	return true;
 }
@@ -810,7 +810,7 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 			}
 			/* (a slow fade looks at the status after every step, a quick one once it is over) */
 			if (step_ms >= 10 && faulty(a, &status)) {
-				say("speaker: the amplifier %s: status %#06x\n", a->where, status);
+				say("speaker: the amplifier %s: status 0x%04x\n", a->where, status);
 				power_down_now("an amplifier reports a fault");
 				return false;
 			}
@@ -840,7 +840,7 @@ hakios_speaker_healthy(void)
 			continue;
 		}
 		if (faulty(a, &status)) {
-			say("speaker: the amplifier %s: status %#06x\n", a->where, status);
+			say("speaker: the amplifier %s: status 0x%04x\n", a->where, status);
 			power_down_now("an amplifier reports a fault");
 			return false;
 		}
@@ -906,7 +906,7 @@ hakios_speaker_monitor(bool tell)
 			(void)get(a, AW_PVDD, &pvdd);
 			(void)get(a, AW_ISNDAT, &isn);
 			(void)get(a, AW_VSNDAT, &vsn);
-			say("speaker: the amplifier %s: %d degrees, the battery %d mV (%#05x, %#05x; supply %#05x, sense %#06x %#06x): "
+			say("speaker: the amplifier %s: %d degrees, the battery %d mV (0x%03x, 0x%03x; supply 0x%03x, sense 0x%04x 0x%04x): "
 			    "%u.%03u dB less\n", a->where, t, v, temp, vbat, pvdd, isn, vsn, less / 8, less % 8 * 125);
 		}
 	}
@@ -981,10 +981,10 @@ show_amplifiers(void)
 			say("speaker: nobody at I2C address %#x: not powered, or not there\n", amplifiers[i].address);
 			continue;
 		}
-		say("speaker: the amplifier %s is there: chip ID %#06x, %s\n", amplifiers[i].where, id, amplifier_name(id));
+		say("speaker: the amplifier %s is there: chip ID 0x%04x, %s\n", amplifiers[i].where, id, amplifier_name(id));
 		for (unsigned r = 0; r < sizeof(more) / sizeof(more[0]); r++) {
 			if (register_read(amplifiers[i].address, more[r].reg, &value)) {
-				say("speaker:   register %#04x (%s) = %#06x\n", more[r].reg, more[r].name, value);
+				say("speaker:   register 0x%02x (%s) = 0x%04x\n", more[r].reg, more[r].name, value);
 			}
 		}
 	}
