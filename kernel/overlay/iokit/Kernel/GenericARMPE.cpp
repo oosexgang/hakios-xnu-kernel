@@ -287,7 +287,8 @@ GenericARMPE::start(IOService * provider)
 						cpus[number]->run();
 					}
 				}
-				IOLog("GenericARMPE: the slower cores started too: %u processors running\n", processor_avail_count);
+				IOLog("GenericARMPE: the slower cores started too: %u processor%s running\n", processor_avail_count,
+				    processor_avail_count == 1 ? "" : "s");
 			}, NULL);
 			clock_interval_to_deadline(later, NSEC_PER_SEC, &deadline);
 			thread_call_enter_delayed(later_call, deadline);
