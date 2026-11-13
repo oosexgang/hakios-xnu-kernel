@@ -18,7 +18,7 @@ anyway). What it makes is a position-independent executable linked at 0 with a d
 Nothing else changes: the code and data are byte for byte what lld wrote, but for the pointers rebased.
 
 With --program the same is done to a user program without moving it (a static executable, which a
-DEVELOPMENT kernel runs: tools/qemu-init.c is one): no dylinker, the entry a thread state.
+DEVELOPMENT kernel runs: tools/qemu-init/ is one): no dylinker, the entry a thread state.
 """
 import struct
 import sys

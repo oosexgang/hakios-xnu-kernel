@@ -38,7 +38,7 @@ and press the buttons), and runs a command here while it types (`--then`). Its h
 ## The root and its shell
 
 `tools/qemu-root.sh` makes an APFS image (`userland/tools/apfs/mkapfs.py`) with `/dev`, `/etc/motd`,
-`/mnt` and `/sbin/launchd`, which is `tools/qemu-init.c`: a static program that makes its system calls
+`/mnt` and `/sbin/launchd`, which is `tools/qemu-init/`: a static program that makes its system calls
 itself. As the kernel's first process it says what the kernel says of itself, then reads the console a
 line at a time:
 
