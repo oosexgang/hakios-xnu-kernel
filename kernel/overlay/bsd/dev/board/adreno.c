@@ -4020,9 +4020,12 @@ hakios_adreno_init(void)
 	uint32_t only = 0, done = 0, failed = 0, keep = 0;
 	bool by_itself = false;
 
+	if (!hakios_board_has(HAKIOS_HAS_GPU_A660)) {
+		return;                 /* no Adreno on this board: nothing to say */
+	}
 	gpu_profile = adreno_profile_for_board();
 	if (gpu_profile == NULL) {
-		printf("adreno: disabled: this board's board.dts has no \"gpu-a660\" with a gpu { } section\n");
+		printf("adreno: disabled: the board lists \"gpu-a660\" but its board.dts has no usable gpu { } section\n");
 		return;
 	}
 	if (!blocks_of_board()) {
