@@ -5,12 +5,12 @@
 # What is typed on its shell then tries the rest of the kernel:
 #   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way
 #     (TCP both ways); a datagram answered (workbench/qemu_host.py is this computer's side)
-#   - the devices: a second disk (virtio block, APFS), read whole and through its file system; a tone (virtio sound, which QEMU writes to a WAV
-#     file); a button and a touch from QEMU's keyboard and tablet
+#   - the devices: a second disk (virtio block, APFS), read whole and through its file system; a tone
+#     (virtio sound, which QEMU writes to a WAV file); a button and a touch from QEMU's keyboard and tablet
 #   - processes: one started and waited for, one forked (its memory copied) and made another program,
 #     one ended by a signal, two by their own mistakes; signals caught by a handler; a pipe between two;
-#     a descriptor sent over a socket pair; threads on both processors at once; Mach messages; kqueue's
-#     timer and a pipe's readiness
+#     a descriptor sent over a socket pair; threads on both processors at once, and taking turns under one
+#     lock; Mach messages; kqueue's timer and a pipe's readiness
 #   - IOKit: its registry walked in MIG messages, as IOKit.framework asks it; the serial number the
 #     loader made read from it; a picture drawn on a surface and swapped onto the screen
 #   - files and memory: a file written, read and removed in ramfs; a program's file mapped; memory of its
