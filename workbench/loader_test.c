@@ -362,7 +362,7 @@ payload(void)
 	    parse_number("ffffffffffffffff", 16) == UINT64_MAX && parse_number("9 ", 10) == 9 && parse_number("x", 16) == 0, "numbers");
 
 	payload_begin();
-	kernel = entry("kernel", "\xcf\xfa\xed\xfe and so on", 18);
+	kernel = entry("kernel", "\xcf\xfa\xed\xfe and so on", sizeof("\xcf\xfa\xed\xfe and so on"));
 	entry("cmdline", "debug=0x14e cpus=8 wifi=0", 26);
 	ramdisk = entry("ramdisk", "an image", 9);
 	entry("checkpoint", "17", 3);
