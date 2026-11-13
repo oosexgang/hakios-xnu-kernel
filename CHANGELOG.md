@@ -52,7 +52,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     `swr-tx-pins` and `swr-tx-slew` (the microphones' SoundWire pins).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
-  `board.dts` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
+  `board.dts` and README on the `devices` branch. `tools/device.py`
   brings one into a checkout and takes it out again: `available`, `add`, `list`, `remove`, `export`
   (`make device DEVICE=NAME` is `add`). Packages elsewhere are found through `HAKIOS_DEVICES`.
 - **The board tables are build outputs.** `tools/boards.py gen` writes the kernel's table, the loader's
@@ -128,7 +128,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
 - **The partition a write may reach is the board's.** The loader and the kernel each had the GPT
-  entry of redwood's own partition in their code: nothing could be written on another phone
+  entry of the first phone's own partition in their code: nothing could be written on another phone
   without changing both. It is `storage { }` of the board file; a board without it is never written.
   `tools/boards.py check` refuses an entry that cannot be one, and the loader's answer to "is this
   the partition?" has a test in which every field is off alone.
@@ -168,9 +168,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 
 - **Bring the phone's package in before you build**: `tools/device.py add renoir`. A kernel or loader
   built with no package knows only the emulator's board and starts no driver of a phone.
-- **On Renoir, the drivers wired for redwood's parts no longer start.** The speaker, microphone,
+- **On Renoir, the drivers wired for the first phone's parts no longer start.** The speaker, microphone,
   haptic, flashlight, camera and Wi-Fi drivers have no Renoir code path. Asked for there, they print
-  which line is missing instead of writing to redwood's pins. Renoir's boot defaults had them off.
+  which line is missing instead of writing to another phone's pins. Renoir's boot defaults had them off.
 - **The assembled tree is `../xnu-12377-hakios`.** A tree made by the earlier `apply.sh` is refused.
 - **The boot tool reads its defaults from the board file.** `ios/tools/boot26.py` takes `--board NAME`,
   or the one phone whose package is present.
@@ -235,9 +235,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | `renoir/docs/`, `renoir/tests/` | `docs/`, `tests/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
-| `redwood_*` and `renoir_fts*` files, functions and `/dev` nodes, `devices/*.toml` | `hakios_*`, `board.dts` and `soc/*.dtsi` |
-| `/redwood`, `libredwood*.dylib` (the small image's mount point and libraries) | `/hakios`, `libhakios*.dylib` |
-| The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile) | `redwood/legacy/` of the `devices` branch |
+| Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `soc/*.dtsi`; the first phone's package lists every former name |
+| The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, the build and tools of that kernel) | `legacy/` of its package on the `devices` branch |
 
 The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
 says how the parts fit together, and [docs/README.md](docs/README.md) is the index of the documentation.
@@ -284,12 +283,12 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 Not changed:
 
-- Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, the
+- Sound, microphones, camera and Wi-Fi are still written for the first phone's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
   wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
-- redwood has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.
+- The first phone has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.
 
 Not yet verified ([docs/building.md](docs/building.md) has the table):
 
@@ -316,7 +315,7 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
 
 ## Before the restructuring
 
-The first generation ran iOS 16.5 on the POCO X5 Pro (redwood) and in QEMU. Its workspace is kept in
+The first generation ran iOS 16.5 on the first phone and in QEMU. Its workspace is kept in
 `base/`, and [base/README.md](base/README.md) describes it. Parts of it are still the only place for
 something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
 by `kernel/`. The notes on how iOS 26 and 27 were brought to the home screen on Renoir, written before

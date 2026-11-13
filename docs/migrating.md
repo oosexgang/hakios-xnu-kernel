@@ -1,7 +1,7 @@
 # Moving work from the old layout
 
 For people with a branch, a patch or a habit from before the restructuring. Nothing in the kernel's
-behaviour on redwood changed, and one thing changed on Renoir (below).
+behaviour on the first phone changed, and one thing changed on Renoir (below).
 
 ## Where things went
 
@@ -18,19 +18,12 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 | `renoir/tests/` | `tests/` |
 | `base/xnuloader/` | `loader/` (a link stays in `base/`) |
 | `base/xnu-deps/` | `kernel/deps/` (a link stays in `base/`) |
-| `base/xnu/`, `base/uefi/files/Platforms/Xiaomi/redwoodPkg/`, `base/uefi/files/Resources/Configs/redwood.toml`, `base/common/devices/redwood.conf`, `base/xnu-build.sh`, `base/mkxnuimg.py`, the tools of that kernel in `base/tools/` (`guard_test.c`, `guard-test.sh`, `kernel-delta.sh`, `new-workspace.sh`, `update-prebuilt.sh`, `prof-sym.py`, `latency.py`, `sound.py`, `ufs-survey.py`, `buttons-watch.sh`), the redwood port's `base/uefi/README.md` | The phone's package on the `devices` branch, `redwood/legacy/`, at the same paths: `cp -R redwood/legacy/. base/` puts them back for a build of the iOS 16.5 generation. The kernel there is superseded by `kernel/`. |
-| `base/tools/mk-mesa26.sh`, `base/tools/mesa26/redwood.patch` (Mesa 26 for the iOS 26 user space: `libredwoodair.dylib`) | `userland/tools/mk-mesa26.sh`, `userland/tools/mesa26/hakios.patch`, making `libhakios-air.dylib` in `userland/xnu-deps/build/mesa26/out`, where `userland/build.sh` and the AIR tools look for it. |
-| `base/wifi/`, `base/tools/mk-ath11k.sh`, `base/tools/mk-wlfw.sh` against `bsd/sys/redwood_*.h` | The same against the kernel's `bsd/sys/hakios_*.h` (`hakios_lx.h`, `hakios_qmi.h`, `hakios_sta.h`), and `mk-wlfw.sh` writes `hakios_wlfw_ath11k.h`, which `hakios_wlfw.c` includes. |
-| `base/uefi/apply.sh`, `export.sh` with the redwood port in `files/` | `apply.sh PHONE_FILES` puts the common changes and a phone's platform (its package's UEFI `files/`) into a clone; `export.sh [MAKER/PHONE PHONE_FILES]` saves them apart again. |
+| Everything named after the first phone: the kernel's files, functions, types and `/dev` nodes, its board checks, the feature of its cameras, the small image's libraries, mount point and paths, and that phone's own files in `base/` | `hakios_*` (and `hakios_board_has()`), `camera-sm7325`, `libhakios*.dylib`, `/hakios`, and the phone's package on the `devices` branch. That package's README, "Its former names", has every old name beside the new one, the `sed` line that carries a patch over, and what to do with a working tree that still has the old names. |
+| `base/tools/mk-mesa26.sh` and its patch under `base/tools/mesa26/` (Mesa 26 for the iOS 26 user space) | `userland/tools/mk-mesa26.sh`, `userland/tools/mesa26/hakios.patch`, making `libhakios-air.dylib` in `userland/xnu-deps/build/mesa26/out`, where `userland/build.sh` and the AIR tools look for it. |
+| `base/wifi/`, `base/tools/mk-ath11k.sh`, `base/tools/mk-wlfw.sh` against the kernel's headers under their former names | The same against the kernel's `bsd/sys/hakios_*.h` (`hakios_lx.h`, `hakios_qmi.h`, `hakios_sta.h`), and `mk-wlfw.sh` writes `hakios_wlfw_ath11k.h`, which `hakios_wlfw.c` includes. |
+| `base/uefi/apply.sh`, `export.sh` with the first phone's port in `files/` | `apply.sh PHONE_FILES` puts the common changes and a phone's platform (its package's UEFI `files/`) into a clone; `export.sh [MAKER/PHONE PHONE_FILES]` saves them apart again. |
 | `base/tools/camsensor.py`, `camtuning.py`, `camraw.py` | `userland/tools/`, where `userland/userland/build.sh` runs them from |
-| `libredwood.dylib`, `libredwood-*.dylib`, `libredwood26.dylib`, `libredwoodair.dylib`, `libredwoodmetal.dylib` (the libraries of the small image) | `libhakios.dylib`, `libhakios-*.dylib`, `libhakios26.dylib`, `libhakios-air.dylib`, `libhakios-metal.dylib`, built and listed in `etc/inject.conf` under these names by the same scripts. An image tree or `obj` directory of an earlier build still has the old files: build it anew, or delete them, so that both are not carried. |
-| `/redwood`, the small image's mount point (and `/flash/redwood`, `/private/preboot/redwood`, the APFS volume named `redwood`, `/private/var/redwood-stamp`) | `/hakios`, and so on: every path, job and script of this repository. **The working tree `darwin-renoir` is to change with it**, because `ios/tools/mkimage26.py` takes its built `stage0` and `ios/userland/root26*.sh` its root tree: its `src/stage0.c` and `src/stage0dsu.c` mount and switch to `/hakios`, its `src/init.c` and the paths in its root tree, launchd jobs and `rc.jobs` files say `/hakios`, as they do here (this repository's `userland/` is that tree's layout: the same files carry the change). Until then `ios/tools/mkimage26.py` reads in the stage0 it carries where that mounts the image (`stage0_root()`) and gives the system volume that name as a link to `/hakios`, where such a stage0 then mounts the image and its paths lead. `rename-image-root.sh --write ../darwin-renoir`, in the `redwood` package of the `devices` branch, makes the change there (without `--write` it says what it would change); then build that tree anew. |
-| `bsd/dev/redwood_cpufreq.c` (in the tree) | `bsd/dev/hakios_cpufreq.c` (the cores' clocks), `hakios_ddr.c` (the memory vote), `hakios_bench.c` (`membench=`, `cpuload=`). A patch to the old file applies to none of them as it is: take each hunk to the file its function is in now. |
-| `bsd/dev/redwood_buttons.c` (in the tree) | `bsd/dev/hakios_buttons.c`; the arbiter's protocol it had is `hakios_spmi.h`. |
 | A driver's own copies of `rd()`/`wr()`, of the waits, of the lookup in RPMh's command database, of a request to RPMh, of a pin's registers | The headers `hakios_mmio.h`, `hakios_time.h`, `hakios_cmd_db.h`, `hakios_rpmh.h`, `hakios_tlmm.h` in `bsd/dev/` ([writing-a-driver.md](writing-a-driver.md)). A patch that touches such a copy has nothing to apply to; what it changed belongs in the header, or in the driver's call of it. |
-| Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.dts` and `hakios_board_has()` for whether a driver starts, and a key of the board file where two phones differ. No code compares the board's name any more: `redwood_board_is()` is gone. |
-| Any `redwood_*` or `renoir_fts*` file of the kernel (`bsd/dev/redwood_camera.c`, `bsd/sys/redwood_sta.h`, `iokit/Kernel/RedwoodGPU.cpp`, ...) | The same file as `hakios_*` (`bsd/dev/hakios_camera.c`, `bsd/sys/hakios_sta.h`, `iokit/Kernel/HakiosGPU.cpp`; `renoir_fts.c` is `hakios_fts.c`). Its functions, types and macros were renamed the same way (`redwood_sta_heard()` is `hakios_sta_heard()`, `REDWOOD_CAMERA_SENSOR` is `HAKIOS_CAMERA_SENSOR`), and so were the nodes in `/dev` (`/dev/hakios-touch`, `/dev/hakios-camera`, ...). The file names said which phone the driver was first written on; which phone a driver is for is the board's to say. `sed -e 's/\bredwood_/hakios_/g' -e 's/\bREDWOOD_/HAKIOS_/g' -e 's/\bRedwood\([A-Z]\)/Hakios\1/g'` carries a patch over, with a look at what it changed. |
-| The feature `camera-redwood` | `camera-sm7325`: it says the cameras are on an SM7325's camera blocks with a PM8008 feeding them, which is what the driver needs; how they are wired is the board's `[camera]`. |
 | `devices/NAME/board.toml`, `soc/SOC.toml` | `devices/NAME/board.dts`, `soc/SOC.dtsi`: the same keys, in the syntax of a device tree source (`key-name = <0x10>;`, `name = "text";`, a section is a node `speaker { ... };`, a camera sensor a node `sensor@0 { ... };`; [devices/README.md](../devices/README.md) has the format). `tools/boards.py convert board.toml` writes the new file beside the old one, comments kept. |
 | Boot argument `renoir_display_clocks=1` | `display_clocks=1`: it reads the display clocks of any board whose SoC file has them. |
 | Default boot arguments in `boot26.py` | `[boot]` of the phone's board file. It was `devices/renoir/board.dts`; the phones' packages have since moved to the `devices` branch (last section). |
@@ -68,10 +61,10 @@ Edit a driver in `kernel/overlay/` and run `kernel/build.sh`, or edit in the tre
 
 - **A driver wired for one phone's parts needs that part in the board file.** `haptic=`, `torch=`,
   `cam=`, `speaker_probe=`, `sound=`, `mic=`, `wifi=` and `touchscreen=` now also need the matching
-  feature in `features`. redwood lists all of its parts. **Renoir lists only its touch controller**:
-  the speaker, microphone, haptic, flashlight, camera and Wi-Fi drivers in the tree are redwood's
-  wiring and have no Renoir code path. Asked for on Renoir, they print which line is missing instead
-  of writing to redwood's pins. When you port one of them to Renoir, add its feature to
+  feature in `features`. The first phone's package lists all of its parts. **Renoir lists only its
+  touch controller**: the speaker, microphone, haptic, flashlight, camera and Wi-Fi drivers in the tree
+  were written for the first phone's parts and have no Renoir code path. Asked for on Renoir, they print
+  which line is missing instead of writing to another phone's pins. When you port one of them to Renoir, add its feature to
   `hakios_board.h` and to the board file of the renoir package (`renoir/board.dts` on the `devices`
   branch).
 - **A part's wiring is in the board file, and a package from before lacks it.** The touch
@@ -99,11 +92,11 @@ no phone. What works on which phone did not change.
 
 | Before | Now |
 | --- | --- |
-| `devices/renoir/`, `devices/redwood/` on the main branch | Device packages on the `devices` branch: `renoir/` and `redwood/` at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
+| The phones' `devices/NAME/` on the main branch | Device packages on the `devices` branch, one directory per phone at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
 | `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `ios/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `ios/userland/inj26.sh`, `kernel/syntax-check.sh`, `tests/run.sh`. |
 | `tools/boards.py gen` before committing, `tools/boards.py gen --check` in `make check` | Gone: there is no committed table to compare. `make boards` validates and writes the tables if you want to look at them. |
-| Host tests against `renoir` and `redwood` | Against stand-ins in `tests/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, and `phone-keys`, with its parts wired otherwise. |
-| The loader asking whether it runs on redwood before it reads the battery | `uefi_charger = true` in the board file's `[loader]` section. |
+| Host tests against the phones' own boards | Against stand-ins in `tests/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, and `phone-keys`, with its parts wired otherwise. |
+| The loader asking whether it runs on the first phone before it reads the battery | `uefi_charger = true` in the board file's `[loader]` section. |
 
 <!-- end -->
 
@@ -119,6 +112,5 @@ What to do:
   changed.
 - **A branch that changes a phone's board file** carries that change to the `devices` branch. A change
   to a SoC file, to a driver or to a key of the board file stays on the main branch.
-- **Drivers did not move or change names.** `redwood_*.c`, `renoir_fts.c` and features such as
-  `camera-redwood` or `touch-ft3658u` are drivers for parts, started only on a board that lists the
-  feature.
+- **Drivers are named for what they drive** (`hakios_*`), and are started only on a board that lists
+  their feature (`touch-ft3658u`, `camera-sm7325`).

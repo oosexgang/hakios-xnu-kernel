@@ -56,15 +56,11 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 
 ## 设备
 
-| 设备包 | 设备 | SoC | 状态 |
-| --- | --- | --- | --- |
-| `renoir` | 小米 11 青春版 5G（Mi 11 Lite 5G） | 骁龙 780G（SM7350） | iOS 27.2（24B119）从 RAM 启动到主屏幕。2026-11-10 已在真机验证。 |
-| `redwood` | POCO X5 Pro 5G | 骁龙 778G（SM7325） | 最早的移植，基于 iOS 16.5（`base/`）。其驱动已在当前内核中，尚未用 iOS 26/27 启动。 |
-| `qemu-virt` | QEMU `virt` | — | 在本分支中。iOS 16.5 一代可在其上运行；尚未适配当前内核。 |
-
-每部手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭，见
-[`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上各设备包自己的 README。
-SoC 支持是共享的，位于本分支的 `soc/`：目前有 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
+手机以设备包的形式与代码分开，存放在
+[`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上：该分支的 README 列出了各部手机及其进度，
+每个设备包自己的 README 说明在该手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭。本分支不描述任何手机；
+它包含 QEMU `virt` 板（`devices/qemu-virt/`），iOS 16.5 一代可在其上运行，尚未适配当前内核。SoC 支持是共享的，
+位于本分支的 `soc/`：目前有 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
 
 ## 快速开始
 

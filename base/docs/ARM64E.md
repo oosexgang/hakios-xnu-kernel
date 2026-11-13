@@ -140,7 +140,7 @@ open-sourced, after xnu-11417 = iOS 18.x).
 which is **two major versions ahead of xnu-8796 and has the board removed.** The HAS_STD_PAC backend
 files all still exist in xnu-12377 (`osfmk/arm64/{pac_asm.h,proc_reg.h,locore.s,start.s,cswitch.s,
 machine_routines.c,pcb.c}`), so the architecture code carries over conceptually, but the 3591-line
-`xnu/redwood.patch` must be rebased hunk by hunk across the version gap, the `xnuloader` boot-time
+the old kernel's patch (`xnu/` in the first phone's package) must be rebased hunk by hunk across the version gap, the `xnuloader` boot-time
 signer re-pointed at xnu-12377's chained-fixup layout, and the build harness retargeted. The selected route:
 
 - **A -- iOS 26 now (the explicit target).** Rebase the arm64e + HAS_STD_PAC kernel onto xnu-12377
@@ -149,9 +149,9 @@ signer re-pointed at xnu-12377's chained-fixup layout, and the build harness ret
 
 ### Route A rebase status (in progress)
 
-Route A was chosen. The rebase of the hakios kernel (`xnu/redwood.patch`, against xnu-8796) onto a
+Route A was chosen. The rebase of the hakios kernel (the old kernel's patch (`xnu/` in the first phone's package), against xnu-8796) onto a
 checkout of xnu-12377.121.6 has a baseline: **110 of the 208 hunks apply cleanly, 98 reject** across
-45 files, and all of `xnu/files/` (the new `redwood_*` drivers, `pac_std_asm.h`, GenericARMPE,
+45 files, and all of `xnu/files/` (the port's new drivers, `pac_std_asm.h`, GenericARMPE,
 miniamfi, ...) is copied in. Half the hunks landing across a two-major-version gap is better than
 feared -- the PAC code regions (`osfmk/arm64/{pac_asm.h,proc_reg.h,locore.s,start.s,
 machine_routines*}`) are close enough between 8796 and 12377 that most of the HAS_STD_PAC additions
@@ -178,7 +178,7 @@ and `psci_smp_cpu_reached`), `machine_routines.c` (slow-core pairing, EL1 virtua
 **The arch + loader layer is resolved; 32 userland-layer rejects remain.** Done this phase, by hand
 against xnu-12377's restructured code: the build registration (`osfmk/conf/files.arm64` adds
 `loader_return.c`/`psci_smp.c`/`gic_v3_irq.c`/`generic_arm64_support.c`/`user_exception_trace.c` and
-comments out the Apple `amcc_rorgn` files; `bsd/conf/files` adds the 31 `redwood_*` devices and
+comments out the Apple `amcc_rorgn` files; `bsd/conf/files` adds the port's 31 devices and
 `kern_minimac.c`; `libkern/conf/files` adds `miniamfi`); `cpu.c` (PSCI idle keeps its cache);
 `machine_routines.c` (`ml_choose_slow_core_partners`/`ml_pair_slow_processors` call sites -- no-ops
 on homogeneous QEMU cores -- and the EL1 physical-timer trap guard; the big.LITTLE DT `small-core`
@@ -195,7 +195,7 @@ memorystatus, credential, socket, sys_generic...), bsd/vfs 7 and bsd/nfs 1 (the 
 attrlist/quota hooks), osfmk/kern 7 (the `sched_slow_secondaries` scheduler wiring, kalloc/percpu/
 work_interval), security 1 (minimac MAC policy), plus `MakeInc` LD flags, `video_console`,
 `vm_shared_region`, iokit `KernelConfigTables`, and the deferred `arm_init.c` boot-progress markers.
-These wire the redwood devices, the MAC policy and the root filesystem into bsd/osfmk -- the rest of
+These wire the port's devices, the MAC policy and the root filesystem into bsd/osfmk -- the rest of
 the bring-up.
 
 **Every build/link-critical reject is now resolved; 18 runtime-feature/filesystem/optional rejects
@@ -240,7 +240,7 @@ driver-API drift and SDK gaps, not bad hunks. They fall in three bounded groups:
   fell back to the generic arm64 config with `config_cpu_counters` on. Fix: restore a
   `MASTER.arm64.bcm2837` for xnu-12377 (the xnu-8796 one has `kperf kpc` but no `config_cpu_counters`
   /`monotonic`), reconciled with xnu-12377's option set.
-- **The redwood drivers (~100): `redwood_camera.c`, `redwood_cpufreq.c`, `redwood_adreno.c`, ...**
+- **The port's drivers (~100): `hakios_camera.c`, `hakios_cpufreq.c`, `hakios_adreno.c`, ...**
   written against xnu-8796's `kmem_alloc` flags (`KMA_KOBJECT`/`KMA_DATA`) and other APIs that
   xnu-12377 renamed. Driver-layer porting.
 - **Three framework headers newer than the 16.5 SDK: `TrustCache/API.h`,
@@ -263,8 +263,8 @@ out of the public headers).
 
 The 122 that remain are three bounded jobs:
 
-- **The redwood drivers (~90): `redwood_camera.c`, `redwood_cpufreq.c`, `redwood_adreno.c`,
-  `redwood_virtio_*`, ... and `kern_minimac.c`.** Written against xnu-8796's `kmem_alloc` flags
+- **The port's drivers (~90): `hakios_camera.c`, `hakios_cpufreq.c`, `hakios_adreno.c`,
+  `hakios_virtio_*`, ... and `kern_minimac.c`.** Written against xnu-8796's `kmem_alloc` flags
   (`KMA_KOBJECT`/`KMA_DATA`) and other APIs xnu-12377 renamed or moved. Systematic driver-layer port.
 - **The AMFI / CoreEntitlements subsystem (~11): `CoreEntitlements/V2/API.h` (pulled by
   `libkern/amfi/amfi.h`) and `CodeSignature/Entitlements.h` (by `kern_exec.c`, `necp_client.c`).**
@@ -290,7 +290,7 @@ XNU_SRC=<xnu-12377 tree> XNU_ARCH=arm64e MACHINE=BCM2837 RC_DARWIN_KERNEL_VERSIO
   ./xnu-build.sh -j10 -k
 ```
 
-The last stretch from the driver/framework layer took, beyond the earlier fixes: the redwood drivers
+The last stretch from the driver/framework layer took, beyond the earlier fixes: the port's drivers
 and `ramfs.c`/`kern_minimac.c`/`loader_return.c`/`user_exception_trace.c` include xnu-12377's split
 internal VM headers (`vm/vm_kern_xnu.h`, `vm/vm_map_xnu.h`, `vm/vm_shared_region_xnu.h`,
 `vm/vm_compressor_xnu.h`); `vm_map_switch` became `vm_map_switch_to`/`vm_map_switch_back` (an opaque
@@ -305,7 +305,7 @@ re-registered in `board_config.h`/`MakeInc.def`/`proc_reg.h` with a restored `MA
 Apple AMCC/CTRR files are skipped for the non-Apple board; and the handful of symbols iOS 26 moved
 into the closed per-SoC KernelSupport library that are absent from open source (`master_cpu`,
 `ml_device_is_prod_fused`, the two `memorystatus_available_pages_critical*` thresholds) are supplied
-by a small `osfmk/arm64/redwood_kernelsupport.c`, with `san/memory/ubsan_minimal.c` registered to
+by a small `osfmk/arm64 kernel-support file`, with `san/memory/ubsan_minimal.c` registered to
 provide the `__ubsan_handle_*_minimal` traps.
 
 ### Milestone 4b reached: the arm64e xnu-12377 (iOS 26) kernel boots `hello` as PID 1 in QEMU
@@ -409,7 +409,7 @@ the xnu-12377 restructuring meeting the hakios features:
   PSCI SMP bring-up -- was applied; the rest were `loader_checkpoint()` markers for the early
   pre-console path, which already boots cleanly to PID 1, so they were not re-placed.
 - **`makedefs/MakeInc.def`** was already applied during the rebase (board `+pan`, `-lpthread_kext`,
-  `REDWOOD_OBJECTS`); **`MakeInc.cmd`** (absolute -> bare tool paths) is only for non-macOS build
+  `the old kernel's object-list variable`); **`MakeInc.cmd`** (absolute -> bare tool paths) is only for non-macOS build
   hosts and is left as-is, since the absolute paths exist and the build succeeds on macOS.
 
 **What this unblocks and what it does not.** The kernel is now ready for the full iOS 26 arm64e user

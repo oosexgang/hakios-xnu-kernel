@@ -1,17 +1,16 @@
 # HakiOS — XNU kernel
 
 > **Legacy.** This directory is the workspace of the first generation: iOS 16.5 on the POCO X5 Pro
-> (redwood) and QEMU. What follows describes that generation, and its paths are those of that workspace,
+> and QEMU. What follows describes that generation, and its paths are those of that workspace,
 > not of this repository. The current project starts at the [top-level README](../README.md).
 >
 > What moved out: the kernel is `../kernel/`, the loader is `../loader/`, the kernel build's dependencies
 > are `../kernel/deps/` (`xnuloader` and `xnu-deps` here are links to them), devices are described in
-> `../devices/`. What was the phone's own -- the old xnu-8796 kernel (`xnu/`), its UEFI platform
-> (`uefi/files/Platforms/Xiaomi/redwoodPkg`, `uefi/files/Resources/Configs/redwood.toml`), its device
-> profile (`common/devices/redwood.conf`), the build scripts and tools that serve only that kernel and that
-> UEFI (`xnu-build.sh`, `mkxnuimg.py`, `tools/guard_test.c` and the like, the UEFI port's README) -- is
-> in the phone's package on the `devices` branch, `redwood/legacy/`, at the same paths: copy it back here
-> (`cp -R redwood/legacy/. base/`) to build this generation. What is still only here: the rest of the UEFI
+> `../devices/`. What was the phone's own -- the old xnu-8796 kernel (`xnu/`), its UEFI platform and
+> configuration, its device profile, the build scripts and tools that serve only that kernel and that UEFI
+> (`xnu-build.sh`, `mkxnuimg.py`, `tools/guard_test.c` and the like, the UEFI port's README) -- is in the
+> phone's package on the `devices` branch, under `legacy/`, at the same paths: copy that back here
+> (`cp -R PACKAGE/legacy/. base/`) to build this generation. What is still only here: the common part of the UEFI
 > port (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
 
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
@@ -21,7 +20,7 @@ on a compatibility layer make that possible.
 
 It runs in two places:
 
-- **POCO X5 Pro 5G (redwood, Snapdragon 778G)** — nothing is flashed: the UEFI is started with `fastboot boot`,
+- **POCO X5 Pro 5G (Snapdragon 778G)** — nothing is flashed: the UEFI is started with `fastboot boot`,
   the whole system lives in RAM, and after a reboot the phone is back in Android;
 - **QEMU** (`virt`, aarch64) — the same thing on any Linux computer, no phone needed.
 
@@ -98,7 +97,7 @@ The lock screen appears after 2–3 minutes.
 
 ## On the phone (POCO X5 Pro 5G)
 
-You need a **POCO X5 Pro 5G (redwood)** with an unlocked bootloader, `adb` and `fastboot`, and the images from the
+You need a **POCO X5 Pro 5G** with an unlocked bootloader, `adb` and `fastboot`, and the images from the
 section above. Nothing is written to the phone's storage.
 
 **The phone's own firmware** is not in the repository and cannot be: it is the vendor's and is taken from the very
@@ -115,8 +114,8 @@ adb pull /vendor/firmware/aw8697_haptic.bin fw-haptic/                          
 line — and `fw-wifi/network` — network name and password. `userland/build.sh` prints which firmware went in.)
 
 ```sh
-common/build.sh redwood GL=1          # images + out/redwood-boot.img
-common/run.sh redwood 900             # loader into RAM, system image into RAM, a 15-minute session
+common/build.sh DEVICE GL=1            # images + out/DEVICE-boot.img
+common/run.sh DEVICE 900              # loader into RAM, system image into RAM, a 15-minute session
 ```
 
 or step by step with `xl`:
@@ -133,7 +132,7 @@ XL_SECS=900 XL_CMDLINE="touchscreen=1 cpufreq=1 bootcpu=7 cpus=8 gpu=1 wifi=1 ad
 
 ## Prebuilt boot image
 
-Every release has `hakios-redwood-boot.img` attached: the redwood UEFI with our loader inside, ready for
+Every release has a boot image of the first phone attached: its UEFI with our loader inside, ready for
 `fastboot boot`. It contains no Apple files; the system image is still made on your machine (above).
 
 ## Building from source
@@ -157,7 +156,7 @@ common/new-device.sh <codename> path/to/device.dtb   # profile + loader platform
 ```
 
 Then follow [docs/PORTING.md](docs/PORTING.md): the UEFI port, the loader's platform description, the kernel's
-drivers, the firmware. Device profiles live in `common/devices/` (`redwood.conf`, `qemu-virt.conf`, `_template.conf`).
+drivers, the firmware. Device profiles live in `common/devices/` (`qemu-virt.conf`, `_template.conf`; a phone's own in its package).
 
 ## How it works
 
@@ -171,13 +170,13 @@ fastboot boot ──► UEFI (Mu-Silicium) ──► xnuloader (EFI application)
               ├─ APFS (images in RAM, iOS volume on flash), ramfs (/private/var, /tmp)
               ├─ minicrypto instead of corecrypto, AMFI and Sandbox stand-ins (MAC policies)
               ├─ driver replacements: IOSurface, IOMobileFramebuffer, AppleKeyStore, network stack
-              ├─ input: /dev/redwood-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
+              ├─ input: /dev/hakios-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
               ├─ GPU: Adreno 642L, Wi-Fi: WCN6750 (ath11k via LinuxKPI), sound: ADSP / virtio-sound
               ▼
    iOS 16.5 launchd → logd, notifyd, cfprefsd, runningboardd, backboardd, SpringBoard, apps
               ├─ our libraries are injected into backboardd, SpringBoard and mediaserverd
               │  (virtual HID services, a few ObjC method swaps — in memory only)
-              └─ mediaserverd gets our CoreAudio output device (RedwoodAudio.driver)
+              └─ mediaserverd gets our CoreAudio output device (HakiosAudio.driver)
 ```
 
 The iOS programs, frameworks and dyld shared cache are not changed by a single byte: what they miss is done by the
@@ -190,7 +189,7 @@ kernel (driver replacements) or by a library the kernel injects with `DYLD_INSER
 | `common/` | `setup.sh` (workspace), `build.sh` / `run.sh` (per device), `new-device.sh`, `devices/*.conf`, `ugit` |
 | `xl` | drives the phone over USB: loader, kernel runs, logs, screenshots, screen and sound recording |
 | `xnuloader/` | the loader: `loader.c` (UEFI application), `mkpayload.py` (kernel + images + arguments container) |
-| `xnu/` | our XNU changes: patch, new files, `apply.sh` / `export.sh` (in `redwood/legacy/` of the `devices` branch now) |
+| `xnu/` | our XNU changes: patch, new files, `apply.sh` / `export.sh` (in the first phone's package on the `devices` branch now, under `legacy/`) |
 | `xnu-deps/` | everything for building XNU on Linux: `setup.sh`, tool wrappers, stubs |
 | `xnu-build.sh`, `xnu-env.sh` | kernel build |
 | `uefi/`, `mkxnuimg.py` | the UEFI port and packing the boot image for `fastboot boot` |
@@ -238,7 +237,7 @@ From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
   `xnu/files/bsd/miscfs/apfs/libdeflate/` — libdeflate 1.24 (Eric Biggers, MIT, `COPYING` there).
 - ath11k, Linux and FreeBSD sources are not in the repository: `tools/mk-ath11k.sh` fetches pinned releases.
   `wifi/lx/patches/*.patch` are our changes to FreeBSD headers; the rest of `wifi/lx/` is ours.
-- `uefi/files/Binaries/redwood` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
+- `uefi/files/Binaries/<phone>` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
   Xiaomi firmware, distributed the way Project Silicium distributes them for other devices;
   `prebuilt/uefi/mkbootimg.py` — AOSP, Apache-2.0.
 - This repository is licensed under the [Apple Public Source License 2.0](LICENSE): our changes to XNU are a derivative of XNU and must be, and our other code here (loader, scripts) is released under the same license. Third-party code keeps its own license, as listed above.

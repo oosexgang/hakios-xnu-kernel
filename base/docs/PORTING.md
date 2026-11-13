@@ -15,7 +15,7 @@ Get the device tree from the phone's `vendor_boot` image, or from a running Andr
 ## 1. The UEFI
 
 The phone needs a UEFI that our loader can run under. Port [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
-the way `uefi/` ports redwood (it follows `lisa`, the same SoC package):
+the way the first phone's port does (it follows `lisa`, the same SoC package):
 
 - `Platforms/<Vendor>/<codename>Pkg`: memory map and driver list (copy the closest device of the same SoC);
 - `Binaries/<codename>`: the UEFI drivers of the phone's own firmware, extracted with
@@ -24,13 +24,13 @@ the way `uefi/` ports redwood (it follows `lisa`, the same SoC package):
   image to `PAYLOAD_BASE`, and `BootManagerLib` starts the XNU loader from it instead of the menu.
 
 Put the addresses in the profile: `FD_BASE`, `FD_SIZE` (where the shim puts the UEFI image) and `PAYLOAD_BASE`
-(free RAM for the kernel and images). The prebuilt `BootShim.bin` is built for redwood's addresses: build the
+(free RAM for the kernel and images). The prebuilt `BootShim.bin` is built for the first phone's addresses: build the
 shim from your Mu-Silicium tree (`mkxnuimg.py` does it when `Mu-Silicium/` is there).
 
 ## 2. The loader
 
 `xnuloader/loader.c` describes each device with a `struct platform` and picks it by the framebuffer base the UEFI
-reports. Paste `common/devices/<codename>.platform.c` next to `platform_redwood` and add it to `platforms[]`:
+reports. Paste `common/devices/<codename>.platform.c` next to the other `platform_*` entries and add it to `platforms[]`:
 
 | Field | Where it comes from |
 |---|---|
@@ -46,13 +46,13 @@ Rebuild with `xnuloader/build.sh`; QEMU must still pick `qemu-virt` (no match = 
 ## 3. The kernel
 
 What is generic: GICv3, the timer, PSCI SMP, the display (the UEFI's framebuffer), APFS and ramfs, the driver
-replacements, the return-to-loader path. What is redwood-specific and needs looking at:
+replacements, the return-to-loader path. What is specific to the first phone and needs looking at:
 
-- **touch**: `bsd/dev/redwood_goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
-  feeding `/dev/redwood-touch` (`bsd/dev/redwood_input.c`);
-- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `redwood_input.c`,
-  `redwood_cpufreq.c`, `osfmk/arm64/loader_return.c`;
-- **GPU / Wi-Fi / sound**: `redwood_adreno.c` (Adreno 642L), `redwood_wifi.c` (WCN6750 + ath11k), `redwood_audio.c`
+- **touch**: `bsd/dev/hakios_goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
+  feeding `/dev/hakios-touch` (`bsd/dev/hakios_input.c`);
+- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `hakios_input.c`,
+  `hakios_cpufreq.c`, `osfmk/arm64/loader_return.c`;
+- **GPU / Wi-Fi / sound**: `hakios_adreno.c` (Adreno 642L), `hakios_wifi.c` (WCN6750 + ath11k), `hakios_audio.c`
   — the same Qualcomm subsystems (SMEM, SMP2P, GLINK, QRTR, QMI) are reused, the addresses and firmware differ.
 
 Start with no extras: the system boots to the lock screen with only the framebuffer, touch and the CPU.

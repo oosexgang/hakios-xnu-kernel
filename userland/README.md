@@ -13,7 +13,7 @@ on a compatibility layer make that possible.
 
 It runs in two places:
 
-- **POCO X5 Pro 5G (redwood, Snapdragon 778G)** — nothing is flashed: the UEFI is started with `fastboot boot`,
+- **POCO X5 Pro 5G (Snapdragon 778G)** — nothing is flashed: the UEFI is started with `fastboot boot`,
   the whole system lives in RAM, and after a reboot the phone is back in Android;
 - **QEMU** (`virt`, aarch64) — the same thing on any Linux computer, no phone needed.
 
@@ -90,7 +90,7 @@ The lock screen appears after 2–3 minutes.
 
 ## On the phone (POCO X5 Pro 5G)
 
-You need a **POCO X5 Pro 5G (redwood)** with an unlocked bootloader, `adb` and `fastboot`, and the images from the
+You need a **POCO X5 Pro 5G** with an unlocked bootloader, `adb` and `fastboot`, and the images from the
 section above. Nothing is written to the phone's storage.
 
 **The phone's own firmware** is not in the repository and cannot be: it is the vendor's and is taken from the very
@@ -107,8 +107,8 @@ adb pull /vendor/firmware/aw8697_haptic.bin fw-haptic/                          
 line — and `fw-wifi/network` — network name and password. `userland/build.sh` prints which firmware went in.)
 
 ```sh
-common/build.sh redwood GL=1          # images + out/redwood-boot.img
-common/run.sh redwood 900             # loader into RAM, system image into RAM, a 15-minute session
+common/build.sh DEVICE GL=1            # images + out/DEVICE-boot.img
+common/run.sh DEVICE 900              # loader into RAM, system image into RAM, a 15-minute session
 ```
 
 or step by step with `xl`:
@@ -125,7 +125,7 @@ XL_SECS=900 XL_CMDLINE="touchscreen=1 cpufreq=1 bootcpu=7 cpus=8 gpu=1 wifi=1 ad
 
 ## Prebuilt boot image
 
-Every release has `hakios-redwood-boot.img` attached: the redwood UEFI with our loader inside, ready for
+Every release has a boot image of the first phone attached: its UEFI with our loader inside, ready for
 `fastboot boot`. It contains no Apple files; the system image is still made on your machine (above).
 
 ## Building from source
@@ -149,7 +149,7 @@ common/new-device.sh <codename> path/to/device.dtb   # profile + loader platform
 ```
 
 Then follow [docs/PORTING.md](docs/PORTING.md): the UEFI port, the loader's platform description, the kernel's
-drivers, the firmware. Device profiles live in `common/devices/` (`redwood.conf`, `qemu-virt.conf`, `_template.conf`).
+drivers, the firmware. Device profiles live in `common/devices/` (`qemu-virt.conf`, `_template.conf`; a phone's own in its package).
 
 ## How it works
 
@@ -230,7 +230,7 @@ From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
   `xnu/files/bsd/miscfs/apfs/libdeflate/` — libdeflate 1.24 (Eric Biggers, MIT, `COPYING` there).
 - ath11k, Linux and FreeBSD sources are not in the repository: `tools/mk-ath11k.sh` fetches pinned releases.
   `wifi/lx/patches/*.patch` are our changes to FreeBSD headers; the rest of `wifi/lx/` is ours.
-- `uefi/files/Binaries/redwood` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
+- `uefi/files/Binaries/<phone>` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
   Xiaomi firmware, distributed the way Project Silicium distributes them for other devices;
   `prebuilt/uefi/mkbootimg.py` — AOSP, Apache-2.0.
 - This repository is licensed under the [Apple Public Source License 2.0](LICENSE): our changes to XNU are a derivative of XNU and must be, and our other code here (loader, scripts) is released under the same license. Third-party code keeps its own license, as listed above.

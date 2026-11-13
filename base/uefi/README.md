@@ -3,7 +3,7 @@
 The loader runs under a port of [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
 to the phone. What every such port needs is here; what a phone's own port is -- its platform package with
 the memory map and driver list, its configuration, its device tree, the UEFI drivers taken from its firmware --
-is in its device package on the `devices` branch (the first one, `redwood/legacy/uefi/`, with its README).
+is in its device package on the `devices` branch (the first phone's has a whole port under `legacy/uefi/`, with its README).
 
 - `BASE` -- the Mu-Silicium commit the ports are made on;
 - `mu-silicium.patch` -- changes to existing files: `BootShim/BootShim.S` (copies our "XNUP" container, which
