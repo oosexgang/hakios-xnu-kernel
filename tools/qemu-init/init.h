@@ -118,6 +118,7 @@ void command_ln(int argc, char **argv);
 void command_mv(int argc, char **argv);
 void command_chmod(int argc, char **argv);
 void command_xattr(int argc, char **argv);
+void command_files(int argc, char **argv);
 void command_run(int argc, char **argv);
 void command_serve(int argc, char **argv);
 void command_sleep(int argc, char **argv);

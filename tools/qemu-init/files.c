@@ -1,4 +1,4 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, mmap */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, mmap */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -360,6 +360,52 @@ command_xattr(int argc, char **argv)
 		say(value);
 		say("\n");
 	}
+}
+
+#define SYS_getrlimit           194
+#define SYS_setrlimit           195
+#define RLIMIT_NOFILE           8
+
+/* [LIMIT]: the descriptors a process may have, lowered to LIMIT (20 without one), and files opened until the
+ * kernel says no; all closed again and the limit put back */
+void
+command_files(int argc, char **argv)
+{
+	struct { uint64_t current, most; } was, lowered;
+	unsigned limit = argc > 1 ? parse_number(argv[1]) : 20;
+	long fds[256], fd = 0;
+	unsigned opened = 0;
+
+	if (limit < 4 || limit > 256) {
+		say("files [LIMIT]: LIMIT from 4 to 256\n");
+		return;
+	}
+	if (syscall6(SYS_getrlimit, RLIMIT_NOFILE, (long)&was, 0, 0, 0, 0) != 0) {
+		say("files: getrlimit failed\n");
+		return;
+	}
+	lowered = was;
+	lowered.current = limit;
+	if (syscall6(SYS_setrlimit, RLIMIT_NOFILE, (long)&lowered, 0, 0, 0, 0) != 0) {
+		say("files: setrlimit failed\n");
+		return;
+	}
+	while (opened < 256 && (fd = syscall6(SYS_open, (long)"/etc/motd", O_RDONLY, 0, 0, 0, 0)) >= 0) {
+		fds[opened++] = fd;
+	}
+	say("files: ");
+	say_number(opened);
+	say(" opened under a limit of ");
+	say_number(limit);
+	say(" descriptors, the last ");
+	say_number(opened ? (uint64_t)fds[opened - 1] : 0);
+	say("; then error ");
+	say_number((uint64_t)-fd);
+	say("\n");
+	while (opened > 0) {
+		syscall6(SYS_close, fds[--opened], 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_setrlimit, RLIMIT_NOFILE, (long)&was, 0, 0, 0, 0);
 }
 
 #define SYS_munmap              73
