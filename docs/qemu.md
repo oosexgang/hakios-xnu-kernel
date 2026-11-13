@@ -68,6 +68,7 @@ line at a time:
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
 | `memory MB` | That much memory of its own (anonymous mmap), a word on every page written and read back; the kernel's free memory before, with it and after. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
+| `ioreg [DEPTH]` | IOKit's registry, the IOService plane from its root: asked in MIG messages (host_get_io_main, io_registry_get_root_entry, the children's iterators), as IOKit.framework asks it. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -87,7 +88,7 @@ program; a signal ends a process in the background, and a process's
 mistakes end it with the signal they should; a timer's signals reach a handler on time; a pipe
 carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; a mapped
 file is what reading it gives; memory of its own holds what is written and is all given back; a descriptor
-sent over a socket pair reads the file it was; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
+sent over a socket pair reads the file it was; IOKit's registry answers in MIG messages; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
 
 ## What it is not
 
