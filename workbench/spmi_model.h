@@ -48,6 +48,7 @@ static struct spmi_model {
 	uint32_t wstatus[SPMI_CHANNELS], wdata0[SPMI_CHANNELS];                         /* ... and its write */
 	unsigned transfers, writes, denied;
 	unsigned elsewhere;             /* accesses where nothing of the arbiter is, and commands that are none */
+	unsigned past_the_table;        /* reads of a channel's entry past the number the arbiter says it has */
 	bool deaf;                      /* the arbiter takes commands and never ends one */
 	unsigned drop_reads, drop_writes;       /* so many of the next reads, of the next writes, dropped (not made) */
 	pthread_mutex_t lock;
@@ -114,11 +115,20 @@ spmi_model_rd(uintptr_t address)
 	if (address >= spmi.core && address < spmi.core + 0x1100) {
 		uint32_t reg = (uint32_t)(address - spmi.core);
 
-		value = reg == 0x000 ? spmi.version : reg == 0x004 ? (spmi.says_channels ? spmi.says_channels - 1 : SPMI_CHANNELS) :
+		uint32_t said = spmi.says_channels ? spmi.says_channels - 1 : SPMI_CHANNELS;
+
+		if (reg >= 0x900 && (reg - 0x900) / 4 >= said) {
+			spmi.past_the_table++;
+		}
+		value = reg == 0x000 ? spmi.version : reg == 0x004 ? said :
 		    reg >= 0x900 && reg < 0x900 + 4 * SPMI_CHANNELS ? spmi.map[(reg - 0x900) / 4] : 0;
 	} else if (address >= spmi.cnfg && address < spmi.cnfg + 0x1000) {
 		uint32_t reg = (uint32_t)(address - spmi.cnfg);
 
+		if (reg >= 0x700 && reg < 0x700 + 4 * 0x200 &&
+		    (reg - 0x700) / 4 >= (spmi.says_channels ? spmi.says_channels - 1 : SPMI_CHANNELS)) {
+			spmi.past_the_table++;
+		}
 		value = reg >= 0x700 && reg < 0x700 + 4 * SPMI_CHANNELS ? spmi.owner[(reg - 0x700) / 4] : 0;
 	} else if (address >= spmi.observer && address < spmi.observer + 0x80 * SPMI_CHANNELS) {
 		uint32_t channel = (uint32_t)(address - spmi.observer) / 0x80, reg = (uint32_t)(address - spmi.observer) % 0x80;
