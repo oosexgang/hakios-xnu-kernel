@@ -50,6 +50,16 @@
 // the CCU holds, like a draw. The packing is this model's reading of the registers; whether the GPU packs the same
 // way is again the phone's to say.
 //
+// A UBWC image (TILE6_3 with a flag buffer: a compressed texture) is not compressed here. The model keeps its pixels in
+// its memory, in the RB's component order, each byte under a mask of its place, so that whatever reads that memory as
+// linear rows -- a descriptor, a copy, an event blit, this processor -- reads noise; and it holds every register that
+// names the image (a texture descriptor, RB_MRT with its flag buffer, the 2D engine's source and destination, the event
+// blit) to the flag buffer, its pitch and layer and the data's pitch the first one named, and to WZYX, the one order of
+// a tiled layout. Faults: a flag buffer not cleared before the GPU first named it (freedreno_resource.c:213-222 says
+// why the driver clears it), linear rows over a UBWC image's buffer, a TILE6_3 colour target without its bit in
+// RB_RENDER_CNTL.FLAG_MRTS (or a linear one with it), a UBWC texture sampled before anything wrote it, and a UBWC image
+// through an IBO. A load or a copy out of an image nothing wrote reads zeros.
+//
 // What it answers is what hakios's kernel driver answers (bsd/dev/hakios.adreno.c, hakios_gpu_parameter): GPU_ID 0,
 // the chip id 0x06030500 with a speed bin above it, 512 KiB of GMEM, 550 MHz. And it fails as that kernel fails. A
 // submission the GPU never finishes is a hang there, found by the wait's timeout alone (the GPU raises no fault for
@@ -155,6 +165,11 @@ public:
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
         uint32_t tiles = 0;         // GMEM tiles begun (CP_SET_MARKER RM6_BIN_RENDER_START | USES_GMEM)
         uint32_t ubwcCopies = 0;   // 2D copies into a UBWC image
+        uint32_t ubwcReads = 0;    // ...and out of one (a copy's source)
+        uint32_t ubwcFills = 0;    // 2D solid fills into a UBWC image
+        uint32_t ubwcLoads = 0, ubwcStores = 0;   // event blits between a UBWC image and GMEM
+        uint32_t ubwcDraws = 0;    // draws whose colour targets include a UBWC one (RB_MRT TILE6_3 with its flag buffer)
+        uint32_t ubwcSamples = 0;  // UBWC texture descriptors a draw or a dispatch read through
         uint32_t tileLoads = 0, tileStores = 0;   // event blits, carried out between memory and the model's GMEM
         uint32_t tileClears = 0;    // ...and clears in GMEM
         uint32_t binningPasses = 0, binnedDraws = 0, binData = 0;   // binning passes, the draws in them, tiles told their streams
@@ -183,6 +198,9 @@ public:
     std::vector<uint8_t> memory(uint64_t iova, uint64_t length);   // LENGTH bytes at a GPU address as they are now; empty outside every buffer
     void writeSurface(uint32_t id, uint64_t at, const void* bytes, uint64_t length);   // what another program drew there
     // stop running submissions until resume(): to see what a program does while the GPU is behind
+    // the next N buffers the driver asks for hold 0xcd in every byte, as a kernel's recycled memory may, rather than the
+    // zeros a fresh allocation has: what a test of the driver's own clearing needs
+    void dirtyNextBuffers(uint32_t n);
     void pause();
     void resume();
 
@@ -247,7 +265,6 @@ private:
     bool execDraw(const uint32_t* p, uint32_t count);
     // CP_BLIT: a solid fill only, judged against the 2D registers and then written into memory as the 2D engine would
     bool execBlit(const uint32_t* p, uint32_t count);
-    bool execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled);
     // one graphics stage's program and constants at the draw: the rules CP_EXEC_CS applies to the compute stage's
     bool checkStageProgram(const char* what, const StageLoads& xs, uint32_t instrlenReg, uint32_t objStartReg, uint32_t hlsqCntl, uint32_t spConfig,
                            uint32_t* instrlen, uint64_t* program, uint32_t* constlen);
@@ -292,7 +309,29 @@ private:
     // inside a GMEM tile (between RM6_BIN_RENDER_START | USES_GMEM and RM6_BIN_RENDER_END), and GMEM itself: what the
     // event blits load and store (the draws rasterize nothing, so a tile holds what its load put there)
     bool inTile_ = false;
-    std::set<uint64_t> ubwcWritten_;   // the UBWC images a copy has written (their data addresses)
+    // The UBWC images the GPU has named, by the address of their data (fake_gpu.cpp: "UBWC images" says how the model
+    // keeps them): the flag buffer every register naming the image must name too, its pitch and layer size in bytes as
+    // each register decodes to (0: none named the layer yet), the data's pitch, and whether anything has written it
+    struct Ubwc {
+        uint64_t flags = 0;
+        uint32_t flagPitch = 0, flagLayer = 0;
+        uint64_t pitch = 0;
+        bool written = false;
+    };
+    std::map<uint64_t, Ubwc> ubwc_;
+    // the image at BASE as WHO names it (its flag buffer at FLAGS, of FLAG_PITCH bytes a row and FLAG_LAYER a layer, 0 when
+    // the register has no layer field; the data PITCH bytes a row): the one named before, or a new one whose flag buffer
+    // the driver cleared; nullptr after a fault
+    Ubwc* ubwcImage(uint64_t base, uint64_t flags, uint32_t flagPitch, uint32_t flagLayer, uint64_t pitch, const std::string& who);
+    // a fault when BASE, read or written as linear rows, lies in the buffer of a UBWC image
+    bool linearOverUbwc(uint64_t base, const std::string& who);
+    // the model's stand-in for compression: N bytes at AT of the image at BASE turned into (or back from) what the
+    // memory holds
+    static void ubwcCode(uint64_t base, uint64_t at, uint8_t* p, uint64_t n);
+    uint32_t dirtyNext_ = 0;
+    // the copy of execBlit, into IMAGE when the destination is a UBWC one
+    bool execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled,
+                  Ubwc* image);
     uint32_t binQueued_ = 0;   // tiles' streams handed over (CP_SET_BIN_DATA5*) and not yet let go by RM6_BIN_END_OF_DRAWS
     bool binning_ = false;   // between RM6_BIN_VISIBILITY and the first tile: the draws only bin
     std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);

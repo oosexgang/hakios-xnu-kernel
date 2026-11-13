@@ -271,6 +271,74 @@ void FakeGpu::fault(const std::string& why) {
     stats_.lastFault = why;
 }
 
+// UBWC images. The hardware's compressed form is not reproduced: each byte of an image lies where linear rows of the
+// same pitch would put it, XORed with a mask of its offset from the image's start -- so that a reader with the image's
+// base and pitch and the UBWC view gets the pixels back, and any other (linear rows, another pitch, another image's
+// mask) gets noise. The flag buffer's memory is not written: the driver clears it before the GPU first sees the image,
+// and the first register that names the image finds it so or faults; every later one must name the same.
+void FakeGpu::ubwcCode(uint64_t base, uint64_t at, uint8_t* p, uint64_t n) {
+    for (uint64_t i = 0; i < n; i++) {
+        const uint64_t o = at - base + i;
+        p[i] ^= uint8_t(0xa5u ^ (o * 37u) ^ (o >> 7) ^ (o >> 15));
+    }
+}
+
+FakeGpu::Ubwc* FakeGpu::ubwcImage(uint64_t base, uint64_t flags, uint32_t flagPitch, uint32_t flagLayer, uint64_t pitch, const std::string& who) {
+    auto it = ubwc_.find(base);
+    if (it != ubwc_.end()) {
+        Ubwc& u = it->second;
+        if (u.flags != flags || u.flagPitch != flagPitch || u.pitch != pitch || (u.flagLayer != 0 && flagLayer != 0 && u.flagLayer != flagLayer)) {
+            fault(who + text(": the UBWC image at %#llx named with its flag buffer at %#llx, ", base, flags) +
+                  text("%llu bytes a row and %llu a layer, ", flagPitch, flagLayer) + text("its rows %llu bytes apart, ", pitch) +
+                  text("where it was named with flags at %#llx, %llu bytes a row ", u.flags, u.flagPitch) +
+                  text("and %llu a layer, rows %llu bytes apart", u.flagLayer, u.pitch));
+            return nullptr;
+        }
+        if (u.flagLayer == 0) u.flagLayer = flagLayer;
+        return &u;
+    }
+    // (fdl6_layout puts the flag buffer first, the data after it in the same buffer: fd6_layout.c:304-318)
+    const uint8_t* f = flags < base ? at(flags, base - flags) : nullptr;
+    if (f == nullptr || flagPitch == 0 || pitch == 0) {
+        fault(who + text(": a UBWC image at %#llx with its flag buffer at %#llx, ", base, flags) +
+              text("%llu bytes a row: not before the data in the same buffer, or of no pitch", flagPitch));
+        return nullptr;
+    }
+    for (uint64_t i = 0; i < base - flags; i++) {
+        if (f[i] != 0) {
+            fault(who + text(": the UBWC image at %#llx was first named with byte %llu of its flag buffer ", base, i) + text("%#llx", f[i]) +
+                  ": a flag buffer the driver did not clear (freedreno clears every one before the first write, freedreno_resource.c:213-222)");
+            return nullptr;
+        }
+    }
+    Ubwc u;
+    u.flags = flags;
+    u.flagPitch = flagPitch;
+    u.flagLayer = flagLayer;
+    u.pitch = pitch;
+    return &(ubwc_[base] = u);
+}
+
+bool FakeGpu::linearOverUbwc(uint64_t base, const std::string& who) {
+    for (const auto& [handle, b] : buffers_) {
+        if (base < b.iova || base - b.iova >= b.bytes.size()) continue;
+        auto it = ubwc_.lower_bound(b.iova);
+        if (it != ubwc_.end() && it->first - b.iova < b.bytes.size()) {
+            fault(who + text(": linear rows at %#llx, in the buffer of the UBWC image at %#llx -- its memory read or written as "
+                             "what it is not",
+                             base, it->first));
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+void FakeGpu::dirtyNextBuffers(uint32_t n) {
+    std::lock_guard<std::mutex> g(lock_);
+    dirtyNext_ = n;
+}
+
 uint32_t FakeGpu::reg(uint32_t r) const {
     auto it = regs_.find(r);
     return it == regs_.end() ? 0 : it->second;
@@ -543,14 +611,31 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
     // linear, or a depth layout's tiles (TILE6_3 on every level, so TILE_ALL; 32 bits a texel, its rows counted to 16 as
     // fdl6_tile_alignment counts them) -- sampled only, nothing stores into tiles here
     if (tile == TILE6_3 && (d[3] & A6XX_TEX_CONST_3_FLAG) != 0) {
-        // a UBWC texture: read only once a copy has written it (ubwcWritten_), what this model knows of its contents
-        const uint64_t base = uint64_t(d[4]) | uint64_t(d[5] & 0x1ffff) << 32;
-        if (!sampled || ubwcWritten_.count(base) == 0) {
+        // a UBWC texture (fdl6_view_init's view of one, fd6_view.c:294-306): sampled, never an image (no UBWC through the
+        // IBO path before A7XX), the tiled layout's WZYX, and the flag buffer its writers named; read only once
+        // something wrote it -- what this model knows of its contents
+        const uint64_t ubase = uint64_t(d[4]) | uint64_t(d[5] & 0x1ffff) << 32;
+        const uint64_t flags = uint64_t(d[7]) | uint64_t(d[8] & 0x1ffff) << 32;
+        const uint32_t flagPitch = (d[10] & 0x7fu) << 6, flagLayer = (d[9] & 0x1ffffu) << 6;
+        if (!sampled) {
+            fault(who + ": a UBWC image through an IBO: this GPU stores and loads images as linear rows alone");
+            return false;
+        }
+        if (fmt != FMT6_8_8_8_8_UNORM || fieldOf(d[0], A6XX_TEX_CONST_0_SWAP__MASK, A6XX_TEX_CONST_0_SWAP__SHIFT) != WZYX) {
+            fault(who + text(": a UBWC texture of format %llu, swap %llu: an 8-bit RGBA layout, WZYX as every tiled one is (fd6_pipe2swap)", fmt,
+                             fieldOf(d[0], A6XX_TEX_CONST_0_SWAP__MASK, A6XX_TEX_CONST_0_SWAP__SHIFT)));
+            return false;
+        }
+        Ubwc* u = ubwcImage(ubase, flags, flagPitch, flagLayer, pitch, who);
+        if (u == nullptr) return false;
+        if (!u->written) {
             fault(who + ": a UBWC texture read before anything wrote it in compressed form");
             return false;
         }
+        stats_.ubwcSamples++;
         return true;
     }
+    if (tile == TILE6_LINEAR && linearOverUbwc(base, who)) return false;
     if (tile != TILE6_LINEAR && (tile != TILE6_3 || !sampled || bpp != 4 || (d[3] & A6XX_TEX_CONST_3_TILE_ALL) == 0)) {
         fault(who + text(": tile mode %llu", tile) + ((d[3] & A6XX_TEX_CONST_3_TILE_ALL) ? " with TILE_ALL" : " without TILE_ALL") +
               ": linear, or a sampled 32-bit depth layout (TILE6_3, TILE_ALL), is what this GPU model reads");
@@ -887,11 +972,12 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     // a linear image of a known format, or the one tiled image this driver makes: a depth texture (FMT6_32_FLOAT, TILE6_3)
     const uint32_t tile = fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT);
     const bool tiled = tile == TILE6_3 && (fmt == FMT6_32_FLOAT || fmt == FMT6_8_UINT);
-    // ...or a UBWC one (TILE6_3 with FLAGS, RGBA8-sized, WZYX): what a copy fills a compressed texture through
-    const bool ubwc = copy && tile == TILE6_3 && (info & A6XX_RB_2D_DST_INFO_FLAGS) != 0 && fmt == FMT6_8_8_8_8_UNORM &&
+    // ...or a UBWC one (TILE6_3 with FLAGS, RGBA8-sized, WZYX): what a copy or a Clear writes a compressed texture through
+    const bool ubwc = tile == TILE6_3 && (info & A6XX_RB_2D_DST_INFO_FLAGS) != 0 && fmt == FMT6_8_8_8_8_UNORM &&
                       fieldOf(info, A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT) == WZYX;
-    if (bpp == 0 || (tile != TILE6_LINEAR && !tiled && !ubwc)) {
-        fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format (or a TILE6_3 depth texture) is what this GPU model fills", fmt, tile));
+    if (bpp == 0 || (tile != TILE6_LINEAR && !tiled && !ubwc) || (tile == TILE6_LINEAR && (info & A6XX_RB_2D_DST_INFO_FLAGS) != 0)) {
+        fault(text("a fill into format %llu, tile mode %llu", fmt, tile) + ((info & A6XX_RB_2D_DST_INFO_FLAGS) ? " with FLAGS" : "") +
+              ": a linear image of a known format, a TILE6_3 depth texture, or an RGBA8 UBWC image (TILE6_3, FLAGS, WZYX) is what this GPU model fills");
         return false;
     }
     // the intermediate format turnip's format_to_ifmt picks for each (tu_clear_blit.cc:41-71): by the red channel's size
@@ -928,22 +1014,22 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
         fault(text("a fill of (%llu, %llu) to ", x0, y0) + text("(%llu, %llu) with a pitch of ", x1, y1) + text("%llu bytes at %#llx: an empty rectangle, rows wider than the pitch or a base not 64-aligned", pitch, base));
         return false;
     }
-    if (copy && ubwc) {
-        // Its bytes and flags are in an order this model does not reproduce: the copy is judged (the source linear and
-        // in reach, a flag buffer in reach) and the image counted as written, which a sample of it then requires
-        const uint64_t flags = reg64(REG_A6XX_RB_2D_DST_FLAGS);
-        const uint32_t sinfo = reg(REG_A6XX_SP_PS_2D_SRC_INFO);
-        if (fieldOf(sinfo, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
-            at(reg64(REG_A6XX_SP_PS_2D_SRC), 64) == nullptr || at(flags, 64) == nullptr || at(base, uint64_t(y1 + 1) * pitch) == nullptr) {
-            fault("a copy into a UBWC image: from a linear source, into an image and a flag buffer in reach, is what this model takes");
+    // a UBWC destination: the image its flag buffer names (RB_2D_DST_FLAGS: the address, then the pitch, which has no
+    // layer field here), its rectangle inside its buffer; a linear one never over a UBWC image's memory
+    Ubwc* image = nullptr;
+    if (ubwc) {
+        image = ubwcImage(base, reg64(REG_A6XX_RB_2D_DST_FLAGS), (reg(REG_A6XX_RB_2D_DST_FLAGS + 2) & 0xffu) << 6, 0, pitch,
+                          copy ? "a copy into a UBWC image" : "a fill into a UBWC image");
+        if (image == nullptr) return false;
+        if (at(base + uint64_t(y0) * pitch, uint64_t(y1 - y0) * pitch + uint64_t(x1 + 1) * bpp) == nullptr) {
+            fault(std::string(copy ? "a copy" : "a fill") + text(" into the UBWC image at %#llx, %llu rows: outside its buffer", base, y1 - y0 + 1));
             return false;
         }
-        ubwcWritten_.insert(base);
-        stats_.ubwcCopies++;
-        return true;
+    } else if (tile == TILE6_LINEAR && linearOverUbwc(base, copy ? "a copy's destination" : "a fill")) {
+        return false;
     }
     if (copy) {
-        return execCopy(fmt, bpp, ifmt, x0, y0, x1, y1, base, pitch, tiled);
+        return execCopy(fmt, bpp, ifmt, x0, y0, x1, y1, base, pitch, tiled, image);
     }
     if (tiled) {
         // a TILE6_3 image: 4096-aligned, the pitch a multiple of 256 bytes, its rows counted to 16 (fdl6_tile_alignment
@@ -999,6 +1085,11 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     }
     for (uint32_t y = y0; y <= y1; y++) {
         for (uint32_t x = x0; x <= x1; x++) memcpy(d + (y - y0) * pitch + uint64_t(x) * bpp, pixel, bpp);
+        if (image != nullptr) ubwcCode(base, base + uint64_t(y) * pitch + uint64_t(x0) * bpp, d + (y - y0) * pitch + uint64_t(x0) * bpp, uint64_t(x1 - x0 + 1) * bpp);
+    }
+    if (image != nullptr) {
+        image->written = true;
+        stats_.ubwcFills++;
     }
     stats_.fills++;
     drawsInSubmission_++;   // the fill sits in the CCU as a draw's colour does: the same two flushes must follow it
@@ -1007,7 +1098,8 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     return true;
 }
 
-bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled) {
+bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled,
+                       Ubwc* image) {
     using namespace a6xx;
     if (tiled) {
         fault("a copy into a tiled image: not modelled");
@@ -1015,12 +1107,21 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     }
     const uint32_t info = reg(REG_A6XX_SP_PS_2D_SRC_INFO), size = reg(REG_A6XX_SP_PS_2D_SRC_SIZE);
     const uint32_t sfmt = info & A6XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT__MASK;
-    // (the TP's format at the source, the colour column's at the destination: they differ for RGB10A2 alone)
+    const uint32_t stile = fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT);
+    const uint32_t sswap = fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT);
+    const uint32_t dswap = fieldOf(reg(REG_A6XX_RB_2D_DST_INFO), A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT);
+    // a UBWC source (TILE6_3 with FLAGS, RGBA8, WZYX), read through its flag buffer (SP_PS_2D_SRC_FLAGS)
+    const bool subwc = stile == TILE6_3 && (info & A6XX_SP_PS_2D_SRC_INFO_FLAGS) != 0 && sfmt == FMT6_8_8_8_8_UNORM && sswap == WZYX;
+    // (the TP's format at the source, the colour column's at the destination: they differ for RGB10A2 alone). Across
+    // swaps only between the two 8-bit RGBA orders: the engine reads the source's into its own and writes the
+    // destination's, which is how a linear BGRA8 texture's rows reach a tiled layout's WZYX and come back
     const bool sameFormat = sfmt == fmt || (sfmt == FMT6_10_10_10_2_UNORM && fmt == FMT6_10_10_10_2_UNORM_DEST);
-    if (!sameFormat || fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
-        fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT) !=
-            fieldOf(reg(REG_A6XX_RB_2D_DST_INFO), A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT)) {
-        fault(text("a copy from format %llu into %llu, or from a tiled source, or across swaps: one linear format is what this model copies", sfmt, fmt));
+    const bool reorder = sswap != dswap;
+    if (!sameFormat || (stile != TILE6_LINEAR && !subwc) || (stile == TILE6_LINEAR && (info & A6XX_SP_PS_2D_SRC_INFO_FLAGS) != 0) ||
+        (reorder && (fmt != FMT6_8_8_8_8_UNORM || (sswap != WZYX && sswap != WXYZ) || (dswap != WZYX && dswap != WXYZ)))) {
+        fault(text("a copy from format %llu into %llu, from tile mode %llu", sfmt, fmt, stile) +
+              text(", swap %llu into %llu", sswap, dswap) +
+              ": one format, from linear rows or an RGBA8 UBWC image, across the two 8-bit RGBA orders at most, is what this model copies");
         return false;
     }
     const uint32_t sw = size & A6XX_SP_PS_2D_SRC_SIZE_WIDTH__MASK, sh = fieldOf(size, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__MASK, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__SHIFT);
@@ -1056,6 +1157,20 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     const uint64_t srcRow = uint64_t(sw) * bpp * ns;
     std::vector<uint8_t> source(uint64_t(sh) * spitch);
     memcpy(source.data(), at(sbase, source.size() - spitch + srcRow), source.size() - spitch + srcRow);
+    if (subwc) {
+        // ...decompressed: through the flag buffer its writers named (the 2D source's pitch field has no layer), zeros
+        // where nothing has written it
+        Ubwc* from = ubwcImage(sbase, reg64(REG_A6XX_SP_PS_2D_SRC_FLAGS), (reg(REG_A6XX_SP_PS_2D_SRC_FLAGS + 2) & 0xffu) << 6, 0, spitch,
+                               "a copy out of a UBWC image");
+        if (from == nullptr) return false;
+        if (from->written) ubwcCode(sbase, sbase, source.data(), source.size() - spitch + srcRow);
+        else std::fill(source.begin(), source.end(), 0);
+        stats_.ubwcReads++;
+    } else if (linearOverUbwc(sbase, "a copy's source")) {
+        return false;
+    }
+    // (blue and red trade places between the two orders, in every sample of every pixel)
+    for (uint64_t o = 0; reorder && o + 4 <= source.size(); o += 4) std::swap(source[o], source[o + 2]);
     auto texel = [&](int64_t x, int64_t y) {
         x = std::min<int64_t>(std::max<int64_t>(x, 0), sw - 1);
         y = std::min<int64_t>(std::max<int64_t>(y, 0), sh - 1);
@@ -1095,6 +1210,15 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
                 out[c] = uint8_t(std::lround(t));
             }
         }
+    }
+    if (image != nullptr) {
+        // ...compressed into the UBWC destination, row by row
+        for (uint32_t y = y0; y <= y1; y++) {
+            const uint64_t row = base + uint64_t(y) * pitch + uint64_t(x0) * bpp;
+            ubwcCode(base, row, at(row, uint64_t(dw) * bpp), uint64_t(dw) * bpp);
+        }
+        image->written = true;
+        stats_.ubwcCopies++;
     }
     stats_.copies++;
     drawsInSubmission_++;   // the copy sits in the CCU as a fill does: the same two flushes must follow it
@@ -1174,8 +1298,24 @@ bool FakeGpu::eventBlit() {
     const uint64_t dst = reg64(REG_A6XX_RB_BLIT_DST), pitch = uint64_t(reg(REG_A6XX_RB_BLIT_DST_PITCH) & 0xffff) << 6;
     const uint32_t gbase = reg(REG_A6XX_RB_BLIT_BASE_GMEM);
     const uint32_t stl = reg(REG_A6XX_RB_BLIT_SCISSOR_TL), sbr = reg(REG_A6XX_RB_BLIT_SCISSOR_BR);
-    if (bpp == 0 || (dstInfo & A6XX_RB_BLIT_DST_INFO_TILE_MODE__MASK) != TILE6_LINEAR || reg(REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL) != 0) {
-        fault(text("RB_BLIT_DST_INFO %#llx: a linear, single-sampled destination of a known format", dstInfo));
+    // a linear destination, or a UBWC one (fdl6_view_init's RB_BLIT_DST_INFO over a UBWC view: TILE6_3, WZYX, FLAGS, RGBA8)
+    // with its flag buffer in RB_BLIT_FLAG_DST (the address, then the pitch and the layer, MRT's fields)
+    const uint32_t dtile = fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_TILE_MODE__MASK, A6XX_RB_BLIT_DST_INFO_TILE_MODE__SHIFT);
+    const bool ubwc = dtile == TILE6_3 && (dstInfo & A6XX_RB_BLIT_DST_INFO_FLAGS) != 0 &&
+                      fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT) == FMT6_8_8_8_8_UNORM &&
+                      fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__SHIFT) == WZYX;
+    if (bpp == 0 || (dtile != TILE6_LINEAR && !ubwc) || (dtile == TILE6_LINEAR && (dstInfo & A6XX_RB_BLIT_DST_INFO_FLAGS) != 0) ||
+        reg(REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL) != 0) {
+        fault(text("RB_BLIT_DST_INFO %#llx: a linear, single-sampled destination of a known format, or an RGBA8 UBWC one (TILE6_3, FLAGS, WZYX)", dstInfo));
+        return false;
+    }
+    Ubwc* image = nullptr;
+    if (ubwc) {
+        const uint32_t fp = reg(REG_A6XX_RB_BLIT_FLAG_DST_PITCH);
+        image = ubwcImage(dst, reg64(REG_A6XX_RB_BLIT_FLAG_DST), (fp & 0x7ffu) << 6, ((fp >> 11) & 0x1ffffu) << 9, pitch,
+                          type == BLIT_EVENT_LOAD ? "a GMEM load of a UBWC image" : "a GMEM store into a UBWC image");
+        if (image == nullptr) return false;
+    } else if (linearOverUbwc(dst, type == BLIT_EVENT_LOAD ? "a GMEM load" : "a GMEM store")) {
         return false;
     }
     const uint32_t x1 = std::max(win[0], stl & 0x3fff), y1 = std::max(win[1], stl >> 16 & 0x3fff);
@@ -1200,11 +1340,21 @@ bool FakeGpu::eventBlit() {
         uint8_t* to = type == BLIT_EVENT_LOAD ? g : m;
         memcpy(to, type == BLIT_EVENT_LOAD ? m : g, rowBytes);
         for (uint64_t o = 0; swapBR && o < rowBytes; o += 4) std::swap(to[o], to[o + 2]);
+        // (a UBWC image's row decompressed into the bin -- zeros where nothing wrote the image -- or the bin's
+        // compressed into it)
+        if (image != nullptr && type == BLIT_EVENT_LOAD && !image->written) memset(g, 0, rowBytes);
+        else if (image != nullptr) ubwcCode(dst, dst + uint64_t(y) * pitch + uint64_t(x1) * bpp, to, rowBytes);
     }
-    if (type == BLIT_EVENT_LOAD) stats_.tileLoads++;
-    else {
+    if (type == BLIT_EVENT_LOAD) {
+        stats_.tileLoads++;
+        if (image != nullptr) stats_.ubwcLoads++;
+    } else {
         stats_.tileStores++;
         stats_.storedPixels += uint64_t(x2 - x1 + 1) * (y2 - y1 + 1);
+        if (image != nullptr) {
+            image->written = true;
+            stats_.ubwcStores++;
+        }
     }
     return true;
 }
@@ -1364,6 +1514,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         d.samples = 1u << s;
     }
     uint32_t unwrittenMask = 0;
+    bool ubwcTargets = false;
     for (uint32_t t = 0; t < d.mrtCount; t++) {
         const std::string which = std::to_string(t);
         uint32_t bufInfo = reg(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, t));
@@ -1374,12 +1525,30 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             fault("RB_MRT_BUF_INFO[" + which + "]: " + text("COLOR_FORMAT %llu is not one this GPU model knows", format));
             return false;
         }
-        if (tile != TILE6_LINEAR) {
-            fault("RB_MRT_BUF_INFO[" + which + "]: " + text("tile mode %llu: only linear targets are what this GPU model runs", tile));
+        // linear, or an RGBA8 UBWC target (fdl6_view_init's RB_MRT_BUF_INFO over a UBWC view: TILE6_3, WZYX), whose flag
+        // buffer RB_MRT_FLAG_BUFFER[t] names and RB_RENDER_CNTL.FLAG_MRTS turns on (tu6_emit_render_cntl) -- in a tile
+        // too, where turnip writes the same words; a linear one with its FLAG_MRTS bit would have the RB write flags
+        // wherever its flag registers point
+        const bool flagged = ((fieldOf(reg(REG_A6XX_RB_RENDER_CNTL), A6XX_RB_RENDER_CNTL_FLAG_MRTS__MASK, A6XX_RB_RENDER_CNTL_FLAG_MRTS__SHIFT) >> t) & 1) != 0;
+        const uint32_t swap = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__SHIFT);
+        if ((tile != TILE6_LINEAR && (tile != TILE6_3 || format != FMT6_8_8_8_8_UNORM || swap != WZYX || !flagged)) || (tile == TILE6_LINEAR && flagged)) {
+            fault("RB_MRT_BUF_INFO[" + which + "]: " + text("tile mode %llu, format %llu, swap %llu", tile, format, swap) + (flagged ? ", FLAG_MRTS set" : "") +
+                  ": a linear target without FLAG_MRTS, or an RGBA8 UBWC one (TILE6_3, WZYX) with it, is what this GPU model runs");
             return false;
         }
         const uint64_t pitch = uint64_t(fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_PITCH, t)), A6XX_RB_MRT_PITCH__MASK, A6XX_RB_MRT_PITCH__SHIFT)) << A6XX_RB_MRT_PITCH__SCALE;
         const uint64_t base = reg64(regRbMrt(REG_A6XX_RB_MRT_BASE, t));
+        if (tile == TILE6_3) {
+            const uint32_t fp = reg(regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_PITCH, t));
+            Ubwc* image = ubwcImage(base, reg64(regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, t)), (fp & 0x7ffu) << 6, ((fp >> 11) & 0x3ffffu) << 9, pitch,
+                                    "RB_MRT[" + which + "]");
+            if (image == nullptr) return false;
+            // (in sysmem the RB writes it, compressed, as it draws; in a tile it writes GMEM, and the store writes the image)
+            if (!inTile_) image->written = true;
+            ubwcTargets = true;
+        } else if (linearOverUbwc(base, "RB_MRT[" + which + "]")) {
+            return false;
+        }
         if (pitch < width * bpp * d.samples) {
             fault("RB_MRT_PITCH[" + which + "] " + text("%llu bytes for rows of %llu pixels", pitch, width) + text(" of %llu bytes", bpp) +
                   text(" and %llu sample(s): shorter than a row", d.samples));
@@ -1901,6 +2070,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         }
     }
     stats_.draws++;
+    if (ubwcTargets) stats_.ubwcDraws++;
     drawsInSubmission_++;
     drawsWithoutCcuFlush_++;
     drawsWithoutCacheFlush_++;
@@ -2462,7 +2632,8 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (size != sizeof(MsmGemNew)) return EINVAL;
         auto* n = static_cast<MsmGemNew*>(data);
         if (n->size == 0 || n->size > (256ull << 20)) return EINVAL;
-        Buffer b{nextIova_, std::vector<uint8_t>(n->size)};
+        Buffer b{nextIova_, std::vector<uint8_t>(n->size, uint8_t(dirtyNext_ != 0 ? 0xcd : 0))};
+        if (dirtyNext_ != 0) dirtyNext_--;
         nextIova_ += (n->size + 0xffff) & ~0xffffull;
         n->handle = nextHandle_++;
         buffers_.emplace(n->handle, std::move(b));
@@ -2487,6 +2658,12 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
             s.bytes = std::move(buffers_.at(handle).bytes);
             s.handle = 0;
             bufferSurface_.erase(sb);
+        }
+        // (and the UBWC images it held: the next buffer at those addresses is new memory)
+        auto gone = buffers_.find(handle);
+        if (gone != buffers_.end()) {
+            const uint64_t lo = gone->second.iova, hi = lo + gone->second.bytes.size();
+            for (auto u = ubwc_.lower_bound(lo); u != ubwc_.end() && u->first < hi;) u = ubwc_.erase(u);
         }
         return buffers_.erase(handle) ? 0 : ENOENT;
     }

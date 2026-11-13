@@ -1245,3 +1245,48 @@ TEST(a_kernel_longer_than_the_instruction_cache_gets_the_instrlen_workaround) {
         CHECK(f.findReg(a6xx::REG_A6XX_SP_FS_INSTRLEN) != size_t(-1));
     }
 }
+
+// A dispatch that samples a compressed render target (one CoreAnimation drew, read by a kernel: compute_average_luma's
+// kind of read) reads it through its UBWC view, which the fake holds to the flag buffer its writer named; a kernel that
+// stores into one, or loads it as an image, is refused by name -- there is no UBWC through the IBO path before A7XX
+TEST(a_dispatch_samples_a_compressed_render_target_and_stores_into_none) {
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = 64;
+    d.height = 32;
+    d.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    d.compressed = true;
+    std::string why;
+    auto c = Texture::make(*r.gpu, d, &why);
+    if (c == nullptr && why.find("this build has none") != std::string::npos) {
+        std::printf("       (no Mesa in this build: %s; not run)\n", why.c_str());
+        return;
+    }
+    CHECK(c != nullptr);
+    if (c == nullptr) return;
+    // (written first, by a copy in: a UBWC texture nothing wrote is no texture to sample, the fake says)
+    auto rows = texture(r, PixelFormat::kRGBA8Unorm, 64, 32, kTextureUsageRead);
+    {
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->blit(*rows, 0, render::BlitRect{0, 0, 64, 32}, *c, 0, render::BlitRect{0, 0, 64, 32}, false));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+    }
+    auto out = buffer(r, 4096, 0x7fc00001);
+    Sampler s = sampler();
+    FakeGpu::Stats st = dispatched(r, texSampleLike(), bind({Binding{out.get(), 0}}, {c.get()}, {&s}));
+    CHECK_EQ(st.faults, 0u);
+    CHECK_EQ(st.ubwcSamples, 1u);
+    if (!st.lastDispatch.tex.empty()) {
+        const a6xx::TexConst& t = st.lastDispatch.tex[0];
+        CHECK_EQ(fieldOf(t.dword[0], a6xx::A6XX_TEX_CONST_0_TILE_MODE__MASK, a6xx::A6XX_TEX_CONST_0_TILE_MODE__SHIFT), uint32_t(a6xx::TILE6_3));
+        CHECK((t.dword[3] & a6xx::A6XX_TEX_CONST_3_FLAG) != 0 && (uint64_t(t.dword[7]) | uint64_t(t.dword[8]) << 32) == c->flagAddress());
+    }
+    // (tex_copy's image at texture 0, its sampled source at 1)
+    Kernel copy = texCopyLike();
+    copy.textures[0].element = kElemFloat;
+    copy.textures[1].element = kElemFloat;
+    CHECK(has(refused(r, copy, bind({}, {c.get(), rows.get()})), "tex_copy addresses texture 0 as an image, and it is compressed"));
+}

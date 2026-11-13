@@ -2260,6 +2260,12 @@ inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT = 7;        
 inline constexpr uint32_t REG_A6XX_RB_BLIT_DST = 0x88d8;                                     // a6xx.xml.h:6325  64-bit
 inline constexpr uint32_t REG_A6XX_RB_BLIT_DST_PITCH = 0x88da;                               // a6xx.xml.h:6328  bytes >> 6
 inline constexpr uint32_t REG_A6XX_RB_BLIT_FLAG_DST = 0x88dc;                                // a6xx.xml.h:6348  64-bit, then FLAG_DST_PITCH: 0 without UBWC
+inline constexpr uint32_t REG_A6XX_RB_BLIT_FLAG_DST_PITCH = 0x88de;                          // a6xx.xml.h:6351
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_FLAGS = 0x00000004;                          // a6xx.xml.h:6302  the destination is UBWC (fdl6_view_init's RB_BLIT_DST_INFO)
+// the flag buffer's pitch word, as tu_cs_image_flag_ref writes it from fdl6_view_init's FLAG_BUFFER_PITCH: the pitch and the
+// layer, the same fields as RB_MRT_FLAG_BUFFER_PITCH's
+constexpr uint32_t A6XX_RB_BLIT_FLAG_DST_PITCH_PITCH(uint32_t v) { return (v >> 6) & 0x7ffu; }               // a6xx.xml.h:6354
+constexpr uint32_t A6XX_RB_BLIT_FLAG_DST_PITCH_ARRAY_PITCH(uint32_t v) { return ((v >> 7) << 11) & 0x0ffff800u; }   // a6xx.xml.h:6361
 inline constexpr uint32_t REG_A6XX_RB_BLIT_INFO = 0x88e3;                                    // a6xx.xml.h:6380
 inline constexpr uint32_t A6XX_RB_BLIT_INFO_TYPE__MASK = 0x00000003;                         // a6xx.xml.h:6381
 inline constexpr uint32_t A6XX_RB_BLIT_INFO_TYPE__SHIFT = 0;                                 // a6xx.xml.h:6382
@@ -4465,6 +4471,9 @@ inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_PITCH = 0xb4c4;                 
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_PITCH_PITCH__MASK = 0x00fffe00;                 // a6xx.xml.h:9905
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_PITCH_PITCH__SHIFT = 9;                         // a6xx.xml.h:9906
 inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_FLAGS = 0xb4ca;                             // a6xx.xml.h:10017
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_FLAGS_PITCH = 0xb4cc;                       // a6xx.xml.h:10020
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_FLAGS = 0x00001000;                         // a6xx.xml.h:9855  the source is UBWC
+constexpr uint32_t A6XX_SP_PS_2D_SRC_FLAGS_PITCH(uint32_t v) { return (v >> 6) & 0xffu; }                     // a6xx.xml.h:10023
 static_assert(REG_A6XX_SP_PS_2D_SRC_SIZE == REG_A6XX_SP_PS_2D_SRC_INFO + 1 && REG_A6XX_SP_PS_2D_SRC == REG_A6XX_SP_PS_2D_SRC_INFO + 2 &&
                   REG_A6XX_SP_PS_2D_SRC_PITCH == REG_A6XX_SP_PS_2D_SRC_INFO + 4 && REG_A6XX_GRAS_2D_DST_TL == REG_A6XX_GRAS_2D_SRC_BR_Y + 1,
               "INFO, SIZE, BASE lo, hi, PITCH are one pkt4; the four source coordinates run on into GRAS_2D_DST_TL");
