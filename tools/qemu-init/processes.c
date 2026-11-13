@@ -103,20 +103,6 @@ command_run(int argc, char **argv)
 #define MACH64_RCV_MSG          0x2ull
 #define MACH64_SEND_MQ_CALL     0x400000000ull  /* (mach_msg2: what the destination is, a message queue) */
 
-static long
-trap8(long number, long a, long b, long c, long d, long e, long f, long g, long h)
-{
-	register long x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c, x3 __asm__("x3") = d;
-	register long x4 __asm__("x4") = e, x5 __asm__("x5") = f, x6 __asm__("x6") = g, x7 __asm__("x7") = h;
-	register long x16 __asm__("x16") = number;
-
-	__asm__ volatile ("svc #0x80"
-	    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
-	    : "r"(x16)
-	    : "memory", "cc");
-	return x0;
-}
-
 struct mach_message {
 	uint32_t bits, size, remote_port, local_port, voucher_port;
 	int32_t id;
