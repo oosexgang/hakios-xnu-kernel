@@ -152,6 +152,20 @@ lifted_in_time(void)
 	/* (fingers beyond the 32 a driver can number are not counted) */
 }
 
+/* a sixth finger landing while five are held does not put the end off: the time runs from the fifth */
+static void
+a_sixth_finger_changes_nothing(void)
+{
+	hakios_input_init();                    /* (the hold: 1.5 s) */
+	for (unsigned f = 0; f < 5; f++) {
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
+	}
+	usleep(1000 * 1000);
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 5, 0, 0);
+	usleep(900 * 1000);                     /* 1.9 s from the fifth; 0.9 s from the sixth */
+	CHECK(returned == 1, "the run ended 1.5 s after the fifth finger, not the sixth: %u", returned);
+}
+
 /* a program writing five fingers down does not end the run */
 static void
 written_fingers_do_not_count(void)
@@ -172,6 +186,20 @@ written_fingers_do_not_count(void)
 	CHECK(returned == 0, "four of a driver's and one written: the run goes on");
 }
 
+/* a read whose buffer stops being writable halfway gets what was moved before it, and no error */
+static void
+a_fault_halfway(void)
+{
+	struct hakios_touch got[3];
+
+	hakios_input_init();
+	for (unsigned i = 0; i < 3; i++) {
+		hakios_touch_post(HAKIOS_TOUCH_MOVE, 0, i, i);
+	}
+	fake_uiomove_fault_at = fake_uiomove_calls + 2;
+	CHECK(take(got, 3) == 1 && got[0].x == 0, "the first record, and the read does not fail");
+}
+
 /* touch_lat=1: a line for every sample, for the latency tool */
 static void
 latency_lines_on(void)
@@ -189,6 +217,7 @@ main(int argc, char **argv)
 		{ "in_order", in_order }, { "nobody_reads", nobody_reads }, { "written_samples", written_samples },
 		{ "five_fingers_end_the_run", five_fingers_end_the_run }, { "lifted_in_time", lifted_in_time },
 		{ "written_fingers_do_not_count", written_fingers_do_not_count }, { "latency_lines_on", latency_lines_on },
+		{ "a_sixth_finger_changes_nothing", a_sixth_finger_changes_nothing }, { "a_fault_halfway", a_fault_halfway },
 	};
 
 	if (argc < 2) {
