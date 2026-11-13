@@ -12,7 +12,7 @@
 #     a descriptor sent over a socket pair; threads on both processors at once; Mach messages; kqueue's
 #     timer and a pipe's readiness
 #   - IOKit: its registry walked in MIG messages, as IOKit.framework asks it; the serial number the
-#     loader made read from it
+#     loader made read from it; a picture drawn on a surface and swapped onto the screen
 #   - files and memory: a file written, read and removed in ramfs; a program's file mapped; memory of its
 #     own taken, used and given back; the kernel's messages read; the date
 #
@@ -99,13 +99,14 @@ typed=(
 	'fork /sbin/launchd echo became'
 	'ioreg 3'
 	'ioprop IOService:/ IOPlatformSerialNumber'
+	'draw'
 )
 # (QEMU itself takes the forwarded port's connections, and closes them while nothing listens in the
 # machine: curl tries again until the shell's serve is there)
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
 	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & for try in \$(seq 90); do curl -s -m 10 http://127.0.0.1:18080/test > '$W/page'; [ -s '$W/page' ] && break; sleep 1; done; curl -s -m 120 -o '$W/sent.bin' http://127.0.0.1:18080/bytes/4194304; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
-	--qmp "$W/qmp" --after 8 \
+	--qmp "$W/qmp" --after 8 --screen "$W/screen.png" \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
 check "the loader takes the kernel and jumps to it" grep -aq "jumping to" "$log"
@@ -179,6 +180,8 @@ check "IOKit's registry answers MIG messages: its root, and the platform expert 
 	bash -c "grep -aq '^+-o Root  <class IORegistryEntry>' '$log' && grep -aq '+-o GenericARMPE  <class GenericARMPE>' '$log'"
 check "the serial number the loader made is the one IOKit gives user space" bash -c "serial=\$(grep -aoE 'identity: serial number [A-Z0-9]+' '$log' | awk '{ print \$4 }') &&
 	[ -n \"\$serial\" ] && tr -d '\\r' < '$log' | grep -qx \"IOPlatformSerialNumber = \\\"\$serial\\\"\""
+check "a picture drawn in user space reaches the screen (IOSurface, the framebuffer's swap)" \
+	bash -c "grep -aq '^draw: a picture of [0-9]* x [0-9]* on the screen' '$log' && python3 '$HERE/screen_shows_draw.py' '$W/screen.png' > /dev/null"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"

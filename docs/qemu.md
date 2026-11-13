@@ -81,6 +81,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | **IOKit** (`iokit.c`) | |
 | `ioreg [DEPTH]` | IOKit's registry, the IOService plane from its root: asked in MIG messages (host_get_io_main, io_registry_get_root_entry, the children's iterators), as IOKit.framework asks it. |
 | `ioprop PATH KEY` | A property of a registry entry (io_registry_entry_from_path, get_property_bytes): `ioprop IOService:/ IOPlatformSerialNumber` is the serial number the loader made. |
+| `draw` | A picture on the screen as the window server puts one there: IOCoreSurfaceRoot's and the framebuffer's user clients opened (io_service_open_extended), a surface made and its memory mapped (io_connect_method), drawn in, and swapped onto the screen (SwapBegin, SwapEnd). |
 | **Devices** (`devices.c`) | |
 | `input [COUNT]` | What the touch screen and the buttons say (`/dev/hakios-touch`), as the kernel's input path hands it on. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
@@ -110,7 +111,8 @@ on its shell and checks what comes back:
   removed; a mapped file is what reading it gives; memory of its own holds what is written and is all
   given back; values are set through sysctl; the kernel's messages are read; the date is this year's.
 - **IOKit.** Its registry answers in MIG messages, and the serial number the loader made is the one it
-  gives user space.
+  gives user space; a picture drawn on a surface and swapped onto the screen is what QEMU's screen shows
+  (`workbench/screen_shows_draw.py`).
 - Nothing panics.
 
 ## What it is not
