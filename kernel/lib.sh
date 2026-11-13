@@ -74,6 +74,24 @@ tree_git() {
 		-c diff.algorithm=myers -c core.autocrlf=false -c user.name=hakios -c user.email=hakios@localhost "$@"
 }
 
+# The tree object of upstream + overlay + patches as the repository has them now, made in the tree DIR's
+# git, in an index of its own: nothing in its working tree is touched by this.
+assembled_tree() {
+	local D=$1 patch
+	export GIT_INDEX_FILE=$D/.git/hakios-assemble-index
+	rm -f "$GIT_INDEX_FILE"
+	tree_git "$D" read-tree upstream
+	(cd "$OVERLAY" && git --git-dir="$D/.git" --work-tree=. -c core.autocrlf=false add -f --no-all .)
+	for patch in $(series_patches); do
+		[ -f "$PATCHES/$patch" ] || continue            # (a topic nothing has changed in yet)
+		tree_git "$D" apply --cached --whitespace=nowarn "$PATCHES/$patch" ||
+			die "patches/$patch does not apply to $UPSTREAM_TAG"
+	done
+	tree_git "$D" write-tree
+	rm -f "$GIT_INDEX_FILE"
+	unset GIT_INDEX_FILE
+}
+
 is_assembled_tree() {
 	[ -d "$1/.git" ] && git -C "$1" rev-parse -q --verify refs/tags/upstream > /dev/null 2>&1
 }

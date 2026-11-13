@@ -33,24 +33,6 @@ done
 [ $# -eq 1 ] || die "usage: assemble.sh [--update] [--from SRC] [--discard] DIR"
 D=$1
 
-# The tree object of upstream + overlay + patches, made in an index of its own: nothing in the working
-# tree is touched by this.
-assembled_tree() {
-	local patch
-	export GIT_INDEX_FILE=$D/.git/hakios-assemble-index
-	rm -f "$GIT_INDEX_FILE"
-	tree_git "$D" read-tree upstream
-	(cd "$OVERLAY" && git --git-dir="$D/.git" --work-tree=. -c core.autocrlf=false add -f --no-all .)
-	for patch in $(series_patches); do
-		[ -f "$PATCHES/$patch" ] || continue            # (a topic nothing has changed in yet)
-		tree_git "$D" apply --cached --whitespace=nowarn "$PATCHES/$patch" ||
-			die "patches/$patch does not apply to $UPSTREAM_TAG"
-	done
-	tree_git "$D" write-tree
-	rm -f "$GIT_INDEX_FILE"
-	unset GIT_INDEX_FILE
-}
-
 # The tree object of what lies in the working tree now, new files included.
 working_tree() {
 	export GIT_INDEX_FILE=$D/.git/hakios-assemble-index
@@ -86,7 +68,7 @@ else
 fi
 tree_excludes "$D"
 
-tree=$(assembled_tree)
+tree=$(assembled_tree "$D")
 if [ $update = 1 ]; then
 	was=$(git -C "$D" rev-parse 'assembled^{tree}')
 	work=$(working_tree)
