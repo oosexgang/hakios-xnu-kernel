@@ -64,10 +64,39 @@ call(const char *what)
 	pthread_mutex_unlock(&calls_lock);
 }
 
-static int radio_power(bool on) { call(on ? "on " : "off "); phase = on ? HAKIOS_STA_IDLE : HAKIOS_STA_OFF; return 0; }
-static int radio_scan(const struct hakios_sta_scan *what) { (void)what; call("scan "); return 0; }
+static volatile int power_error;
+static volatile unsigned scan_takes_ms, state_takes_ms;        /* a call that takes a while */
+static volatile bool scan_returned, state_returned;
+
+static int
+radio_power(bool on)
+{
+	call(on ? "on " : "off ");
+	if (power_error == 0) {
+		phase = on ? HAKIOS_STA_IDLE : HAKIOS_STA_OFF;
+	}
+	return power_error;
+}
+
+static int
+radio_scan(const struct hakios_sta_scan *what)
+{
+	(void)what;
+	call("scan ");
+	usleep(scan_takes_ms * 1000);
+	scan_returned = true;
+	return 0;
+}
+
 static int radio_leave(void) { call("leave "); phase = HAKIOS_STA_IDLE; return 0; }
-static void radio_state(struct hakios_sta_state *state) { state->phase = phase; }
+
+static void
+radio_state(struct hakios_sta_state *state)
+{
+	usleep(state_takes_ms * 1000);
+	state->phase = phase;
+	state_returned = true;
+}
 
 static int
 radio_join(const struct hakios_sta_join *what)
@@ -116,6 +145,21 @@ static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 #define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
+
+/* the last event said, or -1 */
+static int
+last_event(int *status)
+{
+	int event = -1;
+
+	pthread_mutex_lock(&events_lock);
+	if (events_n > 0 && events_n <= 64) {
+		event = events[events_n - 1].event;
+		*status = events[events_n - 1].status;
+	}
+	pthread_mutex_unlock(&events_lock);
+	return event;
+}
 
 static bool
 called(const char *what)
@@ -254,13 +298,116 @@ radio_goes(void)
 	CHECK(!called("scan "), "and nothing reached it: %s", calls);
 }
 
+/* the radio switched off while joined: the link said gone first, then the power; off while not joined: the power alone */
+static void
+off_while_joined(void)
+{
+	struct hakios_sta_join home = network("home");
+	struct hakios_sta_state state;
+	int status = 0;
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join(&home) == 0, "asked");
+	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
+	hakios_sta_state(&state);
+	CHECK(state.phase == HAKIOS_STA_JOINED, "joined, as the radio says: %d", state.phase);
+	CHECK(hakios_sta_ask_power(false) == 0 && !hakios_sta_powered(), "off asked for");
+	WAIT_FOR(had(HAKIOS_STA_POWER, 0), 3000);
+	CHECK(had(HAKIOS_STA_LINK, 0), "the link gone");
+	CHECK(last_event(&status) == HAKIOS_STA_POWER && status == 0, "and then the power: %d %d", last_event(&status), status);
+	CHECK(hakios_sta_ask_power(true) == 0 && hakios_sta_powered(), "on again");
+	WAIT_FOR(called("off on "), 3000);
+	events_n = 0;
+	CHECK(hakios_sta_ask_power(false) == 0, "and off, not joined");
+	WAIT_FOR(had(HAKIOS_STA_POWER, 0), 3000);
+	CHECK(!had(HAKIOS_STA_LINK, 0), "no link to say gone");
+}
+
+/* the radio's driver refuses to switch: the power is said as it stays */
+static void
+power_refused(void)
+{
+	int status = 9;
+
+	hakios_sta_attach(&radio);
+	power_error = EIO;
+	events_n = 0;
+	CHECK(hakios_sta_ask_power(false) == 0, "off asked for");
+	WAIT_FOR(events_n > 0, 3000);
+	CHECK(last_event(&status) == HAKIOS_STA_POWER && status == 1, "still on: %d", status);
+}
+
+/* another standing network that does come through: it is the standing one now, and the one before is not joined again */
+static void
+another_standing_network(void)
+{
+	struct hakios_sta_join home = network("home"), other = network("other");
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join_standing(&home) == 0, "home, standing");
+	WAIT_FOR(called("join:home "), 3000);
+	CHECK(hakios_sta_ask_join_standing(&other) == 0, "then other");
+	WAIT_FOR(called("join:other "), 3000);
+	usleep(100 * 1000);
+	CHECK(strcmp(calls, "join:home join:other ") == 0, "home is not joined again: %s", calls);
+	CHECK(hakios_sta_ask_power(false) == 0 && hakios_sta_ask_power(true) == 0, "off, on");
+	WAIT_FOR(called("on join:"), 3000);
+	CHECK(strstr(calls, "on join:other ") != NULL, "and other is the one joined: %s", calls);
+}
+
+static void *
+read_state(void *state)
+{
+	hakios_sta_state(state);
+	return NULL;
+}
+
+/* the radio going away while a scan is under way, and while its state is being read: both are waited for */
+static void
+goes_during_a_call(void)
+{
+	struct hakios_sta_scan what = { 0 };
+	struct hakios_sta_state state;
+	pthread_t reader;
+
+	hakios_sta_attach(&radio);
+	WAIT_FOR(!hakios_sta_busy(), 3000);
+	CHECK(!hakios_sta_busy(), "nothing asked: not busy");
+	scan_takes_ms = 300;
+	CHECK(hakios_sta_ask_scan(&what) == 0, "a long scan");
+	WAIT_FOR(called("scan "), 3000);
+	CHECK(hakios_sta_busy(), "busy while it runs");
+	hakios_sta_attach(NULL);
+	CHECK(scan_returned, "the radio's going waited for the scan");
+	CHECK(!hakios_sta_busy() && !hakios_sta_powered(), "gone: neither busy nor on");
+	hakios_sta_attach(&radio);
+	state_takes_ms = 300;
+	pthread_create(&reader, NULL, read_state, &state);
+	usleep(100 * 1000);
+	hakios_sta_attach(NULL);
+	CHECK(state_returned, "... and for its state being read");
+	pthread_join(reader, NULL);
+}
+
+/* the radio's address, once there is a radio */
+static void
+address(void)
+{
+	uint8_t mac[6] = { 0 };
+
+	CHECK(!hakios_sta_address(mac) && !hakios_sta_powered(), "no radio: no address");
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_address(mac) && mac[0] == 2 && mac[5] == 1, "the radio's: %02x..%02x", mac[0], mac[5]);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "scan", scan }, { "too_many_heard", too_many_heard }, { "too_many_channels", too_many_channels },
 		{ "join_and_leave", join_and_leave }, { "standing_network", standing_network }, { "wrong_passphrase", wrong_passphrase },
-		{ "lost", lost }, { "radio_goes", radio_goes },
+		{ "lost", lost }, { "radio_goes", radio_goes }, { "off_while_joined", off_while_joined }, { "power_refused", power_refused },
+		{ "another_standing_network", another_standing_network }, { "goes_during_a_call", goes_during_a_call }, { "address", address },
 	};
 
 	if (argc < 2) {
