@@ -1,6 +1,6 @@
 #!/bin/bash
 # A root for the kernel in QEMU, made of nothing of Apple's: an APFS image (userland/tools/apfs/mkapfs.py)
-# with /dev, where the kernel mounts devfs, /etc/motd, and /sbin/launchd, tools/qemu-init.c built as a static arm64
+# with /dev, where the kernel mounts devfs, /etc/motd, and /sbin/launchd, tools/qemu-init/ built as a static arm64
 # program with clang and ld64.lld (kernel/host/llvm/place-kernel.py --program makes it one a kernel runs
 # without dyld).
 #
@@ -16,13 +16,17 @@ L=${XNU_CLANG_DIR:-$(dirname "$(command -v clang)")}
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 # (the platform as the kernel's link gives it: 2, the phones')
-IPHONEOS_DEPLOYMENT_TARGET=16.5 "$L/clang" -target arm64-apple-darwin -O2 -ffreestanding -fno-builtin \
-	-fno-stack-protector -Wall -Wextra -c "$HERE/tools/qemu-init.c" -o "$W/init.o"
+objects=()
+for c in "$HERE"/tools/qemu-init/*.c; do
+	IPHONEOS_DEPLOYMENT_TARGET=16.5 "$L/clang" -target arm64-apple-darwin -O2 -ffreestanding -fno-builtin \
+		-fno-stack-protector -Wall -Wextra -c "$c" -o "$W/$(basename "$c" .c).o"
+	objects+=("$W/$(basename "$c" .c).o")
+done
 "$L/ld64.lld" -arch arm64 -platform_version 2 16.5 16.5 -e _start -no_adhoc_codesign -no_fixup_chains \
-	-o "$W/init.lld" "$W/init.o"
+	-o "$W/init.lld" "${objects[@]}"
 mkdir -p "$W/root/sbin" "$W/root/dev" "$W/root/etc" "$W/root/mnt" "$W/root/tmp"
 printf '%s\n' "This root was made by tools/qemu-root.sh: an APFS image of nothing of Apple's, with" \
-	"/sbin/launchd, which is tools/qemu-init.c, and /dev, where the kernel mounts devfs." > "$W/root/etc/motd"
+	"/sbin/launchd, which is tools/qemu-init/, and /dev, where the kernel mounts devfs." > "$W/root/etc/motd"
 python3 "$HERE/kernel/host/llvm/place-kernel.py" --program "$W/init.lld" "$W/root/sbin/launchd" > /dev/null
 chmod 755 "$W/root/sbin/launchd"
 python3 "$HERE/userland/tools/apfs/mkapfs.py" -o "$out" Root="$W/root" | tail -1
