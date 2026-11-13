@@ -42,13 +42,14 @@ cell(uint64_t address)
 
 #define SWR             0x04230000u     /* the made-up SoC's tx-swr */
 static struct {
-	bool modelled, answers, wrong_id, fifo_full;
+	bool modelled, answers, wrong_id, fifo_full, reads_unanswered;
+	unsigned answer_after;                  /* an answer comes after that many looks at the FIFO's status */
 	bool linked;
 	uint32_t answer;                        /* the read FIFO's word, while one waits there */
 	bool waiting;
 	uint8_t device_reg[16][0x10000];        /* what each device's registers hold */
 	uint16_t stuck_reg;                     /* a register that keeps none of what is written (0: none) */
-	unsigned status_reads, fifo_status_reads, fifo_reads, commands;
+	unsigned status_reads, fifo_status_reads, fifo_reads, commands, slave_status_reads;
 	uint8_t ids[32];                        /* the ids reads were sent with */
 	unsigned id_count;
 } swr;
@@ -66,7 +67,10 @@ swr_model_rd(uint64_t address, uint32_t *value)
 		return true;
 	case 0x030c:                            /* CMD_FIFO_STATUS: [12:8] commands queued, [20:16] answers waiting */
 		swr.fifo_status_reads++;
-		*value = (swr.fifo_full ? 16u << 8 : 0) | (swr.waiting ? 1u << 16 : 0);
+		if (swr.answer_after > 0) {
+			swr.answer_after--;
+		}
+		*value = (swr.fifo_full ? 16u << 8 : 0) | (swr.waiting && swr.answer_after == 0 ? 1u << 16 : 0);
 		return true;
 	case 0x0318:                            /* CMD_FIFO_RD_FIFO */
 		swr.fifo_reads++;
@@ -101,7 +105,7 @@ swr_model_wr(uint64_t address, uint32_t value)
 		if (swr.id_count < 32) {
 			swr.ids[swr.id_count++] = id;
 		}
-		if (swr.answers) {
+		if (swr.answers && !swr.reads_unanswered) {
 			swr.answer = swr.device_reg[device][reg] | (uint32_t)(swr.wrong_id ? (id + 1) & 0xf : id) << 8;
 			swr.waiting = true;
 		}
@@ -114,6 +118,7 @@ hakios_test_rd(vm_offset_t address)
 {
 	uint32_t value;
 
+	swr.slave_status_reads += address == SWR + 0x1090;     /* (MCP_SLV_STATUS, modelled or not) */
 	return swr_model_rd(address, &value) ? value : *cell(address);
 }
 
@@ -392,6 +397,38 @@ an_answer_for_another_read(void)
 	CHECK(strstr(log_text, "device 2 register 0x41: no answer") != NULL, "said: %s", log_text);
 }
 
+/* an answer a while after the read: waited for, and the read FIFO looked at once, when it is there */
+static void
+an_answer_a_while_after(void)
+{
+	uint8_t value = 0;
+
+	blocks_from_board();
+	swr.modelled = swr.answers = true;
+	CHECK(master_on(), "on");
+	swr.device_reg[2][0x41] = 0x5a;
+	swr.answer_after = 5;
+	swr.fifo_status_reads = 0;
+	CHECK(swr_read(2, 0x41, &value) && value == 0x5a, "read: %#x", value);
+	CHECK(swr.fifo_reads == 1 && swr.fifo_status_reads == 5, "the FIFO read %u times, its status %u", swr.fifo_reads,
+	    swr.fifo_status_reads);
+}
+
+/* no answer at all: twenty looks at the FIFO's status for each of four tries, then it is said */
+static void
+no_answer_at_all(void)
+{
+	uint8_t value = 0;
+
+	blocks_from_board();
+	swr.modelled = swr.answers = swr.reads_unanswered = true;
+	CHECK(master_on(), "on");
+	swr.fifo_status_reads = 0;
+	CHECK(!swr_read(2, 0x41, &value), "no value");
+	CHECK(swr.fifo_status_reads == 4 * 20 + 1 && swr.fifo_reads == 4, "the status looked at %u times, the FIFO %u",
+	    swr.fifo_status_reads, swr.fifo_reads);
+}
+
 /* a full command FIFO is waited for, twenty looks, and the command written then */
 static void
 a_full_fifo(void)
@@ -441,6 +478,8 @@ the_codec_not_there(void)
 	enumerated(1, 0x000d01170224ull, 1);
 	enumerated(4, CODEC_ID, 0);                     /* (seen once, gone) */
 	CHECK(codec_wait() == 0, "none");
+	CHECK(swr.slave_status_reads == 200 * 11 + 1, "two hundred looks at each of the 11 devices, and once to say it: %u",
+	    swr.slave_status_reads);
 	CHECK(strstr(log_text, "did not show up") != NULL && strstr(log_text, "device 1: ID 0xd01170224") != NULL &&
 	    strstr(log_text, "device 4: ID 0xd01170223") != NULL && strstr(log_text, "device 2:") == NULL, "said: %s", log_text);
 }
@@ -571,7 +610,7 @@ main(int argc, char **argv)
 		{ "an_answer_of_its_own", an_answer_of_its_own }, { "the_votes", the_votes },
 		{ "the_first_vote_refused", the_first_vote_refused }, { "the_link_up", the_link_up }, { "the_link_down", the_link_down },
 		{ "reads_over_the_bus", reads_over_the_bus }, { "an_answer_for_another_read", an_answer_for_another_read },
-		{ "a_full_fifo", a_full_fifo }, { "the_codec_found", the_codec_found }, { "the_codec_not_there", the_codec_not_there },
+		{ "a_full_fifo", a_full_fifo }, { "an_answer_a_while_after", an_answer_a_while_after }, { "no_answer_at_all", no_answer_at_all }, { "the_codec_found", the_codec_found }, { "the_codec_not_there", the_codec_not_there },
 		{ "the_codec_set_up", the_codec_set_up }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
 		{ "the_codec_does_not_take_it", the_codec_does_not_take_it },
 	};
