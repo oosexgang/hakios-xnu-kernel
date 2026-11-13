@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 18 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 13 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -59,21 +59,21 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file (spmi { }), which peripherals the keys are on from the board file (buttons { }). |
 | `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
-| `touchscreen` | — |
+| `touchscreen` | touchscreen=1, with no buttons= given: the keys too. |
 
 ### `bsd/dev/board/drivers.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `touchscreen` | touchscreen=1: the touch screen, by the driver of the controller the board lists |
+| `touchscreen` | touchscreen=1 asks for the touch screen; read here only to say that this board has none |
 
 ### `bsd/dev/board/fts.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `fts_spi_hz` | — |
-| `fts_trace` | — |
-| `touch_flip` | — |
+| `fts_spi_hz` | fts_spi_hz=N: the SPI clock, 1 to 12 MHz (default 12 MHz). |
+| `fts_trace` | fts_trace=1: the first 40 touches' positions as the controller gives them, in the log. |
+| `touch_flip` | touch_flip=N: bit 0 mirrors the touches left to right, bit 1 top to bottom. |
 | `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments are the first phone's). |
 
 ### `bsd/dev/board/goodix.c`
@@ -120,7 +120,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fb_hz` | 60 Hz (boot-arg fb_hz=N: at N), with one colour mode, 8-bit RGB. |
 | `fb_queue` | By default two frames may wait (boot-arg fb_queue=1: one, as before): CoreAnimation draws on a clock of its own, and a SwapEnd held past its next tick makes that tick late, the clock going on from there (rc.jobs.fps: 28% of the frames over 16.7 ms with two, 33% with one). |
 | `fb_scan` | The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/board/adreno.c says where it is read from). |
-| `fb_scan_lead` | — |
+| `fb_scan_lead` | fb_scan_lead=US: the first lead from a frame's start to its target, 1000 to 8000 microseconds (default 2000) |
 | `fb_small` | fb_small=0: the drawers anywhere, as before. |
 | `fb_threads` | fb_threads=N (1 to 8): so many processors scale a frame onto the panel together (see drawRows()). |
 | `fbheight` | fbwidth= and fbheight= change the size reported. |
