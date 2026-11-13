@@ -55,8 +55,7 @@
 
 #ifndef ASSEMBLER
 
-#define PI3_UART
-#define VMAPPLE_UART                    /* PL011, as found on QEMU virt */
+#define PL011_UART                      /* pe_serial.c's PL011 driver: QEMU virt's console */
 
 #define PI3_BREAK                               asm volatile("brk #0");
 

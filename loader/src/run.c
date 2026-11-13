@@ -1,4 +1,6 @@
 /* Part of the loader (included by loader.c, not compiled alone): the kernel loaded, given its device tree and boot arguments, and run. */
+/* The UART's node, by which /defaults names it as the console's ("serial-device"): any number no other node has */
+#define UART_PHANDLE    0x75617274u
 /*
  * Random bytes: the firmware's generator where it has one, mixed in any case with the counter, read
  * anew for every eight bytes (its low bits differ from run to run by when the firmware got here).
@@ -465,6 +467,9 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 */
 	dt_begin(&w, "defaults");
 	dt_prop_u32(&w, "kern.vm_compressor", 2);
+	if (plat->uart != 0) {
+		dt_prop_u32(&w, "serial-device", UART_PHANDLE);    /* the console: the UART below (pe_serial.c) */
+	}
 	dt_end(&w);
 
 	/* the product: screen class, artwork scale, name ... as on the real phone */
@@ -603,6 +608,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		dt_begin(&w, "uart0");
 		dt_prop_str(&w, "device_type", "uart");
 		dt_prop_str(&w, "compatible", "arm,pl011");
+		dt_prop_u32(&w, "AAPL,phandle", UART_PHANDLE);
 		reg2[0] = plat->uart - plat->io_base;
 		reg2[1] = 0x1000;
 		dt_prop(&w, "reg", reg2, sizeof(reg2));
