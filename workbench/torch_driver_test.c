@@ -268,6 +268,23 @@ for_darwin(void)
 	dark_at_the_end();
 }
 
+/* a register that is not one of the six is not written, whatever asks: refused, said, and no writing after */
+static void
+only_the_six(void)
+{
+	unsigned before;
+
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	before = spmi.writes;
+	CHECK(!put(REG_STATUS1, 0x01), "a write to the module's status register is refused");
+	CHECK(spmi.writes == before && forbidden_writes == 0, "and not made: %u writes", spmi.writes - before);
+	CHECK(logged("a register that is not to be written"), "and said: %s", log_text);
+	CHECK(!put(REG_ITARGET0, 1) && spmi.writes == before, "nor anything after it, even one of the six");
+}
+
 /* a fault while lit: off within a moment, and off for the rest of the run whatever Darwin asks */
 static void
 fault_while_lit(void)
@@ -497,7 +514,7 @@ main(int argc, char **argv)
 		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "battery_hot", battery_hot },
 		{ "time_limit", time_limit }, { "write_does_not_stick", write_does_not_stick },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
-		{ "board_without_the_part", board_without_the_part },
+		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
 	};
 
 	if (argc < 2) {
