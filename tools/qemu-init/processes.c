@@ -386,7 +386,7 @@ command_threads(int argc, char **argv)
 	static int registered;
 	uint32_t processors = 1;
 	size_t size = sizeof(processors);
-	const uint32_t work = 1u << 26;
+	const uint32_t work = 1u << 28;     /* (half a second for one thread, in QEMU: well above the noise) */
 
 	syscall6(SYS_sysctlbyname, (long)"hw.ncpu", 7, (long)&processors, (long)&size, 0, 0);
 	unsigned count = argc > 1 ? parse_number(argv[1]) : processors;
