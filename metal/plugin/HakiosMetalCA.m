@@ -930,7 +930,11 @@ hm_layout_rows(HakiosMetalTextureLayout *l, unsigned bw, unsigned bh, unsigned b
  * kernel allocation of its own, so one made from the heap is the device's own, counted against the budget (and not given
  * back when it goes: the budget only grows, so a heap refuses early rather than late);
  * what a heap adds on an Apple GPU -- resources aliasing one another's memory after -makeAliasable -- is the one part a
- * resource here cannot do (its -makeAliasable says so). A placement heap is refused where it is asked for. */
+ * resource here cannot do (its -makeAliasable says so).
+ * A placement heap (MTLHeapTypePlacement) is served the same way: a resource asked for at an offset is an allocation of
+ * its own, checked only to fit the heap there, and nothing aliases -- more memory than Apple's, the same contents, since
+ * aliasing is for reusing memory whose old contents nobody reads. CMCapture's FigMetalAllocator makes its textures so
+ * (cameracaptured's preview and photographs): refused, it had no texture, and the camera's preview stayed black. */
 @interface HakiosMetalHeap : NSObject <MTLHeap> {
 	id<MTLDevice> _device;
 	NSString *_label;
@@ -1190,17 +1194,29 @@ HM_REFUSES_OUT_LOUD
 {
 	return [self hakiosCounted:[_device newTextureWithDescriptor:descriptor]];
 }
+/* a resource at an offset of a placement heap: its own allocation, refused (nil) only where it would not fit the heap there */
+- (id)hakiosPlaced:(id)resource offset:(NSUInteger)offset
+{
+	NSUInteger size = resource != nil ? [(id<MTLResource>)resource allocatedSize] : 0;
+
+	if (resource == nil) return nil;
+	if ([_descriptor type] != MTLHeapTypePlacement || offset > [_descriptor size] || size > [_descriptor size] - offset) {
+		hm_print("refused: a resource of %lu bytes at offset %lu of a %s heap of %lu bytes; it returns nil\n", (unsigned long)size,
+			 (unsigned long)offset, [_descriptor type] == MTLHeapTypePlacement ? "placement" : "non-placement",
+			 (unsigned long)[_descriptor size]);
+		[resource release];
+		return nil;
+	}
+	HM_ONCE("a placement heap's resource: an allocation of its own, at no offset of a shared one (nothing aliases)\n");
+	return resource;
+}
 - (id)newBufferWithLength:(NSUInteger)length options:(MTLResourceOptions)options offset:(NSUInteger)offset
 {
-	(void)length; (void)options; (void)offset;
-	hm_print("refused: a buffer at an offset of a heap: placement is not served (every resource is its own allocation); it returns nil\n");
-	return nil;
+	return [self hakiosPlaced:[_device newBufferWithLength:length options:options] offset:offset];
 }
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor offset:(NSUInteger)offset
 {
-	(void)descriptor; (void)offset;
-	hm_print("refused: a texture at an offset of a heap: placement is not served (every resource is its own allocation); it returns nil\n");
-	return nil;
+	return [self hakiosPlaced:[_device newTextureWithDescriptor:descriptor] offset:offset];
 }
 /* acceleration structures belong to ray tracing, which this GPU's path does not have (the device has none either) */
 - (id)newAccelerationStructureWithSize:(NSUInteger)size { (void)size; return [self hakiosNoRayTracing]; }
@@ -4449,12 +4465,11 @@ hm_refuse_sampler(NSString *why)
 
 - (id)newHeapWithDescriptor:(MTLHeapDescriptor *)descriptor
 {
-	if (descriptor == nil || [descriptor type] == MTLHeapTypePlacement) {
-		hm_print("refused: a heap of type %ld: a placement heap puts resources at offsets of one allocation, and every resource "
-			 "here is an allocation of its own; it returns nil\n", descriptor != nil ? (long)[descriptor type] : -1L);
+	if (descriptor == nil) {
+		hm_print("refused: a heap without a descriptor; it returns nil\n");
 		return nil;
 	}
-	return [[HakiosMetalHeap alloc] initWithDevice:self descriptor:descriptor];
+	return [[HakiosMetalHeap alloc] initWithDevice:self descriptor:descriptor];      /* (placement too: see HakiosMetalHeap) */
 }
 
 /* A resource group is a residency set of Apple's GPU drivers: what it names is made resident together through the
@@ -4555,6 +4570,11 @@ HM_REFUSES_OUT_LOUD
 - (id)heap                                  { return nil; }   /* every buffer is its own allocation; nil is Metal's answer for that */
 - (NSUInteger)heapOffset                    { return 0; }
 - (BOOL)isAliasable                         { return NO; }
+/* a buffer is its own kernel allocation, as a texture is: there is nothing to alias within (a placement heap's included) */
+- (void)makeAliasable
+{
+	HM_ONCE("a buffer was asked to become aliasable; every buffer here is its own allocation and none aliases another\n");
+}
 
 /* the kernel holds the pages from allocation to release, so a buffer here is never volatile, whatever was asked */
 - (MTLPurgeableState)setPurgeableState:(MTLPurgeableState)state
