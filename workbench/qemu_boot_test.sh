@@ -7,8 +7,9 @@
 #     ways); a datagram answered (workbench/qemu_host.py is this computer's side)
 #   - the devices: a second disk (virtio block, APFS); a tone (virtio sound, which QEMU writes to a WAV
 #     file); a button and a touch from QEMU's keyboard and tablet
-#   - processes: one started and waited for, one ended by a signal, two by their own mistakes, a pipe
-#     between two; threads on both processors at once; Mach messages; kqueue's timer and a pipe's readiness
+#   - processes: one started and waited for, one ended by a signal, two by their own mistakes; signals
+#     caught by a handler; a pipe between two; threads on both processors at once; Mach messages;
+#     kqueue's timer and a pipe's readiness
 #   - files and memory: a file written, read and removed in ramfs; a program's file mapped; the kernel's
 #     messages read; the date
 #
@@ -71,6 +72,7 @@ typed=(
 	'kevent 10'
 	'run /sbin/launchd crash null'
 	'run /sbin/launchd crash illegal'
+	'alarm 5'
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
@@ -120,6 +122,8 @@ check "kqueue delivers a timer's events on time, and a pipe's readiness" \
 	bash -c "grep -aoE '^kevent: 10 timer events of 50 ms in [0-9]+ ms; a pipe with 5 bytes in it is readable' '$log' | awk '{ exit !(\$9 >= 450 && \$9 < 1500) }'"
 check "a process's mistakes reach it as signals: a bad address SIGSEGV, an undefined instruction SIGILL" \
 	bash -c "grep -aqE '^run: pid [0-9]+ ended by signal 11' '$log' && grep -aqE '^run: pid [0-9]+ ended by signal 4' '$log'"
+check "a timer's signals are caught by a handler and the thread goes back where it was (sigreturn)" \
+	bash -c "grep -aoE '^alarm: 5 SIGALRM caught by a handler in [0-9]+ ms' '$log' | awk '{ exit !(\$9 >= 450 && \$9 < 1500) }'"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
