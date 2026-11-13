@@ -262,4 +262,5 @@ hakios_input_init(void)
 	}
 	hakios_wifi_init();
 	hakios_adsp_init();
+	hakios_mpss_init();
 }

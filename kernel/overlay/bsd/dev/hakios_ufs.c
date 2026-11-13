@@ -1064,6 +1064,42 @@ ufs_entry(const char *name)
 }
 
 /*
+ * For the kernel's own drivers (the modem's file systems, hakios_mpss.c): bytes [offset, offset + len)
+ * of the partition of that name (or of its _a or _b slot), and how big it is. ENXIO without the
+ * storage, ENOENT without the partition; nothing is written.
+ */
+int
+hakios_ufs_read_partition(const char *name, uint64_t offset, uint8_t *dst, uint64_t len, uint64_t *bytes)
+{
+	uint32_t part;
+
+	if (ufs_page == NULL) {
+		return ENXIO;
+	}
+	part = ufs_entry(name);
+	for (const char *slot = "_a"; part == BLOCK_MAX_PARTS && slot[0] != 0; slot = slot[1] == 'a' ? "_b" : "") {
+		char slotted[48];
+
+		snprintf(slotted, sizeof(slotted), "%s%s", name, slot);
+		part = ufs_entry(slotted);
+	}
+	if (part == BLOCK_MAX_PARTS) {
+		return ENOENT;
+	}
+	if (bytes != NULL) {
+		*bytes = ufs_part_bytes(part);
+	}
+	if (len == 0) {
+		return 0;
+	}
+	/* (written without a sum: offset + len wraps for an offset near 2^64) */
+	if (offset > ufs_part_bytes(part) || len > ufs_part_bytes(part) - offset) {
+		return EINVAL;
+	}
+	return ufs_read(part, offset, dst, len);
+}
+
+/*
  * Which logical unit each unit the loader lists is (their device paths do not say): unit k is
  * taken to be LUN k (ordinary logical units only: never a well-known one), and it is so only if
  * block 1 (the GPT header, with the unit's own GUID in it) read through the loader

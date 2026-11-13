@@ -84,6 +84,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/hakios_lx.c`, `hakios_qmi.c`, `hakios_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/hakios_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
 | `bsd/dev/hakios_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
+| `bsd/dev/hakios_mpss.c`, `hakios_ipa.c`, `hakios_nas.c`, `hakios_cell.c` | The modem: started through TrustZone, its file systems served from the flash, the SIM and the network's registration, the IPA's data path as `en1`. Research: the modem comes up and finds the SIM, but has not registered yet. | `modem-sm7325` / `modem=1` | the SoC's addresses are built in for the SM7325 (`soc_*=` boot arguments override them); the modem's firmware is the phone's own |
 | `bsd/dev/hakios_virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
 
 ## Storage, file systems

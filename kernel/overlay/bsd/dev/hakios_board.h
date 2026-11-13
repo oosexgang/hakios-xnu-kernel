@@ -55,6 +55,8 @@ enum {
 	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* redwood's four cameras and their wiring (hakios_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (hakios_wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (hakios_mic.c) */
+	HAKIOS_HAS_MODEM_SM7325    = 1u << 16,  /* an SM7325's modem, its packet engine and the SIM as this phone has them
+	                                         * (hakios_mpss.c, hakios_ipa.c, hakios_nas.c, hakios_cell.c) */
 };
 
 /* how the panel's light is set (bsd/dev/hakios_backlight.c) */

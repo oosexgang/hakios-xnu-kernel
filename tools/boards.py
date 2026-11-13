@@ -118,9 +118,10 @@ FEATURE_BOOTARGS = {
     'camera-redwood': 'cam=N',
     'wifi-wcn6750': 'wifi=1',
     'mic-wcd938x': 'mic=N with adsp=1',
+    'modem-sm7325': 'modem=1',
 }
 # features that are a driver of one part as one phone has it wired, by the first word of their names
-PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
+PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic', 'modem')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
