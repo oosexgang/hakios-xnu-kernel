@@ -113,6 +113,7 @@ static const struct {
 	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
+	{ "ioreg", "[DEPTH] IOKit's registry, asked in MIG messages", command_ioreg },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
 	{ "fork", "[PROGRAM [ARGUMENTS]] a copy of this process; it may become PROGRAM", command_fork },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },

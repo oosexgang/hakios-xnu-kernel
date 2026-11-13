@@ -10,7 +10,7 @@
  * tools/qemu-root.sh with clang and ld64.lld.
  *
  * Its parts: main.c (the start and the shell), text.c (the console, numbers, the time), and the
- * commands by what of the kernel they try: kernel.c, files.c, net.c, processes.c, devices.c.
+ * commands by what of the kernel they try: kernel.c, files.c, net.c, processes.c, devices.c, iokit.c.
  */
 #ifndef QEMU_INIT_H
 #define QEMU_INIT_H
@@ -79,6 +79,7 @@ void command_get(int argc, char **argv);
 void command_help(int argc, char **argv);
 void command_ifconfig(int argc, char **argv);
 void command_input(int argc, char **argv);
+void command_ioreg(int argc, char **argv);
 void command_kevent(int argc, char **argv);
 void command_kill(int argc, char **argv);
 void command_ls(int argc, char **argv);
