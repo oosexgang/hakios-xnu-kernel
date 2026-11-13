@@ -84,6 +84,46 @@ command_echo(int argc, char **argv)
 	say("\n");
 }
 
+#define SYS_chdir               12
+#define SYS_fcntl               92
+#define F_GETPATH               50
+#define O_RDONLY_DIRECTORY      0x100000        /* (O_RDONLY | O_DIRECTORY) */
+
+/* DIR: where relative paths start from (/ without one) */
+static void
+command_cd(int argc, char **argv)
+{
+	long error = syscall6(SYS_chdir, (long)(argc > 1 ? argv[1] : "/"), 0, 0, 0, 0, 0);
+
+	if (error != 0) {
+		say("cd: ");
+		say(argc > 1 ? argv[1] : "/");
+		say(": error ");
+		say_number((uint64_t)-error);
+		say("\n");
+	}
+}
+
+/* where that is: the kernel's path of ".", as getcwd() asks it (fcntl F_GETPATH) */
+static void
+command_pwd(int argc, char **argv)
+{
+	char path[1024];
+	long fd = syscall6(SYS_open, (long)".", O_RDONLY_DIRECTORY, 0, 0, 0, 0);
+
+	(void)argc;
+	(void)argv;
+	if (fd < 0 || syscall6(SYS_fcntl, fd, F_GETPATH, (long)path, 0, 0, 0) != 0) {
+		say("pwd: the kernel has no path for it\n");
+	} else {
+		say(path);
+		say("\n");
+	}
+	if (fd >= 0) {
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+}
+
 /* the screen emptied and the cursor at its top: VT100's, which the kernel's video console and a terminal on the
  * serial port both take */
 static void
@@ -111,6 +151,8 @@ static const struct {
 	{ "help", "what this shell can do", command_help },
 	{ "echo", "WORDS... say them", command_echo },
 	{ "clear", "the screen emptied", command_clear },
+	{ "cd", "[DIR] where relative paths start from", command_cd },
+	{ "pwd", "where that is", command_pwd },
 	{ NULL, "the kernel", NULL },
 	{ "about", "what the kernel says of itself", command_about },
 	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
@@ -119,7 +161,7 @@ static const struct {
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "date", "the date and time, UTC", command_date },
 	{ NULL, "files", NULL },
-	{ "ls", "[PATH...] what is in a directory", command_ls },
+	{ "ls", "[PATH...] what is in a directory (this one, without a PATH)", command_ls },
 	{ "cat", "FILE... what is in a file", command_cat },
 	{ "hash", "FILE... each read to its end, timed, hashed", command_hash },
 	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
