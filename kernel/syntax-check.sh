@@ -4,7 +4,7 @@
 # says in a minute or two whether a driver still compiles, where the kernel build (kernel/build.sh)
 # takes a toolchain and much longer.
 #
-#   kernel/syntax-check.sh [--from SRC] [--tree DIR] [--driverkit DIR] [--analyze] [FILE...]
+#   kernel/syntax-check.sh [--from SRC] [--tree DIR] [--driverkit DIR] [--analyze [--why]] [FILE...]
 #
 #   --tree DIR      an assembled tree to check against (kernel/assemble.sh); brought up to date with
 #                   the repository first. Without it one is assembled in a temporary directory.
@@ -16,6 +16,8 @@
 #                   lines listed (a use of a value never set, a null pointer followed, a division by zero ...).
 #                   It reports and does not fail: it does not know that uiomove() fills what it is given,
 #                   for one, and says so of every read. What it says is for a person to judge.
+#   --why           with --analyze: each finding with the path the analyzer took to it (its notes: which
+#                   branch it assumed, where the value came from), file by file, to judge it by
 #   FILE...         files of kernel/overlay, as paths in the tree (bsd/dev/board/thermal.c); all of them
 #                   if none is given
 #
@@ -27,13 +29,14 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-from=() tree='' driverkit='' analyze=0
+from=() tree='' driverkit='' analyze=0 why=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--from) from=(--from "${2:?--from needs a repository}"); shift ;;
 	--tree) tree=${2:?--tree needs a directory}; shift ;;
 	--driverkit) driverkit=${2:?--driverkit needs a directory}; shift ;;
 	--analyze) analyze=1 ;;
+	--why) why=1 ;;
 	-h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	-*) die "unknown option $1 (see --help)" ;;
 	*) break ;;
@@ -89,8 +92,10 @@ compile() {
 	case "$1" in *.cpp) language=(-x c++ -std=gnu++20 -fno-exceptions -fno-rtti -fapple-kext) ;; esac
 	if [ "$analyze" = 1 ]; then
 		# (what it finds in Apple's headers is not ours: only lines of the overlay's files are kept)
+		# (--why: the notes as well, which say how it got there, of the overlay's lines too)
 		(cd "$X" && clang "${flags[@]/-fsyntax-only/--analyze}" -Xanalyzer -analyzer-output=text -w "${language[@]}" "$1" \
-			-o /dev/null 2>&1) | grep -E ': warning: ' | sed "s|^$X/||" | grep -F -f "$work/ours" || true
+			-o /dev/null 2>&1) | grep -E ": warning: $([ "$why" = 1 ] && echo '|: note: ')" | sed "s|^$X/||" |
+			grep -F -f "$work/ours" || true
 		return 0
 	fi
 	(cd "$X" && clang "${flags[@]}" -w "${language[@]}" "$1" 2>&1) || return 1
@@ -126,8 +131,11 @@ done
 wait
 
 if [ "$analyze" = 1 ]; then
-	cat "$work"/out/* 2> /dev/null | sort -u > "$work/found"
-	cat "$work/found"
+	if [ "$why" = 1 ]; then
+		cat "$work"/out/* 2> /dev/null
+	fi
+	cat "$work"/out/* 2> /dev/null | grep ': warning: ' | sort -u > "$work/found" || true
+	[ "$why" = 1 ] || cat "$work/found"
 	log "the static analyzer: $(wc -l < "$work/found") findings in HakiOS' files, of ${#files[@]} files (each for a person to judge)"
 	exit 0
 fi
