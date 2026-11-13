@@ -448,10 +448,11 @@ void CommandBuffer::drawStamp(uint32_t slot) {
 
 std::vector<CommandBuffer::DrawTime> CommandBuffer::drawTimes() const {
     std::vector<DrawTime> out = drawsProfiled_;
-    if (drawStamps_ == nullptr) return {};
+    if (drawStamps_ == nullptr) return out;   // (none timed: every one drawn in tiles, its time 0)
     const auto* t = static_cast<const uint64_t*>(drawStamps_->contents());
     for (size_t i = 0; i < out.size(); i++) {
-        out[i].us = t[2 * i + 1] > t[2 * i] ? double(t[2 * i + 1] - t[2 * i]) / 19.2 : 0.0;
+        const int32_t s = out[i].slot;
+        out[i].us = s >= 0 && t[2 * s + 1] > t[2 * s] ? double(t[2 * s + 1] - t[2 * s]) / 19.2 : 0.0;
     }
     return out;
 }

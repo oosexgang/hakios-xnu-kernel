@@ -149,7 +149,8 @@ public:
     // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
     // the counter at both (so the draws no longer overlap: what each costs alone), with its program's name. Which
     // draws of a heavy frame are heavy is read off these (metal_fps=draws).
-    struct DrawTime { std::string name; double us; uint32_t pass = 0, area[4] = {}; };   // PASS: its pass among passTimes'; AREA render::drawArea's
+    // PASS: its pass among passTimes'; AREA render::drawArea's; SLOT its stamps' (-1: a draw in tiles, listed and not timed)
+    struct DrawTime { std::string name; double us; uint32_t pass = 0, area[4] = {}; int32_t slot = -1; };
     static constexpr uint32_t kMaxProfiledDraws = 512;
     void setProfileDraws(bool on) { profileDraws_ = on; }
     std::vector<DrawTime> drawTimes() const;
@@ -218,6 +219,7 @@ private:
     bool tuning_ = false;     // setGmemTuned's (cleared by a failed stamp buffer too)
     bool profileDraws_ = false;
     std::vector<DrawTime> drawsProfiled_;
+    uint32_t timedDraws_ = 0;   // (drawsProfiled_ with stamps: the next one's slot)
     std::shared_ptr<Buffer> drawStamps_;
     void drawStamp(uint32_t slot);
     bool gmem_ = true;

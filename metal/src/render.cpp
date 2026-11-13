@@ -3132,8 +3132,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     open_->fetches += program.fs.fbRead != 0 ? 1 : 0;
     open_->draws++;
     pm4::Stream& into = open_->gmem ? open_->bodies : stream_;
-    const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
-    if (timed) {
+    // (each draw listed; a draw of a sysmem pass timed as well, one in tiles not: its tiles' draws interleave)
+    const bool listed = profileDraws_ && drawsProfiled_.size() < kMaxProfiledDraws;
+    const bool timed = listed && !open_->gmem;
+    if (listed) {
         DrawTime dt{program.name != nullptr ? program.name : "?", 0};
         dt.name += " fs:" + std::to_string(program.fs.k.numWords) + "w v:" + std::to_string(d.vertexCount) + (program.blend.enabled ? " blend" : "");   // (which variant: one function's pipelines differ by their constants)
         // (and what its fragment stage samples: a draw's cost is mostly its texture reads, which the name does not tell)
@@ -3153,8 +3155,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
         dt.pass = profiled_.empty() ? 0 : uint32_t(profiled_.size() - 1);
         render::drawArea(pass, d, dt.area);
+        if (timed) dt.slot = int32_t(timedDraws_++);
         drawsProfiled_.push_back(dt);
-        drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1)));
+        if (timed) drawStamp(uint32_t(2 * dt.slot));
     }
     if (options.dedupRegs && open_->options.dedupRegs) {
         bool forgot = appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
@@ -3164,7 +3167,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         appendStream(into, body);
         if (open_->dual) appendStream(open_->sysStream, bodySys);
     }
-    if (timed) drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1) + 1));
+    if (timed) drawStamp(uint32_t(2 * (timedDraws_ - 1) + 1));
     counts_.draws++;
     if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing

@@ -6490,7 +6490,7 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 			}
 			/* metal_fps=timeline: a heavy buffer's every pass, the first 80 such buffers (metal_timeline_from=SECONDS: from
 			 * so long after the first buffer timed, past the lock screen's say) */
-			static unsigned heavyListed;
+			static unsigned heavyListed, listMost = 80;
 			static double listFrom = -1, listOver = 0.015;
 			if (listFrom < 0) {
 				char args[1024] = "";
@@ -6501,10 +6501,12 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_timeline_from=")) != NULL) {
 					listFrom += atoi(at + strlen("metal_timeline_from="));
 				}
-				/* (metal_timeline_ms=N: a buffer is heavy from N ms of commit to completion, not 15) */
+				/* (metal_timeline_ms=N: a buffer is heavy from N ms of commit to completion, not 15; metal_timeline_n=N: N
+				 * buffers listed, not 80) */
 				if ((at = strstr(args, "metal_timeline_ms=")) != NULL) listOver = atoi(at + strlen("metal_timeline_ms=")) / 1e3;
+				if ((at = strstr(args, "metal_timeline_n=")) != NULL) listMost = (unsigned)atoi(at + strlen("metal_timeline_n="));
 			}
-			const BOOL listAll = gpu > listOver && heavyListed < 80 && hm_timeline_on() && hm_now() >= listFrom;
+			const BOOL listAll = gpu > listOver && heavyListed < listMost && hm_timeline_on() && hm_now() >= listFrom;
 			NSMutableString *all = listAll ? [NSMutableString string] : nil;
 
 			heavyListed += listAll ? 1 : 0;
@@ -6521,8 +6523,28 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 						listed++;
 						for (NSUInteger k = 1; k < [each count]; k += 8) {
 							NSRange r = NSMakeRange(k, MIN((NSUInteger)8, [each count] - k));
-							hm_print("timeline: buffer %u of %.1f ms on the GPU, %lu passes, from %lu:%s\n", listed, gpu * 1e3,
-								 (unsigned long)[each count] - 1, (unsigned long)k - 1, [[[each subarrayWithRange:r] componentsJoinedByString:@""] UTF8String]);
+							/* (done at US: the microseconds of mach_absolute_time the tl: lines use, as their M's done) */
+							hm_print("timeline: buffer %u of %.1f ms on the GPU, done at %.0f, %lu passes, from %lu:%s\n", listed, gpu * 1e3,
+								 hm_now() * 1e6, (unsigned long)[each count] - 1, (unsigned long)k - 1,
+								 [[[each subarrayWithRange:r] componentsJoinedByString:@""] UTF8String]);
+						}
+						/* (with metal_fps=draws as well: every draw of a buffer of 20 passes or more -- an application
+						 * opening or closing -- by pass, the first 12 such: a sysmem pass's draws timed, a GMEM pass's
+						 * listed with 0) */
+						static unsigned drawsListed;
+						if (hm_fps_draws() && [each count] - 1 >= 20 && drawsListed < 12) {
+							drawsListed++;
+							for (unsigned d = 0;; d++) {
+								const char *name = NULL;
+								unsigned pass, area[4];
+								double dus = 0;
+
+								if (hakios_metal_cb_draw_time(cb, d, &name, &dus) <= (int)d || hakios_metal_cb_draw_place(cb, d, &pass, area) <= (int)d) {
+									break;
+								}
+								hm_print("timeline: buffer %u pass %u: %.0f us over %ux%u: %.200s\n", listed, pass, dus,
+									 area[2] - area[0] + 1, area[3] - area[1] + 1, name);
+							}
 						}
 					}
 					break;
