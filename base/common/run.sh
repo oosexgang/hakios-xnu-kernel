@@ -15,7 +15,7 @@ mkdir -p logs
 
 case "$KIND" in
 qemu)
-	QEMU_SMP=${QEMU_SMP:-$SMP} CMDLINE="${CMDLINE:-$BOOTARGS}" qemu/run-ios.sh "$SECS" -display "${DISPLAY_KIND:-gtk}" |
+	QEMU_SMP=${QEMU_SMP:-$SMP} CMDLINE="${CMDLINE:-$BOOTARGS}" qemu/run-darwin.sh "$SECS" -display "${DISPLAY_KIND:-gtk}" |
 		tee logs/qemu-$(date +%H%M%S).log
 	;;
 phone)

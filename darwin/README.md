@@ -1,8 +1,8 @@
 # Darwin user space
 
 What Darwin 26 and 27 need to run on a Qualcomm phone from RAM: small libraries inserted into a few of
-Darwin's processes (`ios/userland/`), and the tools that make Apple's arm64e code runnable, build the
-images and boot them (`ios/tools/`). Darwin itself is not here: it is extracted on your machine from
+Darwin's processes (`darwin/userland/`), and the tools that make Apple's arm64e code runnable, build the
+images and boot them (`darwin/tools/`). Darwin itself is not here: it is extracted on your machine from
 Apple's IPSW.
 
 **The limitation.** The build scripts, the image builder and the boot tool also need the team's working
@@ -16,7 +16,7 @@ The root images and the launchd jobs are written into `IOS` as well. `boot26.py`
 variables: it looks beside the repository and takes `--kernel`, `--system` and `--root`; its defaults are
 Darwin 27's images.
 
-## `ios/userland/`
+## `darwin/userland/`
 
 | File | What it is | Inserted into / used by | Needs |
 | --- | --- | --- | --- |
@@ -24,19 +24,19 @@ Darwin 27's images.
 | `inject_brightness.c` | `libhakios-brightness.dylib`: the brightness slider and the Auto-Brightness switch, to the kernel's `hw.backlight.level` and `hw.backlight.auto`. | SpringBoard, backboardd, Preferences | Built by `inj26.sh`. Does nothing where the kernel has no backlight (`backlight=0`). |
 | `inject_poster.c` | `libhakios-poster.dylib`: the first wallpaper of a new device becomes the collections poster with the default wallpaper, which is drawn without Metal. | PosterBoard | Built by `inj26.sh`. The default wallpaper is the one `mkimage26.py` sets. |
 | `inject_statusbar.c` | Moves the status bar's leading items past a hole-punch camera at the top left, by the points the board gives. | SpringBoard, as part of `libhakios-sb.dylib`. Also built alone, as `libhakios-statusbar.dylib`. | Built by `inj26.sh`, with the generated `hakios_boards.h`. |
-| `console_log.c` | `libhakios-console.dylib`: the standard error of its program goes to the console, so into the loader's log. | The programs named in `CONSOLE_LOG="NAME ..."` for `root26-ios.sh`. | Built by `inj26.sh`. |
-| `inj26.sh` | Builds the five above as arm64e, with darwin-renoir's own libraries and the audio plug-in; puts SpringBoard's addresses of the Darwin build in (`BUILD`); runs `pacstrip` and `ldid` over each. Output: `obj26/` beside it, or `OBJ`. | `root26-ios.sh` | darwin-renoir (`xnu-env.sh`, `userland/src/`), theos (`THEOS`: the iPhoneOS 16.5 SDK, `ldid`), `pacstrip` built, `mesa26e.sh` and `gl26.sh` run. |
+| `console_log.c` | `libhakios-console.dylib`: the standard error of its program goes to the console, so into the loader's log. | The programs named in `CONSOLE_LOG="NAME ..."` for `root26-darwin.sh`. | Built by `inj26.sh`. |
+| `inj26.sh` | Builds the five above as arm64e, with darwin-renoir's own libraries and the audio plug-in; puts SpringBoard's addresses of the Darwin build in (`BUILD`); runs `pacstrip` and `ldid` over each. Output: `obj26/` beside it, or `OBJ`. | `root26-darwin.sh` | darwin-renoir (`xnu-env.sh`, `userland/src/`), theos (`THEOS`: the iPhoneOS 16.5 SDK, `ldid`), `pacstrip` built, `mesa26e.sh` and `gl26.sh` run. |
 | `mesa26e.sh` | Mesa 26.2.5 (softpipe and freedreno, OSMesa) for arm64e: `libOSMesa.8.dylib`, into `obj26/`. | `gl26.sh`, the root images | darwin-renoir (`xnu-env.sh`, `xnu-deps/`, its `mk-mesa.sh` run once), theos, meson, ninja, `pacstrip` built. |
 | `gl26.sh` | `libhakios-gl.dylib` and `gl_test` on that Mesa, from darwin-renoir's sources, into `obj26/`. | The root images | darwin-renoir (`xnu-env.sh`, `userland/src/`, `xnu-deps/`), theos, `mesa26e.sh` run, `pacstrip` built. |
-| `root26-ios.sh` | The small image (`/hakios`) for a boot towards SpringBoard: darwin-renoir's root tree with the libraries, every Mach-O signed ad hoc, the lines of `inject.conf`, and what Darwin expects to find in `/private/var`. Also the launchd jobs, made from Darwin's own plists. Writes `$IOS/root26-ios.apfs` and `$IOS/jobs26`. | `mkimage26.py` (the jobs), `boot26.py` (the image) | darwin-renoir (`userland/root`, `mkjobs.py`, `mkapfs.py`, `ldid`), the IPSW, `inj26.sh` run. |
-| `root26.sh` | A small image for the first boots: darwin-renoir's root tree as it is, with the libraries and `rc.jobs.ios26-probe` as its `rc.jobs`. Writes `$IOS/root26.apfs`. | No other script here. | darwin-renoir (`userland/root`, `mkapfs.py`), `obj26/` filled. |
-| `rc.jobs.ios26-probe` | What the first boots ran, to the console: `uname`, `sw_vers`, `ps`, `id`. `root26.sh` writes it. | `root26.sh` | Nothing. |
+| `root26-darwin.sh` | The small image (`/hakios`) for a boot towards SpringBoard: darwin-renoir's root tree with the libraries, every Mach-O signed ad hoc, the lines of `inject.conf`, and what Darwin expects to find in `/private/var`. Also the launchd jobs, made from Darwin's own plists. Writes `$IOS/root26-darwin.apfs` and `$IOS/jobs26`. | `mkimage26.py` (the jobs), `boot26.py` (the image) | darwin-renoir (`userland/root`, `mkjobs.py`, `mkapfs.py`, `ldid`), the IPSW, `inj26.sh` run. |
+| `root26.sh` | A small image for the first boots: darwin-renoir's root tree as it is, with the libraries and `rc.jobs.darwin26-probe` as its `rc.jobs`. Writes `$IOS/root26.apfs`. | No other script here. | darwin-renoir (`userland/root`, `mkapfs.py`), `obj26/` filled. |
+| `rc.jobs.darwin26-probe` | What the first boots ran, to the console: `uname`, `sw_vers`, `ps`, `id`. `root26.sh` writes it. | `root26.sh` | Nothing. |
 
 A line of the small image's `etc/inject.conf` names a library and the executables that get it; the kernel
 inserts it when one of them starts (`kern.exec_inject`). A library that replaces methods finds them by
 name, checks their types, and leaves alone what is not as it expects.
 
-## `ios/tools/`
+## `darwin/tools/`
 
 | File | What it does | Needs |
 | --- | --- | --- |
@@ -72,29 +72,29 @@ The SpringBoard addresses in `inj26.sh` and the values in `fips26.py` belong to 
 
 ## Building
 
-The order, from [docs/ios26-boot.md](../docs/ios26-boot.md), for Darwin 26.6.2 (23G90). Set `IOS` to the
+The order, from [docs/darwin26-boot.md](../docs/darwin26-boot.md), for Darwin 26.6.2 (23G90). Set `IOS` to the
 extracted IPSW; the scripts' own default is `ios26/` beside the repository.
 
 ```sh
 # needs neither darwin-renoir nor Darwin
 tools/device.py add renoir                 # the phone's package: screen { }, boot { }
 kernel/build.sh
-cc -O2 -o ios/tools/pacstrip ios/tools/pacstrip.c -lcrypto
+cc -O2 -o darwin/tools/pacstrip darwin/tools/pacstrip.c -lcrypto
 
 # needs the extracted IPSW
 # (the cache's main file and its numbered subcaches, not .symbols/.atlas)
-ios/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
-python3 ios/tools/fips26.py "$IOS/dyld-strip"
+darwin/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+python3 darwin/tools/fips26.py "$IOS/dyld-strip"
 
 # needs darwin-renoir and theos as well
-bash ios/userland/inj26.sh                 # the libraries; before it, once: mesa26e.sh, then gl26.sh
-bash ios/userland/root26-ios.sh            # $IOS/root26-ios.apfs and $IOS/jobs26
+bash darwin/userland/inj26.sh                 # the libraries; before it, once: mesa26e.sh, then gl26.sh
+bash darwin/userland/root26-darwin.sh            # $IOS/root26-darwin.apfs and $IOS/jobs26
 LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
-    python3 ios/tools/mkimage26.py --prune "$IOS/system26-prune.apfs"
+    python3 darwin/tools/mkimage26.py --prune "$IOS/system26-prune.apfs"
 
 # needs darwin-renoir (the loader's image, the payload tool) and the phone in its stock fastboot
-python3 ios/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
-    --system "$IOS/system26-prune.apfs" --root "$IOS/root26-ios.apfs"
+python3 darwin/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
+    --system "$IOS/system26-prune.apfs" --root "$IOS/root26-darwin.apfs"
 ```
 
 For Darwin 27.2 (24B119): `IOS=.../ios27`, `OBJ=.../obj27`, `BUILD=24B119` for `inj26.sh`, and that build's
@@ -103,7 +103,7 @@ two values for `fips26.py` (`fips26.py CACHE_DIR STORED COMPUTED`; its header sa
 ## More
 
 - [docs/architecture.md](../docs/architecture.md): "Darwin user space", and "What is not in this repository".
-- [docs/ios26-boot.md](../docs/ios26-boot.md): what stood between Darwin and its home screen, in order.
+- [docs/darwin26-boot.md](../docs/darwin26-boot.md): what stood between Darwin and its home screen, in order.
 - [docs/ram-budget.md](../docs/ram-budget.md): does the image fit in 6 GB of RAM.
 - [docs/backlight.md](../docs/backlight.md): what `inject_backlight.c` and `inject_brightness.c` talk to.
 - [docs/porting.md](../docs/porting.md), step 7: the user-space side of a new phone.

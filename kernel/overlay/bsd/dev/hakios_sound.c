@@ -1029,12 +1029,12 @@ static int16_t ring[RING_FRAMES * 2];
 static volatile uint32_t ring_head, ring_tail;  /* frames: written by the sink, taken by the feeder */
 static volatile uint64_t last_sound_us;         /* when the latest write that was not silence came */
 static volatile bool feeder_runs, watcher_runs;
-static uint64_t fed_frames, silent_frames, ios_frames;
-static volatile uint32_t ios_peak;              /* the largest sample since the amplifiers last started */
+static uint64_t fed_frames, silent_frames, darwin_frames;
+static volatile uint32_t darwin_peak;              /* the largest sample since the amplifiers last started */
 
 /* From the writer's thread, under hakios_audio.c's lock: never waits. */
 static uint32_t
-ios_sink(const int16_t *frames, uint32_t count)
+darwin_sink(const int16_t *frames, uint32_t count)
 {
 	uint32_t head = ring_head, room = RING_FRAMES - (head - ring_tail), taken = count < room ? count : room;
 	bool sound = false;
@@ -1046,13 +1046,13 @@ ios_sink(const int16_t *frames, uint32_t count)
 		ring[2 * ((head + i) % RING_FRAMES)] = left;
 		ring[2 * ((head + i) % RING_FRAMES) + 1] = right;
 		sound |= l > SILENCE || r > SILENCE;
-		if (l > ios_peak || r > ios_peak) {
-			ios_peak = l > r ? l : r;
+		if (l > darwin_peak || r > darwin_peak) {
+			darwin_peak = l > r ? l : r;
 		}
 	}
 	OSMemoryBarrier();
 	ring_head = head + taken;
-	ios_frames += taken;
+	darwin_frames += taken;
 	if (sound) {
 		last_sound_us = now_us();
 	}
@@ -1093,7 +1093,7 @@ guard_say(const char *when, bool quiet)
 
 /* A period from the ring, the rest of it silence. */
 static void
-period_fill_ios(unsigned period)
+period_fill_darwin(unsigned period)
 {
 	int16_t *samples = (int16_t *)(buffer + 4096 * period);
 	uint32_t tail = ring_tail, available = ring_head - tail, n = available < PERIOD_FRAMES ? available : PERIOD_FRAMES;
@@ -1124,7 +1124,7 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 
 	returned = 0;
 	for (unsigned p = 0; p < PERIODS; p++) {
-		period_fill_ios(p);
+		period_fill_darwin(p);
 		sent += period_write(p);
 	}
 	while (!stopping) {
@@ -1145,7 +1145,7 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 			OSBitAndAtomic(~back, &returned);
 			for (unsigned p = 0; p < PERIODS; p++) {
 				if (back & 1u << p) {
-					period_fill_ios(p);
+					period_fill_darwin(p);
 					if (period_write(p)) {
 						sent++;
 					} else {
@@ -1158,7 +1158,7 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	say("sound: the feeder stops: %u periods written (%u could not be sent), %u given back (%u with an error), %u underflows; "
 	    "from Darwin %llu frames came, %llu went to the DSP, %llu of silence filled in\n", sent, failed, written_done, write_errors,
-	    underflows, ios_frames, fed_frames, silent_frames);
+	    underflows, darwin_frames, fed_frames, silent_frames);
 	feeder_runs = false;
 	thread_terminate(current_thread());
 }
@@ -1229,7 +1229,7 @@ watch(void)
 		if (!on && !given_up && !muted && sounded != 0 && now - sounded < 100000) {
 			say_when("Darwin plays: the amplifiers are started");
 			starts++;
-			ios_peak = 0;
+			darwin_peak = 0;
 			if (!hakios_speaker_start() || !hakios_speaker_volume(below + extra, 1)) {
 				say("sound: THE AMPLIFIERS DID NOT START; Darwin's sound goes on to the DSP, unheard\n");
 				guard_off(true);
@@ -1247,8 +1247,8 @@ watch(void)
 			}
 		} else if (on && now - sounded > QUIET_BEFORE_OFF_US) {
 			say_when("three seconds of silence: the amplifiers are stopped");
-			say("sound: what Darwin wrote while they were on peaked at %u%% of full scale (%u)\n", ios_peak * 100 / 32768,
-			    ios_peak);
+			say("sound: what Darwin wrote while they were on peaked at %u%% of full scale (%u)\n", darwin_peak * 100 / 32768,
+			    darwin_peak);
 			guard_off(false);
 			hakios_speaker_stop();
 			on = false;
@@ -1380,7 +1380,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 		thread_deallocate(feeder);
 		watcher_runs = true;
-		hakios_audio_set_sink("the speakers (the audio DSP, hakios_sound.c)", ios_sink);
+		hakios_audio_set_sink("the speakers (the audio DSP, hakios_sound.c)", darwin_sink);
 		say("sound: WHAT IOS PLAYS GOES TO THE SPEAKERS from here on, %u.%03u dB under Android's level, until the run ends\n",
 		    below / 8, below % 8 * 125);
 		say("sound: through the guard (hakios_guard.c): %u.%03u dB of gain first (sound_gain), then high-pass at 200 Hz; peaks "

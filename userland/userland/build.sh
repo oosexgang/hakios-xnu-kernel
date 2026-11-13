@@ -7,8 +7,8 @@
 #                    the payload next to the kernel (the second RAM disk, /dev/md1) and is mounted
 #                    on /hakios. Rebuilt every time.
 #                      RC=<file>    etc/rc: rc.launchd (default) hands process 1 to the Darwin launchd
-#                                   after init's checks; rc.ios runs a few Darwin programs and halts
-#                      JOBS="..."   labels of the stock Darwin launchd jobs to load (default: IOS_JOBS)
+#                                   after init's checks; rc.darwin runs a few Darwin programs and halts
+#                      JOBS="..."   labels of the stock Darwin launchd jobs to load (default: DARWIN_JOBS)
 #                      REST=1       ... and the rest of them, started only when asked for (see mkjobs.py)
 #                      WIFID=0      without wifid, Darwin's Wi-Fi daemon, which is in by default (see below)
 #                      OSLOG="..."  labels of the jobs whose os_log output goes to the console ("all": every
@@ -115,7 +115,7 @@ for d in rootfs cryptex cryptex-app; do
 	exit 1
 done
 # The stock Darwin jobs given to launchd, roughly in the order they were brought up.
-IOS_JOBS=${JOBS-"
+DARWIN_JOBS=${JOBS-"
 	com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.apple.logd
 	com.apple.syslogd com.apple.distnoted.xpc.daemon com.apple.diagnosticd com.apple.fseventsd
 	com.apple.containermanagerd com.apple.containermanagerd.system com.apple.runningboardd
@@ -132,9 +132,9 @@ IOS_JOBS=${JOBS-"
 # restarted -- and it answers what the rest of the system keeps asking for anyway. com.apple.wifi.manager, which
 # wifid registers itself rather than declaring in its plist, fell from 30 failed lookups a session to 3,
 # com.apple.private.corewifi-xpc from 1 to none, and the session's whole failed-lookup count from 331 to 305.
-# (Count a QEMU run log with its duplicate lines removed: run-ios.sh prints launchd's log twice.)
+# (Count a QEMU run log with its duplicate lines removed: run-darwin.sh prints launchd's log twice.)
 # WIFID=0 leaves it out.
-[ "${WIFID-1}" != 0 ] && IOS_JOBS="$IOS_JOBS com.apple.wifid"
+[ "${WIFID-1}" != 0 ] && DARWIN_JOBS="$DARWIN_JOBS com.apple.wifid"
 # The programs (file names) started with a library of ours inside them: "LIBRARY NAME..." per line
 # (src/inject.c is libhakios.dylib, src/inject_sb.c is libhakios-sb.dylib, src/inject_media.c is
 # libhakios-media.dylib).
@@ -633,7 +633,7 @@ PY
 	cp com.hakios.demo.plist com.hakios.wifi.plist com.hakios.thermald.plist root/LaunchDaemons/
 	VOLUME=""
 	[ -n "$FLASHBOOT" ] && [ -f $IOS/rootfs.slt ] && VOLUME="--root-volume $IOS/rootfs.slt"
-	[ -n "$IOS_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $IOS/rootfs root/LaunchDaemons $IOS_JOBS
+	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $IOS/rootfs root/LaunchDaemons $DARWIN_JOBS
 fi
 # firmware of the phone's own hardware, where somebody has pulled it from the phone's Android into ../fw-gpu
 # (it is the vendor's and never in the repository): the kernel's GPU bring-up, bsd/dev/hakios_adreno.c, finds it in fw/

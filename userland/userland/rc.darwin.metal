@@ -1,7 +1,7 @@
 # Commands init runs after its own checks: one per line, words separated by blanks.
 #
 # The first experiment with Metal's device discovery (docs/metal.md 10.14 and 10.31), and
-# deliberately the smallest one: with this file as etc/rc (RC=rc.ios.metal) init runs these lines
+# deliberately the smallest one: with this file as etc/rc (RC=rc.darwin.metal) init runs these lines
 # itself and halts, so launchd is never born and nothing in the system can ask Metal for a device.
 # What is measured here is only whether the two properties can be put on the IOAcceleratorES
 # service from user space -- nothing about what Metal then does with them.
@@ -26,7 +26,7 @@
 # the class is a subclass of _MTLDevice, 5 initialises it. Every step before this has been
 # passed by hand (docs/metal.md 10.14); this is the first time Metal walks the whole way.
 #
-# It is run here, under RC=rc.ios.metal, for the reason 10.14 gives: launchd is never born,
+# It is run here, under RC=rc.darwin.metal, for the reason 10.14 gives: launchd is never born,
 # so no daemon can ask Metal and meet a half-made device. The properties are removed again
 # on the line after it, so nothing outlives this list.
 /hakios/bin/metal_test

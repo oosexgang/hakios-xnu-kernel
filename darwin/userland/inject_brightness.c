@@ -7,7 +7,7 @@
  * on a BrightnessSystemClient, which hands it to the BrightnessSystem in backboardd, which sets the panel.
  * Here CoreBrightness has no panel it knows (there is no Apple display driver), so the value goes nowhere.
  *
- * This library is put into the processes that set those properties and into backboardd (root26-ios.sh's
+ * This library is put into the processes that set those properties and into backboardd (root26-darwin.sh's
  * inject.conf), and replaces -setProperty:forKey: and -copyPropertyForKey: of both classes, whichever of
  * them the process has:
  *

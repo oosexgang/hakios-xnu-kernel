@@ -13,7 +13,7 @@ behaviour on the first phone changed, and one thing changed on Renoir (below).
 | `renoir/kernel/patches/00NN-*.patch` | Folded into the same two places. No patch series any more. |
 | `renoir/kernel/build.sh`, `xnu-env.sh` | `kernel/build.sh`, `kernel/env.sh` |
 | `../xnu-12377-renoir` (the tree) | `../xnu-12377-hakios`, made by `kernel/assemble.sh`. A tree of the old kind is refused: move it away. |
-| `renoir/userland/`, `renoir/tools/` | `ios/userland/`, `ios/tools/` |
+| `renoir/userland/`, `renoir/tools/` | `darwin/userland/`, `darwin/tools/` |
 | `renoir/docs/` | `docs/` |
 | `renoir/tests/` | `tests/` |
 | `base/xnuloader/` | `loader/` (a link stays in `base/`) |
@@ -22,6 +22,7 @@ behaviour on the first phone changed, and one thing changed on Renoir (below).
 | `base/tools/mk-mesa26.sh` and its patch under `base/tools/mesa26/` (Mesa 26 for the Darwin 26 user space) | `userland/tools/mk-mesa26.sh`, `userland/tools/mesa26/hakios.patch`, making `libhakios-air.dylib` in `userland/xnu-deps/build/mesa26/out`, where `userland/build.sh` and the AIR tools look for it. |
 | `base/wifi/`, `base/tools/mk-ath11k.sh`, `base/tools/mk-wlfw.sh` against the kernel's headers under their former names | The same against the kernel's `bsd/sys/hakios_*.h` (`hakios_lx.h`, `hakios_qmi.h`, `hakios_sta.h`), and `mk-wlfw.sh` writes `hakios_wlfw_ath11k.h`, which `hakios_wlfw.c` includes. |
 | `base/uefi/apply.sh`, `export.sh` with the first phone's port in `files/` | `apply.sh PHONE_FILES` puts the common changes and a phone's platform (its package's UEFI `files/`) into a clone; `export.sh [MAKER/PHONE PHONE_FILES]` saves them apart again. |
+| `ios/` (`ios/tools/boot26.py`, `ios/userland/root26-ios.sh` making `root26-ios.apfs`, ...), `docs/ios26-boot.md`, `tests/ios_tools_test.py`, `userland/userland/rc.ios`, `rc.ios.metal`, `rc.jobs.ios`, `base/qemu/run-ios.sh`; the board keys `ios-sensor`, `ios-front`; `/System/Volumes/iOS` | `darwin/` (`darwin/tools/boot26.py`, `darwin/userland/root26-darwin.sh` making `root26-darwin.apfs`, ...), `docs/darwin26-boot.md`, `tests/darwin_tools_test.py`, `rc.darwin`, `rc.darwin.metal`, `rc.jobs.darwin`, `base/qemu/run-darwin.sh`; `darwin-sensor`, `darwin-front`; `/System/Volumes/Darwin`. The system is called Darwin throughout. Kept: Apple's identifiers the build needs, the `IOS` and `IOS_SDK` variables (where the firmware and Apple's SDK are), and `/sbin/launchd.ios`, which the root tree of `darwin-renoir` runs. |
 | `base/tools/camsensor.py`, `camtuning.py`, `camraw.py` | `userland/tools/`, where `userland/userland/build.sh` runs them from |
 | A driver's own copies of `rd()`/`wr()`, of the waits, of the lookup in RPMh's command database, of a request to RPMh, of a pin's registers | The headers `hakios_mmio.h`, `hakios_time.h`, `hakios_cmd_db.h`, `hakios_rpmh.h`, `hakios_tlmm.h` in `bsd/dev/` ([writing-a-driver.md](writing-a-driver.md)). A patch that touches such a copy has nothing to apply to; what it changed belongs in the header, or in the driver's call of it. |
 | `devices/NAME/board.toml`, `soc/SOC.toml` | `devices/NAME/board.dts`, `soc/SOC.dtsi`: the same keys, in the syntax of a device tree source (`key-name = <0x10>;`, `name = "text";`, a section is a node `speaker { ... };`, a camera sensor a node `sensor@0 { ... };`; [devices/README.md](../devices/README.md) has the format). `tools/boards.py convert board.toml` writes the new file beside the old one, comments kept. |
@@ -93,7 +94,7 @@ no phone. What works on which phone did not change.
 | Before | Now |
 | --- | --- |
 | The phones' `devices/NAME/` on the main branch | Device packages on the `devices` branch, one directory per phone at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
-| `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `ios/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `ios/userland/inj26.sh`, `kernel/syntax-check.sh`, `tests/run.sh`. |
+| `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `darwin/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `darwin/userland/inj26.sh`, `kernel/syntax-check.sh`, `tests/run.sh`. |
 | `tools/boards.py gen` before committing, `tools/boards.py gen --check` in `make check` | Gone: there is no committed table to compare. `make boards` validates and writes the tables if you want to look at them. |
 | Host tests against the phones' own boards | Against stand-ins in `tests/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, and `phone-keys`, with its parts wired otherwise. |
 | The loader asking whether it runs on the first phone before it reads the battery | `uefi_charger = true` in the board file's `[loader]` section. |

@@ -233,7 +233,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `cam_keep_mb` | — |
 | `cam_mode` | table ("resN": boot-arg cam_mode=N, or the mode with the fewest pixels: the macro's 1600x1200 RAW10 on one lane at 665.6 Mbit/s, 30 frames a second; the wide one's 1920x1080 RAW10 on three C-PHY trios at 3.11 Gbit/s each, 120 frames a second); the sensor's CSIPHY, CSID-lite 0's RX from that PHY and… |
 | `cam_pattern` | The OV02B10's own colour bars (cam_pattern=1) are still taken for GBRG, as before: the module file says nothing of them. |
-| `cam_sensor` | cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra"); without it, the board's test-sensor, and for cam=5 its ios-sensor (the back camera; ios-front, the front one). |
+| `cam_sensor` | cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra"); without it, the board's test-sensor, and for cam=5 its darwin-sensor (the back camera; darwin-front, the front one). |
 | `cam_settle` | cam_settle=N sets it instead. |
 | `cam_shutter` | for a look in other light, written the sensor's way: cam_shutter= LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
 | `cam_vblank` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; S5KHM2SD: 0x0204, 32 is 1x), cam_vblank=LINES (the frame that much longer: OV02B10 0x14/0x15; |

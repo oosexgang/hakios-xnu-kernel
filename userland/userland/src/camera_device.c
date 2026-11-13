@@ -423,7 +423,7 @@ static const char *const output_names[OUTPUTS] = { "PrimaryScaler", "SecondarySc
  * The device's cameras, a stream each, as the iPhone X's are in CMCapture's D22/AVCaptureSession.plist
  * (its devices' uniqueIDs, and the stream formats its formats and presets are matched to by sensor size
  * and frame rate). Which of the phone's sensors is the back camera and which the front one is the
- * board's (camera { } ios-sensor and ios-front), and so is whether a sensor's pictures are upside down:
+ * board's (camera { } darwin-sensor and darwin-front), and so is whether a sensor's pictures are upside down:
  * the kernel says it in every frame's header. It gives one sensor's frames at a time; a stream's frames
  * start with its own sensor's (see worker()).
  */
@@ -443,7 +443,7 @@ static const struct camera {
 static uint32_t
 sensor_of(const struct camera *camera, const struct hakios_camera_frame *head)
 {
-	return camera->front && head->ios_front != HAKIOS_CAMERA_NONE ? head->ios_front : head->ios_back;
+	return camera->front && head->darwin_front != HAKIOS_CAMERA_NONE ? head->darwin_front : head->darwin_back;
 }
 
 struct stream {

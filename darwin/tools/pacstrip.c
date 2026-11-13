@@ -1108,7 +1108,7 @@ main(int argc, char **argv)
 			return do_cache(1, NULL, argc - 2, argv + 2);
 		return do_macho(1, argv[2], NULL);
 	}
-	/* after a later edit of a rewritten cache file (ios/tools/fips26.py): its signature again */
+	/* after a later edit of a rewritten cache file (darwin/tools/fips26.py): its signature again */
 	if (argc >= 3 && strcmp(argv[1], "resign") == 0) {
 		for (int a = 2; a < argc; a++) {
 			uint64_t size;

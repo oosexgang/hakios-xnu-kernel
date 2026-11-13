@@ -34,7 +34,7 @@ p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's 
 p.add_argument('--kernel', type=Path,
                default=DK / 'xnu-12377-hakios/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
 p.add_argument('--system', type=Path, default=IOS / 'system27-prune.apfs')
-p.add_argument('--root', type=Path, default=IOS / 'root26-ios.apfs')
+p.add_argument('--root', type=Path, default=IOS / 'root26-darwin.apfs')
 p.add_argument('--boot-arg', action='append', default=[], metavar='NAME[=VALUE]',
                help='add (or replace) one boot argument, e.g. cpus=1; repeatable')
 p.add_argument('--return-after', type=int, metavar='SECONDS',
@@ -90,7 +90,7 @@ loader = DR / f'prebuilt/{options.board}/resident-usb.img'
 share = DR / f'recovery/assets/{options.board}-ios-share.bin'
 for path in (options.kernel, options.system, options.root, loader, share):
     if not path.is_file():
-        raise SystemExit(f'Missing {path} (docs/ios26-boot.md says how it is made)')
+        raise SystemExit(f'Missing {path} (docs/darwin26-boot.md says how it is made)')
 try:
     with options.system.open('rb') as image:
         validate_apfs(image.read(4096), options.system.stat().st_size)

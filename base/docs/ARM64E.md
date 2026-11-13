@@ -55,7 +55,7 @@ regardless (milestone 3).
 The iPhone XS (A12) arm64e Darwin 16.5 is fetched and the user space is built for arm64e
 (`ios165/fetch.sh` and `userland/build.sh`, both now parameterised by device/arch; see the
 hakios-xnu-userland side). Booting it on the arm64e kernel took three signing fixes, each found by
-tracing the fault PC under `qemu/run-ios.sh ... -d int` and disassembling the cache:
+tracing the fault PC under `qemu/run-darwin.sh ... -d int` and disassembling the cache:
 
 - **The user shared cache must be signed even for the default region.** The kernel signs the slid
   cache and dyld-linked images with the process's A key (`vm_shared_region_slide_page_v3`,
@@ -419,5 +419,5 @@ not on disk (a previous session's scratch).  Re-acquiring them means re-download
 Pro Max Darwin 26.6.2 IPSW (~12 GB, Apple CDN -- the `/etc/hosts` unblock needs the user's sudo),
 AEA-decrypting the root/cryptex (`/usr/bin/aea` + the FCS key from Apple), re-extracting the cache,
 and writing an `ios26/` selection config (the analog of `ios165/select-system.py`).  Then
-`userland/build.sh` assembles `system.apfs`/`root.apfs` and `qemu/run-ios.sh` boots it -- pointed at
+`userland/build.sh` assembles `system.apfs`/`root.apfs` and `qemu/run-darwin.sh` boots it -- pointed at
 the xnu-12377 kernel (it currently hardcodes the xnu-8796 path).

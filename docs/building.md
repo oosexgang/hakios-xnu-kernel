@@ -7,7 +7,7 @@ What can be built, from the least setup to the most.
 | The checks | `make check` | A C compiler, Python 3.11+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
 | The loader | `loader/build.sh` | `clang`, `lld`. |
 | The kernel | `kernel/build.sh` | Linux, the system packages below with clang 19 or newer, theos or LLVM's Mach-O tools, and the device package of the phone it is for. |
-| Darwin images, and a boot | [ios26-boot.md](ios26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
+| Darwin images, and a boot | [darwin26-boot.md](darwin26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
 
 ## The checks
 

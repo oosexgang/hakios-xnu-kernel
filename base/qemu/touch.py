@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Touch the screen of the system running under QEMU (qemu/run-ios.sh), through QMP.
+"""Touch the screen of the system running under QEMU (qemu/run-darwin.sh), through QMP.
 
 usage: touch.py STEP...
   tap X Y                     a short touch

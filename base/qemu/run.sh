@@ -4,7 +4,7 @@
 # env: QEMU_TB_MB           megabytes for QEMU's cache of translated code (default 384; QEMU's own
 #                           default of 1 GB mostly costs host memory)
 #      QEMU_SMP             processor cores of the machine (default 1); the kernel uses as many of them as
-#                           its boot-arg cpus=N says (CMDLINE="cpus=4" for run-ios.sh), one without it
+#                           its boot-arg cpus=N says (CMDLINE="cpus=4" for run-darwin.sh), one without it
 #      QEMU_EFI, QEMU_VARS  the UEFI firmware for aarch64 guests (default: where Arch's edk2-aarch64
 #                           puts it; Debian/Ubuntu: /usr/share/AAVMF/AAVMF_CODE.fd and AAVMF_VARS.fd;
 #                           macOS: Homebrew's QEMU has them in its share/qemu)

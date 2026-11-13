@@ -1,8 +1,8 @@
-"""The parts of the Darwin image tool (ios/tools/mkimage26.py) that need no IPSW: which files a pruned image
+"""The parts of the Darwin image tool (darwin/tools/mkimage26.py) that need no IPSW: which files a pruned image
 leaves out, which Mach-O files are arm64e and go through pacstrip, the trimming of string tables, and
 where the stage0 it carries mounts the small image.
 
-    python3 tests/ios_tools_test.py
+    python3 tests/darwin_tools_test.py
 """
 import importlib.util
 import os
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('mkimage26', ROOT / 'ios/tools/mkimage26.py')
+spec = importlib.util.spec_from_file_location('mkimage26', ROOT / 'darwin/tools/mkimage26.py')
 mkimage26 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mkimage26)
 

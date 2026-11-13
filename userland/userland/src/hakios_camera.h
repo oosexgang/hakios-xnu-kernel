@@ -43,8 +43,8 @@ struct hakios_camera_frame {
 	                                 * has no motor (or it does not answer) */
 	char            chip[12];       /* the sensor's chip, as the board names it ("S5KHM2SD") */
 	uint8_t         upside_down;    /* 1: its pictures are turned half round from the way Darwin has that camera's */
-	uint8_t         ios_back;       /* which sensors are Darwin's back camera ... */
-	uint8_t         ios_front;      /* ... and its front one (HAKIOS_CAMERA_NONE: the phone gives it none) */
+	uint8_t         darwin_back;       /* which sensors are Darwin's back camera ... */
+	uint8_t         darwin_front;      /* ... and its front one (HAKIOS_CAMERA_NONE: the phone gives it none) */
 	uint8_t         unused;
 	uint32_t        reserved;
 };

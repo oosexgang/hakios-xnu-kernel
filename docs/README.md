@@ -12,7 +12,7 @@
 | [backlight.md](backlight.md) | Brightness and Auto-Brightness: design, boot arguments, sysctls, testing. |
 | [thermal.md](thermal.md) | The thermal limiter: what it does at which temperature, tuning, testing. |
 | [metal-glass.md](metal-glass.md) | What exists for Metal on the Adreno, and the steps to Liquid Glass on Darwin 27. |
-| [ios26-boot.md](ios26-boot.md) | The lab notebook: how Darwin 26 and 27 were brought to the home screen on Renoir, the build and boot commands, measurements. |
+| [darwin26-boot.md](darwin26-boot.md) | The lab notebook: how Darwin 26 and 27 were brought to the home screen on Renoir, the build and boot commands, measurements. |
 | [ram-budget.md](ram-budget.md) | Fitting the Darwin system image into the phone's RAM. |
 | [troubleshooting.md](troubleshooting.md) | What a message or a symptom means and what to do: the tools, the builds, the kernel's log at boot, each driver, the checks. |
 | [glossary.md](glossary.md) | The words of three worlds, one line each: this project's, Qualcomm's and Android's, Apple's. |
@@ -29,7 +29,7 @@ Next to the code:
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
 | [../loader/README.md](../loader/README.md) | The loader. |
-| [../ios/README.md](../ios/README.md) | What Darwin's user space needs: each library and tool, and what each needs. |
+| [../darwin/README.md](../darwin/README.md) | What Darwin's user space needs: each library and tool, and what each needs. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
 | [../components.toml](../components.toml) | Everything taken from elsewhere, at the exact version, with its licence. |
 

@@ -73,7 +73,7 @@
         <text x="980" y="528">in a few of Darwin's processes</text>
         <text x="220" y="550">by kernel/build.sh</text>
         <text x="600" y="550">by loader/build.sh</text>
-        <text x="980" y="550">by ios/userland/inj26.sh</text>
+        <text x="980" y="550">by darwin/userland/inj26.sh</text>
         <text x="220" y="702">passes the board's name in</text>
         <text x="220" y="724">/chosen/darwin-board</text>
         <text x="600" y="702">finds its row in the table</text>

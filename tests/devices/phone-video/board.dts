@@ -134,8 +134,8 @@
 		pmic-pins = <4 5>;
 		pmic-reset = <0x28a>;           // the PM8350C's (SPMI slave 2) GPIO 3
 		test-sensor = "macro";
-		ios-sensor = "wide";
-		ios-front = "front";
+		darwin-sensor = "wide";
+		darwin-front = "front";
 
 		sensor@0 {
 			name = "macro";

@@ -13,7 +13,7 @@ usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracte
           left out, and Fonts/AppFonts
 
 /sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /hakios and runs its init), the
-real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (ios/userland/root26-ios.sh writes ios26/jobs26)
+real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (darwin/userland/root26-darwin.sh writes ios26/jobs26)
 the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
 System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /hakios/LaunchDaemons,
 as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
@@ -308,7 +308,7 @@ def main():
             continue
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.symlink(target, dst)
-    # the audio server's output device (root26-ios.sh): the HAL loads plug-ins from this directory only
+    # the audio server's output device (root26-darwin.sh): the HAL loads plug-ins from this directory only
     hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver')
     if not os.path.lexists(hal):
         os.makedirs(os.path.dirname(hal), exist_ok=True)

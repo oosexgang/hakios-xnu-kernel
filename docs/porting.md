@@ -188,15 +188,15 @@ nothing. That is deliberate: these drivers write to pins and PMIC registers.
 
 ## 7. Darwin user space
 
-The user-space side is the same for every phone: the libraries in `ios/userland/` and the images
-built by `ios/tools/`. What depends on the device is small:
+The user-space side is the same for every phone: the libraries in `darwin/userland/` and the images
+built by `darwin/tools/`. What depends on the device is small:
 
 - which iPhone Darwin is told it is (`loader/identity.h`), and through that the screen layout;
 - the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
-  of `screen { }` in the board file, in points (`ios/userland/inject_statusbar.c` applies it);
+  of `screen { }` in the board file, in points (`darwin/userland/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `boot { }` section.
 
-How the images are built and what Darwin needed on the way to the home screen: [ios26-boot.md](ios26-boot.md).
+How the images are built and what Darwin needed on the way to the home screen: [darwin26-boot.md](darwin26-boot.md).
 
 ## 8. Send it back
 
@@ -256,7 +256,7 @@ Stated plainly, so nobody finds out the hard way:
 - **Darwin's camera** (`userland/userland/src/camera_device.c`, of the Darwin 16.5 generation) presents two
   cameras the way an iPhone X has them (optics and formats, which Darwin's capture stack matches its
   presets to). Which of the phone's sensors is the back and which the front camera, and whether a
-  sensor's pictures are upside down, is the board's (`camera { }` `ios-sensor`, `ios-front`, a sensor's
+  sensor's pictures are upside down, is the board's (`camera { }` `darwin-sensor`, `darwin-front`, a sensor's
   `upside-down`); a sensor's colour tuning is found by its chip (`fw/camera-CHIP.isp`, made by
   `userland/tools/camtuning.py` from the phone's tuning file).
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Copy stock Darwin launchd job definitions into the small image, adjusted for the bring-up.
 
-usage: mkjobs.py [--rest] [--root-volume LISTING] IOS_ROOTFS DEST_DIR label...
+usage: mkjobs.py [--rest] [--root-volume LISTING] DARWIN_ROOTFS DEST_DIR label...
 
-For every label, IOS_ROOTFS/System/Library/LaunchDaemons/<label>.plist is copied to DEST_DIR with
+For every label, DARWIN_ROOTFS/System/Library/LaunchDaemons/<label>.plist is copied to DEST_DIR with
 its standard error sent to the console, which is where a daemon's last words are read (there
 is no log viewer or crash reporter yet). For the jobs named in the environment variable OSLOG
 ("all" for every one) OS_ACTIVITY_DT_MODE is set too, which makes os_log print there as well:

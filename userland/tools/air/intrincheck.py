@@ -1680,7 +1680,7 @@ def parse_runner_log(path):
     ident = None
     block = []
     lines = [l.rstrip("\n") for l in open(path, errors="replace")]
-    # A log QEMU produced has every line twice: qemu/run-ios.sh writes the
+    # A log QEMU produced has every line twice: qemu/run-darwin.sh writes the
     # console to two places that both end up here, and the two copies are
     # adjacent. Undoing it needs care, because a suite legitimately prints the
     # same four numbers for two different cases, so no per-line rule is safe.
@@ -1696,7 +1696,7 @@ def parse_runner_log(path):
         if ident is None:
             return
         # An id already answered is not replaced. The console log of a phone or
-        # QEMU run repeats lines -- qemu/run-ios.sh prints every one twice --
+        # QEMU run repeats lines -- qemu/run-darwin.sh prints every one twice --
         # and the second copy of a marker opens a block with nothing after it,
         # which would turn an answer into a refusal. A refusal therefore never
         # overwrites an answer, and the first answer stands.

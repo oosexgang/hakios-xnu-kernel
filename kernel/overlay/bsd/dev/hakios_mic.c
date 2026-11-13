@@ -1462,7 +1462,7 @@ static volatile uint64_t ring_written;          /* frames put into the ring sinc
 static uint64_t ring_read;                      /* frames taken from it (one reader: the audio server) */
 static bool ring_primed;                        /* the reader is RING_KEEP behind; false after it ran dry */
 static uint64_t ring_skipped, ring_dry;         /* frames skipped, reads that found too little: said when Darwin stops */
-static volatile uint32_t ios_wants;             /* the device is open */
+static volatile uint32_t darwin_wants;             /* the device is open */
 static volatile bool stopping;                  /* the run ends (hakios_mic_dsp_down()) */
 
 static void
@@ -1517,7 +1517,7 @@ mic_dev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 static int
 mic_dev_open(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
 {
-	ios_wants = 1;
+	darwin_wants = 1;
 	return 0;
 }
 
@@ -1525,7 +1525,7 @@ mic_dev_open(__unused dev_t dev, __unused int flags, __unused int type, __unused
 static int
 mic_dev_close(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
 {
-	ios_wants = 0;
+	darwin_wants = 0;
 	return 0;
 }
 
@@ -1540,12 +1540,12 @@ static const struct cdevsw mic_cdevsw = {
 static uint32_t mic_secs = 10;
 
 /*
- * The stream run, read for mic_secs (for_ios: while Darwin has the device open): how loud it is, every
+ * The stream run, read for mic_secs (for_darwin: while Darwin has the device open): how loud it is, every
  * second (for Darwin: the first three, then every 30th); into the recording with rec_sound_mic=1; for
  * Darwin into the ring.
  */
 static void
-listen(bool for_ios)
+listen(bool for_darwin)
 {
 	uint32_t run[3] = { 0, 0, 0 }, frames = 0, seconds = 0, peak = 0, periods = 0, empty = 0;
 	int64_t sum = 0;
@@ -1570,7 +1570,7 @@ listen(bool for_ios)
 			return;
 		}
 	}
-	if (for_ios) {
+	if (for_darwin) {
 		say("mic: LISTENING for Darwin: %u reads of 20 ms given to the DSP\n", MIC_PERIODS);
 	} else {
 		say("mic: LISTENING: %u reads of 20 ms given to the DSP; for %u s\n", MIC_PERIODS, mic_secs);
@@ -1590,7 +1590,7 @@ listen(bool for_ios)
 			hakios_haptic_pretend(0);
 			tap = 2;
 		}
-		if ((for_ios ? (!ios_wants || stopping) : elapsed_ms >= mic_secs * 1000ull) || broken) {
+		if ((for_darwin ? (!darwin_wants || stopping) : elapsed_ms >= mic_secs * 1000ull) || broken) {
 			break;
 		}
 		if (!(read_ready & (1u << next))) {
@@ -1619,7 +1619,7 @@ listen(bool for_ios)
 				peak = a > peak ? a : peak;
 			}
 			frames += got;
-			if (for_ios) {
+			if (for_darwin) {
 				ring_put(samples, got);
 			}
 			if (hakios_audio_recording_mic()) {
@@ -1656,7 +1656,7 @@ listen(bool for_ios)
 				db10 = tenths - (int)((32768 - r) * 60 / 16384);
 			}
 			seconds++;
-			if (!for_ios || seconds <= 3 || seconds % 30 == 0) {
+			if (!for_darwin || seconds <= 3 || seconds % 30 == 0) {
 				say("mic: second %u: %u frames (%u periods, %u empty), level %d.%d dBFS (rms %u), peak %u, mean %lld; "
 				    "reads %u, errors %u%s%s\n", seconds, frames, periods, empty, db10 / 10, db10 < 0 ? -db10 % 10 : db10 % 10,
 				    rms, peak, sum / (int64_t)frames, reads_done, read_errors, unmuted ? "" : " (muted)",
@@ -1715,7 +1715,7 @@ path_up(void)
  * recordings that broke off, no more until the run ends.
  */
 static void
-for_ios(void)
+for_darwin(void)
 {
 	int major = cdevsw_add(-1, &mic_cdevsw);
 	unsigned recordings = 0, failures = 0;
@@ -1731,7 +1731,7 @@ for_ios(void)
 		uint64_t began, ns;
 		bool failed;
 
-		if (!ios_wants) {
+		if (!darwin_wants) {
 			sleep_ms(20);
 			continue;
 		}
@@ -1765,7 +1765,7 @@ for_ios(void)
 				break;
 			}
 			/* (not again until Darwin has closed the device and opened it again) */
-			while (ios_wants && !stopping) {
+			while (darwin_wants && !stopping) {
 				sleep_ms(20);
 			}
 		}
@@ -1780,7 +1780,7 @@ mic_thread(__unused void *parameter, __unused wait_result_t result)
 	    level == 3 ? "the main microphone, as Android records from it, listened to; then all undone" :
 	    "the main microphone for Darwin (/dev/hakios-mic), up while Darwin records");
 	if (level == 4) {
-		for_ios();
+		for_darwin();
 	} else {
 		lck_mtx_lock(&mic_lock);
 		if (level == 1) {

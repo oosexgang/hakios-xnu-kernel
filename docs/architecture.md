@@ -28,7 +28,7 @@ stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the pho
                                       ▼
                          Darwin user space, unmodified apart from pointer authentication
                            - launchd → backboardd → SpringBoard → apps
-                           - small libraries of ours are inserted into a few processes (ios/userland/)
+                           - small libraries of ours are inserted into a few processes (darwin/userland/)
 ```
 
 When the kernel is done, or panics, it returns to the loader, which still holds the phone's USB link.
@@ -40,7 +40,7 @@ A reboot brings Android back.
 | --- | --- | --- |
 | **Device data** | A device package per phone (`NAME/board.dts`, kept on the `devices` branch), `soc/SOC.dtsi` on the main branch | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
-| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `ios/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
+| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `darwin/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
 
 The aim is that a new phone on a known SoC is a change to the first row only, and a new SoC adds one
 file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
@@ -80,7 +80,7 @@ soc/sm7350.dtsi, soc/… ────────────┘  (run by the bu
   (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
   a directory of their own: `kernel/build.sh` (which puts the kernel's table
   into the assembled tree as `bsd/dev/hakios_board_table.h`, only when it changed), `loader/build.sh`,
-  `ios/userland/inj26.sh`, `kernel/syntax-check.sh` and `tests/run.sh`. So the kernel, the loader and
+  `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `tests/run.sh`. So the kernel, the loader and
   the libraries know the boards whose packages were present when they were built, and the data and the
   code cannot drift apart. Built with no package, they know only the emulator's board.
 - The host tests do not use real phones. They run against three stand-ins in `tests/devices/`:
@@ -148,17 +148,17 @@ More: [loader/README.md](../loader/README.md).
 ## Darwin user space
 
 Darwin's own programs and frameworks are used as Apple ships them, with one transformation: on CPUs
-without pointer authentication, `ios/tools/pacstrip.c` rewrites PAC instructions to their plain
+without pointer authentication, `darwin/tools/pacstrip.c` rewrites PAC instructions to their plain
 equivalents and re-signs the pages.
 
 | Path | Contents |
 | --- | --- |
-| `ios/userland/inject_*.c` | Libraries inserted into single processes by the kernel (`kern.exec_inject`): display-mode completion and panel power, brightness, the first wallpaper, the status bar's clock. Each checks the method it replaces and leaves it alone if it is not what it expects. |
-| `ios/userland/*.sh` | Build those libraries and the small root image. |
-| `ios/tools/` | `pacstrip`, the system image builder (`mkimage26.py`), the FIPS self-test fix, the RAM budget tools, the boot tool (`boot26.py`). |
+| `darwin/userland/inject_*.c` | Libraries inserted into single processes by the kernel (`kern.exec_inject`): display-mode completion and panel power, brightness, the first wallpaper, the status bar's clock. Each checks the method it replaces and leaves it alone if it is not what it expects. |
+| `darwin/userland/*.sh` | Build those libraries and the small root image. |
+| `darwin/tools/` | `pacstrip`, the system image builder (`mkimage26.py`), the FIPS self-test fix, the RAM budget tools, the boot tool (`boot26.py`). |
 | `userland/` | The earlier generation's user-space sources that are still used or still being ported: `init`, the audio plug-in, the Metal device, the AIR-to-NIR shader compiler for Mesa, the APFS image tools. |
 
-How Darwin 26 and 27 were brought to the home screen, step by step: [ios26-boot.md](ios26-boot.md).
+How Darwin 26 and 27 were brought to the home screen, step by step: [darwin26-boot.md](darwin26-boot.md).
 
 ## What is not in this repository
 
@@ -172,9 +172,9 @@ against the scripts that fetch).
 | Apple's XNU release | It is Apple's; only the pin is kept. | `kernel/assemble.sh` fetches it. |
 | Darwin itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
 | The phone's firmware (GPU, DSP, touch) | The vendor's; taken from the same phone it runs on. | `adb pull` from its Android. |
-| theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `ios/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
+| theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `darwin/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
 | The UEFI for a phone | A port of Mu-Silicium per device. | `base/uefi/` has the changes every port needs; a phone's own port is in its package. |
-| **Renoir's resident loader, its recovery payload tool and the user-space root tree** | They live in the team's working tree (`darwin-renoir`), which has not been published. | Not available yet. `ios/tools/boot26.py` and the `ios/userland/*.sh` scripts need it. |
+| **Renoir's resident loader, its recovery payload tool and the user-space root tree** | They live in the team's working tree (`darwin-renoir`), which has not been published. | Not available yet. `darwin/tools/boot26.py` and the `darwin/userland/*.sh` scripts need it. |
 
 The last row is the gap between this repository and booting Renoir from a clean checkout.
 Everything under `make check` and the kernel build itself do not depend on it.

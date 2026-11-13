@@ -30,7 +30,7 @@ esac
 [ -z "$SB_ACTIVATION" ] || sed -i -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" $O/src/inject_sb.c
 DYN="xnu-clang -arch arm64e -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libhakios.dylib $O/src/inject.c
-# the status bar's clock past the hole punch: ios/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
+# the status bar's clock past the hole punch: darwin/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
 # (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libhakios-sb.dylib $O/src/inject_sb.c -I$O/boards $RN/userland/inject_statusbar.c
@@ -42,7 +42,7 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios-app.dylib -lobjc -o $O/libh
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-console.dylib -o $O/libhakios-console.dylib $RN/userland/console_log.c
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o $O/libhakios-poster.dylib $RN/userland/inject_poster.c
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-backlight.dylib -framework CoreFoundation -lobjc -o $O/libhakios-backlight.dylib $RN/userland/inject_backlight.c
-# the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: ios/userland/inject_brightness.c)
+# the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: darwin/userland/inject_brightness.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o $O/libhakios-brightness.dylib $RN/userland/inject_brightness.c
 for f in $O/*.dylib $O/HakiosAudio; do
   $RN/tools/pacstrip macho $f $f.strip > /dev/null && mv $f.strip $f

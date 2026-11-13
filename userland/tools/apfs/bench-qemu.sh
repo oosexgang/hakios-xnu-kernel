@@ -20,7 +20,7 @@ LOGS=${BENCH_LOGS:-$ROOT/apfs-work}
 INSTANCE=$(cat "$ROOT/qemu/instance" 2>/dev/null || echo 0)
 PORT=$((4444 + 10 * INSTANCE))
 cd "$ROOT" || exit 1
-touch "$IMAGE"          # run-ios.sh rebuilds its RAM image only from a newer file
+touch "$IMAGE"          # run-darwin.sh rebuilds its RAM image only from a newer file
 
 printf "%-7s %9s %11s %12s %12s %8s %s\n" readers wall_ms MB/s lock_wait_ms lock_held_ms "bad" sums
 for n in $COUNTS; do
@@ -32,7 +32,7 @@ for n in $COUNTS; do
 	log="$LOGS/bench-$(date +%H%M%S)-$n.log"
 	QEMU_SMP=$SMP IMG="$IMAGE" ROOT=userland/root.apfs \
 		CMDLINE="cpus=$SMP apfs_check=5 apfs_threads=$n $EXTRA" \
-		timeout 900 qemu/run-ios.sh 600 > "$log" 2>&1
+		timeout 900 qemu/run-darwin.sh 600 > "$log" 2>&1
 	wall=$(grep -ao "$n readers done in [0-9]*" "$log" | head -1 | awk '{print $5}')
 	kbs=$(grep -ao "bytes  [0-9]* KB/s" "$log" | head -1 | awk '{print $2}')
 	lock=$(grep -a "apfs: lock" "$log" | head -1 | sed 's/^\[[^]]*\]: //')

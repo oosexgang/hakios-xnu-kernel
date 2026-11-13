@@ -2,7 +2,7 @@
 # Boot the whole system under QEMU: the big system image preloaded at the loader's resident
 # address (it becomes /dev/md0, the root) and the small image in the payload (/dev/md1), the
 # same arrangement `xl ramdisk` + `xl run` make on the phone.
-# usage: run-ios.sh [seconds] [extra qemu args...]
+# usage: run-darwin.sh [seconds] [extra qemu args...]
 #
 # Counting anything in the log this writes: every console line comes out TWICE, the second copy in a
 # block replayed some thousands of lines later (take any launchd line and grep -n it). So `grep -c` gives
@@ -42,10 +42,10 @@ if [ "$(uname -s)" = Darwin ]; then
 	done
 fi
 K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
-[ -f $K ] || { K=prebuilt/mach.development.bcm2837; echo "run-ios.sh: no kernel built here, using $K" >&2; }
+[ -f $K ] || { K=prebuilt/mach.development.bcm2837; echo "run-darwin.sh: no kernel built here, using $K" >&2; }
 IMG=${IMG:-userland/system.apfs}
 ROOT=${ROOT:-userland/root.apfs}
-[ -f "$IMG" ] && [ -f "$ROOT" ] || { echo "run-ios.sh: $IMG or $ROOT is missing (userland/build.sh makes them)"; exit 1; }
+[ -f "$IMG" ] && [ -f "$ROOT" ] || { echo "run-darwin.sh: $IMG or $ROOT is missing (userland/build.sh makes them)"; exit 1; }
 SECS=${1:-60}; shift
 RAM_BASE=0x40000000 RD_ADDR=0xFC000000
 RAM_GB=${QEMU_RAM_GB:-7}
@@ -54,7 +54,7 @@ INSTANCE=${QEMU_INSTANCE:-$(cat qemu/instance 2>/dev/null || echo 0)}
 # an instance takes 2.5-3 GB of host memory; starting one that does not fit gets something killed
 AVAILABLE=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
 if [ "${AVAILABLE:-9999}" -lt 3000 ] && [ -z "$QEMU_FORCE" ]; then
-	echo "run-ios.sh: only $AVAILABLE MB of memory available on this machine: stop another QEMU first (QEMU_FORCE=1 to start anyway)"
+	echo "run-darwin.sh: only $AVAILABLE MB of memory available on this machine: stop another QEMU first (QEMU_FORCE=1 to start anyway)"
 	exit 1
 fi
 

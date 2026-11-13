@@ -714,14 +714,14 @@ class Generate(Sandbox):
                 '\t\t\tfocus-supply = "ldoc9 2800mV";\n\t\t};\n')
         front = ('\t\tsensor@1 {\n\t\t\tname = "front";\n\t\t\tchip = "OV16A1Q";\n\t\t\tcci = <0 0>;\n\t\t\tpins = <69 70>;\n'
                  '\t\t\treset = <20>;\n\t\t\tmclk = <0>;\n\t\t\tmclk-pin = <64>;\n\t\t\tcsiphy = <0>;\n\t\t\tvana = "ldo3 2800mV";\n\t\t};\n')
-        head = '\t\tpmic-pins = <4 5>;\n\t\tpmic-reset = <0x28a>;\n\t\tios-sensor = "wide";\n'
+        head = '\t\tpmic-pins = <4 5>;\n\t\tpmic-reset = <0x28a>;\n\t\tdarwin-sensor = "wide";\n'
 
         def camera(*parts, head=head):
             return plain + '/ {\n\tcamera {\n' + head + ''.join(parts) + '\t};\n};\n'
         path.write_text(camera(wide, front))
         self.assertEqual(self.problems(), '')
         table = boards.table_text(*boards.load())
-        for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0, .ios_front = 0xff,',
+        for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .darwin_sensor = 0, .darwin_front = 0xff,',
                      '{ .name = "wide", .chip = "S5KHM2SD", .cci = 0, .cci_master = 1, .sda = 71, .scl = 72, .reset = 21,',
                      '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1, .upside_down = 0, .focus_supply = "ldoc9", .focus_mv = 2800,',
                      '.vana = { 2, 0, 2800, 106, 135 }, .vdig = { 1, 1, 1000, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },',
@@ -744,16 +744,16 @@ class Generate(Sandbox):
         path.write_text(camera(wide, front, head=head.replace('0x28a', '0x203')))
         self.assertIn("pmic-reset is a PMIC's GPIO", self.problems())         # (a peripheral, not a GPIO's)
         path.write_text(camera(wide, front, head=head.replace('"wide"', '"tele"')))
-        self.assertIn("ios-sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
+        self.assertIn("darwin-sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
         # Darwin's front camera, and a sensor whose pictures are upside down
         path.write_text(camera(wide, front.replace('csiphy = <0>;', 'csiphy = <0>;\n\t\t\tupside-down;'),
-                               head=head + '\t\tios-front = "front";\n'))
+                               head=head + '\t\tdarwin-front = "front";\n'))
         self.assertEqual(self.problems(), '')
         table = boards.table_text(*boards.load())
-        self.assertIn('.ios_sensor = 0, .ios_front = 1,', table)
+        self.assertIn('.darwin_sensor = 0, .darwin_front = 1,', table)
         self.assertIn('.csiphy = 0, .focus_motor = 0, .upside_down = 1,', table)
-        path.write_text(camera(wide, front, head=head + '\t\tios-front = "selfie";\n'))
-        self.assertIn("ios-front = 'selfie': the name of one of its sensors (wide, front)", self.problems())
+        path.write_text(camera(wide, front, head=head + '\t\tdarwin-front = "selfie";\n'))
+        self.assertIn("darwin-front = 'selfie': the name of one of its sensors (wide, front)", self.problems())
         more = [front.replace('@1', f'@{n}').replace('"front"', f'"s{n}"') for n in (2, 3, 4)]
         path.write_text(camera(wide, front, *more))
         self.assertIn('5 sensors: the driver has room for 4', self.problems())

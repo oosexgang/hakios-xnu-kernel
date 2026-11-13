@@ -40,7 +40,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     Wi-Fi DSP's memory, the radio's pins and its supplies' names), `mic { }` (the codec's reset pin),
     `camera { }` (the sensors' PMIC bus, and one `sensor@N { }` table a sensor: its chip, CCI
     master and pins, reset, MCLK, CSI receiver, supplies and lens motor's supply; the driver's table of
-    four is gone; `ios-sensor` and `ios-front` say which sensors are Darwin's back and front cameras, and
+    four is gone; `darwin-sensor` and `darwin-front` say which sensors are Darwin's back and front cameras, and
     `upside-down` a sensor whose pictures come out turned half round), `touch { }` `coordinates` (the controller's range), `wifi { }` `board-data` and
     `regdb` (the radio's files),
     `screen { }` (the status bar's shift past the camera), `loader { }` (framebuffer base,
@@ -172,7 +172,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   haptic, flashlight, camera and Wi-Fi drivers have no Renoir code path. Asked for there, they print
   which line is missing instead of writing to another phone's pins. Renoir's boot defaults had them off.
 - **The assembled tree is `../xnu-12377-hakios`.** A tree made by the earlier `apply.sh` is refused.
-- **The boot tool reads its defaults from the board file.** `ios/tools/boot26.py` takes `--board NAME`,
+- **The boot tool reads its defaults from the board file.** `darwin/tools/boot26.py` takes `--board NAME`,
   or the one phone whose package is present.
 - **A branch or patch from the old layout** is carried over with `kernel/import-patch.sh`.
   [docs/migrating.md](docs/migrating.md) has the steps.
@@ -231,7 +231,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | --- | --- |
 | The single kernel patch, `apply.sh`, the numbered patches | `kernel/overlay/`, `kernel/patches/`, `kernel/assemble.sh` |
 | `renoir/kernel/build.sh` and its environment script | `kernel/build.sh`, `kernel/env.sh` |
-| `renoir/userland/`, `renoir/tools/` | `ios/userland/`, `ios/tools/` |
+| `renoir/userland/`, `renoir/tools/` | `darwin/userland/`, `darwin/tools/` |
 | `renoir/docs/`, `renoir/tests/` | `docs/`, `tests/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
@@ -272,7 +272,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   makes them from one 64-bit seed (`loader/src/unit.c`): a serial number of 10 and an MLB serial of 17
   characters (digits and capitals without I and O, as Apple's randomised ones), a 52-bit ECID, unicast,
   locally administered Wi-Fi and Bluetooth addresses, a 48-byte manifest hash. `tools/identity.py NAME`
-  makes a phone's seed once and keeps it outside the checkout; `ios/tools/boot26.py` passes it
+  makes a phone's seed once and keeps it outside the checkout; `darwin/tools/boot26.py` passes it
   (`identity=`), so a phone is the same device at every boot. Without a seed the loader takes a random
   one, from the firmware's generator where it has one, which now also fills the kernel's random seed.
 - **Brightness and Auto-Brightness** (`hakios_backlight.c`, [docs/backlight.md](docs/backlight.md)).
@@ -319,7 +319,7 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
   hardware answering.
 - **Renoir cannot be booted from a clean checkout.** Its resident loader, its recovery payload tool and
   the user-space root tree are in the team's working tree, which is not published.
-  `ios/tools/boot26.py` and the image scripts in `ios/userland/` need it.
+  `darwin/tools/boot26.py` and the image scripts in `darwin/userland/` need it.
 
 ## Before the restructuring
 
@@ -327,4 +327,4 @@ The first generation ran Darwin 16.5 on the first phone and in QEMU. Its workspa
 `base/`, and [base/README.md](base/README.md) describes it. Parts of it are still the only place for
 something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
 by `kernel/`. The notes on how Darwin 26 and 27 were brought to the home screen on Renoir, written before
-the restructuring, are in [docs/ios26-boot.md](docs/ios26-boot.md).
+the restructuring, are in [docs/darwin26-boot.md](docs/darwin26-boot.md).

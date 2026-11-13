@@ -2,7 +2,7 @@
 
 Liquid Glass, CASDF shapes and the large lock-screen clock are drawn by CoreAnimation's **Metal** renderer, in
 backboardd. Darwin 27 has no OpenGL renderer left, and its software renderer skips these effects. That is why the
-current `gpu=0` configuration shows them incomplete (`docs/ios26-boot.md`, item 10). The glass needs three
+current `gpu=0` configuration shows them incomplete (`docs/darwin26-boot.md`, item 10). The glass needs three
 things, all of them device-independent apart from the kernel's GPU profile:
 - a Metal device for backboardd;
 - a compiler from Apple's shader bitcode (AIR) to the Adreno;
@@ -23,13 +23,13 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 1. **Kernel, `gpu=1` on the 12377 kernel.** Boot with `--boot-arg gpu=1` and the phone's GPU firmware in the small image, and check
    that `HakiosGPU` publishes and that a submit retires.
-   Heat: at 490 MHz the GPU sensor read 69.1 °C (`ios26-boot.md`, item 14). hxff's thermal work has to cap the
+   Heat: at 490 MHz the GPU sensor read 69.1 °C (`darwin26-boot.md`, item 14). hxff's thermal work has to cap the
    GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
    that table, 1 and up) is the safe start.
-2. **Mesa for arm64e Darwin 27.** `ios/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
+2. **Mesa for arm64e Darwin 27.** `darwin/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
    to build `libhakios-air.dylib` (Mesa with `air-frontend.patch`, `air-ir3.patch` and `air-metal.patch`,
    `air_metal.h` contract), then run it through pacstrip and `ldid -Cadhoc` like the other libraries
-   (root26-ios.sh).
+   (root26-darwin.sh).
 3. **Metal device on Darwin 27.**
    - Diff Metal's requirements between 26 and 27 with the existing tools (`userland/tools/metal/owes.py`,
      `refusals.py`, `protometh.py` against Darwin 27's Metal): `MTLAddDevice` asserts on `MTLDevice`/`MTLDeviceSPI`
@@ -66,7 +66,7 @@ the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims
 
 ## What the next person with the phone can do in an afternoon
 
-1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with the GPU firmware in
+1. `python3 darwin/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with the GPU firmware in
    place and the phone's package brought in before the kernel was built (`tools/device.py add NAME`).
    Confirm the GPU block starts on 12377, and read the temperature lines.
 2. On the build machine: `userland/tools/metallib.py` on Darwin 27's `QuartzCore.framework/default.metallib`, then

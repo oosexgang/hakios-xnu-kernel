@@ -10,10 +10,10 @@ __pycache__/
 *.apfs
 *.metallib
 tools/export.local
-ios/tools/a64census
-ios/tools/pacstrip
-ios/userland/obj26/
-ios/userland/obj27/
+darwin/tools/a64census
+darwin/tools/pacstrip
+darwin/userland/obj26/
+darwin/userland/obj27/
 *.obj
 
 # what tools/boards.py gen writes (the tables the code is built with, for the boards that are there)

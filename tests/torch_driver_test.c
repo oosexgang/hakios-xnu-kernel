@@ -240,7 +240,7 @@ another_chip(void)
 
 /* torch=3: the level Darwin writes is the light, never above Android's current, and a read says what is lit */
 static void
-for_ios(void)
+for_darwin(void)
 {
 	phone("phone-video");
 	boot_args = "torch=3";
@@ -491,7 +491,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "light_once", light_once }, { "another_chip", another_chip },
-		{ "for_ios", for_ios },
+		{ "for_darwin", for_darwin },
 		{ "fault_while_lit", fault_while_lit }, { "module_fault", module_fault }, { "channel_fault", channel_fault },
 		{ "hotter_still", hotter_still }, { "supply_droops", supply_droops }, { "flags_not_readable", flags_not_readable },
 		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "battery_hot", battery_hot },

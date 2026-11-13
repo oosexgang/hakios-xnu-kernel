@@ -123,8 +123,8 @@
 		// pmic-reset = <0x28a>;        // the PMIC GPIO its reset is on (its node's reset-gpio: <&pm8350c_gpios 3 ...>),
 		//                              // as SPMI slave << 8 | the GPIO's peripheral's high byte: GPIO n is 0x88 + n - 1
 		// test-sensor = "macro";       // optional: the one cam=1 to cam=4 work on (the first, if not said)
-		// ios-sensor = "wide";         // optional: Darwin's back camera, whose frames it gets with cam=5 (the first, if not said)
-		// ios-front = "front";         // optional: Darwin's front camera (none, if not said)
+		// darwin-sensor = "wide";         // optional: Darwin's back camera, whose frames it gets with cam=5 (the first, if not said)
+		// darwin-front = "front";         // optional: Darwin's front camera (none, if not said)
 		//
 		// sensor@0 {
 			// name = "wide";       // what cam_sensor= picks it by: lower-case letters, digits and dashes
@@ -217,7 +217,7 @@
 		// regdb = "regdb_oem.bin";    // optional: its regulatory database, likewise; regdb.bin if not said
 	// };
 
-	// What Darwin's interface is told of the screen (ios/userland/inject_statusbar.c). Only for a phone whose
+	// What Darwin's interface is told of the screen (darwin/userland/inject_statusbar.c). Only for a phone whose
 	// front camera is a hole at the top left, where the status bar's clock would be drawn.
 	// screen {
 		// statusbar-leading-shift = <24>; // points (not pixels) the status bar's leading items move right
@@ -233,7 +233,7 @@
 		//                              // through them and hands it to the kernel (feature "battery-uefi")
 	// };
 
-	// How ios/tools/boot26.py starts this phone (--board NAME).
+	// How darwin/tools/boot26.py starts this phone (--board NAME).
 	// boot {
 		// fastboot-product = "codename"; // what `fastboot getvar product` must answer: the tool refuses any other phone
 		// cpus = <8>;                  // how many cores the kernel is given

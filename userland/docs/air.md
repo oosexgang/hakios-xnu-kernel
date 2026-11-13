@@ -2308,7 +2308,7 @@ Three references, each independent of the translator:
      SafariSharedUI's, which the corpus list already names as holding no functions at all. Nothing
      is lost with these, and `air2nir` exits 1 for them without a word, which is worth its own
      message some day.
-   - **one is a reader gap with a name**: `libtracepoint_rt_ios.metallib` stops at
+   - **one is a reader gap with a name**: `libtracepoint_rt_darwin.metallib` stops at
      `__tracepoint_data.p0i8: thread-local global`.
    - **one is a resource limit**: `ci_filters.metallib` is killed by the kernel for memory
      (`exit -9`), and it is the one of the fourteen that could be hiding vocabulary, because it is
@@ -2456,7 +2456,7 @@ Three references, each independent of the translator:
    because each one adds 22 ms of further boot noise. `--cases 8` should still fit; past that it
    will not, and the answer then is not a bigger cap but to stop booting Darwin for a measurement at
    all: `init` runs programs itself, before `launchd`, where the log is nearly empty and nothing
-   can push the output out of it (`RC=<file>`, as `rc.ios` does it). The GPU is up by then, since
+   can push the output out of it (`RC=<file>`, as `rc.darwin` does it). The GPU is up by then, since
    the kernel brings it up, and a question about what the hardware does to a number does not need
    a window server. That is the shape this suite should take if it ever outgrows `--cases 4`; it
    has not yet, and the 225 modules above all arrived.
@@ -2934,7 +2934,7 @@ below it is believed. `AIR_RUN_SOFTWARE=1` forces software even on the phone, fo
 two on the same device.
 
 **It runs on Darwin, and the numbers are exact there.** In QEMU (`CMDLINE="cpus=4
-RC_JOBS=rc.jobs.air" qemu/run-ios.sh 420`, a clean boot: 72 `[ ok ]` lines, SpringBoard up),
+RC_JOBS=rc.jobs.air" qemu/run-darwin.sh 420`, a clean boot: 72 `[ ok ]` lines, SpringBoard up),
 `air_run` translated `clearFragment01`, found no `msm` device, fell back to softpipe as designed,
 drew the quad and read back
 
@@ -3037,7 +3037,7 @@ was owed to the whole port rather than to this frontend, and the answer is yes. 
 is up and holding it. A refusal is a finding the whole port needs, not just this frontend, so
 either answer is worth the run.
 
-(Counting anything out of a QEMU log here: `qemu/run-ios.sh` prints every line twice, and
+(Counting anything out of a QEMU log here: `qemu/run-darwin.sh` prints every line twice, and
 `sort -u` does not catch it because the pairs are separated by other output.)
 
 ### 5b. Dispatching a kernel

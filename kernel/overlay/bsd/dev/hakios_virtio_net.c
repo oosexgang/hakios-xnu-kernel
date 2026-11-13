@@ -3,7 +3,7 @@
  *
  * "-device virtio-net-device" on the virt machine's virtio-mmio bus, which must be the current
  * one, not "legacy" (-global virtio-mmio.force-legacy=false), with any "-netdev" behind it;
- * qemu/run-ios.sh does that with QEMU_NET=1. Only with boot-arg virtio_net=1: the bus address is
+ * qemu/run-darwin.sh does that with QEMU_NET=1. Only with boot-arg virtio_net=1: the bus address is
  * QEMU's and means nothing on the phone.
  *
  * Nothing of what the device offers is taken (no checksums or segmentation left to it, no

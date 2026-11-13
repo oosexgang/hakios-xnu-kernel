@@ -89,10 +89,10 @@
 		statusbar-leading-shift = <24>; // points: the status bar's clock and what follows it move right, past the camera
 	};
 
-	// How the boot tool starts this phone (ios/tools/boot26.py --board NAME): what stock fastboot must say it
+	// How the boot tool starts this phone (darwin/tools/boot26.py --board NAME): what stock fastboot must say it
 	// is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
 	// CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their Darwin 27 ports
-	// land (docs/ios26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
+	// land (docs/darwin26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
 	boot {
 		fastboot-product = "phone-cmd";
 		cpus = <8>;

@@ -103,8 +103,8 @@ as_before(void)
 		CHECK(s->focus_motor == before[i].focus_motor && s->exposure == before[i].exposure, "%u: focus %d, exposure %d", i,
 		    s->focus_motor, s->exposure);
 	}
-	CHECK(hakios_board()->cameras.test_sensor == 0 && hakios_board()->cameras.ios_sensor == 1, "the macro tested, the wide for Darwin");
-	CHECK(hakios_board()->cameras.ios_front == 2, "the front one as Darwin's front camera: %u", hakios_board()->cameras.ios_front);
+	CHECK(hakios_board()->cameras.test_sensor == 0 && hakios_board()->cameras.darwin_sensor == 1, "the macro tested, the wide for Darwin");
+	CHECK(hakios_board()->cameras.darwin_front == 2, "the front one as Darwin's front camera: %u", hakios_board()->cameras.darwin_front);
 	for (unsigned i = 0; i < 4; i++) {
 		CHECK(hakios_board()->cameras.sensors[i].upside_down == (i == 2), "%u: upside down only the front one", i);
 	}

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stop the QEMU of this working copy (and only it): "quit" on its monitor.
-# The instance is QEMU_INSTANCE, or the number in qemu/instance, or 0 (see run-ios.sh).
+# The instance is QEMU_INSTANCE, or the number in qemu/instance, or 0 (see run-darwin.sh).
 here=$(dirname "$(readlink -f "$0")")
 port=$((4444 + 10 * ${QEMU_INSTANCE:-$(cat "$here/instance" 2>/dev/null || echo 0)}))
 python3 - $port <<'PY'

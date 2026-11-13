@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compressed size of files the way darwin-ios/tools/apfs/mkapfs.py -z stores them:
+"""Compressed size of files the way userland/tools/apfs/mkapfs.py -z stores them:
 64 KB pieces, zlib level 9 each (stored with a 0xff prefix when not smaller), in an HFS resource
 fork (0x100 header + 4 + 4 + 8*count table + pieces + 50-byte map), rounded up to 4 KB blocks;
 a file <= 64 KB whose zlib stream fits 3804-16 bytes goes inline (0 blocks); a file stays raw when

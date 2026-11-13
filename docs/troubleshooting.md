@@ -93,8 +93,8 @@ files `kernel/syntax-check.sh` cannot check ([building.md](building.md), "What h
 | `stage1: ... is not the archive this was written with (its SHA-256 differs): not unpacked`, `build.sh: ...: unexpected checksum` | A downloaded macOS SDK archive is not the one the script pins. Nothing was unpacked. | Run the build again: the archive is fetched anew. If it differs again, the file at that address is no longer the pinned one (`components.toml` lists the pins): report it. |
 | `stage1: cannot fetch ... from ...`, `download failed: ...` | The first build fetches Apple's open sources at pinned commits and two SDK archives. | It needs the network once. What is there already is left alone, so run it again. |
 | `stage1: mig did not build, see DIR/mig-build.log`, `stage1: tcsh did not build, see DIR/tcsh-build.log`, `build.sh: exporthdrs failed, see DIR/exporthdrs.log` | A step failed, and its output is in the file named. | Read the file. Its last lines belong in a report. |
-| `System image exceeds fastboot's 4 GiB - 1 download limit` | `ios/tools/mkimage26.py`: fastboot sends a download's size in eight hex digits. | Build the image with `--prune` ([ios26-boot.md](ios26-boot.md), Darwin 27, item 1). |
-| The scripts under `ios/` do not run from a clean checkout | They expect the team's working tree (`darwin-renoir`), which is not published, and an extracted IPSW beside the repository. | Nothing yet. `make check` and the kernel build do not depend on it ([architecture.md](architecture.md), "What is not in this repository"). |
+| `System image exceeds fastboot's 4 GiB - 1 download limit` | `darwin/tools/mkimage26.py`: fastboot sends a download's size in eight hex digits. | Build the image with `--prune` ([darwin26-boot.md](darwin26-boot.md), Darwin 27, item 1). |
+| The scripts under `darwin/` do not run from a clean checkout | They expect the team's working tree (`darwin-renoir`), which is not published, and an extracted IPSW beside the repository. | Nothing yet. `make check` and the kernel build do not depend on it ([architecture.md](architecture.md), "What is not in this repository"). |
 
 ## At boot: the kernel's log
 
@@ -112,7 +112,7 @@ feature on ([porting.md](porting.md), step 4).
 | `touch: touchscreen=1, but this board's board.dts lists no touch controller ("touch-...")` | Neither touch feature is in `features`. | The same part wired the same way: list it. Another part needs a driver ([porting.md](porting.md), step 6). |
 | `ddr: no RPMh vote on this board (its board.dts lists no "ddr-rpmh")`, `ddr: no RPMh vote: the SoC file has no rpmh { }` | `ddr=` was passed without the feature, or without RPMh's addresses. | Fill in `rpmh { }` in the SoC file and list `ddr-rpmh`. `ddr=1` only looks. |
 | `MiniIOMobileFramebuffer: panel scan: no readout counters on this board: frames written at once` | The board does not list `display-scan`, or its SoC file has no `intf1` in `display { }` or no `clocks { }`, or the display block could not be read. Frames are written on a timer, which works. | Nothing for a video-mode panel. For a command-mode panel: `display-scan` and `intf1`; then `panel scan:` lines with a period near 16.7 ms ([porting.md](porting.md), step 5). |
-| Darwin 27 stays at the boot spinner with `fbscale=2` | `fbscale=2` does not work with Darwin 27. | Leave it out ([ios26-boot.md](ios26-boot.md), Darwin 27, item 9). |
+| Darwin 27 stays at the boot spinner with `fbscale=2` | `fbscale=2` does not work with Darwin 27. | Leave it out ([darwin26-boot.md](darwin26-boot.md), Darwin 27, item 9). |
 | A driver behaves differently than before the restructuring | Constants that were in the drivers became data of the board and SoC files. | Compare `sysctl hw.board` and the driver's first log lines with the board file: every value is printed or can be read there ([building.md](building.md)). |
 
 ## Hardware, one piece at a time
@@ -231,7 +231,7 @@ software without it.
 | `adreno: disabled: the SoC file does not say where the GPU's blocks are (adreno { }, clocks { }, rpmh { })` | One of the addresses the driver needs is not there. | Fill in the three sections of the SoC file. |
 | `adreno: THE GPU IS NOT STARTED: the small image has no DIR/FILE (the phone's /vendor/firmware/FILE goes into fw-gpu/); the system draws with its software renderer` | `gpu=1` was passed, and a firmware file is not in the directory `firmware` of `gpu { }` names. | `adb pull` the file from the same phone and build the small image again. Firmware is never committed. |
 | `adreno: step N: FAILED; the steps after it are not attempted`, then `adreno: THE GPU IS NOT STARTED: step N (...) failed; the system draws with its software renderer` | The bring-up stopped at that step. The step's own lines are above it. | Compare `gpu { }` and `adreno { }` with the device tree. The sequence has only been run on two chips: another generation of Adreno needs work in the driver ([porting.md](porting.md), "What is still tied to the first two phones"). |
-| No application icons, no glass, parts of the interface missing, with `gpu=0` | They are drawn with the GPU, and the software renderer leaves them out. Expected. | [ios26-boot.md](ios26-boot.md), Darwin 27, item 10. |
+| No application icons, no glass, parts of the interface missing, with `gpu=0` | They are drawn with the GPU, and the software renderer leaves them out. Expected. | [darwin26-boot.md](darwin26-boot.md), Darwin 27, item 10. |
 
 ## The checks (`make check`)
 

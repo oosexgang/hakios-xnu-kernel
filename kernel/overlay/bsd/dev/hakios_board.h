@@ -280,7 +280,7 @@ struct hakios_board {
 		uint16_t pmic_reset;            /* the PMIC GPIO its reset is on: SPMI slave << 8 | the peripheral's high byte */
 		uint8_t sensor_count;           /* 0: the board says nothing of its cameras */
 		uint8_t test_sensor;            /* which the driver works on by itself (cam=1..4) */
-		uint8_t ios_sensor, ios_front;  /* Darwin's back camera (cam=5) and its front one (0xff: none) */
+		uint8_t darwin_sensor, darwin_front;  /* Darwin's back camera (cam=5) and its front one (0xff: none) */
 		struct hakios_camera_sensor {
 			const char *name;               /* "macro", "wide", ...: what cam_sensor= picks it by */
 			const char *chip;               /* one of the camera driver's chips */

@@ -2215,7 +2215,7 @@ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
  * registerService() time, the properties would exist before launchd, backboardd and SpringBoard
  * are born, so each of the three would take the Metal road on its first call, with nobody left
  * to read the log. Behind a boot-arg, a machine that has them is a machine booted on purpose to
- * have them, and the first such boot is meant to be RC=rc.ios, where launchd is never born.
+ * have them, and the first such boot is meant to be RC=rc.darwin, where launchd is never born.
  *
  * An empty string removes a property rather than setting it. That is the way out of the loop
  * above without a reboot: the properties live only in the registry, so processes started after

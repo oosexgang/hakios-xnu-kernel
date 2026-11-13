@@ -22,4 +22,4 @@ their own.
 
 The kernel's own tools (assembling the tree, taking work back, verifying, the syntax check, the
 build) are in `kernel/`; the loader's build is `loader/build.sh`; what builds Darwin images and starts a
-phone is in `ios/tools/`.
+phone is in `darwin/tools/`.

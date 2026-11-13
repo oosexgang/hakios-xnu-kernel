@@ -9,14 +9,14 @@ rm -rf $T; cp -a $DR/userland/root $T
 cp $RN/userland/obj26/*.dylib $T/lib/
 cp $RN/userland/obj26/gl_test $T/bin/gl_test
 mkdir -p $RN/userland
-cat > $RN/userland/rc.jobs.ios26-probe <<'EOF'
+cat > $RN/userland/rc.jobs.darwin26-probe <<'EOF'
 # Darwin 26, first boots: what runs (to the console, read back from the loader's log)
 /usr/bin/uname -a
 /usr/bin/sw_vers
 /bin/ps -A
 /usr/bin/id
 EOF
-cp $RN/userland/rc.jobs.ios26-probe $T/etc/rc.jobs
+cp $RN/userland/rc.jobs.darwin26-probe $T/etc/rc.jobs
 cd $DR/userland
 M=; [ -f obj/apfs-root-source/manifest ] && M=,manifest=obj/apfs-root-source/manifest
 # the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie

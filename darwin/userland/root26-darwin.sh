@@ -4,7 +4,7 @@
 # named jobs as they are, every other job with Mach services on demand only) into ios26/jobs26, for
 # the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): Darwin 26's launchd takes a job for a system
 # service only when its plist is on the system volume.
-# Writes $IOS/root26-ios.apfs and $IOS/jobs26 (IOS=.../ios27 for Darwin 27, with OBJ=.../obj27).
+# Writes $IOS/root26-darwin.apfs and $IOS/jobs26 (IOS=.../ios27 for Darwin 27, with OBJ=.../obj27).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py.
 set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -12,7 +12,7 @@ DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, da
 DR=${DR:-$DK/darwin-renoir}
 IOS=${IOS:-$DK/ios26}            # the extracted IPSW (ios26: 23G90, ios27: 24B119); the outputs go there
 OBJ=${OBJ:-$RN/userland/obj26}   # our arm64e libraries (inj26.sh), built for that IPSW's addresses
-T=$IOS/root26-ios-tree
+T=$IOS/root26-darwin-tree
 JOBS=${JOBS-"
 	com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.apple.logd
 	com.apple.syslogd com.apple.distnoted.xpc.daemon com.apple.diagnosticd com.apple.fseventsd
@@ -144,13 +144,13 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 	printf 'f\t644\t0\t0\t/private/var/preferences/FeatureFlags/Domain/%s\t/var/preferences/FeatureFlags/Domain/%s\n' \
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
-# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
+# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: darwin/userland/inject_poster.c)
 echo "/hakios/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
-# ios/userland/inject_backlight.c)
+# darwin/userland/inject_backlight.c)
 echo "/hakios/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
-# hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
+# hw.backlight; backboardd for CoreBrightness's own side (src: darwin/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/hakios/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
@@ -212,5 +212,5 @@ fi
 cd $DR/userland
 # the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie
 plain=(); for d in "$T"/fw*/; do if [ -d "$d" ]; then plain+=(--plain "$(basename "$d")"); fi; done
-python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-ios.apfs hakios=$T | tail -1
-ls -la $IOS/root26-ios.apfs
+python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-darwin.apfs hakios=$T | tail -1
+ls -la $IOS/root26-darwin.apfs

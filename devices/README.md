@@ -108,7 +108,7 @@ tools/boards.py compare renoir --dts device-tree.dts        # a board and its So
   They read the board's name from `/chosen/darwin-board` in the registry.
 
 None of the three is kept in the repository. The builds make them (`kernel/build.sh`,
-`loader/build.sh`, `ios/userland/inj26.sh`), so what is built knows exactly the boards whose packages
+`loader/build.sh`, `darwin/userland/inj26.sh`), so what is built knows exactly the boards whose packages
 were present: bring the package in, then build. The tests make their own, with three stand-in phones
 (`tests/devices`).
 
