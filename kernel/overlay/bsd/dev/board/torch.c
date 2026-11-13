@@ -245,12 +245,12 @@ put(uint8_t reg, uint8_t value)
 		}
 	}
 	if (problem != NULL || (problem = spmi_read(&flash, reg, &back, 1)) != NULL) {
-		say("torch: %#04x <- %#04x: %s\n", reg, value, problem);
+		say("torch: 0x%02x <- 0x%02x: %s\n", reg, value, problem);
 		give_up("a write that failed");
 		return false;
 	}
 	if (back != value) {
-		say("torch: %#04x <- %#04x, but it reads %#04x\n", reg, value, back);
+		say("torch: 0x%02x <- 0x%02x, but it reads 0x%02x\n", reg, value, back);
 		give_up("a register that did not read back as written");
 		return false;
 	}
@@ -263,7 +263,7 @@ get(const struct peripheral *p, uint8_t reg, uint8_t *value)
 	const char *problem = spmi_read(p, reg, value, 1);
 
 	if (problem != NULL) {
-		say("torch: reading %#04x of %s: %s\n", reg, p->name, problem);
+		say("torch: reading 0x%02x of %s: %s\n", reg, p->name, problem);
 		return false;
 	}
 	return true;
@@ -312,7 +312,7 @@ show_registers(void)
 	char line[200];
 
 	for (unsigned base = 0; base < 0x100; base += 0x20) {
-		int n = snprintf(line, sizeof(line), "torch: %#04x:", base);
+		int n = snprintf(line, sizeof(line), "torch: 0x%02x:", base);
 
 		for (unsigned i = 0; i < 0x20; i += 8) {
 			if (spmi_read(&flash, (uint8_t)(base + i), r, 8) != NULL) {
@@ -665,6 +665,6 @@ hakios_torch_quiesce(void)
 	(void)spmi_read(&flash, FLASH_MODULE_EN, &module, 1);
 	(void)spmi_read(&flash, FLASH_EN_LED_CTRL, &channels, 1);
 	(void)spmi_read(&flash, FLASH_ITARGET0, &target, 1);
-	say("torch: at the run's end the module reads: enable %#04x, channels %#04x, target %#04x%s\n", module, channels, target,
+	say("torch: at the run's end the module reads: enable 0x%02x, channels 0x%02x, target 0x%02x%s\n", module, channels, target,
 	    module == 0 && (channels & 0x01) == 0 && target == 0 ? " (dark)" : " (NOT DARK)");
 }
