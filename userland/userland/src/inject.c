@@ -1622,6 +1622,14 @@ static uint64_t ws_turn_from;
 /* the main thread's processor time (us) and the time (mach) at the turn's first and last samples: busy, or waiting
  * for a core, or for something else */
 static uint64_t ws_turn_cpu[2], ws_turn_at[2];
+/* waitstack=sbfull: every sample's whole stack of a long turn kept as well, and said after the aggregates
+ * ("hakios: sbstack TURN SAMPLE PART: innermost first ..."), for a call tree to be made of it on the host */
+#define WS_FULL_SAMPLES 96
+#define WS_FULL_DEPTH 160
+static bool ws_full_on;
+static uintptr_t ws_full[WS_FULL_SAMPLES][WS_FULL_DEPTH];
+static uint8_t ws_full_n[WS_FULL_SAMPLES];
+static unsigned ws_full_count, ws_full_turn;
 
 static void
 ws_turn_observer(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activity, __unused void *info)
@@ -1704,6 +1712,20 @@ ws_turn_say(uintptr_t cache, size_t cache_length)
 		snprintf(line + used, sizeof(line) - used, "\n");
 		write(2, line, strlen(line));
 	}
+	/* (waitstack=sbfull: each sample's stack, in parts of 60 frames: the console cuts a line at 1022 characters) */
+	ws_full_turn++;
+	for (unsigned k = 0; k < ws_full_count; k++) {
+		for (unsigned from = 0, part = 0; from < ws_full_n[k]; from += 60, part++) {
+			used = (size_t)snprintf(line, sizeof(line), "hakios: sbstack %u %u %u:", ws_full_turn, k, part);
+			for (unsigned i = from; i < ws_full_n[k] && i < from + 60 && used < sizeof(line) - 40; i++) {
+				ws_frame(line + used, sizeof(line) - used, ws_full[k][i], cache, cache_length);
+				used += strlen(line + used);
+			}
+			snprintf(line + used, sizeof(line) - used, "\n");
+			write(2, line, strlen(line));
+		}
+	}
+	ws_full_count = 0;
 	memset(ws_turn_pc, 0, sizeof(ws_turn_pc));
 	memset(ws_turn_leaf, 0, sizeof(ws_turn_leaf));
 	ws_turn_samples = 0;
@@ -1820,6 +1842,10 @@ ws_sampler(void *unused)
 								if (!again) ws_turn_count(all[i], n - 1 - i, false);
 							}
 							ws_turn_count(all[0], 0, true);
+							if (ws_full_on && ws_full_count < WS_FULL_SAMPLES) {
+								memcpy(ws_full[ws_full_count], all, n * sizeof(all[0]));
+								ws_full_n[ws_full_count++] = (uint8_t)n;
+							}
 						}
 					}
 					ext.pth_name[0] = 0;
@@ -1963,6 +1989,7 @@ hakios_init(void)
 			ws_main_hi = (uintptr_t)pthread_get_stackaddr_np(me);
 			ws_main_lo = ws_main_hi - pthread_get_stacksize_np(me);
 			ws_turn_on = true;
+			ws_full_on = strstr(arguments, "waitstack=sbfull") != NULL;
 			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopAfterWaiting, true, LONG_MIN,
 			    ws_turn_observer, NULL), kCFRunLoopCommonModes);
 			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, LONG_MAX,
