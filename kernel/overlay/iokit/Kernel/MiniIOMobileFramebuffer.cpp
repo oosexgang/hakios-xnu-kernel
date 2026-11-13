@@ -480,6 +480,7 @@ public:
 	uint32_t *      fBlendRow;              /* ... and a row of the picture blended from two (fBlendRowSize pixels) */
 	uint32_t        fBlendRowSize;
 	uint8_t *       fRecBase;
+	IOBufferMemoryDescriptor * fRecMemory;  /* (whose bytes those are: kept for as long as the kernel runs, the loader reads them after) */
 	uint64_t        fRecSize, fRecUsed;
 	uint64_t        fFirstFrame, fRecFirst; /* when the first frame was shown, and the first recorded */
 	bool            fRecDone;
@@ -776,6 +777,7 @@ IOMobileFramebuffer::start(IOService * provider)
 		if (memory != NULL) {
 			struct rec_header * header = (struct rec_header *) memory->getBytesNoCopy();
 
+			fRecMemory = memory;
 			fRecBase = (uint8_t *) header;
 			fRecSize = (uint64_t) gRecMegabytes << 20;
 			fRecUsed = sizeof(*header);
