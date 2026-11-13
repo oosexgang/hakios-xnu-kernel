@@ -6,7 +6,7 @@
 	description = "QEMU virt (aarch64)";
 	soc = "qemu-virt";
 
-	features = "virtio";                    // its network card, tablet and keyboard are virtio devices
+	features = "virtio";                    // its network card, tablet, keyboard, disk and sound are virtio devices
 
 	// No panel to tell: the display driver darkens the picture itself.
 	backlight {
