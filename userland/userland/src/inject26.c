@@ -279,6 +279,13 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 	if (display) {
 		CFDictionarySetValue(properties, CFSTR("DisplayIntegrated"), kCFBooleanTrue);
 	}
+	/* (the dictionary holds what it was given: these references are let go) */
+	CFRelease(name);
+	CFRelease(page_number);
+	CFRelease(usage_number);
+	CFRelease(zero);
+	CFRelease(pairs);
+	CFRelease(pair);
 	/* the dictionary stays: it is what service_copy_property() answers from */
 	made->properties = properties;
 	for (int attempt = 1; attempt <= 20; attempt++) {
