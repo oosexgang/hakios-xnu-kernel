@@ -997,6 +997,7 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 	{
 		uint32_t ubc = 1;
 
+		/* boot-arg apfs_ubc_read=0: read(2) past the page cache (default 1: through it) */
 		(void)PE_parse_boot_argn("apfs_ubc_read", &ubc, sizeof(ubc));
 		am->am_ubc_read = (ubc != 0);
 	}
@@ -1086,11 +1087,13 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 	{
 		uint32_t round = 0;
 
+		/* boot-arg apfs_round=BYTES: the I/O buffer a read is rounded to, 64 KB steps up to 2 MB (default 1 MB) */
 		if (PE_parse_boot_argn("apfs_round", &round, sizeof(round)) &&
 		    round >= 64 * 1024 && round <= APFS_IOBUF_MAX && (round % (64 * 1024)) == 0) {
 			am->am_iobuf_size = round;
 		}
 	}
+	/* boot-arg apfs_meta_cluster=N: blocks a metadata read brings in, 1 to 16 (default 4; apfs_lib.h says why) */
 	(void)PE_parse_boot_argn("apfs_meta_cluster", &am->am_nx.meta_cluster,
 	    sizeof(am->am_nx.meta_cluster));
 	/*
