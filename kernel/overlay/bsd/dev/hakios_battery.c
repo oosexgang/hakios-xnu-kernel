@@ -103,6 +103,13 @@ battery_snapshot(struct loader_battery *out)
 
 static int battery_source_dsp;
 static int battery_shown_tenths = -1;   /* what iOS is shown, tenths of a percent (-1: nothing yet) */
+/*
+ * Boot-arg battery_shown=N (a test): iOS is shown N percent whatever the cell says, the rest (voltage, current, the
+ * charger, the temperature) as it is -- for iOS's own low-battery alert at 19, an alert to look at on purpose
+ * (the Metal plug-in's binning once left one out of most frames while a finger moved on it). The log's battery lines say N
+ * as well.
+ */
+static uint32_t battery_shown_override = ~0u;
 
 SYSCTL_INT(_kern_hakios, OID_AUTO, battery_shown, CTLFLAG_RD | CTLFLAG_LOCKED, &battery_shown_tenths, 0,
     "the charge iOS is shown, tenths of a percent: the firmware's when the voltage agrees, else the voltage's (-1 if none)");
@@ -130,6 +137,9 @@ battery_tell_ios(const struct loader_battery *sample)
 	}
 	battery_shown_tenths = bat_shown_tenths(battery_shown_tenths,
 	    bat_estimate_tenths(sample->soc_percent, (sample->flags & LOADER_BATTERY_SOC_ESTIMATED) != 0, mv, sample->current_ma), gaining);
+	if (battery_shown_override <= 100) {
+		battery_shown_tenths = (int)battery_shown_override * 10;
+	}
 	memset(&state, 0, sizeof(state));
 	state.size = sizeof(state);
 	state.percent_hundredths = battery_shown_tenths * 10;
@@ -245,6 +255,7 @@ hakios_battery_init(void)
 
 	if (!hakios_board_has(HAKIOS_HAS_BATTERY_UEFI)) return;
 	if (!PE_parse_boot_argn("battery", &enabled, sizeof(enabled)) || !enabled) return;
+	PE_parse_boot_argn("battery_shown", &battery_shown_override, sizeof(battery_shown_override));
 	if (!PE_parse_boot_argn("battery_shared_pa", &shared_pa, sizeof(shared_pa)) || shared_pa == 0) {
 		printf("battery: xnuloader did not provide battery_shared_pa\n");
 		return;
