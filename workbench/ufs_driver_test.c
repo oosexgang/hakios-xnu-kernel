@@ -612,6 +612,20 @@ a_buffer_of_one_block(void)
 	CHECK(too_long == 0, "none longer than the buffer");
 }
 
+/* a partition as large as 64 bits of bytes hold, to the block: a page to use (one block more is not: page_not_usable) */
+static void
+the_largest_partition(void)
+{
+	static uint8_t data[4096];
+	size_t done = 0;
+
+	loader("");
+	page->part[SUPER].blocks = UINT64_MAX / 4096;
+	hakios_ufs_init();
+	CHECK(!logged("more than 64 bits hold"), "used: %s", log_text);
+	CHECK(fake_dev_pread("rufs_super", data, 4096, AT(1), &done) == 0 && done == 4096, "and read");
+}
+
 /* the run is ending: nothing more is asked of the loader */
 static void
 closing(void)
@@ -684,7 +698,8 @@ main(int argc, char **argv)
 		{ "long_write", long_write, 1 }, { "writer_claims_first", writer_claims_first, 1 },
 		{ "partition_must_be_the_ports", partition_must_be_the_ports, 10 }, { "loader_fails", loader_fails, 1 },
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
-		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 }, { "saver_is_asked", saver_is_asked, 1 },
+		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
+		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
 		{ "off_without_the_loader", off_without_the_loader, 1 },
 	};
 
