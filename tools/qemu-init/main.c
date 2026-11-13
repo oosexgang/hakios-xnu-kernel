@@ -3,7 +3,6 @@
 
 /* bsd/kern/syscalls.master */
 #define SYS_exit                1
-#define SYS_getpid              20
 #define SYS_sigsuspend          111
 #define O_RDWR                  2
 #define O_NOCTTY                0x20000
@@ -123,6 +122,7 @@ static const struct {
 	{ "spawn", "PROGRAM [ARGUMENTS] a process of its own, not waited for", command_spawn },
 	{ "kill", "PID [SIGNAL] a signal to a process (PID !: the one spawned last)", command_kill },
 	{ "wait", "the next of its processes to end", command_wait },
+	{ "crash", "KIND this process stopped by a mistake (in a child: run)", command_crash },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
 	{ "mkdir", "DIR... new directories", command_mkdir },
 	{ "write", "FILE WORDS... the words as all of a file", command_write },

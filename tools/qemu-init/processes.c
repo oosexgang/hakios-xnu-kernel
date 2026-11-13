@@ -479,3 +479,26 @@ command_kevent(int argc, char **argv)
 	say("\n");
 	syscall6(SYS_close, kq, 0, 0, 0, 0, 0);
 }
+
+/*
+ * KIND: this process stopped by the processor, as a program's mistake stops it: "null" reads address 0
+ * (SIGSEGV), "illegal" runs an undefined instruction (SIGILL), "breakpoint" a brk (SIGTRAP). What the
+ * kernel makes of the exception is what the one waiting for it sees (run /sbin/launchd crash null). Not
+ * in the first process, whose end is the kernel's.
+ */
+void
+command_crash(int argc, char **argv)
+{
+	if (syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0) == 1) {
+		say("crash: not in the first process (run /sbin/launchd crash KIND)\n");
+		return;
+	}
+	if (argc == 2 && same(argv[1], "null")) {
+		say((const char *)*(volatile long *)0);
+	} else if (argc == 2 && same(argv[1], "illegal")) {
+		__asm__ volatile ("udf #0");
+	} else if (argc == 2 && same(argv[1], "breakpoint")) {
+		__asm__ volatile ("brk #0");
+	}
+	say("crash KIND: null, illegal or breakpoint\n");
+}
