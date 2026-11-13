@@ -97,6 +97,7 @@ void command_sysctl(int argc, char **argv);
 void command_threads(int argc, char **argv);
 void command_tone(int argc, char **argv);
 void command_udp(int argc, char **argv);
+void command_unix(int argc, char **argv);
 void command_uptime(int argc, char **argv);
 void command_wait(int argc, char **argv);
 void command_write(int argc, char **argv);

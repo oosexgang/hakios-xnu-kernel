@@ -572,3 +572,83 @@ command_alarm(int argc, char **argv)
 	say_number((uint64_t)took / 1000);
 	say(" ms\n");
 }
+
+/* ---- a socket pair, and a descriptor sent through it ---- */
+
+#define SYS_recvmsg             27
+#define SYS_sendmsg             28
+#define SYS_socketpair          135
+#define AF_UNIX                 1
+#define SOCK_STREAM             1
+#define SOL_SOCKET              0xffff
+#define SCM_RIGHTS              1
+
+struct iovec {
+	void *base;
+	size_t length;
+};
+
+struct msghdr {
+	void *name;
+	uint32_t name_length;
+	struct iovec *iov;
+	int32_t iov_count;
+	void *control;
+	uint32_t control_length;
+	int32_t flags;
+};
+
+struct rights {                         /* a cmsghdr with one descriptor (aligned to 4, as Darwin's are) */
+	uint32_t length;
+	int32_t level, type, fd;
+};
+
+/* FILE: FILE opened, its descriptor sent over a socket pair (SCM_RIGHTS) with a word, and read through
+ * the descriptor that comes out of the other end */
+void
+command_unix(int argc, char **argv)
+{
+	char word[16] = "sent", got[16], text[128];
+	int32_t ends[2];
+
+	if (argc != 2) {
+		say("unix FILE\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)argv[1], 0, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_socketpair, AF_UNIX, SOCK_STREAM, 0, (long)ends, 0, 0) != 0) {
+		say(fd < 0 ? "unix: the file cannot be read\n" : "unix: no socket pair\n");
+		return;
+	}
+	struct iovec out = { word, 5 }, in = { got, sizeof(got) };
+	struct rights sent = { sizeof(sent), SOL_SOCKET, SCM_RIGHTS, (int32_t)fd }, came = { 0, 0, 0, -1 };
+	struct msghdr message = { 0, 0, &out, 1, &sent, sizeof(sent), 0 };
+	long n = syscall6(SYS_sendmsg, ends[0], (long)&message, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);         /* (the one in flight keeps the file open) */
+	struct msghdr received = { 0, 0, &in, 1, &came, sizeof(came), 0 };
+	if (n == 5) {
+		n = syscall6(SYS_recvmsg, ends[1], (long)&received, 0, 0, 0, 0);
+	}
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	if (n != 5 || came.type != SCM_RIGHTS || came.fd < 0) {
+		say("unix: the descriptor did not come through\n");
+		return;
+	}
+	long length = syscall6(SYS_read, came.fd, (long)text, sizeof(text) - 1, 0, 0, 0);
+	syscall6(SYS_close, came.fd, 0, 0, 0, 0, 0);
+	text[length > 0 ? length : 0] = '\0';
+	for (long i = 0; i < length; i++) {
+		if (text[i] == '\n') {
+			text[i] = '\0';
+			break;
+		}
+	}
+	char line[200];
+	size_t at = append(line, 0, sizeof(line), "unix: \"");
+	at = append(line, at, sizeof(line), got);
+	at = append_number(line, append(line, at, sizeof(line), "\" and descriptor "), sizeof(line), (uint64_t)came.fd);
+	at = append(line, append(line, at, sizeof(line), " came through; it reads: "), sizeof(line), text);
+	append(line, at, sizeof(line), "\n");
+	say(line);
+}

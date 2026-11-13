@@ -124,6 +124,7 @@ static const struct {
 	{ "crash", "KIND this process stopped by a mistake (in a child: run)", command_crash },
 	{ "alarm", "[COUNT] a timer's signals caught by a handler", command_alarm },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
+	{ "unix", "FILE its descriptor sent through a socket pair, and read", command_unix },
 	{ "mkdir", "DIR... new directories", command_mkdir },
 	{ "write", "FILE WORDS... the words as all of a file", command_write },
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
