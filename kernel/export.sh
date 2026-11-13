@@ -32,6 +32,13 @@ D=$(cd "$1" && pwd)
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 
+# Into the repository, only from a tree made of what the repository has now: one assembled before the
+# repository changed would put back the old files over the new ones.
+if [ "$out" = "$KERNEL_DIR" ] && [ "$(assembled_tree "$D")" != "$(git -C "$D" rev-parse 'assembled^{tree}')" ]; then
+	die "kernel/overlay or kernel/patches changed since $D was assembled: bring the tree up to date first
+(kernel/assemble.sh --update $D), then work there and export"
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"; rm -f "$D/.git/hakios-export-index"' EXIT
 
