@@ -92,6 +92,14 @@ DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-paramete
 	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" -I"$HERE/../loader" "$HERE/fakekernel/fakekernel.c")
 # (the last is the example driver of docs/writing-a-driver.md, which lives beside the guide)
 EXAMPLES=$HERE/../docs/examples
+# On the host, under the address and undefined-behaviour sanitizers where the compiler has them: a read or
+# a write past a buffer, or a load of a 64-bit number from an address that is not a multiple of 8, fails
+# the scenario (what the drivers leak on purpose -- a run's memory is never given back -- is not looked for)
+SANITIZE=()
+if echo 'int main(void) { return 0; }' | "$CC" -fsanitize=address,undefined -x c - -o "$WORK/sanitizers" 2> /dev/null; then
+	SANITIZE=(-O1 '-fsanitize=address,undefined' -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+	export ASAN_OPTIONS=detect_leaks=0
+fi
 scenarios() {
 	local runner=$1 binary=$2 scenario list
 	list=$($runner "$binary")
@@ -107,8 +115,8 @@ scenarios() {
 for test in bt_uart_test loader_test loader_window_test loader_download_test loader_dsu_test loader_own_partition_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test qrtr_frame_test mdt_test ipc_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test scmi_perf_test audio_device_test station_test apple80211_test camera_wiring_test sound_pins_test mic_wiring_test sparse_driver_test ufs_driver_test ufs_whitelist_test input_queue_test guard_test example_led_test; do
 	source=$HERE/$test.c
 	[ -f "$source" ] || source=$EXAMPLES/$test.c
-	echo "== $test (host)"
-	if "$CC" "${DRIVER_FLAGS[@]}" "$source" -o "$WORK/$test"; then
+	echo "== $test (host${SANITIZE[0]:+, sanitizers})"
+	if "$CC" "${DRIVER_FLAGS[@]}" "${SANITIZE[@]}" "$source" -o "$WORK/$test"; then
 		scenarios "" "$WORK/$test"
 	else
 		failed=1
