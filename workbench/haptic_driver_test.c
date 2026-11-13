@@ -331,7 +331,7 @@ write_does_not_stick(void)
 	boot_args = "haptic=3";
 	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
-	CHECK(logged("0x1d <- 0xcf, reads 0000: NOT AS WRITTEN"), "said which and what it reads: %s", log_text);
+	CHECK(logged("0x1d <- 0xcf, reads 0x00: NOT AS WRITTEN"), "said which and what it reads: %s", log_text);
 	CHECK(logged("a register did not read back as written: THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
 	CHECK(!register_written[0x1e] && !register_written[0x70] && !register_written[0x5b], "and nothing after it was written");
 	CHECK(only_androids_registers(), "nor anything else");

@@ -223,7 +223,7 @@ static bool
 get(uint8_t reg, uint8_t *value)
 {
 	if (!regs_read(reg, value, 1)) {
-		say("haptic: %#04x NOT READ\n", reg);
+		say("haptic: 0x%02x NOT READ\n", reg);
 		return false;
 	}
 	return true;
@@ -239,7 +239,7 @@ put(uint8_t reg, uint8_t value)
 		return false;
 	}
 	if (!regs_write(reg, &value, 1)) {
-		say("haptic: %#04x <- %#04x NOT ACKNOWLEDGED\n", reg, value);
+		say("haptic: 0x%02x <- 0x%02x NOT ACKNOWLEDGED\n", reg, value);
 		give_up("a write was not acknowledged");
 		return false;
 	}
@@ -247,7 +247,7 @@ put(uint8_t reg, uint8_t value)
 		give_up("a register could not be read back");
 		return false;
 	}
-	say("haptic: %#04x <- %#04x, reads %#04x%s\n", reg, value, after, after == value ? "" : ": NOT AS WRITTEN");
+	say("haptic: 0x%02x <- 0x%02x, reads 0x%02x%s\n", reg, value, after, after == value ? "" : ": NOT AS WRITTEN");
 	if (after != value) {
 		give_up("a register did not read back as written");
 		return false;
@@ -266,7 +266,7 @@ healthy(const char *when)
 		return false;
 	}
 	if (flags & SYSINT_FAULTS) {
-		say("haptic: %s: the chip reports %#04x:%s%s%s%s%s\n", when, flags, flags & 0x80 ? " BOOST SHORT CIRCUIT" : "",
+		say("haptic: %s: the chip reports 0x%02x:%s%s%s%s%s\n", when, flags, flags & 0x80 ? " BOOST SHORT CIRCUIT" : "",
 		    flags & 0x40 ? " BOOST OVER-VOLTAGE" : "", flags & 0x20 ? " UNDER-VOLTAGE" : "", flags & 0x04 ? " OVER-CURRENT" : "",
 		    flags & 0x02 ? " OVER-TEMPERATURE" : "");
 		give_up("a fault");
@@ -302,12 +302,12 @@ show_registers(void)
 			continue;
 		}
 		if (!regs_read((uint8_t)reg, &value, 1)) {
-			say("haptic: %#04x NOT READ\n", reg);
+			say("haptic: 0x%02x NOT READ\n", reg);
 			return;
 		}
 		if (value != android_regs[reg]) {
 			differ++;
-			say("haptic: %#04x = %#04x (Android leaves %#04x)\n", reg, value, android_regs[reg]);
+			say("haptic: 0x%02x = 0x%02x (Android leaves 0x%02x)\n", reg, value, android_regs[reg]);
 		}
 	}
 	say("haptic: %u registers differ from what Android leaves in them\n", differ);
@@ -322,7 +322,7 @@ chip_answers(void)
 		say("haptic: nobody answers at %#x on the bus of gpio%u/%u\n", AW_ADDRESS, PIN_SDA, PIN_SCL);
 		return false;
 	}
-	say("haptic: the chip at %#x is %#06x%s\n", AW_ADDRESS, id[0] << 8 | id[1], (id[0] << 8 | id[1]) == AW_CHIPID ? ", an AW86927" :
+	say("haptic: the chip at %#x is 0x%04x%s\n", AW_ADDRESS, id[0] << 8 | id[1], (id[0] << 8 | id[1]) == AW_CHIPID ? ", an AW86927" :
 	    ": NOT THE AW86927 EXPECTED");
 	return (id[0] << 8 | id[1]) == AW_CHIPID;
 }
@@ -367,7 +367,7 @@ unlock(bool open)
 		give_up("the analog registers could not be opened");
 		return false;
 	}
-	say("haptic: %#04x <- %#04x (the analog registers %s)\n", AW_TMCFG, value, open ? "opened" : "closed");
+	say("haptic: 0x%02x <- 0x%02x (the analog registers %s)\n", AW_TMCFG, value, open ? "opened" : "closed");
 	return true;
 }
 
@@ -715,7 +715,7 @@ serve(void)
 				taps++;
 				if (taps + loops <= TOLD_EVENTS) {
 					wait_ms(4);
-					say("haptic: tap %u: Darwin's waveform peaks at %u of 32768: Android's waveform 1 at gain %#04x; the "
+					say("haptic: tap %u: Darwin's waveform peaks at %u of 32768: Android's waveform 1 at gain 0x%02x; the "
 					    "chip's state %u\n", taps, peak, gain ? gain : 1, chip_state());
 				}
 				break;
@@ -734,7 +734,7 @@ serve(void)
 					if (taps + loops <= TOLD_EVENTS) {
 						wait_ms(4);
 						say("haptic: vibration %u: Darwin goes on playing (peak %u): Android's waveform 11 over and over at "
-						    "gain %#04x, %u ms at most; the chip's state %u\n", loops, peak, gain ? gain : 1,
+						    "gain 0x%02x, %u ms at most; the chip's state %u\n", loops, peak, gain ? gain : 1,
 						    HAPTIC_MAX_MS, chip_state());
 					}
 				}
@@ -765,7 +765,7 @@ serve(void)
 				if (stop_waveform()) {
 					state = rest_until > now ? REST : IDLE;
 					if (taps + loops <= TOLD_EVENTS + 1) {
-						say("haptic: vibration %u: %s after %llu ms (its strength changed %u times, last to gain %#04x); "
+						say("haptic: vibration %u: %s after %llu ms (its strength changed %u times, last to gain 0x%02x); "
 						    "the chip is in standby\n", loops, cut ? "CUT at the limit" : "Darwin stopped, and so does the motor",
 						    (now - since) / 1000, follows, playing_gain);
 					}
