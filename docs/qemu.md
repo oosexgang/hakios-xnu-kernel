@@ -55,6 +55,9 @@ line at a time:
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
+| `date`, `sleep SECONDS` | The time of day, UTC, as the kernel has it from QEMU's clock; and a pause. |
+| `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended. |
+| `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -67,7 +70,8 @@ APFS disk on the virtio block device is mounted and read; a tone played on the v
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
-port and come back unchanged; nothing panics.
+port and come back unchanged; the date is this year's; a signal ends a process in the background; a pipe
+carries what a child writes into it; nothing panics.
 
 ## What it is not
 
