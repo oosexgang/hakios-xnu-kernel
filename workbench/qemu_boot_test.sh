@@ -55,7 +55,7 @@ typed=(
 	'tone 440 1'
 	'input 4'
 	'run /sbin/launchd ps'
-	'dmesg 3'
+	'dmesg 1000'
 	'mach 200'
 	'date'
 	'spawn /sbin/launchd sleep 60'
@@ -90,7 +90,7 @@ check "the kernel starts and says its version" grep -aq "^Darwin Kernel Version"
 check "it finds the emulator's board" grep -aq "^board: qemu-virt" "$log"
 check "its second processor joins it" grep -aq "2 processors running" "$log"
 check "its network card becomes en0, link up" grep -aq "en0 attached on QEMU's virtio network device.*link up" "$log"
-check "both input devices are found" test "$(grep -ac "virtio-input: device in slot" "$log")" = 2
+check "both input devices are found" test "$(sed -n '1,/a shell on the console/p' "$log" | grep -ac "virtio-input: device in slot")" = 2
 check "the root is mounted from the RAM disk" grep -aq 'apfs: volume 0 "Root"' "$log"
 check "its first process runs, as pid 1" grep -aq "user space: /sbin/launchd, pid 1" "$log"
 check "... and hears from the kernel what it is" grep -aq "board      qemu-virt" "$log"
@@ -112,6 +112,9 @@ check "a button pressed on the virtio keyboard reaches the input device" \
 check "... and a touch on the virtio tablet, where it was made" grep -aq "touch down finger 0 at 3276[0-9],1638[0-9]" "$log"
 check "it starts a process of its own (posix_spawn), which runs as its child" grep -aqE "^ +[0-9]+ +1 +0  launchd" "$log"
 check "... and waits for it to end, as it ended" grep -aqE "^run: pid [0-9]+ exited with 0" "$log"
+# (no wait for a clock that is not there: the first process starts some seconds after the kernel, not 30 more)
+check "the kernel starts its first process within 20 seconds of its own start" bash -c "tr -d '\\r' < '$log' |
+	grep -aoE '^\\[ *[0-9]+\\.[0-9]+\\]: load_init_program: attempting to load /sbin/launchd' | tr -d '[]:' | awk '{ exit !(\$1 < 20) }'"
 check "the kernel's message buffer is read (dmesg)" bash -c "tr -d '\\r' < '$log' | sed -n '/^# dmesg/,\$p' | grep -qE '^\\[ *[0-9]+\\.[0-9]+\\]: '"
 check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"

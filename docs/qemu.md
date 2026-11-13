@@ -72,7 +72,8 @@ line at a time:
 
 ## What `make qemu` holds
 
-The loader jumps to the kernel; the kernel starts on two processors and finds the emulator's board;
+The loader jumps to the kernel; the kernel starts on two processors and finds the emulator's board, and
+starts its first process within 20 seconds of its own start (in QEMU's emulation, about 7);
 `en0` attaches with its link up and both input devices are found; the root mounts from the RAM disk;
 `/sbin/launchd` runs as pid 1 and its shell answers what is typed; `en0` takes an address, QEMU's
 gateway answers its pings, its TCP serves this machine a page through a forwarded port and asks this
