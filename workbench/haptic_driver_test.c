@@ -264,7 +264,7 @@ only_androids_registers(void)
 			ok |= allowed[i] == reg;
 		}
 		if (register_written[reg] && !ok) {
-			fprintf(stderr, "register %#04x was written\n", reg);
+			fprintf(stderr, "register 0x%02x was written\n", reg);
 			return false;
 		}
 	}
@@ -289,7 +289,7 @@ configured(void)
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(logged("haptic: Android's configuration is written"), "said: %s", log_text);
 	for (unsigned i = 0; i < sizeof(androids) / sizeof(androids[0]); i++) {
-		CHECK(register_written[androids[i][0]] && device.reg[androids[i][0]] == androids[i][1], "register %#04x holds %#04x, Android's is %#04x",
+		CHECK(register_written[androids[i][0]] && device.reg[androids[i][0]] == androids[i][1], "register 0x%02x holds 0x%02x, Android's is 0x%02x",
 		    androids[i][0], device.reg[androids[i][0]], androids[i][1]);
 	}
 	CHECK(device.reg[0x5b] == 0 && analog_while_closed == 0, "their lock was open for them and is closed again (%u written while closed)",

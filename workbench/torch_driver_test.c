@@ -50,7 +50,7 @@ flash_written(struct spmi_peripheral *p, uint8_t reg, uint8_t value)
 	if (reg != REG_TIMER0 && reg != REG_ITARGET0 && reg != REG_MODULE_EN && reg != REG_IRES && reg != REG_STROBE0 &&
 	    reg != REG_EN_LED) {
 		forbidden_writes++;
-		fprintf(stderr, "MODEL: a write to register %#04x of the flash module, which is not one of the six\n", reg);
+		fprintf(stderr, "MODEL: a write to register 0x%02x of the flash module, which is not one of the six\n", reg);
 	}
 	if (reg == REG_ITARGET0 && (value & 0x7fu) > highest_target) {
 		highest_target = value & 0x7f;
