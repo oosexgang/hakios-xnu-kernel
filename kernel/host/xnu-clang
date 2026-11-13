@@ -21,5 +21,7 @@ for a in "$@"; do
     *) args+=("$a");;
   esac
 done
-exec "${XNU_CLANG_DIR:-/usr/bin}/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+# the generic Darwin target, for the version the phones' SDK says (clang takes it from this variable)
+export IPHONEOS_DEPLOYMENT_TARGET=${XNU_SDK_VERSION:-16.5}
+exec "${XNU_CLANG_DIR:-/usr/bin}/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-darwin --ld-path="$HB/ld64" \
   "${quiet[@]}" "${extra[@]}" "${args[@]}"

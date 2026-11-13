@@ -72,7 +72,8 @@ if [ -x "$KERNEL_DIR/../tools/boards.py" ]; then
 	"$KERNEL_DIR/../tools/boards.py" gen --out "$gen" > /dev/null
 fi
 
-flags=(--target=arm64-apple-ios16.5 -fsyntax-only -ferror-limit=5 -nostdinc
+export IPHONEOS_DEPLOYMENT_TARGET=16.5   # (the generic Darwin target, for this version of the SDK)
+flags=(--target=arm64-apple-darwin -fsyntax-only -ferror-limit=5 -nostdinc
 	-isystem "$(clang -print-resource-dir)/include"
 	-include "$KERNEL_DIR/deps/hostinc/xnu_clang_compat.h" -mkernel
 	-DKERNEL -DKERNEL_PRIVATE -DXNU_KERNEL_PRIVATE -DBSD_KERNEL_PRIVATE -DPRIVATE -D__arm64__

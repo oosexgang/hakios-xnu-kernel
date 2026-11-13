@@ -42,7 +42,7 @@ usage:
           ipsw dyld objc sel $C -i $i     >> selmap.txt          # the uniqued table
           ipsw dyld extract $C $i --output ext                   # the metadata
   done
-  clang -target arm64-apple-ios16.5 -isysroot ~/theos/sdks/iPhoneOS16.5.sdk -w -S \
+  IPHONEOS_DEPLOYMENT_TARGET=16.5 clang -target arm64-apple-darwin -isysroot ~/theos/sdks/iPhoneOS16.5.sdk -w -S \
         userland/src/hakiosmetal.m -o hakiosmetal.s
   owes.py --dump Metal.txt --dump AGXMetalA11.txt --dump IOGPU.txt \
           --images ext --selmap selmap.txt --asm hakiosmetal.s [--verbose]

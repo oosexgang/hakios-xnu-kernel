@@ -80,7 +80,7 @@ if [ ! -x venv/bin/python3 ]; then
 fi
 export PATH=$B/venv/bin:$PATH
 
-# the compiler is the kernel's wrapper: it names the target (arm64-apple-ios) and the linker (ld64)
+# the compiler is the kernel's wrapper: it names the target (arm64-apple-darwin, at the SDK's version) and the linker (ld64)
 cat > cross.ini <<INI
 [binaries]
 c = ['$CC', '-arch', 'arm64', '-isysroot', '$SDK']
