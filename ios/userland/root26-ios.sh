@@ -46,6 +46,9 @@ $DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o "$OBJ/ne
 # touches, buttons and notifications for job lists (RC_JOBS=...; usage in its source): a swipe up unlocks, as a finger does
 $DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
 "$PACSTRIP" macho "$OBJ/rwtouch" "$OBJ/rwtouch.strip" > /dev/null && mv "$OBJ/rwtouch.strip" "$OBJ/rwtouch"
+# the flashlight as an application reaches it, through AVFlashlight (rc.jobs.torch; ios/userland/torch_test.c)
+$DYN -framework CoreFoundation -lobjc -o "$OBJ/torch_test" "$RN/userland/torch_test.c"
+"$PACSTRIP" macho "$OBJ/torch_test" "$OBJ/torch_test.strip" > /dev/null && mv "$OBJ/torch_test.strip" "$OBJ/torch_test"
 
 # --- the tree ----------------------------------------------------------------------------------------
 rm -rf "$T"
@@ -61,6 +64,7 @@ for f in ${EXTRA_BIN:-}; do
 	"$PACSTRIP" macho "$f" "$T/bin/$(basename "$f")" > /dev/null && chmod 755 "$T/bin/$(basename "$f")"
 done
 cp "$OBJ/rwtouch" "$T/bin/rwtouch"
+cp "$OBJ/torch_test" "$T/bin/torch_test"
 # the SSH server and its shell, when ios/userland/ssh.sh has built them (rc.jobs.ssh starts the server); the keys of
 # this machine's ../ssh/ with them, unless SHARE=1 (an image for somebody else: no host key of ours in it). dropbear
 # refuses keys whose file or directory anyone but their owner may write: 600 and 700
@@ -266,6 +270,9 @@ echo "/redwood/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
+# cameracaptured, iOS 27's camera daemon: the flashlight's server given the kernel's flashlight (src:
+# ios/userland/inject_capture.c). It does nothing where the kernel has none (boot-arg torch=3).
+echo "/redwood/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys

@@ -321,6 +321,19 @@ supported(const struct prop *p, size_t n)
 	return all;
 }
 
+/*
+ * A stream format as the plist's matches it (csu_resolveFormatIndexForNamedStreamFormat): the sensor's
+ * size, the frame rate ("MaxFrameRate", compared exactly), SIFR ("SIFREnabled", iOS 26/27), the front-end
+ * scaler's output where the plist's format is an FES one; and the crop the picture is taken from (0: all
+ * of the sensor), which the scalers' and the still image's native sizes are as well.
+ */
+struct fmt {
+	int             width, height, fps;
+	bool            sifr;
+	int             fes_width, fes_height, crop_width, crop_height;
+};
+#define FORMATS 3
+
 /* ---- the formats ----------------------------------------------------------------------------------- */
 
 #define PF_420F         0x34323066      /* '420f' */
@@ -348,10 +361,15 @@ output_info(int width, int height)
 }
 
 static CFDictionaryRef
-format(int sensor_width, int sensor_height, int max_fps, bool binned, double fov)
+format(const struct fmt *spec, bool binned, double fov)
 {
 	CFMutableDictionaryRef f = (CFMutableDictionaryRef)new_dict(), outputs = (CFMutableDictionaryRef)new_dict();
 	CMVideoFormatDescriptionRef fd = NULL;
+	int sensor_width = spec->width, sensor_height = spec->height, max_fps = spec->fps;
+	int crop_width = spec->crop_width ? spec->crop_width : sensor_width;
+	int crop_height = spec->crop_height ? spec->crop_height : sensor_height;
+	int scaler_width = spec->fes_width ? spec->fes_width : crop_width;
+	int scaler_height = spec->fes_height ? spec->fes_height : crop_height;
 
 	CMVideoFormatDescriptionCreate(NULL, PF_420F, sensor_width, sensor_height, NULL, &fd);
 	if (fd != NULL) {
@@ -379,18 +397,26 @@ format(int sensor_width, int sensor_height, int max_fps, bool binned, double fov
 	 * output dimensions (confirmed by a hook: -[FigCaptureSourceVideoFormat sensorCropDimensions] /
 	 * postGDCCropDimensions] return these). Everything spans the full sensor: no GDC crop.
 	 */
-	put(f, "SensorCropWidth", number_i(sensor_width));
-	put(f, "SensorCropHeight", number_i(sensor_height));
-	put(f, "PreGDCSensorCropWidth", number_i(sensor_width));
-	put(f, "PreGDCSensorCropHeight", number_i(sensor_height));
-	put(f, "PostGDCCropWidth", number_i(sensor_width));
-	put(f, "PostGDCCropHeight", number_i(sensor_height));
-	put(f, "GeometricDistortionCorrectedNativeWidth", number_i(sensor_width));
-	put(f, "GeometricDistortionCorrectedNativeHeight", number_i(sensor_height));
+	put(f, "SensorCropWidth", number_i(crop_width));
+	put(f, "SensorCropHeight", number_i(crop_height));
+	put(f, "PreGDCSensorCropWidth", number_i(crop_width));
+	put(f, "PreGDCSensorCropHeight", number_i(crop_height));
+	put(f, "PostGDCCropWidth", number_i(crop_width));
+	put(f, "PostGDCCropHeight", number_i(crop_height));
+	put(f, "GeometricDistortionCorrectedNativeWidth", number_i(crop_width));
+	put(f, "GeometricDistortionCorrectedNativeHeight", number_i(crop_height));
+	/* (iOS 26/27: what the plist's format is matched on besides the sizes and the frame rate) */
+	if (spec->sifr) {
+		put(f, "SIFREnabled", CFRetain(kCFBooleanTrue));
+	}
+	if (spec->fes_width) {
+		put(f, "FrontEndScalerOutputWidth", number_i(spec->fes_width));
+		put(f, "FrontEndScalerOutputHeight", number_i(spec->fes_height));
+	}
 
-	put(outputs, "PrimaryScaler", output_info(sensor_width, sensor_height));
-	put(outputs, "SecondaryScaler", output_info(sensor_width, sensor_height));
-	put(outputs, "StillImage", output_info(sensor_width, sensor_height));
+	put(outputs, "PrimaryScaler", output_info(scaler_width, scaler_height));
+	put(outputs, "SecondaryScaler", output_info(scaler_width, scaler_height));
+	put(outputs, "StillImage", output_info(crop_width, crop_height));
 	put(f, "SupportedOutputs", outputs);
 	return f;
 }
@@ -424,17 +450,32 @@ static const char *const output_names[OUTPUTS] = { "PrimaryScaler", "SecondarySc
  * and frame rate): the wide camera as the back camera, the front one as the front camera. The kernel
  * gives one sensor's frames at a time; a stream's frames start with its own sensor's (see worker()).
  */
+
 static const struct camera {
 	uint32_t        sensor;         /* the kernel's (the frames' sensor, HAKIOS_CAMERA_SENSOR) */
 	const char      *name, *unique_id;
 	bool            turned;         /* its sensor the other way up from the iPhone's: the pictures turned half round */
 	double          focal_length, f_number, pixel_size, fov;
-	int             formats[2][3];  /* sensor width, height, frames a second of "Photo" and of a video format */
+	struct fmt      formats[FORMATS];       /* those there are (width 0 after the last) */
 } cameras[2] = {
+#ifdef HAKIOS_IOS27
+	/*
+	 * iOS 26/27: the identity is an iPhone 11 (iPhone12,1), so the formats are N104's, from
+	 * CMCapture.framework/N104/AVCaptureSession.plist: "Photo", "Video-FullSensor-FES-30" (1080p and 720p at
+	 * 30 and the High preset), "Video-60" (back) or "Video-30" (front: UHD). None of D22's would match.
+	 */
+	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.25, 1.8, 1.4, 68.0,
+	  { { 4224, 3168, 60, true, 0, 0, 4032, 3024 }, { 4224, 3168, 30, true, 2304, 1728, 4224, 2376 },
+	    { 4224, 2384, 60, true, 0, 0, 4224, 2376 } } },
+	{ 2, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", true, 2.71, 2.2, 1.0, 70.0,
+	  { { 4032, 3024, 30, true, 0, 0, 4032, 3024 }, { 4032, 3024, 30, true, 2112, 1584, 4032, 2268 },
+	    { 4032, 2272, 30, true, 0, 0, 4032, 2268 } } },
+#else
 	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.0, 1.8, 1.22, 65.0,
 	  { { 4032, 3024, 30 }, { 4224, 2376, 60 } } },        /* "Photo", "Video-60" */
 	{ 2, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", true, 2.87, 2.2, 1.0, 70.0,
 	  { { 3088, 2320, 30 }, { 3840, 2160, 30 } } },        /* "Photo", "Video-30" */
+#endif
 };
 
 struct stream {
@@ -573,6 +614,19 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	} else if (key_is(key, "HasAutoFocusPositionSensor") || key_is(key, "HighCurrentTorchEnabled") ||
 	    key_is(key, "DeferAdditionOfAttachments")) {
 		value = CFRetain(kCFBooleanFalse);
+	} else if (key_is(key, "AEMaxGain")) {
+		/*
+		 * Listed in the supported properties, so asked for with IfSupported: at the stream's start, where an
+		 * error is a failure (iOS 26/27). The format's own limits: 64x the most gain, 1x the least, the
+		 * longest exposure a fifteenth of a second, and the frame rate the format's.
+		 */
+		value = number_f(64);
+	} else if (key_is(key, "AEMinGain")) {
+		value = number_f(1);
+	} else if (key_is(key, "MaxIntegrationTime")) {
+		value = number_i(1000000 / 15);
+	} else if (key_is(key, "MaximumAllowedFrameRate")) {
+		value = number_f(s->max_fps);
 	} else {
 		say_once("stream: no answer for", key, NULL);
 		return ERR_NOT_AVAILABLE;
@@ -1655,13 +1709,17 @@ stream_create(CFAllocatorRef allocator, const struct camera *camera, CFStringRef
 		s->out[i].name = output_names[i];
 	}
 
-	CFDictionaryRef f[2] = { format(camera->formats[0][0], camera->formats[0][1], camera->formats[0][2], false, camera->fov),
-		format(camera->formats[1][0], camera->formats[1][1], camera->formats[1][2], false, camera->fov) };
+	CFDictionaryRef f[FORMATS];
+	int n = 0;
 
-	s->formats = CFArrayCreate(NULL, (const void **)f, 2, &kCFTypeArrayCallBacks);
+	for (; n < FORMATS && camera->formats[n].width != 0; n++) {
+		f[n] = format(&camera->formats[n], false, camera->fov);
+	}
+	s->formats = CFArrayCreate(NULL, (const void **)f, n, &kCFTypeArrayCallBacks);
 	s->supported = supported(stream_props, sizeof(stream_props) / sizeof(stream_props[0]));
-	CFRelease(f[0]);
-	CFRelease(f[1]);
+	for (int i = 0; i < n; i++) {
+		CFRelease(f[i]);
+	}
 	return o;
 }
 
@@ -1686,6 +1744,12 @@ device_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	} else if (key_is(key, "SupportedPropertiesDictionary")) {
 		value = CFRetain(d->supported);
 	} else if (key_is(key, "SupportedSynchronizedStreamsGroups")) {
+		value = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+	} else if (key_is(key, "SupportedISPProcessionSessionTypes")) {
+		/*
+		 * (Apple's spelling.) iOS 26/27's -[BWFigCaptureDevice supportsISPProcessingSessionType:error:] asks,
+		 * and an error but "not supported" fails the camera pipeline's configuration: there are none.
+		 */
 		value = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
 	} else {
 		say_once("device: no answer for", key, NULL);

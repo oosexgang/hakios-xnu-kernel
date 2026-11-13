@@ -22,8 +22,10 @@
  *
  * What iOS's flashlight is on this machine: the loader says the camera has a flash (with torch=N,
  * /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and
- * libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device
- * of ours whose torch level is written to /dev/hakios-torch (userland/src/inject_media.c).
+ * the flashlight's server, which finds no camera here, is handed a device of ours whose torch level
+ * is written to /dev/hakios-torch: on iOS 26/27 libhakios-capture.dylib in cameracaptured gives each
+ * FigFlashlightLocal that device and stream (ios/userland/inject_capture.c); on 16.5 it was
+ * libhakios-media.dylib in mediaserverd, for FigFlashlight (userland/src/inject_media.c).
  *
  * Nothing here is done unless a boot-arg asks for it:
  *
