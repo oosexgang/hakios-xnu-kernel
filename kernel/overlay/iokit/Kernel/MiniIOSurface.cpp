@@ -1422,6 +1422,8 @@ IOSurfaceRootUserClient::methodCreate(IOExternalMethodArguments * args)
 	}
 
 	uint64_t mapped_at = mach_absolute_time();
+	/* (read now: where the client got no reference, the hold given up below was the last and s is gone) */
+	bool big = s->info.allocSize >= SURFACE_KEEP_FROM;
 	IOLockLock(gSurfaceLock);
 	ref = addRef(s);
 	ret = ref ? returnSurface(ref, false, args) : kIOReturnNoMemory;
@@ -1433,7 +1435,7 @@ IOSurfaceRootUserClient::methodCreate(IOExternalMethodArguments * args)
 	mapped_at = mach_absolute_time() - mapped_at;
 	OSAddAtomic64((SInt64) (mach_absolute_time() - began), (SInt64 *) &gSurfaceMaking);
 	OSIncrementAtomic(&gSurfacesMade);
-	if (s->info.allocSize >= SURFACE_KEEP_FROM) {
+	if (big) {
 		/* the big ones (the window server's of the whole display): where the time to make one goes, every 5 s */
 		static uint64_t since, all, making, mapping;
 		static uint32_t count;
