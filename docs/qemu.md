@@ -52,6 +52,8 @@ line at a time:
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. |
 | `mount apfs DEVICE DIR` | A disk's APFS volume, read only. |
 | `input [COUNT]` | What the touch screen and the buttons say (`/dev/hakios-touch`), as the kernel's input path hands it on. |
+| `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
+| `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
@@ -62,7 +64,8 @@ The loader jumps to the kernel; the kernel starts on two processors and finds th
 gateway answers its pings, and its TCP serves this machine a page through a forwarded port; a second
 APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
-and a touch on its tablet reach the input device, the touch where it was made; nothing panics.
+and a touch on its tablet reach the input device, the touch where it was made; a process started by the
+shell runs as its child and is waited for; the kernel's message buffer is read; nothing panics.
 
 ## What it is not
 
