@@ -208,6 +208,191 @@ l3_raise(void)
 }
 
 /*
+ * The system cache (LLCC: between the cores' L3 and the memory, shared with the GPU and the rest; Linux
+ * drivers/soc/qcom/llcc-qcom.c with sc7280's table, the device tree's "qcom,sc7280-llcc" at 0x9200000, 0x9280000
+ * and the broadcast block at 0x9600000). Nothing here programmed it: whether the processors' slice is in use is
+ * whatever the boot loader left. Boot-arg llcc=1: a look (the block's version, its banks, each slice's attributes
+ * and state); llcc=2: the processors' slice (1) and the one of the SMMU's table walks (13) programmed as Linux does
+ * and activated, the GPU's two (11, 12) programmed only (activating those is the GPU's own business), and a load
+ * chasing through 1-6 MB before and after. The slices activated here are taken back on the way to the loader.
+ * What it found here (logs/194716-run.log in hakios-sm7325): version 2.0, two banks, no slice programmed or active.
+ * With the processors' slice on, the kernel's chase through 3 MB took 20.7 ns a load against 25.8 (1-2 MB and 4-6 MB
+ * the same), but nothing else measured moved: SpringBoard's turn after a tap on an icon 180-190 ms against 196-197,
+ * the gap before the opening animation 225-233 ms against 192-242. So it is left off, as the L3's clock is.
+ */
+#define LLCC_BANK0              0x09200000
+#define LLCC_BCAST              0x09600000
+#define LLCC_SIZE               0x58000
+#define LLCC_HW_INFO            0x30000         /* (broadcast) the version: 0xMMmmpp00 */
+#define LLCC_STATUS0            0x3000c         /* (a bank) [31:28] the number of banks */
+#define LLCC_ACT_CTRL(n)        ((n) * 0x1000)  /* [0] trigger, [2:1] opcode: 1 activate, 2 deactivate */
+#define LLCC_ACT_STATUS(n)      (4 + (n) * 0x1000)      /* [0] active, [1] inactive */
+#define LLCC_ATTR0(n)           (0x21000 + 8 * (n))     /* [15:0] reserved ways, [31:16] bonus ways */
+#define LLCC_ATTR1(n)           (0x21004 + 8 * (n))     /* [1:0] mode, [2] probe target, [3] fixed, [6:4] priority, [31:16] lines a bank */
+#define LLCC_DIS_CAP_ALLOC      0x21f00
+#define LLCC_PCB_ACT            0x21f04         /* a bit a slice: kept through a power collapse */
+#define LLCC_WRSC_EN            0x21f20
+#define LLCC_WRSC_CACHEABLE_EN  0x21f2c
+#define LLCC_CHASE_MAX          (6u << 20)
+
+static const struct llcc_slice {
+	uint8_t id, priority, fixed, retain, activate;
+	uint16_t kb;
+} llcc_slices[] = {
+	{ 1, 1, 0, 1, 1, 768 },         /* CPUSS: the processors */
+	{ 11, 1, 1, 1, 0, 256 },        /* GPUHTW: the GPU's SMMU table walks */
+	{ 12, 1, 0, 1, 0, 512 },        /* GPU */
+	{ 13, 1, 1, 0, 1, 256 },        /* MMUHWT: the system SMMU's table walks */
+};
+static vm_offset_t llcc_bcast;
+static bool llcc_activated;
+
+static void
+llcc_chain(vm_offset_t buffer, uint32_t *perm, uint32_t bytes)
+{
+	uint32_t lines = bytes / 64, seed = 12345;
+
+	for (uint32_t i = 0; i < lines; i++) perm[i] = i;
+	for (uint32_t i = lines - 1; i > 0; i--) {
+		uint32_t j, t;
+
+		seed = seed * 1103515245u + 12345u;
+		j = (seed >> 8) % (i + 1);
+		t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+	}
+	for (uint32_t i = 0; i < lines; i++) {
+		*(uint64_t *)(buffer + 64ull * perm[i]) = buffer + 64ull * perm[(i + 1) % lines];
+	}
+}
+
+static void
+llcc_chase_all(vm_offset_t buffer, uint32_t *perm, const char *when)
+{
+	static const uint32_t sizes[] = { 1u << 20, 2u << 20, 3u << 20, 4u << 20, 6u << 20 };
+	char line[200];
+	int used = 0;
+
+	for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		llcc_chain(buffer, perm, sizes[i]);
+		used += snprintf(line + used, sizeof(line) - (size_t)used, " %u KB %llu/100 ns,", sizes[i] >> 10,
+		    l3_chase_ns(buffer));
+	}
+	tell("llcc: a load chasing through%s %s\n", line, when);
+}
+
+static bool
+llcc_act(uint32_t id, bool activate)
+{
+	volatile uint32_t *ctrl = (volatile uint32_t *)(llcc_bcast + LLCC_ACT_CTRL(id));
+	volatile uint32_t *status = (volatile uint32_t *)(llcc_bcast + LLCC_ACT_STATUS(id));
+	uint32_t opcode = activate ? 1u << 1 : 2u << 1, waiting_for = activate ? 2u : 1u;
+
+	*ctrl = opcode | 1;             /* the trigger up, then down (Linux: llcc_update_act_ctrl()) */
+	*ctrl = opcode;
+	for (int i = 0; i < 2000; i++) {        /* (reads only, no delay: this runs with interrupts off as well) */
+		if ((*status & waiting_for) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void
+llcc_setup(void)
+{
+	uint32_t mode = 0, version, banks;
+	vm_offset_t bank0, buffer = 0;
+	uint32_t *perm = NULL;
+
+	PE_parse_boot_argn("llcc", &mode, sizeof(mode));
+	if (mode == 0) {
+		return;
+	}
+	if (hakios_board()->cpufreq.epss != L3_EPSS + 0x1000) {
+		tell("llcc: not this SoC (the cores' EPSS at %#x): left alone\n", hakios_board()->cpufreq.epss);
+		return;
+	}
+	llcc_bcast = ml_io_map(LLCC_BCAST, LLCC_SIZE);
+	bank0 = ml_io_map(LLCC_BANK0, LLCC_SIZE);
+	version = *(volatile uint32_t *)(llcc_bcast + LLCC_HW_INFO);
+	banks = *(volatile uint32_t *)(bank0 + LLCC_STATUS0) >> 28;
+	tell("llcc: version %#x, %u banks; kept through power collapse %#x, writes' slices %#x/%#x, no capacity %#x\n",
+	    version, banks, *(volatile uint32_t *)(llcc_bcast + LLCC_PCB_ACT), *(volatile uint32_t *)(llcc_bcast + LLCC_WRSC_EN),
+	    *(volatile uint32_t *)(llcc_bcast + LLCC_WRSC_CACHEABLE_EN), *(volatile uint32_t *)(llcc_bcast + LLCC_DIS_CAP_ALLOC));
+	for (uint32_t id = 0; id < 32; id++) {
+		uint32_t a0 = *(volatile uint32_t *)(llcc_bcast + LLCC_ATTR0(id)), a1 = *(volatile uint32_t *)(llcc_bcast + LLCC_ATTR1(id));
+		uint32_t st = *(volatile uint32_t *)(llcc_bcast + LLCC_ACT_STATUS(id));
+
+		if (a0 != 0 || a1 != 0 || (st & 1) != 0) {
+			tell("llcc: slice %2u: %s, ways %#x+%#x, priority %u%s, %u KB\n", id, st & 1 ? "ACTIVE" : st & 2 ? "inactive" : "state 0",
+			    a0 & 0xffff, a0 >> 16, (a1 >> 4) & 7, a1 & 8 ? " fixed" : "", (a1 >> 16) * 64 * (banks ? banks : 1) / 1024);
+		}
+	}
+	if (mode != 2) {
+		return;
+	}
+	if (version >= 0x04010000 || banks == 0 || banks > 4) {
+		tell("llcc: not the block this was written for: left alone\n");
+		return;
+	}
+	if (kmem_alloc(kernel_map, &buffer, LLCC_CHASE_MAX, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS ||
+	    kmem_alloc(kernel_map, (vm_offset_t *)&perm, LLCC_CHASE_MAX / 64 * sizeof(uint32_t), KMA_KOBJECT | KMA_DATA,
+	    VM_KERN_MEMORY_DIAG) != KERN_SUCCESS) {
+		if (buffer != 0) {
+			kmem_free(kernel_map, buffer, LLCC_CHASE_MAX);
+		}
+		buffer = 0;
+	}
+	if (buffer != 0) {
+		llcc_chase_all(buffer, perm, "before");
+	}
+	for (unsigned i = 0; i < sizeof(llcc_slices) / sizeof(llcc_slices[0]); i++) {
+		const struct llcc_slice *s = &llcc_slices[i];
+		uint32_t lines = s->kb * 1024u / banks / 64, bit = 1u << s->id;
+
+		*(volatile uint32_t *)(llcc_bcast + LLCC_ATTR1(s->id)) = (uint32_t)s->fixed << 3 | (uint32_t)s->priority << 4 | lines << 16;
+		*(volatile uint32_t *)(llcc_bcast + LLCC_ATTR0(s->id)) = 0x3fu << 16;
+		*(volatile uint32_t *)(llcc_bcast + LLCC_DIS_CAP_ALLOC) &= ~bit;
+		*(volatile uint32_t *)(llcc_bcast + LLCC_PCB_ACT) = (*(volatile uint32_t *)(llcc_bcast + LLCC_PCB_ACT) & ~bit) |
+		    (s->retain ? bit : 0);
+		if (version >= 0x02000000) {
+			*(volatile uint32_t *)(llcc_bcast + LLCC_WRSC_EN) &= ~bit;
+		}
+		if (version >= 0x02010000) {
+			*(volatile uint32_t *)(llcc_bcast + LLCC_WRSC_CACHEABLE_EN) &= ~bit;
+		}
+		if (s->activate) {
+			bool done = llcc_act(s->id, true);
+
+			llcc_activated = llcc_activated || done;
+			tell("llcc: slice %u (%u KB) activated: %s, state %#x\n", s->id, s->kb, done ? "yes" : "NO",
+			    *(volatile uint32_t *)(llcc_bcast + LLCC_ACT_STATUS(s->id)));
+		}
+	}
+	if (buffer != 0) {
+		llcc_chase_all(buffer, perm, "after");
+		kmem_free(kernel_map, buffer, LLCC_CHASE_MAX);
+		kmem_free(kernel_map, (vm_offset_t)perm, LLCC_CHASE_MAX / 64 * sizeof(uint32_t));
+	}
+}
+
+/* On the way back to the loader (interrupts off): the slices activated above, deactivated. */
+static void
+llcc_quiesce(void)
+{
+	if (!llcc_activated) {
+		return;
+	}
+	llcc_activated = false;
+	for (unsigned i = 0; i < sizeof(llcc_slices) / sizeof(llcc_slices[0]); i++) {
+		if (llcc_slices[i].activate) {
+			(void)llcc_act(llcc_slices[i].id, false);
+		}
+	}
+	tell("llcc: the slices activated at boot deactivated for the loader\n");
+}
+
+/*
  * Boot-arg membench=1: how fast this processor reads, writes and copies memory, in MB a second
  * (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which
  * nobody here asks to be raised.
@@ -906,6 +1091,7 @@ hakios_ddr_quiesce(void)
 	if (gov_on) {
 		gov_quiesce();
 	}
+	llcc_quiesce();
 	if (!ddr_voted) {
 		return;
 	}
@@ -968,6 +1154,7 @@ hakios_cpufreq_init(void)
 	}
 	printf("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
 	l3_raise();
+	llcc_setup();
 	/* the groups by their load from here on (cpu_gov), and the small cores parked (park_small): one thread looks */
 	gov_start();
 	park_start();
