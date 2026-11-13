@@ -8,8 +8,8 @@
 #   - the devices: a second disk (virtio block, APFS); a tone (virtio sound, which QEMU writes to a WAV
 #     file); a button and a touch from QEMU's keyboard and tablet
 #   - processes: one started and waited for, one ended by a signal, two by their own mistakes; signals
-#     caught by a handler; a pipe between two; threads on both processors at once; Mach messages;
-#     kqueue's timer and a pipe's readiness
+#     caught by a handler; a pipe between two; a descriptor sent over a socket pair; threads on both
+#     processors at once; Mach messages; kqueue's timer and a pipe's readiness
 #   - files and memory: a file written, read and removed in ramfs; a program's file mapped; memory of its
 #     own taken, used and given back; the kernel's messages read; the date
 #
@@ -74,6 +74,7 @@ typed=(
 	'run /sbin/launchd crash illegal'
 	'alarm 5'
 	'memory 128'
+	'unix /etc/motd'
 )
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
@@ -128,6 +129,8 @@ check "a timer's signals are caught by a handler and the thread goes back where 
 check "memory of its own is given, holds what is written, and is all given back" \
 	bash -c "grep -aoE '^memory: 128 MB written and read back in [0-9]+ ms, all as written; free: [0-9]+ MB before, [0-9]+ MB with it, [0-9]+ MB after' '$log' |
 	awk '{ exit !(\$15 - \$18 >= 120 && \$22 - \$15 > -8) }'"
+check "a descriptor sent over a socket pair (SCM_RIGHTS) comes out and reads the file it was" \
+	grep -aq '^unix: "sent" and descriptor [0-9]* came through; it reads: This root was made by tools/qemu-root.sh' "$log"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
