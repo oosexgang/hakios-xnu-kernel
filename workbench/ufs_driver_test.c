@@ -446,6 +446,7 @@ writer_claims_first(void)
 	CHECK(try_as_root("var_busy", 1) == 0 && get("var_busy") == 100, "left by a process that is gone, it is taken");
 	CHECK(logged("var_store: the claim on the store was left by process 200, which is gone"), "and that is said: %s", log_text);
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST), &done) == 0 && writes_asked == 1, "and its holder writes");
+	CHECK(try_as_root("var_busy", 1) == 0 && get("var_busy") == 100, "taken again by its holder: still its own");
 	CHECK(try_as_root("var_busy", 0) == 0 && get("var_busy") == 0, "given back");
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST), &done) == EPERM && writes_asked == 1, "after which a write is refused again");
 }
@@ -593,6 +594,24 @@ page_not_usable(void)
 	CHECK(asked_n == 0, "case %u: the loader was asked nothing", i);
 }
 
+/* the smallest buffer a page may offer, one block: a read of three blocks is three requests */
+static void
+a_buffer_of_one_block(void)
+{
+	static uint8_t data[3 * 4096];
+	size_t done = 0;
+
+	loader("");
+	page->buffer_size = 4096;
+	page->part[BOOT].block_size = 4096;     /* (no partition's blocks may be larger than the buffer) */
+	hakios_ufs_init();
+	CHECK(fake_dev_pread("rufs_darwin", data, sizeof(data), AT(10), &done) == 0 && done == sizeof(data) &&
+	    is_disk(DARWIN, 10 * 4096, data, sizeof(data)), "read: %s", log_text);
+	CHECK(asked_n == 3 && asked[0].count == 1 && asked[1].lba == 11 && asked[2].lba == 12 && asked[2].count == 1,
+	    "a block a request: %u requests", asked_n);
+	CHECK(too_long == 0, "none longer than the buffer");
+}
+
 /* the run is ending: nothing more is asked of the loader */
 static void
 closing(void)
@@ -665,7 +684,7 @@ main(int argc, char **argv)
 		{ "long_write", long_write, 1 }, { "writer_claims_first", writer_claims_first, 1 },
 		{ "partition_must_be_the_ports", partition_must_be_the_ports, 10 }, { "loader_fails", loader_fails, 1 },
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
-		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "saver_is_asked", saver_is_asked, 1 },
+		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 }, { "saver_is_asked", saver_is_asked, 1 },
 		{ "off_without_the_loader", off_without_the_loader, 1 },
 	};
 
