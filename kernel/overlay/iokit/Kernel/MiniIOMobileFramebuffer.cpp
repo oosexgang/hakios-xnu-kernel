@@ -579,7 +579,7 @@ IOMobileFramebuffer::publishModes(void)
 
 	if (timing == NULL || horizontal == NULL || vertical == NULL || color == NULL || refresh == NULL ||
 	    attributes == NULL || product == NULL || timings == NULL || colors == NULL || none == NULL) {
-		return;
+		goto out;                       /* (what was made is let go again) */
 	}
 	colorData[12] = 16;                                     /* colorimetry */
 	setNumber(color, "ID", kFBColorID);
@@ -662,6 +662,7 @@ IOMobileFramebuffer::publishModes(void)
 	setNumber(refresh, "displayRefreshStep", 0);
 	setNumber(refresh, "displayRefreshStepMachTime", 0);
 	setProperty("IOMFBDisplayRefresh", refresh);
+out:
 	OSSafeReleaseNULL(timings);
 	OSSafeReleaseNULL(colors);
 	OSSafeReleaseNULL(none);
