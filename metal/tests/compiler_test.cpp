@@ -1344,6 +1344,61 @@ TEST(a_stage_compiled_for_its_constant_buffer_reads_none_of_it) {
     CHECK(other != nullptr && other->listing.find("c0.x") != std::string::npos);
 }
 
+// What a stage's control flow depends on in its constant buffer, and a specialisation that folds that alone: tri_cloop_fs
+// adds the float4 at bytes 16 to 31 as many times as the uint at bytes 0 to 3 says. The loop's bound is a control byte,
+// the float4 is not; compiled for n = 3 with only the control bytes known, the stage reads the float4 from the buffer
+// (c1) and no longer the bound (c0.x) -- and two buffers that differ in the float4 alone are one stage in the cache.
+TEST(a_buffers_control_bytes_are_those_its_control_flow_reads) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: no control bytes said)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("tri_cloop_fs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::vector<uint8_t> mask;
+    std::string why;
+    CHECK(knownBufferControlBytes(bc.data(), bc.size(), {}, 0, 32, &mask, &why));
+    if (mask.size() != 32) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    for (size_t i = 0; i < 32; i++) {
+        if (i < 4) CHECK_EQ(mask[i], 1u);
+        else CHECK_EQ(mask[i], 0u);
+    }
+    uint8_t bytes[32] = {};
+    const uint32_t n = 3;
+    const float a[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+    memcpy(bytes, &n, 4);
+    memcpy(bytes + 16, a, 16);
+    KnownBuffer known;
+    known.binding = 0;
+    known.bytes.assign(bytes, bytes + 32);
+    known.fold = mask;
+    auto part = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(part != nullptr);
+    if (part == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK(part->listing.find("c1.") != std::string::npos || part->listing.find("c4") != std::string::npos);   // (the float4, read)
+    CHECK(part->listing.find("0x3e800000") == std::string::npos);                                                  // (not folded)
+    // every byte known, as before: nothing read at all
+    known.fold.clear();
+    auto whole = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(whole != nullptr && whole->stage.k.constlen == 0);
+    // the cache's name: the float4 changed, the control bytes not -- one stage; the bound changed -- another
+    setenv("HAKIOS_METAL_CACHE_SEED", "/nonexistent", 1);
+    known.fold = mask;
+    const std::string first = stageCacheFileName(bc.data(), bc.size(), {}, 0, &known);
+    known.bytes[16] ^= 0x40;
+    CHECK(stageCacheFileName(bc.data(), bc.size(), {}, 0, &known) == first);
+    known.bytes[0] = 4;
+    CHECK(stageCacheFileName(bc.data(), bc.size(), {}, 0, &known) != first);
+    unsetenv("HAKIOS_METAL_CACHE_SEED");
+}
+
 // Three specialisations of one module at once, as the plug-in's three queues start them: one thread translates the
 // module and the two others wait for it and take copies (compiler.cpp: translatedAgain), and each comes out with its own
 // buffer's values -- a copy that carried another's folded values, or a thread that took a half-made one, would show

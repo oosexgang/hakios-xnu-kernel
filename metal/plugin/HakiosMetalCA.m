@@ -1267,6 +1267,11 @@ HM_REFUSES_OUT_LOUD
 	int _specBinding;
 	unsigned _specLength;
 	NSMutableDictionary *_specialised;
+	/* which of those bytes choose the path (hakios_metal_function_control_bytes, once: 1 each), when known; the rest --
+	 * colours, opacities, sizes, which change every frame of an animation -- are read by the specialised program as by
+	 * the uber shader, and a specialisation is one for each content of the bytes that choose */
+	uint8_t _specFold[256];
+	BOOL _specFoldKnown, _specFoldAsked;
 	/* what it is to CoreAnimation's path renderer (ca_paths.h): CA_PATH_NONE for every other pipeline */
 	unsigned _pathRole, _pathShift;
 	BOOL _pathKeepsOnZero;   /* path_blit: its colour times a coverage of 0 leaves the attachments as they were */
@@ -8309,7 +8314,45 @@ hm_spec_off(void)
 	const uint8_t *bytes = (const uint8_t *)hakios_metal_buffer_contents(buffers[_specBinding]);
 	const uint64_t length = hakios_metal_buffer_length(buffers[_specBinding]), at = offsets[_specBinding];
 	if (bytes == NULL || at > length || length - at < _specLength) return _program;
-	NSData *key = [NSData dataWithBytes:bytes + at length:_specLength];
+	dispatch_once(&once, ^{
+		for (unsigned i = 0; i < HM_SPEC_QUEUES; i++) {
+			compiling[i] = dispatch_queue_create("hakios.metal.specialise", DISPATCH_QUEUE_SERIAL);
+		}
+	});
+	/* the bytes that choose the path, found once (a translation of the uber shader: on a queue of the compiles, the frame
+	 * drawn meanwhile by its own program); with boot-arg metal_spec_whole=1, every byte, as before */
+	BOOL ask = NO;
+	@synchronized(self) {
+		if (!_specFoldKnown && !_specFoldAsked) _specFoldAsked = ask = YES;
+	}
+	if (ask) {
+		[self retain];
+		dispatch_async(compiling[__atomic_fetch_add(&turn, 1, __ATOMIC_RELAXED) % HM_SPEC_QUEUES], ^{
+			uint8_t fold[256];
+			static int whole = -1;
+			if (whole < 0) whole = hm_boot_arg_set("metal_spec_whole=1");
+			int ok = !whole ? hakios_metal_function_control_bytes([_fsAir bytes], [_fsAir length], _fsConstants, _fsConstantCount,
+									      (unsigned)_specBinding, _specLength, fold) : -1;
+			unsigned control = 0;
+			for (unsigned i = 0; i < _specLength; i++) {
+				if (ok != 0) fold[i] = 1;   /* (not said: every byte, as before) */
+				control += fold[i] != 0;
+			}
+			if (hm_fps_on()) {
+				hm_print("specialise: %s: %u of the %u bytes of its buffer %d choose its path%s\n", hakios_metal_program_name(_program),
+					 control, _specLength, _specBinding, ok != 0 ? (whole ? " (metal_spec_whole=1)" : " (not said: all of them)") : "");
+			}
+			@synchronized(self) {
+				memcpy(_specFold, fold, _specLength);
+				_specFoldKnown = YES;
+			}
+			[self release];
+		});
+	}
+	if (!_specFoldKnown) return _program;
+	uint8_t chosen[256];
+	for (unsigned i = 0; i < _specLength; i++) chosen[i] = _specFold[i] != 0 ? bytes[at + i] : 0;
+	NSData *key = [NSData dataWithBytes:chosen length:_specLength];
 	hakios_metal_program *found = _program;
 	BOOL start = NO;
 
@@ -8324,18 +8367,14 @@ hm_spec_off(void)
 		}
 	}
 	if (start) {
-		dispatch_once(&once, ^{
-			for (unsigned i = 0; i < HM_SPEC_QUEUES; i++) {
-				compiling[i] = dispatch_queue_create("hakios.metal.specialise", DISPATCH_QUEUE_SERIAL);
-			}
-		});
 		[self retain];
 		dispatch_async(compiling[__atomic_fetch_add(&turn, 1, __ATOMIC_RELAXED) % HM_SPEC_QUEUES], ^{
 			struct timespec t0, t1;
 
 			clock_gettime(CLOCK_MONOTONIC, &t0);
-			hakios_metal_program *p = hakios_metal_program_specialize(_program, [_fsAir bytes], [_fsAir length], _fsConstants, _fsConstantCount,
-										 (unsigned)_specBinding, [key bytes], [key length]);
+			hakios_metal_program *p = hakios_metal_program_specialize_part(_program, [_fsAir bytes], [_fsAir length], _fsConstants,
+										      _fsConstantCount, (unsigned)_specBinding, [key bytes], _specFold,
+										      [key length]);
 			clock_gettime(CLOCK_MONOTONIC, &t1);
 			if (p == NULL) {
 				hm_print("specialise: %s for its buffer %d: %s; its own program goes on\n", hakios_metal_program_name(_program), _specBinding,

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <condition_variable>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #ifdef HAKIOS_METAL_MESA
@@ -54,6 +55,13 @@ bool argumentBufferLayout(const void*, size_t, uint32_t, std::vector<std::pair<u
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return false;
 }
+
+bool knownBufferControlBytes(const void*, size_t, const FunctionConstants&, uint32_t, size_t, std::vector<uint8_t>*, std::string* why) {
+    *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
+    return false;
+}
+
+std::string stageCacheFileName(const void*, size_t, const FunctionConstants&, uint32_t, const KnownBuffer*) { return {}; }
 
 #else
 
@@ -275,6 +283,13 @@ bool foldKnownLoad(nir_builder* b, nir_intrinsic_instr* intr, void* data) {
     const unsigned bits = intr->def.bit_size, comps = intr->def.num_components;
     const uint64_t at = nir_src_as_uint(intr->src[1]);
     if (bits % 8 != 0 || at + uint64_t(comps) * (bits / 8) > known->bytes.size()) return false;
+    if (!known->fold.empty()) {
+        // (a read of bytes not all known stays a read: the draw's buffer has them)
+        if (at + uint64_t(comps) * (bits / 8) > known->fold.size()) return false;
+        for (uint64_t i = at; i < at + uint64_t(comps) * (bits / 8); i++) {
+            if (known->fold[i] == 0) return false;
+        }
+    }
     nir_const_value values[NIR_MAX_VEC_COMPONENTS];
     for (unsigned c = 0; c < comps; c++) {
         uint64_t v = 0;
@@ -1348,7 +1363,18 @@ std::string stageCacheName(const void* bitcode, size_t size, const FunctionConst
     }
     if (known != nullptr) {
         mix(&known->binding, sizeof(known->binding));
-        mix(known->bytes.data(), known->bytes.size());
+        if (known->fold.empty()) {
+            mix(known->bytes.data(), known->bytes.size());
+        } else {
+            // the known bytes alone, and which they are: stages that differ in the others are one stage
+            static const char tag[] = "fold";
+            mix(tag, sizeof(tag));
+            mix(known->fold.data(), known->fold.size());
+            for (size_t i = 0; i < known->bytes.size(); i++) {
+                const uint8_t b = i < known->fold.size() && known->fold[i] != 0 ? known->bytes[i] : 0;
+                mix(&b, 1);
+            }
+        }
     }
     char name[64];
     snprintf(name, sizeof(name), "/%016llx%016llx.stage", (unsigned long long)h[0], (unsigned long long)h[1]);
@@ -1449,6 +1475,79 @@ std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
     return s;
 }
 }  // namespace
+
+std::string stageCacheFileName(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t iboBase, const KnownBuffer* known) {
+    return stageCacheName(bitcode, size, constants, iboBase, known);
+}
+
+bool knownBufferControlBytes(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t binding, size_t length,
+                             std::vector<uint8_t>* mask, std::string* why) {
+    if (theCompiler() == nullptr) return refuse(why, "ir3 has no compiler for chip 0x06030500");
+    // the function's NIR as a specialisation starts from (the kept translation of the module), nothing folded
+    KnownBuffer none;
+    none.binding = binding;
+    none.bytes.assign(length, 0);
+    none.fold.assign(length, 0);
+    Translation t;
+    if (!translate(bitcode, size, t, why, constants, &none)) return false;
+    mask->assign(length, 0);
+    std::vector<nir_def*> work;
+    std::set<nir_def*> seen;
+    auto want = [&](nir_src& src) {
+        if (seen.insert(src.ssa).second) work.push_back(src.ssa);
+    };
+    nir_foreach_function_impl(impl, t.nir) {
+        nir_foreach_block(block, impl) {
+            // what a branch or a loop's exit is decided by
+            if (nir_if* branch = nir_block_get_following_if(block)) want(branch->condition);
+            // what a memory access's address is computed from (an offset into the buffer itself among them)
+            nir_foreach_instr(instr, block) {
+                if (instr->type != nir_instr_type_intrinsic) continue;
+                nir_intrinsic_instr* in = nir_instr_as_intrinsic(instr);
+                switch (in->intrinsic) {
+                case nir_intrinsic_load_ubo:
+                case nir_intrinsic_load_ssbo:
+                    want(in->src[0]);
+                    want(in->src[1]);
+                    break;
+                case nir_intrinsic_store_ssbo:
+                    want(in->src[1]);
+                    want(in->src[2]);
+                    break;
+                case nir_intrinsic_load_global:
+                case nir_intrinsic_load_scratch:
+                    want(in->src[0]);
+                    break;
+                case nir_intrinsic_store_global:
+                case nir_intrinsic_store_scratch:
+                    want(in->src[1]);
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+    // back through the arithmetic and the phis to the buffer's reads
+    while (!work.empty()) {
+        nir_def* def = work.back();
+        work.pop_back();
+        nir_instr* parent = def->parent_instr;
+        if (parent->type == nir_instr_type_alu) {
+            nir_alu_instr* alu = nir_instr_as_alu(parent);
+            for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) want(alu->src[i].src);
+        } else if (parent->type == nir_instr_type_phi) {
+            nir_foreach_phi_src(ps, nir_instr_as_phi(parent)) want(ps->src);
+        } else if (parent->type == nir_instr_type_intrinsic) {
+            nir_intrinsic_instr* in = nir_instr_as_intrinsic(parent);
+            if (in->intrinsic != nir_intrinsic_load_ubo || !nir_src_is_const(in->src[0]) || nir_src_as_uint(in->src[0]) != binding) continue;
+            if (!nir_src_is_const(in->src[1])) continue;   // (its offset is wanted already: a memory access's address)
+            const uint64_t at = nir_src_as_uint(in->src[1]), n = uint64_t(in->def.num_components) * (in->def.bit_size / 8);
+            for (uint64_t i = at; i < at + n && i < length; i++) (*mask)[i] = 1;
+        }
+    }
+    return true;
+}
 
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
                                            const KnownBuffer* known) {

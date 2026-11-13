@@ -298,6 +298,15 @@ hakios_metal_program *hakios_metal_program_new_bitcode_linked(const void *vs_bit
  * descriptor and sample count come with it. NULL with the reason. */
 hakios_metal_program *hakios_metal_program_specialize(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
     const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, size_t length);
+/* ...the same, but only the bytes FOLD marks (LENGTH of them, non-zero: known) compiled as their values; the others are
+ * read from the draw's buffer as in BASE. Draws whose buffer holds the same marked bytes may use it, whatever the
+ * others hold. FOLD NULL: every byte, as hakios_metal_program_specialize. */
+hakios_metal_program *hakios_metal_program_specialize_part(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, const uint8_t *fold, size_t length);
+/* Which of the LENGTH bytes of the fragment function's constant buffer at [[buffer(BINDING)]] its control flow depends on
+ * (compiler.hpp: knownBufferControlBytes): MASK gets LENGTH bytes, 1 where so. 0, or -1 with the reason. */
+int hakios_metal_function_control_bytes(const void *fs_bitcode, size_t fs_size, const hakios_metal_constant *fs_constants,
+    unsigned fs_count, unsigned binding, size_t length, uint8_t *mask);
 /* STAGE 0 = vertex, 1 = fragment: how many instruction words that stage compiled to */
 unsigned hakios_metal_program_stage_words(hakios_metal_program *program, unsigned stage);
 void hakios_metal_program_free(hakios_metal_program *program);

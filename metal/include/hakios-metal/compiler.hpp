@@ -125,12 +125,26 @@ using FunctionConstants = std::vector<FunctionConstant>;
 // buffer at constant offsets inside BYTES compiled as those values, so that the branches they decide are decided once,
 // here, rather than in every fragment. CoreAnimation's uber shader (fixed_frag_lph_cpf) picks its path through 15 000
 // instructions by the 52 bytes of its FragmentShaderConfig: compiled for one configuration it is 16 to 48 instructions.
+// FOLD, when not empty, says which of BYTES are known (non-zero: that byte): a read that is not all of known bytes stays
+// a read of the buffer, as in the function's own stage. The others may change from one draw to the next without a new
+// stage: an uber shader's colours, opacities and sizes, which change every frame of an animation, where the bytes that
+// choose its path do not (knownBufferControlBytes).
 struct KnownBuffer {
     uint32_t binding = 0;
     std::vector<uint8_t> bytes;
+    std::vector<uint8_t> fold;
 };
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
                                            uint32_t iboBase = 0, const KnownBuffer* known = nullptr);
+// Which bytes of the constant buffer at [[buffer(BINDING)]] (LENGTH of them) the function's control flow depends on: what
+// an if's or a loop's condition is computed from, and what a memory access's address is, followed back through the
+// arithmetic to reads of that buffer at constant offsets (*MASK: LENGTH bytes, 1 where so). Reads whose values only go
+// into what the function computes are not among them. False with *why when it cannot be said (no compiler, the front
+// end's refusal).
+bool knownBufferControlBytes(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t binding, size_t length,
+                             std::vector<uint8_t>* mask, std::string* why);
+// The name a stage compiled from these is filed under in the cache ("" with no cache configured): for the tests
+std::string stageCacheFileName(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t iboBase, const KnownBuffer* known);
 // The visible functions a pipeline links (MTLLinkedFunctions), for the compiles on this thread while a LinkedScope
 // lives: a call of a function a stage only declares, named NAME by its air.visible_function_references, is a call of
 // the linked function called NAME (the front end's air_to_nir_options::linked). Part of a compiled stage's cache name:

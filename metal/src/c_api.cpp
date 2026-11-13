@@ -1167,6 +1167,28 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
 
 hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base, const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants,
                                                      unsigned fsCount, unsigned binding, const void* bytes, size_t length) {
+    return hakios_metal_program_specialize_part(base, fsBitcode, fsSize, fsConstants, fsCount, binding, bytes, nullptr, length);
+}
+
+int hakios_metal_function_control_bytes(const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants, unsigned fsCount,
+                                        unsigned binding, size_t length, uint8_t* mask) {
+    if (fsBitcode == nullptr || fsSize == 0 || mask == nullptr) {
+        failed("the control bytes need the function's bitcode and room for the mask");
+        return -1;
+    }
+    std::string why;
+    std::vector<uint8_t> m;
+    if (!knownBufferControlBytes(fsBitcode, fsSize, constantsOf(fsConstants, fsCount), binding, length, &m, &why) || m.size() != length) {
+        failed(why.empty() ? std::string("no control bytes") : why);
+        return -1;
+    }
+    memcpy(mask, m.data(), length);
+    return 0;
+}
+
+hakios_metal_program* hakios_metal_program_specialize_part(hakios_metal_program* base, const void* fsBitcode, size_t fsSize,
+                                                          const hakios_metal_constant* fsConstants, unsigned fsCount, unsigned binding,
+                                                          const void* bytes, const uint8_t* fold, size_t length) {
     if (base == nullptr || fsBitcode == nullptr || fsSize == 0 || bytes == nullptr) {
         failed("a specialisation needs the program, its fragment function's bitcode and the buffer's bytes");
         return nullptr;
@@ -1175,6 +1197,7 @@ hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base
     KnownBuffer known;
     known.binding = binding;
     known.bytes.assign(static_cast<const uint8_t*>(bytes), static_cast<const uint8_t*>(bytes) + length);
+    if (fold != nullptr) known.fold.assign(fold, fold + length);
     const Program& was = base->program->program;
     std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), was.fsIboBase, &known);
     if (fs == nullptr) {
