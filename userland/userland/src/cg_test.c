@@ -58,7 +58,7 @@ look(const char *what, IOSurfaceRef surface)
 	}
 	first = pixels[10 * SIZE + 10];
 	IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, &seed);
-	printf("cg_test: %s: %u of %u pixels red, %u zero, the one at 10,10 %#010x (seed %u)\n", what, red, SIZE * SIZE, zero, first,
+	printf("cg_test: %s: %u of %u pixels red, %u zero, the one at 10,10 0x%08x (seed %u)\n", what, red, SIZE * SIZE, zero, first,
 	    IOSurfaceGetSeed(surface));
 }
 

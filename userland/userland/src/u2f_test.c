@@ -238,7 +238,7 @@ main(int argc, char **argv)
 		glFinish();
 		glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
 		bits = (uint32_t)pixel[0] << 24 | (uint32_t)pixel[1] << 16 | (uint32_t)pixel[2] << 8 | pixel[3];
-		printf("u2f_test: 0x%08x -> %#010x %-16.9g  C says %#010x %-16.9g  %s\n", values[i], bits, (double)as_float(bits),
+		printf("u2f_test: 0x%08x -> 0x%08x %-16.9g  C says 0x%08x %-16.9g  %s\n", values[i], bits, (double)as_float(bits),
 		    want, (double)as_float(want), bits == want ? "same" : "DIFFERENT");
 		differ += bits != want;
 	}
