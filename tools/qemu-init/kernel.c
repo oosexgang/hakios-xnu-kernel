@@ -153,6 +153,7 @@ command_vm(int argc, char **argv)
 	uint32_t reply = (uint32_t)trap8(TRAP_reply_port, 0, 0, 0, 0, 0, 0, 0, 0);
 	uint32_t bits = 19 | 21 << 8;           /* MACH_MSG_TYPE_COPY_SEND to the host, MAKE_SEND_ONCE for the answer */
 	uint32_t size = sizeof(message.request);
+	uint64_t page_size;
 	long kr;
 
 	(void)argc;
@@ -178,13 +179,17 @@ command_vm(int argc, char **argv)
 		return;
 	}
 	copy_bytes(&vm, message.reply.info, sizeof(vm));
-	say_pages("vm: pages: free ", vm.free);
+	if (!sysctl_number("hw.pagesize", &page_size)) {
+		page_size = 0;
+	}
+	say_pages("vm: pages of ", page_size >> 10);
+	say_pages(" KB: free ", vm.free);
 	say_pages(", active ", vm.active);
 	say_pages(", inactive ", vm.inactive);
 	say_pages(", speculative ", vm.speculative);
 	say_pages(", wired ", vm.wired);
 	say_pages(", in the compressor ", vm.compressor);
-	say_pages("; faults ", vm.faults);
+	say_pages("\nvm: faults ", vm.faults);
 	say_pages(" (copy on write ", vm.cow_faults);
 	say_pages(", zero filled ", vm.zero_fill);
 	say_pages("), page-ins ", vm.pageins);
