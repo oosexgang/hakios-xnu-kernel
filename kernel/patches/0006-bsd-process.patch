@@ -153,6 +153,24 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  	}
  #endif /* DEVFS */
  
+@@ -1030,7 +1032,7 @@ bsd_init(void)
+ 
+ 			error = imageboot_pivot_image(dmgpath, IMAGEBOOT_DMG, "/System/Volumes/BaseSystem", "System/Volumes/macOS", rooted_dmg, skip_signature_check);
+ 			if (error) {
+-				bsd_init_kprintf("couldn't mount BaseSystem dmg: error = %d", error);
++				bsd_init_kprintf("couldn't mount BaseSystem dmg: error = %d\n", error);
+ 			} else {
+ 				IOSetImageBoot();
+ 			}
+@@ -1103,7 +1105,7 @@ bsdinit_task(void)
+ 	}
+ #endif
+ 
+-	bsd_init_kprintf("bsd_do_post - done");
++	bsd_init_kprintf("bsd_do_post - done\n");
+ 
+ 	load_init_program(p);
+ 	lock_trace = 1;
 diff --git a/bsd/kern/kern_credential.c b/bsd/kern/kern_credential.c
 --- a/bsd/kern/kern_credential.c
 +++ b/bsd/kern/kern_credential.c
