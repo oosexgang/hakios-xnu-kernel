@@ -135,6 +135,7 @@ static const struct {
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
 	{ "unix", "FILE its descriptor sent through a socket pair, and read", command_unix },
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
+	{ "locks", "[COUNT] threads adding under one lock (ulock_wait, ulock_wake)", command_locks },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 	{ NULL, "IOKit", NULL },

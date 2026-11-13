@@ -86,6 +86,7 @@ void command_ioprop(int argc, char **argv);
 void command_ioreg(int argc, char **argv);
 void command_kevent(int argc, char **argv);
 void command_kill(int argc, char **argv);
+void command_locks(int argc, char **argv);
 void command_ls(int argc, char **argv);
 void command_mach(int argc, char **argv);
 void command_memory(int argc, char **argv);
