@@ -19,7 +19,8 @@ make qemu                                           # all of that, checked (work
 
 `tools/qemu-kernel.sh` keeps what the serial port says (`--log`), stops at a text (`--until`), types on
 the console (`--type`, a line once the shell's prompt is back), takes the screen as a PNG (`--screen`),
-attaches a disk image to the virtio block device (`--disk`), forwards a TCP port of the machine to this
+attaches a disk image to the virtio block device (`--disk`), writes what the virtio sound device plays to
+a WAV file (`--audio`), forwards a TCP port of the machine to this
 one (`--forward H:G`), and runs a command here while it types (`--then`). Its head lists every option.
 
 ## The machine
@@ -30,6 +31,7 @@ one (`--forward H:G`), and runs a command here while it types (`--then`). Its he
 | Console | The PL011 serial port, and the screen (ramfb) when a picture is asked for (`console_screen=1`). |
 | Network | A virtio network card (`en0`) behind QEMU's own network: 10.0.2.15, the gateway 10.0.2.2. |
 | Keyboard, tablet | virtio input devices, which the kernel's input path takes. |
+| Sound | A virtio sound device (`--audio`): `/dev/hakios-audio`, 48 kHz, two channels of 16 bits. |
 | Disks | The root from the payload's RAM disk (`/dev/md0`); a second image on the virtio block device (`/dev/rvblk0`). |
 
 ## The root and its shell
@@ -48,6 +50,7 @@ line at a time:
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. |
 | `mount apfs DEVICE DIR` | A disk's APFS volume, read only. |
+| `tone HZ [SECONDS]` | A sine wave written to the sound device, through the virtio sound driver. |
 
 ## What `make qemu` holds
 
@@ -55,7 +58,8 @@ The loader jumps to the kernel; the kernel starts on two processors and finds th
 `en0` attaches with its link up and both input devices are found; the root mounts from the RAM disk;
 `/sbin/launchd` runs as pid 1 and its shell answers what is typed; `en0` takes an address, QEMU's
 gateway answers its pings, and its TCP serves this machine a page through a forwarded port; a second
-APFS disk on the virtio block device is mounted and read; nothing panics.
+APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
+out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); nothing panics.
 
 ## What it is not
 
