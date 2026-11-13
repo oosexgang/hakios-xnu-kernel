@@ -65,8 +65,8 @@ The phones are device packages, kept apart from the code on the
 [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices): its README lists them with
 how far each is, and each package's own README says what works on that phone, what is written but not yet
 verified on it, and what is still off. This branch describes no phone; it has the QEMU `virt` board
-(`devices/qemu-virt/`), on which the Darwin 16.5 generation runs and which is not yet set up for the current
-kernel. Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845
+(`devices/qemu-virt/`), on which the current kernel boots to a shell of its own and is tested with its
+network, disk, sound, input, processes and threads ([docs/qemu.md](docs/qemu.md)). Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845
 (CPU levels, temperature sensors).
 
 ## Quick start
