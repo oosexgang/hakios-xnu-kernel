@@ -9,7 +9,7 @@
  * script of answers: its refusals are named, the votes for the subsystem's blocks given back with their
  * handles. And the run's lines, kept, are said again at its end as they were said.
  *
- *   mic_wiring_test SCENARIO
+ *   mic_driver_test SCENARIO
  */
 #include "fakekernel.h"
 

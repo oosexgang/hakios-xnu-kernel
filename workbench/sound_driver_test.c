@@ -8,7 +8,7 @@
  * and context of the SMMU are found and set up with page tables of the buffers, and put back as found; and
  * what the boot chain set up for somebody else is left alone.
  *
- *   sound_pins_test SCENARIO
+ *   sound_driver_test SCENARIO
  */
 #include "fakekernel.h"
 
