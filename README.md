@@ -49,7 +49,7 @@ brings it into a checkout.
   sanitizers, the porting guide is run on a made-up phone, the kernel sources are verified against
   Apple's release and compiled for syntax, types and the formats of what they print, on every push.
 - **The kernel in QEMU.** It boots on the emulator as on a phone, to a shell of its own, and its
-  network, disks, sound, input, processes, threads, IOKit and screen are tried there
+  network, disks, files, sound, input, processes, threads, memory, IOKit and screen are tried there
   ([docs/qemu.md](docs/qemu.md), `make qemu`).
 - **Pinned inputs.** Everything taken from elsewhere is in [`components`](components), at an
   exact version.
@@ -69,8 +69,9 @@ The phones are device packages, kept apart from the code on the
 how far each is, and each package's own README says what works on that phone, what is written but not yet
 verified on it, and what is still off. This branch describes no phone; it has the QEMU `virt` board
 (`devices/qemu-virt/`), on which the current kernel boots to a shell of its own and is tested with its
-network, disk, sound, input, processes and threads ([docs/qemu.md](docs/qemu.md)). Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845
-(CPU levels, temperature sensors).
+network, disk, sound, input, processes, threads, files, IOKit and screen ([docs/qemu.md](docs/qemu.md)).
+Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845 (CPU
+levels, temperature sensors).
 
 ## Quick start
 
