@@ -37,7 +37,7 @@ CC="xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protec
 LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
 $CC -I"$US/libmini" -c "$US/libmini/mini.c" -o "$OBJ/mini.o"
 $CC -c "$US/libmini/start.S" -o "$OBJ/start.o"
-for prog in init stage0 child; do
+for prog in init stage0 child var_store; do
 	$CC -I"$US/libmini" $LD -o "$OBJ/$prog" "$US/src/$prog.c" "$OBJ/mini.o" "$OBJ/start.o"
 done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
@@ -52,7 +52,14 @@ rm -rf "$T"
 mkdir -p "$T/sbin" "$T/bin" "$T/etc" "$T/lib" "$T/share" "$T/LaunchDaemons"
 cp "$OBJ/init" "$T/sbin/init"
 cp "$OBJ/child" "$T/bin/child"           # (init execs it and collects its exit status: one of its checks)
+# /private/var between boots (userland/src/var_store.c): init unpacks the last one with boot-arg var_store=1, and the
+# job list's first line saves it when the run ends (ufs_write=1 lets it write darwin past the system's volumes)
+cp "$OBJ/var_store" "$T/bin/var_store"
 cp "$OBJ/net_test" "$T/bin/net_test"
+# EXTRA_BIN="FILE ...": more programs of ours for a job list (a probe), into /redwood/bin, through pacstrip as the others
+for f in ${EXTRA_BIN:-}; do
+	"$PACSTRIP" macho "$f" "$T/bin/$(basename "$f")" > /dev/null && chmod 755 "$T/bin/$(basename "$f")"
+done
 cp "$OBJ/rwtouch" "$T/bin/rwtouch"
 # the SSH server and its shell, when ios/userland/ssh.sh has built them (rc.jobs.ssh starts the server); the keys of
 # this machine's ../ssh/ with them, unless SHARE=1 (an image for somebody else: no host key of ours in it). dropbear
@@ -289,6 +296,17 @@ printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501
 if [ -n "${CONSOLE_LOG:-}" ]; then
 	echo "/redwood/lib/libhakios-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
 fi
+# PRIVATE_LOG=1: os_log's private arguments shown (com.apple.system.logging's Enable-Private-Data): what "<private>" hides,
+# for a diagnostic image only
+if [ -n "${PRIVATE_LOG:-}" ]; then
+	mkdir -p $T/var/preferences/Logging
+	python3 - "$T/var/preferences/Logging/com.apple.system.logging.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump({'Enable-Private-Data': True}, f)
+PY
+	printf 'f\t644\t0\t0\t/private/var/preferences/Logging/com.apple.system.logging.plist\t/var/preferences/Logging/com.apple.system.logging.plist\n' >> $T/etc/var.skel
+fi
 # LOGGING_DEBUG="SUBSYSTEM ...": os_log of those subsystems at every level, Debug included (on the console
 # with boot-arg exec_env=NAME:OS_ACTIVITY_DT_MODE=1); /Library/Preferences is /private/var/preferences
 for subsystem in ${LOGGING_DEBUG:-}; do
@@ -317,6 +335,8 @@ cat > $T/etc/rc.jobs <<'EOF'
 /bin/ps -A
 EOF
 fi
+# (first: /private/var saved as the run ends, with boot-arg var_store=1; without it var_store ends at once)
+{ echo "/redwood/bin/var_store watch &"; cat $T/etc/rc.jobs; } > $T/etc/rc.jobs.new && mv $T/etc/rc.jobs.new $T/etc/rc.jobs
 python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-ios.apfs" redwood="$T" | tail -1
 ls -la "$IOS/root26-ios.apfs"
 
