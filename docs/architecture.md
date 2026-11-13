@@ -38,41 +38,41 @@ A reboot brings Android back.
 
 | Layer | Where | Changes when |
 | --- | --- | --- |
-| **Device data** | A device package per phone (`NAME/board.dts`, kept on the `devices` branch), `soc/SOC.dtsi` on the main branch | A new phone, or a new SoC. No code. |
+| **Device data** | A device package per phone (`NAME/board.dts` and `NAME/soc.dtsi`, kept on the `devices` branch) | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
 | **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `darwin/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
 
-The aim is that a new phone on a known SoC is a change to the first row only, and a new SoC adds one
-file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
+The aim is that a new phone, on a known SoC or a new one, is a change to the first row only. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
 
 ## Device data
 
 ![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](assets/device-data.svg)
 
 ```
-device packages (NAME/board.dts) ─┐
-  from the devices branch, or any  │  tools/boards.py gen       build/boards/hakios_board_table.h  (the kernel's table)
-  directory on the search path     ├──────────────────────►     build/boards/platforms.h           (the loader's)
-soc/sm7350.dtsi, soc/… ────────────┘  (run by the builds)       build/boards/hakios_boards.h       (the injected libraries')
+device packages                     tools/boards.py gen        build/boards/hakios_board_table.h  (the kernel's table)
+  (NAME/board.dts, NAME/soc.dtsi) ──────────────────────►      build/boards/platforms.h           (the loader's)
+  from the devices branch, or any    (run by the builds)        build/boards/hakios_boards.h       (the injected libraries')
+  directory on the search path
 ```
 
 - The repository describes no phone. `devices/` on the main branch has the emulator's board
   (`devices/qemu-virt/`) and a template (`devices/_template/`).
-- A phone is a **device package**: a directory `NAME/` with its `board.dts`, its README and its notes.
+- A phone is a **device package**: a directory `NAME/` with its `board.dts`, its `soc.dtsi`, its README
+  and its notes.
   Packages are kept on the `devices` branch, one directory per phone.
   `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/NAME/` of a
   checkout, which git ignores there: a package is changed where it is kept. `tools/device.py available`
   lists what the branch has, `list` what is here, `remove` takes one out, and `--from SOURCE` takes
   packages from a directory or another branch or commit.
 - `tools/boards.py` looks for packages in `devices/`, in `--devices DIR` and in the directories of the
-  environment variable `HAKIOS_DEVICES` (written like `PATH`); for SoC files in `soc/` and `--soc DIR`.
+  environment variable `HAKIOS_DEVICES` (written like `PATH`).
 - A **board file** says what the device has: its SoC, the drivers it may start (`features`), how its
   panel's brightness is set, thermal floors, how the loader recognises it, its default boot arguments.
 - A **SoC file** says where the blocks of the chip are: interrupt controller, cores, clock
   controllers, DSI controller, temperature sensors, the CPU frequency block, the SoC's pins, the PMIC
   arbiter, RPMh, the SMMU, the way to its other processors, the storage controller, the camera's and
-  the audio subsystem's blocks. It is shared by every board with that chip, so it stays in `soc/` on
-  the main branch. The drivers take these addresses from it; the one address still in a driver's
+  the audio subsystem's blocks. Each package carries its own copy: two phones with one chip have the
+  same file, and `tools/boards.py new` copies it from a package that has it. The drivers take these addresses from it; the one address still in a driver's
   code is the serial port a touch controller is wired to, which is that part's wiring.
 - `tools/boards.py new` starts both files from a phone's Android device tree, and
   `tools/boards.py compare` holds them against one later.
@@ -85,7 +85,7 @@ soc/sm7350.dtsi, soc/… ────────────┘  (run by the bu
   code cannot drift apart. Built with no package, they know only the emulator's board.
 - The host tests do not use real phones. They run against three stand-ins in `workbench/devices/`:
   `phone-cmd` (a command-mode panel on sm7350), `phone-video` (a video-mode panel on sm7325, every
-  part driver listed) and `phone-keys` (on a chip of its own, `workbench/soc`, with its parts on other pins
+  part driver listed) and `phone-keys` (on a made-up chip, with its parts on other pins
   and buses than the first two: the test of a part's driver runs it there too, so a value of one phone
   left in the code shows).
 - At boot the kernel finds its row by `/chosen/darwin-board`. A driver asks

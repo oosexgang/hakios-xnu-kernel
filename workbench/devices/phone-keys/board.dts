@@ -1,6 +1,6 @@
 /dts-v1/;
 
-// A test phone wired unlike the real ones, on a chip of its own (workbench/soc/soc-test.dtsi): its keys on the
+// A test phone wired unlike the real ones, on a made-up chip (soc.dtsi beside this file): its keys on the
 // third PMIC of the bus, volume up on its ninth GPIO, behind an arbiter that is elsewhere and that knows
 // this system as its third; its flashlight, vibration motor, speaker amplifiers and touch controller on
 // other pins, buses and serial engines than the first phones'. A value of the first phones that is still

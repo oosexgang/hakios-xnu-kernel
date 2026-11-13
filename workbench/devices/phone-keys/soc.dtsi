@@ -3,8 +3,7 @@
 // A chip that is nobody's: the PMIC arbiter and the CPU frequency block at addresses unlike any real
 // SoC's, this system as the arbiter's third (ee = 2), two groups of cores. For the tests of what must
 // come from the SoC file and not from the code (workbench/buttons_driver_test.c, cpufreq_driver_test.c,
-// mic_wiring_test.c);
-// workbench/run.sh takes this directory with --soc.
+// mic_wiring_test.c).
 / {
 	name = "soc-test";
 	description = "A made-up chip for the tests";

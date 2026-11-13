@@ -12,8 +12,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 
 ### Porting to a new phone
 
-- **A phone is data.** `devices/NAME/board.dts` says what a phone has. `soc/SOC.dtsi` says where the
-  blocks of its chip are, once for every phone with that chip. Before, each driver carried its own list
+- **A phone is data.** `devices/NAME/board.dts` says what a phone has. `devices/NAME/soc.dtsi`, beside
+  it, says where the blocks of its chip are: each package carries its chip's file, so a package is
+  complete on its own, and `tools/boards.py new` copies the file from a package with that SoC. Before, each driver carried its own list
   of phones and addresses, and the loader described each machine in C. Every key is explained in
   `devices/_template/board.dts` and `devices/_template/soc.dtsi`; [devices/README.md](devices/README.md)
   has every section, and the steps for making one more constant data.
@@ -234,8 +235,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | `renoir/userland/`, `renoir/tools/` | `darwin/userland/`, `darwin/tools/` |
 | `renoir/docs/`, `renoir/workbench/` | `docs/`, `workbench/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
-| Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
-| Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `soc/*.dtsi`; the first phone's package lists every former name |
+| Lists of phones inside drivers and the loader | Device packages on the `devices` branch, each with its `soc.dtsi` |
+| Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `devices/*/soc.dtsi`; the first phone's package lists every former name |
 | The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, the build and tools of that kernel) | `legacy/` of its package on the `devices` branch |
 
 The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
@@ -259,8 +260,8 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   back to Darwin past the room Apple's layouts and the caller's buffer have. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
-  porting guide, and build the loader. They use stand-in phones in `workbench/devices/` and a made-up chip in
-  `workbench/soc/`.
+  porting guide, and build the loader. They use stand-in phones in `workbench/devices/`, one of them on a
+  made-up chip.
   [workbench/README.md](workbench/README.md) lists each test.
 - **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
   request. The kernel is not built or linked there.

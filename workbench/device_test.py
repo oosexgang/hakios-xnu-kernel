@@ -34,13 +34,12 @@ class Sandbox(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS)
-        boards.ROOT, boards.DEVICES, boards.SOCS = self.dir, self.dir / 'devices', self.dir / 'soc'
+        self.saved = (boards.ROOT, boards.DEVICES)
+        boards.ROOT, boards.DEVICES = self.dir, self.dir / 'devices'
         self.git('init', '-q', '-b', 'code')
-        (self.dir / 'soc').mkdir()
-        (self.dir / 'soc/sm0001.dtsi').write_text(SOC)
         (self.dir / 'devices/emulator').mkdir(parents=True)
         (self.dir / 'devices/emulator/board.dts').write_text(board('emulator', 'An emulator'))
+        (self.dir / 'devices/emulator/soc.dtsi').write_text(SOC)
         (self.dir / '.gitignore').write_text('/devices/*/\n!/devices/emulator/\n')
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'the code')
@@ -48,11 +47,11 @@ class Sandbox(unittest.TestCase):
         self.git('checkout', '-q', '--orphan', 'devices')
         self.git('rm', '-rq', '--cached', '.')
         shutil.rmtree(self.dir / 'devices')
-        shutil.rmtree(self.dir / 'soc')
         (self.dir / '.gitignore').unlink()
         for name in ('alpha', 'beta'):
             (self.dir / name / 'notes').mkdir(parents=True)
             (self.dir / name / 'board.dts').write_text(board(name, f'Phone {name}'))
+            (self.dir / name / 'soc.dtsi').write_text(SOC)
             (self.dir / name / 'README.md').write_text(f'# {name}\n')
             (self.dir / name / 'notes/pins.md').write_text('pins\n')
         (self.dir / 'README.md').write_text('packages\n')
@@ -61,7 +60,7 @@ class Sandbox(unittest.TestCase):
         self.git('checkout', '-q', 'code')
 
     def tearDown(self):
-        boards.ROOT, boards.DEVICES, boards.SOCS = self.saved
+        boards.ROOT, boards.DEVICES = self.saved
         shutil.rmtree(self.dir)
 
     def run_tool(self, *arguments):
@@ -100,6 +99,7 @@ class Packages(Sandbox):
         try:
             (elsewhere / 'gamma').mkdir()
             (elsewhere / 'gamma/board.dts').write_text(board('gamma', 'Phone gamma'))
+            (elsewhere / 'gamma/soc.dtsi').write_text(SOC)
             self.assertEqual(self.run_tool('add', 'alpha', 'beta')[0], 0)
             code, said, _ = self.run_tool('add', 'gamma', '--from', str(elsewhere))
             self.assertEqual(code, 0)
@@ -113,6 +113,7 @@ class Packages(Sandbox):
         self.run_tool('add', 'alpha')
         (self.dir / 'devices/mine').mkdir()
         (self.dir / 'devices/mine/board.dts').write_text(board('mine', 'My phone'))
+        (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
         code, said, _ = self.run_tool('list')
         self.assertEqual(code, 0)
         self.assertRegex(said, r"emulator .*\[the repository's own\]")
@@ -128,6 +129,7 @@ class Packages(Sandbox):
     def test_work_that_this_tool_did_not_bring_in_is_not_run_over(self):
         (self.dir / 'devices/alpha').mkdir()
         (self.dir / 'devices/alpha/board.dts').write_text(board('alpha', 'My own alpha'))
+        (self.dir / 'devices/alpha/soc.dtsi').write_text(SOC)
         code, _, _ = self.run_tool('add', 'alpha')
         self.assertIn('was not brought in by this tool', str(code))
         self.assertEqual(boards.load()[1]['alpha']['description'], 'My own alpha')
@@ -137,6 +139,7 @@ class Packages(Sandbox):
         try:
             (elsewhere / 'emulator').mkdir()
             (elsewhere / 'emulator/board.dts').write_text(board('emulator', 'Another'))
+            (elsewhere / 'emulator/soc.dtsi').write_text(SOC)
             self.assertIn('part of the repository itself', str(self.run_tool('add', 'emulator', '--from', str(elsewhere))[0]))
             self.assertIn('part of the repository itself', str(self.run_tool('remove', 'emulator')[0]))
             self.assertEqual(boards.load()[1]['emulator']['description'], 'An emulator')
@@ -154,6 +157,7 @@ class Packages(Sandbox):
     def test_a_package_made_here_is_exported_to_where_packages_are_kept(self):
         (self.dir / 'devices/mine/notes').mkdir(parents=True)
         (self.dir / 'devices/mine/board.dts').write_text(board('mine', 'My phone'))
+        (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
         (self.dir / 'devices/mine/notes/pins.md').write_text('pins\n')
         (self.dir / 'devices/mine/.from').write_text('somewhere\n')
         out = Path(tempfile.mkdtemp())
@@ -171,12 +175,13 @@ class Packages(Sandbox):
             shutil.rmtree(out / 'mine')
             self.run_tool('export', 'mine', str(out))
             self.assertEqual(sorted(str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()),
-                             ['mine/board.dts', 'mine/notes/pins.md'])        # (not the note of where it came from)
+                             ['mine/board.dts', 'mine/notes/pins.md', 'mine/soc.dtsi'])    # (not the note of where it came from)
             # ... and can be brought in from there again
             shutil.rmtree(self.dir / 'devices/mine')
             self.assertEqual(self.run_tool('add', 'mine', '--from', str(out))[0], 0)
             # one that is not right is not sent
             (self.dir / 'devices/mine/board.dts').write_text(board('mine', more='\twarp {\n\t\tfactor = <9>;\n\t};\n'))
+            (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
             code, _, complained = self.run_tool('export', 'mine', str(out))
             self.assertEqual(code, 1)
             self.assertIn('not exported', complained)
@@ -197,6 +202,7 @@ class Packages(Sandbox):
         try:
             (elsewhere / 'odd').mkdir()
             (elsewhere / 'odd/board.dts').write_text(board('odd', more='\twarp {\n\t\tfactor = <9>;\n\t};\n'))
+            (elsewhere / 'odd/soc.dtsi').write_text(SOC)
             code, _, complained = self.run_tool('add', 'odd', '--from', str(elsewhere))
             self.assertEqual(code, 1)
             self.assertIn('devices/odd/board.dts: unknown section warp { }', complained)

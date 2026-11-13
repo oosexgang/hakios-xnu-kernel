@@ -9,7 +9,7 @@ documentation. Boot arguments are in [boot-args.md](boot-args.md).
 | | |
 | --- | --- |
 | **any** | No device knowledge in the code. Works on any board, QEMU included. |
-| **data** | Device knowledge comes from the board file of the phone's device package and from `soc/`. A new phone is a new package, and a file in `soc/` if its SoC is new. |
+| **data** | Device knowledge comes from the phone's device package: its board file and its SoC file. A new phone is a new package. |
 | **part** | Written for one part with one wiring. Runs only on a board that lists its feature. A phone with another part needs another driver. |
 | **phone** | Addresses of one phone or SoC are in the code. Listed under "still tied" in [porting.md](porting.md). |
 

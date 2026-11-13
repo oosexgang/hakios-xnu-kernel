@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | Device | MAKER MODEL |
-| SoC | CHIP (SOC); `soc/SOC.dtsi` on the main branch |
+| SoC | CHIP (SOC); `soc.dtsi` |
 | State | One sentence: how far it boots, with which Darwin build, and when that was last seen on the phone. |
 
 Nothing in the procedure writes to the phone's storage. It is started with `fastboot boot` and runs

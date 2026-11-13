@@ -7,7 +7,7 @@ body:
       value: |
         The procedure is [docs/porting.md](https://github.com/oosexgang/xnu-kernel-qcom/blob/HEAD/docs/porting.md), in the order to do it. A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in Mu-Silicium.
 
-        A port goes to two places. The phone's package (`NAME/board.dts`, with its README and notes) goes to the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices). SoC files (`soc/SOC.dtsi`) and drivers go to the main branch.
+        A port goes to two places. The phone's package (`NAME/board.dts` and `NAME/soc.dtsi`, with its README and notes) goes to the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices). Drivers go to the main branch.
   - type: input
     id: device
     attributes:
@@ -19,8 +19,8 @@ body:
     id: soc
     attributes:
       label: SoC
-      description: "Say whether `soc/` already has it: SM7350 and SM7325 so far. A new SoC adds one file."
-      placeholder: "Snapdragon 780G (SM7350), already in soc/"
+      description: "Say whether a package on the `devices` branch has its SoC file already: SM7350, SM7325 and SM8845 so far."
+      placeholder: "Snapdragon 780G (SM7350), as renoir has it"
     validations:
       required: true
   - type: dropdown

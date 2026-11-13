@@ -1,13 +1,13 @@
 /dts-v1/;
 
-// A SoC file with every key, explained: what goes in soc/SOC.dtsi, once for every board with that chip.
+// A SoC file with every key, explained: what goes in a package's soc.dtsi, beside its board.dts.
 // `tools/boards.py new NAME --soc SOC --dts FILE` writes one with what your device tree says; this is the
-// reference. A section is needed only by what uses it: a board with `features = []` and a "soft"
+// reference. A section is needed only by what uses it: a board with `features = <>;` and a "soft"
 // backlight needs none of them. Addresses are the SoC's physical ones, as the Android device tree has
 // them (the SoC's .dtsi).
 
 / {
-	name = "sm0000";                        // the file's name, and what board files give as `soc`
+	name = "sm0000";                        // what the board file gives as `soc`
 	description = "Qualcomm Snapdragon NNN (SM0000, codename)";
 
 	// The clocks the display block's registers need before they can be read: for a "dcs" backlight and

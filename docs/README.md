@@ -23,7 +23,6 @@ Next to the code:
 | Document | |
 | --- | --- |
 | [../devices/README.md](../devices/README.md) | Device packages, the board and SoC files. |
-| [../soc/README.md](../soc/README.md) | The SoC files: which chips there are, what each section is for. |
 | [../workbench/README.md](../workbench/README.md) | What is tested without a phone, and how a driver runs without a kernel. |
 | [../tools/README.md](../tools/README.md) | The tools, one line each. |
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |

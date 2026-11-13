@@ -14,7 +14,7 @@ help:
 	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
 	@echo "make test           host tests of kernel drivers and of the tools (workbench/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
-	@echo "make boards         validate the device packages and soc/, write the tables the code is built with (build/boards)"
+	@echo "make boards         validate the device packages, write the tables the code is built with (build/boards)"
 	@echo "make docs           regenerate docs/boot-args.md from the sources"
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"

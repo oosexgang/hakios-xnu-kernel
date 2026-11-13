@@ -66,8 +66,8 @@ The phones are device packages, kept apart from the code on the
 how far each is, and each package's own README says what works on that phone, what is written but not yet
 verified on it, and what is still off. This branch describes no phone; it has the QEMU `virt` board
 (`devices/qemu-virt/`), on which the Darwin 16.5 generation runs and which is not yet set up for the current
-kernel. SoC support is shared and lives here, in `soc/`: SM7350 and SM7325, and SM8845 (CPU levels,
-temperature sensors).
+kernel. Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845
+(CPU levels, temperature sensors).
 
 ## Quick start
 
@@ -104,8 +104,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 
 | Path | Contents |
 | --- | --- |
-| `devices/` | The board template, the emulator's board, and the packages you bring in. |
-| `soc/` | **One file per chip**: where its blocks are, shared by every board with that chip. |
+| `devices/` | The templates, the emulator's package, and the packages you bring in: each a board file and its chip's SoC file. |
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
@@ -118,13 +117,12 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 
 ## Porting in one paragraph
 
-A phone is described by one board file and its chip by `soc/SOC.dtsi`. `tools/boards.py new NAME
+A phone is described by one board file and its chip by the `soc.dtsi` beside it. `tools/boards.py new NAME
 --soc SOC --dts phone.dts` starts both from the phone's Android device tree. The kernel starts a
 driver only on a board that lists it, so a new phone begins with nothing but the display and gains
 hardware one line at a time; `tools/boards.py status NAME` says what can be turned on next and what
 each of the rest still needs, and `tools/boards.py compare NAME --dts phone.dts` holds the files
-against the tree at any time. Where the blocks of the chip are comes from the SoC file, once for
-every phone with that chip, not from the drivers' code (the one exception is the serial port a touch
+against the tree at any time. Where the blocks of the chip are comes from the SoC file, not from the drivers' code (the one exception is the serial port a touch
 controller is wired to, which is in that part's driver). Parts nobody has a driver for yet (a touch
 controller, an amplifier) need one written, from an example that is built and tested with the rest
 ([docs/writing-a-driver.md](docs/writing-a-driver.md)). When it works, the package goes to the

@@ -3728,7 +3728,7 @@ static struct block disp_intf;                                          /* the i
 /*
  * Where the clocks and the panel's interface are differs between SoCs (on shima the DSI interfaces are
  * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block; yupik has its one elsewhere), so it is
- * the board's data: soc/SOC.dtsi, clocks { } and display { } intf1.
+ * the board's data: its soc.dtsi, clocks { } and display { } intf1.
  */
 struct display_layout {
 	uint32_t core_gdscr, pclk0_cbcr, mdp_cbcr, ahb_cbcr;

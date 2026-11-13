@@ -6,7 +6,7 @@
 / {
 	name = "NAME";                          // the directory's name, and what the loader puts in /chosen/darwin-board
 	description = "Maker Model";            // for people: logs, hw.board.description, tools/boards.py list
-	soc = "sm0000";                         // soc/sm0000.dtsi: where the blocks of the chip are
+	soc = "sm0000";                         // the name in soc.dtsi beside it: where the blocks of the chip are
 
 	// The drivers this board may start. Empty at first: add one once its driver has been seen to work
 	// here, in the order of docs/porting.md. The kernel knows these:

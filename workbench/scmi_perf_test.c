@@ -15,7 +15,7 @@ extern char log_text[];
 
 /* ---- the channel: its shared memory and the mailbox's doorbell -------------------------------------- */
 
-#define SHMEM_PA        0x80a40000ul            /* (workbench/soc/soc-test.dtsi) */
+#define SHMEM_PA        0x80a40000ul            /* (workbench/devices/phone-keys/soc.dtsi) */
 #define MAILBOX_PA      0x1c900000ul
 #define DOORBELL        0x208
 

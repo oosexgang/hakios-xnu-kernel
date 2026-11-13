@@ -7,7 +7,7 @@
 - `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
   HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `loader/` and `kernel/deps/`, which were `base/xnuloader/` and
   `base/xnu-deps/`.
-- `tools/`, `workbench/`, `devices/`, `soc/` of this repository and the documentation written for it: MIT (`LICENSES/MIT.txt`).
+- `tools/`, `workbench/`, `devices/` of this repository and the documentation written for it: MIT (`LICENSES/MIT.txt`).
 
 ## Files inside the kernel overlay that keep their own licence
 

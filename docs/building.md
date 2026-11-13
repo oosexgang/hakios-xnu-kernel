@@ -15,7 +15,7 @@ What can be built, from the least setup to the most.
 make check
 ```
 
-Runs the lint, validates the device packages that are present and `soc/`, checks that
+Runs the lint, validates the device packages that are present, checks that
 `docs/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
 or Darwin: the tests run against three stand-in phones in `workbench/devices/`. CI runs the same on every push, plus
 `kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
@@ -31,7 +31,7 @@ loader/build.sh             # loader/loader.efi
 ```
 
 It includes `platforms.h`, the boards it knows, which the script first makes into `build/boards/` from
-the device packages that are present and `soc/`. Nothing is run by hand after changing a board or SoC
+the device packages that are present. Nothing is run by hand after changing a board or SoC
 file. The loader knows the boards it was built with; with no package, only the emulator's.
 The link is reproducible: the same sources and the same packages give the same file.
 

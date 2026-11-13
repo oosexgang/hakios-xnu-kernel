@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the XNU loader as a freestanding AArch64 UEFI application: clang and lld, no EDK2.
 # platforms.h (the boards it knows) is made here, by tools/boards.py gen, from the device packages that
-# are there (devices/, HAKIOS_DEVICES) and soc/: the loader knows the boards it was built with.
+# are there (devices/, HAKIOS_DEVICES): the loader knows the boards it was built with.
 #
 # LOADER_CFLAGS adds to the compiler's flags: where the boot shim of a phone's UEFI puts the payload
 # elsewhere than at 0xF0000000, or reserves more than 64 MB for it, say so here, e.g.

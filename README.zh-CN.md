@@ -59,8 +59,8 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 手机以设备包的形式与代码分开，存放在
 [`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上：该分支的 README 列出了各部手机及其进度，
 每个设备包自己的 README 说明在该手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭。本分支不描述任何手机；
-它包含 QEMU `virt` 板（`devices/qemu-virt/`），Darwin 16.5 一代可在其上运行，尚未适配当前内核。SoC 支持是共享的，
-位于本分支的 `soc/`：目前有 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
+它包含 QEMU `virt` 板（`devices/qemu-virt/`），Darwin 16.5 一代可在其上运行，尚未适配当前内核。每个设备包都带有其芯片的
+SoC 文件；目前的设备包涵盖 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
 
 ## 快速开始
 
@@ -96,8 +96,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 
 | 路径 | 内容 |
 | --- | --- |
-| `devices/` | 板型模板、模拟器的板型，以及你带入的设备包。 |
-| `soc/` | **每种芯片一个文件**：其各模块的位置，由使用该芯片的所有板型共享。 |
+| `devices/` | 模板、模拟器的设备包，以及你带入的设备包：每个包含一个板型文件和其芯片的 SoC 文件。 |
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
 | `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
 | `darwin/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
@@ -110,12 +109,12 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 
 ## 一段话说明移植
 
-一部手机由一个板型文件描述，其芯片由 `soc/SOC.dtsi` 描述。
+一部手机由一个板型文件描述，其芯片由同目录下的 `soc.dtsi` 描述。
 `tools/boards.py new NAME --soc SOC --dts phone.dts` 可从手机的 Android 设备树生成这两个文件的初稿。
 内核只在列出了相应驱动的板型上启动该驱动，因此新手机一开始只有显示，之后逐行增加硬件；
 `tools/boards.py status NAME` 会说明接下来可以启用什么，以及其余各项还缺什么；
 `tools/boards.py compare NAME --dts phone.dts` 可随时把这两个文件与设备树逐项对照。
-芯片各模块的地址来自 SoC 文件，同一芯片的所有手机共用，而不是写死在驱动代码里
+芯片各模块的地址来自 SoC 文件，而不是写死在驱动代码里
 （唯一的例外是触摸控制器所接的串口，它写在该器件的驱动里）。
 尚无驱动的器件（触摸控制器、功放等）需要另写驱动，可从一个随其余部分一起构建并测试的示例入手
 （[docs/writing-a-driver.md](docs/writing-a-driver.md)）。可用之后，设备包提交到 `devices` 分支。

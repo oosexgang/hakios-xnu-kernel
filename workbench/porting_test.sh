@@ -52,7 +52,7 @@ says() {
 # --- a copy of what a port touches ----------------------------------------------------------------
 R=$W/repo
 mkdir -p "$R/kernel/overlay/bsd/dev" "$R/workbench"
-cp -r "$REPO/devices" "$REPO/soc" "$REPO/tools" "$REPO/loader" "$R/"
+cp -r "$REPO/devices" "$REPO/tools" "$REPO/loader" "$R/"
 cp "$REPO"/kernel/overlay/bsd/dev/hakios_* "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/workbench/fakekernel" "$R/workbench/"
 B="$R/tools/boards.py"
@@ -111,13 +111,13 @@ EOF
 # --- step 1: describe the board -------------------------------------------------------------------
 says "a board is started from the device tree" "wrote devices/testphone/board.dts" \
 	"$B" new testphone --soc sm9999 --dts "$W/phone.dts" --description "Maker Testphone"
-check "... and its SoC, which is new" test -f "$R/soc/sm9999.dtsi"
+check "... and its SoC, which is new" test -f "$R/devices/testphone/soc.dtsi"
 refuses "what a device tree cannot say is asked for by name" "gcc-disp-ahb-cbcr" "$B" check
 check "... and nothing else is wrong with what was written" \
 	sh -c "\"$B\" check 2>&1 | grep -v 'gcc-disp-ahb-cbcr, dispcc-mdss-gdscr, dispcc-mdss-ahb-cbcr in clocks { }' | grep -q . && exit 1 || exit 0"
 sed -i -e 's|// gcc-disp-ahb-cbcr = <0x\.\.\.>;|gcc-disp-ahb-cbcr = <0x33004>;|' \
 	-e 's|// dispcc-mdss-gdscr = <0x\.\.\.>;|dispcc-mdss-gdscr = <0x4000>;|' \
-	-e 's|// dispcc-mdss-ahb-cbcr = <0x\.\.\.>;|dispcc-mdss-ahb-cbcr = <0x4080>;|' "$R/soc/sm9999.dtsi"
+	-e 's|// dispcc-mdss-ahb-cbcr = <0x\.\.\.>;|dispcc-mdss-ahb-cbcr = <0x4080>;|' "$R/devices/testphone/soc.dtsi"
 says "with those filled in, everything is consistent" "ok" "$B" check
 check "the tables are regenerated" "$B" gen
 says "the board is listed" "testphone" "$B" list
@@ -130,7 +130,7 @@ check "without a loader { } section the loader does not list the board" \
 printf '\n/ {\n\tloader {\n\t\tfb-base = <0x9C000000>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 refuses "the I/O window, which no tree has, is asked for when the loader is to know the board" \
 	'loader { } needs io-base and io-size in platform { }' "$B" check
-sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3fc00000>;|io-size = <0x3F000000>;|' "$R/soc/sm9999.dtsi"
+sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3fc00000>;|io-size = <0x3F000000>;|' "$R/devices/testphone/soc.dtsi"
 check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
 	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
@@ -201,7 +201,7 @@ sed -i 's/floor-mhz = <900 1200 1300>;/floor-mhz = <900 1200>;/' "$R/devices/tes
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
 says "the tool says what can be turned on next" "buttons-pmic *can be listed" "$B" status testphone
-says "... and what the rest waits for" "gpu-a660 *needs adreno { } in soc/sm9999.dtsi, .*gpu { } in the board file" "$B" status testphone
+says "... and what the rest waits for" "gpu-a660 *needs adreno { } in soc.dtsi, .*gpu { } in the board file" "$B" status testphone
 # the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
 says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
 	ask testphone
@@ -233,7 +233,7 @@ check "(the tables again)" "$B" gen
 says "... and has its board again, with what was turned on" "buttons=1 pon=0x208" ask testphone
 
 # --- the repository itself --------------------------------------------------------------------------
-check "the repository was not touched" sh -c "cd \"$REPO\" && test ! -e devices/testphone && test ! -e soc/sm9999.dtsi"
+check "the repository was not touched" sh -c "cd \"$REPO\" && test ! -e devices/testphone"
 
 echo "porting_test: $checks checks, $failed failed"
 [ $failed = 0 ]

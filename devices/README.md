@@ -1,11 +1,11 @@
 # Devices
 
-A device is described by data, in two places:
+A device is described by data, in two files of its package:
 
 | What | Where | What it says |
 | --- | --- | --- |
-| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what Darwin's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
-| A **SoC file** | `soc/SOC.dtsi` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), its SCMI performance mailbox (`scmi-perf { }`), and an emulator's virtio transports (`virtio { }`). |
+| The **board file** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what Darwin's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
+| The **SoC file** | `NAME/soc.dtsi` | Where the blocks of its chip are: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), its SCMI performance mailbox (`scmi-perf { }`), and an emulator's virtio transports (`virtio { }`). |
 
 `devices/_template/board.dts` and `devices/_template/soc.dtsi` explain every key;
 `devices/_template/README.md` is the form of a package's README, which `tools/boards.py new` copies
@@ -58,8 +58,8 @@ not right):
 
 ## Where packages are kept
 
-This branch describes no phone. It has the emulator's board (`devices/qemu-virt`), the templates, and
-the SoC files, which are shared. Phones are packages on the repository's
+This branch describes no phone. It has the emulator's package (`devices/qemu-virt`) and the templates.
+Phones are packages on the repository's
 [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices): one directory each, with
 nothing of the code. They change at their own pace, and a phone can be added there without touching
 the kernel.
@@ -121,6 +121,21 @@ millivolts, and the RF VRM clock name. `bt=-1` inspects first; `bt=1` powers and
 unambiguous. Vendor power nodes without a UART link require manual association; clock votes and
 resource names still need checking against the clock/power drivers. See the template for every key.
 
+## The SoC file
+
+A package carries its chip's `soc.dtsi`, and the board's `soc = "..."` names it. Two phones with one
+chip each have a copy: `tools/boards.py new NAME --soc SOC` copies one from a package that has that
+SoC, and otherwise writes a new one with what the phone's device tree says, every value with what
+the template says of its key. Two things are never in a device tree and are filled in by hand: the
+display clocks' register offsets (from Linux's clock drivers for the chip) and the window over the
+peripherals ([docs/porting.md](../docs/porting.md), step 1). `camera { }` and `lpass { }` are not read
+from a tree yet; the template says where in the vendor's trees their values are.
+
+A board needs only the sections of what it turns on: one with `features = <>;` (none) and a software
+backlight needs none. `tools/boards.py status NAME` says which section a feature still waits for, and
+`tools/boards.py compare NAME --dts phone.dts` holds the SoC file against a device tree at any time.
+A SoC file names where each value is from, in a comment: the device tree node, the Linux file.
+
 ## Adding a phone
 
 The whole procedure, with what to take from the device tree and in which order to try the drivers, is
@@ -132,7 +147,7 @@ The whole procedure, with what to take from the device tree and in which order t
 4. Boot with features off, then enable them one at a time.
 5. Send the package (`devices/NAME/`, with a README that says what works) to the `devices` branch:
    `git worktree add ../hakios-devices devices`, then `tools/device.py export NAME ../hakios-devices`
-   and commit it there. A SoC file that is new goes to this branch, in `soc/`.
+   and commit it there, its `soc.dtsi` with it.
 
 Drivers that are specific to one device's parts (a touch controller, a speaker amplifier) are code,
 not data: they live in `kernel/overlay/bsd/dev/` and are started for the boards that have the part.
@@ -146,7 +161,7 @@ small example to copy; each step is one place:
 1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/hakios_board.h`),
    with a comment that says which file and section it comes from.
 2. **The schema.** The key and its type in `SOC_SCHEMA` or `BOARD_SCHEMA` of `tools/boards.py`: what
-   every board with the chip shares goes in the SoC file, what one phone has goes in the board file.
+   the chip has goes in the SoC file, what one phone has goes in the board file.
    If a feature cannot work without the section, say so in `FEATURE_NEEDS` or
    `FEATURE_NEEDS_OF_BOARD`; values that can be wrong in a way worth catching get a check in `load()`.
 3. **The table.** A line in `table_text()` that writes the field.

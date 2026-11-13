@@ -50,7 +50,7 @@ if [ "$(dirname "$original")" = "$(dirname "$test")" ]; then
 	cp "$test" "$W/copy/"
 	test=$W/copy/$name.c
 fi
-"$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
+"$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
 (source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/hakios_focaltech_fw.h") || die "no stub for the touch firmware"
 
 # (the flags of workbench/run.sh, the copy's directory first)

@@ -2,7 +2,7 @@
  * The board this kernel runs on, as data.
  *
  * One kernel serves every board. Which one it is, the loader says (/chosen/darwin-board); what that
- * board has and where, the repository's devices/NAME/board.dts and soc/SOC.dtsi say, and
+ * board has and where, the repository's devices/NAME/board.dts and soc.dtsi say, and
  * tools/boards.py turns them into the table of hakios_board_table.h. A driver asks here instead of
  * carrying its own list of phones:
  *

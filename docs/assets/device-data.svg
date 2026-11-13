@@ -37,13 +37,13 @@
       </g>
       <g font-size="17" text-anchor="end">
         <text x="548" y="110">NAME/board.dts</text>
-        <text x="1118" y="110">soc/SOC.dtsi</text>
+        <text x="1118" y="110">NAME/soc.dtsi</text>
       </g>
       <g font-size="16">
         <text x="82" y="139">one directory per phone, on the devices branch</text>
         <text x="82" y="161">brought in by tools/device.py add NAME</text>
-        <text x="652" y="139">one file per chip, on the main branch</text>
-        <text x="652" y="161">shared by every board with that chip</text>
+        <text x="652" y="139">one per package, beside its board file</text>
+        <text x="652" y="161">where the blocks of its chip are</text>
       </g>
 
       <text x="600" y="264" text-anchor="middle"><tspan font-size="23" font-weight="bold">tools/boards.py gen</tspan><tspan font-size="17" dx="22">(run by the builds)</tspan></text>

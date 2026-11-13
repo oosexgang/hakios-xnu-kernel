@@ -87,7 +87,7 @@ static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 
-/* the made-up SoC's (workbench/soc/soc-test.dtsi) */
+/* the made-up SoC's (workbench/devices/phone-keys/soc.dtsi) */
 #define LPI             0x043c0000u
 #define LPI_SLEW        0x0455a000u
 #define HCTL_REGISTER   0x042a90b0u

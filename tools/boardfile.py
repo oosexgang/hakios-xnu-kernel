@@ -1,4 +1,4 @@
-"""The files that describe a phone and its SoC: devices/NAME/board.dts and soc/SOC.dtsi.
+"""The files that describe a phone and its SoC: devices/NAME/board.dts and soc.dtsi.
 
 They are written in the syntax of a device tree source, the one a porter reads in the phone's Android
 tree, with a small part of it:

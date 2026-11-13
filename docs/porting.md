@@ -5,7 +5,8 @@ which parts are data, which are drivers and which are the same for every device.
 
 A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in
 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium). A phone on a SoC that is already
-described (`soc/sm7325.dtsi`, `soc/sm7350.dtsi`) needs the least; a new SoC adds one file.
+described (a package with its `soc.dtsi`: SM7325, SM7350) needs the least; a new SoC is one more file
+in the package.
 
 Nothing in this procedure writes to the phone's storage. The UEFI is started with `fastboot boot`,
 everything runs from RAM, and a reboot brings Android back.
@@ -30,10 +31,11 @@ the log line to look for at each step.
 tools/boards.py new mido --soc sm7325 --dts phone.dts --description "Maker Model"
 ```
 
-This writes the board file (`devices/NAME/board.dts`, here with `mido` for NAME), and the SoC file in
-`soc/` if that SoC is new. The directory `devices/NAME/` is your phone's device package. Git ignores it in
-a checkout of the main branch, because packages are kept on the `devices` branch (step 8); a new SoC file
-is an ordinary new file of the main branch. From the tree it reads:
+This writes the board file (`devices/NAME/board.dts`, here with `mido` for NAME) and the SoC file beside
+it (`devices/NAME/soc.dtsi`): a copy of another package's when one that is present has that SoC, else a
+new one from the tree. The directory `devices/NAME/` is your phone's device package. Git ignores it in a
+checkout of the main branch, because packages are kept on the `devices` branch (step 8). From the tree it
+reads:
 
 - the DSI controller, the TSENS controllers, the CPU frequency block, the clock controllers' addresses;
 - the interrupt controller, the cores with their MPIDR numbering, which cores are the small ones, the
@@ -208,8 +210,8 @@ A port goes to two places:
 
 | What | Where it goes |
 | --- | --- |
-| The device package: the `devices/NAME/` directory with `board.dts`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
-| The SoC file if new (`soc/SOC.dtsi`), any new driver with its feature, a new key of the board file | The main branch. |
+| The device package: the `devices/NAME/` directory with `board.dts` and `soc.dtsi`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
+| Any new driver with its feature, a new key of the board or SoC file | The main branch. |
 
 No generated table is sent: none is in the repository. For the package:
 

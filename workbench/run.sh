@@ -24,17 +24,17 @@ run() {
 echo "== the repository's own checks (tools/check-links.py, tools/components.py)"
 python3 "$HERE/tools_test.py" 2>&1 | tail -3 || failed=1
 
-echo "== boards (devices/, soc/, tools/boards.py)"
+echo "== boards (devices/, tools/boards.py)"
 python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 echo "== device packages (tools/device.py)"
 python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
 # The tables the code under test is built with: the repository's own boards and the tests' phones
-# (workbench/devices, with a chip of their own in workbench/soc), which stand in for real ones -- device
+# (workbench/devices), which stand in for real ones -- device
 # packages are not part of this repository.
 BOARDS=$WORK/boards
-"$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" check || failed=1
-"$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$BOARDS" || failed=1
+"$HERE/../tools/boards.py" --devices "$HERE/devices" check || failed=1
+"$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$BOARDS" || failed=1
 # (one touch driver includes a controller's firmware, which is not ours to publish: the stub the kernel's build has without it)
 (source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/hakios_focaltech_fw.h") || failed=1
 
