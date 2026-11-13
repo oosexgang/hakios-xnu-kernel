@@ -468,6 +468,7 @@ hakios_buttons_init(void)
 	/*
 	 * On with the touch screen (the phone, somebody at it) unless buttons=0 says otherwise: a hand
 	 * has pressed all three keys and each press and release was read as it was made.
+	 * touchscreen=1, with no buttons= given: the keys too.
 	 */
 	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled))) {
 		uint32_t touch_screen = 0;
