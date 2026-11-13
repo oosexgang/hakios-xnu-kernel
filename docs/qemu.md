@@ -54,6 +54,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `help`, `echo WORDS...`, `clear` | The commands, by group; words said back; the screen emptied (VT100's, which the kernel's video console takes). |
 | **The kernel** (`kernel.c`) | |
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
+| `vm` | The virtual memory's pages (free, active, wired, in the compressor) and its faults, as `vm_stat` asks them: host_statistics64 in a MIG message to the host's port. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `uptime`, `date` | The time since boot; the time of day, UTC, as the kernel has it from QEMU's clock. |
 | **Files** (`files.c`) | |
@@ -117,7 +118,7 @@ on its shell and checks what comes back:
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
   symbolic link to it is read through; extended attributes are set, replaced, listed and taken away;
   a mapped file is what reading it gives; memory of its own holds what is written and is all given
-  back; values are set through sysctl; the kernel's messages are read; the date is this year's.
+  back, each of its pages a fault Mach's counts see; values are set through sysctl; the kernel's messages are read; the date is this year's.
 - **IOKit.** Its registry answers in MIG messages, and the serial number the loader made is the one it
   gives user space; a picture drawn on a surface and swapped onto the screen is what QEMU's screen shows
   (`workbench/screen_shows_draw.py`).
