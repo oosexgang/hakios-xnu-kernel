@@ -102,6 +102,10 @@ typed=(
 	'xattr -d /tmp/notes/b com.example.size'
 	'xattr /tmp/notes/b'
 	'xattr -d /tmp/notes/b com.example.size'
+	'cd /tmp/notes'
+	'pwd'
+	'cat b'
+	'cd'
 	'threads 2'
 	'locks 4'
 	'mmap /sbin/launchd'
@@ -196,6 +200,9 @@ check "extended attributes are set, replaced, listed and taken away; one taken a
 check "Mach's host port counts the virtual memory's pages and faults (host_statistics64): 128 MB, some 8192 zero-filled faults" \
 	bash -c "grep -aoE '^vm: faults [0-9]+ .*zero filled [0-9]+' '$log' | sed 's/.* //' | tr '\\n' ' ' |
 		awk '{ exit !(NF == 2 && \$2 - \$1 >= 8192 - 64 && \$2 - \$1 < 8192 + 1000) }'"
+check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
+	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
+		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
 # (two threads on two processors take well under the time of one doing it all: they do run side by side)
 check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
 	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
