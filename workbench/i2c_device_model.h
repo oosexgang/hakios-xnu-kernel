@@ -37,7 +37,19 @@ static struct {
 	unsigned driven_high;           /* a line driven high by the SoC: never, on an open-drain bus */
 	unsigned writes;                /* bytes written into its registers */
 	void (*written)(uint8_t reg, uint8_t value);    /* a write the test wants to see or to change; NULL: the register takes it */
+	uint8_t (*read)(uint8_t reg);   /* a read the test answers; NULL: the register's value */
+	bool streams;                   /* stream_register is a port: bytes after the first go to it too, not to the next */
+	uint8_t stream_register;
 } device;
+
+/* the register a transfer's next byte is of: the next one, unless this one is a port */
+static inline void
+i2c_device_next(void)
+{
+	if (!(device.streams && device.at == device.stream_register)) {
+		device.at++;
+	}
+}
 
 static inline bool
 soc_low(unsigned pin)
@@ -109,10 +121,11 @@ changed(void)
 					device.bytes_in++;
 				} else {
 					if (device.written != NULL) {
-						device.written(device.at++, device.shift);
+						device.written(device.at, device.shift);
 					} else {
-						device.bank[device.at++] = device.shift;
+						device.bank[device.at] = device.shift;
 					}
+					i2c_device_next();
 					device.bytes_in++;
 					device.writes++;
 				}
@@ -136,7 +149,8 @@ changed(void)
 			}
 			if (device.reading) {
 				if (device.master_acked) {
-					device.out = device.bank[device.at++];
+					device.out = device.read != NULL && device.bank == device.reg ? device.read(device.at) : device.bank[device.at];
+					i2c_device_next();
 					device.bytes_out++;
 					device.sda_low = !(device.out & 0x80);
 				} else {
