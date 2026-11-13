@@ -1801,6 +1801,7 @@ apfs_volume_mount(void)
 	if (!PE_parse_boot_arg_str("apfs_volume", dev, sizeof(dev)) || dev[0] == '\0') {
 		return;
 	}
+	/* boot-arg apfs_volume_at=DIR: where apfs_volume is mounted (default /System/Volumes/Darwin) */
 	(void)PE_parse_boot_arg_str("apfs_volume_at", at, sizeof(at));
 	snprintf(path, sizeof(path), "/dev/%s", dev);
 	/* a node devfs_make_node() has just made is not in /dev at once (see apfs_check_thread) */
