@@ -96,6 +96,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <execinfo.h>
+#include <ptrauth.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -7067,6 +7068,77 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	[self hakiosPaySlot];
 }
 
+/*
+ * boot-arg metal_handlers=1 (a diagnostic): each different handler a process puts on its command buffers, said once --
+ * the block's function and the three calls that added it, as unslid addresses of the shared cache (ipsw dyld a2s names
+ * them) or IMAGE+OFFSET -- so that what the window server does when a frame's GPU work is scheduled or done can be read.
+ * (iOS 27.2's window server: MetalContext::prepare_new_command_buffer's block counts completed buffers,
+ * MetalContext::flush's reads GPUStartTime and GPUEndTime, MetalContext::delete_image's is a scheduled one.)
+ */
+extern const void *_dyld_get_shared_cache_range(size_t *length);
+
+static void
+hm_where(char *out, size_t size, uintptr_t address)
+{
+	size_t length = 0;
+	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&length);
+	Dl_info info;
+
+	if (address >= cache && address < cache + length) {
+		snprintf(out, size, " %lx", (unsigned long)(address - cache + 0x180000000UL));
+	} else if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+		const char *base = strrchr(info.dli_fname, '/');
+
+		snprintf(out, size, " %s+%lx", base != NULL ? base + 1 : info.dli_fname, (unsigned long)(address - (uintptr_t)info.dli_fbase));
+	} else {
+		snprintf(out, size, " ?%lx", (unsigned long)address);
+	}
+}
+
+static void
+hm_note_handler(const char *kind, id handler)
+{
+	static int on = -1;
+	static uintptr_t seen[96];
+	static unsigned count;
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	void *frames[5];
+	char line[512];
+	size_t at;
+	uintptr_t invoke, key;
+	int n;
+
+	if (on < 0) {
+		on = hm_boot_arg_set("metal_handlers=1");
+	}
+	if (!on || handler == NULL) {
+		return;
+	}
+	invoke = (uintptr_t)ptrauth_strip(((void **)(__bridge void *)handler)[2], ptrauth_key_function_pointer);
+	n = backtrace(frames, 5);
+	key = invoke ^ (uintptr_t)kind ^ (n > 2 ? (uintptr_t)frames[2] : 0);
+	pthread_mutex_lock(&lock);
+	for (unsigned i = 0; i < count; i++) {
+		if (seen[i] == key) {
+			pthread_mutex_unlock(&lock);
+			return;
+		}
+	}
+	if (count < sizeof(seen) / sizeof(seen[0])) {
+		seen[count++] = key;
+	}
+	pthread_mutex_unlock(&lock);
+	at = (size_t)snprintf(line, sizeof(line), "handler: %s, its function", kind);
+	hm_where(line + at, sizeof(line) - at, invoke);
+	at += strlen(line + at);
+	at += (size_t)snprintf(line + at, sizeof(line) - at, "; added from");
+	for (int i = 2; i < n && at < sizeof(line) - 40; i++) {
+		hm_where(line + at, sizeof(line) - at, (uintptr_t)ptrauth_strip(frames[i], ptrauth_key_return_address));
+		at += strlen(line + at);
+	}
+	hm_print("%s\n", line);
+}
+
 /* A handler added once the stage it is about has passed is delivered at once rather than dropped: Metal calls that
  * undefined, and losing it would be exactly the kind of silence this file exists to stop having. */
 - (void)addScheduledHandler:(MTLCommandBufferHandler)handler
@@ -7074,6 +7146,7 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	if (handler == NULL) {
 		return;
 	}
+	hm_note_handler("scheduled", handler);
 	@synchronized (self) {
 		if (!_committed) {
 			if (_scheduled == nil) {
@@ -7091,6 +7164,7 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	if (handler == NULL) {
 		return;
 	}
+	hm_note_handler("completed", handler);
 	@synchronized (self) {
 		if (hakios_metal_cb_status(_cb) < HAKIOS_METAL_COMPLETED) {
 			if (_completed == nil) {
