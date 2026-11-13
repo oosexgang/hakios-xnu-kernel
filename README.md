@@ -92,6 +92,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | Understand how it fits together | [docs/architecture.md](docs/architecture.md) |
 | Port it to your phone | [docs/porting.md](docs/porting.md) |
 | Build the kernel or the loader | [docs/building.md](docs/building.md) |
+| Go from an Ubuntu machine to Darwin 27 on a phone (in Russian) | [docs/darwin27-ubuntu.ru.md](docs/darwin27-ubuntu.ru.md) |
 | Know what a driver or a boot argument does | [docs/drivers.md](docs/drivers.md), [docs/boot-args.md](docs/boot-args.md) |
 | Write a driver for a part nobody has one for | [docs/writing-a-driver.md](docs/writing-a-driver.md) |
 | Find out what a message in the log means | [docs/troubleshooting.md](docs/troubleshooting.md) |
