@@ -1,4 +1,4 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, mmap */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, mmap */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -304,6 +304,61 @@ command_chmod(int argc, char **argv)
 		if (error != 0) {
 			say_failed("chmod", argv[i], error);
 		}
+	}
+}
+
+#define SYS_getxattr            234
+#define SYS_setxattr            236
+#define SYS_removexattr         238
+#define SYS_listxattr           240
+#define XATTR_NOFOLLOW          1
+
+/* FILE: its extended attributes and their values; FILE NAME VALUE: one set; -d FILE NAME: one taken away */
+void
+command_xattr(int argc, char **argv)
+{
+	char names[1024], value[256];
+	long error, n;
+
+	if (argc == 4 && same(argv[1], "-d")) {
+		error = syscall6(SYS_removexattr, (long)argv[2], (long)argv[3], XATTR_NOFOLLOW, 0, 0, 0);
+		if (error != 0) {
+			say_failed("xattr", argv[3], error);
+		}
+		return;
+	}
+	if (argc == 4) {
+		error = syscall6(SYS_setxattr, (long)argv[1], (long)argv[2], (long)argv[3], length(argv[3]), 0, XATTR_NOFOLLOW);
+		if (error != 0) {
+			say_failed("xattr", argv[2], error);
+		}
+		return;
+	}
+	if (argc != 2) {
+		say("xattr FILE | xattr FILE NAME VALUE | xattr -d FILE NAME\n");
+		return;
+	}
+	n = syscall6(SYS_listxattr, (long)argv[1], (long)names, sizeof(names), XATTR_NOFOLLOW, 0, 0);
+	if (n < 0) {
+		say_failed("xattr", argv[1], n);
+		return;
+	}
+	if (n == 0) {
+		say(argv[1]);
+		say(": no extended attributes\n");
+	}
+	for (long at = 0; at < n; at += length(names + at) + 1) {
+		long got = syscall6(SYS_getxattr, (long)argv[1], (long)(names + at), (long)value, sizeof(value) - 1, 0, XATTR_NOFOLLOW);
+
+		say(names + at);
+		if (got < 0) {
+			say(": cannot be read\n");
+			continue;
+		}
+		value[got] = '\0';
+		say(" = ");
+		say(value);
+		say("\n");
 	}
 }
 

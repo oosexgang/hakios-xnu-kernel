@@ -129,6 +129,7 @@ static const struct {
 	{ "ln", "[-s] TARGET NAME another name for a file; -s a symbolic link", command_ln },
 	{ "mv", "OLD NEW renamed", command_mv },
 	{ "chmod", "MODE PATH... the permissions (octal)", command_chmod },
+	{ "xattr", "FILE [NAME VALUE] | -d FILE NAME extended attributes: listed, set, taken away", command_xattr },
 	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
 	{ "memory", "MB that much memory of its own, written and read back", command_memory },
 	{ NULL, "the network", NULL },
