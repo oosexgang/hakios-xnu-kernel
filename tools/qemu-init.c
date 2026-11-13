@@ -862,6 +862,94 @@ command_mount(int argc, char **argv)
 	list(argv[3]);
 }
 
+/* ---- tone: a sine wave to the kernel's sound device ---- */
+
+#define O_WRONLY                1
+#define AUDIO_RATE              48000           /* sys/board/audio.h: 48 kHz, two channels of 16 bits */
+
+static unsigned
+parse_number(const char *text)
+{
+	unsigned n = 0;
+
+	while (*text >= '0' && *text <= '9') {
+		n = n * 10 + (unsigned)(*text++ - '0');
+	}
+	return *text == '\0' ? n : 0;
+}
+
+#define SYS_select              93
+
+/* microseconds since 1970 */
+static int64_t
+now_us(void)
+{
+	int64_t tv[2] = { 0, 0 };       /* struct timeval: seconds, then microseconds in 32 bits */
+
+	syscall6(SYS_gettimeofday, (long)tv, 0, 0, 0, 0, 0);
+	return tv[0] * 1000000 + (int32_t)tv[1];
+}
+
+static void
+sleep_us(int64_t us)
+{
+	int64_t tv[2] = { us / 1000000, us % 1000000 };
+
+	syscall6(SYS_select, 0, 0, 0, 0, (long)tv, 0);
+}
+
+/*
+ * HZ [SECONDS]: a sine of HZ (y[n] = 2 cos(w) y[n-1] - y[n-2], no libm), a tenth of a second at a time
+ * and in time: the device takes what it is given at once and plays it at its own pace, holding no more
+ * than a third of a second, so the writes keep two tenths ahead of the clock.
+ */
+static void
+command_tone(int argc, char **argv)
+{
+	unsigned hz = argc > 1 ? parse_number(argv[1]) : 0, seconds = argc > 2 ? parse_number(argv[2]) : 1;
+	static int16_t frames[AUDIO_RATE / 10 * 2];
+
+	if (hz < 20 || hz > 20000 || seconds < 1 || seconds > 30) {
+		say("tone HZ [SECONDS]: 20 to 20000 Hz, 1 to 30 s\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)"/dev/hakios-audio", O_WRONLY, 0, 0, 0, 0);
+	if (fd < 0) {
+		say("tone: no sound device (/dev/hakios-audio)\n");
+		return;
+	}
+	double w = 2 * 3.14159265358979 * hz / AUDIO_RATE, w2 = w * w;
+	double c = 1 - w2 / 2 * (1 - w2 / 12 * (1 - w2 / 30 * (1 - w2 / 56)));        /* cos(w) */
+	double s1 = 0, s2 = -8000 * (w - w * w2 / 6 * (1 - w2 / 20));                   /* sin(-w) times the level */
+
+	int64_t start = now_us();
+
+	for (unsigned tenth = 0; tenth < seconds * 10; tenth++) {
+		int64_t early = start + ((int64_t)tenth - 2) * 100000 - now_us();
+
+		if (early > 0) {
+			sleep_us(early);
+		}
+		for (unsigned i = 0; i < AUDIO_RATE / 10; i++) {
+			double y = 2 * c * s1 - s2;
+
+			s2 = s1;
+			s1 = y;
+			frames[2 * i] = frames[2 * i + 1] = (int16_t)y;
+		}
+		if (syscall6(SYS_write, fd, (long)frames, sizeof(frames), 0, 0, 0) != (long)sizeof(frames)) {
+			say("tone: the sound device took less than it was given\n");
+			break;
+		}
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	say("played ");
+	say_number(hz);
+	say(" Hz for ");
+	say_number(seconds);
+	say(" s\n");
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -888,6 +976,7 @@ static const struct {
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
 	{ "mount", "TYPE DEVICE DIR a disk's file system, read only", command_mount },
+	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 };
 
 static void
