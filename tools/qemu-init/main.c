@@ -84,6 +84,16 @@ command_echo(int argc, char **argv)
 	say("\n");
 }
 
+/* the screen emptied and the cursor at its top: VT100's, which the kernel's video console and a terminal on the
+ * serial port both take */
+static void
+command_clear(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	say("\033[H\033[2J");
+}
+
 void
 command_about(int argc, char **argv)
 {
@@ -100,6 +110,7 @@ static const struct {
 	{ NULL, "the shell", NULL },
 	{ "help", "what this shell can do", command_help },
 	{ "echo", "WORDS... say them", command_echo },
+	{ "clear", "the screen emptied", command_clear },
 	{ NULL, "the kernel", NULL },
 	{ "about", "what the kernel says of itself", command_about },
 	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
