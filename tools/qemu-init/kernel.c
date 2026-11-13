@@ -1,4 +1,4 @@
-/* tools/qemu-init: the kernel's values, messages and time: sysctl, uptime, dmesg, date */
+/* tools/qemu-init: the kernel's values, messages and time: sysctl, vm, uptime, dmesg, date */
 #include "init.h"
 
 /*
@@ -104,6 +104,92 @@ command_sysctl(int argc, char **argv)
 		}
 		say("\n");
 	}
+}
+
+/*
+ * The virtual memory's counts, as vm_stat asks them: host_statistics64 (mach_host.defs, routine 219) in a
+ * MIG message to the host's port, flavour HOST_VM_INFO64, a vm_statistics64 back.
+ */
+#define TRAP_reply_port         -26
+#define TRAP_host_self          -29
+#define TRAP_mach_msg2          -47
+#define MIG_host_statistics64   219
+#define HOST_VM_INFO64          4
+#define VM_INFO64_COUNT         38              /* (sizeof(vm_statistics64_data_t) / sizeof(integer_t)) */
+
+struct vm_statistics64 {
+	uint32_t free, active, inactive, wired;
+	uint64_t zero_fill, reactivations, pageins, pageouts, faults, cow_faults, lookups, hits, purges;
+	uint32_t purgeable, speculative;
+	uint64_t decompressions, compressions, swapins, swapouts;
+	uint32_t compressor, throttled, external, internal;
+	uint64_t uncompressed_in_compressor;
+};
+
+union vm_message {
+	struct {
+		uint32_t bits, size, remote, local, voucher;
+		int32_t id;
+		uint64_t ndr;
+	} head;
+	struct { uint8_t head[32]; int32_t flavor; uint32_t count; } request;
+	struct { uint8_t head[32]; int32_t code; uint32_t count; uint32_t info[VM_INFO64_COUNT]; } reply;
+	uint8_t room[512];
+};
+
+static void
+say_pages(const char *what, uint64_t pages)
+{
+	say(what);
+	say_number(pages);
+}
+
+void
+command_vm(int argc, char **argv)
+{
+	union vm_message message = { 0 };
+	struct vm_statistics64 vm;
+	uint32_t host = (uint32_t)trap8(TRAP_host_self, 0, 0, 0, 0, 0, 0, 0, 0);
+	uint32_t reply = (uint32_t)trap8(TRAP_reply_port, 0, 0, 0, 0, 0, 0, 0, 0);
+	uint32_t bits = 19 | 21 << 8;           /* MACH_MSG_TYPE_COPY_SEND to the host, MAKE_SEND_ONCE for the answer */
+	uint32_t size = sizeof(message.request);
+	long kr;
+
+	(void)argc;
+	(void)argv;
+	message.head.bits = bits;
+	message.head.size = size;
+	message.head.remote = host;
+	message.head.local = reply;
+	message.head.id = MIG_host_statistics64;
+	message.head.ndr = 0x0000000001000000ull;  /* NDR_record: little-endian, ASCII, IEEE floats */
+	message.request.flavor = HOST_VM_INFO64;
+	message.request.count = VM_INFO64_COUNT;
+	/* MACH64_SEND_MSG | MACH64_RCV_MSG | MACH64_SEND_KOBJECT_CALL: the host is a kernel object */
+	kr = trap8(TRAP_mach_msg2, (long)&message, (long)(0x1ull | 0x2ull | 0x200000000ull), (long)(bits | (uint64_t)size << 32),
+	    (long)(host | (uint64_t)reply << 32), (long)((uint64_t)MIG_host_statistics64 << 32), (long)((uint64_t)reply << 32),
+	    sizeof(message), 0);
+	if (kr != 0 || message.reply.code != 0 || message.reply.count != VM_INFO64_COUNT) {
+		say("vm: host_statistics64: ");
+		say_number((uint64_t)(kr != 0 ? kr : message.reply.code));
+		say(", ");
+		say_number(message.reply.count);
+		say(" words\n");
+		return;
+	}
+	copy_bytes(&vm, message.reply.info, sizeof(vm));
+	say_pages("vm: pages: free ", vm.free);
+	say_pages(", active ", vm.active);
+	say_pages(", inactive ", vm.inactive);
+	say_pages(", speculative ", vm.speculative);
+	say_pages(", wired ", vm.wired);
+	say_pages(", in the compressor ", vm.compressor);
+	say_pages("; faults ", vm.faults);
+	say_pages(" (copy on write ", vm.cow_faults);
+	say_pages(", zero filled ", vm.zero_fill);
+	say_pages("), page-ins ", vm.pageins);
+	say_pages(", page-outs ", vm.pageouts);
+	say("\n");
 }
 
 void

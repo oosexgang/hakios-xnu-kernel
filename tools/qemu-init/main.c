@@ -114,6 +114,7 @@ static const struct {
 	{ NULL, "the kernel", NULL },
 	{ "about", "what the kernel says of itself", command_about },
 	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
+	{ "vm", "the virtual memory's pages and faults (host_statistics64)", command_vm },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "date", "the date and time, UTC", command_date },
