@@ -759,7 +759,7 @@ extern void MiniIOSurfaceUsage(uint32_t *count, uint64_t *bytes);
  */
 void hakios_memory_line(char *buf, size_t len);
 
-/* The line itself (also kern.hakios_memory, for a job list to keep: bsd/miscfs/apfs/apfs_vfsops.c) */
+/* The line itself, as the heartbeat prints it */
 void
 hakios_memory_line(char *buf, size_t len)
 {
