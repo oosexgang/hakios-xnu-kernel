@@ -184,6 +184,30 @@ across_blocks(void)
 	    "over the end: what is there, then zeros: %#x %#x", data[0], data[512]);
 }
 
+/* the smallest blocks a header may have, a sector each, and every one of them here: the image is the disk */
+static void
+every_block_here(void)
+{
+	uint8_t data[BLOCKS * 512];
+	size_t resid = 99;
+
+	image();
+	put32(AT_BLOCK_SIZE, 512);
+	put64(AT_PRESENT, BLOCKS);
+	for (unsigned i = 0; i < BLOCKS; i++) {
+		put32(TABLE_AT + 4 * i, i + 1);
+		memset(memory + ROOT + DATA_AT + i * 512, 0xb0 + (int)i, 512);
+	}
+	hakios_sparse_init();
+	CHECK(there() && logged("/dev/rsp0 stands in for 8 blocks of 512, 8 of them here"), "the disk is there: %s", log_text);
+	CHECK(fake_disk_read("rsp0", 0, data, sizeof(data), &resid) == 0 && resid == 0, "read whole");
+	for (unsigned i = 0; i < BLOCKS; i++) {
+		CHECK(all(data + i * 512, 512, (uint8_t)(0xb0 + i)), "sector %u: %#x", i, data[i * 512]);
+	}
+	hakios_sparse_report();
+	CHECK(logged("sparse: 8 blocks served, 0 asked for that are not in the image"), "counted: %s", log_text);
+}
+
 /* nothing writes it */
 static void
 read_only(void)
@@ -320,7 +344,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); unsigned cases; } scenarios[] = {
-		{ "served", served, 1 }, { "across_blocks", across_blocks, 1 }, { "read_only", read_only, 1 },
+		{ "served", served, 1 }, { "across_blocks", across_blocks, 1 }, { "every_block_here", every_block_here, 1 }, { "read_only", read_only, 1 },
 		{ "table_points_outside", table_points_outside, 1 }, { "does_not_fit", does_not_fit, 7 },
 		{ "header_makes_no_sense", header_makes_no_sense, 6 }, { "no_image_there", no_image_there, 1 },
 		{ "offset_past_the_disk", offset_past_the_disk, 3 }, { "no_ram_disk", no_ram_disk, 1 }, { "off_by_default", off_by_default, 1 },
