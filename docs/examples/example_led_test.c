@@ -84,6 +84,8 @@ lets_go_of_its_thread(void)
 	example_led_init();
 	CHECK(fake_threads_started == 1 && fake_threads_released == 1, "%u started, %u let go of", fake_threads_started,
 	    fake_threads_released);
+	/* (and the thread is let finish: a process that ends under a thread still writing its log can abort) */
+	WAIT_FOR(logged("led: done"), 3000);
 }
 
 /* a look writes nothing */
