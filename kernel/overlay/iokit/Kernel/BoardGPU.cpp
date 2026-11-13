@@ -1320,6 +1320,12 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		addresses[count] = b->address + cmds[i].submit_offset;
 		words[count++] = cmds[i].size / 4;
 	}
+	if (count == 0) {
+		/* (every one of another kind: nothing for this GPU to run, and nothing to say it ran) */
+		IOLog("HakiosGPU: a submission of %u command buffers, none of them for this GPU: not taken\n", request->nr_cmds);
+		IOLockUnlock(gGPULock);
+		goto out;
+	}
 	request->fence = hakios_gpu_submit(addresses, words, count);
 	fLastFence = request->fence != 0 ? request->fence : fLastFence;
 	/*
