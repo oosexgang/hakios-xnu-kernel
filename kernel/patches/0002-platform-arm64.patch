@@ -250,6 +250,30 @@ diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
  	pmap_clear_user_ttb();
  	flush_mmu_tlb();
  #endif
+diff --git a/osfmk/arm/machine_cpuid.c b/osfmk/arm/machine_cpuid.c
+--- a/osfmk/arm/machine_cpuid.c
++++ b/osfmk/arm/machine_cpuid.c
+@@ -93,11 +93,17 @@ machine_arm_debug_info(void)
+ void
+ machine_do_mvfpid()
+ {
++	uint64_t pfr0;
++
+ 	cpuid_mvfp_info.neon = 1;
+ 	cpuid_mvfp_info.neon_hpfp = 1;
+-#if defined(__ARM_ARCH_8_2__)
+-	cpuid_mvfp_info.neon_fp16 = 1;
+-#endif /* defined(__ARM_ARCH_8_2__) */
++	/*
++	 * Half precision in AdvSIMD as the processor says it (ID_AA64PFR0_EL1.AdvSIMD, bits 23:20, is 1), not
++	 * as the kernel was compiled: a kernel built for ARMv8.0 runs on cores that have it, and
++	 * hw.optional.neon_fp16, read from the same register, must agree with this.
++	 */
++	__asm__ volatile ("mrs %0, ID_AA64PFR0_EL1" : "=r"(pfr0));
++	cpuid_mvfp_info.neon_fp16 = ((pfr0 >> 20) & 0xf) == 1;
+ }
+ 
+ arm_mvfp_info_t *
 diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
 --- a/osfmk/arm/model_dep.c
 +++ b/osfmk/arm/model_dep.c
