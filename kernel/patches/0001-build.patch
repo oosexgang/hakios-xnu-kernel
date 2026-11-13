@@ -184,7 +184,7 @@ diff --git a/iokit/IOKit/IOCircularDataQueueImplementation.h b/iokit/IOKit/IOCir
 diff --git a/iokit/conf/files b/iokit/conf/files
 --- a/iokit/conf/files
 +++ b/iokit/conf/files
-@@ -80,6 +80,14 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+@@ -80,6 +80,15 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
  iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
  
  iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
@@ -194,12 +194,13 @@ diff --git a/iokit/conf/files b/iokit/conf/files
 +iokit/Kernel/HakiosGPU.cpp				optional iokitcpp
 +iokit/Kernel/HakiosWLAN.cpp			optional iokitcpp
 +iokit/Kernel/HakiosBattery.cpp			optional iokitcpp
++iokit/Kernel/HakiosHaptics.cpp			optional iokitcpp
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
  iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
  
  iokit/Kernel/IOCPU.cpp					optional iokitcpp
-@@ -111,8 +119,10 @@ iokit/Tests/TestServices/TestIODeviceMemoryRosetta.cpp optional iokitcpp
+@@ -111,8 +120,10 @@ iokit/Tests/TestServices/TestIODeviceMemoryRosetta.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIOUserClient2022Entitlements.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIOServiceUserNotification.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIODataQueues.cpp optional iokitcpp

@@ -94,7 +94,11 @@ BIG_PROGRAM = 10 << 20           # daemons bigger than this (locationd, lskdd, .
 # audio goes through, with its generic tunings (signal processing chains), and the system's own sounds.
 # Not the tunings of the IPSW's own models (11 MB for the iPhone 11's: they are for its speakers, not the
 # phone's), nor the neural networks among the tunings, nor the sounds of the watch.
-AUDIO = ('Library/Audio/Plug-Ins/', 'Library/Audio/Tunings/Generic/',
+# The tunings are the IPSW's own phone's as well (Library/Audio/Tunings/N104/ for iPhone12,1: an IPSW has only
+# its own): its VAD strips name the haptic chain n104_actuator_general and its Haptics/ the engine's
+# hapticengineconfig.plist. Without them audiomxd played nothing on the actuator ("Cannot find strips file
+# N104/VAD/n104_actuator_general") and CoreHaptics made no engine.
+AUDIO = ('Library/Audio/Plug-Ins/', 'Library/Audio/Tunings/',
          'System/Library/Audio/UISounds/')
 SKIP_AUDIO = ('System/Library/Audio/UISounds/nano/',)
 KEEP_LANG = ('en', 'Base', 'English', 'en_US', 'en_GB')

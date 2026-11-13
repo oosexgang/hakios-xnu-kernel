@@ -64,6 +64,7 @@
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
+extern void HakiosHapticsReady(void);             /* iokit/Kernel/HakiosHaptics.cpp */
 
 static vm_offset_t tlmm;
 static uint32_t level;
@@ -825,6 +826,7 @@ serve(void)
 		return;
 	}
 	say("haptic: THE MOTOR PLAYS WHAT IOS PLAYS ON ITS ACTUATOR (/dev/hakios-haptic) from here on, until the run ends\n");
+	HakiosHapticsReady();           /* the service iOS's haptic server waits for (iokit/Kernel/HakiosHaptics.cpp) */
 	while (!broken) {
 		uint64_t now = now_us();
 		bool active = heard_us != 0 && now - heard_us < ACTIVE_US;
