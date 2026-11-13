@@ -23,7 +23,7 @@
  *   - A press of the side button that is long over is not taken for a long press (Siri) because
  *     SpringBoard was busy waking the display: see lock_long_press().
  *   - A long press on the lock screen's wallpaper does not open the poster switcher, which the
- *     window server here shows as a black screen: see poster_switcher_allowed().
+ *     window server here shows as a black screen (16.5; iOS 27 opens it): see poster_switcher_allowed().
  *   - Darwin notifications as a remote control, for scripts (rwtouch notify NAME):
  *       com.hakios.unlock      what the lock screen does after "swipe up to open"
  *       com.hakios.layers      write down the layers SpringBoard has on the screen: see layers()
@@ -530,10 +530,42 @@ unlock(void)
  * Until it is, the switcher is not offered, the way SpringBoard itself withholds it where it has
  * none (an iPad, Guided Access): its policy says the capability is not there, and the long press
  * does nothing.
+ *
+ * iOS 27 (HAKIOS_POSTER_SWITCHER=1, ios/userland/inj26.sh): offered as iOS offers it. There the long
+ * press restarted SpringBoard ("process was nil" in -[SBApplicationSceneUpdateTransaction
+ * _notifyObserversOfClientConnection:]) as long as PosterBoard ran as a system daemon, a process
+ * FrontBoard did not know; it is a launch angel again (ios/tools/mkimage26.py), started in the user's
+ * domain as on an iPhone, and the switcher opens: the row of posters with "Customize" and "+", and a
+ * swipe up takes it away. Boot-arg poster_switcher=0 withholds it, poster_switcher=1 offers it.
  */
+#ifndef HAKIOS_POSTER_SWITCHER
+#define HAKIOS_POSTER_SWITCHER  0
+#endif
+static BOOL (*original_poster_switcher_allowed)(id self, SEL selector, id *explanation);
+
 static BOOL
-poster_switcher_allowed(__unused id self, __unused SEL selector, id *explanation)
+poster_switcher_allowed(id self, SEL selector, id *explanation)
 {
+	static int wanted = -1;         /* offered as iOS offers it: HAKIOS_POSTER_SWITCHER, or boot-arg poster_switcher=0/1 */
+
+	if (wanted < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+		const char *at = NULL;
+
+		wanted = HAKIOS_POSTER_SWITCHER;
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+			for (at = strstr(args, "poster_switcher="); at != NULL && at != args && at[-1] != ' ';
+			    at = strstr(at + 1, "poster_switcher=")) {
+			}
+		}
+		if (at != NULL && (at[16] == '0' || at[16] == '1')) {
+			wanted = at[16] == '1';
+		}
+	}
+	if (wanted && original_poster_switcher_allowed != NULL) {
+		return original_poster_switcher_allowed(self, selector, explanation);
+	}
 	if (explanation != NULL) {
 		*explanation = (id)CFSTR("the poster switcher is not shown here (see inject_sb.c)");
 	}
@@ -1311,6 +1343,7 @@ hakios_springboard_init(void)
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",
 	    0x1c507e0fcUL, (IMP)poster_switcher_allowed);
+	original_poster_switcher_allowed = (BOOL (*)(id, SEL, id *))poster_switcher;
 	original_switcher_wallpaper_overlay = (void (*)(id, SEL))replace_method("SBAppSwitcherPageView",
 	    "_createOrDestroyWallpaperOverlayView", 0x1c4af7860UL, (IMP)switcher_wallpaper_overlay);
 	/*

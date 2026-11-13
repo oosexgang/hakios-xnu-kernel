@@ -19,8 +19,8 @@ cp "$US"/src/*.c "$US"/src/*.h "$O/src/"
 #     3 JPEG, chosen by two flags of the device and the snapshot's opacity, as on 16.5
 #   -[SBLockHardwareButton longPress:]: the side button's long press (Siri), given the gesture recognizer, as on 16.5
 #   -[SBPolicyAggregator _allowsCapabilityPosterSwitcherWithExplanation:] (16.5's SBMainDisplayPolicyAggregator): a BOOL
-#     and the explanation through its pointer, as on 16.5; the poster switcher a long press on the lock screen's
-#     wallpaper opens is still black here on 27.2 (a spinner on black: logs/232339-run.log in hakios-sm7325)
+#     and the explanation through its pointer, as on 16.5; on 27.2 the switcher is offered (HAKIOS_POSTER_SWITCHER=1):
+#     with PosterBoard a launch angel again (mkimage26.py) it opens, where 16.5's is black
 case $BUILD in
 23G90)	SB_ACTIVATION=0x22450fdc0 SB_SETUP=0x224675b68 SB_SNAPSHOT_FORMAT='' SB_LONG_PRESS='' SB_POSTER='' ;;
 24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc SB_SNAPSHOT_FORMAT=0x2b42c8d38 SB_LONG_PRESS=0x227922350 SB_POSTER=0x2272817c4 ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
@@ -35,7 +35,7 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFound
 # the status bar's clock past the hole punch: ios/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
 # (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
-$DYN -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
+$DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/userland/inject_statusbar.c"
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it

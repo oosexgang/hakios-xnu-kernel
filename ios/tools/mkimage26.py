@@ -288,6 +288,21 @@ def default_wallpaper():
         plistlib.dump(defaults, f)
 
 
+def angels_placed():
+    """
+    The names of the jobs that are launch angels (System/Library/LaunchAngels of the IPSW), which go back to that
+    directory of the image instead of LaunchDaemons, and into the job cache by that directory's path (write_job_cache).
+    launchd starts an angel in the user's domain (osservice<com.apple.PosterBoard(501)> on an iPhone); as a system
+    daemon PosterBoard was a process FrontBoard did not know, and the lock screen's poster switcher, an application
+    scene of it, ended SpringBoard ("process was nil" in -[SBApplicationSceneUpdateTransaction
+    _notifyObserversOfClientConnection:]). LAUNCHANGELS=0: none, every job a daemon as before.
+    """
+    if os.environ.get('LAUNCHANGELS', '1') != '1':
+        return set()
+    src = ROOT + '/System/Library/LaunchAngels'
+    return {name for name in os.listdir(src) if name.endswith('.plist')} if os.path.isdir(src) else set()
+
+
 def write_job_cache(jobs):
     """
     System/Library/xpc/launchd.plist with our jobs. On a normal (not restore) boot launchd takes its jobs
@@ -299,10 +314,15 @@ def write_job_cache(jobs):
     with open(ROOT + '/System/Library/xpc/launchd.plist', 'rb') as f:
         cache = plistlib.load(f)
     daemons = {}
+    angels = angels_placed()
     for name in sorted(os.listdir(jobs)):
         if name.endswith('.plist'):
+            # (an angel is in the same dictionary, by its own directory's path: that path is what launchd
+            # knows an angel by, as Apple's cache has com.apple.PosterBoard; left out, it was no job at all,
+            # and PosterBoard never ran)
+            where = 'LaunchAngels' if name in angels else 'LaunchDaemons'
             with open(os.path.join(jobs, name), 'rb') as f:
-                daemons['/System/Library/LaunchDaemons/' + name] = plistlib.load(f)
+                daemons[f'/System/Library/{where}/' + name] = plistlib.load(f)
     cache['LaunchDaemons'] = daemons
     os.makedirs(os.path.join(WORK, 'System/Library/xpc'), exist_ok=True)
     with open(os.path.join(WORK, 'System/Library/xpc/launchd.plist'), 'wb') as f:
@@ -365,6 +385,16 @@ def main():
     jobs = os.environ.get('LAUNCHDAEMONS')
     if jobs:
         shutil.copytree(jobs, ld)
+        angels = angels_placed()
+        if angels:
+            la = os.path.join(WORK, 'System/Library/LaunchAngels')
+            os.makedirs(la, exist_ok=True)
+            moved = 0
+            for name in sorted(angels):
+                if os.path.exists(os.path.join(ld, name)):
+                    os.replace(os.path.join(ld, name), os.path.join(la, name))
+                    moved += 1
+            print(f'mkimage26: {moved} launch angels in System/Library/LaunchAngels')
         write_job_cache(jobs)
     elif not os.path.lexists(ld):
         os.symlink('/redwood/LaunchDaemons', ld)
