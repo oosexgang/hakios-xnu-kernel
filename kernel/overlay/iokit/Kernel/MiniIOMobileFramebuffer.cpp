@@ -258,7 +258,8 @@ recStep(void)
 extern "C" bool hakios_display_scan_start(void);
 extern "C" bool hakios_display_scan(uint32_t * frame, uint32_t * line);
 static TUNABLE(uint32_t, gScan, "fb_scan", 1);
-static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);   /* the first lead from a frame's start to its target */
+/* fb_scan_lead=US: the first lead from a frame's start to its target, 1000 to 8000 microseconds (default 2000) */
+static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);
 
 struct panel_scan {
 	bool            ok;
