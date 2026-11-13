@@ -84,7 +84,7 @@ void
 command_ls(int argc, char **argv)
 {
 	if (argc < 2) {
-		list("/");
+		list(".");
 	}
 	for (int i = 1; i < argc; i++) {
 		if (argc > 2) {
