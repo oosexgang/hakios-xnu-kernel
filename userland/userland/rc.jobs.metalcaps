@@ -48,11 +48,11 @@
 #         instead. logs/213739-run.log already has Apple1 = yes from metal_stubdev on a
 #         profile-0 stub, so a NO here is a change and not a surprise.
 #
-#   caps:   supportsFeatureSet( 0 iOS_GPUFamily1_v1   ) yes
-#   caps:   supportsFeatureSet( 2 iOS_GPUFamily1_v2   ) yes
-#   caps:   supportsFeatureSet( 5 iOS_GPUFamily1_v3   ) yes
-#   caps:   supportsFeatureSet( 8 iOS_GPUFamily1_v4   ) yes
-#   caps:   supportsFeatureSet(12 iOS_GPUFamily1_v5   ) yes
+#   caps:   supportsFeatureSet(0 GPUFamily1_v1       ) yes
+#   caps:   supportsFeatureSet(2 GPUFamily1_v2       ) yes
+#   caps:   supportsFeatureSet(5 GPUFamily1_v3       ) yes
+#   caps:   supportsFeatureSet(8 GPUFamily1_v4       ) yes
+#   caps:   supportsFeatureSet(12 GPUFamily1_v5       ) yes
 #         and NO to the other fourteen, to 19 and to 30000.
 #         +[_MTLDevice featureProfile:supportsFeatureSet:] (0x181aab6e4) indexes a 19-byte table
 #         at 0x181b5bc90 by the FEATURE SET and compares the minimum profile it finds against

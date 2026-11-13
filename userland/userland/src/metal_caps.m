@@ -50,11 +50,11 @@ static const struct { const char *name; NSUInteger value; } families[] = {
 };
 
 static const char *const feature_sets[] = {
-	"iOS_GPUFamily1_v1", "iOS_GPUFamily2_v1", "iOS_GPUFamily1_v2", "iOS_GPUFamily2_v2",
-	"iOS_GPUFamily3_v1", "iOS_GPUFamily1_v3", "iOS_GPUFamily2_v3", "iOS_GPUFamily3_v2",
-	"iOS_GPUFamily1_v4", "iOS_GPUFamily2_v4", "iOS_GPUFamily3_v3", "iOS_GPUFamily4_v1",
-	"iOS_GPUFamily1_v5", "iOS_GPUFamily2_v5", "iOS_GPUFamily3_v4", "iOS_GPUFamily4_v2",
-	"iOS_GPUFamily5_v1", "iOS_GPUFamily6_v1", "iOS_GPUFamily7_v1",
+	"GPUFamily1_v1", "GPUFamily2_v1", "GPUFamily1_v2", "GPUFamily2_v2",
+	"GPUFamily3_v1", "GPUFamily1_v3", "GPUFamily2_v3", "GPUFamily3_v2",
+	"GPUFamily1_v4", "GPUFamily2_v4", "GPUFamily3_v3", "GPUFamily4_v1",
+	"GPUFamily1_v5", "GPUFamily2_v5", "GPUFamily3_v4", "GPUFamily4_v2",
+	"GPUFamily5_v1", "GPUFamily6_v1", "GPUFamily7_v1",
 };
 
 /* one helper per return shape; see the file comment for why there is no generic one */

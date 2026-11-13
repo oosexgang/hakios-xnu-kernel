@@ -488,7 +488,7 @@ new_brotli(id self, SEL cmd, void *a, void *b, void *c, void *d)
  * AND THE SHARPER FACT, which was in the task report all along and wanted reading for the thing
  * nobody was looking for: THE APP MAKES EXACTLY FOUR REQUESTS AND NONE OF THEM IS FOR CONTENT.
  * Three sessions, four tasks each, every time the same four: the bag twice, and
- * apps.mzstatic.com/.../ios-appstore.jetpack twice. The jetpack is the store's user interface, not
+ * the store's jetpack file on apps.mzstatic.com twice. The jetpack is the store's user interface, not
  * its content; the Today page's items come from a separate feed (amp-api), and no such request is
  * ever made. So "the page is parsed and not drawn" is better said as: nothing ever asks for anything
  * to draw. That moves the question from "why does JetEngine not draw this document" to "what should
