@@ -64,6 +64,28 @@ off_by_default(void)
 	CHECK(model.writes == 0 && model.elsewhere == 0 && !logged("led:"), "nothing: %s", log_text);
 }
 
+/* led=0 is not being asked: the same nothing */
+static void
+asked_for_none(void)
+{
+	phone("phone-cmd");
+	boot_args = "led=0";
+	example_led_init();
+	usleep(50000);
+	CHECK(model.writes == 0 && model.elsewhere == 0 && !logged("led:"), "nothing: %s", log_text);
+}
+
+/* the thread it starts runs on its own: the driver lets go of the reference it was given */
+static void
+lets_go_of_its_thread(void)
+{
+	phone("phone-cmd");
+	boot_args = "led=1";
+	example_led_init();
+	CHECK(fake_threads_started == 1 && fake_threads_released == 1, "%u started, %u let go of", fake_threads_started,
+	    fake_threads_released);
+}
+
 /* a look writes nothing */
 static void
 look_only(void)
@@ -133,7 +155,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "blinks", blinks }, { "pin_in_use", pin_in_use },
-		{ "no_pins", no_pins },
+		{ "no_pins", no_pins }, { "asked_for_none", asked_for_none }, { "lets_go_of_its_thread", lets_go_of_its_thread },
 	};
 
 	/* (run without an argument a test lists its scenarios, which workbench/run.sh then runs one a process) */
