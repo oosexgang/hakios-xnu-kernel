@@ -5,6 +5,7 @@
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
+#   - no C format says a number with %#0Nx, which leaves the 0x off a zero ("0000"): 0x%0Mx says it one way
 #   - the copies of the kernel's device interfaces that the Darwin side compiles against
 #     (userland/userland/src/board/*.h of kernel/overlay/bsd/sys/board/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
@@ -31,6 +32,11 @@ tools/check-links.py || failed=1
 tools/components.py check || failed=1
 
 tools/check-publishable.sh > /dev/null || { tools/check-publishable.sh; failed=1; }
+
+if git grep -nE '%#0[0-9]+(l|ll)?x' -- '*.c' '*.cpp' '*.h' '*.m'; then
+	echo "lint: %#0Nx says a zero without its 0x: write 0x%0Mx (two digits fewer)"
+	failed=1
+fi
 
 # (each copy's first comment may say where it is used, and its #ifdef KERNEL part is the kernel's own; the rest is
 # what a program sees, and is the kernel's word for word)
