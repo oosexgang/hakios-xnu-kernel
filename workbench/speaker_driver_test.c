@@ -760,6 +760,37 @@ monitor_table_not_trusted(void)
 	never();
 }
 
+/* a monitor table of a device that is neither amplifier: passed over, the others' read as ever */
+static void
+a_table_for_no_amplifier(void)
+{
+	phone_with_file("phone-video");
+	acf_monitor_table(7, temps, 4, vbats, 3);
+	wide(device.reg_b, 0x01, 0x0311);
+	CHECK(hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start(), "prepared and started: %s", log_text);
+	CHECK(logged("the amplifier 0x35, slot 0's monitor: at 2 to 5 degrees, 3.000 dB less"), "the amplifiers' own tables: %s", log_text);
+	CHECK(!logged("device 7"), "and nothing of device 7's: %s", log_text);
+}
+
+/* a monitor table whose sum is right but whose rows run past its end: not used */
+static void
+monitor_rows_past_the_end(void)
+{
+	uint32_t length = 0x48 + 12 * (4 + 3), sum = 0;
+	uint8_t *block;
+
+	phone_with_file("phone-video");
+	block = acf + acf_size - length;        /* (the second amplifier's, the last in the file) */
+	put32(block + 0x34, length - 12);       /* its temperatures' four rows begin one row before its end */
+	for (uint32_t i = 4; i < length; i++) {
+		sum += block[i];
+	}
+	put32(block, sum);
+	wide(device.reg_b, 0x01, 0x0311);
+	CHECK(hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start(), "prepared and started all the same: %s", log_text);
+	CHECK(logged("device 1's monitor table is not of the shape known: not used"), "said: %s", log_text);
+}
+
 /* the kernel on its way out while they play: both powered down at once */
 static void
 run_ends(void)
@@ -797,7 +828,8 @@ main(int argc, char **argv)
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
-		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "run_ends", run_ends }, { "not_listed", not_listed },
+		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
+		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "run_ends", run_ends }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {
