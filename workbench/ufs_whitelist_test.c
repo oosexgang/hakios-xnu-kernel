@@ -162,12 +162,42 @@ read_lengths(void)
 	CHECK(hc_refusal(upiu, UTRD_CT_UFS | UTRD_DD_NONE, 1, false) != NULL, "a read without data from the device");
 }
 
+/* logical units 8 to 127 are none of the eight a mask can name: refused whatever the mask says (1 << 8 and up is no unit) */
+static void
+units_past_the_eighth(void)
+{
+	uint8_t upiu[32];
+
+	for (unsigned lun = 0; lun < 0x80; lun++) {
+		command(upiu, UPIU_COMMAND, UPIU_FLAG_READ, (uint8_t)lun, 4096, 0x28, 0, 1);
+		CHECK((hc_refusal(upiu, UTRD_CT_UFS | UTRD_DD_IN, 0xffffffffu, false) == NULL) == (lun < 8), "unit %u", lun);
+	}
+}
+
+/* what the slots are given goes through ufshc_permitted(): a read to unit 0 passes, a write is counted and said */
+static void
+permitted_or_said(void)
+{
+	uint8_t upiu[32];
+	bool said = false;
+
+	command(upiu, UPIU_COMMAND, UPIU_FLAG_READ, 0, 4096, 0x28, 0, 1);
+	CHECK(ufshc_permitted(upiu, UTRD_CT_UFS | UTRD_DD_IN) && hc_refused == 0, "a read of unit 0 passes, nothing refused");
+	command(upiu, UPIU_COMMAND, UPIU_FLAG_WRITE, 0, 4096, 0x2a, 0, 1);
+	CHECK(!ufshc_permitted(upiu, UTRD_CT_UFS | UTRD_DD_OUT) && hc_refused == 1, "a write does not, and is counted: %llu",
+	    (unsigned long long)hc_refused);
+	for (unsigned i = 0; i < KEPT_LINES; i++) {
+		said |= strstr(hc_kept[i], "ufs: native: REFUSED (data from host to device)") != NULL;
+	}
+	CHECK(said, "and said, with why");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "own_cases", own_cases }, { "every_operation", every_operation }, { "everything_else", everything_else },
-		{ "read_lengths", read_lengths },
+		{ "read_lengths", read_lengths }, { "units_past_the_eighth", units_past_the_eighth }, { "permitted_or_said", permitted_or_said },
 	};
 
 	if (argc < 2) {
