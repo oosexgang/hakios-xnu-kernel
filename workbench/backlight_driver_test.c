@@ -447,6 +447,51 @@ deaf_controller(void)
 	CHECK(m.tpg == 0, "the TPG off even so");
 }
 
+/* bl_backend=soft: the light made in software, whatever the board's panel takes */
+static void
+backend_from_boot_arg(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_backend=soft";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(strcmp(get_string("backend"), "soft") == 0 && hakios_backlight_soft(), "%s", get_string("backend"));
+	CHECK(m.accesses == 0, "and the DSI controller is left alone: %u accesses", m.accesses);
+}
+
+/* a DCS profile that cannot be right -- three bytes a level, or no range -- is refused, and nothing sent */
+static void
+incomplete_profile(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_bytes=3";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+	CHECK(m.sent_n == 0, "nothing sent: %u", m.sent_n);
+}
+
+static void
+no_range(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_min=100 bl_max=100";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+}
+
+/* bl_le=1: the two bytes of a level least significant first */
+static void
+least_significant_first(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_le=1 bl_level=1000";
+	hakios_backlight_init();
+	WAIT_FOR(m.sent_n >= 1, 1000);
+	CHECK(m.sent_n >= 1 && last_sent() == ((2047 & 0xff) << 8 | 2047 >> 8), "2047 sent as ff 07: %#x", last_sent());
+}
+
 static int redraws;
 static void redraw(void) { __atomic_fetch_add(&redraws, 1, __ATOMIC_RELAXED); }
 
@@ -600,6 +645,8 @@ main(int argc, char **argv)
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
+		{ "backend_from_boot_arg", backend_from_boot_arg }, { "incomplete_profile", incomplete_profile }, { "no_range", no_range },
+		{ "least_significant_first", least_significant_first },
 	};
 
 	if (argc < 2) {
