@@ -87,6 +87,10 @@ static const char *const SKIP[] = {
 	 * stand at the boot logo, no frame drawn (found by halves with var_store_skip: everything else of the volume
 	 * restored, the boot came up); the widgets are made again instead */
 	"mobile/Library/chronod",
+	/* MobileGestalt's answers, kept in a cache it makes when it is missing: kept across boots they are the first boot's,
+	 * whatever the device tree says now -- a boot with torch=3 had "camera-flash" still false, AVFlashlight no
+	 * flashlight. Made again at every boot, as before /private/var was kept */
+	"containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches",
 	NULL,
 };
 
