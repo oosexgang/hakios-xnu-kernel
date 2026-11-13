@@ -47,6 +47,8 @@ if command -v clang > /dev/null && command -v lld-link > /dev/null; then
 	    lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \
 		"/out:$WORK/loader.efi" "$WORK/loader.obj"; then
 		echo "loader.efi: $(stat -c %s "$WORK/loader.efi") bytes, ok"
+		echo "== the loader booted by a UEFI in QEMU (tests/loader_boot_test.sh)"
+		"$HERE/loader_boot_test.sh" "$WORK/loader.efi" || failed=1
 	else
 		failed=1
 	fi
