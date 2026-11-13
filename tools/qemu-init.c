@@ -996,6 +996,76 @@ command_input(int argc, char **argv)
 	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 }
 
+/* ---- dmesg and run: the kernel's messages, and a process of one's own ---- */
+
+#define PROC_INFO_CALL_KERNMSGBUF 4
+#define SYS_wait4               7
+#define SYS_posix_spawn         244
+
+/* [LINES]: the last LINES lines (20 if not said) of the kernel's message buffer */
+static void
+command_dmesg(int argc, char **argv)
+{
+	static char text[128 * 1024];
+	unsigned lines = argc > 1 ? parse_number(argv[1]) : 20;
+
+	long got = syscall6(SYS_proc_info, PROC_INFO_CALL_KERNMSGBUF, 0, 0, 0, (long)text, sizeof(text));
+	if (got <= 0 || lines == 0) {
+		say(got <= 0 ? "dmesg: the kernel will not give its messages\n" : "dmesg [LINES]: a number of lines\n");
+		return;
+	}
+	while (got > 0 && (text[got - 1] == '\0' || text[got - 1] == '\n')) {
+		got--;
+	}
+	text[got] = '\0';
+	long from = got;
+	for (unsigned seen = 0; from > 0; from--) {
+		if (text[from - 1] == '\n' && ++seen == lines) {
+			break;
+		}
+	}
+	say(text + from);
+	say("\n");
+}
+
+/* PROGRAM [ARGUMENTS]: a new process (posix_spawn) running PROGRAM, waited for; what it ended with */
+static void
+command_run(int argc, char **argv)
+{
+	char *environment[] = { NULL };
+	int32_t pid = 0, status = 0;
+
+	if (argc < 2) {
+		say("run PROGRAM [ARGUMENTS]\n");
+		return;
+	}
+	long error = syscall6(SYS_posix_spawn, (long)&pid, (long)argv[1], 0, (long)(argv + 1), (long)environment, 0);
+	if (error != 0) {
+		say("run: ");
+		say(argv[1]);
+		say(" does not start (error ");
+		say_number((uint64_t)-error);
+		say(")\n");
+		return;
+	}
+	if (syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0) != pid) {
+		say("run: pid ");
+		say_number((uint64_t)pid);
+		say(" was not waited for\n");
+		return;
+	}
+	say("run: pid ");
+	say_number((uint64_t)pid);
+	if ((status & 0x7f) == 0) {
+		say(" exited with ");
+		say_number((uint64_t)((status >> 8) & 0xff));
+	} else {
+		say(" ended by signal ");
+		say_number((uint64_t)(status & 0x7f));
+	}
+	say("\n");
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1024,6 +1094,8 @@ static const struct {
 	{ "mount", "TYPE DEVICE DIR a disk's file system, read only", command_mount },
 	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
+	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
+	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
 };
 
 static void
@@ -1042,33 +1114,55 @@ command_help(int argc, char **argv)
 	}
 }
 
-static void
-run(char *text)
+/* a command, its name first; whether there is one of that name */
+static int
+run_words(int argc, char **argv)
 {
-	char *argv[WORDS];
-	int argc = split(text, argv);
-
-	if (argc == 0) {
-		return;
-	}
 	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
 		if (same(argv[0], commands[i].name)) {
 			commands[i].run(argc, argv);
-			return;
+			return 1;
 		}
 	}
 	say(argv[0]);
 	say(": not a command here (help lists them)\n");
+	return 0;
 }
 
-void
-start(void)
+static void
+run(char *text)
 {
+	char *argv[WORDS + 1];
+	int argc = split(text, argv);
+
+	if (argc > 0) {
+		argv[argc] = NULL;
+		run_words(argc, argv);
+	}
+}
+
+/*
+ * The kernel starts a static program with the stack holding argc, then argv and its NULL, then the
+ * environment: _start hands the stack to the C side.
+ */
+__asm__(".globl _start\n_start:\n\tmov x0, sp\n\tb _start_with_stack\n");
+
+void start_with_stack(long *stack);
+
+void
+start_with_stack(long *stack)
+{
+	int argc = (int)stack[0];
+	char **argv = (char **)(stack + 1);
 	char text[256];
 	long fd = syscall6(SYS_open, (long)"/dev/console", O_RDWR | O_NOCTTY, 0, 0, 0, 0);
 
 	if (fd >= 0) {
 		console = (int)fd;
+	}
+	/* not the first process, with words: one command (run /sbin/launchd uptime), then the end */
+	if (syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0) != 1 && argc > 1) {
+		syscall6(SYS_exit, run_words(argc - 1, argv + 1) ? 0 : 127, 0, 0, 0, 0, 0);
 	}
 	say("\n");
 	say("================================================================\n");
