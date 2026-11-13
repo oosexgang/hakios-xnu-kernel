@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 7 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 0 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -402,11 +402,11 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `ufs_native_buffer` | — |
+| `ufs_native_buffer` | ufs_native_buffer=BYTES: each slot's buffer, whole blocks up to 4 MB (default 256 KB). |
 | `ufs_native_hang` | ufs_native_hang=N (a test of the loader's side): once N reads are done, the thread that has just rung a doorbell stops the kernel -- every processor spinning with interrupts off, this one included -- with reads in flight and this kernel's list in. |
 | `ufs_native_leave` | ufs_native_leave=1 (a test): the list left in at the end, for the loader |
-| `ufs_native_slots` | — |
-| `ufs_native_spin` | — |
+| `ufs_native_slots` | ufs_native_slots=N: how many slots carry reads, 1 to 31 (default 31). |
+| `ufs_native_spin` | ufs_native_spin=US: how long a waiter looks at its slot before it sleeps, at most 5000 (default 40) |
 
 ### `bsd/dev/board/virtio_blk.c`
 
@@ -419,12 +419,12 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `apfs_cheap` | apfs_cheap=0 puts neighbouring requests together, for a disk where each request costs. |
-| `apfs_meta_cluster` | — |
+| `apfs_meta_cluster` | apfs_meta_cluster=N: blocks a metadata read brings in, 1 to 16 (default 4; apfs_lib.h says why) |
 | `apfs_par` | apfs_par=N: at most N threads on one request, the caller's included (default: four, or the processors if fewer -- see apfs_pool_start(); 1 turns the helpers off). |
 | `apfs_root_c` | apfs_root_c=N and apfs_root_v=M say which container of the device and which volume of it (default: the first container, its first volume with a root directory). |
 | `apfs_root_v` | apfs_root_c=N and apfs_root_v=M say which container of the device and which volume of it (default: the first container, its first volume with a root directory). |
-| `apfs_round` | — |
-| `apfs_ubc_read` | — |
+| `apfs_round` | apfs_round=BYTES: the I/O buffer a read is rounded to, 64 KB steps up to 2 MB (default 1 MB) |
+| `apfs_ubc_read` | apfs_ubc_read=0: read(2) past the page cache (default 1: through it) |
 
 ### `bsd/vfs/vfs_attrlist.c`
 
@@ -482,7 +482,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `rd` | — |
+| `rd` | rd=mdN, a root on a memory device, needs no file system's driver: no 30-second wait for one |
 
 ### `osfmk/arm64/loader_return.c`
 
