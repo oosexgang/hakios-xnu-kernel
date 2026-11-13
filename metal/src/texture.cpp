@@ -942,10 +942,20 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     if (buffer == nullptr) {
         return nullptr;
     }
+    // (surfaceBuffer keeps the last buffers wrapped for the next wrap: one whose texture is refused here is not kept)
+    struct KeptIfWrapped {
+        Gpu& gpu;
+        std::shared_ptr<Buffer> buffer;
+        bool wrapped = false;
+        ~KeptIfWrapped() {
+            if (!wrapped) forgetSurfaceBuffer(&gpu, buffer);
+        }
+    } kept{gpu, buffer};
     const std::string name = "IOSurface " + n(surfaceId);
     if (info->twoPlane) {
         std::shared_ptr<Texture> t = wrapTwoPlanes(std::move(buffer), s, name, desc, info, chroma, why);
         if (t != nullptr) t->surface_ = surfaceId;
+        kept.wrapped = t != nullptr;
         return t;
     }
     if (s.planes > 1) {
@@ -999,6 +1009,7 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     // TEX_CONST_2.PITCHALIGN: the largest k up to log2(cpp) with the pitch a multiple of 64 << k
     uint32_t pitchAlign = 0;
     while (pitchAlign < log2u(info->bytesPerPixel) && s.rowBytes % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+    kept.wrapped = true;
     return adopt(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, pitchAlign, surfaceId));
 }
 

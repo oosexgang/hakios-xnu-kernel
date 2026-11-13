@@ -3644,14 +3644,26 @@ TEST(a_texture_over_an_iosurface_draws_into_the_surfaces_memory) {
     for (uint32_t y = 0; all && y < 64; y++)
         for (uint32_t x = 0; all && x < 64; x++) all = memcmp(px.data() + y * 256 + x * 4, want, 4) == 0;
     CHECK(all);
-    // the surface outlives its buffer: both textures and the command buffer that kept it gone, the handle closed once,
-    // the pixels kept
+    // the surface outlives its buffer: both textures and the command buffer that kept it gone, the buffer kept for the
+    // next wrap of the surface (the window server wraps its display's page anew every frame) until four others have been
+    // wrapped since, then the handle closed once, the pixels kept
     cb.reset();
     const uint32_t withSurface = r.fake->liveBuffers();   // (the queue keeps buffers of its own past a command buffer)
+    const Buffer* kept = t->buffer().get();
     t.reset();
     CHECK_EQ(r.fake->liveBuffers(), withSurface);         // the other texture holds the surface's buffer still
     t2.reset();
-    CHECK_EQ(r.fake->liveBuffers(), withSurface - 1);
+    CHECK_EQ(r.fake->liveBuffers(), withSurface);         // ... and now the kept ones
+    auto t3 = Texture::wrapSurface(*r.gpu, 7, d, &why);
+    CHECK(t3 != nullptr && t3->buffer().get() == kept && t3->bytesPerRow() == 256u);   // (from the kept one: no kernel call)
+    CHECK_EQ(r.fake->liveBuffers(), withSurface);
+    t3.reset();
+    for (uint32_t k = 0; k < 4; k++) {
+        r.fake->addSurface(20 + k, 64, 64, 256, kBGRA);
+        auto o = Texture::wrapSurface(*r.gpu, 20 + k, d, &why);
+        CHECK(o != nullptr);
+    }
+    CHECK_EQ(r.fake->liveBuffers(), withSurface - 1 + 4);   // surface 7's let go, the four others kept
     px = r.fake->surfaceBytes(7);
     CHECK(px.size() >= 4 && memcmp(px.data(), want, 4) == 0);
     // ...and a surface whose rows start at an offset and are 320 bytes apart (64-aligned, not 256-aligned): the Clear

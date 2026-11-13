@@ -151,9 +151,13 @@ struct BoUse {
     bool write;
 };
 
+// the surface buffers command.cpp's surfaceBuffer keeps past their last user for GPU, let go (before GPU itself goes)
+void forgetSurfaceBuffers(const class Gpu* gpu);
+
 class Gpu {
 public:
     explicit Gpu(std::unique_ptr<Transport> transport) : t_(std::move(transport)) {}
+    ~Gpu() { forgetSurfaceBuffers(this); }
 
     // what the driver says about the GPU (kParam...): 0 and *value, or an errno
     int param(uint32_t which, uint64_t* value);

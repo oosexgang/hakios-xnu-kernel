@@ -203,10 +203,81 @@ namespace {
 // cannot be met by a Buffer still being destroyed.
 std::mutex gSurfaceLock;
 std::map<std::pair<const Gpu*, uint32_t>, std::weak_ptr<Buffer>> gSurfaceBuffers;
+// ... and by (GPU, surface ID), with what the kernel said of the surface: a surface wrapped again while its buffer lives
+// is answered from here, no call to the kernel. The window server wraps its display's page in a texture anew for every
+// frame and lets go of it after: each frame opened the surface's buffer in the kernel and closed it again, the close
+// waiting for the GPU's lock beside the threads that wait for the GPU, and the next frame's wrap waiting on this lock
+// for the close (waitstack=1 on the phone: 1051 samples of the render thread here, logs/072837-run.log). So the last
+// kRecentSurfaces buffers wrapped are kept past their last user. A kept buffer holds its surface in the kernel, whose
+// ID is not given to another surface meanwhile (MiniIOSurface: the slot frees with the surface's last holder).
+struct SurfaceEntry {
+    std::weak_ptr<Buffer> buffer;
+    SurfaceInfo info;
+};
+std::map<std::pair<const Gpu*, uint32_t>, SurfaceEntry> gSurfaceIds;
+constexpr size_t kRecentSurfaces = 4;
+std::vector<std::pair<const Gpu*, std::shared_ptr<Buffer>>> gRecentSurfaces;   // (the last one wrapped at the back)
+
+// with the lock held: B wrapped just now; what falls out of the recent ones goes to *DROPPED, let go by the caller after
+// the lock (its deleter takes the lock)
+void keepRecent(const Gpu* gpu, const std::shared_ptr<Buffer>& b, std::vector<std::shared_ptr<Buffer>>* dropped) {
+    for (auto it = gRecentSurfaces.begin(); it != gRecentSurfaces.end(); ++it) {
+        if (it->second == b) {
+            gRecentSurfaces.erase(it);
+            break;
+        }
+    }
+    gRecentSurfaces.emplace_back(gpu, b);
+    while (gRecentSurfaces.size() > kRecentSurfaces) {
+        dropped->push_back(std::move(gRecentSurfaces.front().second));
+        gRecentSurfaces.erase(gRecentSurfaces.begin());
+    }
+}
 }  // namespace
 
-std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo* info, std::string* why) {
+void forgetSurfaceBuffers(const Gpu* gpu) {
+    std::vector<std::shared_ptr<Buffer>> dropped;
+    {
+        std::lock_guard<std::mutex> g(gSurfaceLock);
+        for (auto it = gRecentSurfaces.begin(); it != gRecentSurfaces.end();) {
+            if (it->first == gpu) {
+                dropped.push_back(std::move(it->second));
+                it = gRecentSurfaces.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    dropped.clear();   // (the deleters, each under the lock, after it)
     std::lock_guard<std::mutex> g(gSurfaceLock);
+    for (auto it = gSurfaceIds.begin(); it != gSurfaceIds.end();) it = it->first.first == gpu ? gSurfaceIds.erase(it) : std::next(it);
+}
+
+void forgetSurfaceBuffer(const Gpu* gpu, const std::shared_ptr<Buffer>& b) {
+    std::shared_ptr<Buffer> dropped;   // (let go after the lock)
+    std::lock_guard<std::mutex> g(gSurfaceLock);
+    for (auto it = gRecentSurfaces.begin(); it != gRecentSurfaces.end(); ++it) {
+        if (it->first == gpu && it->second == b) {
+            dropped = std::move(it->second);
+            gRecentSurfaces.erase(it);
+            break;
+        }
+    }
+}
+
+std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo* info, std::string* why) {
+    std::vector<std::shared_ptr<Buffer>> dropped;   // (let go after the lock: declared before it)
+    std::lock_guard<std::mutex> g(gSurfaceLock);
+    const auto id = std::make_pair(static_cast<const Gpu*>(&gpu), surfaceId);
+    auto known = gSurfaceIds.find(id);
+    if (known != gSurfaceIds.end()) {
+        if (std::shared_ptr<Buffer> b = known->second.buffer.lock()) {
+            *info = known->second.info;
+            keepRecent(&gpu, b, &dropped);
+            return b;
+        }
+        gSurfaceIds.erase(known);
+    }
     int error = 0;
     std::unique_ptr<Bo> bo = gpu.surfaceBo(surfaceId, info, &error);
     if (bo == nullptr) {
@@ -219,17 +290,23 @@ std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo*
     if (live != gSurfaceBuffers.end()) {
         if (std::shared_ptr<Buffer> b = live->second.lock()) {
             gpu.disown(std::move(bo));   // the same handle as the live Buffer's Bo: closed once, by that Bo
+            gSurfaceIds[id] = SurfaceEntry{b, *info};
+            keepRecent(&gpu, b, &dropped);
             return b;
         }
     }
     const uint64_t length = bo->size();
-    std::shared_ptr<Buffer> b(new Buffer(std::move(bo), length), [key](Buffer* x) {
+    std::shared_ptr<Buffer> b(new Buffer(std::move(bo), length), [key, id](Buffer* x) {
         std::lock_guard<std::mutex> g(gSurfaceLock);
         auto it = gSurfaceBuffers.find(key);
         if (it != gSurfaceBuffers.end() && it->second.expired()) gSurfaceBuffers.erase(it);
+        auto known = gSurfaceIds.find(id);
+        if (known != gSurfaceIds.end() && known->second.buffer.expired()) gSurfaceIds.erase(known);
         delete x;
     });
     gSurfaceBuffers[key] = b;
+    gSurfaceIds[id] = SurfaceEntry{b, *info};
+    keepRecent(&gpu, b, &dropped);
     return b;
 }
 
