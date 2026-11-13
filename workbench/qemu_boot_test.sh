@@ -102,6 +102,7 @@ typed=(
 	'xattr -d /tmp/notes/b com.example.size'
 	'xattr /tmp/notes/b'
 	'xattr -d /tmp/notes/b com.example.size'
+	'files 20'
 	'cd /tmp/notes'
 	'pwd'
 	'cat b'
@@ -200,6 +201,8 @@ check "extended attributes are set, replaced, listed and taken away; one taken a
 check "Mach's host port counts the virtual memory's pages and faults (host_statistics64): 128 MB, some 8192 zero-filled faults" \
 	bash -c "grep -aoE '^vm: faults [0-9]+ .*zero filled [0-9]+' '$log' | sed 's/.* //' | tr '\\n' ' ' |
 		awk '{ exit !(NF == 2 && \$2 - \$1 >= 8192 - 64 && \$2 - \$1 < 8192 + 1000) }'"
+check "the kernel holds a process to its limit of descriptors (setrlimit): the 20th is refused with EMFILE" \
+	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24' "$log"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
