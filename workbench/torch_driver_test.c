@@ -268,6 +268,27 @@ for_darwin(void)
 	dark_at_the_end();
 }
 
+/* a transfer the arbiter drops has not been made: asked for again, the light is lit as asked all the same */
+static void
+dropped_and_asked_again(void)
+{
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	pthread_mutex_lock(&spmi.lock);
+	spmi.drop_writes = 1;
+	spmi.drop_reads = 1;
+	pthread_mutex_unlock(&spmi.lock);
+	ask_for(500);
+	WAIT_FOR(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, 3000);
+	CHECK(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, "lit at half all the same: code %u", spmi_get(&flash_model, REG_ITARGET0));
+	CHECK(spmi.drop_writes == 0 && spmi.drop_reads == 0 && !logged("no more writing"), "the dropped ones asked for again: %s", log_text);
+	ask_for(0);
+	WAIT_FOR(!lit_now(), 3000);
+	CHECK(!lit_now(), "and off");
+}
+
 /* a register that is not one of the six is not written, whatever asks: refused, said, and no writing after */
 static void
 only_the_six(void)
@@ -515,6 +536,7 @@ main(int argc, char **argv)
 		{ "time_limit", time_limit }, { "write_does_not_stick", write_does_not_stick },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
+		{ "dropped_and_asked_again", dropped_and_asked_again },
 	};
 
 	if (argc < 2) {
