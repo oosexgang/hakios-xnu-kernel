@@ -126,10 +126,13 @@ hakios_mic_quiesce(void)
 	for (unsigned i = kept_count > KEPT_LINES ? kept_count - KEPT_LINES : 0; i < kept_count; i++) {
 		loader_log_putc('>');
 		loader_log_putc(' ');
-		for (const char *c = kept[i % KEPT_LINES]; *c != 0; c++) {
+		const char *line = kept[i % KEPT_LINES];
+		size_t length = strlen(line);
+
+		for (const char *c = line; *c != 0; c++) {
 			loader_log_putc(*c);
 		}
-		if (kept[i % KEPT_LINES][strlen(kept[i % KEPT_LINES]) - 1] != '\n') {
+		if (length == 0 || line[length - 1] != '\n') {
 			loader_log_putc('\n');
 		}
 	}
