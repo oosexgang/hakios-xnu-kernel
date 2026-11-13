@@ -53,8 +53,13 @@ fi
 "$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
 (source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/focaltech_fw.h") || die "no stub for the touch firmware"
 
-# (the flags of workbench/run.sh, the copy's directory first)
+# (the flags of workbench/run.sh, the copy's directory first; under the sanitizers as there, where the
+# compiler has them: a change that reads or writes past a buffer is caught by them)
 flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -iquote "$SRC/board" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")
+if echo 'int main(void) { return 0; }' | "$CC" -fsanitize=address,undefined -x c - -o "$W/sanitizers" 2> /dev/null; then
+	flags+=(-O1 '-fsanitize=address,undefined' -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+	export ASAN_OPTIONS=detect_leaks=0
+fi
 # the test has to take the copy, itself or through a file it includes: a change to a file it never sees is caught by nothing
 "$CC" "${flags[@]}" -MM "$test" 2> /dev/null | grep -qF "$W/copy/$source" || die "$name does not include $source"
 if ! "$CC" "${flags[@]}" "$HERE/fakekernel/fakekernel.c" "$test" -o "$W/test" 2> "$W/errors"; then
