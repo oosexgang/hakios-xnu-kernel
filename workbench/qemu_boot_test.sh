@@ -44,6 +44,12 @@ python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data"
 # what it asks this computer for (workbench/qemu_host.py serves it)
 mkdir -p "$W/www"
 echo "a page from the computer QEMU runs on" > "$W/www/page.txt"
+head -c 4194304 /dev/urandom > "$W/www/big.bin"
+big_hash=$(python3 -c 'import sys
+h = 0xcbf29ce484222325
+for b in open(sys.argv[1], "rb").read():
+    h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
+print("%016x" % h)' "$W/www/big.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'sysctl hw.ncpu hw.board.name kern.ostype'
@@ -52,6 +58,7 @@ typed=(
 	'ping 10.0.2.2 2'
 	'serve 1'
 	'get 10.0.2.2 18081 /page.txt'
+	'get 10.0.2.2 18081 /big.bin'
 	'udp 10.0.2.2 18082 a datagram'
 	'mount apfs /dev/rvblk0 /mnt'
 	'cat /mnt/hello.txt'
@@ -111,6 +118,8 @@ check "its TCP serves a page to this machine, through QEMU's forwarded port" gre
 check "... which it saw asked for" grep -aq "GET /test HTTP" "$log"
 check "it asks this computer for a page over TCP, as a client" bash -c "tr -d '\\r' < '$log' | grep -q '^get: HTTP/1.0 200 OK, 38 bytes of body' &&
 	tr -d '\\r' < '$log' | grep -qx 'a page from the computer QEMU runs on'"
+check "... and 4 MB of it arrive whole (the same FNV-1a hash as here)" \
+	grep -aq "^get: HTTP/1.0 200 OK, 4194304 bytes of body in [0-9]* ms, fnv1a $big_hash" "$log"
 check "a datagram goes to this computer and its answer comes back" grep -aq "^udp: 18 bytes back from 10.0.2.2: echoed: a datagram" "$log"
 check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
