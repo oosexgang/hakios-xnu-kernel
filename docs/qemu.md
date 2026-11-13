@@ -115,6 +115,14 @@ on its shell and checks what comes back:
   (`workbench/screen_shows_draw.py`).
 - Nothing panics.
 
+## The kernel's own tests
+
+`workbench/qemu_post_test.sh` (also part of `make qemu`) boots with `kernPOST=1`: before its first
+process the kernel runs XNU's own tests (`osfmk/tests`: the zone allocator, `os_log`, the console, thread
+calls, turnstiles and gates, the VM, the arm64 platform's PAN, speculation guards and system call
+mungers ...), some thirty of them and over a thousand checks, each said as PASS or FAIL on the serial
+port. None may fail.
+
 ## What it is not
 
 A Darwin user space: launchd, dyld and the rest are Apple's and are not here. With an IPSW and the

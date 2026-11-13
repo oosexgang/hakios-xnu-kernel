@@ -22,7 +22,7 @@ help:
 	@echo "make analyze-userland the same analyzer on the Darwin side's libraries and programs (DARWIN_SDK=DIR)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
-	@echo "make qemu           boot the built kernel in QEMU to its first process (KERNEL=FILE; workbench/qemu_boot_test.sh)"
+	@echo "make qemu           boot the built kernel in QEMU, try it from its shell and run its own tests (KERNEL=FILE)"
 
 .PHONY: check
 check: lint boards-check docs-check test
@@ -90,3 +90,4 @@ KERNEL ?= ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
 .PHONY: qemu
 qemu:
 	workbench/qemu_boot_test.sh $(KERNEL)
+	workbench/qemu_post_test.sh $(KERNEL)
