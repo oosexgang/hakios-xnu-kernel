@@ -3813,14 +3813,42 @@ hm_compress_ok(void)
 	return !off;
 }
 
+/*
+ * ...and with boot-arg metal_ubwc_rt=1, CoreAnimation's offscreen render targets too: private, drawn into and sampled
+ * (RenderTarget | ShaderRead, nothing else: no kernel stores into a compressed texture on this GPU, and a view in
+ * another format than its sRGB pair would not read its bytes reinterpreted, the tiles holding every 8-bit format in one
+ * order), of 65536 pixels or more -- the 832x1792, 896x1856 and 448x960 textures its
+ * backdrop and blur passes draw and then read. An app-open frame is 31 passes, 17.8 ms on the GPU, eight of them over
+ * the whole screen at 1-2.6 ms with 1 to 12 draws: some 18 MB a blended full-screen draw at ~14 GB/s, at the memory's
+ * ceiling, and the same in GMEM. Compression is what moves fewer bytes. Private storage, because this processor never
+ * reads such a texture (Metal forbids -getBytes: and -replaceRegion: on one; the core refuses both on a compressed render
+ * target by name). Off until it is measured on the phone; metal_noubwc still turns every compressed texture off.
+ */
+static BOOL
+hm_compress_rt_ok(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		on = hm_boot_arg_set("metal_ubwc_rt=1");
+	}
+	return on;
+}
+
 static BOOL
 hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 {
-	return hm_compress_ok() && [descriptor textureType] == MTLTextureType2D && [descriptor mipmapLevelCount] == 1 && [descriptor sampleCount] == 1 &&
-	       ([descriptor pixelFormat] == MTLPixelFormatRGBA8Unorm || [descriptor pixelFormat] == MTLPixelFormatBGRA8Unorm) &&
-	       usage == MTLTextureUsageShaderRead &&
-	       [descriptor storageMode] == MTLStorageModeShared &&
-	       [descriptor width] * [descriptor height] >= 65536;
+	if (!hm_compress_ok() || [descriptor textureType] != MTLTextureType2D || [descriptor mipmapLevelCount] != 1 || [descriptor sampleCount] != 1 ||
+	    ([descriptor pixelFormat] != MTLPixelFormatRGBA8Unorm && [descriptor pixelFormat] != MTLPixelFormatBGRA8Unorm) ||
+	    [descriptor width] * [descriptor height] < 65536) {
+		return NO;
+	}
+	if (usage == MTLTextureUsageShaderRead && [descriptor storageMode] == MTLStorageModeShared) {
+		return YES;
+	}
+	/* (the descriptor's own usage for the view bit: the caller's USAGE has it dropped already) */
+	return hm_compress_rt_ok() && usage == (MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget) &&
+	       ([descriptor usage] & MTLTextureUsagePixelFormatView) == 0 && [descriptor storageMode] == MTLStorageModePrivate;
 }
 
 /*
@@ -4069,8 +4097,17 @@ hm_memoryless_give(hakios_metal_texture *t, unsigned type, unsigned format, unsi
 		texture = hakios_metal_texture_new_compressed(_gpu, (unsigned)[descriptor pixelFormat], (unsigned)[descriptor width],
 							      (unsigned)[descriptor height], (unsigned)usage);
 		if (hm_timeline_on()) {
-			hm_print("timeline: a compressed texture of %lux%lu, format %lu: %s\n", (unsigned long)[descriptor width], (unsigned long)[descriptor height],
-				 (unsigned long)[descriptor pixelFormat], texture != NULL ? "made" : hakios_metal_error());
+			hm_print("timeline: a compressed texture of %lux%lu, format %lu, usage %#lx: %s\n", (unsigned long)[descriptor width],
+				 (unsigned long)[descriptor height], (unsigned long)[descriptor pixelFormat], (unsigned long)usage,
+				 texture != NULL ? "made" : hakios_metal_error());
+		}
+		/* (a layout the core does not give -- a build without Mesa's, a size it has none for -- is a linear texture, as
+		 * before compression: the same pixels, more bytes) */
+		if (texture == NULL) {
+			HM_ONCE("a compressed %lux%lu texture was not made (%s): one that is not is made linear instead\n", (unsigned long)[descriptor width],
+				(unsigned long)[descriptor height], hakios_metal_error());
+			texture = hakios_metal_texture_new_levels(_gpu, (unsigned)[descriptor textureType], (unsigned)[descriptor pixelFormat],
+								  (unsigned)[descriptor width], (unsigned)[descriptor height], 1, (unsigned)usage);
 		}
 	} else {
 		texture = NULL;

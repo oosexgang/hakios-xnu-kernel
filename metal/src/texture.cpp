@@ -1102,16 +1102,22 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     // (a view of a compressed texture is a view of its rows: their layout is the one a view reinterprets)
     if (parent->staging_ != nullptr) return view(parent->staging_, format, type, baseLevel, levels, baseSlice, slices, why);
     const Texture& p = *parent;
-    // ...and of a compressed render target, which has no rows: the whole of it as it is, UBWC and all. A view in another
-    // format of the same size would not read the bytes reinterpreted, as Metal promises: the tiled layout holds every
-    // 8-bit format WZYX (fd6_pipe2swap, fd6_format_table.c:370-375), so a BGRA8 view of RGBA8 tiles reads them as RGBA8
+    // ...and of a compressed render target, which has no rows: the whole of it as it is, UBWC and all, in its own format
+    // or its sRGB pair's (the same components, which Metal lets a texture without PixelFormatView usage be viewed as).
+    // A view in another format of the same size would not read the bytes reinterpreted, as Metal promises: the tiled
+    // layout holds every 8-bit format WZYX (fd6_pipe2swap, fd6_format_table.c:370-375), so a BGRA8 view of RGBA8 tiles
+    // reads them as RGBA8
     if (p.ubwc_) {
-        if (format != p.format() || type != p.type() || baseLevel != 0 || levels != 1 || baseSlice != 0 || slices != 1) {
+        const FormatInfo* pair = formatInfo(format);
+        if (pair == nullptr || pair->fmt6 != p.info().fmt6 || pair->swap != p.info().swap || pair->bytesPerPixel != p.info().bytesPerPixel ||
+            type != p.type() || baseLevel != 0 || levels != 1 || baseSlice != 0 || slices != 1) {
             refuse(why, "a view in pixel format " + n(uint32_t(format)) + ", type " + n(uint32_t(type)) + " of a compressed " + p.info().name +
-                            " render target: its whole self is the one view served (its tiles are not rows another format could read)");
+                            " render target: its whole self, in its format or its sRGB pair's, is the one view served (its tiles are not rows another format could read)");
             return nullptr;
         }
-        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_));
+        TextureDesc d = p.desc_;
+        d.format = format;
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, d, pair, p.pitch_, p.offset_, p.pitchAlign_));
         t->takeUbwc(p);
         return t;
     }

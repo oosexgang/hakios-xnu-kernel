@@ -412,6 +412,13 @@ TEST(a_compressed_target_refuses_what_its_layout_cannot_serve) {
     CHECK(same != nullptr && same->compressed() && same->flagAddress() == c->flagAddress() && same->gpuAddress() == c->gpuAddress());
     why.clear();
     CHECK(Texture::view(c, PixelFormat::kBGRA8Unorm, TextureType::k2D, 0, 1, 0, 1, &why) == nullptr && why.find("compressed") != std::string::npos);
+    // (its sRGB pair: the same tiles and flags, read with the sRGB conversion)
+    auto srgb = Texture::view(c, PixelFormat::kRGBA8UnormSrgb, TextureType::k2D, 0, 1, 0, 1, &why);
+    CHECK(srgb != nullptr && srgb->compressed() && srgb->info().srgb);
+    if (srgb != nullptr) {
+        const a6xx::TexConst d = srgb->sampledDescriptor(), e = c->sampledDescriptor();
+        CHECK(d.dword[0] == (e.dword[0] | a6xx::A6XX_TEX_CONST_0_SRGB) && d.dword[3] == e.dword[3] && d.dword[7] == e.dword[7] && d.dword[10] == e.dword[10]);
+    }
     const uint8_t swz[4] = {4, 3, 2, 5};
     auto swizzled = Texture::swizzled(c, swz, &why);
     CHECK(swizzled != nullptr && swizzled->compressed());
