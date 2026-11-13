@@ -2755,6 +2755,7 @@ step_apr(void)
 	uint32_t wait_seconds = 10, asked = 0, state = 0;
 	uint64_t began = now_us();
 
+	/* boot-arg adsp_apr_wait=N: for how many seconds (default 10) the core service is asked whether the audio services are up */
 	PE_parse_boot_argn("adsp_apr_wait", &wait_seconds, sizeof(wait_seconds));
 	announce("ask the audio DSP's core service over APR whether the audio services are up (again and again, as Android "
 	    "does), then which services it has");
