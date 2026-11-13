@@ -124,6 +124,49 @@ command_pwd(int argc, char **argv)
 	}
 }
 
+#define SYS_getrusage           117
+#define RUSAGE_SELF             0
+
+static int run_words(int argc, char **argv);
+
+/* the processor time this process has had, in microseconds: its user and system times (getrusage) */
+static void
+used(uint64_t *user_us, uint64_t *system_us)
+{
+	struct { int64_t user_s; int32_t user_us, pad1; int64_t system_s; int32_t system_us, pad2; int64_t rest[14]; } usage = { 0 };
+
+	syscall6(SYS_getrusage, RUSAGE_SELF, (long)&usage, 0, 0, 0, 0);
+	*user_us = (uint64_t)usage.user_s * 1000000 + (uint64_t)usage.user_us;
+	*system_us = (uint64_t)usage.system_s * 1000000 + (uint64_t)usage.system_us;
+}
+
+/* COMMAND...: the command, and how long it took: on the clock, and of the processors' time, in user space and in the kernel */
+static void
+command_time(int argc, char **argv)
+{
+	uint64_t began = now_us(), user0, system0, user1, system1;
+	char line[160];
+	size_t at = 0;
+
+	if (argc < 2) {
+		say("time COMMAND [ARGUMENTS]\n");
+		return;
+	}
+	used(&user0, &system0);
+	if (!run_words(argc - 1, argv + 1)) {
+		return;
+	}
+	used(&user1, &system1);
+	at = append(line, at, sizeof(line), "time: ");
+	at = append_number(line, at, sizeof(line), (now_us() - began) / 1000);
+	at = append(line, at, sizeof(line), " ms; of the processors' time ");
+	at = append_number(line, at, sizeof(line), (user1 - user0) / 1000);
+	at = append(line, at, sizeof(line), " ms in user space, ");
+	at = append_number(line, at, sizeof(line), (system1 - system0) / 1000);
+	at = append(line, at, sizeof(line), " ms in the kernel\n");
+	syscall6(SYS_write, console, (long)line, (long)at, 0, 0, 0);
+}
+
 /* the screen emptied and the cursor at its top: VT100's, which the kernel's video console and a terminal on the
  * serial port both take */
 static void
@@ -151,6 +194,7 @@ static const struct {
 	{ "help", "what this shell can do", command_help },
 	{ "echo", "WORDS... say them", command_echo },
 	{ "clear", "the screen emptied", command_clear },
+	{ "time", "COMMAND... how long it took, and of the processors' time (getrusage)", command_time },
 	{ "cd", "[DIR] where relative paths start from", command_cd },
 	{ "pwd", "where that is", command_pwd },
 	{ NULL, "the kernel", NULL },
