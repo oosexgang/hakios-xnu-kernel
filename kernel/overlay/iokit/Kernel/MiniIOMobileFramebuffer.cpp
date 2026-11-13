@@ -931,7 +931,7 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 	const uint8_t * pixels = job->pixels;
 	uint32_t stride = job->stride;
 	int32_t sx = job->sx, sy = job->sy, sw = job->sw, sh = job->sh;
-	int32_t px0 = job->px0, py0 = job->py0, px1 = job->px1, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
+	int32_t px0 = job->px0, py0 = job->py0, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
 	bool filter = job->filter;
 	bool timely = scanWaitRows(y0 > 0 ? y0 : 0, y1, job->target);
 
