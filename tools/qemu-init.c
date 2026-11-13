@@ -1626,6 +1626,130 @@ command_kevent(int argc, char **argv)
 	syscall6(SYS_close, kq, 0, 0, 0, 0, 0);
 }
 
+/* ---- the network the other way: get (a TCP client) and udp ---- */
+
+#define SYS_connect             98
+
+/* ADDRESS PORT: a socket address, or 0 */
+static int
+parse_endpoint(char **argv, struct sockaddr_in *to)
+{
+	unsigned port = parse_number(argv[2]);
+
+	to->len = 16;
+	to->family = AF_INET;
+	to->port = (uint16_t)((port >> 8) | (port << 8));
+	return parse_ipv4(argv[1], to->addr) && port > 0 && port < 65536;
+}
+
+/* ADDRESS PORT [PATH]: a page asked for over HTTP (connect, as a client); its first line and its size */
+static void
+command_get(int argc, char **argv)
+{
+	static char response[16384];
+	struct sockaddr_in to = { 0 };
+	struct { int64_t seconds; int32_t microseconds, pad; } wait = { 10, 0, 0 };
+	const char *path = argc > 3 ? argv[3] : "/";
+
+	if (argc < 3 || !parse_endpoint(argv, &to)) {
+		say("get ADDRESS PORT [PATH]: get 10.0.2.2 8000 /\n");
+		return;
+	}
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+	if (sock < 0) {
+		say("get: no socket\n");
+		return;
+	}
+	syscall6(SYS_setsockopt, sock, SOL_SOCKET, SO_RCVTIMEO, (long)&wait, sizeof(wait), 0);
+	long error = syscall6(SYS_connect, sock, (long)&to, sizeof(to), 0, 0, 0);
+	if (error != 0) {
+		say("get: no connection, error ");
+		say_number((uint64_t)-error);
+		say("\n");
+		syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+		return;
+	}
+	const char *const request[] = { "GET ", path, " HTTP/1.0\r\nHost: ", argv[1], "\r\nUser-Agent: qemu-init\r\n\r\n" };
+	for (int i = 0; i < 5; i++) {
+		syscall6(SYS_write, sock, (long)request[i], (long)length(request[i]), 0, 0, 0);
+	}
+	long all = 0;
+	for (long got; all < (long)sizeof(response) - 1 &&
+	    (got = syscall6(SYS_read, sock, (long)response + all, (long)sizeof(response) - 1 - all, 0, 0, 0)) > 0; all += got) {
+	}
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+	response[all] = '\0';
+	long line = 0, body = 0;
+	while (line < all && response[line] != '\r' && response[line] != '\n') {
+		line++;
+	}
+	for (long i = 0; i + 3 < all; i++) {
+		if (response[i] == '\r' && response[i + 1] == '\n' && response[i + 2] == '\r' && response[i + 3] == '\n') {
+			body = i + 4;
+			break;
+		}
+	}
+	response[line] = '\0';
+	say("get: ");
+	say(response);
+	say(", ");
+	say_number((uint64_t)(body > 0 ? all - body : 0));
+	say(" bytes of body\n");
+	if (body > 0) {
+		say(response + body);
+		if (all > body && response[all - 1] != '\n') {
+			say("\n");
+		}
+	}
+}
+
+/* ADDRESS PORT WORDS...: the words in a datagram, and what comes back */
+static void
+command_udp(int argc, char **argv)
+{
+	struct sockaddr_in to = { 0 }, from;
+	struct { int64_t seconds; int32_t microseconds, pad; } wait = { 5, 0, 0 };
+	char text[512], back[512];
+	long n = 0;
+
+	if (argc < 4 || !parse_endpoint(argv, &to)) {
+		say("udp ADDRESS PORT WORDS...\n");
+		return;
+	}
+	for (int i = 3; i < argc; i++) {
+		for (const char *c = argv[i]; *c != '\0' && n < (long)sizeof(text) - 1; c++) {
+			text[n++] = *c;
+		}
+		if (i + 1 < argc && n < (long)sizeof(text) - 1) {
+			text[n++] = ' ';
+		}
+	}
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_DGRAM, 0, 0, 0, 0);
+	if (sock < 0) {
+		say("udp: no socket\n");
+		return;
+	}
+	syscall6(SYS_setsockopt, sock, SOL_SOCKET, SO_RCVTIMEO, (long)&wait, sizeof(wait), 0);
+	uint32_t size = sizeof(from);
+	long got = -1;
+	if (syscall6(SYS_sendto, sock, (long)text, n, 0, (long)&to, sizeof(to)) == n) {
+		got = syscall6(SYS_recvfrom, sock, (long)back, sizeof(back) - 1, 0, (long)&from, (long)&size);
+	}
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+	if (got < 0) {
+		say("udp: nothing came back\n");
+		return;
+	}
+	back[got] = '\0';
+	say("udp: ");
+	say_number((uint64_t)got);
+	say(" bytes back from ");
+	say_ipv4(from.addr);
+	say(": ");
+	say(back);
+	say("\n");
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -1651,6 +1775,8 @@ static const struct {
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 	{ "serve", "[COUNT] a page over HTTP on port 80", command_serve },
+	{ "get", "ADDRESS PORT [PATH] a page asked for over HTTP", command_get },
+	{ "udp", "ADDRESS PORT WORDS... a datagram, and its answer", command_udp },
 	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
 	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
