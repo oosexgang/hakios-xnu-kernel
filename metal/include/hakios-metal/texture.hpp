@@ -221,7 +221,10 @@ struct TextureDesc {
     uint32_t depth = 1;                   // a 3D texture's slices (TextureType::k3D, one level); 1 for every other type
     uint32_t samples = 1;                 // MTLTextureDescriptor.sampleCount: 2 or 4 for TextureType::k2DMultisample, 1 for every other type
     // laid out for the GPU alone, tiled and compressed (UBWC, Mesa's fdl6_layout): no rows a CPU can address, its bytes
-    // what the GPU reads compressed. A 2D, one-level, single-sample RGBA8 texture, in a build with Mesa
+    // what the GPU reads compressed. A 2D, one-level, single-sample RGBA8 or BGRA8 texture no kernel stores into, in a
+    // build with Mesa. Sampled alone, it keeps linear rows for this processor beside it (staging); a render target is
+    // drawn, cleared, loaded and stored by the tiles, copied and resolved into and out of, sampled and fetched -- all
+    // through its flag buffer -- and has no rows at all (replace and read refuse it)
     bool compressed = false;
 };
 
@@ -371,6 +374,14 @@ public:
 private:
     uint64_t ubwcOffset_ = 0;
     uint32_t ubwcPitch_ = 0, ubwcLayerSize_ = 0, ubwcLogW_ = 0, ubwcLogH_ = 0;
+    void takeUbwc(const Texture& p) {   // a view's or a swizzled view's: the parent's compressed layout, flag buffer and all
+        ubwc_ = p.ubwc_;
+        ubwcOffset_ = p.ubwcOffset_;
+        ubwcPitch_ = p.ubwcPitch_;
+        ubwcLayerSize_ = p.ubwcLayerSize_;
+        ubwcLogW_ = p.ubwcLogW_;
+        ubwcLogH_ = p.ubwcLogH_;
+    }
 };
 
 // The border colour table a sampler's BCOLOR indexes, 128 bytes an entry: Metal's MTLSamplerBorderColor in its own

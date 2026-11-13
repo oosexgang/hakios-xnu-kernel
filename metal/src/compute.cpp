@@ -229,6 +229,12 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
                                    (t.kind == kTexImage ? " stores through it as texture2d<" : " reads it as texture2d<") + elementName(t.element) + ">");
         }
         if (t.kind == kTexImage) {
+            // (a compressed texture has no rows an IBO view could name: before A7XX nothing stores or loads UBWC through
+            // the IBO path, turnip's ubwc_possible, tu_image.cc:376-387)
+            if (tex->compressed()) {
+                return refuse(why, std::string(k.name) + " addresses texture " + n(i) + " as an image, and it is compressed: " +
+                                       "an image is loaded and stored through linear rows alone on this GPU");
+            }
             if (t.write && (tex->usage() & kTextureUsageWrite) == 0) {
                 return refuse(why, "texture " + n(i) + " was made without shader-write usage; " + k.name + " writes it");
             }

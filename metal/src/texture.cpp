@@ -453,6 +453,12 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
             refuse(why, std::string("a compressed ") + info->name + " texture: one level of 2D, single-sampled RGBA8Unorm or BGRA8Unorm is what is served");
             return nullptr;
         }
+        // (no kernel stores into one: before A7XX a storage image is left uncompressed, there being no UBWC through the
+        // IBO path -- turnip's ubwc_possible, tu_image.cc:376-387, supports_ibo_ubwc an a7xx field)
+        if ((desc.usage & kTextureUsageWrite) != 0) {
+            refuse(why, std::string("a compressed ") + info->name + " texture with shader-write usage: a kernel stores through linear rows alone on this GPU");
+            return nullptr;
+        }
         // (rows for this processor only for one it does not draw into: a render target's truth is what the GPU drew,
         // in the compressed layout alone, and replace and read refuse it)
         std::shared_ptr<Texture> staging;
@@ -474,6 +480,18 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         }
         std::shared_ptr<Buffer> buffer = newBuffer(gpu, l.size, why);
         if (buffer == nullptr) return nullptr;
+        // The flag buffer zeroed before the GPU first reads or writes the texture. Gallium's freedreno clears the flags
+        // of every UBWC resource it allocates before the first write (freedreno_resource.c:213-222, needs_ubwc_clear;
+        // fd6_clear_ubwc, fd6_blitter.cc:485-540, fills the bytes before slices[0].offset): "intermittent failures with
+        // UBWC ... due to the HW having a hard time interpreting arbitrary values populating the flags buffer when the BO
+        // was recycled". A Load of a target nothing has drawn yet reads these flags too. The processor writes the zeros
+        // through the mapping, as nothing of the GPU's has touched the buffer
+        const uint64_t data = fdl_surface_offset(&l, 0, 0);
+        if (buffer->contents() == nullptr || data > buffer->length()) {
+            refuse(why, "a compressed texture's buffer is not mapped: its flag buffer cannot be cleared");
+            return nullptr;
+        }
+        memset(buffer->contents(), 0, data);
         uint32_t bw = 0, bh = 0;
         fdl6_get_ubwc_blockwidth(&l, &bw, &bh);
         auto log2ceil = [](uint32_t v) { uint32_t r = 0; while ((1u << r) < v) r++; return r; };
@@ -844,6 +862,9 @@ a6xx::TexConst Texture::sampledDescriptor() const {
 }
 
 a6xx::TexConst Texture::levelDescriptor(uint32_t level) const {
+    // (a compressed texture has its one level, read through the UBWC view: a framebuffer fetch in sysmem reads what the
+    // RB wrote there compressed, which linear rows over the same memory would read as noise)
+    if (ubwc_) return sampledDescriptor();
     const TextureLevel L = this->level(level);
     a6xx::TexConst d = texture2d(levelAddress(level), L.width, L.height, uint32_t(L.pitch), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel),
                                  info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
@@ -879,6 +900,7 @@ std::shared_ptr<Texture> Texture::swizzled(const std::shared_ptr<Texture>& textu
     std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
     t->chroma_ = p.chroma_;
     t->layerPitch_ = p.layerPitch_;
+    t->takeUbwc(p);
     // over the parent's: a component naming red reads what the parent's red reads
     for (int c = 0; c < 4; c++) t->swizzle_[c] = swizzle[c] < 2 ? swizzle[c] : p.swizzle_[swizzle[c] - 2];
     return t;
@@ -1080,6 +1102,19 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     // (a view of a compressed texture is a view of its rows: their layout is the one a view reinterprets)
     if (parent->staging_ != nullptr) return view(parent->staging_, format, type, baseLevel, levels, baseSlice, slices, why);
     const Texture& p = *parent;
+    // ...and of a compressed render target, which has no rows: the whole of it as it is, UBWC and all. A view in another
+    // format of the same size would not read the bytes reinterpreted, as Metal promises: the tiled layout holds every
+    // 8-bit format WZYX (fd6_pipe2swap, fd6_format_table.c:370-375), so a BGRA8 view of RGBA8 tiles reads them as RGBA8
+    if (p.ubwc_) {
+        if (format != p.format() || type != p.type() || baseLevel != 0 || levels != 1 || baseSlice != 0 || slices != 1) {
+            refuse(why, "a view in pixel format " + n(uint32_t(format)) + ", type " + n(uint32_t(type)) + " of a compressed " + p.info().name +
+                            " render target: its whole self is the one view served (its tiles are not rows another format could read)");
+            return nullptr;
+        }
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_));
+        t->takeUbwc(p);
+        return t;
+    }
     const FormatInfo* info = formatInfo(format);
     const bool layered = p.type() == TextureType::k2DArray || p.type() == TextureType::kCube || p.type() == TextureType::kCubeArray;
     const uint32_t parentSlices = layered ? p.depth() : 1;

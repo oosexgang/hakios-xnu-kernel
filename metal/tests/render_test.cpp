@@ -1574,8 +1574,15 @@ TEST(the_fake_refuses_a_draw_whose_target_does_not_hold_together) {
     }
     {
         Twin w;
-        w.at(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0)) = rbMrtBufInfo(FMT6_8_8_8_8_UNORM, a6xx_tile_mode(3), WZYX);   // TILE6_3 (a6xx.xml.h:60), which the enum here does not name
-        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: tile mode 3: only linear targets are what this GPU model runs"));
+        // TILE6_3 without its flag buffer turned on: the RB would write tiles a UBWC reader takes for compressed ones
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0)) = rbMrtBufInfo(FMT6_8_8_8_8_UNORM, TILE6_3, WZYX);
+        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: tile mode 3, format 48, swap 0: a linear target without FLAG_MRTS, or an RGBA8 UBWC one"));
+    }
+    {
+        // ...and a linear target with it: the RB would write flags wherever RB_MRT_FLAG_BUFFER[0] points
+        Twin w;
+        w.at(REG_A6XX_RB_RENDER_CNTL) |= A6XX_RB_RENDER_CNTL_FLAG_MRTS(1);
+        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: tile mode 0, format 48, swap 0, FLAG_MRTS set: a linear target without FLAG_MRTS"));
     }
     {
         Twin w;

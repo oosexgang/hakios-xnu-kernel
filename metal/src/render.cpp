@@ -131,10 +131,13 @@ MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
     MrtWords m{};
     // (a layer, a face or a depth plane: the slices are one 2D layout each, sliceBytes apart -- fd6_layout.c's layer_size)
     const uint64_t base = t.levelAddress(level) + (slice != 0 ? uint64_t(slice) * t.sliceBytes() : 0);
-    m.bufInfo = rbMrtBufInfo(colorFmt(f), t.compressed() ? TILE6_3 : TILE6_LINEAR, f.swap);
+    // (a compressed one tiled, its components WZYX whatever the format's swap: "CCU ignores swap and always uses WZYX
+    // when tiled", fd6_pipe2swap in fd6_format_table.c:370-375, which is what the sampled view reads it with)
+    m.bufInfo = rbMrtBufInfo(colorFmt(f), t.compressed() ? TILE6_3 : TILE6_LINEAR, t.compressed() ? WZYX : f.swap);
     if (t.compressed()) {
         // its flag buffer, as tu6_emit_mrt / fd6 emit_mrt write it (fd6_view.c's FLAG_BUFFER_PITCH: the pitch, the layer
-        // size over 4); RB_RENDER_CNTL.FLAG_MRTS turns its use on
+        // size over 4); RB_RENDER_CNTL.FLAG_MRTS turns its use on -- in a tile too, where turnip writes the same words
+        // (tu6_emit_mrt and tu6_emit_render_cntl serve both modes)
         m.flagLo = uint32_t(t.flagAddress());
         m.flagHi = uint32_t(t.flagAddress() >> 32);
         m.flagPitch = A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH(t.flagPitch()) | A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH(t.flagLayerSize() >> 2);
@@ -928,8 +931,17 @@ void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c,
     reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(colorFmt(f), f.element == kElemInt, f.element == kElemUint, f.srgb));
     regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
     regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {c.value[0], c.value[1], c.value[2], c.value[3]});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(f), tile, f.swap, f.srgb), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
-    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    if (target.compressed()) {
+        // a UBWC target filled as turnip clears one in sysmem (clear_sysmem_attachment through r2d_dst, tu_clear_blit.cc:
+        // 396-413, over fdl6_view_init's RB_2D_DST_INFO): TILE6_3, WZYX, FLAGS, and its flag buffer, which the 2D engine
+        // writes with the data
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(f), TILE6_3, WZYX, f.srgb) | A6XX_RB_2D_DST_INFO_FLAGS, uint32_t(at), uint32_t(at >> 32),
+                                                A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {uint32_t(target.flagAddress()), uint32_t(target.flagAddress() >> 32), A6XX_RB_2D_DST_FLAGS_PITCH(target.flagPitch())});
+    } else {
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(f), tile, f.swap, f.srgb), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    }
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
 }
 
@@ -1013,9 +1025,6 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         const FormatInfo& f = t.info();
         // (attachment 0's sentences are the ones a single target always had; a later one's name its index)
         const std::string which = "colour attachment " + n(i), of = i == 0 ? std::string() : " of " + which, at = i == 0 ? std::string() : which + ": ";
-        if (t.compressed() && (i == 0 ? pass.load : pass.more[i - 1].load) == LoadAction::kClear) {
-            return refuse(why, at + "a Clear of a compressed texture: the 2D engine's fill writes linear rows (not served yet)");
-        }
         if ((t.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
@@ -2203,7 +2212,7 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why, uint32_t
             return refuse(why, which + ": GMEM takes single-sampled 4- and 8-byte float formats");
         }
         if (a.level >= t.levels()) return refuse(why, which + ": no such level");
-        if (t.compressed()) return refuse(why, which + ": compressed, which the tiles' loads and stores do not serve yet");
+        // (a compressed one is loaded and stored by the same event blit, told the UBWC layout: encodeGmem)
         const TextureLevel L = t.level(a.level);
         if (L.width != W || L.height != H) return refuse(why, which + ": not the window's size, " + n(W) + "x" + n(H));
         // The event blit moves whole 16 x 4 granules: past the right edge it reads and writes the row's padding, past
@@ -2410,9 +2419,20 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         const Texture& t = *a.texture;
         const FormatInfo& f = t.info();
         const uint64_t base = t.levelAddress(a.level) + (a.slice != 0 ? uint64_t(a.slice) * t.sliceBytes() : 0);
-        regs(stream, REG_A6XX_RB_BLIT_DST_INFO,
-             {rbBlitDstInfo(colorFmt(f), TILE6_LINEAR, f.swap), uint32_t(base), uint32_t(base >> 32), uint32_t(t.level(a.level).pitch) >> 6});
-        regs(stream, REG_A6XX_RB_BLIT_FLAG_DST, {0, 0, 0});
+        if (t.compressed()) {
+            // A UBWC attachment: the destination as fdl6_view_init gives it for a blit (RB_BLIT_DST_INFO: TILE6_3, the
+            // tiled layout's WZYX, FLAGS) and its flag buffer in RB_BLIT_FLAG_DST, the address and FLAG_BUFFER_PITCH's
+            // pitch and layer -- turnip's event_blit_run (tu_clear_blit.cc:1990-1995) for the load and the store alike.
+            // The store compresses the bin's granules into memory, the load decompresses them into the bin.
+            regs(stream, REG_A6XX_RB_BLIT_DST_INFO, {rbBlitDstInfo(colorFmt(f), TILE6_3, WZYX) | A6XX_RB_BLIT_DST_INFO_FLAGS, uint32_t(base), uint32_t(base >> 32),
+                                                     uint32_t(t.level(a.level).pitch) >> 6});
+            regs(stream, REG_A6XX_RB_BLIT_FLAG_DST, {uint32_t(t.flagAddress()), uint32_t(t.flagAddress() >> 32),
+                                                     A6XX_RB_BLIT_FLAG_DST_PITCH_PITCH(t.flagPitch()) | A6XX_RB_BLIT_FLAG_DST_PITCH_ARRAY_PITCH(t.flagLayerSize() >> 2)});
+        } else {
+            regs(stream, REG_A6XX_RB_BLIT_DST_INFO,
+                 {rbBlitDstInfo(colorFmt(f), TILE6_LINEAR, f.swap), uint32_t(base), uint32_t(base >> 32), uint32_t(t.level(a.level).pitch) >> 6});
+            regs(stream, REG_A6XX_RB_BLIT_FLAG_DST, {0, 0, 0});
+        }
         reg(stream, REG_A6XX_RB_BLIT_BASE_GMEM, plan.base[i]);
         reg(stream, REG_A6XX_RB_BLIT_INFO, rbBlitInfo(type, false));
         event(stream, BLIT);
@@ -2614,13 +2634,16 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (sf.depth || df.depth) {
         return refuse(why, std::string("a copy of a ") + (sf.depth ? sf.name : df.name) + " texture: a depth texture is tiled, the 2D copy is written for linear ones");
     }
-    if (src.compressed()) {
-        return refuse(why, "a copy from a compressed texture: the 2D copy reads linear ones (not served yet)");
+    // A compressed texture on either side (UBWC, read and written by the 2D engine through its flag buffer as turnip's
+    // r2d_src and r2d_dst do over a UBWC view): a copy of its own format, pixel for pixel, of its one level -- or a
+    // multisample attachment's resolve into one, which turnip's resolve_sysmem sends through the same r2d_dst. A scale, a
+    // filter or a turn into or out of one is nothing anything here asks for, and is refused rather than sent unmeasured
+    if ((src.compressed() || dst.compressed()) &&
+        (sf.fmt6 != df.fmt6 || sf.swap != df.swap || srcLevel != 0 || dstLevel != 0 || linear || o.rotate2d != 0 || s.w != d.w || s.h != d.h)) {
+        return refuse(why, std::string("a copy ") + (src.compressed() ? "from" : "into") + " a compressed texture: of its own format, pixel for pixel, unturned, " +
+                               "from and into level 0 is what is served");
     }
-    if (dst.compressed() && (sf.fmt6 != df.fmt6 || dstLevel != 0 || linear)) {
-        return refuse(why, "a copy into a compressed texture: from its own format, pixel for pixel, into level 0 is what is served");
-    }
-    if (sf.fmt6 != df.fmt6 || (sf.swap != df.swap && !dst.compressed())) {
+    if (sf.fmt6 != df.fmt6 || sf.swap != df.swap) {
         return refuse(why, std::string("a copy from ") + sf.name + " to " + df.name + ": the two must be one pixel format (an sRGB pair is one)");
     }
     if (srcLevel >= src.levels() || dstLevel >= dst.levels()) {
@@ -2707,9 +2730,20 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     const a3xx_msaa_samples srcSamples = src.samples() == 4 ? MSAA_FOUR : src.samples() == 2 ? MSAA_TWO : MSAA_ONE;
     const uint32_t srcInfo = sp2dSrcInfo(srcFmt, srcSwap, srgb, linear && scaled) | A6XX_SP_PS_2D_SRC_INFO_SAMPLES(srcSamples) |
                              (srcSamples != MSAA_ONE && sf.element == kElemFloat ? A6XX_SP_PS_2D_SRC_INFO_SAMPLES_AVERAGE : 0u);
-    regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
-                                              uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
-    regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
+    if (src.compressed()) {
+        // out of a UBWC layout (r2d_src over a UBWC view, tu_clear_blit.cc:268-301; fdl6_view_init's SP_PS_2D_SRC_INFO,
+        // fd6_view.c:320-332): TILE6_3, WZYX (the layout's order; the destination's swap puts a BGRA texture's back),
+        // FLAGS, and the flag buffer in SP_PS_2D_SRC_FLAGS
+        const uint32_t tiled = (srcInfo & ~(A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK | A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK)) |
+                               field(TILE6_3, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK) |
+                               field(WZYX, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK) | A6XX_SP_PS_2D_SRC_INFO_FLAGS;
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {tiled, sp2dSrcSize(SL.width, SL.height), uint32_t(from), uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {uint32_t(src.flagAddress()), uint32_t(src.flagAddress() >> 32), A6XX_SP_PS_2D_SRC_FLAGS_PITCH(src.flagPitch())});
+    } else {
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
+                                                  uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
+    }
     if (dst.compressed()) {
         // into a UBWC layout (r2d_dst over a UBWC view, tu_clear_blit.cc; fdl6_view_init's RB_2D_DST_INFO): TILE6_3, WZYX
         // (the layout's order, the source's swap reordering a BGRA texture's bytes into it), FLAGS, and its flag buffer
