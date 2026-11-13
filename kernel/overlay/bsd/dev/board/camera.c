@@ -423,7 +423,7 @@ pgpio_put(uint8_t reg, uint8_t value, bool force)
 		}
 	}
 	if (problem != NULL || (problem = pgpio_read(reg, &back)) != NULL || back != value) {
-		say("camera: the PM8008i's reset GPIO %#04x <- %#04x: %s (reads %#04x)\n", reg, value, problem ? problem : "does not read back", back);
+		say("camera: the PM8008i's reset GPIO 0x%02x <- 0x%02x: %s (reads 0x%02x)\n", reg, value, problem ? problem : "does not read back", back);
 		give_up("a write to the PMIC that failed");
 		return false;
 	}
@@ -551,7 +551,7 @@ pm8008_put(uint8_t address, uint16_t reg, uint8_t value, bool force)
 		}
 		wait_ms(1);
 	}
-	say("camera: PM8008i %#04x:%#06x <- %#04x: %s (reads %#04x), %u goes\n", address, reg, value, back == 0xff ? "no answer" :
+	say("camera: PM8008i 0x%02x:0x%04x <- 0x%02x: %s (reads 0x%02x), %u goes\n", address, reg, value, back == 0xff ? "no answer" :
 	    "does not read back", back, PM8008_GOES);
 	give_up("a write to the PM8008i that failed");
 	return false;
@@ -566,7 +566,7 @@ show_ldo(unsigned n)
 	    pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_VSET_LB), vset, 2) &&
 	    pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_MODE_CTL1), &mode, 1) &&
 	    pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_ENABLE), &enable, 1)) {
-		say("camera: PM8008i LDO%u: status %#04x (%sready%s, mode %u), set to %u mV, mode control %#04x, enable %#04x\n", n,
+		say("camera: PM8008i LDO%u: status 0x%02x (%sready%s, mode %u), set to %u mV, mode control 0x%02x, enable 0x%02x\n", n,
 		    status, status & 0x80 ? "" : "not ", status & 0x20 ? ", OVER-CURRENT" : "", status & 3, vset[1] << 8 | vset[0], mode,
 		    enable);
 	} else {
@@ -634,20 +634,20 @@ ldo_on(unsigned n, unsigned mv)
 			/* as healthy() does while it runs: an over-current counts when it is still there */
 			wait_ms(2);
 			if (pm8008_get(PM8008_REGULATORS, (uint16_t)(base + LDO_STATUS1), &again, 1) && !(again & 0x20)) {
-				say("camera: PM8008i LDO%u: status %#04x, and %#04x when asked again\n", n, status, again);
+				say("camera: PM8008i LDO%u: status 0x%02x, and 0x%02x when asked again\n", n, status, again);
 				status = again;
 			} else {
-				say("camera: PM8008i LDO%u reports over-current (status %#04x)\n", n, status);
+				say("camera: PM8008i LDO%u reports over-current (status 0x%02x)\n", n, status);
 				give_up("an LDO over its current");
 				return false;
 			}
 		}
 		if (status & 0x80) {
-			say("camera: PM8008i LDO%u on at %u mV (status %#04x)\n", n, mv, status);
+			say("camera: PM8008i LDO%u on at %u mV (status 0x%02x)\n", n, mv, status);
 			return true;
 		}
 	}
-	say("camera: PM8008i LDO%u not ready (status %#04x)\n", n, status);
+	say("camera: PM8008i LDO%u not ready (status 0x%02x)\n", n, status);
 	give_up(status == 0xff ? "a PM8008i whose status is all ones" : "an LDO that is not ready");
 	return false;
 }
@@ -1318,16 +1318,16 @@ read_chip_id(void)
 		wait_ms(2);
 	}
 	if (go == 20) {
-		say("camera: the %s sensor does not answer at %#04x\n", hw->name, sensor_address());
+		say("camera: the %s sensor does not answer at 0x%02x\n", hw->name, sensor_address());
 		return false;
 	}
 	if (go != 0) {
-		say("camera: the %s sensor answered at %#04x after %u more goes (%u ms)\n", hw->name, sensor_address(), go, go * 2);
+		say("camera: the %s sensor answered at 0x%02x after %u more goes (%u ms)\n", hw->name, sensor_address(), go, go * 2);
 	}
 	for (unsigned i = 0; i < in; i++) {
 		chip = chip << 8 | id[i];
 	}
-	say("camera: the %s sensor's chip ID: %#06x (%s)\n", hw->name, chip, (chip & ctab->id_mask) == (ctab->id & ctab->id_mask) ?
+	say("camera: the %s sensor's chip ID: 0x%04x (%s)\n", hw->name, chip, (chip & ctab->id_mask) == (ctab->id & ctab->id_mask) ?
 	    "as Android expects" : "NOT what Android expects");
 	return (chip & ctab->id_mask) == (ctab->id & ctab->id_mask);
 }
@@ -1355,12 +1355,12 @@ healthy(void)
 				break;
 			}
 			if (look == 0) {
-				say("camera: PM8008i LDO%u: status %#04x, asked again\n", n, status);
+				say("camera: PM8008i LDO%u: status 0x%02x, asked again\n", n, status);
 				wait_ms(2);
 			}
 		}
 		if (!(status & 0x80) || (status & 0x20)) {
-			say("camera: PM8008i LDO%u: status %#04x\n", n, status);
+			say("camera: PM8008i LDO%u: status 0x%02x\n", n, status);
 			give_up("an LDO that is no longer well");
 			return false;
 		}
@@ -2759,7 +2759,7 @@ af_look(const char *when)
 
 		if (ldo_switched[n] && pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_STATUS1), &status, 1) &&
 		    (status & 0xb8) != 0x80) {
-			say("camera: %s: PM8008i LDO%u status %#04x\n", when, n, status);
+			say("camera: %s: PM8008i LDO%u status 0x%02x\n", when, n, status);
 		}
 	}
 }
@@ -3954,15 +3954,15 @@ look(void)
 		say("camera: the PM8008i's reset GPIO cannot be read\n");
 		return;
 	}
-	say("camera: the PM8008i's reset GPIO: type %#04x subtype %#04x, at %u; vin %#04x pull %#04x mode %#04x "
-	    "source %#04x enable %#04x: %s\n", type, subtype, sts & 1, regs[0], regs[1], regs[2], regs[3], regs[4],
+	say("camera: the PM8008i's reset GPIO: type 0x%02x subtype 0x%02x, at %u; vin 0x%02x pull 0x%02x mode 0x%02x "
+	    "source 0x%02x enable 0x%02x: %s\n", type, subtype, sts & 1, regs[0], regs[1], regs[2], regs[3], regs[4],
 	    pgpio_active(regs) ? "as Android's pm8008i_active (out of reset)" : "not as Android's pm8008i_active");
 	if (!pm8008_get(PM8008_CHIP, REVID_BASE, revid, 4)) {
 		say("camera: the PM8008i does not answer (in reset, or its bus is not at rest)\n");
 		return;
 	}
 	(void)pm8008_get(PM8008_CHIP, MISC_CHIP_ENABLE, &enable, 1);
-	say("camera: the PM8008i: revision %02x %02x %02x %02x, chip enable %#04x\n", revid[0], revid[1], revid[2], revid[3], enable);
+	say("camera: the PM8008i: revision %02x %02x %02x %02x, chip enable 0x%02x\n", revid[0], revid[1], revid[2], revid[3], enable);
 	show_ldos();
 }
 
