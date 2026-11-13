@@ -15,13 +15,16 @@ cp "$US"/src/*.c "$US"/src/*.h "$O/src/"
 # method alone otherwise).
 #   -[SBLockdownManager _setupActivationState]: the activation state an int at +8, 2 = activated
 #   -[SBSetupManager _setSetupRequiredReason:]: the reason kept at +8, 0 = no setup assistant
+#   +[XBApplicationSnapshotManifestImpl _outputFormatForSnapshot:]: 0 PNG, 1 ATX (ASTC, compressed on the processor),
+#     3 JPEG, chosen by two flags of the device and the snapshot's opacity, as on 16.5
 case $BUILD in
-23G90)	SB_ACTIVATION=0x22450fdc0 SB_SETUP=0x224675b68 ;;
-24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
+23G90)	SB_ACTIVATION=0x22450fdc0 SB_SETUP=0x224675b68 SB_SNAPSHOT_FORMAT='' ;;
+24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc SB_SNAPSHOT_FORMAT=0x2b42c8d38 ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
 *)	echo "inj26.sh: no SpringBoard addresses for $BUILD: those hooks will be left alone" >&2
-	SB_ACTIVATION='' SB_SETUP='' ;;
+	SB_ACTIVATION='' SB_SETUP='' SB_SNAPSHOT_FORMAT='' ;;
 esac
 [ -z "$SB_ACTIVATION" ] || sed -i -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" "$O/src/inject_sb.c"
+[ -z "$SB_SNAPSHOT_FORMAT" ] || sed -i -e "s/0x1f1c91480UL/${SB_SNAPSHOT_FORMAT}UL/" "$O/src/inject_sb.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios.dylib" "$O/src/inject.c"
 # the status bar's clock past the hole punch: ios/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
 # (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
