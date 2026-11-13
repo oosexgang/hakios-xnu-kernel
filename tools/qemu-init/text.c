@@ -34,6 +34,26 @@ void
 say_number(uint64_t n)
 {
 	char digits[24];
+
+	append_number(digits, 0, sizeof(digits), n);
+	say(digits);
+}
+
+/* text, then a number, put at the end of what LINE (SIZE bytes) holds from AT; where it now ends */
+size_t
+append(char *line, size_t at, size_t size, const char *text)
+{
+	while (*text != '\0' && at + 1 < size) {
+		line[at++] = *text++;
+	}
+	line[at] = '\0';
+	return at;
+}
+
+size_t
+append_number(char *line, size_t at, size_t size, uint64_t n)
+{
+	char digits[24];
 	int i = (int)sizeof(digits) - 1;
 
 	digits[i] = '\0';
@@ -41,7 +61,7 @@ say_number(uint64_t n)
 		digits[--i] = (char)('0' + n % 10);
 		n /= 10;
 	} while (n != 0 && i > 0);
-	say(&digits[i]);
+	return append(line, at, size, &digits[i]);
 }
 
 /* the line split at spaces, in place; how many words */

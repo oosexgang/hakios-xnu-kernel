@@ -53,6 +53,8 @@ size_t length(const char *s);
 int same(const char *a, const char *b);
 void say(const char *s);
 void say_number(uint64_t n);
+size_t append(char *line, size_t at, size_t size, const char *text);       /* (a line said in one write, */
+size_t append_number(char *line, size_t at, size_t size, uint64_t n);      /*  which the kernel's own lines do not cut) */
 void say_padded(uint64_t n, int width);
 unsigned parse_number(const char *text);
 int split(char *text, char **words);
@@ -79,6 +81,7 @@ void command_kevent(int argc, char **argv);
 void command_kill(int argc, char **argv);
 void command_ls(int argc, char **argv);
 void command_mach(int argc, char **argv);
+void command_memory(int argc, char **argv);
 void command_mkdir(int argc, char **argv);
 void command_mmap(int argc, char **argv);
 void command_mount(int argc, char **argv);
