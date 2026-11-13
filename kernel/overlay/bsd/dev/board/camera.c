@@ -2960,6 +2960,7 @@ capture_sensor(void)
 	height = mode->height;
 	stride = RAW10_STRIDE(width);
 	rate = (uint64_t)mode->pixel_clock * 10 / (mode->lanes ? mode->lanes : 1);
+	/* boot-arg cam_frames=N: how many frames are taken, 1 to 300 (default 8) */
 	(void)PE_parse_boot_argn("cam_frames", &wanted, sizeof(wanted));
 	wanted = wanted < 1 ? 1 : wanted > 300 ? 300 : wanted;
 	if (!PE_parse_boot_argn("cam_settle", &settle, sizeof(settle)) || settle == 0) {
@@ -3971,6 +3972,7 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	uint32_t secs = 20;
 	char which[16] = "";
 
+	/* boot-arg cam_after=N: how many seconds after the start the camera is looked at (default 20: the system up first) */
 	(void)PE_parse_boot_argn("cam_after", &secs, sizeof(secs));
 	if (level == 5) {
 		camdev_make();
