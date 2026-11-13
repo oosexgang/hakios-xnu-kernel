@@ -116,6 +116,7 @@ static const struct {
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "ioreg", "[DEPTH] IOKit's registry, asked in MIG messages", command_ioreg },
 	{ "ioprop", "PATH KEY a property of a registry entry", command_ioprop },
+	{ "draw", "a picture on the screen, through IOSurface and the framebuffer", command_draw },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
 	{ "fork", "[PROGRAM [ARGUMENTS]] a copy of this process; it may become PROGRAM", command_fork },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
