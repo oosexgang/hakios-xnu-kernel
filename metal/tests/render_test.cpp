@@ -5964,6 +5964,40 @@ TEST(a_binned_gmem_pass_bins_its_draws_then_tells_each_tile_its_streams) {
     }
 }
 
+// A pass tiled over its render area alone has its grid's corner at the area's (aligned down), but the hardware bins the
+// binning pass's primitives on a grid from the window's corner: tile (x, y) would be given the visibility of the bin at
+// (x, y) from the window's corner -- another place on the screen -- and miss draws (the phone: a low-battery alert left
+// out of most frames while a finger moved on it, 19 one-frame flickers in a recording against none without the binning).
+// Such a pass is not binned: its tiles draw every draw (CP_SET_VISIBILITY_OVERRIDE 1), the whole screen's passes still are.
+TEST(a_pass_tiled_over_a_corner_is_not_binned) {
+    Rig r;
+    auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    fillCoords(*t);
+    RenderPass a;
+    a.color0 = t.get();
+    render::Options o;
+    o.gmemBinning = true;
+    auto cb = r.queue->commandBuffer();
+    Draw d = wholeDraw(3);
+    d.viewport = Viewport{300, 1000, 100, 50, 0, 1};
+    CHECK(cb->draw(flatProgram(), a, d, Bindings{}, Bindings{}, o));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK(s.tiles == 1 && s.binningPasses == 0 && s.binData == 0);
+    CHECK_EQ(cb->counts().binnedPasses, 0u);
+    CHECK_EQ(coordsWrong(*t), 0u);
+    // the whole screen's pass, after it, binned as before
+    auto c2 = r.queue->commandBuffer();
+    CHECK(c2->draw(flatProgram(), a, wholeDraw(3, 1125, 2436), Bindings{}, Bindings{}, o));
+    c2->commit();
+    c2->waitUntilCompleted();
+    CHECK_EQ(c2->counts().binnedPasses, 1u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 // A pass whose streams overran their pitch turns the binning off for the queue: the command processor's compare marks
 // the word (render::kVscOverflowAt), the queue reads it when the buffer completes, and the next pass draws every draw
 TEST(a_visibility_stream_overflow_turns_the_binning_off) {

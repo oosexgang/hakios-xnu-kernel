@@ -3373,8 +3373,13 @@ void CommandBuffer::closePass() {
             if (!cleared && (every || !(la == LoadAction::kDontCare && inside))) load |= 1u << i;
             if ((every || cleared || ((open_->written >> i) & 1)) && (sa != StoreAction::kDontCare || open_->goesOn)) store |= 1u << i;
         }
+        // Binned only with the grid's corner at the window's: the hardware bins the binning pass's primitives on a grid from
+        // the window's corner, and a pass tiled over its render area alone (gmemTiles: the corner at the area's, aligned
+        // down) would give each tile the visibility of a bin somewhere else on the screen -- on the phone the low-battery
+        // alert left out of most frames while a finger moved on it. Such a pass draws every draw in its few tiles: its
+        // draws' USE_VISIBILITY is ignored under CP_SET_VISIBILITY_OVERRIDE 1.
         uint64_t vsc = 0;
-        if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk()) {
+        if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk() && plan.x0 == 0 && plan.y0 == 0) {
             std::shared_ptr<Buffer> v = queue_.vscBuffer(&why);
             if (v == nullptr) {
                 retirePass();
