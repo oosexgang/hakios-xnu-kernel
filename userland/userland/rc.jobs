@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 /hakios/bin/hello_dyn started by launchd
 /hakios/bin/svc_test
 /hakios/bin/surf_test

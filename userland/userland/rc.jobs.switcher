@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The switcher of running applications (RC_JOBS=rc.jobs.switcher, gpu=1): three applications are
 # started one after another (ones that ask nothing: an application that puts up a question of its
 # own -- Photos asks about notifications -- leaves a modal alert on the screen, and with one of

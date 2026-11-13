@@ -709,7 +709,7 @@ def emit(decl, outdir):
 #   2. THE UNIFORM PREAMBLE. These shaders have constant coordinates, so ir3
 #      hoists the whole sample into the early preamble and emits `samgq.s` rather
 #      than `sam.s`. Boot once more with IR3_SHADER_DEBUG=nopreamble in the job's
-#      environment (com.hakios.demo.plist): the same modules then compile to
+#      environment (launchd/demo.plist): the same modules then compile to
 #      `sam.s` in the main shader, and if they compare then, the preamble is the
 #      place. Nothing else changes, so the two boots differ in one variable.
 """ % dict(ncompare=ncompare, total=len(manifest)))

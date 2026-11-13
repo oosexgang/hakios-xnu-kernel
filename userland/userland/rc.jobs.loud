@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The speakers at their loudest (RC_JOBS=rc.jobs.loud, with adsp=1 sound=4 and the sound_below being tried). First a
 # tone at full scale (1 kHz left, 440 Hz right) for 60 seconds written straight to /dev/hakios-audio, past Darwin's
 # own processing, which never lets a tone come near full scale: the hardest thing the speakers can be given, for

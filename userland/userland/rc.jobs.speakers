@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The phone's speakers (boot-arg sound=4 with adsp=1, bsd/dev/board/sound.c): once SpringBoard is up, what Darwin
 # plays in the ways that matter to the amplifiers, which are on only while there is sound -- a tone of three
 # seconds (1000 Hz left, 440 Hz right), the lock sound, keyboard clicks four seconds apart (each one starts the

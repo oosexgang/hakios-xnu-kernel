@@ -197,7 +197,7 @@ cp obj/child root/bin/child
 # ends: the program and its job together, away from the Darwin job list below, which several working
 # copies are editing at once.
 [ -f obj/var_store ] && cp obj/var_store root/bin/
-cp com.hakios.varstore.plist root/LaunchDaemons/
+cp launchd/varstore.plist root/LaunchDaemons/com.hakios.varstore.plist
 echo "HakiOS: image built $(date '+%Y-%m-%d %H:%M')" > root/etc/motd
 # 300000 bytes, byte i = (i*31 + (i>>8)) & 0xff; init verifies it through read() and mmap()
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for i in range(300000)))" > root/share/pattern.bin
@@ -632,7 +632,8 @@ PY
 	# the system image, so mkjobs.py judges "is this daemon's program there" by the listing of the volume
 	# and not by what select-system.py extracted here (--root-volume; seven jobs turn on the difference,
 	# fairplayd among them).
-	cp com.hakios.demo.plist com.hakios.wifi.plist com.hakios.thermald.plist root/LaunchDaemons/
+	# (launchd/JOB.plist, in the image as LaunchDaemons/LABEL.plist: the name launchd's own jobs have)
+	for job in demo wifi thermald; do cp launchd/$job.plist root/LaunchDaemons/com.hakios.$job.plist; done
 	VOLUME=""
 	[ -n "$FLASHBOOT" ] && [ -f $DARWIN_FW/rootfs.slt ] && VOLUME="--root-volume $DARWIN_FW/rootfs.slt"
 	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $DARWIN_FW/rootfs root/LaunchDaemons $DARWIN_JOBS

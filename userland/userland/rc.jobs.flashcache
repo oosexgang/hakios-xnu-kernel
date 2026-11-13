@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The Darwin root volume on the phone's flash as the root (flashboot.apfs resident, root_apfs=ufs_darwin
 # ufs=2 ufs_native=1), read(2) through the page cache. The driver's numbers and the kernel's line about
 # memory for the boot (until 25 s after this list began: nothing of ours meanwhile) and the next 30 s;

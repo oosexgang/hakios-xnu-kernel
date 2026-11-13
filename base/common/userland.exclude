@@ -33,7 +33,7 @@ __pycache__/
 !/userland/build.sh
 !/userland/*.py
 !/userland/rc.*
-!/userland/com.hakios.*.plist
+!/userland/launchd/
 !/userland/src/
 !/userland/libmini/
 !/userland/var/

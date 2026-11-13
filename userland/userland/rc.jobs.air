@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 #
 # The first draw on this GPU by a shader Apple compiled for Metal (RC_JOBS=rc.jobs.air).
 # /hakios/bin/air_run translates one function of a .metallib with the AIR frontend

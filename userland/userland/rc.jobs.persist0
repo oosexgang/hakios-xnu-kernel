@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The boot before the series of rc.jobs.persist5: the store is forgotten first, so that what
 # follows starts from a volume as empty as every boot of this port used to be. Run this one
 # WITHOUT var_store=1 -- nothing is restored and nothing saved, and it doubles as the measure of

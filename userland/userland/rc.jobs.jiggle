@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The home screen in edit mode (RC_JOBS=rc.jobs.jiggle, gpu=1): a long press on an empty place makes
 # the icons jiggle and puts the translucent minus on each of them. Then SpringBoard writes down the
 # layers it has on the screen (com.hakios.layers, see inject_sb.c), which names the badge's views.

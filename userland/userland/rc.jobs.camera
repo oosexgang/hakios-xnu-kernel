@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The cameras for Darwin (RC_JOBS=rc.jobs.camera, with cam=5; with cam_pattern=1 its frames are colour bars):
 # first what AVFoundation lists (camera_avtest: the device is libhakios-media.dylib's in mediaserverd,
 # camera_device.c, whose frames come from the kernel's /dev/hakios-camera), then Camera.app opened from the home

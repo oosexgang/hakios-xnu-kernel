@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The flashlight for Darwin (RC_JOBS=rc.jobs.torch, with torch=3): as a program works it (torch_test: AVFlashlight, i.e.
 # mediaserverd's FigFlashlight, i.e. the kernel's /dev/hakios-torch) at full and at a quarter, then off; then from
 # Control Center, as a finger works it: opened from the top right corner, its flashlight button pressed, pressed again

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # The microphone for Darwin (RC_JOBS=rc.jobs.mic, with adsp=1 mic=4, haptic=5 and sound=4): first the speakers' path
 # as a check (a tone of two seconds and a keyboard click; with sound_below=720 the amplifiers play it 90 dB under
 # Android's level, which is silence), then two recordings the way an application makes them (record_test:

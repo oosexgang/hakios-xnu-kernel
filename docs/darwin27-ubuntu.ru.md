@@ -127,8 +127,8 @@ python3 darwin/tools/fips26.py "$DARWIN_FW/dyld-strip" \
 
 ## 6. Образы (нужен `darwin-renoir`)
 
-`darwin-renoir` кладётся в `$DK/darwin-renoir`. Один раз до всего остального: `tools/mk-mesa.sh` из
-`darwin-renoir`, потом `darwin/userland/mesa26e.sh` и `darwin/userland/gl26.sh`.
+`darwin-renoir` кладётся в `$DK/darwin-renoir`. Один раз до всего остального: его скрипт
+mk-mesa.sh (в каталоге tools), потом `darwin/userland/mesa26e.sh` и `darwin/userland/gl26.sh`.
 
 ```sh
 export OBJ=$PWD/darwin/userland/obj27

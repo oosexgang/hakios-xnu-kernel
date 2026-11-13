@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # What a save every so often would cost, and how much of one is new (var_store=1 ufs_write=1).
 # Three saves a minute apart, each saying how long it took, how big it is and how much of it was
 # written since the save before -- which is what decides whether saving only the difference is

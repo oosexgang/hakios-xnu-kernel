@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
 # Safari (RC_JOBS=rc.jobs.safari, with wifi=1): whether Darwin takes the screen for one of extended colour (it must
 # not: WebKit then draws into surfaces of ten bits a colour that come out black), then yandex.ru and example.com
 # opened the way a link opens them (battery_test open URL: SpringBoard is asked to open it), for screenshots of what
