@@ -25,6 +25,7 @@
 #define SPMI_DONE               0x1
 #define SPMI_FAILURE            0x2
 #define SPMI_DENIED             0x4
+#define SPMI_DROPPED            0x8
 
 struct spmi_peripheral {
 	uint16_t id;                    /* slave << 8 | peripheral */
@@ -48,6 +49,7 @@ static struct spmi_model {
 	unsigned transfers, writes, denied;
 	unsigned elsewhere;             /* accesses where nothing of the arbiter is, and commands that are none */
 	bool deaf;                      /* the arbiter takes commands and never ends one */
+	unsigned drop_reads, drop_writes;       /* so many of the next reads, of the next writes, dropped (not made) */
 	pthread_mutex_t lock;
 } spmi = { .version = 0x50000000, .lock = PTHREAD_MUTEX_INITIALIZER };
 
@@ -152,6 +154,9 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 			spmi.status[channel] = 0;
 		} else if (p == NULL || p->silent) {
 			spmi.status[channel] = SPMI_DONE | SPMI_FAILURE;
+		} else if (spmi.drop_reads > 0) {
+			spmi.drop_reads--;
+			spmi.status[channel] = SPMI_DONE | SPMI_DROPPED;
 		} else {
 			if (p->looked_at != NULL) {
 				p->looked_at(p, (uint8_t)reg);
@@ -179,6 +184,9 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 				spmi.wstatus[channel] = SPMI_DONE | SPMI_DENIED;
 			} else if (p == NULL || p->silent) {
 				spmi.wstatus[channel] = SPMI_DONE | SPMI_FAILURE;
+			} else if (spmi.drop_writes > 0) {
+				spmi.drop_writes--;
+				spmi.wstatus[channel] = SPMI_DONE | SPMI_DROPPED;
 			} else {
 				uint8_t which = (uint8_t)(value >> 4 & 0xff), byte = (uint8_t)spmi.wdata0[channel];
 
