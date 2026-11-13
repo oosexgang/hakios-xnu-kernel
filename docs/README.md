@@ -31,6 +31,6 @@ Next to the code:
 | [../loader/README.md](../loader/README.md) | The loader. |
 | [../darwin/README.md](../darwin/README.md) | What Darwin's user space needs: each library and tool, and what each needs. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
-| [../components.toml](../components.toml) | Everything taken from elsewhere, at the exact version, with its licence. |
+| [../components](../components) | Everything taken from elsewhere, at the exact version, with its licence. |
 
 `base/README.md` and `base/docs/` describe the first generation (Darwin 16.5 on the first phone and QEMU).

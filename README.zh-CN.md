@@ -44,7 +44,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 - **设备包。** 手机与代码分开保存。内核、引导器和库按当前存在的设备包构建。
 - **不需要手机的检查。** 驱动在主机上对照硬件模型运行，移植指南在一部虚构的手机上执行，内核源码对照
   Apple 的发布进行验证并做语法、类型和打印格式的编译检查，每次推送都会运行。
-- **固定版本的输入。** 从外部获取的所有内容都在 [`components.toml`](components.toml) 中，精确到版本。
+- **固定版本的输入。** 从外部获取的所有内容都在 [`components`](components) 中，精确到版本。
 
 ## 启动过程
 
@@ -104,7 +104,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
 | `workbench/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
-| `components.toml` | 从外部获取的所有内容及其固定版本。 |
+| `components` | 从外部获取的所有内容及其固定版本。 |
 | `docs/` | 文档。 |
 | `base/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
 

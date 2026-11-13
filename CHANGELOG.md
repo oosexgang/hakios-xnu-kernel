@@ -158,7 +158,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   project portable, and says where each kind of change goes.
 - **Every boot argument is listed.** `tools/bootargs.py` writes [docs/boot-args.md](docs/boot-args.md)
   from the comments beside the code: 236 arguments, 34 of them without a description yet.
-- **Pinned inputs in one place.** `components.toml` lists the sixteen things fetched from elsewhere at
+- **Pinned inputs in one place.** `components` lists the sixteen things fetched from elsewhere at
   their exact versions, and the lint checks it against the scripts that fetch. The macOS SDK archive is
   checked against its SHA-256 before unpacking.
 - **Build scripts run on any machine.** The Darwin image scripts named one home directory. They take their
@@ -246,7 +246,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **`make check`** runs everything that needs no phone, no Darwin files and no kernel toolchain: the lint,
   the validation of the board and SoC files, whether `docs/boot-args.md` is current, the host tests.
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
-  link and repository path in the documentation exists, checks the pins of `components.toml`, looks
+  link and repository path in the documentation exists, checks the pins of `components`, looks
   for files that must never be published, and holds the Darwin side's copies of the kernel's device
   interfaces (`userland/userland/src/hakios_*.h`) to what the kernel's say.
 - **The host tests** (`workbench/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)

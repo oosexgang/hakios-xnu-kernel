@@ -10,7 +10,7 @@ first lines; `make` lists the common ones.
 | `devicetree.py` | What `boards.py new --dts` reads from a device tree: the blocks' addresses, the panel's brightness control, the cores, the keys. A module, not a command. |
 | `device.py` | Device packages: brings a phone's package into the checkout from the `devices` branch or a directory (`add`), lists what there is (`available`, `list`), takes one out (`remove`), sends one made here to where packages are kept (`export`). |
 | `bootargs.py` | Finds every boot argument the kernel reads, with the comment that describes it, and writes `docs/boot-args.md` (`--write`; `--check` says whether it is current). |
-| `components.py` | Checks that `components.toml` pins what the fetching scripts pin. |
+| `components.py` | Checks that `components` pins what the fetching scripts pin. |
 | `check-links.py` | Checks that every link and every repository path in the documentation points at something. |
 | `check-publishable.sh` | Looks for what must never be published: binaries, firmware, Apple's shader code, home directories, keys. |
 | `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, the three checks above. `make lint`. |

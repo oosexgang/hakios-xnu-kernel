@@ -164,7 +164,7 @@ How Darwin 26 and 27 were brought to the home screen, step by step: [darwin26-bo
 
 Being honest about this is part of the architecture: these are the inputs a build or a boot needs
 from elsewhere. Everything that is fetched is pinned to an exact version, listed in one place:
-`components.toml` at the top of the repository (`tools/components.py` prints it, and the lint checks it
+`components` at the top of the repository (`tools/components.py` prints it, and the lint checks it
 against the scripts that fetch).
 
 | What | Why not here | Where it comes from |

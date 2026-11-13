@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""components.toml: everything the project takes from elsewhere, at the exact version it takes.
+"""components: everything the project takes from elsewhere, at the exact version it takes.
 
   tools/components.py            list them
   tools/components.py check      every pin named there is the pin the fetching script has (`make lint`)
@@ -8,16 +8,27 @@ The manifest is checked against the scripts rather than read by them: a script s
 own, and the manifest cannot drift from what is really fetched.
 """
 import sys
-import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import boardfile  # noqa: E402  (the board files' syntax, which this file is in)
+
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / 'components.toml'
+MANIFEST = ROOT / 'components'
 KEYS = ('id', 'what', 'source', 'pins', 'pinned_in', 'used_for', 'licence')
 
 
 def load():
-    return tomllib.loads(MANIFEST.read_text())['component']
+    """The components, in the order the file has them: one node each, its name the component's id."""
+    components = []
+    for name, _unit, node, _line in boardfile.read_tree(MANIFEST.read_text())['nodes']:
+        component = {'id': name}
+        for key, value in node['props'].items():
+            component[boardfile.key_of(key)] = value.plain()
+        if isinstance(component.get('pins'), str):
+            component['pins'] = [component['pins']]
+        components.append(component)
+    return components
 
 
 def check(components):
@@ -26,13 +37,13 @@ def check(components):
         name = component.get('id', '?')
         for key in KEYS:
             if key not in component:
-                problems.append(f'{name}: "{key}" is missing')
+                problems.append(f'{name}: "{boardfile.name_of(key)}" is missing')
         if name in seen:
             problems.append(f'{name}: listed twice')
         seen.add(name)
         path = ROOT / component.get('pinned_in', '')
         if not path.is_file():
-            problems.append(f'{name}: pinned_in {component.get("pinned_in")!r} is not a file of the repository')
+            problems.append(f'{name}: pinned-in {component.get("pinned_in")!r} is not a file of the repository')
             continue
         text = path.read_text(errors='replace')
         for pin in component.get('pins', []):
@@ -46,7 +57,7 @@ def main():
     if sys.argv[1:] == ['check']:
         problems = check(components)
         for problem in problems:
-            print(f'components.toml: {problem}', file=sys.stderr)
+            print(f'components: {problem}', file=sys.stderr)
         if not problems:
             print(f'components: {len(components)} pinned, each as its script fetches it')
         return 1 if problems else 0

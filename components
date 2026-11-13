@@ -1,0 +1,158 @@
+// Everything this project takes from elsewhere, at the exact version it takes. One place to see what
+// a build fetches, what a change of version touches, and under which licence it comes.
+//
+// Each `pins` entry is the string that pins the version, and `pinned-in` the file of this repository
+// that does the fetching and checks it: `tools/components.py check` (part of `make lint`) fails when
+// the two disagree, so this file cannot say one thing while a script fetches another. To move a
+// component to another version, change the script and this file together.
+//
+// Not listed, because they are yours and stay on your machine: Apple's IPSW, the phone's firmware.
+//
+// The syntax is that of the board files (devices/README.md, "The format"): one node a component, by its name.
+
+/ {
+	xnu {
+		what = "Apple's kernel: the release this port is made from";
+		source = "https://github.com/apple-oss-distributions/xnu.git";
+		pins = "xnu-12377.121.6", "ac9718fb1af618d5ce8678d0dc6e8a58f252216f";
+		pinned-in = "kernel/UPSTREAM";
+		used-for = "kernel";
+		licence = "APSL-2.0";
+	};
+
+	AvailabilityVersions {
+		what = "availability.pl for the kernel's generated headers";
+		source = "https://github.com/apple-oss-distributions/AvailabilityVersions.git";
+		pins = "5d9baee345b3bc72b26c71adc65f94f2d5e9ced2";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel";
+		licence = "APSL-2.0";
+	};
+
+	libdispatch {
+		what = "the firehose (os_log) buffer code linked into the kernel";
+		source = "https://github.com/apple-oss-distributions/libdispatch.git";
+		pins = "a641558f447659d90ad002ef0ee6f0212273fbfc";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel";
+		licence = "Apache-2.0";
+	};
+
+	libpthread {
+		what = "the pthread kernel extension, linked into the kernel";
+		source = "https://github.com/apple-oss-distributions/libpthread.git";
+		pins = "a6c70ca0e544347a0377babf748f831577ec24f9";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel";
+		licence = "APSL-2.0";
+	};
+
+	bootstrap_cmds {
+		what = "mig, in a port that builds on glibc (host tool)";
+		source = "https://github.com/markmentovai/bootstrap_cmds";
+		pins = "f337e600741638896fb6056ce87c6479f74b89a3";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel build";
+		licence = "APSL-2.0";
+	};
+
+	tcsh {
+		what = "csh for XNU's doconf script (host tool)";
+		source = "https://github.com/tcsh-org/tcsh.git";
+		pins = "b7db07931546178c4cb2542b5fc850c483628ed5";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel build";
+		licence = "BSD-3-Clause";
+	};
+
+	unifdef {
+		what = "unifdef (host tool)";
+		source = "https://github.com/fanf2/unifdef.git";
+		pins = "08d12cd3059fe072929ea001ad9833f5487fd355";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel build";
+		licence = "BSD-2-Clause";
+	};
+
+	macos-sdk-26.5 {
+		what = "Kernel.framework's DriverKit headers: what Apple's closed iig would generate for this release";
+		source = "https://github.com/socheatsok78/macos-sdks/releases/download/rolling/MacOSX26.5.sdk.tar.xz";
+		pins = "MacOSX26.5.sdk", "e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190";
+		pinned-in = "kernel/build.sh";
+		used-for = "kernel build";
+		licence = "Apple SDK licence (headers only; fetched, never redistributed here)";
+	};
+
+	macos-sdk-13.3 {
+		what = "the same headers of the earlier release, for interfaces the newer SDK no longer carries";
+		source = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz";
+		pins = "MacOSX13.3.sdk.tar.xz", "518e35eae6039b3f64e8025f4525c1c43786cc5cf39459d609852faf091e34be";
+		pinned-in = "kernel/deps/stage1.sh";
+		used-for = "kernel build";
+		licence = "Apple SDK licence (headers only; fetched, never redistributed here)";
+	};
+
+	theos {
+		what = "the Mach-O linker and tools (cctools) and iPhoneOS16.5.sdk";
+		source = "https://theos.dev/docs/installation-linux";
+		pins = "iPhoneOS16.5.sdk";
+		pinned-in = "kernel/build.sh";
+		used-for = "kernel build, Darwin libraries";
+		licence = "various (installed by you)";
+		note = "not fetched by this repository: install it as theos documents";
+	};
+
+	mu-silicium {
+		what = "the UEFI the loader runs under, ported per phone";
+		source = "https://github.com/Project-Silicium/Mu-Silicium";
+		pins = "e51cd877e31c8fbb322032dc4cb6715e83d25ad3";
+		pinned-in = "base/uefi/BASE";
+		used-for = "UEFI ports (base/uefi; a phone's platform is in its device package)";
+		licence = "BSD-2-Clause-Patent";
+	};
+
+	mesa {
+		what = "freedreno and the AIR-to-NIR shader frontend patches, for OpenGL ES and Metal on the Adreno";
+		source = "https://archive.mesa3d.org/";
+		pins = "25.0.7", "592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6";
+		pinned-in = "userland/tools/mk-mesa.sh";
+		used-for = "user space graphics (Darwin 16.5 generation)";
+		licence = "MIT";
+	};
+
+	mesa-26 {
+		what = "the same for the arm64e Darwin 26 user space";
+		source = "https://archive.mesa3d.org/";
+		pins = "26.2.5", "794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5";
+		pinned-in = "userland/tools/mk-mesa26.sh";
+		used-for = "user space graphics (Darwin 26/27)";
+		licence = "MIT";
+	};
+
+	linux-ath11k {
+		what = "Linux's ath11k Wi-Fi driver, compiled unmodified on a compatibility layer";
+		source = "https://cdn.kernel.org/pub/linux/kernel/";
+		pins = "7.0.14", "de9999b784d2293f00d39c62d8f92a08ab8a54bc4e80ffd250a0c09cb07a0f98";
+		pinned-in = "base/tools/mk-ath11k.sh";
+		used-for = "Wi-Fi (optional object linked into the kernel)";
+		licence = "BSD-3-Clause-Clear";
+	};
+
+	freebsd-linuxkpi {
+		what = "FreeBSD's LinuxKPI headers, the base of that compatibility layer";
+		source = "https://download.freebsd.org/releases/";
+		pins = "15.1", "cf5762da53fd52e1eaf0f9ceee9bf58cbe314c821031d0d9ffa76823185a89e1";
+		pinned-in = "base/tools/mk-ath11k.sh";
+		used-for = "Wi-Fi (optional object linked into the kernel)";
+		licence = "BSD-2-Clause";
+	};
+
+	libdeflate {
+		what = "DEFLATE decompression for APFS's compressed files (a copy is in kernel/overlay)";
+		source = "https://github.com/ebiggers/libdeflate";
+		pins = "1.24", "a0dda1c4b804742066db07b9510876edd09cc0ca06cdc32c5dfe1b2016a26463";
+		pinned-in = "base/tools/mk-libdeflate.sh";
+		used-for = "kernel (APFS)";
+		licence = "MIT";
+	};
+};

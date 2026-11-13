@@ -48,7 +48,7 @@ brings it into a checkout.
 - **Checks that need no phone.** The drivers run on the host against models of the hardware, the
   porting guide is run on a made-up phone, the kernel sources are verified against Apple's release and
   compiled for syntax, types and the formats of what they print, on every push.
-- **Pinned inputs.** Everything taken from elsewhere is in [`components.toml`](components.toml), at an
+- **Pinned inputs.** Everything taken from elsewhere is in [`components`](components), at an
   exact version.
 
 ## How it boots
@@ -112,7 +112,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
-| `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
+| `components` | Everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |
 | `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 

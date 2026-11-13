@@ -101,15 +101,20 @@ class Links(Sandbox):
         self.assertIn('2 documents, ok', said)        # (README.md and docs/guide.md: not the one under base/)
 
 
-COMPONENT = '''[[component]]
-id = "thing"
-what = "a thing"
-source = "https://example.org/thing.git"
-pins = ["0123456789abcdef"]
-pinned_in = "fetch.sh"
-used_for = "tests"
-licence = "MIT"
+COMPONENT = '''	thing {
+		what = "a thing";
+		source = "https://example.org/thing.git";
+		pins = "0123456789abcdef";
+		pinned-in = "fetch.sh";
+		used-for = "the workbench";
+		licence = "MIT";
+	};
 '''
+
+
+def manifest(*components):
+    """A components file of these nodes."""
+    return '/ {\n' + ''.join(components) + '};\n'
 
 
 class Components(Sandbox):
@@ -117,28 +122,28 @@ class Components(Sandbox):
         super().setUp()
         self.components = tool('components')
         self.components.ROOT = self.dir
-        self.components.MANIFEST = self.dir / 'components.toml'
+        self.components.MANIFEST = self.dir / 'components'
         self.write('fetch.sh', 'git fetch https://example.org/thing.git 0123456789abcdef\n')
 
-    def problems(self, manifest):
-        self.write('components.toml', manifest)
+    def problems(self, text):
+        self.write('components', text)
         return '\n'.join(self.components.check(self.components.load()))
 
     def test_a_pin_the_script_has_passes(self):
-        self.assertEqual(self.problems(COMPONENT), '')
+        self.assertEqual(self.problems(manifest(COMPONENT)), '')
 
     def test_a_pin_the_script_no_longer_has_is_found(self):
         self.write('fetch.sh', 'git fetch https://example.org/thing.git fedcba9876543210\n')
-        self.assertIn('thing: fetch.sh does not pin "0123456789abcdef"', self.problems(COMPONENT))
+        self.assertIn('thing: fetch.sh does not pin "0123456789abcdef"', self.problems(manifest(COMPONENT)))
 
     def test_every_pin_is_looked_for(self):
         self.assertIn('does not pin "a-checksum"',
-                      self.problems(COMPONENT.replace('["0123456789abcdef"]', '["0123456789abcdef", "a-checksum"]')))
+                      self.problems(manifest(COMPONENT.replace('"0123456789abcdef";', '"0123456789abcdef", "a-checksum";'))))
 
     def test_what_is_missing_or_twice_is_said(self):
-        self.assertIn('thing: "licence" is missing', self.problems(COMPONENT.replace('licence = "MIT"\n', '')))
-        self.assertIn('thing: listed twice', self.problems(COMPONENT + COMPONENT))
-        self.assertIn("pinned_in 'gone.sh' is not a file", self.problems(COMPONENT.replace('fetch.sh', 'gone.sh')))
+        self.assertIn('thing: "licence" is missing', self.problems(manifest(COMPONENT.replace('\t\tlicence = "MIT";\n', ''))))
+        self.assertIn('thing: listed twice', self.problems(manifest(COMPONENT, COMPONENT)))
+        self.assertIn("pinned-in 'gone.sh' is not a file", self.problems(manifest(COMPONENT.replace('fetch.sh', 'gone.sh'))))
 
 
 class Repository(unittest.TestCase):
