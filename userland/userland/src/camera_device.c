@@ -577,14 +577,28 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 		 * ReadWrite, and the capture graph READS it before it starts the session:
 		 * -[BWMultiStreamCameraSourceNode _verifyColorSpacePropertiesForAllOutputs] does a
 		 * getProperty:error: for it, and an error there fails the session's transition to running
-		 * and tears the whole graph down again. What it holds matters only for an output whose
-		 * colour space is not sRGB (_verifyColorSpacePropertiesForOutputID: returns at once when
-		 * the output's colour space is 0), and sRGB is the only one this stream offers, so what
-		 * the graph set is given back as it is.
+		 * and tears the whole graph down again. For each output whose colour space the node has set
+		 * (0 is "unset"; 1 is sRGB, Rec. 709 primaries and transfer with the 601 matrix), the
+		 * pixel buffer attachments of that colour space must equal this property's entry for the
+		 * output, key for key. On iOS 26/27 the still image output always has one (sRGB, the iPhone
+		 * 11's 12 MP format uses packed 10-bit stills), and with no entry for it every start of the
+		 * session failed there (BWMultiStreamCameraSourceNode.m:15630, err -12780: some 160 tries a
+		 * run, the preview black, no photograph): H10ISP gives an entry for every output, as here --
+		 * the attachments this stream's buffers carry (see deliver()), its only colour space.
 		 */
-		pthread_mutex_lock(&s->lock);
-		value = s->colour_info != NULL ? CFRetain(s->colour_info) : new_dict();
-		pthread_mutex_unlock(&s->lock);
+		CFMutableDictionaryRef all = (CFMutableDictionaryRef)new_dict();
+		const void *keys[] = { kCVImageBufferColorPrimariesKey, kCVImageBufferYCbCrMatrixKey, kCVImageBufferTransferFunctionKey };
+		const void *values[] = { kCVImageBufferColorPrimaries_ITU_R_709_2, kCVImageBufferYCbCrMatrix_ITU_R_601_4,
+					 kCVImageBufferTransferFunction_ITU_R_709_2 };
+		CFDictionaryRef one = CFDictionaryCreate(NULL, keys, values, 3, &kCFTypeDictionaryKeyCallBacks,
+		    &kCFTypeDictionaryValueCallBacks);
+
+		for (int i = 0; i < OUTPUTS; i++) {
+			put(all, output_names[i], CFRetain(one));
+		}
+		put(all, "IntermediateTap", CFRetain(one));
+		CFRelease(one);
+		value = all;
 	} else if (key_is(key, "SupportedPropertiesDictionary")) {
 		value = CFRetain(s->supported);
 	} else if (key_is(key, "FocalLength")) {
