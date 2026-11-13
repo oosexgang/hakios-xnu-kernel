@@ -8,6 +8,8 @@
 #                       panics)
 #     --seconds N       stop after N seconds in any case (default 300)
 #     --screen FILE     a picture of the screen, as a PNG, when it stops
+#     --type TEXT       once the --until text is there, type TEXT on the console (\n: the end of a line; the
+#                       serial port is the console's keyboard), then wait --after seconds (default 5)
 #     --log FILE        the serial log (default: qemu-kernel.log in the working directory)
 #     --boot-args ARGS  added to the kernel's boot arguments (-v, the verbose console on the screen, is
 #                       there unless --quiet)
@@ -25,7 +27,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=()
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5
 # (the kernel's drivers speak virtio 1.0, which QEMU's MMIO transports offer when not forced to the legacy one)
 devices=(-global virtio-mmio.force-legacy=false -netdev 'user,id=net0' -device 'virtio-net-device,netdev=net0'
 	-device virtio-keyboard-device -device virtio-tablet-device)
@@ -34,6 +36,8 @@ while [ $# -gt 1 ]; do
 	--until) until_text=$2; shift 2 ;;
 	--seconds) seconds=$2; shift 2 ;;
 	--screen) screen=$(realpath -m "$2"); shift 2 ;;
+	--type) typed=$2; shift 2 ;;
+	--after) after=$2; shift 2 ;;
 	--log) log=$(realpath -m "$2"); shift 2 ;;
 	--boot-args) args=$2; shift 2 ;;
 	--ramdisk) ramdisk=$(realpath "$2"); shift 2 ;;
@@ -68,7 +72,8 @@ qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp "$cpus" -m 6G -ac
 	-drive if=pflash,format=raw,readonly=on,file="$firmware" -drive if=pflash,format=raw,file="$W/vars.fd" \
 	-drive file=fat:rw:"$W/esp",format=raw,if=virtio -device virtio-rng-pci -device ramfb \
 	-device loader,file="$W/payload.bin",addr=0xF0000000,force-raw=on \
-	-display none -serial file:"$log" -monitor unix:"$monitor",server,nowait -no-reboot "${devices[@]}" "${extra[@]}" 2> "$W/qemu.err" &
+	-display none -chardev "socket,id=console,path=$W/console,server=on,wait=off,logfile=$log" \
+	-serial chardev:console -monitor unix:"$monitor",server,nowait -no-reboot "${devices[@]}" "${extra[@]}" 2> "$W/qemu.err" &
 qemu=$!
 started=$SECONDS
 reached=''
@@ -80,6 +85,19 @@ while kill -0 "$qemu" 2> /dev/null && [ $((SECONDS - started)) -lt "$seconds" ];
 	fi
 	sleep 1
 done
+if [ -n "$reached" ] && [ -n "$typed" ] && kill -0 "$qemu" 2> /dev/null; then
+	# a key at a time, as a person types: the console's line discipline takes them as they come
+	python3 - "$W/console" "$typed" <<'PY'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+for c in sys.argv[2].replace('\\n', '\n').encode():
+    s.sendall(bytes([c]))
+    time.sleep(1.0 if c == 10 else 0.1)
+time.sleep(0.5)
+PY
+	sleep "$after"
+fi
 if [ -n "$screen" ] && kill -0 "$qemu" 2> /dev/null; then
 	python3 - "$monitor" "$screen" <<'PY'
 import os, socket, struct, sys, time, zlib
