@@ -110,7 +110,9 @@ picture(CALayer *layer, unsigned depth)
 	CGFloat scale = 0;
 
 	if (layer == nil || depth > 24) return 0;
-	if (drawn == nil) drawn = [NSMapTable weakToStrongObjectsMapTable];
+	/* (kept: this file is built without ARC, and the table as made is autoreleased -- stored as it was, it was freed with
+	 * the pool, and the next look at it took CollectionsPoster down in objc_msgSend, again and again) */
+	if (drawn == nil) drawn = [[NSMapTable weakToStrongObjectsMapTable] retain];
 	for (CALayer *s in [layer sublayers]) {
 		if ([s isKindOfClass:[CAShapeLayer class]]) shapes++, scale = MAX(scale, [s contentsScale]);
 	}
