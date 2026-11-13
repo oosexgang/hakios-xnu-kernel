@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 13 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 7 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -150,7 +150,7 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `battery` | The battery, as the phone's resident UEFI reports it (feature battery-uefi). |
-| `battery_shared_pa` | — |
+| `battery_shared_pa` | battery_shared_pa=ADDRESS: the page the loader shares the charger's state in (the loader gives it) |
 
 ### `bsd/dev/board/bench.c`
 
@@ -216,7 +216,7 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `adsp` | Once everything is up with adsp=1, the sound's path takes over (board/sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
-| `adsp_apr_wait` | — |
+| `adsp_apr_wait` | adsp_apr_wait=N: for how many seconds (default 10) the core service is asked whether the audio services are up |
 | `adsp_listen` | adsp_listen=N: for how many seconds (default 3) the services the DSP tells of are written down |
 | `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
 | `adsp_pause` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
@@ -237,10 +237,10 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `cam` | sensors, modes and frame headers are cam=5's, from the same tables in fw/, but nothing of the phone is touched: the frames are a colour chart made here -- eight bars (white, beige, red, yellow, green, cyan, blue, 18 % grey) over a grey ramp -- in RAW10 in the sensor's own Bayer order, as bright as t… |
-| `cam_after` | — |
+| `cam_after` | cam_after=N: how many seconds after the start the camera is looked at (default 20: the system up first) |
 | `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/hakios-camera without the phone's camera. |
 | `cam_fake_fps` | cam_fake_fps: frames a second (default 5: QEMU's processor is slow). |
-| `cam_frames` | — |
+| `cam_frames` | cam_frames=N: how many frames are taken, 1 to 300 (default 8) |
 | `cam_gain` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
 | `cam_keep_mb` | Memory in one piece for the host (cam_keep_mb, default 24: a 12-megapixel NV12 picture of cam=5, or two frames of cam=3 and cam=4 up to 12 MB each), taken now, while the system's memory still is in large pieces. |
 | `cam_mode` | table ("resN": boot-arg cam_mode=N, or the mode with the fewest pixels: the macro's 1600x1200 RAW10 on one lane at 665.6 Mbit/s, 30 frames a second; the wide one's 1920x1080 RAW10 on three C-PHY trios at 3.11 Gbit/s each, 120 frames a second); the sensor's CSIPHY, CSID-lite 0's RX from that PHY and… |
@@ -277,7 +277,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `sound_below` | and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
 | `sound_gain` | sound_gain eighths of a dB of gain (default and most 96, 12 dB: Darwin's own processing keeps its top that far under full scale), a high-pass filter, three averages of the power at the speakers and a peak limiter. sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under… |
 | `sound_guard_as` | sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under Android's level (louder than they are) and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
-| `sound_pause` | — |
+| `sound_pause` | sound_pause=MS: the pause after each step is said, for the loader to note it (default 1000; 0: none) |
 | `sound_secs` | Held for sound_secs (default 3), then everything stopped and put back |
 
 ### `bsd/dev/board/speaker.c`
@@ -349,7 +349,7 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `wifi_cal` | wifi_cal=1 adds what qmi.c does with cold-boot calibration switched on. |
 | `wifi_mission` | wifi_mission=1 adds what qmi.c is asked for next (ath11k_qmi_firmware_start()): the firmware's logging, the configuration, the mode "mission", after which the firmware has the radio on and the driver begins to use its registers. |
-| `wifi_ready` | — |
+| `wifi_ready` | wifi_ready=N: how many seconds to wait for the firmware's "ready" (default 5) |
 
 ## Storage and file systems
 
