@@ -109,7 +109,7 @@ enum {
 
 /* MTLVertexFormat and MTLVertexStepFunction, the few --draw-attrib configures and the
  * few it expects to be refused. The numbers are Apple's own, out of the Darwin 16.5 SDK's
- * MTLVertexDescriptor.h -- the same header userland/src/hakiosmetal.m asserts the
+ * MTLVertexDescriptor.h -- the same header userland/src/metal_driver.m asserts the
  * library's table against -- and MTLVertexFormatFloatRGB9E5 (55) is in that list
  * BECAUSE it is not in that header: Darwin 17 added it, so nothing on the device can ask
  * for it, and what this program checks about it is that the sentence names it rather

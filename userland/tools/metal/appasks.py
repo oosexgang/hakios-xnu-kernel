@@ -37,7 +37,7 @@ usage:
            /System/Library/Frameworks/QuartzCore.framework/QuartzCore; do
           ipsw dyld macho $C $i --objc > $(basename $i).objc.txt
   done
-  appasks.py APP_BINARY --decl Metal.objc.txt [--decl ...] [--src userland/src/hakiosmetal.m]
+  appasks.py APP_BINARY --decl Metal.objc.txt [--decl ...] [--src userland/src/metal_driver.m]
              [--imports] [--missing] [--protocol MTLDevice]
 """
 import argparse
@@ -148,7 +148,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('binary')
     ap.add_argument('--decl', action='append', default=[], required=True)
-    ap.add_argument('--src', default=os.path.join(ROOT, 'userland/src/hakiosmetal.m'))
+    ap.add_argument('--src', default=os.path.join(ROOT, 'userland/src/metal_driver.m'))
     ap.add_argument('--imports', action='store_true', help='also how it reaches the runtime')
     ap.add_argument('--missing', action='store_true', help='list what we do not implement')
     ap.add_argument('--ours', action='store_true',

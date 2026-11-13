@@ -104,7 +104,7 @@ TIMEOUT = 180               # a kernel softpipe cannot finish is a named row, no
 # The driver's MTLCommandBufferStatus used to be its own invention -- committed 3,
 # scheduled 4, completed 6, and 6 is not a status at all -- and since 2026-10-21 it is
 # Metal's: NotEnqueued 0, Enqueued 1, Committed 2, Scheduled 3, Completed 4, Error 5
-# (userland/src/hakiosmetal.m). The logs under logs/ are evidence and are not going to
+# (userland/src/metal_driver.m). The logs under logs/ are evidence and are not going to
 # be regenerated, so this tool does not reinterpret their numbers and does not quietly
 # follow the new ones: it DATES each log and reads it in the numbering it was written in.
 #

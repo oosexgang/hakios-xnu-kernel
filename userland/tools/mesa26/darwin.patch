@@ -18,10 +18,10 @@ diff --git a/meson.build b/meson.build
 -if dep_libdrm.found()
 +if host_machine.system() == 'darwin' and with_gallium_freedreno
 +  # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
-+  # for libdrm (src/hakios-drm, put there by HakiOS's tools/mk-mesa.sh; its one
++  # for libdrm (src/darwin-drm, put there by HakiOS's tools/mk-mesa.sh; its one
 +  # source file is built with freedreno's drm layer, src/freedreno/drm).
 +  dep_libdrm = declare_dependency(
-+    include_directories : include_directories('src/hakios-drm'),
++    include_directories : include_directories('src/darwin-drm'),
 +    link_args : ['-framework', 'IOKit', '-framework', 'CoreFoundation'],
 +  )
 +elif dep_libdrm.found()
@@ -76,7 +76,7 @@ diff --git a/src/freedreno/drm/freedreno_bo.c b/src/freedreno/drm/freedreno_bo.c
        return NULL;
     }
 +#ifdef __APPLE__
-+   /* no mmap() on a device here: the kernel's driver maps the buffer (src/hakios-drm) */
++   /* no mmap() on a device here: the kernel's driver maps the buffer (src/darwin-drm) */
 +   return hakios_drm_map(bo->dev->fd, bo->handle, bo->size);
 +#else
     return os_mmap(0, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -93,7 +93,7 @@ diff --git a/src/freedreno/drm/meson.build b/src/freedreno/drm/meson.build
  )
  libfreedreno_drm_files += libfreedreno_drm_msm_files
 +if host_machine.system() == 'darwin'
-+  libfreedreno_drm_files += files('../../hakios-drm/hakios_drm.c')
++  libfreedreno_drm_files += files('../../darwin-drm/darwin_drm.c')
 +endif
  
  libfreedreno_drm_virtio_files = files(
@@ -517,7 +517,7 @@ diff --git a/src/gallium/drivers/freedreno/meson.build b/src/gallium/drivers/fre
  
 +# libhakios-air: the same path air_run takes -- a Metal shader through the AIR frontend
 +# into a compute state and a grid on the Adreno -- as a shared library, for the Metal
-+# driver in userland/src/hakiosmetal.m. Its contract is src/compiler/air/air_metal.h and
++# driver in userland/src/metal_driver.m. Its contract is src/compiler/air/air_metal.h and
 +# mentions nothing of Mesa; this is only where it is built, beside air_run and for the
 +# same reason, that libgallium exists here and not where the frontend is read. The
 +# dependencies are deliberately air_run's: a driver that links this gets the path the
@@ -572,7 +572,7 @@ diff --git a/src/util/meson.build b/src/util/meson.build
  
 -if dep_libdrm.found()
 +if dep_libdrm.found() and host_machine.system() != 'darwin'
-+  # (HakiOS: the stand-in for libdrm, src/hakios-drm, has no sync objects; the header's
++  # (HakiOS: the stand-in for libdrm, src/darwin-drm, has no sync objects; the header's
 +  # inline stand-in for this provider is what is used without HAVE_LIBDRM)
    files_mesa_util += files('u_sync_provider.c', 'u_sync_provider.h')
    deps_for_libmesa_util += dep_libdrm

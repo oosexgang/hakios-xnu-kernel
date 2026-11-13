@@ -64,7 +64,7 @@
 extern id MTLCreateSystemDefaultDevice(void);
 
 /*
- * One call of the compiler library's own contract, declared here as hakiosmetal.m
+ * One call of the compiler library's own contract, declared here as metal_driver.m
  * declares the rest of it (tools/mesa/air/air_metal.h is in the Mesa tree and this
  * program must not grow a dependency on it): what textures a module declares.
  *
@@ -3944,7 +3944,7 @@ pic_heartbeat(void *unused)
  * The second ladder named the stall as -[MTLCommandQueue commandBuffer] on the 65th
  * command buffer of the process, and 64 was Metal's own maxCommandBufferCount: every
  * _MTLCommandBuffer waits on the queue's semaphore in its designated initialiser and owes
- * it a signal, and this driver never paid (hakiosmetal.m). That was an inference from a
+ * it a signal, and this driver never paid (metal_driver.m). That was an inference from a
  * number that happened to be 64. These two lines are the measurement instead: the queue
  * reports how many buffers it takes at a time and how many of this process's still hold a
  * slot, and it says OUT LOUD when the next one will block -- before it does.
@@ -4085,7 +4085,7 @@ pic_draw(id<MTLCommandQueue> queue, MTLRenderPassDescriptor *rp,
 	/* The second boot stopped between these two calls and the one line covered both, so
 	 * they are two lines now. Neither of them has anything in it proportional to the
 	 * attachment's area -- -commandBuffer allocates an object and an NSMutableArray, and
-	 * the encoder's init reads four properties per attachment (hakiosmetal.m) -- which
+	 * the encoder's init reads four properties per attachment (metal_driver.m) -- which
 	 * is exactly why the two have to be told apart before anything else is believed. */
 	if (trace) {
 		snprintf(line, sizeof(line), "%s: asking the queue for a command buffer", what);
@@ -4941,7 +4941,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *   with and without the clear   the same attachments drawn through two render passes that
  *                         differ in ONE field, loadAction. Every draw in a pass whose
  *                         loadAction is Clear re-clears the attachment in this driver
- *                         (hakiosmetal.m copies _clears into every recorded draw), and an
+ *                         (metal_driver.m copies _clears into every recorded draw), and an
  *                         application clears once a frame, so the two have to be told apart
  *                         before a per-draw cost means anything.
  *   a texture upload      -replaceRegion: of the whole attachment-sized image, in MB/s: what
@@ -5350,7 +5350,7 @@ tm_say_gpu_side(const char *what, const struct tm_worked *w, uint64_t ours_ns,
  * Both descriptors hold the same textures; `*clear` loads by clearing and `*load` keeps what
  * is there. That is the only difference between them, which is what makes the difference
  * between their timings the cost of the clear and nothing else. (In this driver the clear is
- * attachment 0's alone -- hakiosmetal.m reads loadAction only for i == 0 -- so what the
+ * attachment 0's alone -- metal_driver.m reads loadAction only for i == 0 -- so what the
  * difference prices is one full-attachment clear, however many targets are bound.)
  */
 static bool
@@ -5481,7 +5481,7 @@ tm_one_buffer(id<MTLCommandQueue> queue, MTLRenderPassDescriptor *rp,
  * actually written.
  *
  * What it does NOT include is said as plainly as what it does. The device, the Mesa screen and
- * the GPU context are opened in -initWithAcceleratorPort: (hakiosmetal.m calls
+ * the GPU context are opened in -initWithAcceleratorPort: (metal_driver.m calls
  * rwa_device_open there), which main() did above, so they are inside the "before this mode"
  * part and not inside the compile. And main()'s part also contains this test's own sweep of
  * every class of the driver, which no application does -- so the breakdown is printed in three
@@ -6023,7 +6023,7 @@ out:
 /*
  * The compute round trip, which is the same question as the draw's asked of the other path.
  *
- * A dispatch goes through the same -commit and the same fence as a draw (hakiosmetal.m's
+ * A dispatch goes through the same -commit and the same fence as a draw (metal_driver.m's
  * commit loop calls rwa_dispatch for it), so the difference between this number and the 4x4
  * draw's is the difference between the two paths' own work and nothing else -- which is the
  * only way to say whether the per-submission cost lives in the render path or under both.

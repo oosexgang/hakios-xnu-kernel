@@ -2173,7 +2173,7 @@ publishDisplayNode(void)
  * over by both, which leaves CoreAnimation with its software renderer, as before.
  *
  * With boot-arg metal=1 a user process may put those two properties here, which is the whole
- * of what keeps Metal from finding a driver of ours (userland/src/hakiosmetal.m); see setProperties
+ * of what keeps Metal from finding a driver of ours (userland/src/metal_driver.m); see setProperties
  * below and docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
  * its software renderer, as in the RAM-only release.
  */

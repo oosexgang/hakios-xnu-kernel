@@ -5,10 +5,10 @@
 # tools/mk-mesa.sh is the older recipe for the SM7325's Adreno on Linux (Mesa 25.0.7, with OSMesa,
 # which Mesa has since dropped).
 #
-# The sources are the release archive with tools/mesa26/hakios.patch on top (the Darwin stand-ins for
+# The sources are the release archive with tools/mesa26/darwin.patch on top (the Darwin stand-ins for
 # DRM and sysinfo, the AIR frontend's meson, freedreno's air_run and libhakios-air targets, the ir3
 # fixes that are still needed), plus tools/mesa/air (the frontend, copied to src/compiler/air) and
-# tools/mesa/hakios-drm (libdrm's stand-in, src/hakios-drm), always the current ones.
+# tools/mesa/darwin-drm (libdrm's stand-in, src/darwin-drm), always the current ones.
 #
 # Needs: Xcode, Homebrew's llvm (llvm-ar), bison >= 3 and flex (brew install bison flex), ninja.
 # meson and Mako go into a private venv here.
@@ -25,17 +25,17 @@ mkdir -p "$B/out"
 cd "$B"
 export PATH=/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$B/venv/bin:$PATH
 
-PATCH_SUM=$(shasum -a 256 "$ROOT/tools/mesa26/hakios.patch" | cut -d' ' -f1)
+PATCH_SUM=$(shasum -a 256 "$ROOT/tools/mesa26/darwin.patch" | cut -d' ' -f1)
 if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.hakios-patch 2>/dev/null)" != "$PATCH_SUM" ]; then
 	[ -f mesa-$VERSION.tar.xz ] || curl -sL --fail -o mesa-$VERSION.tar.xz https://archive.mesa3d.org/mesa-$VERSION.tar.xz
 	echo "$SHA256  mesa-$VERSION.tar.xz" | shasum -a 256 -c --quiet
 	rm -rf mesa-$VERSION build
 	tar xJf mesa-$VERSION.tar.xz
-	patch -s -p1 -d mesa-$VERSION < "$ROOT/tools/mesa26/hakios.patch"
+	patch -s -p1 -d mesa-$VERSION < "$ROOT/tools/mesa26/darwin.patch"
 	echo "$PATCH_SUM" > mesa-$VERSION/.hakios-patch
 fi
-rm -rf mesa-$VERSION/src/hakios-drm mesa-$VERSION/src/compiler/air
-cp -r "$ROOT/tools/mesa/hakios-drm" mesa-$VERSION/src/hakios-drm
+rm -rf mesa-$VERSION/src/darwin-drm mesa-$VERSION/src/compiler/air
+cp -r "$ROOT/tools/mesa/darwin-drm" mesa-$VERSION/src/darwin-drm
 cp -r "$ROOT/tools/mesa/air" mesa-$VERSION/src/compiler/air
 if [ ! -x venv/bin/python3 ]; then
 	python3 -m venv venv

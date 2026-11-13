@@ -6,7 +6,7 @@
  *   drawable_test --refusals          only the cases the bridge must decline, by name
  *
  * WHY IT IS A PROGRAM AND NOT A UNIT TEST. The drawable path of the Metal driver
- * (src/hakiosdrawable.m, docs/metal.md 10.46) ends in a texture laid over memory the
+ * (src/drawable.m, docs/metal.md 10.46) ends in a texture laid over memory the
  * kernel allocated for an IOSurface, and everything about it can be made to look right
  * without being right: the import can succeed over the wrong pages, over the right pages
  * at the wrong stride, or over a staging copy that is written back later -- and in all
@@ -49,10 +49,10 @@ static int failed, checks;
 
 /*
  * The three calls of the compiler library this program needs, looked up the way the driver
- * looks them up (src/hakiosmetal.m): the library is opened by its path on the device, and a
+ * looks them up (src/metal_driver.m): the library is opened by its path on the device, and a
  * symbol that is not there is a sentence rather than a failed link. rwa_texture_from_surface
- * is NOT among them -- hakiosdrawable.m finds that one itself, and this program goes through
- * hakiosdrawable.m on purpose, because the bridge is what is under test.
+ * is NOT among them -- drawable.m finds that one itself, and this program goes through
+ * drawable.m on purpose, because the bridge is what is under test.
  */
 static struct {
 	void *handle;

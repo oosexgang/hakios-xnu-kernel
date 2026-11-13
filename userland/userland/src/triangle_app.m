@@ -115,7 +115,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 #define MTL_CREATE_DEVICE_UNSLID 0x181a34b3cUL
 #define MTL_ADD_DEVICE_UNSLID    0x181a1875cUL
 
-/* MTLCommandBufferStatus, Metal's own numbers (hakiosmetal.m says them in the log too). */
+/* MTLCommandBufferStatus, Metal's own numbers (metal_driver.m says them in the log too). */
 #define RW_CB_COMPLETED 4
 
 /*
@@ -666,7 +666,7 @@ rwt_say_named_pixels(const char *view, const unsigned char *rows, size_t stride,
  * The drawable's own IOSurface, found through CAMetalDrawable's one ivar and validated
  * before it is believed.
  *
- * The driver's texture answers nil to -iosurface (hakiosmetal.m), so there is no way to
+ * The driver's texture answers nil to -iosurface (metal_driver.m), so there is no way to
  * ask Metal for it; CoreAnimation keeps it in the private structure of the drawable. The
  * search below is over the ivars of the drawable's class, narrowed to the one whose type
  * encoding names _CAMetalDrawablePrivate, so nothing of another shape is ever

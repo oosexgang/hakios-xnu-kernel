@@ -25,7 +25,7 @@
  *     MTLAddDevice read is conformsToProtocol:. One call says the same thing truthfully.
  *     MTLDeviceSPI adopts MTLDevice, so one declaration satisfies both.
  *   - -initWithAcceleratorPort: opens this port's OWN gpu service, `HakiosGPU`, the way
- *     Mesa's shim does (tools/mesa/hakios-drm/hakios_drm.c: IOServiceOpen with type 0,
+ *     Mesa's shim does (tools/mesa/darwin-drm/darwin_drm.c: IOServiceOpen with type 0,
  *     then msm-shaped requests through IOConnectCallStructMethod). That is the road the
  *     resource layer will take, and it already carries Mesa's own dispatches today. The
  *     IOGPU road was measured shut: IOServiceOpen on our IOAcceleratorES service with
@@ -33,7 +33,7 @@
  *
  * The first resource is here too. A Metal buffer on this port is a GEM allocation of the
  * kernel's own gpu driver, made and mapped exactly the way Mesa's shim makes and maps one
- * (tools/mesa/hakios-drm/hakios_drm.c): kMsmGemNew (0x42) for the memory, MSM_INFO_GET_IOVA
+ * (tools/mesa/darwin-drm/darwin_drm.c): kMsmGemNew (0x42) for the memory, MSM_INFO_GET_IOVA
  * through kMsmGemInfo (0x43) for the address the GPU sees, IOConnectMapMemory64 for the
  * address the processor sees, kDrmGemClose (0x09) to give it back. The kernel makes that
  * memory write-combined, with no cache of this processor between the program and what the
@@ -2855,7 +2855,7 @@ static NSData *rw_function_air(id function);
  * The one method -[CAMetalLayer nextDrawable] asks of a device (docs/metal.md 10.46):
  * allocate_drawable_texture builds an ordinary MTLTextureDescriptor, sets its private
  * rotation/isDrawable/framebufferOnly/usage and sends this. The surface, its geometry and
- * every refusal live in src/hakiosdrawable.m, because they answer CoreAnimation rather than
+ * every refusal live in src/drawable.m, because they answer CoreAnimation rather than
  * Metal; what is left here is the object, which has to be of this class.
  *
  * The refusal is printed rather than returned silently, and that is not a style choice:

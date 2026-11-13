@@ -1,7 +1,7 @@
 /*
  * The drawable side of the Metal driver: an IOSurface of CoreAnimation's as a texture.
  *
- * Why this is a file of its own. Everything in src/hakiosmetal.m answers Metal; this
+ * Why this is a file of its own. Everything in src/metal_driver.m answers Metal; this
  * answers CoreAnimation, and the two meet in exactly one method --
  * -newTextureWithDescriptor:iosurface:plane:. Keeping it apart means the surface bridge can
  * be read, and refused, without reading the 865 answers next to it.
@@ -15,7 +15,7 @@
  *
  * What this does NOT contain: a texture class. The object Metal gets back has to be the
  * driver's own HakiosMetalTexture, because that is what the render encoder binds, so
- * this side stops at `struct rwa_texture *` and src/hakiosmetal.m wraps it. The split is
+ * this side stops at `struct rwa_texture *` and src/metal_driver.m wraps it. The split is
  * deliberate: the surface, its geometry and every refusal are here, and the Objective-C
  * object stays where its class is.
  */
@@ -38,7 +38,7 @@ struct rwa_texture;
  * What the kernel answers about an IOSurface, and the request it answers in: kHakiosSurface
  * (0x7e) on HakiosGPUUserClient, `struct hakios_surface` in
  * xnu/files/iokit/Kernel/BoardGPU.cpp. Field for field the same, and declared here rather
- * than included for the reason src/hakiosmetal.m gives for the Mesa contract: userland/build.sh
+ * than included for the reason src/metal_driver.m gives for the Mesa contract: userland/build.sh
  * knows nothing of the kernel tree.
  *
  * The struct goes in and comes back out of the same call, so `handle` is both the question
@@ -69,7 +69,7 @@ struct rwd_texture_shape {
 
 /*
  * The GPU service, opened and closed. This is the same service and the same user client
- * src/hakiosmetal.m already opens for the device; a second connection is cheap and keeps
+ * src/metal_driver.m already opens for the device; a second connection is cheap and keeps
  * this file from reaching into that one's statics.
  *
  * 0, or -1 and a sentence in `why`. A kernel booted without gpu=1 has no such service, and

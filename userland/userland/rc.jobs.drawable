@@ -10,7 +10,7 @@
 # -[CAMetalLayer nextDrawable] asks a Metal device exactly one thing for this:
 # -newTextureWithDescriptor:iosurface:plane:, a texture over an IOSurface CoreAnimation
 # allocated (docs/metal.md 10.46). The library grew rwa_texture_from_surface for it and
-# userland/src/hakiosdrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
+# userland/src/drawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
 # This list is the first time, and it asks the one question that separates a texture over the
 # surface's own pages from a texture over a copy of them.
 #

@@ -12,7 +12,7 @@
 #      (mobile) and UIKit above it, and nobody has ever tried one.
 #   2  DOES THE DRAWABLE WORK. -[CAMetalLayer nextDrawable] asks a device exactly one thing,
 #      -newTextureWithDescriptor:iosurface:plane: (docs/metal.md 10.46). That method landed in
-#      src/hakiosmetal.m today and HAS NEVER EXECUTED. This boot is its first caller.
+#      src/metal_driver.m today and HAS NEVER EXECUTED. This boot is its first caller.
 #   3  DOES PRESENTATION REACH THE SCREEN. Presentation goes through no device at all: the
 #      drawable's IOSurface is registered in the layer's CAImageQueue by surface id and the
 #      window server takes it from there. A triangle on the panel is that whole chain at once,

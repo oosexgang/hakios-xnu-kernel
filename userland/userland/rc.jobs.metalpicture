@@ -32,7 +32,7 @@
 # -[HakiosMetalCommandQueue commandBuffer] and a heartbeat thread proved the process alive
 # and blocked for four minutes rather than killed.
 #
-# The fix is in userland/src/hakiosmetal.m: the slot goes back at -commit (where this
+# The fix is in userland/src/metal_driver.m: the slot goes back at -commit (where this
 # driver's work is actually finished) and at -dealloc for a buffer that was never
 # committed, and Apple's own flag is cleared with it. The queue now also reports its
 # maxCommandBufferCount and how many buffers still hold a slot, so this boot prints the

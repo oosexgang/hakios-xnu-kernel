@@ -219,10 +219,10 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		# an IOSurface of ours imported as a texture of the GPU, written through one view
 		# and read through the other (src/drawable_test.c): the check that tells a texture
 		# over the surface's own pages from a texture over a copy of them. It goes through
-		# src/hakiosdrawable.m, which is the bridge under test, and dlopens the compiler
+		# src/drawable.m, which is the bridge under test, and dlopens the compiler
 		# library the way the driver does.
 		$DYN -Wno-four-char-constants -framework CoreFoundation -framework IOSurface \
-			-framework IOKit -o obj/drawable_test src/drawable_test.c src/hakiosdrawable.m
+			-framework IOKit -o obj/drawable_test src/drawable_test.c src/drawable.m
 		$DYN -o obj/rwtouch src/rwtouch.c
 		# the kernel's thermal pressure passed on to Darwin (src/thermald.c)
 		$DYN -o obj/thermald src/thermald.c
@@ -253,15 +253,15 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/metal_stubdev src/metal_stubdev.m
 		# the device object of the driver itself, as the library a bundle would hold
-		# (src/hakiosmetal.m). It links against Metal's private _OBJC_CLASS_$__MTLDevice,
+		# (src/metal_driver.m). It links against Metal's private _OBJC_CLASS_$__MTLDevice,
 		# which is bindable because IOGPU.framework imports the same symbol; -lobjc for
 		# class_addProtocol and no ARC because it calls objc_msgSend by hand.
-		# (with src/hakiosdrawable.m beside it: the IOSurface a CAMetalLayer hands a
+		# (with src/drawable.m beside it: the IOSurface a CAMetalLayer hands a
 		# device, as a texture. A file of its own because it answers CoreAnimation and
 		# not Metal, and the two meet in one method -- docs/metal.md 10.46.)
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios-metal.dylib \
 			-framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/libhakios-metal.dylib src/hakiosmetal.m src/hakiosdrawable.m
+			-o obj/libhakios-metal.dylib src/metal_driver.m src/drawable.m
 		# and the program that walks Metal's own steps 4 and 5 against it
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/metal_drv_test src/metal_drv_test.m
@@ -360,12 +360,12 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		# executable: dyld uniques images by install_name, so a process that already has
 		# /hakios/lib/libhakios-metal.dylib would bind the bundle to it and fail that test.
 		$DYN -bundle -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/HakiosMetal src/hakiosmetal.m src/hakiosdrawable.m
+			-o obj/HakiosMetal src/metal_driver.m src/drawable.m
 		if [ -n "$GL" ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
 			M=../xnu-deps/build/mesa/out
-			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../tools/mesa/*.patch ../tools/mesa/hakios-drm/* | sha256sum)" ] ||
+			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../tools/mesa/*.patch ../tools/mesa/darwin-drm/* | sha256sum)" ] ||
 				../tools/mk-mesa.sh
 			# ... and the compiler library separately, because the hash above covers the PATCHES
 			# and the library is built from tools/mesa/air/, which they do not mention. Two boots
@@ -394,7 +394,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			[ -f $M/air_run ] && cp $M/air_run obj/air_run
 			# The compiler the Metal driver asks for: AIR in, a dispatch on the
 			# Adreno out (tools/mesa/air/air_metal.h). It is copied whether or not
-			# GL is wanted, because src/hakiosmetal.m dlopens it by that path --
+			# GL is wanted, because src/metal_driver.m dlopens it by that path --
 			# and its absence is a sentence the driver prints, not a crash.
 			[ -f $M/libhakios-air.dylib ] && cp $M/libhakios-air.dylib obj/
 		fi
@@ -507,7 +507,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -I../tools/mesa/air -o obj/glasscase ../tools/air/glasscase.c -L$M26 -lhakios-air &&
 			cp obj/glasscase root/bin/
 	fi
-	# the pipelines a metal_bisect run skips one after another (src/hakiosmetal.m), when there is a list
+	# the pipelines a metal_bisect run skips one after another (src/metal_driver.m), when there is a list
 	if [ -f bisect.txt ]; then cp bisect.txt root/bisect.txt; else rm -f root/bisect.txt; fi
 	if [ -f "${TAPS:-taps.txt}" ]; then cp "${TAPS:-taps.txt}" root/taps.txt; else rm -f root/taps.txt; fi     # boot-arg taps=1 (inject26.c); TAPS= another script
 	if [ -f obj/HakiosAudio ]; then

@@ -3,7 +3,7 @@
 # WHAT THIS BOOT IS FOR. An application decides its whole render path at startup from what the
 # device says it supports, and this port answers almost none of those questions itself:
 # -supportsFamily:, -supportsFeatureSet: and some forty more are INHERITED from Apple's private
-# _MTLDevice, which derives them from one number hakiosmetal.m supplies -- -featureProfile,
+# _MTLDevice, which derives them from one number metal_driver.m supplies -- -featureProfile,
 # which returns 0. Reading Metal's own code says what 0 produces (docs/metal.md 10.48). Nothing
 # has ever asked the device. This boot asks it.
 #
@@ -33,7 +33,7 @@
 # of these is a disassembly result and not a measurement, which is the whole point of the boot.
 #
 #   caps: featureProfile = 0
-#         hakiosmetal.m returns 0. If this is not 0, nothing else below is predicted at all,
+#         metal_driver.m returns 0. If this is not 0, nothing else below is predicted at all,
 #         because every answer is a function of it. (Apple's own A11 driver answers 5:
 #         -[AGXA11FamilyDevice featureProfile] is `mov w0, #5; ret` at 0x209210f10.)
 #
@@ -96,7 +96,7 @@
 #   caps:   supportsTextureSampleCount(1) yes / supportsSampleCount(1) yes
 #   caps:   supportsTextureSampleCount(2) no  / supportsSampleCount(2) no     (4 and 8 likewise)
 #         -supportsTextureSampleCount: is one instruction that tail-calls -supportsSampleCount:,
-#         which only hakiosmetal.m implements (`count == 1`). The two must agree; if they do
+#         which only metal_driver.m implements (`count == 1`). The two must agree; if they do
 #         not, something other than our method is answering the forward.
 #
 #   caps:   maxThreadsPerThreadgroup                   1024 x 1024 x 64
@@ -141,7 +141,7 @@
 #         port fails uniquely, and answering the TRUTHFUL profile would not change it.
 #
 #         -gpuCoreCount is answered by nothing in this port's chain: only Apple's own
-#         AGXA11FamilyDevice declares it, _MTLDevice has no entry, and hakiosmetal.m does not
+#         AGXA11FamilyDevice declares it, _MTLDevice has no entry, and metal_driver.m does not
 #         implement it. MetalFX guards it with respondsToSelector:, so it is a no and not an
 #         abort -- and the "respondsToSelector(gpuCoreCount) no" line above is there to record
 #         that the only thing between this device and an unrecognized selector is somebody

@@ -5,7 +5,7 @@
  * starts this service. A program that opens it speaks the interface of Linux's msm DRM driver,
  * the one Mesa's freedreno knows: every request of that interface is a call of the user client
  * with the request's number as the selector and the request's structure passed in and back
- * (userland: tools/mesa/hakios-drm, which stands in for libdrm inside Mesa). What Linux does
+ * (userland: tools/mesa/darwin-drm, which stands in for libdrm inside Mesa). What Linux does
  * with mmap() on the device is the client memory of the type that is the buffer's handle.
  *
  * What there is of the interface is what freedreno uses to draw: parameters, buffers (made,

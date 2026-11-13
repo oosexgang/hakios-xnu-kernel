@@ -43,7 +43,7 @@ usage:
           ipsw dyld extract $C $i --output ext                   # the metadata
   done
   IPHONEOS_DEPLOYMENT_TARGET=16.5 clang -target arm64-apple-darwin -isysroot ~/theos/sdks/iPhoneOS16.5.sdk -w -S \
-        userland/src/hakiosmetal.m -o hakiosmetal.s
+        userland/src/metal_driver.m -o hakiosmetal.s
   owes.py --dump Metal.txt --dump AGXMetalA11.txt --dump IOGPU.txt \
           --images ext --selmap selmap.txt --asm hakiosmetal.s [--verbose]
 
@@ -62,7 +62,7 @@ import protometh
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Each of our classes, the Apple classes above it (as hakiosmetal.m declares
+# Each of our classes, the Apple classes above it (as metal_driver.m declares
 # them, nearest first), and the protocols its Apple counterpart declares. The
 # counterpart is named so the claim can be checked: AGXA11FamilyCommandQueue
 # really does say <MTLCommandQueueSPI>, and that is where this table comes from.
@@ -304,12 +304,12 @@ def declared_encodings(images, selmap):
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="append", default=[], required=True)
-    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/hakiosmetal.m"))
+    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/metal_driver.m"))
     ap.add_argument("--class", dest="only", action="append", default=[])
     ap.add_argument("--images", help="directory of images extracted with `ipsw dyld extract`")
     ap.add_argument("--selmap", action="append", default=[],
                     help="output of `ipsw dyld objc sel <DSC> -i <image>`")
-    ap.add_argument("--asm", help="assembly of hakiosmetal.m, for the signature check")
+    ap.add_argument("--asm", help="assembly of metal_driver.m, for the signature check")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 

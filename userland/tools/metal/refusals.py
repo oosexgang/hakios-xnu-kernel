@@ -22,7 +22,7 @@ What it does NOT count, and why, because the gap bounds every number here:
     corpus at all. A corpus module carries no MTLTextureDescriptor. Those
     sites are listed with "no corpus" rather than with a zero, because the two
     mean opposite things: one is unmeasured, the other is measured as never.
-  - the driver's own refusals (userland/src/hakiosmetal.m) reach an
+  - the driver's own refusals (userland/src/metal_driver.m) reach an
     application as an NSError and are counted per BOOT, in a log, not per
     module. They are listed and not counted.
   - RW_ONCE notices in the driver are counted apart and are NOT refusals: they
@@ -165,7 +165,7 @@ def events(path):
 
 def rw_once(root=ROOT):
     """The driver's RW_ONCE notices: printed once, work dropped, nothing refused."""
-    path = os.path.join(root, "userland/src/hakiosmetal.m")
+    path = os.path.join(root, "userland/src/metal_driver.m")
     if not os.path.exists(path):
         return []
     text = open(path, encoding="utf-8", errors="replace").read()
@@ -270,7 +270,7 @@ def main():
         print("--- the driver's RW_ONCE notices: %d. NOT refusals: printed once, work "
               "dropped ---" % len(notes))
         for l, s in notes:
-            print("  hakiosmetal.m:%-6d %s" % (l, s[:150]))
+            print("  metal_driver.m:%-6d %s" % (l, s[:150]))
 
 
 main()

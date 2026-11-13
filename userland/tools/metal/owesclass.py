@@ -53,7 +53,7 @@ a selector it never messages) AND an instruction in __text that reaches it.
 Either one alone is reported as such and not counted.
 
 The method is checked against the boot that prompted it, which is the only test
-it could fail. Run with --src pointing at hakiosmetal.m as it stood before
+it could fail. Run with --src pointing at metal_driver.m as it stood before
 7fdc217 -- the source that was on the phone at 01:51 -- it names
 
     setProtectionOptions:  fatal  ours  QuartzCore: 10 message
@@ -815,7 +815,7 @@ def verdict(sites):
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="append", default=[], required=True)
-    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/hakiosmetal.m"))
+    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/metal_driver.m"))
     ap.add_argument("--images", help="directory of `ipsw dyld extract` output")
     ap.add_argument("--selmap", action="append", default=[])
     ap.add_argument("--sender", action="append", default=[], metavar="NAME=PATH")

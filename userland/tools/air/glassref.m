@@ -1,7 +1,7 @@
 /*
  * glassref: one Metal draw, on Apple's GPU and through our AIR -> NIR path, compared pixel by pixel.
  *
- * The phone's driver (userland/src/hakiosmetal.m) hands each pipeline's bitcode -- -[MTLFunction
+ * The phone's driver (userland/src/metal_driver.m) hands each pipeline's bitcode -- -[MTLFunction
  * bitcodeData], function constants registered beside it -- to libhakios-air, which translates it and
  * draws with Mesa. This machine's Metal loads the very same Darwin 26 libraries (QuartzCore's
  * default.metallib, AIR slice), so the same draw can be made twice: once by Apple's compiler on the

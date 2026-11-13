@@ -32,7 +32,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fbscale` | fbscale=2: the same 375 x 812 points drawn at two pixels a point instead of three. |
 | `fbtrace` | fbtrace=N: log the first N calls of every selector (default 3). |
 | `fbwidth` | fbwidth= and fbheight= change the size reported. |
-| `metal` | With boot-arg metal=1 a user process may put those two properties here, which is the whole of what keeps Metal from finding a driver of ours (userland/src/hakiosmetal.m); see setProperties below and docs/metal-glass.md. |
+| `metal` | With boot-arg metal=1 a user process may put those two properties here, which is the whole of what keeps Metal from finding a driver of ours (userland/src/metal_driver.m); see setProperties below and docs/metal-glass.md. |
 | `rec_mb` | rec_secs=N [rec_start=S] [rec_mb=M]: from S seconds after the first frame, for N seconds, every frame that is shown is also kept -- one pixel of every REC_STEP in each direction, three bytes a pixel -- in a piece of memory of M megabytes (default 480, which is 520 frames) that is left in place when… |
 | `rec_ring` | rec_ring=1: when the memory is full the recording does not stop but goes on over its oldest frames, so that what it holds at the end is the last of the run: for something that happens once in a long session, the run is ended right after it (five fingers) and the frames before it are there. |
 | `rec_secs` | rec_secs=N [rec_start=S] [rec_mb=M]: from S seconds after the first frame, for N seconds, every frame that is shown is also kept -- one pixel of every REC_STEP in each direction, three bytes a pixel -- in a piece of memory of M megabytes (default 480, which is 520 frames) that is left in place when… |

@@ -796,8 +796,8 @@ the 258 is and is not.
 **Decision: a Mesa frontend in Mesa's tree, shaped like `src/compiler/spirv`.** Its entry point
 is one function, `air_to_nir()` (`nir_air.h`), the analogue of `spirv_to_nir()`. In this
 repository the sources are `tools/mesa/air/`; `tools/mk-mesa.sh` and `tools/air/mk-host.sh` copy
-them to `src/compiler/air/` of the pinned Mesa release, exactly as `tools/mesa/hakios-drm/` is
-copied to `src/hakios-drm/`, and `tools/mesa/air.patch` adds the two lines of meson that build
+them to `src/compiler/air/` of the pinned Mesa release, exactly as `tools/mesa/darwin-drm/` is
+copied to `src/darwin-drm/`, and `tools/mesa/air.patch` adds the two lines of meson that build
 it. The tree is the shape an upstream merge request would have.
 
 Why not a standalone library that Mesa links:
@@ -2784,7 +2784,7 @@ an unhandled metadata key), so "features not yet handled" is a ranked list, not 
   and four of the sixteen masks are palindromes (None, All, green|blue, red|alpha), so a suite
   built out of "write everything" and "write nothing" would not notice. Two independent sources pin
   the numbering: Apple's `MTLRenderPipeline.h` for this release, which
-  `userland/src/hakiosmetal.m` `_Static_assert`s against so a disagreement is a *build failure*;
+  `userland/src/metal_driver.m` `_Static_assert`s against so a disagreement is a *build failure*;
   and `Metal.framework`'s own value-to-string code on the device, where `MTLBlendFactorString`
   (`0x181b08730`) bounds its argument at 18 over a nineteen-entry table and
   `MTLColorWriteMaskString` (`0x181b08754`) tests bit 3 for "R" and bit 0 for "A", which *is* the
@@ -2910,7 +2910,7 @@ the Mesa already on the phone rather than being built from nothing:
 
 - The port's Mesa **already creates a Gallium screen for the Adreno**:
   `osmesa_create_gpu_screen()` in `tools/mesa/freedreno-darwin.patch` opens the kernel's `msm`
-  driver through `tools/mesa/hakios-drm` and calls `fd_drm_screen_create_renderonly()`. It also
+  driver through `tools/mesa/darwin-drm` and calls `fd_drm_screen_create_renderonly()`. It also
   already has `osmesa_surface_resource()`, which wraps an IOSurface as a `pipe_resource`. So the
   Gallium layer is reachable inside the library CoreAnimation already draws Darwin through.
 - **freedreno takes NIR natively** (`PIPE_SHADER_CAP_SUPPORTED_IRS` includes
@@ -2922,7 +2922,7 @@ the Mesa already on the phone rather than being built from nothing:
 
 **That is now built and in the image, and no export was needed.** `air_run` is built *inside* the
 Mesa cross build (`AIR=1 tools/mk-mesa.sh`), so it links Gallium's own static libraries and opens
-the Adreno itself — `drmOpenWithType("msm", …)` through `tools/mesa/hakios-drm`, then
+the Adreno itself — `drmOpenWithType("msm", …)` through `tools/mesa/darwin-drm`, then
 `fd_drm_screen_create_renderonly()`, exactly as `osmesa_create_gpu_screen()` does. It needs
 nothing exported from `libOSMesa` and does not load it: a 9.8 MB arm64 Mach-O against libSystem,
 libz and IOKit alone. `userland/build.sh` puts it in `/hakios/bin`, and `rc.jobs.air` runs it.
@@ -4143,7 +4143,7 @@ exists to enforce.
 ##### 8.2.2 Built: the runtime's half, where an encoder records and nothing is written
 
 The design above says the runtime "cannot be a writer; it has to be a **recorder**". It is one
-now, in the library (`air_metal.c`, `air_metal.h`) and in the driver (`hakiosmetal.m`), and the
+now, in the library (`air_metal.c`, `air_metal.h`) and in the driver (`metal_driver.m`), and the
 measurement is differential: **the same pixel comes out of an argument buffer as out of direct
 arguments**, and every record deliberately made wrong prints a different picture that is named in
 advance. `tools/air/argbufruncheck.sh` is that run — **20 checks, 0 failed**, on this machine,

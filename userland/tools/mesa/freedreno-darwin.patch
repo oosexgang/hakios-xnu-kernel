@@ -7,10 +7,10 @@
 -if dep_libdrm.found()
 +if host_machine.system() == 'darwin' and with_gallium_freedreno
 +  # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
-+  # for libdrm (src/hakios-drm, put there by HakiOS's tools/mk-mesa.sh; its one
++  # for libdrm (src/darwin-drm, put there by HakiOS's tools/mk-mesa.sh; its one
 +  # source file is built with freedreno's drm layer, src/freedreno/drm).
 +  dep_libdrm = declare_dependency(
-+    include_directories : include_directories('src/hakios-drm'),
++    include_directories : include_directories('src/darwin-drm'),
 +    link_args : ['-framework', 'IOKit', '-framework', 'CoreFoundation'],
 +  )
 +elif dep_libdrm.found()
@@ -52,7 +52,7 @@
        return NULL;
     }
 +#ifdef __APPLE__
-+   /* no mmap() on a device here: the kernel's driver maps the buffer (src/hakios-drm) */
++   /* no mmap() on a device here: the kernel's driver maps the buffer (src/darwin-drm) */
 +   return hakios_drm_map(bo->dev->fd, bo->handle, bo->size);
 +#else
     return os_mmap(0, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -68,7 +68,7 @@
  )
  libfreedreno_drm_files += libfreedreno_drm_msm_files
 +if host_machine.system() == 'darwin'
-+  libfreedreno_drm_files += files('../../hakios-drm/hakios_drm.c')
++  libfreedreno_drm_files += files('../../darwin-drm/darwin_drm.c')
 +endif
  
  libfreedreno_drm_virtio_files = files(
@@ -334,7 +334,7 @@ Only in b2/src/gallium/frontends/osmesa: osmesa.c.orig
 +      return NULL;
 +   if (s.pixel_format != 0x42475241 /* 'BGRA' */ || s.planes != 0)
 +      return NULL;
-+   /* (the surface comes in as Linux's buffers come in by file descriptor: see hakios-drm) */
++   /* (the surface comes in as Linux's buffers come in by file descriptor: see darwin-drm) */
 +   templ.width0 = s.width;
 +   templ.height0 = s.height;
 +   handle.handle = surface;

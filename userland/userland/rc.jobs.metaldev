@@ -44,7 +44,7 @@
 #
 # And the same question asked of the real driver library rather than of classes assembled at
 # runtime: does a source-declared subclass of the private _MTLDevice link and load here, and
-# does Metal take it? (src/hakiosmetal.m, src/metal_drv_test.m)
+# does Metal take it? (src/metal_driver.m, src/metal_drv_test.m)
 /hakios/bin/metal_drv_test
 #
 # And the first dispatch worth trying: MetalFaceMask_InitMinMax takes exactly one device

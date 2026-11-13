@@ -42,7 +42,7 @@
  *   the kernel     kHakiosSurface (0x7e) turns an IOSurface into a GPU buffer and reports
  *                  its size, offset, row length and geometry (BoardGPU.cpp:821)
  *   the DRM shim   drmPrimeFDToHandle(fd, surface_id, &handle) -- the ID goes where Linux
- *                  puts a dmabuf descriptor (tools/mesa/hakios-drm/hakios_drm.c:189)
+ *                  puts a dmabuf descriptor (tools/mesa/darwin-drm/darwin_drm.c:189)
  *   freedreno      fd_bo_from_dmabuf_drm takes it ("what comes in here is an IOSurface, and
  *                  the file descriptor its ID"), and fd_resource_from_handle lays a resource
  *                  over it with one pitch
@@ -496,14 +496,14 @@ rwd_format_of_metal(unsigned metal_pixel_format, uint32_t *fourcc, unsigned *byt
 /*
  * The import call of the compiler library, if it has one.
  *
- * It is looked up rather than linked for the same reason src/hakiosmetal.m dlopens the
+ * It is looked up rather than linked for the same reason src/metal_driver.m dlopens the
  * library at all, and with RTLD_NOLOAD so that this file never loads a second copy: dyld
  * uniques images by install_name, so a handle asked for this way is the one the driver
  * already has, or nothing when the driver never got one.
  *
  * The signature is tools/mesa/air/air_metal.h's, field for field: the shape the caller wants,
  * the surface by its ID (which is where freedreno's import takes it --
- * drmPrimeFDToHandle(fd, surface, &handle) in tools/mesa/hakios-drm/hakios_drm.c:189), and
+ * drmPrimeFDToHandle(fd, surface, &handle) in tools/mesa/darwin-drm/darwin_drm.c:189), and
  * the row length and offset the kernel reported, because fd_resource_from_handle takes those
  * from the caller and does not ask the kernel again.
  */
