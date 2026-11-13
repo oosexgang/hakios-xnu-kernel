@@ -92,50 +92,58 @@ command_about(int argc, char **argv)
 	about();
 }
 
+/* the commands, by what of the kernel they try: an entry with no name is a heading of help's */
 static const struct {
 	const char *name, *what;
 	void (*run)(int argc, char **argv);
 } commands[] = {
+	{ NULL, "the shell", NULL },
 	{ "help", "what this shell can do", command_help },
+	{ "echo", "WORDS... say them", command_echo },
+	{ NULL, "the kernel", NULL },
 	{ "about", "what the kernel says of itself", command_about },
 	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
-	{ "echo", "WORDS... say them", command_echo },
+	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
+	{ "uptime", "how long the kernel has run", command_uptime },
+	{ "date", "the date and time, UTC", command_date },
+	{ NULL, "files", NULL },
 	{ "ls", "[PATH...] what is in a directory", command_ls },
 	{ "cat", "FILE... what is in a file", command_cat },
 	{ "hash", "FILE... each read to its end, timed, hashed", command_hash },
-	{ "ps", "the processes", command_ps },
-	{ "uptime", "how long the kernel has run", command_uptime },
+	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
+	{ "mkdir", "DIR... new directories", command_mkdir },
+	{ "write", "FILE WORDS... the words as all of a file", command_write },
+	{ "rm", "PATH... files, or empty directories, gone", command_rm },
+	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
+	{ "memory", "MB that much memory of its own, written and read back", command_memory },
+	{ NULL, "the network", NULL },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 	{ "serve", "[COUNT] a page over HTTP on port 80 (or /bytes/N: N bytes)", command_serve },
 	{ "get", "ADDRESS PORT [PATH] a page asked for over HTTP", command_get },
 	{ "udp", "ADDRESS PORT WORDS... a datagram, and its answer", command_udp },
-	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
-	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
-	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
-	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
-	{ "ioreg", "[DEPTH] IOKit's registry, asked in MIG messages", command_ioreg },
-	{ "ioprop", "PATH KEY a property of a registry entry", command_ioprop },
-	{ "draw", "a picture on the screen, through IOSurface and the framebuffer", command_draw },
+	{ NULL, "processes", NULL },
+	{ "ps", "the processes", command_ps },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
-	{ "fork", "[PROGRAM [ARGUMENTS]] a copy of this process; it may become PROGRAM", command_fork },
-	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
-	{ "date", "the date and time, UTC", command_date },
-	{ "sleep", "SECONDS nothing, for that long", command_sleep },
 	{ "spawn", "PROGRAM [ARGUMENTS] a process of its own, not waited for", command_spawn },
 	{ "kill", "PID [SIGNAL] a signal to a process (PID !: the one spawned last)", command_kill },
 	{ "wait", "the next of its processes to end", command_wait },
+	{ "sleep", "SECONDS nothing, for that long", command_sleep },
+	{ "fork", "[PROGRAM [ARGUMENTS]] a copy of this process; it may become PROGRAM", command_fork },
 	{ "crash", "KIND this process stopped by a mistake (in a child: run)", command_crash },
 	{ "alarm", "[COUNT] a timer's signals caught by a handler", command_alarm },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
 	{ "unix", "FILE its descriptor sent through a socket pair, and read", command_unix },
-	{ "mkdir", "DIR... new directories", command_mkdir },
-	{ "write", "FILE WORDS... the words as all of a file", command_write },
-	{ "rm", "PATH... files, or empty directories, gone", command_rm },
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
-	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
-	{ "memory", "MB that much memory of its own, written and read back", command_memory },
+	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
+	{ NULL, "IOKit", NULL },
+	{ "ioreg", "[DEPTH] IOKit's registry, asked in MIG messages", command_ioreg },
+	{ "ioprop", "PATH KEY a property of a registry entry", command_ioprop },
+	{ "draw", "a picture on the screen, through IOSurface and the framebuffer", command_draw },
+	{ NULL, "devices", NULL },
+	{ "input", "[COUNT] what the touch screen and the buttons say", command_input },
+	{ "tone", "HZ [SECONDS] a sine wave on the sound device", command_tone },
 };
 
 void
@@ -144,6 +152,12 @@ command_help(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+		if (commands[i].name == NULL) {
+			say(i == 0 ? "" : "\n");
+			say(commands[i].what);
+			say(":\n");
+			continue;
+		}
 		say("  ");
 		say(commands[i].name);
 		for (size_t n = length(commands[i].name); n < 10; n++) {
@@ -159,7 +173,7 @@ static int
 run_words(int argc, char **argv)
 {
 	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
-		if (same(argv[0], commands[i].name)) {
+		if (commands[i].name != NULL && same(argv[0], commands[i].name)) {     /* (a NULL name: a heading of help's) */
 			commands[i].run(argc, argv);
 			return 1;
 		}
