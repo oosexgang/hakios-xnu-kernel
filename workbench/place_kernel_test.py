@@ -3,7 +3,8 @@
 under the name __DATA and __DATA under __DATX, a pointer to rebase, a symbol, LC_MAIN and a dyld's load
 commands. What is held: the image is moved to the base, the pointer with it and nothing else of the
 contents; the segments have their names and protections back; the entry is an LC_UNIXTHREAD at the base;
-what only dyld reads is gone; and what cannot be made into a kernel is refused with the reason."""
+what only dyld reads is gone; and what cannot be made into a kernel is refused with the reason. With
+--program, a static user program: the same without moving it."""
 import importlib.util
 import struct
 import sys
@@ -118,6 +119,14 @@ class PlaceKernel(unittest.TestCase):
             place_kernel.place(image(chained=True), BASE)
         with self.assertRaisesRegex(SystemExit, 'not a 64-bit Mach-O'):
             place_kernel.place(b'\0' * 64, BASE)
+
+    def test_a_program_is_left_where_it_was_linked(self):
+        after, moved, entry = place_kernel.place(image(), 0, program=True)
+        names = [struct.unpack_from('<16s', body, 8)[0].rstrip(b'\0') for cmd, body in load_commands(after) if cmd == 0x19]
+        self.assertEqual(names, [b'__TEXT', b'__DATA', b'__DATX', b'__LINKEDIT'])       # (as linked)
+        self.assertEqual(entry, PAGE + 0x10)
+        self.assertEqual(struct.unpack_from('<I', after, 24)[0], 0x1)          # MH_NOUNDEFS: no dyld, not slid
+        self.assertNotIn(0xe, [cmd for cmd, _ in load_commands(after)])
 
     def test_the_rebase_opcodes(self):
         segments = [{'fileoff': 0x1000}, {'fileoff': 0x8000}]

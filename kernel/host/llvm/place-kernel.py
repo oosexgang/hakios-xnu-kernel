@@ -3,6 +3,7 @@
 and -static, done after the link.
 
   place-kernel.py IN OUT [BASE]
+  place-kernel.py --program IN OUT    a static program instead: left where it was linked, no dyld
 
 ld64.lld does not implement -image_base, -segaddr, -segment_order or -static (it says so, and links
 anyway). What it makes is a position-independent executable linked at 0 with a dyld's load commands:
@@ -15,6 +16,9 @@ anyway). What it makes is a position-independent executable linked at 0 with a d
   reads (the dylinker, the rebase and bind information, encryption) are left out.
 
 Nothing else changes: the code and data are byte for byte what lld wrote, but for the pointers rebased.
+
+With --program the same is done to a user program without moving it (a static executable, which a
+DEVELOPMENT kernel runs: tools/qemu-init.c is one): no dylinker, the entry a thread state.
 """
 import struct
 import sys
@@ -81,7 +85,8 @@ def rebases(opcodes, segments):
     return out
 
 
-def place(image, base):
+def place(image, base, program=False):
+    renamed, protection = ({}, {}) if program else (RENAMED, PROTECTION)
     image = bytearray(image)
     magic, cputype, subtype, filetype, ncmds, sizeofcmds, flags, _ = struct.unpack_from('<IiiIIIII', image)
     if magic != 0xfeedfacf:
@@ -138,11 +143,11 @@ def place(image, base):
         cmd = struct.unpack_from('<I', command)[0]
         if cmd == LC_SEGMENT_64:
             name = bytes(command[8:24]).rstrip(b'\0')
-            name = RENAMED.get(name, name)
+            name = renamed.get(name, name)
             command[8:24] = name.ljust(16, b'\0')
             struct.pack_into('<Q', command, 24, struct.unpack_from('<Q', command, 24)[0] + base)
-            if name in PROTECTION:
-                struct.pack_into('<ii', command, 56, PROTECTION[name], PROTECTION[name])
+            if name in protection:
+                struct.pack_into('<ii', command, 56, protection[name], protection[name])
             nsects = struct.unpack_from('<I', command, 64)[0]
             for s in range(nsects):
                 sect = 72 + s * 80
@@ -159,16 +164,19 @@ def place(image, base):
         raise SystemExit('place-kernel: no room for the load commands: link with a larger -headerpad')
     image[32:end_of_commands] = bytes(end_of_commands - 32)
     image[32:32 + len(commands)] = commands
-    struct.pack_into('<IIII', image, 12, filetype, len(out), len(commands), MH_NOUNDEFS | MH_PIE)
+    struct.pack_into('<IIII', image, 12, filetype, len(out), len(commands), MH_NOUNDEFS | (0 if program else MH_PIE))
     return bytes(image), len(slots), entry_va
 
 
 def main():
-    if len(sys.argv) not in (3, 4):
+    arguments = sys.argv[1:]
+    program = arguments[:1] == ['--program']
+    arguments = arguments[1:] if program else arguments
+    if len(arguments) not in (2, 3) or (program and len(arguments) != 2):
         raise SystemExit(__doc__.split('\n\n')[1])
-    base = int(sys.argv[3], 0) if len(sys.argv) == 4 else 0xfffffff007004000
-    image, slots, entry = place(open(sys.argv[1], 'rb').read(), base)
-    open(sys.argv[2], 'wb').write(image)
+    base = 0 if program else int(arguments[2], 0) if len(arguments) == 3 else 0xfffffff007004000
+    image, slots, entry = place(open(arguments[0], 'rb').read(), base, program)
+    open(arguments[1], 'wb').write(image)
     print(f'place-kernel: at {base:#x}, {slots} pointers moved, entry {entry:#x}')
 
 
