@@ -300,10 +300,17 @@ uio_setresid(struct uio *uio, user_ssize_t resid)
 	uio->resid = (size_t)resid;
 }
 
+/* uiomove()s made so far; the one numbered fake_uiomove_fault_at (from 1) meets a bad user address */
+unsigned fake_uiomove_calls, fake_uiomove_fault_at;
+
 int
 uiomove(caddr_t kernel, int n, struct uio *uio)
 {
 	size_t count = (size_t)n < uio->resid ? (size_t)n : uio->resid;
+
+	if (++fake_uiomove_calls == fake_uiomove_fault_at) {
+		return EFAULT;
+	}
 
 	if (uio->to_kernel) {
 		memcpy(kernel, uio->base, count);
