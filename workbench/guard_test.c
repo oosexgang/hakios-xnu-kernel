@@ -69,20 +69,29 @@ next(void)
 static int peak_out, peak_ever;
 static double power_out;
 
-/* `seconds' of a sine of that amplitude on both channels through the guard, a period at a time */
+/* `seconds' of a sine of that amplitude on both channels through the guard, a period at a time; the frames
+ * after the period are the caller's, which the guard must leave as they are */
+#define AFTER           8
 static void
 play(double amplitude, double seconds)
 {
-	static int16_t frames[2 * PERIOD];
+	static int16_t frames[2 * (PERIOD + AFTER)];
 	long periods = (long)(seconds * RATE / PERIOD);
 	double sum = 0;
+	bool overrun = false;
 
 	peak_out = 0;
 	for (long p = 0; p < periods; p++) {
 		for (int f = 0; f < PERIOD; f++) {
 			frames[2 * f] = frames[2 * f + 1] = (int16_t)(next() * amplitude);
 		}
+		for (int i = 2 * PERIOD; i < 2 * (PERIOD + AFTER); i++) {
+			frames[i] = 0x5a5a;
+		}
 		hakios_guard_process(frames, PERIOD);
+		for (int i = 2 * PERIOD; i < 2 * (PERIOD + AFTER) && !overrun; i++) {
+			overrun = frames[i] != 0x5a5a;
+		}
 		if (p == periods - 10) {
 			sum = 0;
 			peak_out = 0;
@@ -100,6 +109,7 @@ play(double amplitude, double seconds)
 		}
 	}
 	power_out = sum / (10.0 * 2 * PERIOD) / (32768.0 * 32768.0);
+	CHECK(!overrun, "nothing past the frames given is touched");
 }
 
 static struct hakios_guard_report report;
