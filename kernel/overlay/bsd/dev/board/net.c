@@ -285,7 +285,12 @@ net_thread(__unused void *parameter, __unused wait_result_t result)
 			    net_count.sent, net_count.sent_bytes, net_count.received, net_count.received_bytes,
 			    net_count.dropped_out, net_count.dropped_in);
 		}
-		delay_for_interval(quiet < 100 ? 2 : 10, NSEC_PER_MSEC);
+		/*
+		 * While frames come, ask again soon: a TCP sender waits for the acknowledgements this brings in,
+		 * and 2 ms between askings held a stream from the machine to a few MB a second. Quiet: every
+		 * 2 ms, then (after 100 empty askings) every 10.
+		 */
+		delay_for_interval(quiet == 0 ? 200 : quiet < 100 ? 2000 : 10000, NSEC_PER_USEC);
 	}
 }
 
