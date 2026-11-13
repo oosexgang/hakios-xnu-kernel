@@ -101,6 +101,113 @@ raise_domain(uint32_t domain, uint32_t cores)
 }
 
 /*
+ * The L3 cache's clock, for a look (boot-arg l3=1: raised to its top row; l3_probe=1: its table, the block's words that
+ * are not 0, and a load chasing through 2 MB -- past L2, inside L3 -- before and after). Its EPSS block, the device
+ * tree's epss_l3_cpu ("qcom,lahaina-epss-l3-cpu", reg 0x18590000 0x4000), sits just before the cores' groups and has
+ * their layout: the table at +0x100 (300-1516 MHz here), the row wanted at +0x320 (upstream Linux's sc7280/sm8250
+ * epss-l3), which the boot loader leaves at row 0. Raising it changed nothing measured: the chase 7.28 ns against 7.21
+ * after, SpringBoard's turn after a tap on an icon 188-193 ms against 190-230 (logs/182753-run.log in hakios-sm7325;
+ * a first look, 8.11 against 6.83, did not come again). So it is left where the boot loader put it.
+ */
+#define L3_EPSS                 0x18590000
+#define L3_CHASE_BYTES          (2u << 20)
+#define L3_CHASE_STEPS          (1u << 20)
+
+static uint64_t
+l3_chase_ns(vm_offset_t buffer)
+{
+	uint64_t began, t = 0;
+	volatile uint64_t *at = (volatile uint64_t *)buffer;
+
+	for (uint32_t i = 0; i < L3_CHASE_STEPS / 8; i++) {
+		at = (volatile uint64_t *)(uintptr_t)*at;       /* (warm) */
+	}
+	began = mach_absolute_time();
+	for (uint32_t i = 0; i < L3_CHASE_STEPS; i++) {
+		at = (volatile uint64_t *)(uintptr_t)*at;
+	}
+	absolutetime_to_nanoseconds(mach_absolute_time() - began, &t);
+	(void)at;
+	return t * 100 / L3_CHASE_STEPS;        /* hundredths of a ns a load */
+}
+
+static void
+l3_raise(void)
+{
+	uint32_t enabled = 0, probe = 0, top = 0, top_khz = 0, was, lines = L3_CHASE_BYTES / 64, seed = 12345;
+	vm_offset_t base, buffer = 0;
+	char line[600];
+	int used = 0;
+
+	PE_parse_boot_argn("l3", &enabled, sizeof(enabled));
+	PE_parse_boot_argn("l3_probe", &probe, sizeof(probe));
+	if (enabled == 0 && probe == 0) {
+		return;
+	}
+	if (hakios_board()->cpufreq.epss != L3_EPSS + 0x1000) {
+		tell("l3: not this SoC's layout (the cores' EPSS at %#x): left alone\n", hakios_board()->cpufreq.epss);
+		return;
+	}
+	base = ml_io_map(L3_EPSS, 0x1000);
+	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
+		uint32_t entry = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + 4 * row);
+		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
+
+		if (row > 0 && khz <= top_khz) {
+			break;
+		}
+		top = row;
+		top_khz = khz;
+		used += snprintf(line + used, sizeof(line) - (size_t)used, " %u:%u", row, khz / 1000);
+	}
+	if (probe) {
+		tell("l3: frequency table (row:MHz)%s\n", line);
+		used = 0;
+		for (uint32_t off = 0; off < 0x400 && used < (int)sizeof(line) - 24; off += 4) {
+			uint32_t w;
+
+			if (off >= 0x100 && off < 0x300) {
+				continue;
+			}
+			w = *(volatile uint32_t *)(base + off);
+			if (w != 0) {
+				used += snprintf(line + used, sizeof(line) - (size_t)used, " %x=%x", off, w);
+			}
+		}
+		tell("l3: words not 0:%s\n", line);
+		if (kmem_alloc(kernel_map, &buffer, L3_CHASE_BYTES, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) == KERN_SUCCESS) {
+			/* a random cycle through every 64-byte line: each load waits for the one before */
+			static uint32_t perm[L3_CHASE_BYTES / 64];
+
+			for (uint32_t i = 0; i < lines; i++) perm[i] = i;
+			for (uint32_t i = lines - 1; i > 0; i--) {
+				uint32_t j, t;
+
+				seed = seed * 1103515245u + 12345u;
+				j = (seed >> 8) % (i + 1);
+				t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+			}
+			for (uint32_t i = 0; i < lines; i++) {
+				*(uint64_t *)(buffer + 64ull * perm[i]) = buffer + 64ull * perm[(i + 1) % lines];
+			}
+			tell("l3: a load through 2 MB: %llu/100 ns\n", l3_chase_ns(buffer));
+		}
+	}
+	was = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
+	if (enabled != 0) {
+		*(volatile uint32_t *)(base + EPSS_PERF_STATE) = top;
+		delay_for_interval(20, NSEC_PER_MSEC);
+		tell("l3: row %u -> %u of its frequency table, %u MHz\n", was, top, top_khz / 1000);
+	}
+	if (buffer != 0) {
+		if (enabled != 0) {
+			tell("l3: a load through 2 MB now: %llu/100 ns\n", l3_chase_ns(buffer));
+		}
+		kmem_free(kernel_map, buffer, L3_CHASE_BYTES);
+	}
+}
+
+/*
  * Boot-arg membench=1: how fast this processor reads, writes and copies memory, in MB a second
  * (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which
  * nobody here asks to be raised.
@@ -860,6 +967,7 @@ hakios_cpufreq_init(void)
 		}
 	}
 	printf("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
+	l3_raise();
 	/* the groups by their load from here on (cpu_gov), and the small cores parked (park_small): one thread looks */
 	gov_start();
 	park_start();
