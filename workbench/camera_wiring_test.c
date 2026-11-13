@@ -13,10 +13,28 @@
 
 extern char log_text[];
 
-/* (what the driver links against and these scenarios never reach: no register is read or written) */
+/* (the PMIC arbiter, for the scenarios of the PM8008i's reset GPIO; the others read and write no register) */
+#include "spmi_model.h"
+
+static struct spmi_peripheral pgpio_model;
+static bool arbiter;
 static unsigned accesses;
-uint32_t hakios_test_rd(vm_offset_t address __unused) { accesses++; return 0; }
-void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { accesses++; }
+
+uint32_t
+hakios_test_rd(vm_offset_t address)
+{
+	accesses++;
+	return arbiter ? spmi_model_rd(address) : 0;
+}
+
+void
+hakios_test_wr(vm_offset_t address, uint32_t value)
+{
+	accesses++;
+	if (arbiter) {
+		spmi_model_wr(address, value);
+	}
+}
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 vm_offset_t ml_io_map_unmappable(vm_offset_t phys, vm_size_t size __unused, unsigned int flags __unused) { return phys; }
 uint64_t kvtophys(vm_offset_t va) { return va; }
@@ -170,11 +188,119 @@ no_sensor(void)
 	CHECK(logged("the board's camera { } names no sensor"), "said: %s", log_text);
 }
 
+/* ---- the PM8008i's reset: a GPIO of a PMIC, behind the arbiter --------------------------------------------- */
+
+/* the arbiter where the SoC file has it, the GPIO on channel 4 (another system's) and channel 9 (this one's) */
+static void
+arbiter_and_gpio(void)
+{
+	const struct hakios_board *b = hakios_board();
+
+	arbiter = true;
+	spmi.core = b->spmi.core;
+	spmi.cnfg = b->spmi.cnfg;
+	spmi.channels = b->spmi.channels;
+	spmi.ee = b->spmi.ee;
+	spmi.observer = b->spmi.observer + 0x10000 * spmi.ee;
+	pgpio_model.id = b->cameras.pmic_reset;
+	spmi_channel(4, &pgpio_model, 3);
+	spmi_channel(9, &pgpio_model, spmi.ee);
+	pgpio_model.reg[PGPIO_TYPE] = 0x10;
+	CHECK(hakios_spmi_map(&arb), "the arbiter mapped");
+}
+
+/* of its two channels the one this system writes through; a write to one of its five registers goes there */
+static void
+pgpio_through_our_channel(void)
+{
+	arbiter_and_gpio();
+	pgpio_find();
+	CHECK(pgpio_found && pgpio_writable && pgpio_channel == 9, "channel 9, ours: %u", pgpio_channel);
+	CHECK(logged("channel 4 is the PM8008i's reset GPIO (0x28a00); written by system 3\n") &&
+	    logged("channel 9 is the PM8008i's reset GPIO (0x28a00); written by system 0, which is us"), "both said: %s", log_text);
+	CHECK(pgpio_put(PGPIO_MODE_CTL, 1, false) && pgpio_model.reg[PGPIO_MODE_CTL] == 1 && spmi.denied == 0, "written, read back");
+}
+
+/* its only channel another system's: read through it, never written */
+static void
+pgpio_only_anothers_channel(void)
+{
+	uint8_t type = 0;
+
+	arbiter_and_gpio();
+	spmi.map[9] = 0;
+	pgpio_find();
+	CHECK(pgpio_found && !pgpio_writable && pgpio_channel == 4, "channel 4, not ours: %u", pgpio_channel);
+	CHECK(pgpio_read(PGPIO_TYPE, &type) == NULL && type == 0x10, "read: %#x", type);
+	CHECK(!pgpio_put(PGPIO_MODE_CTL, 1, false) && spmi.writes == 0 && spmi.denied == 0, "not written, not even tried");
+	CHECK(broken && logged("a write to the PMIC that may not be made"), "and given up: %s", log_text);
+}
+
+/* of all its registers five may be written, and only those */
+static void
+pgpio_five_registers(void)
+{
+	unsigned allowed = 0;
+
+	arbiter_and_gpio();
+	pgpio_find();
+	for (unsigned reg = 0; reg < 256; reg++) {
+		bool put;
+
+		broken = false;
+		put = pgpio_put((uint8_t)reg, 0, false);
+		allowed += put;
+		CHECK(put == (reg == 0x40 || reg == 0x41 || reg == 0x42 || reg == 0x44 || reg == 0x46), "register %#x", reg);
+	}
+	CHECK(allowed == 5 && pgpio_model.writes == 5, "five written: %u", pgpio_model.writes);
+}
+
+/* a transfer the arbiter drops is made again, up to three times */
+static void
+pgpio_dropped(void)
+{
+	uint8_t type = 0;
+
+	arbiter_and_gpio();
+	pgpio_find();
+	spmi.drop_reads = 2;
+	CHECK(pgpio_read(PGPIO_TYPE, &type) == NULL && type == 0x10, "two reads dropped, the third made");
+	spmi.drop_reads = 3;
+	CHECK(pgpio_read(PGPIO_TYPE, &type) != NULL, "three dropped: not read");
+	spmi.drop_reads = 0;
+	spmi.drop_writes = 2;
+	CHECK(pgpio_put(PGPIO_EN_CTL, 0x80, false) && pgpio_model.reg[PGPIO_EN_CTL] == 0x80, "two writes dropped, the third made");
+	spmi.drop_writes = 3;
+	CHECK(!pgpio_put(PGPIO_EN_CTL, 0x00, false) && pgpio_model.reg[PGPIO_EN_CTL] == 0x80 && broken, "three dropped: not written");
+}
+
+/* a register that does not take what is written; a channel that is somebody else's by now: given up */
+static void
+keeps_nothing(struct spmi_peripheral *p __unused, uint8_t reg __unused, uint8_t value __unused) { }
+
+static void
+pgpio_given_up(void)
+{
+	arbiter_and_gpio();
+	pgpio_find();
+	pgpio_model.written = keeps_nothing;
+	CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 5, false) && broken, "not taken");
+	CHECK(logged("the PM8008i's reset GPIO 0x42 <- 0x05: does not read back (reads 0x00)"), "said: %s", log_text);
+	pgpio_model.written = NULL;
+	CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 5, false) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 0, "once given up, nothing more");
+	CHECK(pgpio_put(PGPIO_DIG_PULL_CTL, 5, true) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 5, "but what puts things back, yes");
+	spmi.map[9] = 0x3c000;
+	CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 1, true) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 5, "a channel that is not its own now");
+	CHECK(logged("the arbiter's channel is no longer the PM8008i's reset GPIO") || broken, "said");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "as_before", as_before }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
+		{ "as_before", as_before }, { "pgpio_through_our_channel", pgpio_through_our_channel },
+		{ "pgpio_only_anothers_channel", pgpio_only_anothers_channel }, { "pgpio_five_registers", pgpio_five_registers },
+		{ "pgpio_dropped", pgpio_dropped }, { "pgpio_given_up", pgpio_given_up }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
 		{ "clock_plan", clock_plan },
 	};
 
