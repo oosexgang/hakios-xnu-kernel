@@ -39,6 +39,7 @@ touch_controller_init(void)
 	} else if (hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX)) {
 		hakios_goodix_init();
 	} else if (PE_parse_boot_argn("touchscreen", &asked, sizeof(asked)) && asked != 0) {
+		/* boot-arg touchscreen=1 asks for the touch screen; read here only to say that this board has none */
 		hakios_say("touch: touchscreen=1, but this board's board.dts lists no touch controller (\"touch-...\")\n");
 	}
 }
