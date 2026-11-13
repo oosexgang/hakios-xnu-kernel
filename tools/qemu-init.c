@@ -649,6 +649,87 @@ command_ifconfig(int argc, char **argv)
 	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 }
 
+/* ---- ping: ICMP echo on a datagram socket, which needs no privilege ---- */
+
+#define SYS_recvfrom            29
+#define SYS_sendto              133
+#define SYS_setsockopt          105
+#define IPPROTO_ICMP            1
+#define SOL_SOCKET              0xffff
+#define SO_RCVTIMEO             0x1006
+
+static uint16_t
+checksum(const uint8_t *data, size_t size)
+{
+	uint32_t sum = 0;
+
+	for (size_t i = 0; i + 1 < size; i += 2) {
+		sum += (uint32_t)(data[i] << 8 | data[i + 1]);
+	}
+	if (size & 1) {
+		sum += (uint32_t)data[size - 1] << 8;
+	}
+	while (sum >> 16) {
+		sum = (sum & 0xffff) + (sum >> 16);
+	}
+	return (uint16_t)~sum;
+}
+
+static void
+command_ping(int argc, char **argv)
+{
+	struct sockaddr_in to = { 16, AF_INET, 0, { 0 }, { 0 } }, from;
+	struct { int64_t seconds; int32_t microseconds, pad; } wait = { 1, 0, 0 };
+	int count = argc > 2 ? argv[2][0] - '0' : 3, answered = 0;
+
+	if (argc < 2 || !parse_ipv4(argv[1], to.addr) || count < 1 || count > 9) {
+		say("ping ADDRESS [COUNT 1-9]\n");
+		return;
+	}
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_DGRAM, IPPROTO_ICMP, 0, 0, 0);
+	if (sock < 0) {
+		say("ping: no ICMP socket\n");
+		return;
+	}
+	syscall6(SYS_setsockopt, sock, SOL_SOCKET, SO_RCVTIMEO, (long)&wait, sizeof(wait), 0);
+	for (int seq = 1; seq <= count; seq++) {
+		uint8_t packet[64] = { 8, 0, 0, 0, 0x51, 0x55, 0, (uint8_t)seq }, reply[256];
+		uint32_t size = sizeof(from);
+
+		for (int i = 8; i < (int)sizeof(packet); i++) {
+			packet[i] = (uint8_t)i;
+		}
+		uint16_t sum = checksum(packet, sizeof(packet));
+		packet[2] = (uint8_t)(sum >> 8);
+		packet[3] = (uint8_t)sum;
+		if (syscall6(SYS_sendto, sock, (long)packet, sizeof(packet), 0, (long)&to, sizeof(to)) < 0) {
+			say("ping: not sent (no route to it?)\n");
+			break;
+		}
+		long got = syscall6(SYS_recvfrom, sock, (long)reply, sizeof(reply), 0, (long)&from, (long)&size);
+		/* what comes back has the IP header before the ICMP message */
+		long ip = got > 0 && reply[0] >> 4 == 4 ? (reply[0] & 0xf) * 4 : 0;
+		if (got >= ip + 8 && reply[ip] == 0 && reply[ip + 7] == seq) {
+			say_number((uint64_t)(got - ip));
+			say(" bytes from ");
+			say_ipv4(from.addr);
+			say(": icmp_seq=");
+			say_number((uint64_t)seq);
+			say("\n");
+			answered++;
+		} else {
+			say("no answer to icmp_seq=");
+			say_number((uint64_t)seq);
+			say("\n");
+		}
+	}
+	say_number((uint64_t)count);
+	say(" sent, ");
+	say_number((uint64_t)answered);
+	say(" answered\n");
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -672,6 +753,7 @@ static const struct {
 	{ "ps", "the processes", command_ps },
 	{ "uptime", "how long the kernel has run", command_uptime },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
+	{ "ping", "ADDRESS [COUNT] ICMP echo: is it there", command_ping },
 };
 
 static void
