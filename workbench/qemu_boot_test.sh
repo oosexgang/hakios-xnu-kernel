@@ -115,8 +115,9 @@ typed=(
 	'run /sbin/launchd crash illegal'
 	'alarm 5'
 	'vm'
-	'memory 128'
+	'time memory 128'
 	'vm'
+	'time sleep 1'
 	'unix /etc/motd'
 	'fork'
 	'fork /sbin/launchd echo became'
@@ -201,6 +202,13 @@ check "extended attributes are set, replaced, listed and taken away; one taken a
 check "Mach's host port counts the virtual memory's pages and faults (host_statistics64): 128 MB, some 8192 zero-filled faults" \
 	bash -c "grep -aoE '^vm: faults [0-9]+ .*zero filled [0-9]+' '$log' | sed 's/.* //' | tr '\\n' ' ' |
 		awk '{ exit !(NF == 2 && \$2 - \$1 >= 8192 - 64 && \$2 - \$1 < 8192 + 1000) }'"
+# (a second asleep is a second on the clock and next to nothing of a processor's; 128 MB of new memory is mostly
+# the kernel's time, filling pages, not the program's)
+check "the kernel keeps a process's time (getrusage): asleep it uses none, and its page faults are the kernel's" \
+	bash -c "grep -aA1 '^# time sleep 1' '$log' | grep -aoE '^time: [0-9]+ ms; of the processors. time [0-9]+ ms in user space, [0-9]+ ms' |
+		awk '{ exit !(\$2 >= 1000 && \$2 < 1600 && \$8 + \$13 < 100) }' &&
+		grep -aE '^time: [0-9]+ ms; of the processors. time [0-9]+ ms in user space, [0-9]+ ms' '$log' | head -1 |
+		awk '{ exit !(\$13 > \$8) }'"
 check "the kernel holds a process to its limit of descriptors (setrlimit): the 20th is refused with EMFILE" \
 	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24' "$log"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
