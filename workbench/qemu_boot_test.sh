@@ -47,6 +47,7 @@ echo "a page from the computer QEMU runs on" > "$W/www/page.txt"
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'sysctl hw.ncpu hw.board.name kern.ostype'
+	'sysctl kern.maxfiles=20000 kern.procname=shell'
 	'ifconfig en0 10.0.2.15'
 	'ping 10.0.2.2 2'
 	'serve 1'
@@ -83,9 +84,11 @@ typed=(
 	'ioreg 3'
 	'ioprop IOService:/ IOPlatformSerialNumber'
 )
+# (QEMU itself takes the forwarded port's connections, and closes them while nothing listens in the
+# machine: curl tries again until the shell's serve is there)
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
 	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
-	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
+	--forward 18080:80 --then "python3 '$HERE/qemu_host.py' '$W/www' 18081 18082 120 & for try in \$(seq 90); do curl -s -m 10 http://127.0.0.1:18080/test > '$W/page'; [ -s '$W/page' ] && break; sleep 1; done; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25; wait" \
 	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
@@ -100,6 +103,8 @@ check "its first process runs, as pid 1" grep -aq "user space: /sbin/launchd, pi
 check "... and hears from the kernel what it is" grep -aq "board      qemu-virt" "$log"
 check "its shell reads the console and answers with the kernel's values, typed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'hw.ncpu: 2' && tr -d '\\r' < '$log' | grep -qx 'kern.ostype: Darwin'"
+check "the kernel takes values set: a number, and its own name for the process" \
+	bash -c "tr -d '\\r' < '$log' | grep -qx 'kern.maxfiles: 20000' && tr -d '\\r' < '$log' | grep -qx 'kern.procname: shell'"
 check "en0 takes an address and comes up" bash -c "tr -d '\\r' < '$log' | grep -qx $'\\tinet 10.0.2.15'"
 check "QEMU's gateway answers its pings, through the virtio network driver" grep -aq "2 sent, 2 answered" "$log"
 check "its TCP serves a page to this machine, through QEMU's forwarded port" grep -q "^Served by /sbin/launchd" "$W/page"

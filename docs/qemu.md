@@ -44,7 +44,7 @@ line at a time:
 
 | Command | What it does, and with what of the kernel |
 | --- | --- |
-| `about`, `sysctl NAME...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4). |
+| `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
 | `ls [PATH]`, `cat FILE` | Directories and files: getdirentries64, lstat64, read. |
 | `ps`, `uptime` | The processes (proc_info) and the time since boot. |
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
