@@ -30,6 +30,10 @@
 #                       (QEMU_QMP=PATH base/qemu/touch.py tap 0.5 0.5)
 #     --no-devices      without the machine's virtio devices: by default it has a network card (QEMU's own
 #                       network behind it), a keyboard and a tablet, and the kernel is told to take them
+#     --interactive     the console on this terminal, to type on (the shell of tools/qemu-root.sh's root);
+#                       Ctrl-C ends it. --until, --type and --screen are not for it
+#     --window          the screen in a window of QEMU's, whose keyboard and pointer are the machine's
+#                       virtio keyboard and tablet (the kernel's buttons and touch screen)
 #
 # Needs qemu-system-aarch64 and an aarch64 UEFI (Debian/Ubuntu: qemu-system-arm qemu-efi-aarch64).
 # The kernel: kernel/build.sh (with LLVM's tools or theos'); the loader: loader/build.sh, made here if
@@ -37,7 +41,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio=''
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio='' interactive='' display=none
 with_devices=1
 while [ $# -gt 1 ]; do
 	case $1 in
@@ -59,6 +63,8 @@ while [ $# -gt 1 ]; do
 	--then) then=$2; shift 2 ;;
 	--monitor) monitor=$(realpath -m "$2"); shift 2 ;;
 	--qmp) qmp=$(realpath -m "$2"); shift 2 ;;
+	--interactive) interactive=1; shift ;;
+	--window) display=gtk; shift ;;
 	*) die "unknown option $1 (the head of this file lists them)" ;;
 	esac
 done
@@ -96,12 +102,19 @@ python3 "$HERE/loader/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdi
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 [ -n "$monitor" ] || monitor=$W/monitor
 : > "$log"
-qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp "$cpus" -m 6G -accel tcg,tb-size=384 \
-	-drive if=pflash,format=raw,readonly=on,file="$firmware" -drive if=pflash,format=raw,file="$W/vars.fd" \
-	-drive file=fat:rw:"$W/esp",format=raw,if=virtio -device virtio-rng-pci -device ramfb \
-	-device loader,file="$W/payload.bin",addr=0xF0000000,force-raw=on \
-	-display none -chardev "socket,id=console,path=$W/console,server=on,wait=off,logfile=$log" \
-	-serial chardev:console -monitor unix:"$monitor",server,nowait -no-reboot "${devices[@]}" "${extra[@]}" 2> "$W/qemu.err" &
+machine=(qemu-system-aarch64 -M 'virt,gic-version=3' -cpu cortex-a76 -smp "$cpus" -m 6G -accel 'tcg,tb-size=384'
+	-drive "if=pflash,format=raw,readonly=on,file=$firmware" -drive "if=pflash,format=raw,file=$W/vars.fd"
+	-drive "file=fat:rw:$W/esp,format=raw,if=virtio" -device virtio-rng-pci -device ramfb
+	-device "loader,file=$W/payload.bin,addr=0xF0000000,force-raw=on" -display "$display"
+	-serial chardev:console -monitor "unix:$monitor,server,nowait" -no-reboot "${devices[@]}" "${extra[@]}")
+if [ -n "$interactive" ]; then
+	# (in the foreground: a command a script puts in the background reads nothing of the terminal)
+	echo "qemu-kernel: the console is this terminal (Ctrl-C ends it); the serial log: $log" >&2
+	"${machine[@]}" -chardev "stdio,id=console,signal=on,logfile=$log" 2> "$W/qemu.err"
+	echo "qemu-kernel: QEMU has ended; the serial log: $log ($(wc -l < "$log") lines)" >&2
+	exit 0
+fi
+"${machine[@]}" -chardev "socket,id=console,path=$W/console,server=on,wait=off,logfile=$log" 2> "$W/qemu.err" &
 qemu=$!
 started=$SECONDS
 reached=''
