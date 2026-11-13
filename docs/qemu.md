@@ -59,6 +59,7 @@ line at a time:
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
 | `date`, `sleep SECONDS` | The time of day, UTC, as the kernel has it from QEMU's clock; and a pause. |
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended. |
+| `crash null`, `illegal`, `breakpoint` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint; the shell sees the signal the kernel made of it. |
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
@@ -76,7 +77,8 @@ APFS disk on the virtio block device is mounted and read; a tone played on the v
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
-port and come back unchanged; the date is this year's; a signal ends a process in the background; a pipe
+port and come back unchanged; the date is this year's; a signal ends a process in the background, and a process's
+mistakes end it with the signal they should; a pipe
 carries what a child writes into it; a file is written in ramfs, read back and removed; two threads run on the two processors at once; a mapped
 file is what reading it gives; kqueue's timer keeps time and it sees a pipe become readable; nothing panics.
 
