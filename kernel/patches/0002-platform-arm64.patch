@@ -1753,6 +1753,33 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
  	// Return to arm_init()
  	ret
  
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -119,6 +119,12 @@ TUNABLE(bool, allow_printf_from_interrupts_disabled_context, "nointr_consio", fa
+ #define allow_printf_from_interrupts_disabled_context false
+ #endif
+ 
++/*
++ * console_screen=1: what goes to the serial console goes to the video console too (a verbose boot shows
++ * the whole log on the screen, not only what came before the serial port was taken; hakios)
++ */
++static TUNABLE(bool, console_on_screen_too, "console_screen", false);
++
+ SECURITY_READ_ONLY_EARLY(struct console_ops) cons_ops[] = {
+ 	{
+ 		.putc = serial_putc_options, .getc = _serial_getc,
+@@ -261,6 +267,10 @@ _cnputc(char c, bool poll)
+ 	}
+ 
+ 	cons_ops[idx].putc(c, poll);
++	/* hakios: the console on the screen as well as on the serial port (QEMU: a log to read, a screen to look at) */
++	if (idx == SERIAL_CONS_OPS && console_on_screen_too) {
++		vcputc_options(c, poll);
++	}
+ }
+ 
+ /**
 diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
 --- a/osfmk/console/video_console.c
 +++ b/osfmk/console/video_console.c
