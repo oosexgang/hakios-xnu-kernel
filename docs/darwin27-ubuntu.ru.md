@@ -102,6 +102,8 @@ tools/qemu-kernel.sh --cpus 2 --ramdisk root.img --boot-args rd=md0 --until 'a s
     --type 'help\nioreg 3\nthreads\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
 ```
 
+Самому поработать в оболочке ядра: `tools/qemu-kernel.sh --interactive --cpus 2 --ramdisk root.img
+--boot-args rd=md0 <ядро>` (консоль в этом терминале, выход Ctrl-C; с `--window` ещё и экран в окне).
 Что умеет оболочка в QEMU и что проверяет `make qemu`: [qemu.md](qemu.md).
 
 ## 4. IPSW Darwin 27.2

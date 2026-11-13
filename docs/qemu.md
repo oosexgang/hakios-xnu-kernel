@@ -15,7 +15,11 @@ tools/qemu-root.sh root.img                         # a root: /sbin/launchd and 
 tools/qemu-kernel.sh --ramdisk root.img --boot-args rd=md0 --until 'a shell on the console' \
     --type 'help\nps\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
 make qemu                                           # all of that, checked (workbench/qemu_boot_test.sh)
+tools/qemu-kernel.sh --interactive --cpus 2 --ramdisk root.img --boot-args rd=md0 KERNEL   # its shell, by hand
 ```
+
+`--interactive` makes this terminal the machine's console, to type on (Ctrl-C ends it); `--window` shows
+its screen in a window of QEMU's, whose keyboard and pointer are the machine's keyboard and tablet.
 
 `tools/qemu-kernel.sh` keeps what the serial port says (`--log`), stops at a text (`--until`), types on
 the console (`--type`, a line once the shell's prompt is back), takes the screen as a PNG (`--screen`),
