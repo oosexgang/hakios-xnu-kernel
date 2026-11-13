@@ -196,7 +196,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
  
 -	if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
-+	// A memory-device root needs no filesystem kext, so do not sit out the timeout for one
++	/* rd=mdN, a root on a memory device, needs no file system's driver: no 30-second wait for one */
 +	char rdEarly[kMaxBootVar];
 +	uint64_t bsdWait = 30ULL * kSecondScale;
 +	if (PE_parse_boot_argn("rd", rdEarly, sizeof(rdEarly)) && rdEarly[0] == 'm' && rdEarly[1] == 'd') {
