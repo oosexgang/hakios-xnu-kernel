@@ -11,6 +11,21 @@ static struct {
 static unsigned dsu_extents;
 static uint64_t dsu_bytes;
 
+/*
+ * A 64-bit number of the metadata, a byte at a time: an extent is 24 bytes packed, so its sector (at 12)
+ * lies on a 4-byte boundary only, and an unaligned load is no load to make (it faults in Device memory).
+ */
+static uint64_t
+dsu_u64(const uint8_t *p)
+{
+	uint64_t v = 0;
+
+	for (int i = 7; i >= 0; i--) {
+		v = v << 8 | p[i];
+	}
+	return v;
+}
+
 /* The extents of system_gsi from one lp_metadata found at `at` in buffer `p` (geometry first); 0 = none. */
 static int
 dsu_parse(const uint8_t *p, uint64_t room, uint64_t userdata_sectors)
@@ -53,7 +68,7 @@ dsu_parse(const uint8_t *p, uint64_t room, uint64_t userdata_sectors)
 		}
 		for (uint32_t x = 0; x < n; x++) {
 			const uint8_t *ex = t + eo + (uint64_t)(first + x) * es;
-			uint64_t count = *(const uint64_t *)ex, sector = *(const uint64_t *)(ex + 12);
+			uint64_t count = dsu_u64(ex), sector = dsu_u64(ex + 12);
 
 			/* (not "sector + count > userdata_sectors": a start or a length near 2^64 makes that sum small) */
 			if (*(const uint32_t *)(ex + 8) != 0 /* linear */ || count > userdata_sectors || sector > userdata_sectors - count) {
