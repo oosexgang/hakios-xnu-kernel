@@ -646,7 +646,7 @@ master_on(void)
 		return false;
 	}
 	spin_us(505);
-	/* swrm_runtime_resume() */
+	/* swrm_runtime_resume(): the reset written twice, as it does */
 	if (!put(&tx_swr, "COMP_SW_RESET", SWRM_COMP_SW_RESET, 1, 0) || !put(&tx_swr, "COMP_SW_RESET", SWRM_COMP_SW_RESET, 1, 0) ||
 	    !put(&tx_swr, "MCP_BUS_CTRL", SWRM_MCP_BUS_CTRL, 1, 0)) {
 		return false;
