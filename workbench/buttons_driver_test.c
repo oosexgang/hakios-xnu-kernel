@@ -170,6 +170,24 @@ three_keys(void)
 	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
 	press_and_release(volume_down_down, pon_up, HAKIOS_BUTTON_VOLUME_DOWN, "volume down");
 	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
+	CHECK(spmi.past_the_table == 0, "no channel looked at past the %u the arbiter has (%u)", SPMI_CHANNELS, spmi.past_the_table);
+	no_write();
+}
+
+/* the pin's only channel is another system's: reading takes no channel of one's own, so it is read
+ * through that one (and nothing is written through it) */
+static void
+only_another_systems_channel(void)
+{
+	phone("phone-cmd");
+	spmi.map[9] = 0;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	CHECK(logged("step 5: watching power volume-up volume-down"), "all three watched: %s", log_text);
+	CHECK(logged("read the type of GPIO6 of the PM8350 through channel 5"), "the pin read through the other system's channel");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
+	CHECK(spmi.denied == 0, "nothing tried through a channel that is not this system's (%u)", spmi.denied);
 	no_write();
 }
 
@@ -429,7 +447,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "three_keys", three_keys }, { "another_wiring", another_wiring }, { "with_the_touch_screen", with_the_touch_screen }, { "off_when_told", off_when_told },
+		{ "three_keys", three_keys }, { "only_another_systems_channel", only_another_systems_channel }, { "another_wiring", another_wiring }, { "with_the_touch_screen", with_the_touch_screen }, { "off_when_told", off_when_told },
 		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
