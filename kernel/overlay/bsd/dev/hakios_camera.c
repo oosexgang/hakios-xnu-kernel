@@ -1,6 +1,7 @@
 /*
  * Cameras on an SM7325's camera blocks. How each sensor is wired is the board's camera { } and its
- * sensor@N nodes; what each sensor chip is (chips[] below) and the SoC's camera clock controller are this
+ * sensor@N nodes; where the camera's blocks and clocks are, the SoC file's camera { }; what each sensor
+ * chip is (chips[] below), and how the clock controller's PLLs are set up and its clocks divided, this
  * file's. It was written on a phone with four: the macro one, an OmniVision OV02B10 (2 MP,
  * "<phone>_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD (108 MP, "<phone>_sunny_s5khm2sd_wide"),
  * the front one and the ultra-wide one, described below as an example. Every number was found on
@@ -148,13 +149,6 @@ static const struct chip {
 	{ "OV16A1Q", "camera-ov16a1q.tab", REGS_OV16, 3, 0, false, 0x100, 0xf80 },
 	{ "S5K4H7", "camera-s5k4h7.tab", REGS_SMIA, 1, 2, false, 32, 0x200 },
 };
-/* camcc of the SM7325 (camcc-yupik.c): MCLK n's RCG and branch; CSIPHY n's branch, and its timer's RCG and branch */
-static const struct { uint32_t rcg, branch; } mclk_clocks[4] = {
-	{ 0xe000, 0xe018 }, { 0xe01c, 0xe034 }, { 0xe038, 0xe050 }, { 0xe054, 0xe06c },
-};
-static const struct { uint32_t branch, timer_rcg, timer_branch; } csiphy_clocks[4] = {
-	{ 0xe0c8, 0xe0ac, 0xe0c4 }, { 0xe0ec, 0xe0d0, 0xe0e8 }, { 0xe110, 0xe0f4, 0xe10c }, { 0xe138, 0xe11c, 0xe134 },
-};
 /* a sensor as the rest of this file works on it: the board's wiring, its chip's ways, its clocks' registers */
 struct sensor_hw {
 	char            name[40];       /* "macro (OV02B10)" */
@@ -189,7 +183,7 @@ sensors_from_board(void)
 		for (unsigned c = 0; c < sizeof(chips) / sizeof(chips[0]); c++) {
 			chip = strcmp(chips[c].name, wired->chip) == 0 ? &chips[c] : chip;
 		}
-		if (chip == NULL || wired->mclk >= 4 || wired->csiphy >= 4) {
+		if (chip == NULL || wired->mclk >= board->camera.mclk_count || wired->csiphy >= board->camera.csiphy_count) {
 			say("camera: disabled: the board's %s camera is %s, which this driver does not know\n", wired->name,
 			    chip == NULL ? wired->chip : "on an MCLK or a CSIPHY the SoC has not");
 			return false;
@@ -208,12 +202,12 @@ sensors_from_board(void)
 		to->scl = wired->scl;
 		to->reset = wired->reset;
 		to->mclk_pin = wired->mclk_pin;
-		to->mclk_cmd = mclk_clocks[wired->mclk].rcg;
-		to->mclk_cbcr = mclk_clocks[wired->mclk].branch;
+		to->mclk_cmd = board->camera.mclk_rcg[wired->mclk];
+		to->mclk_cbcr = board->camera.mclk_branch[wired->mclk];
 		to->csiphy = wired->csiphy;
-		to->phy_cbcr = csiphy_clocks[wired->csiphy].branch;
-		to->timer_cmd = csiphy_clocks[wired->csiphy].timer_rcg;
-		to->timer_cbcr = csiphy_clocks[wired->csiphy].timer_branch;
+		to->phy_cbcr = board->camera.csiphy_branch[wired->csiphy];
+		to->timer_cmd = board->camera.csiphy_timer_rcg[wired->csiphy];
+		to->timer_cbcr = board->camera.csiphy_timer_branch[wired->csiphy];
 		to->vana = wired->vana;
 		to->vdig = wired->vdig;
 		to->vio = wired->vio;
@@ -678,9 +672,10 @@ ldo_off(unsigned n)
 /* ---- the camera's clocks: camcc --------------------------------------------------------------------- */
 
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
-#define GCC_CAMERA_AHB_CBCR     0x26004         /* always on (gcc-yupik.c keeps it so) */
-#define GCC_CAMERA_XO_CBCR      0x26028
-#define CAMCC_PHYS              (hakios_board()->camera.camcc)  /* the SoC file's camera { } */
+#define CAMERA                  (hakios_board()->camera)        /* the SoC file's camera { } */
+#define GCC_CAMERA_AHB_CBCR     (CAMERA.gcc_ahb_branch)         /* always on (Linux keeps it so) */
+#define GCC_CAMERA_XO_CBCR      (CAMERA.gcc_xo_branch)
+#define CAMCC_PHYS              (CAMERA.camcc)
 #define CAMCC_SIZE              0x20000UL
 #define MCLK_CMD_RCGR           (hw->mclk_cmd)          /* [0] update, [31] the root is off */
 #define MCLK_CFG_RCGR           (hw->mclk_cmd + 4)      /* [4:0] divider (2n - 1), [10:8] source (0: the crystal), [13:12] M/N mode */
@@ -688,7 +683,7 @@ ldo_off(unsigned n)
 #define MCLK_N                  (hw->mclk_cmd + 12)
 #define MCLK_D                  (hw->mclk_cmd + 16)
 #define MCLK_CBCR               (hw->mclk_cbcr)         /* [0] enable, [31] the clock is off */
-#define TITAN_TOP_GDSCR         0xc194          /* [0] collapse, [11] keep the registers, [31] on */
+#define TITAN_TOP_GDSCR         (CAMERA.top_gdsc)       /* [0] collapse, [11] keep the registers, [31] on */
 #define CBCR_OFF                (1u << 31)
 #define CMD_UPDATE              1u
 #define GDSC_COLLAPSE           1u
@@ -699,13 +694,13 @@ static uint32_t found_mclk_cfg_rcgr, found_mclk_cbcr, found_gdscr, found_mclk_mn
 static bool gdsc_switched, mclk_switched, pll2_switched;
 
 /*
- * camcc's PLL2 (Zonda), for the 24 MHz MCLK the ultra-wide sensor's module file asks for:
- * camcc-yupik.c's cam_cc_pll2_config ("1440MHz Configuration"), set as clk_zonda_pll_configure()
+ * camcc's PLL2 (Zonda), for the 24 MHz MCLK the ultra-wide sensor's module file asks for (where it is: the
+ * SoC file's camera { } pll2): camcc-yupik.c's cam_cc_pll2_config ("1440MHz Configuration"), set as clk_zonda_pll_configure()
  * and started as clk_zonda_pll_enable() do it; the MCLK RCG takes its early output (source 5)
  * divided by 10 and by M/N 1/6 (ftbl_cam_cc_mclk0_clk_src's 24 MHz). Taken down as
  * clk_zonda_pll_disable() does, with the MCLK.
  */
-#define PLL2_BASE               0x2000
+#define PLL2_BASE               (CAMERA.pll2)
 #define PLL2_MODE               0x00            /* [0] outputs, [1] out of bypass, [2] out of reset, [20] voted, [29] frequency locked, [31] locked */
 #define PLL2_L_VAL              0x04
 #define PLL2_USER_CTL           0x0c            /* [3:0] the outputs */
@@ -1493,7 +1488,7 @@ look_around(void)
  *          asked through DRV 2's second TCS for requests made at once, as camcc's vdd_cx and vdd_mx
  *          votes are, and given back (position 0) at the end: DRV 2 holds no other vote on them
  *          (cam=1 looks: none of its TCSs has a command for either)
- *   GCC    camera_hf_axi (0x26010), camera_sf_axi (0x2601c)
+ *   GCC    camera_hf_axi, camera_sf_axi (where each is: the SoC file's camera { }, as all the clocks below)
  *   camcc  PLL0 (Lucid, 1200 MHz: L 0x3e, alpha 0x8000, its config and user values), then the RCGs
  *          slow_ahb 80 MHz, camnoc_axi 150, cphy_rx 400, csiNphytimer 300, ife_lite_0_csid 400,
  *          ife_lite_0 400 (all from PLL0's even (600) or odd (400) output) and the branches
@@ -1594,7 +1589,8 @@ rails(bool on)
 	return done;
 }
 
-/* camcc's PLL0 (Lucid): the registers of clk-alpha-pll.c's Lucid layout */
+/* camcc's PLL0 (Lucid; where it is: the SoC file's camera { } pll0): the registers of clk-alpha-pll.c's Lucid layout */
+#define PLL0                    (CAMERA.pll0)
 #define PLL_MODE                0x00            /* [0] outputs, [2] out of reset, [23] update bypass, [31] locked */
 #define PLL_L_VAL               0x04
 #define PLL_CAL_L_VAL           0x08
@@ -1624,15 +1620,16 @@ camcc_any(uint32_t offset, uint32_t value, uint32_t check)
 static bool
 pll0_up(void)
 {
-	static const struct {
+	const struct {
 		uint32_t offset, value;
 	} config[] = {                  /* camcc-yupik.c: cam_cc_pll0_config ("1200MHz Configuration"); CAL_L as clk-alpha-pll.c's default */
-		{ PLL_L_VAL, 0x3e }, { PLL_CAL_L_VAL, 0x44 }, { PLL_ALPHA_VAL, 0x8000 }, { PLL_CONFIG_CTL, 0x20485699 },
-		{ PLL_CONFIG_CTL_U, 0x00002261 }, { PLL_CONFIG_CTL_U1, 0x329a299c }, { PLL_USER_CTL, 0x00003101 },
-		{ PLL_USER_CTL_U, 0x00000805 }, { PLL_USER_CTL_U1, 0x00000000 },
+		{ PLL0 + PLL_L_VAL, 0x3e }, { PLL0 + PLL_CAL_L_VAL, 0x44 }, { PLL0 + PLL_ALPHA_VAL, 0x8000 },
+		{ PLL0 + PLL_CONFIG_CTL, 0x20485699 }, { PLL0 + PLL_CONFIG_CTL_U, 0x00002261 },
+		{ PLL0 + PLL_CONFIG_CTL_U1, 0x329a299c }, { PLL0 + PLL_USER_CTL, 0x00003101 },
+		{ PLL0 + PLL_USER_CTL_U, 0x00000805 }, { PLL0 + PLL_USER_CTL_U1, 0x00000000 },
 	};
 
-	if (rd(camcc + PLL_MODE) & 1) {
+	if (rd(camcc + PLL0 + PLL_MODE) & 1) {
 		give_up("camcc's PLL0 is running already (somebody else's)");
 		return false;
 	}
@@ -1643,23 +1640,26 @@ pll0_up(void)
 	}
 	pll_on = true;
 	/* clk_lucid_pll_configure(): update bypass, outputs off, standby, out of reset */
-	if (!camcc_any(PLL_MODE, rd(camcc + PLL_MODE) | 1u << 23, 1u << 23) || !camcc_any(PLL_MODE, rd(camcc + PLL_MODE) & ~1u, 1) ||
-	    !camcc_any(PLL_OPMODE, 0, 1) || !camcc_any(PLL_MODE, rd(camcc + PLL_MODE) | 1u << 2, 1u << 2)) {
+	if (!camcc_any(PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) | 1u << 23, 1u << 23) ||
+	    !camcc_any(PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) & ~1u, 1) || !camcc_any(PLL0 + PLL_OPMODE, 0, 1) ||
+	    !camcc_any(PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) | 1u << 2, 1u << 2)) {
 		return false;
 	}
 	/* alpha_pll_lucid_enable(): run, locked, the outputs on */
-	if (!camcc_any(PLL_OPMODE, 1, 1)) {
+	if (!camcc_any(PLL0 + PLL_OPMODE, 1, 1)) {
 		return false;
 	}
-	if (!wait_bits(PLL_MODE, 1u << 31, 1u << 31, 1000)) {
-		say("camera: camcc's PLL0 does not lock (mode %#x)\n", rd(camcc + PLL_MODE));
+	if (!wait_bits(PLL0 + PLL_MODE, 1u << 31, 1u << 31, 1000)) {
+		say("camera: camcc's PLL0 does not lock (mode %#x)\n", rd(camcc + PLL0 + PLL_MODE));
 		give_up("a PLL that does not lock");
 		return false;
 	}
-	if (!camcc_any(PLL_USER_CTL, rd(camcc + PLL_USER_CTL) | 7, 7) || !camcc_any(PLL_MODE, rd(camcc + PLL_MODE) | 1, 1)) {
+	if (!camcc_any(PLL0 + PLL_USER_CTL, rd(camcc + PLL0 + PLL_USER_CTL) | 7, 7) ||
+	    !camcc_any(PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) | 1, 1)) {
 		return false;
 	}
-	say("camera: camcc's PLL0 locked at 1200 MHz (mode %#x, user_ctl %#x)\n", rd(camcc + PLL_MODE), rd(camcc + PLL_USER_CTL));
+	say("camera: camcc's PLL0 locked at 1200 MHz (mode %#x, user_ctl %#x)\n", rd(camcc + PLL0 + PLL_MODE),
+	    rd(camcc + PLL0 + PLL_USER_CTL));
 	return true;
 }
 
@@ -1670,12 +1670,12 @@ pll0_down(void)
 		return;
 	}
 	/* alpha_pll_lucid_disable(), then back into reset as it was found */
-	wr(camcc + PLL_MODE, rd(camcc + PLL_MODE) & ~1u);
-	wr(camcc + PLL_USER_CTL, rd(camcc + PLL_USER_CTL) & ~7u);
-	wr(camcc + PLL_OPMODE, 0);
-	wr(camcc + PLL_MODE, rd(camcc + PLL_MODE) & ~(1u << 2));
+	wr(camcc + PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) & ~1u);
+	wr(camcc + PLL0 + PLL_USER_CTL, rd(camcc + PLL0 + PLL_USER_CTL) & ~7u);
+	wr(camcc + PLL0 + PLL_OPMODE, 0);
+	wr(camcc + PLL0 + PLL_MODE, rd(camcc + PLL0 + PLL_MODE) & ~(1u << 2));
 	pll_on = false;
-	say("camera: camcc's PLL0 off (mode %#x)\n", rd(camcc + PLL_MODE));
+	say("camera: camcc's PLL0 off (mode %#x)\n", rd(camcc + PLL0 + PLL_MODE));
 }
 
 /* An RCG set (source, divider field 2n - 1, no M/N) and updated; then branches on. */
@@ -1685,13 +1685,13 @@ struct rcg {
 	uint32_t        found_cfg;
 	bool            set;
 };
-static struct rcg rcgs[] = {
-	{ "slow_ahb 80 MHz", 0x7058, 2, 14 },           /* PLL0 even (600) / 7.5 */
-	{ "camnoc_axi 150 MHz", 0xc124, 2, 7 },         /* / 4 */
-	{ "cphy_rx 400 MHz", 0xa064, 2, 2 },            /* / 1.5 */
-	{ "csiNphytimer 300 MHz", 0, 2, 3 },            /* / 2 (the sensor's CSIPHY's: hw->timer_cmd) */
-	{ "ife_lite_0_csid 400 MHz", 0xc020, 2, 2 },    /* / 1.5 */
-	{ "ife_lite_0 400 MHz", 0xc004, 3, 1 },         /* PLL0 odd (400) / 1 */
+static struct rcg rcgs[] = {                    /* (where each is: the SoC file's camera { }, in clocks_up()) */
+	{ "slow_ahb 80 MHz", 0, 2, 14 },                /* PLL0 even (600) / 7.5 */
+	{ "camnoc_axi 150 MHz", 0, 2, 7 },              /* / 4 */
+	{ "cphy_rx 400 MHz", 0, 2, 2 },                 /* / 1.5 */
+	{ "csiNphytimer 300 MHz", 0, 2, 3 },            /* / 2 (the sensor's CSIPHY's) */
+	{ "ife_lite_0_csid 400 MHz", 0, 2, 2 },         /* / 1.5 */
+	{ "ife_lite_0 400 MHz", 0, 3, 1 },              /* PLL0 odd (400) / 1 */
 };
 struct branch {
 	const char *    name;
@@ -1699,20 +1699,29 @@ struct branch {
 	uint32_t        cbcr;
 	bool            set;
 };
-static struct branch branches[] = {
-	{ "gcc camera_hf_axi", true, 0x26010 }, { "gcc camera_sf_axi", true, 0x2601c },
-	{ "cpas_ahb", false, 0xc11c }, { "camnoc_axi", false, 0xc140 }, { "csiphyN", false, 0 },
-	{ "csiNphytimer", false, 0 },
-	{ "ife_lite_0_csid", false, 0xc038 }, { "ife_lite_0_cphy_rx", false, 0xc040 }, { "ife_lite_0", false, 0xc01c },
+static struct branch branches[] = {            /* (the same) */
+	{ "gcc camera_hf_axi", true, 0 }, { "gcc camera_sf_axi", true, 0 },
+	{ "cpas_ahb", false, 0 }, { "camnoc_axi", false, 0 }, { "csiphyN", false, 0 }, { "csiNphytimer", false, 0 },
+	{ "ife_lite_0_csid", false, 0 }, { "ife_lite_0_cphy_rx", false, 0 }, { "ife_lite_0", false, 0 },
 };
 
 static bool
 clocks_up(void)
 {
-	/* (the sensor's CSIPHY: its own branch and timer) */
-	rcgs[3].cmd = hw->timer_cmd;
-	branches[4].cbcr = hw->phy_cbcr;
-	branches[5].cbcr = hw->timer_cbcr;
+	const uint32_t rcg_at[] = { CAMERA.slow_ahb_rcg, CAMERA.camnoc_axi_rcg, CAMERA.cphy_rx_rcg, hw->timer_cmd,
+	                            CAMERA.ife_csid_rcg, CAMERA.ife_rcg };
+	const uint32_t branch_at[] = { CAMERA.gcc_hf_axi_branch, CAMERA.gcc_sf_axi_branch, CAMERA.cpas_ahb_branch,
+	                               CAMERA.camnoc_axi_branch, hw->phy_cbcr, hw->timer_cbcr, CAMERA.ife_csid_branch,
+	                               CAMERA.ife_cphy_rx_branch, CAMERA.ife_branch };
+
+	_Static_assert(sizeof(rcg_at) / sizeof(rcg_at[0]) == sizeof(rcgs) / sizeof(rcgs[0]), "an RCG's place each");
+	_Static_assert(sizeof(branch_at) / sizeof(branch_at[0]) == sizeof(branches) / sizeof(branches[0]), "a branch's each");
+	for (unsigned i = 0; i < sizeof(rcgs) / sizeof(rcgs[0]); i++) {
+		rcgs[i].cmd = rcg_at[i];
+	}
+	for (unsigned i = 0; i < sizeof(branches) / sizeof(branches[0]); i++) {
+		branches[i].cbcr = branch_at[i];
+	}
 	for (unsigned i = 0; i < sizeof(rcgs) / sizeof(rcgs[0]); i++) {
 		struct rcg *r = &rcgs[i];
 		uint32_t cfg = r->cmd + 4;

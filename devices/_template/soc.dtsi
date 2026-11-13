@@ -70,6 +70,32 @@
 		                                // "lite" one (qcom,ife-lite, reg "ife-lite")
 		csid = <0x0acc8000>;            // ... and its CSI decoder (qcom,csid-lite, reg "csid-lite")
 		csiphy = <0x0ace0000>;          // the first CSI receiver (qcom,csiphy, cell-index 0); the others follow at 0x2000
+		// Where the clocks the driver switches are: offsets in camcc, as Linux's camcc-CODENAME.c has them (each
+		// clock's .halt_reg for a branch, .cmd_rcgr for an RCG, .gdscr for the power domain, .offset for a PLL),
+		// and the GCC's camera clocks in the GCC (gcc-CODENAME.c). How the PLLs are set up, and the dividers, are
+		// the driver's: it speaks a Lucid PLL0 and a Zonda PLL2.
+		top-gdsc = <0xc194>;            // titan_top_gdsc: the camera's top power domain
+		pll0 = <0x0000>;                // cam_cc_pll0: the camera's clocks come from it
+		pll2 = <0x2000>;                // cam_cc_pll2: an MCLK that is not the crystal's 19.2 MHz comes from it
+		mclk-rcg = <0xe000 0xe01c 0xe038 0xe054>;       // cam_cc_mclkN_clk_src, one for each MCLK (a sensor's mclk)
+		mclk-branch = <0xe018 0xe034 0xe050 0xe06c>;    // cam_cc_mclkN_clk, in the same order
+		csiphy-branch = <0xe0c8 0xe0ec 0xe110 0xe138>;  // cam_cc_csiphyN_clk, one for each CSI receiver (a sensor's csiphy)
+		csiphy-timer-rcg = <0xe0ac 0xe0d0 0xe0f4 0xe11c>;       // cam_cc_csiNphytimer_clk_src, in the same order
+		csiphy-timer-branch = <0xe0c4 0xe0e8 0xe10c 0xe134>;    // cam_cc_csiNphytimer_clk, in the same order
+		slow-ahb-rcg = <0x7058>;        // cam_cc_slow_ahb_clk_src
+		camnoc-axi-rcg = <0xc124>;      // cam_cc_camnoc_axi_clk_src
+		cphy-rx-rcg = <0xa064>;         // cam_cc_cphy_rx_clk_src
+		ife-csid-rcg = <0xc020>;        // cam_cc_ife_lite_0_csid_clk_src: of the IFE above
+		ife-rcg = <0xc004>;             // cam_cc_ife_lite_0_clk_src
+		cpas-ahb-branch = <0xc11c>;     // cam_cc_cpas_ahb_clk
+		camnoc-axi-branch = <0xc140>;   // cam_cc_camnoc_axi_clk
+		ife-csid-branch = <0xc038>;     // cam_cc_ife_lite_0_csid_clk
+		ife-cphy-rx-branch = <0xc040>;  // cam_cc_ife_lite_0_cphy_rx_clk
+		ife-branch = <0xc01c>;          // cam_cc_ife_lite_0_clk
+		gcc-ahb-branch = <0x26004>;     // gcc_camera_ahb_clk, in the GCC
+		gcc-xo-branch = <0x26028>;      // gcc_camera_xo_clk
+		gcc-hf-axi-branch = <0x26010>;  // gcc_camera_hf_axi_clk
+		gcc-sf-axi-branch = <0x2601c>;  // gcc_camera_sf_axi_clk
 	};
 
 	// The low-power audio subsystem's blocks on the microphones' path, for the feature "mic-wcd938x". From the

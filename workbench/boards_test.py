@@ -731,7 +731,7 @@ class Generate(Sandbox):
         for wrong, said in ((wide.replace('"S5KHM2SD"', '"IMX766"'), 'chip = \'IMX766\': one of OV02B10'),
                             (wide.replace('"ldo1 1000mV"', '"ldo1 1V"'), "vdig = 'ldo1 1V': not in the form"),
                             (wide.replace('"ldoc9 2800mV"', '"L9C"'), "focus-supply = 'L9C': not in the form"),
-                            (wide.replace('mclk = <1>;', 'mclk = <4>;'), 'mclk and csiphy are numbers'),
+                            (wide.replace('mclk = <1>;', 'mclk = <8>;'), 'mclk and csiphy are numbers'),
                             (wide.replace('cci = <0 1>;', 'cci = <2 1>;'), 'cci is the CCI and its master'),
                             (wide.replace('reset = <21>;', 'reset = <106>;'), 'different pins of the SoC'),    # (the supply's switch)
                             (wide.replace('"wide"', '"front"'), "no other sensor's"),
@@ -887,12 +887,27 @@ class Generate(Sandbox):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "camera-sm7325"')
         self.assertIn('feature "camera-sm7325" needs smmu { } in soc.dtsi', self.problems())
         self.assertIn('feature "camera-sm7325" needs camera { } in soc.dtsi', self.problems())
-        self.soc('\tthermal {', '\tcamera {\n\t\tcamcc = <0xad00000>;\n\t\tife = <0xacc4000>;\n\t\tcsid = <0xacc8000>;\n\t\tcsiphy = <0xace0000>;\n\t};\n\tthermal {')
+        # (the template's camera { }: the blocks, and where camcc has its clocks)
+        blocks = re.search(r'\tcamera \{\n.*?\n\t\};\n', (ROOT / 'devices/_template/soc.dtsi').read_text(), re.S)[0]
+        self.soc('\tthermal {', blocks + '\tthermal {')
         self.board('"cpufreq-epss", "camera-sm7325"', '"cpufreq-epss"')
         self.soc('\tthermal {', '\tsmmu {\n\t\tapps = <0x15000000>;\n\t};\n\tthermal {')
         self.assertEqual(self.problems(), '')
-        self.assertIn('.camera = { .camcc = 0x0ad00000, .ife = 0x0acc4000, .csid = 0x0acc8000, .csiphy = 0x0ace0000 },',
-                      boards.table_text(*boards.load()))
+        table = boards.table_text(*boards.load())
+        for line in ('\t\t\t.camcc = 0x0ad00000, .ife = 0x0acc4000, .csid = 0x0acc8000, .csiphy = 0x0ace0000,',
+                     '\t\t\t.top_gdsc = 0xc194, .pll0 = 0x0, .pll2 = 0x2000, .slow_ahb_rcg = 0x7058,',
+                     '\t\t\t.mclk_count = 4, .csiphy_count = 4,',
+                     '\t\t\t.mclk_rcg = { 0xe000, 0xe01c, 0xe038, 0xe054 },',
+                     '\t\t\t.csiphy_timer_branch = { 0xe0c4, 0xe0e8, 0xe10c, 0xe134 },'):
+            self.assertIn(line, table)
+        # one MCLK fewer than branches, or an offset that is no register's
+        for old, new, said in (('<0xe000 0xe01c 0xe038 0xe054>', '<0xe000 0xe01c 0xe038>', 'one each of the MCLKs'),
+                               ('<0x26028>', '<0x26029>', 'multiples of 4')):
+            path = self.dir / 'devices/phone/soc.dtsi'
+            text = path.read_text()
+            self.soc(old, new)
+            self.assertIn(said, self.problems())
+            path.write_text(text)
         self.assertIn('.smmu = { .apps = 0x15000000 },', boards.table_text(*boards.load()))
         # the vendor's node is named; the GPU's own is not this one
         soc, board, notes = devicetree.from_dts('''/ { soc {

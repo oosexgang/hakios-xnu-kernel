@@ -50,10 +50,12 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     `display { }` (DSI controller, the panel's interface), `spmi { }` (PMIC arbiter), `rpmh { }`, `thermal { }`
     (TSENS), `cpufreq { }` (the EPSS block and its groups of cores), `smmu { }` `audio-stream`,
     `wifi-stream`, `camera-stream` (the SMMU streams the parts' DMA comes in on), `lpass { }`
-    `swr-tx-pins` and `swr-tx-slew` (the microphones' SoundWire pins).
+    `swr-tx-pins` and `swr-tx-slew` (the microphones' SoundWire pins), `camera { }` (the camera's blocks,
+    and where its clock controller has the power domain, the PLLs and each clock the driver switches:
+    the MCLKs and the CSI receivers' clocks one each, as many as the SoC has).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
-  `board.dts` and README on the `devices` branch. `tools/device.py`
+  `board.dts`, `soc.dtsi` and README on the `devices` branch. `tools/device.py`
   brings one into a checkout and takes it out again: `available`, `add`, `list`, `remove`, `export`
   (`make device DEVICE=NAME` is `add`). Packages elsewhere are found through `HAKIOS_DEVICES`.
 - **The board tables are build outputs.** `tools/boards.py gen` writes the kernel's table, the loader's
@@ -294,7 +296,8 @@ Not changed:
 
 - Sound, microphones, camera and Wi-Fi are still written for the first phone's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
-  wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.
+  wired are board data now, and so is where the camera's clocks are; how each part is spoken to is not, nor
+  how the camera's PLLs are set up and its clocks divided. They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
 - The first phone has not been booted with Darwin 26/27. The emulator's board is not set up for this kernel.
@@ -312,8 +315,9 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
   The assembled tree is byte for byte what the previous patch series produced, but the build's first
   steps changed.
 - **No driver whose constants became board data has run on a phone since.** The GPU's profile, the
-  audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh are named there. The values are
-  the ones the code had, the tests hold them, and the drivers compile. That is all that is known.
+  audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh are named there, and the camera's
+  clocks (redwood's `soc.dtsi`, `camera { }`). The values are the ones the code had, the tests hold
+  them, and the drivers compile. That is all that is known.
 - **The loader** compiles on every push. Its last run on a phone was before its board table was
   generated and before `uefi-charger` replaced a board's name in its code.
 - **`kernel/deps/stage1.sh` and the whole kernel build** have been run end to end once since, on Ubuntu

@@ -76,6 +76,7 @@ enum {
 
 #define HAKIOS_CPU_GROUPS       4               /* groups of cores with a clock of their own, at most */
 #define HAKIOS_TSENS_MAX        8               /* TSENS controllers of a SoC, at most (SM8845 has seven) */
+#define HAKIOS_CAMERA_CLOCKS    8               /* MCLKs, and CSI receivers, of a SoC's camera, at most */
 
 struct hakios_board {
 	const char *name;                       /* /chosen/darwin-board */
@@ -154,6 +155,17 @@ struct hakios_board {
 		uint32_t camcc;                 /* its clock controller */
 		uint32_t ife, csid;             /* the image front end the sensors' data goes through, and its CSI decoder */
 		uint32_t csiphy;                /* the first CSI receiver; the others follow, 0x2000 apart */
+		/* where the clock controller has what the driver switches: offsets in camcc, as Linux's
+		 * camcc-CODENAME.c has them (a GDSC's register, a PLL's first, an RCG's command register, a branch's) */
+		uint32_t top_gdsc, pll0, pll2;
+		uint8_t mclk_count, csiphy_count;
+		uint32_t mclk_rcg[HAKIOS_CAMERA_CLOCKS], mclk_branch[HAKIOS_CAMERA_CLOCKS];
+		uint32_t csiphy_branch[HAKIOS_CAMERA_CLOCKS], csiphy_timer_rcg[HAKIOS_CAMERA_CLOCKS],
+		    csiphy_timer_branch[HAKIOS_CAMERA_CLOCKS];
+		uint32_t slow_ahb_rcg, camnoc_axi_rcg, cphy_rx_rcg, ife_csid_rcg, ife_rcg;
+		uint32_t cpas_ahb_branch, camnoc_axi_branch, ife_csid_branch, ife_cphy_rx_branch, ife_branch;
+		/* ... and in the global clock controller (clocks { } gcc): the camera's bus and crystal clocks */
+		uint32_t gcc_ahb_branch, gcc_xo_branch, gcc_hf_axi_branch, gcc_sf_axi_branch;
 	} camera;
 
 	/* the low-power audio subsystem's blocks the microphones' path goes through (soc: lpass { }) */

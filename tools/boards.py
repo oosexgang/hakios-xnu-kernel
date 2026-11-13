@@ -63,6 +63,14 @@ class U64(int):
 
 # key: (type, required). Types: str, int (32-bit), U64, bool, [int] and so on; a tuple of strings is a choice.
 TSENS_MAX = 8   # HAKIOS_TSENS_MAX (kernel/overlay/bsd/dev/hakios_board.h)
+CAMERA_CLOCKS = 8       # HAKIOS_CAMERA_CLOCKS (the same)
+# where camcc has what the camera's driver switches (offsets in it, and the GCC's camera clocks in the GCC):
+# one each, and a list each of the MCLKs and of the CSI receivers' clocks
+CAMCC_OFFSETS = ('top_gdsc', 'pll0', 'pll2', 'slow_ahb_rcg', 'camnoc_axi_rcg', 'cphy_rx_rcg', 'ife_csid_rcg', 'ife_rcg',
+                 'cpas_ahb_branch', 'camnoc_axi_branch', 'ife_csid_branch', 'ife_cphy_rx_branch', 'ife_branch',
+                 'gcc_ahb_branch', 'gcc_xo_branch', 'gcc_hf_axi_branch', 'gcc_sf_axi_branch')
+CAMCC_LISTS = ('mclk_rcg', 'mclk_branch', 'csiphy_branch', 'csiphy_timer_rcg', 'csiphy_timer_branch')
+
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
     'platform': {'io_base': (U64, False), 'io_size': (U64, False), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
@@ -82,7 +90,8 @@ SOC_SCHEMA = {
     'pins': {'tlmm': (int, True)},
     'smmu': {'apps': (int, True), 'audio_stream': ([int], False), 'wifi_stream': ([int], False),
              'camera_stream': ([int], False)},
-    'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True)},
+    'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True),
+               **{key: (int, True) for key in CAMCC_OFFSETS}, **{key: ([int], True) for key in CAMCC_LISTS}},
     'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
               'lpi': (int, True), 'lpi_slew': (int, True), 'swr_tx_pins': ([int], True), 'swr_tx_slew': ([int], True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
@@ -447,8 +456,8 @@ def camera_problems(where, cameras, problems):
             problems.add(at, 'cci is the CCI and its master: [0 or 1, 0 or 1]')
         if len(sensor['pins']) != 2:
             problems.add(at, 'pins are the CCI master\'s SDA and SCL: two')
-        if not 0 <= sensor['mclk'] <= 3 or not 0 <= sensor['csiphy'] <= 3:
-            problems.add(at, 'mclk and csiphy are numbers of camcc\'s clocks and of the CSI receivers: 0 to 3')
+        if not 0 <= sensor['mclk'] < CAMERA_CLOCKS or not 0 <= sensor['csiphy'] < CAMERA_CLOCKS:
+            problems.add(at, f'mclk and csiphy are numbers of camcc\'s clocks and of the CSI receivers: 0 to {CAMERA_CLOCKS - 1}')
         switches = [supply_of(sensor.get(key))[3] for key in ('vana', 'vdig', 'vio') if supply_of(sensor.get(key))[0] == 2]
         wires = list(sensor['pins']) + [sensor['reset'], sensor['mclk_pin']] + switches
         if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
@@ -501,6 +510,17 @@ def load_soc(path, problems):
                          '(two to four, 0 to 15), swr_tx_slew each one\'s field in the slew register (an even bit, 0 to 30)')
     if isinstance(lpass, dict) and isinstance(lpass.get('tx_swr_hctl'), int) and lpass['tx_swr_hctl'] & 3:
         problems.add(f'{shown(path)} [lpass]', 'tx_swr_hctl is a register: its address is a multiple of 4')
+    camera = data.get('camera')
+    if isinstance(camera, dict) and all(isinstance(camera.get(key), list) for key in CAMCC_LISTS):
+        mclks, phys = [len(camera[key]) for key in CAMCC_LISTS[:2]], [len(camera[key]) for key in CAMCC_LISTS[2:]]
+        if len(set(mclks)) != 1 or len(set(phys)) != 1 or not 1 <= mclks[0] <= CAMERA_CLOCKS or not 1 <= phys[0] <= CAMERA_CLOCKS:
+            problems.add(f'{shown(path)} [camera]', f'mclk_rcg and mclk_branch are one each of the MCLKs, csiphy_branch, '
+                         f'csiphy_timer_rcg and csiphy_timer_branch one each of the CSI receivers: 1 to {CAMERA_CLOCKS} of each')
+        offsets = [camera[key] for key in CAMCC_OFFSETS if isinstance(camera.get(key), int)] + \
+            [v for key in CAMCC_LISTS for v in camera[key]]
+        if any(not 0 <= v < 0x100000 or v & 3 for v in offsets):
+            problems.add(f'{shown(path)} [camera]', 'the clocks\' places are registers\' offsets in their clock controller: '
+                         'multiples of 4, below 0x100000')
     smmu = data.get('smmu')
     if isinstance(smmu, dict):
         for key in ('audio_stream', 'wifi_stream', 'camera_stream'):
@@ -584,6 +604,12 @@ def load(problems=None):
         cameras = data.get('camera')
         if cameras is not None:
             camera_problems(f'{rel} [camera]', cameras, problems)
+            blocks = soc.get('camera')
+            if isinstance(blocks, dict) and well_formed:
+                for i, sensor in enumerate(cameras.get('sensors', [])):
+                    if sensor['mclk'] >= len(blocks.get('mclk_rcg', [])) or sensor['csiphy'] >= len(blocks.get('csiphy_branch', [])):
+                        problems.add(f'{rel} [camera] sensors[{i}]', f'mclk {sensor["mclk"]} or csiphy {sensor["csiphy"]}: '
+                                     'soc.dtsi [camera] has not that many')
         bt = data.get('bluetooth')
         if bt is not None:
             bluetooth_problems(f'{rel} [bluetooth]', bt, problems)
@@ -830,8 +856,13 @@ def table_text(socs, boards):
             out.append(f'\t\t.pins = {{ .tlmm = {pins["tlmm"]:#010x} }},')
         camera = soc.get('camera')
         if camera:
-            out.append(f'\t\t.camera = {{ .camcc = {camera["camcc"]:#010x}, .ife = {camera["ife"]:#010x}, '
-                       f'.csid = {camera["csid"]:#010x}, .csiphy = {camera["csiphy"]:#010x} }},')
+            out += ['\t\t.camera = {',
+                    f'\t\t\t.camcc = {camera["camcc"]:#010x}, .ife = {camera["ife"]:#010x}, '
+                    f'.csid = {camera["csid"]:#010x}, .csiphy = {camera["csiphy"]:#010x},',
+                    '\t\t\t' + ', '.join(f'.{key} = {camera[key]:#x}' for key in CAMCC_OFFSETS) + ',',
+                    f'\t\t\t.mclk_count = {len(camera["mclk_rcg"])}, .csiphy_count = {len(camera["csiphy_branch"])},',
+                    *(f'\t\t\t.{key} = {{ {", ".join(f"{v:#x}" for v in camera[key])} }},' for key in CAMCC_LISTS),
+                    '\t\t},']
         lpass = soc.get('lpass')
         if lpass:
             out += ['\t\t.lpass = {',

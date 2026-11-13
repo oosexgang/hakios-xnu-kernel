@@ -250,8 +250,9 @@ Stated plainly, so nobody finds out the hard way:
     (`wifi { }`), and the cameras (`camera { }`: the PMIC that feeds them, and a `sensor@N` node for each
     sensor with its chip, its pins, its MCLK, its CSI receiver, its supplies and its lens motor's).
 
-  What stays in the code is how each part is spoken to, and the layout of an SM7325's camera clock
-  controller. For the touch controllers, the keys, the flashlight, the vibration motor and the speaker
+  What stays in the code is how each part is spoken to, and for the cameras how the clock controller's
+  PLLs are set up and its clocks divided (a Lucid PLL0 and a Zonda PLL2, as on an SM7325); where each
+  of those clocks is, is the SoC file's `camera { }`. For the touch controllers, the keys, the flashlight, the vibration motor and the speaker
   amplifiers that is all: a phone with one of those parts wired differently needs its section of the
   board file filled in and no change to the driver. [features.md](features.md) lists what each
   feature needs.
