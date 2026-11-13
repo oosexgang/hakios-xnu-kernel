@@ -312,7 +312,7 @@ MiniIOSurface::free(void)
 		}
 		memcpy(&middle, kpixels + (info.allocSize / 2 & ~3u), 4);
 		traceLine("MiniIOSurface: surface %u (%ux%u) goes: of every 64 bytes %u of %u begin with a pixel that is not 0, one in "
-		    "the middle %#010x\n", sid, info.width, info.height, nonzero, info.allocSize / 64, middle);
+		    "the middle 0x%08x\n", sid, info.width, info.height, nonzero, info.allocSize / 64, middle);
 	}
 
 	OSSafeReleaseNULL(values);
@@ -1555,7 +1555,7 @@ IOSurfaceRootUserClient::methodLookupFromPort(IOExternalMethodArguments * args)
 		}
 		proc_selfname(procname, sizeof(procname));
 		traceLine("MiniIOSurface: %s[%d] looked up surface %u (%ux%u '%c%c%c%c') from a port: %#x; of every 64 bytes %u of %u "
-		    "begin with a pixel that is not 0, the first %#010x, one in the middle %#010x\n", procname, proc_selfpid(),
+		    "begin with a pixel that is not 0, the first 0x%08x, one in the middle 0x%08x\n", procname, proc_selfpid(),
 		    right->surface->sid, right->surface->info.width, right->surface->info.height, (int) (format >> 24 & 0xff),
 		    (int) (format >> 16 & 0xff), (int) (format >> 8 & 0xff), (int) (format & 0xff), ret, nonzero, size / 64, first, middle);
 	}
