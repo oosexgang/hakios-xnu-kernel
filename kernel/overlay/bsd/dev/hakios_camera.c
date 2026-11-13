@@ -3271,6 +3271,12 @@ static const struct ctab_mode *ios_mode;
 static uint32_t ios_mode_n, ios_line_ns;
 static volatile bool ios_open, ios_streaming, ios_wanted;  /* open; frames coming; a read wants them */
 static uint64_t ios_last_read, ios_given, ios_frames_done, ios_writes_late;
+/*
+ * Reads copying out of the ring now (camdev_read, which copies with ios_lock let go): the ring is not freed
+ * under them. iOS 27's cameracaptured, asking for another sensor while a frame was being read, had the ring
+ * taken away mid-copy and the kernel stopped on the cache maintenance of a page no longer there.
+ */
+static uint32_t ios_readers;
 static struct { uint32_t lines, gain, frame_lines; bool pending; uint32_t focus; bool focus_pending; } ios_ask;
 static struct { uint32_t lines, gain, frame_lines; uint64_t from; } ios_now, ios_next;
 /*
@@ -3356,6 +3362,11 @@ exposure_write(uint32_t lines, uint32_t gain, uint32_t frame_lines)
 static void
 ring_free(void)
 {
+	lck_mtx_lock(&ios_lock);
+	while (ios_readers > 0) {
+		(void)msleep(&ios_readers, &ios_lock, PZERO, "hakios-camera-readers", NULL);
+	}
+	lck_mtx_unlock(&ios_lock);
 	if (page_tables != 0) {
 		kmem_free(kernel_map, page_tables, ring_tables_bytes);
 		page_tables = 0;
@@ -3798,6 +3809,8 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	struct hakios_camera_frame f;
 	uint64_t since = ios_ms();
 	int b = -1, error = 0;
+	vm_offset_t at;
+	uint32_t frame_bytes;
 
 	lck_mtx_lock(&ios_lock);
 	ios_last_read = ios_ms();
@@ -3837,6 +3850,9 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	}
 	place[b].state = PLACE_READING;
 	ios_given = place[b].sequence;
+	ios_readers++;
+	at = ring + (uint64_t)b * ring_place_bytes;    /* (taken while the ring cannot change) */
+	frame_bytes = ring_frame_bytes;
 	bzero(&f, sizeof(f));
 	memcpy(f.magic, HAKIOS_CAMERA_MAGIC, 8);
 	f.header_bytes = sizeof(f);
@@ -3863,8 +3879,7 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 
 	error = uiomove((caddr_t)&f, (int)MIN(sizeof(f), (size_t)uio_resid(uio)), uio);
 	if (error == 0 && uio_resid(uio) > 0) {
-		vm_offset_t at = ring + (uint64_t)b * ring_place_bytes;
-		uint32_t n = (uint32_t)MIN((uint64_t)ring_frame_bytes, (uint64_t)uio_resid(uio));
+		uint32_t n = (uint32_t)MIN((uint64_t)frame_bytes, (uint64_t)uio_resid(uio));
 
 		uint64_t t0 = mach_absolute_time(), t1, t2;
 
@@ -3890,6 +3905,9 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		place[b].state = PLACE_READY;
 	}
 	ios_last_read = ios_ms();
+	if (--ios_readers == 0) {
+		wakeup(&ios_readers);
+	}
 	lck_mtx_unlock(&ios_lock);
 	return error;
 }
