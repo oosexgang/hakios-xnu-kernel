@@ -4,7 +4,8 @@
  * keeps what is written, and nothing of the codec or of SoundWire is modelled. What is tested, on a
  * made-up SoC whose lpass { } is no real chip's: the SoundWire pins the driver sets up are the SoC file's
  * swr-tx-pins, their slew fields its swr-tx-slew, and no other pin is touched; the hardware control
- * register it clears a bit of and puts back is the one tx-swr-hctl names, in its page.
+ * register it clears a bit of and puts back is the one tx-swr-hctl names, in its page. And the run's lines,
+ * kept, are said again at its end as they were said.
  *
  *   mic_wiring_test SCENARIO
  */
@@ -133,11 +134,63 @@ the_socs_hctl(void)
 	CHECK(written(HCTL_REGISTER) == 2 && *cell(HCTL_REGISTER) == 0x3, "put back as found: %#x", *cell(HCTL_REGISTER));
 }
 
+/* ---- the run's lines, said again at its end (hakios_mic_quiesce()) ------------------------------------- */
+
+static unsigned
+occurrences(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = log_text; (at = strstr(at, text)) != NULL; at++) {
+		n++;
+	}
+	return n;
+}
+
+/* nothing said: nothing said again, not even that this is the run's lines */
+static void
+nothing_to_say_again(void)
+{
+	hakios_mic_quiesce();
+	CHECK(log_text[0] == 0, "the log: \"%s\"", log_text);
+}
+
+/* every line again, after a "> ", each on a line of its own: one without its newline, or empty, gets one */
+static void
+the_run_said_again(void)
+{
+	say("mic: first\n");
+	say("mic: no newline");
+	say("%s", "");
+	say("mic: last\n");
+	hakios_mic_quiesce();
+	CHECK(strstr(log_text, "mic: what happened in this run, again:\n> mic: first\n> mic: no newline\n> \n> mic: last\n") != NULL &&
+	    strcmp(log_text + strlen(log_text) - strlen("> mic: last\n"), "> mic: last\n") == 0, "the log: \"%s\"", log_text);
+}
+
+/* more lines than are kept: the latest of them, oldest first */
+static void
+the_latest_lines_said_again(void)
+{
+	char last[32];
+
+	for (unsigned i = 0; i < KEPT_LINES + 50; i++) {
+		say("mic: line %u\n", i);
+	}
+	hakios_mic_quiesce();
+	snprintf(last, sizeof(last), "> mic: line %u\n", KEPT_LINES + 49);
+	CHECK(occurrences("> mic: line ") == KEPT_LINES, "%u lines said again", occurrences("> mic: line "));
+	CHECK(occurrences("> mic: line 49\n") == 0 && occurrences("again:\n> mic: line 50\n") == 1, "from the 51st on");
+	CHECK(strcmp(log_text + strlen(log_text) - strlen(last), last) == 0, "to the last: %s", log_text + strlen(log_text) - 40);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "the_socs_pins", the_socs_pins }, { "the_socs_hctl", the_socs_hctl },
+		{ "nothing_to_say_again", nothing_to_say_again }, { "the_run_said_again", the_run_said_again },
+		{ "the_latest_lines_said_again", the_latest_lines_said_again },
 	};
 
 	if (argc < 2) {
