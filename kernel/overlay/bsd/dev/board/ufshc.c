@@ -1138,6 +1138,10 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 		return false;
 	}
 	hc_loader = *loader;
+	/*
+	 * ufs_native_buffer=BYTES: each slot's buffer, whole blocks up to 4 MB (default 256 KB).
+	 * ufs_native_slots=N: how many slots carry reads, 1 to 31 (default 31).
+	 */
 	PE_parse_boot_argn("ufs_native_buffer", &hc_slot_buffer, sizeof(hc_slot_buffer));
 	if (hc_slot_buffer < BLOCK || hc_slot_buffer > (4u << 20) || hc_slot_buffer % BLOCK) {
 		hc_slot_buffer = SLOT_BUFFER_DEFAULT;
@@ -1265,6 +1269,7 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 			return false;
 		}
 	}
+	/* boot-arg ufs_native_spin=US: how long a waiter looks at its slot before it sleeps, at most 5000 (default 40) */
 	PE_parse_boot_argn("ufs_native_spin", &hc_spin_us, sizeof(hc_spin_us));
 	if (hc_spin_us > 5000) {
 		hc_spin_us = 5000;
