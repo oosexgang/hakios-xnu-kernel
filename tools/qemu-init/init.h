@@ -23,11 +23,12 @@
 #define SYS_write               4
 #define SYS_open                5
 #define SYS_close               6
-#define SYS_sysctlbyname        274
+#define SYS_getpid              20
 #define SYS_gettimeofday        116
+#define SYS_sysctlbyname        274
 #define SYS_proc_info           336
-#define WORDS   16
 #define O_WRONLY                1
+#define WORDS                   16              /* the most words a line is split into */
 
 /* a system call: the number in x16, the carry flag set on an error (then the result is -errno) */
 static inline long
@@ -64,6 +65,7 @@ int sysctl_number(const char *name, uint64_t *value);
 /* the commands: argc words, the command's name first (main.c lists them for the shell) */
 void command_about(int argc, char **argv);
 void command_cat(int argc, char **argv);
+void command_crash(int argc, char **argv);
 void command_date(int argc, char **argv);
 void command_dmesg(int argc, char **argv);
 void command_echo(int argc, char **argv);
