@@ -474,6 +474,181 @@ command_uptime(int argc, char **argv)
 	say(" (seconds since 1970)\n");
 }
 
+/* ---- the network ---- */
+
+#define SYS_ioctl               54
+#define SYS_socket              97
+#define AF_INET                 2
+#define AF_LINK                 18
+#define SOCK_DGRAM              2
+#define IFNAMSIZ                16
+#define IFF_UP                  0x1
+#define IFF_LOOPBACK            0x8
+#define IFF_RUNNING             0x40
+/* sys/sockio.h: _IOW/_IOWR('i', n, the structure) */
+#define SIOCSIFFLAGS            0x80206910u     /* struct ifreq, 32 bytes */
+#define SIOCGIFFLAGS            0xc0206911u
+#define SIOCAIFADDR             0x8040691au     /* struct ifaliasreq, 64 bytes */
+#define SIOCGIFCONF             0xc00c6924u     /* struct ifconf: 12 bytes, packed to 4 as net/if.h has it */
+
+struct sockaddr_in {
+	uint8_t         len, family;
+	uint16_t        port;                   /* (network order) */
+	uint8_t         addr[4];
+	char            zero[8];
+};
+
+struct ifreq {
+	char            name[IFNAMSIZ];
+	union {
+		struct sockaddr_in addr;
+		int16_t         flags;
+		char            pad[16];
+	};
+};
+
+static void
+say_ipv4(const uint8_t *a)
+{
+	for (int i = 0; i < 4; i++) {
+		say_number(a[i]);
+		say(i < 3 ? "." : "");
+	}
+}
+
+static void
+say_hex_byte(uint8_t b)
+{
+	char text[3] = { "0123456789abcdef"[b >> 4], "0123456789abcdef"[b & 0xf], '\0' };
+
+	say(text);
+}
+
+/* "10.0.2.15" into four bytes; 0 when it is not an address */
+static int
+parse_ipv4(const char *text, uint8_t *out)
+{
+	for (int i = 0; i < 4; i++) {
+		unsigned n = 0, digits = 0;
+
+		while (*text >= '0' && *text <= '9' && digits < 4) {
+			n = n * 10 + (unsigned)(*text++ - '0');
+			digits++;
+		}
+		if (digits == 0 || n > 255 || (i < 3 && *text++ != '.')) {
+			return 0;
+		}
+		out[i] = (uint8_t)n;
+	}
+	return *text == '\0';
+}
+
+static long
+interface_flags(long sock, const char *name)
+{
+	struct ifreq request = { .name = { 0 } };
+
+	for (int i = 0; i < IFNAMSIZ - 1 && name[i] != '\0'; i++) {
+		request.name[i] = name[i];
+	}
+	return syscall6(SYS_ioctl, sock, (long)SIOCGIFFLAGS, (long)&request, 0, 0, 0) < 0 ? -1 : (uint16_t)request.flags;
+}
+
+static void
+show_interfaces(long sock)
+{
+	char buffer[2048];
+	struct __attribute__((packed, aligned(4))) { int32_t len; char *buf; } conf = { sizeof(buffer), buffer };
+	char last[IFNAMSIZ] = "";
+
+	if (syscall6(SYS_ioctl, sock, (long)SIOCGIFCONF, (long)&conf, 0, 0, 0) < 0) {
+		say("ifconfig: the kernel will not list its interfaces\n");
+		return;
+	}
+	/* an entry: the name, then a socket address of its own length (at least 16) */
+	for (int at = 0; at + IFNAMSIZ + 2 <= conf.len;) {
+		const char *name = buffer + at;
+		const uint8_t *sa = (const uint8_t *)buffer + at + IFNAMSIZ;
+		int sa_len = sa[0] > 16 ? sa[0] : 16;
+
+		if (!same(name, last)) {
+			long flags = interface_flags(sock, name);
+			say(name);
+			say(":");
+			say(flags & IFF_UP ? " up" : " down");
+			say(flags & IFF_RUNNING ? ", running" : "");
+			say(flags & IFF_LOOPBACK ? ", loopback" : "");
+			say("\n");
+			for (int i = 0; i < IFNAMSIZ; i++) {
+				last[i] = name[i];
+			}
+		}
+		if (sa[1] == AF_INET) {
+			say("\tinet ");
+			say_ipv4(sa + 4);
+			say("\n");
+		} else if (sa[1] == AF_LINK && sa[6] == 6) {
+			/* sockaddr_dl: len, family, index, type, name length, address length, selector length, name, address */
+			say("\tether ");
+			for (int i = 0; i < 6; i++) {
+				say_hex_byte(sa[8 + sa[5] + i]);
+				say(i < 5 ? ":" : "");
+			}
+			say("\n");
+		}
+		at += IFNAMSIZ + sa_len;
+	}
+}
+
+/* NAME ADDRESS [MASK]: the address on the interface, and the interface up */
+static void
+configure_interface(long sock, char **argv, int argc)
+{
+	struct {
+		char name[IFNAMSIZ];
+		struct sockaddr_in addr, broadaddr, mask;
+	} alias = { { 0 }, { 16, AF_INET, 0, { 0 }, { 0 } }, { 0 }, { 16, AF_INET, 0, { 255, 255, 255, 0 }, { 0 } } };
+	struct ifreq request = { .name = { 0 } };
+
+	if (!parse_ipv4(argv[2], alias.addr.addr) || (argc > 3 && !parse_ipv4(argv[3], alias.mask.addr))) {
+		say("ifconfig: an address is four numbers: 10.0.2.15\n");
+		return;
+	}
+	for (int i = 0; i < IFNAMSIZ - 1 && argv[1][i] != '\0'; i++) {
+		alias.name[i] = request.name[i] = argv[1][i];
+	}
+	long flags = interface_flags(sock, argv[1]);
+	request.flags = (int16_t)((flags < 0 ? 0 : flags) | IFF_UP);
+	if (flags < 0 || syscall6(SYS_ioctl, sock, (long)SIOCSIFFLAGS, (long)&request, 0, 0, 0) < 0) {
+		say("ifconfig: ");
+		say(argv[1]);
+		say(" is no interface here, or will not come up\n");
+		return;
+	}
+	if (syscall6(SYS_ioctl, sock, (long)SIOCAIFADDR, (long)&alias, 0, 0, 0) < 0) {
+		say("ifconfig: the address was not taken\n");
+		return;
+	}
+	show_interfaces(sock);
+}
+
+static void
+command_ifconfig(int argc, char **argv)
+{
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_DGRAM, 0, 0, 0, 0);
+
+	if (sock < 0) {
+		say("ifconfig: no socket\n");
+		return;
+	}
+	if (argc >= 3) {
+		configure_interface(sock, argv, argc);
+	} else {
+		show_interfaces(sock);
+	}
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+}
+
 static void command_help(int argc, char **argv);
 
 static void
@@ -496,6 +671,7 @@ static const struct {
 	{ "cat", "FILE... what is in a file", command_cat },
 	{ "ps", "the processes", command_ps },
 	{ "uptime", "how long the kernel has run", command_uptime },
+	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
 };
 
 static void
