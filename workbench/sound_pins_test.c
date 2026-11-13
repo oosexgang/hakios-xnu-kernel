@@ -1,10 +1,12 @@
 /*
  * Which pins the sound driver (kernel/overlay/bsd/dev/board/sound.c) sets up for the speakers' TDM
- * interface, and which it watches to see the interface's clock run. The driver is compiled as it is into
- * a host program; of the hardware only the pin controller's registers are modelled. What is tested: the
- * four pins it sets up are the board's speaker { } sound-pins, with the board's function; and the bit
- * clock and frame sync it watches are the first two of them -- on a board whose pins are not the first
- * phone's, too.
+ * interface, which it watches to see the interface's clock run, and how it gives the audio DSP its view of
+ * the buffers through the apps SMMU. The driver is compiled as it is into a host program; of the hardware
+ * the pin controller's registers and the SMMU's are modelled. What is tested: the four pins it sets up are
+ * the board's speaker { } sound-pins, with the board's function; the bit clock and frame sync it watches
+ * are the first two of them -- on a board whose pins are not the first phone's, too; a free match register
+ * and context of the SMMU are found and set up with page tables of the buffers, and put back as found; and
+ * what the boot chain set up for somebody else is left alone.
  *
  *   sound_pins_test SCENARIO
  */
@@ -20,11 +22,34 @@ static vm_offset_t tlmm_at;             /* where the driver mapped it (the fake 
 static unsigned toggling[2] = { ~0u, ~0u }, reads[2];
 static unsigned written_cfg[256], written_io[256];
 
+/* ---- the apps SMMU (the made-up SoC's smmu { } apps): a megabyte of registers, 128 pages of 4K each half ---- */
+
+#define SMMU_AT         0x16000000u
+#define SMMU_BYTES      0x100000u
+#define CONTEXT_AT(n)   (SMMU_AT + (128u + (n)) * 0x1000u)
+static uint32_t smmu_regs[SMMU_BYTES / 4];
+static unsigned smmu_writes, tlb_looks;
+static bool tlb_stuck;                  /* a context's TLB sync that never ends */
+static bool smr_deaf;                   /* the match registers keep none of what is written */
+
+static uint32_t *
+smmu(uint32_t address)
+{
+	return &smmu_regs[(address - SMMU_AT) / 4];
+}
+
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
 	uint32_t offset = (uint32_t)(address - tlmm_at);
 
+	if (address >= SMMU_AT && address < SMMU_AT + SMMU_BYTES) {
+		if (address >= CONTEXT_AT(0) && (address & 0xfff) == 0x7f4) {        /* (SMMU_CB_TLBSTATUS) */
+			tlb_looks++;
+			return tlb_stuck;
+		}
+		return *smmu((uint32_t)address);
+	}
 	for (unsigned i = 0; i < 2; i++) {
 		if (toggling[i] != ~0u && offset == 0x1000u * toggling[i] + 4) {
 			return reads[i]++ & 1;          /* a pin that changes at every read */
@@ -38,6 +63,17 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 {
 	uint32_t offset = (uint32_t)(address - tlmm_at);
 
+	if (address >= SMMU_AT && address < SMMU_AT + SMMU_BYTES) {
+		smmu_writes++;
+		if (address >= CONTEXT_AT(0) && (address & 0xfff) == 0x58) {       /* (a context's FSR: what is written is cleared) */
+			*smmu((uint32_t)address) &= ~value;
+		} else if (smr_deaf && address >= SMMU_AT + 0x800 && address < SMMU_AT + 0xc00) {
+			/* (kept nothing) */
+		} else {
+			*smmu((uint32_t)address) = value;
+		}
+		return;
+	}
 	if (offset < TLMM_SIZE) {
 		pin_regs[offset / 4] = value;
 		if (offset % 0x1000 == 0) {
@@ -50,9 +86,22 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
-/* (what the driver links against and these scenarios never reach) */
+/* memory the driver asks for: pages of the host's, at the addresses they have here */
 uint64_t kvtophys(vm_offset_t va) { return va; }
-int kmem_alloc(void *map __unused, vm_offset_t *address __unused, vm_size_t size __unused, int flags __unused, int tag __unused) { return 1; }
+
+int
+kmem_alloc(void *map __unused, vm_offset_t *address, vm_size_t size, int flags __unused, int tag __unused)
+{
+	void *memory = NULL;
+
+	if (posix_memalign(&memory, 4096, size) != 0) {
+		return 1;
+	}
+	memset(memory, 0, size);
+	*address = (vm_offset_t)memory;
+	return 0;
+}
+
 void kmem_free(void *map __unused, vm_offset_t address __unused, vm_size_t size __unused) { }
 struct fake_lock hakios_smmu_lock = { PTHREAD_MUTEX_INITIALIZER };
 
@@ -150,23 +199,175 @@ not_at_the_first_phones(void)
 	CHECK(!tdm_clock_runs(), "the board's pins are still: %s", log_text);
 }
 
+/* ... nor when the bit clock runs and the frame sync does not */
+static void
+no_frames(void)
+{
+	start();
+	pins_on();
+	toggling[0] = 120;
+	CHECK(!tdm_clock_runs(), "a bit clock without frames is no interface running: %s", log_text);
+}
+
+/* ---- the SMMU: the DSP's view of the buffers ---------------------------------------------------------------- */
+
+#define AUDIO           0x1801u         /* the made-up SoC's audio-stream */
+
+/* an SMMU of 16 match registers and 8 contexts, of which the boot chain has used two of each for other streams */
+static void
+an_smmu(void)
+{
+	start();
+	apps_smmu.phys = hakios_board()->smmu.apps;
+	*smmu(SMMU_AT + SMMU_IDR0) = 16;
+	*smmu(SMMU_AT + SMMU_IDR1) = 6u << 28 | 8;
+	*smmu(SMMU_AT + SMMU_SMR(0)) = 1u << 31 | 0x0100;
+	*smmu(SMMU_AT + SMMU_S2CR(0)) = 0;
+	*smmu(SMMU_AT + SMMU_SMR(1)) = 1u << 31 | 0x0200;
+	*smmu(SMMU_AT + SMMU_S2CR(1)) = 1;
+	*smmu(SMMU_AT + SMMU_SMR(2)) = 0x0333;          /* (not valid: free, whatever it says) */
+	*smmu(SMMU_AT + SMMU_S2CR(2)) = 0x0444;
+}
+
+static bool
+memory(uintptr_t *at, uint64_t *dsp, uint32_t *bytes)
+{
+	return hakios_audio_dsp_memory(at, dsp, bytes);
+}
+
+/* nothing set up for the stream: the first free match register and the first unused context are ours, with
+ * page tables that put our buffers at the DSP's addresses; given back, all is as it was */
+static void
+smmu_set_up(void)
+{
+	uintptr_t at = 0;
+	uint64_t dsp = 0, ttbr, *root, *second, *third;
+	uint32_t bytes = 0;
+
+	an_smmu();
+	CHECK(memory(&at, &dsp, &bytes), "given: %s", log_text);
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(2)) == (1u << 31 | AUDIO) && *smmu(SMMU_AT + SMMU_S2CR(2)) == 2,
+	    "match register 2 sends the stream to context 2: %#x %#x", *smmu(SMMU_AT + SMMU_SMR(2)), *smmu(SMMU_AT + SMMU_S2CR(2)));
+	CHECK((*smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) & 1) && *smmu(CONTEXT_AT(2) + SMMU_CB_TCR) == SMMU_TCR_39_BITS,
+	    "context 2 on, of 39 bits: %#x", *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR));
+	ttbr = (uint64_t)*smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0 + 4) << 32 | *smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0);
+	CHECK(ttbr >> 48 == 2, "its tables tagged with its number: %#llx", (unsigned long long)ttbr);
+	root = (uint64_t *)(uintptr_t)(ttbr & PTE_ADDRESS);
+	second = (uint64_t *)(uintptr_t)(root[0] & PTE_ADDRESS);
+	third = (uint64_t *)(uintptr_t)(second[0x80] & PTE_ADDRESS);
+	CHECK((root[0] & 3) == 3 && (second[0x80] & 3) == 3, "0x10000000 through the root's first and the second's 128th");
+	for (unsigned page = 0; page < SHARED_BYTES / 4096; page++) {
+		CHECK(third[page] == ((uint64_t)(buffer + 4096 * page) | AUDIO_PTE), "page %u", page);
+	}
+	CHECK(third[SHARED_BYTES / 4096] == 0, "and no page past the buffers");
+	CHECK(buffer != 0 && at == buffer + BUFFER_BYTES && dsp == (AUDIO_ADDRESSES | 1ull << 32) + BUFFER_BYTES && bytes == MIC_BYTES,
+	    "the microphones' part, as the DSP sees it: %#llx", (unsigned long long)dsp);
+	hakios_audio_dsp_memory_put();
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(2)) == 0x0333 && *smmu(SMMU_AT + SMMU_S2CR(2)) == 0x0444 &&
+	    *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == 0, "put back as found");
+	CHECK(logged("the SMMU has refused the DSP nothing"), "and nothing was refused: %s", log_text);
+}
+
+/* the boot chain lets the stream through untranslated already (a match register whose mask covers it): used as it is */
+static void
+smmu_let_through(void)
+{
+	uintptr_t at = 0;
+	uint64_t dsp = 0;
+	uint32_t bytes = 0;
+
+	an_smmu();
+	*smmu(SMMU_AT + SMMU_SMR(1)) = 1u << 31 | 0x1u << 16 | 0x1800;       /* 0x1800 and 0x1801 ... */
+	*smmu(SMMU_AT + SMMU_S2CR(1)) = 1u << 16;                               /* ... let through */
+	smmu_writes = 0;
+	CHECK(memory(&at, &dsp, &bytes), "given: %s", log_text);
+	CHECK(dsp == ((uint64_t)buffer | 1ull << 32) + BUFFER_BYTES, "at its own address: %#llx", (unsigned long long)dsp);
+	CHECK(smmu_writes == 0, "nothing written: %u", smmu_writes);
+}
+
+/* the SMMU's state that is somebody else's: left alone, and no memory for the DSP */
+static void
+smmu_left_alone(void)
+{
+	const char *which = getenv("SOUND_CASE");
+	unsigned i = which ? (unsigned)atoi(which) : 0;
+	uintptr_t at;
+	uint64_t dsp;
+	uint32_t bytes;
+	static const char *const said[] = {
+		"does not let it through untranslated", "numbers its streams with 16 bits", "not a megabyte",
+		"no match register or no context left", "no match register or no context left", "IS SWITCHED ON",
+		"does not finish forgetting old translations", "DID NOT TAKE WHAT WAS WRITTEN",
+	};
+
+	an_smmu();
+	switch (i) {
+	case 0: *smmu(SMMU_AT + SMMU_SMR(0)) = 1u << 31 | AUDIO; break;         /* translated, through somebody's context */
+	case 1: *smmu(SMMU_AT + SMMU_SCR0) = 1u << 3; break;
+	case 2: *smmu(SMMU_AT + SMMU_IDR1) = 7u << 28 | 8; break;
+	case 3: for (unsigned n = 2; n < 16; n++) { *smmu(SMMU_AT + SMMU_SMR(n)) = 1u << 31 | n; } break;
+	case 4: *smmu(SMMU_AT + SMMU_IDR1) = 6u << 28 | 2; break;                /* two contexts, both used */
+	case 5: *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) = 1; break;
+	case 6: tlb_stuck = true; break;
+	default: smr_deaf = true; break;
+	}
+	smmu_writes = 0;
+	CHECK(!memory(&at, &dsp, &bytes), "case %u: none: %s", i, log_text);
+	CHECK(logged(said[i]), "case %u: said: %s", i, log_text);
+	CHECK(i >= 6 ? *smmu(SMMU_AT + SMMU_SMR(2)) == 0x0333 : smmu_writes == 0, "case %u: nothing of it changed (%u written)", i,
+	    smmu_writes);
+	CHECK(i != 6 || tlb_looks == 101, "a hundred milliseconds of looks, then given up: %u", tlb_looks);
+}
+
+/* what the SMMU refused the DSP while it was on is said when it is put back */
+static void
+smmu_faults_said(void)
+{
+	uintptr_t at;
+	uint64_t dsp;
+	uint32_t bytes;
+
+	an_smmu();
+	CHECK(memory(&at, &dsp, &bytes), "given");
+	*smmu(CONTEXT_AT(2) + SMMU_CB_FSR) = 1u << 1;
+	*smmu(CONTEXT_AT(2) + SMMU_CB_FAR) = 0x10008000;
+	hakios_audio_dsp_memory_put();
+	CHECK(logged("THE SMMU HAS REFUSED A REQUEST: context 2: status 0x2, address 0x10008000"), "said: %s", log_text);
+}
+
 int
 main(int argc, char **argv)
 {
-	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "the_boards_pins", the_boards_pins }, { "the_clock_watched_at_the_boards_pins", the_clock_watched_at_the_boards_pins },
-		{ "not_at_the_first_phones", not_at_the_first_phones },
+	static const struct { const char *name; void (*run)(void); unsigned cases; } scenarios[] = {
+		{ "the_boards_pins", the_boards_pins, 1 }, { "the_clock_watched_at_the_boards_pins", the_clock_watched_at_the_boards_pins, 1 },
+		{ "not_at_the_first_phones", not_at_the_first_phones, 1 }, { "no_frames", no_frames, 1 },
+		{ "smmu_set_up", smmu_set_up, 1 }, { "smmu_let_through", smmu_let_through, 1 },
+		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
 	};
+	char name[64];
+	const char *colon;
 
 	if (argc < 2) {
+		/* a scenario with several cases is listed once for each: NAME:N (the driver's state is a process's) */
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
-			printf("%s\n", scenarios[i].name);
+			for (unsigned c = 0; c < scenarios[i].cases; c++) {
+				if (scenarios[i].cases == 1) {
+					printf("%s\n", scenarios[i].name);
+				} else {
+					printf("%s:%u\n", scenarios[i].name, c);
+				}
+			}
 		}
 		return 0;
 	}
+	snprintf(name, sizeof(name), "%s", argv[1]);
+	if ((colon = strchr(argv[1], ':')) != NULL) {
+		name[colon - argv[1]] = 0;
+		setenv("SOUND_CASE", colon + 1, 1);
+	}
 	board = "phone-keys";
 	for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
-		if (strcmp(argv[1], scenarios[i].name) == 0) {
+		if (strcmp(name, scenarios[i].name) == 0) {
 			if (freopen("/dev/null", "w", stdout) == NULL) {
 				return 2;
 			}
