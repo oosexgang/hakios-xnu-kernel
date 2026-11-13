@@ -221,17 +221,6 @@ put_bits(struct block *b, const char *name, uint32_t offset, uint32_t mask, uint
 #define CLOCK_HZ                                19200000
 #define CLOCK_COUPLE_NO                         1
 
-static const char *
-dsp_error(uint32_t status)
-{
-	static const char *const names[] = { "ok", "failed", "bad parameter", "unsupported", "version", "unexpected", "panic",
-		                             "no resource", "bad handle", "already", "not ready", "pending", "busy", "aborted",
-		                             "preempted", "continue", "immediate", "not implemented", "need more", "no memory",
-		                             "not there" };
-
-	return status < sizeof(names) / sizeof(names[0]) ? names[status] : "an error this does not know";
-}
-
 static bool
 command(const char *what, uint8_t service, uint32_t opcode, const void *payload, uint32_t length, uint32_t wanted,
     struct hakios_apr_answer *answer)
@@ -249,7 +238,7 @@ command(const char *what, uint8_t service, uint32_t opcode, const void *payload,
 		if (answer->words[1] == 0) {
 			note("mic: %s: done\n", what);
 		} else {
-			say("mic: %s: REFUSED: %s\n", what, dsp_error(answer->words[1]));
+			say("mic: %s: REFUSED: %s\n", what, hakios_apr_status_name(answer->words[1]));
 		}
 		return answer->words[1] == 0 && wanted == 0;
 	}

@@ -115,6 +115,18 @@ typedef bool (*hakios_apr_events_t)(uint8_t service, uint16_t port, uint32_t opc
 
 bool hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode, const void *payload, uint32_t length,
     uint32_t wait_ms, struct hakios_apr_answer *answer);
+
+/* what the status of the DSP's basic answer (APR_BASIC_RSP_RESULT's second word) means: Qualcomm's ADSP_E*, 0 done */
+static inline const char *
+hakios_apr_status_name(uint32_t status)
+{
+	static const char *const names[] = { "ok", "failed", "bad parameter", "unsupported", "version", "unexpected", "panic",
+		                             "no resource", "bad handle", "already", "not ready", "pending", "busy", "aborted",
+		                             "preempted", "continue", "immediate", "not implemented", "need more", "no memory",
+		                             "not there" };
+
+	return status < sizeof(names) / sizeof(names[0]) ? names[status] : "an error this does not know";
+}
 void hakios_adsp_apr_events(hakios_apr_events_t handler);
 const uint8_t *hakios_adsp_fw_file(const char *name, uint64_t *size);        /* /fw/name, read whole; give back with: */
 void hakios_adsp_fw_free(const uint8_t *data, uint64_t size);

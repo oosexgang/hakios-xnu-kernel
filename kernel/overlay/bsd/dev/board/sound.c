@@ -257,17 +257,6 @@ tdm_clock_runs(void)
 #define APR_BASIC_RSP_RESULT    0x000110e8u
 #define APR_WAIT_MS             1000
 
-static const char *
-dsp_error(uint32_t status)
-{
-	static const char *const names[] = { "ok", "failed", "bad parameter", "unsupported", "version", "unexpected", "panic",
-		                             "no resource", "bad handle", "already", "not ready", "pending", "busy", "aborted",
-		                             "preempted", "continue", "immediate", "not implemented", "need more", "no memory",
-		                             "not there" };
-
-	return status < sizeof(names) / sizeof(names[0]) ? names[status] : "an error this does not know";
-}
-
 /*
  * One command, its answer waited for: true if the answer is the basic one with status 0, or the
  * opcode `wanted' (then in *answer).
@@ -288,7 +277,7 @@ command(const char *what, uint8_t service, uint16_t port, uint32_t opcode, const
 	}
 	if (answer->opcode == APR_BASIC_RSP_RESULT && answer->words[0] == opcode) {
 		say("sound: %s: %s%s\n", what, answer->words[1] == 0 ? "done" : "REFUSED: ", answer->words[1] == 0 ? "" :
-		    dsp_error(answer->words[1]));
+		    hakios_apr_status_name(answer->words[1]));
 		return answer->words[1] == 0 && wanted == 0;
 	}
 	if (wanted != 0 && answer->opcode == wanted) {
@@ -852,7 +841,7 @@ stream_on(void)
 		return false;
 	}
 	if (answer.words[0] != 0) {
-		say("sound: the device path: REFUSED: %s\n", dsp_error(answer.words[0]));
+		say("sound: the device path: REFUSED: %s\n", hakios_apr_status_name(answer.words[0]));
 		return false;
 	}
 	copp_open = true;
