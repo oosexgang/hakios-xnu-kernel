@@ -1448,6 +1448,7 @@ hakios_sound_dsp_up(void)
 	}
 	PE_parse_boot_argn("sound_secs", &seconds, sizeof(seconds));
 	PE_parse_boot_argn("sound_below", &below, sizeof(below));
+	/* boot-arg sound_pause=MS: the pause after each step is said, for the loader to note it (default 1000; 0: none) */
 	PE_parse_boot_argn("sound_pause", &pause_ms, sizeof(pause_ms));
 	PE_parse_boot_argn("sound_guard_as", &guard_as, sizeof(guard_as));
 	PE_parse_boot_argn("sound_gain", &gain, sizeof(gain));
