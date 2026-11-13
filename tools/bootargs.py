@@ -96,22 +96,19 @@ def collect():
     return found
 
 
+B = 'bsd/dev/board/'
 AREAS = [
-    ('Display, graphics and input', ('iokit/Kernel/MiniIOMobileFramebuffer', 'iokit/Kernel/MiniIOSurface', 'iokit/Kernel/HakiosGPU',
-                                     'bsd/dev/hakios_adreno', 'bsd/dev/hakios_backlight', 'bsd/dev/hakios_input', 'bsd/dev/hakios_drivers',
-                                     'bsd/dev/hakios_goodix', 'bsd/dev/hakios_fts', 'bsd/dev/hakios_buttons',
-                                     'bsd/dev/hakios_virtio_input')),
-    ('Power, CPU and temperature', ('bsd/dev/hakios_cpufreq', 'bsd/dev/hakios_ddr', 'bsd/dev/hakios_bench', 'bsd/dev/hakios_thermal', 'bsd/dev/hakios_cputop',
-                                    'bsd/dev/hakios_battery', 'iokit/Kernel/HakiosBattery', 'osfmk/arm64/hakios_cpu_idle',
-                                    'osfmk/arm64/psci_smp', 'iokit/Kernel/GenericARMPE')),
-    ('Sound, camera, haptics, flashlight', ('bsd/dev/hakios_adsp', 'bsd/dev/hakios_audio', 'bsd/dev/hakios_sound',
-                                            'bsd/dev/hakios_speaker', 'bsd/dev/hakios_mic', 'bsd/dev/hakios_virtio_sound',
-                                            'bsd/dev/hakios_camera', 'bsd/dev/hakios_haptic', 'bsd/dev/hakios_torch')),
-    ('Wi-Fi and network', ('bsd/dev/hakios_wifi', 'bsd/dev/hakios_wlfw', 'bsd/dev/hakios_qmi', 'bsd/dev/hakios_lx',
-                           'bsd/dev/hakios_sta', 'bsd/dev/hakios_net', 'bsd/dev/hakios_virtio_net',
-                           'bsd/dev/hakios_apple80211', 'iokit/Kernel/HakiosWLAN', 'iokit/Kernel/MiniIONetworkStack')),
-    ('Storage and file systems', ('bsd/dev/hakios_ufs', 'bsd/dev/hakios_virtio_blk', 'bsd/dev/hakios_sparse',
-                                  'bsd/dev/hakios_image', 'bsd/dev/hakios_apfs_check', 'bsd/dev/hakios_guard', 'bsd/miscfs/',
+    ('Display, graphics and input', ('iokit/Kernel/MiniIOMobileFramebuffer', 'iokit/Kernel/MiniIOSurface', 'iokit/Kernel/BoardGPU',
+                                     B + 'adreno', B + 'backlight', B + 'input', B + 'drivers', B + 'goodix', B + 'fts',
+                                     B + 'buttons', B + 'virtio_input')),
+    ('Power, CPU and temperature', (B + 'cpufreq', B + 'scmi_perf', B + 'ddr', B + 'bench', B + 'thermal', B + 'cputop',
+                                    B + 'battery', 'iokit/Kernel/BoardBattery', 'osfmk/arm64/cpu_idle', 'osfmk/arm64/psci_smp',
+                                    'iokit/Kernel/GenericARMPE', 'iokit/Kernel/IOPMrootDomain')),
+    ('Sound, camera, haptics, flashlight', (B + 'adsp', B + 'audio', B + 'sound', B + 'speaker', B + 'guard', B + 'mic',
+                                            B + 'virtio_sound', B + 'camera', B + 'haptic', B + 'torch')),
+    ('Wi-Fi, Bluetooth and network', (B + 'wifi', B + 'wlfw', B + 'qmi', B + 'lx', B + 'sta', B + 'net', B + 'virtio_net',
+                                      B + 'apple80211', B + 'bt_uart', 'iokit/Kernel/BoardWLAN', 'iokit/Kernel/MiniIONetworkStack')),
+    ('Storage and file systems', (B + 'ufs', B + 'virtio_blk', B + 'sparse', B + 'image', B + 'apfs_check', 'bsd/miscfs/',
                                   'bsd/dev/memdev', 'bsd/vfs/')),
 ]
 REST = 'Kernel core, processes and diagnostics'
