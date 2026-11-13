@@ -335,6 +335,31 @@ smmu_faults_said(void)
 	CHECK(logged("THE SMMU HAS REFUSED A REQUEST: context 2: status 0x2, address 0x10008000"), "said: %s", log_text);
 }
 
+/* ---- the DSP's events about the stream -------------------------------------------------------------------- */
+
+/* a write's "done" gives its period back, with an error if its status says one; a refused write too; underflows
+ * counted; and what is not the stream's, or not about a write of ours, is somebody else's */
+static void
+the_streams_events(void)
+{
+	const uint32_t ok[4] = { 0x1000, 0, 3840, 0 }, failed[4] = { 0x1000, 0, 3840, 2 };
+
+	CHECK(!events(APR_SVC_AFE, 0, ASM_DATA_EVENT_WRITE_DONE_V2, WRITE_TOKEN | 1, ok, 16), "another service's: not taken");
+	CHECK(!events(APR_SVC_ASM, 0, ASM_DATA_EVENT_WRITE_DONE_V2, 1, ok, 16), "a write's done without our token: not taken");
+	CHECK(written_done == 0 && returned == 0, "nothing counted");
+	CHECK(events(APR_SVC_ASM, 0, ASM_DATA_EVENT_WRITE_DONE_V2, WRITE_TOKEN | 3, ok, 16), "period 3 done");
+	CHECK(written_done == 1 && returned == 1u << 3 && write_errors == 0, "given back, no error: %#x", returned);
+	CHECK(events(APR_SVC_ASM, 0, ASM_DATA_EVENT_WRITE_DONE_V2, WRITE_TOKEN | 5, failed, 16), "period 5 done, badly");
+	CHECK(written_done == 2 && returned == (1u << 3 | 1u << 5) && write_errors == 1, "given back, an error: %u", write_errors);
+	CHECK(events(APR_SVC_ASM, 0, ASM_DATA_EVENT_WRITE_DONE_V2, WRITE_TOKEN | 6, failed, 12), "a short one");
+	CHECK(write_errors == 1 && (returned & 1u << 6), "its status, not there, is no error: %u", write_errors);
+	CHECK(events(APR_SVC_ASM, 0, APR_BASIC_RSP_RESULT, WRITE_TOKEN | 7, failed, 8) && write_errors == 2 && (returned & 1u << 7),
+	    "a write refused outright: an error, and its period back");
+	CHECK(!events(APR_SVC_ASM, 0, APR_BASIC_RSP_RESULT, 7, failed, 8) && write_errors == 2, "a command's answer is not ours");
+	CHECK(events(APR_SVC_ASM, 0, ASM_SESSION_EVENT_RX_UNDERFLOW, 0, ok, 0) && underflows == 1, "an underflow");
+	CHECK(!events(APR_SVC_ASM, 0, 0x12345, WRITE_TOKEN, ok, 16) && underflows == 1 && written_done == 4, "anything else: not taken");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -343,6 +368,7 @@ main(int argc, char **argv)
 		{ "not_at_the_first_phones", not_at_the_first_phones, 1 }, { "no_frames", no_frames, 1 },
 		{ "smmu_set_up", smmu_set_up, 1 }, { "smmu_let_through", smmu_let_through, 1 },
 		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
+		{ "the_streams_events", the_streams_events, 1 },
 	};
 	char name[64];
 	const char *colon;
