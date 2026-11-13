@@ -26,6 +26,8 @@
 #     --then COMMAND    run COMMAND here while it types, and wait for it before the --after wait (its output
 #                       is printed): e.g. curl to a --forward port
 #     --monitor PATH    QEMU's monitor as a socket at PATH, for another program to ask it while it runs
+#     --qmp PATH        QEMU's QMP as a socket at PATH: what touches the screen and presses the buttons
+#                       (QEMU_QMP=PATH base/qemu/touch.py tap 0.5 0.5)
 #     --no-devices      without the machine's virtio devices: by default it has a network card (QEMU's own
 #                       network behind it), a keyboard and a tablet, and the kernel is told to take them
 #
@@ -35,7 +37,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' disk='' audio=''
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio=''
 with_devices=1
 while [ $# -gt 1 ]; do
 	case $1 in
@@ -56,6 +58,7 @@ while [ $# -gt 1 ]; do
 	--forward) forward=",hostfwd=tcp:127.0.0.1:${2%%:*}-:${2##*:}"; shift 2 ;;
 	--then) then=$2; shift 2 ;;
 	--monitor) monitor=$(realpath -m "$2"); shift 2 ;;
+	--qmp) qmp=$(realpath -m "$2"); shift 2 ;;
 	*) die "unknown option $1 (the head of this file lists them)" ;;
 	esac
 done
@@ -72,6 +75,7 @@ if [ -n "$disk" ]; then
 	[ ${#devices[@]} -gt 0 ] || devices=(-global virtio-mmio.force-legacy=false)
 	devices+=(-drive "file=$disk,format=raw,if=none,id=disk0,readonly=on" -device 'virtio-blk-device,drive=disk0')
 fi
+[ -z "$qmp" ] || devices+=(-qmp "unix:$qmp,server,nowait")
 kernel=$(realpath "$1") || exit 1
 command -v qemu-system-aarch64 > /dev/null || die "no qemu-system-aarch64 (apt: qemu-system-arm)"
 firmware=
