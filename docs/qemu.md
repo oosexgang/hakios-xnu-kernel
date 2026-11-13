@@ -46,6 +46,7 @@ line at a time:
 | --- | --- |
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
 | `ls [PATH]`, `cat FILE` | Directories and files: getdirentries64, lstat64, read. |
+| `hash FILE...` | Each file or device read to its end, timed, and its FNV-1a hash, for this machine to compare. |
 | `ps`, `uptime` | The processes (proc_info) and the time since boot. |
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
@@ -80,7 +81,8 @@ starts its first process within 20 seconds of its own start (in QEMU's emulation
 `/sbin/launchd` runs as pid 1 and its shell answers what is typed; `en0` takes an address, QEMU's
 gateway answers its pings, its TCP serves this machine a page and 4 MB through a forwarded port and asks this
 machine for one (and for 4 MB, which arrive whole), and a datagram to this machine is answered (`workbench/qemu_host.py`); a second
-APFS disk on the virtio block device is mounted and read; a tone played on the virtio sound device comes
+APFS disk on the virtio block device is read whole and mounted, and its bytes and a file's in it are
+the image's; a tone played on the virtio sound device comes
 out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a

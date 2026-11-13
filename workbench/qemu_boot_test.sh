@@ -5,7 +5,7 @@
 # What is typed on its shell then tries the rest of the kernel:
 #   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way
 #     (TCP both ways); a datagram answered (workbench/qemu_host.py is this computer's side)
-#   - the devices: a second disk (virtio block, APFS); a tone (virtio sound, which QEMU writes to a WAV
+#   - the devices: a second disk (virtio block, APFS), read whole and through its file system; a tone (virtio sound, which QEMU writes to a WAV
 #     file); a button and a touch from QEMU's keyboard and tablet
 #   - processes: one started and waited for, one forked (its memory copied) and made another program,
 #     one ended by a signal, two by their own mistakes; signals caught by a handler; a pipe between two;
@@ -37,19 +37,26 @@ check() {
 	if "$@"; then echo "ok   $what"; else echo "FAIL $what"; failed=1; fi
 }
 XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { echo "FAIL the root does not build"; exit 1; }
+# FILE's FNV-1a hash, as the shell's hash and get say it
+fnv1a() {
+	python3 -c 'import sys
+h = 0xcbf29ce484222325
+for b in open(sys.argv[1], "rb").read():
+    h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
+print("%016x" % h)' "$1"
+}
 # a second disk, on the virtio block device
 mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
+head -c 3000000 /dev/urandom > "$W/data/big.bin"
 python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
+disk_hash=$(fnv1a "$W/data.img")
+file_hash=$(fnv1a "$W/data/big.bin")
 # what it asks this computer for (workbench/qemu_host.py serves it)
 mkdir -p "$W/www"
 echo "a page from the computer QEMU runs on" > "$W/www/page.txt"
 head -c 4194304 /dev/urandom > "$W/www/big.bin"
-big_hash=$(python3 -c 'import sys
-h = 0xcbf29ce484222325
-for b in open(sys.argv[1], "rb").read():
-    h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
-print("%016x" % h)' "$W/www/big.bin")
+big_hash=$(fnv1a "$W/www/big.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'sysctl hw.ncpu hw.board.name kern.ostype'
@@ -60,8 +67,10 @@ typed=(
 	'get 10.0.2.2 18081 /page.txt'
 	'get 10.0.2.2 18081 /big.bin'
 	'udp 10.0.2.2 18082 a datagram'
+	'hash /dev/rvblk0'
 	'mount apfs /dev/rvblk0 /mnt'
 	'cat /mnt/hello.txt'
+	'hash /mnt/big.bin'
 	'tone 440 1'
 	'input 4'
 	'run /sbin/launchd ps'
@@ -126,6 +135,9 @@ check "... and 4 MB of it arrive whole (the same FNV-1a hash as here)" \
 check "a datagram goes to this computer and its answer comes back" grep -aq "^udp: 18 bytes back from 10.0.2.2: echoed: a datagram" "$log"
 check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
+check "... read whole through the virtio block driver, every byte as the image's" \
+	grep -aq "^/dev/rvblk0: $(stat -c %s "$W/data.img") bytes in [0-9]* ms, fnv1a $disk_hash" "$log"
+check "... and a file of 3 MB in its APFS volume, as it was put there" grep -aq "^/mnt/big.bin: 3000000 bytes in [0-9]* ms, fnv1a $file_hash" "$log"
 check "its sound device plays a tone of 440 Hz, through the virtio sound driver" \
 	bash -c "python3 '$HERE/tone_in_wav.py' '$W/sound.wav' 440 > /dev/null"
 check "a button pressed on the virtio keyboard reaches the input device" \
