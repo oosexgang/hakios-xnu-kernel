@@ -371,7 +371,8 @@ parse_endpoint(char **argv, struct sockaddr_in *to)
 	return parse_ipv4(argv[1], to->addr) && port > 0 && port < 65536;
 }
 
-/* ADDRESS PORT [PATH]: a page asked for over HTTP (connect, as a client); its first line and its size */
+/* ADDRESS PORT [PATH]: a page asked for over HTTP (connect, as a client): its first line, its size, the time it
+ * took and its hash; and the page itself if it is short */
 void
 command_get(int argc, char **argv)
 {
@@ -402,31 +403,51 @@ command_get(int argc, char **argv)
 	for (int i = 0; i < 5; i++) {
 		syscall6(SYS_write, sock, (long)request[i], (long)length(request[i]), 0, 0, 0);
 	}
-	long all = 0;
-	for (long got; all < (long)sizeof(response) - 1 &&
-	    (got = syscall6(SYS_read, sock, (long)response + all, (long)sizeof(response) - 1 - all, 0, 0, 0)) > 0; all += got) {
-	}
-	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
-	response[all] = '\0';
-	long line = 0, body = 0;
-	while (line < all && response[line] != '\r' && response[line] != '\n') {
-		line++;
-	}
-	for (long i = 0; i + 3 < all; i++) {
-		if (response[i] == '\r' && response[i + 1] == '\n' && response[i + 2] == '\r' && response[i + 3] == '\n') {
-			body = i + 4;
-			break;
+	/*
+	 * The first 16 KB kept (the head, and a small body to show); all of it counted, timed and hashed
+	 * (FNV-1a over the body, for the other side to compare), however long it is.
+	 */
+	long all = 0, kept = 0, body = -1;
+	uint64_t hash = 0xcbf29ce484222325ull;
+	int64_t start = now_us();
+	static char chunk[65536];
+	for (long got; (got = syscall6(SYS_read, sock, (long)chunk, sizeof(chunk), 0, 0, 0)) > 0; all += got) {
+		for (long i = 0; i < got; i++) {
+			if (kept < (long)sizeof(response) - 1) {
+				response[kept++] = chunk[i];
+			}
+			if (body >= 0) {
+				hash = (hash ^ (uint8_t)chunk[i]) * 0x100000001b3ull;
+			} else if (all + i >= 3 && kept == all + i + 1 && response[all + i - 3] == '\r' && response[all + i - 2] == '\n' &&
+			    response[all + i - 1] == '\r' && response[all + i] == '\n') {
+				body = all + i + 1;     /* (the head ends here; what follows is the body) */
+			}
 		}
 	}
+	int64_t took = now_us() - start;
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+	response[kept] = '\0';
+	long line = 0;
+	while (line < kept && response[line] != '\r' && response[line] != '\n') {
+		line++;
+	}
+	long body_size = body >= 0 ? all - body : 0;
 	response[line] = '\0';
 	say("get: ");
 	say(response);
 	say(", ");
-	say_number((uint64_t)(body > 0 ? all - body : 0));
-	say(" bytes of body\n");
-	if (body > 0) {
+	say_number((uint64_t)body_size);
+	say(" bytes of body in ");
+	say_number((uint64_t)took / 1000);
+	say(" ms, fnv1a ");
+	for (int shift = 60; shift >= 0; shift -= 4) {
+		char digit[2] = { "0123456789abcdef"[(hash >> shift) & 15], '\0' };
+		say(digit);
+	}
+	say("\n");
+	if (body >= 0 && body_size > 0 && body_size <= 1024 && all <= kept) {
 		say(response + body);
-		if (all > body && response[all - 1] != '\n') {
+		if (response[kept - 1] != '\n') {
 			say("\n");
 		}
 	}
