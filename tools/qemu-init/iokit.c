@@ -19,6 +19,8 @@
 #define MIG_host_get_io_main                    205
 #define MIG_io_object_get_class                 2800
 #define MIG_io_iterator_next                    2802
+#define MIG_io_registry_entry_from_path         2809
+#define MIG_io_registry_entry_get_property_bytes 2812
 #define MIG_io_registry_entry_get_child_iterator 2813
 #define MIG_io_registry_get_root_entry          2827
 #define MIG_io_registry_entry_get_name_in_plane 2843
@@ -63,6 +65,14 @@ struct string_request {                 /* a request that is a string (a plane's
 	char text[128];
 };
 
+struct bytes_reply {                    /* a property's bytes */
+	struct header head;
+	uint64_t ndr;
+	int32_t code;
+	uint32_t count;
+	uint8_t bytes[4096];
+};
+
 struct string_reply {                   /* an answer that is a string (a name, a class) */
 	struct header head;
 	uint64_t ndr;
@@ -76,8 +86,10 @@ union message {
 	struct port_reply port;
 	struct error_reply error;
 	struct string_request request;
+	struct { struct header head; uint64_t ndr; uint32_t offset, count; char text[512]; } path;
 	struct string_reply string;
-	uint8_t room[1024];             /* (and the trailer the kernel adds on receiving) */
+	struct bytes_reply bytes;
+	uint8_t room[4096 + 512];       /* (and the trailer the kernel adds on receiving) */
 };
 
 static uint32_t reply_port;
@@ -119,19 +131,28 @@ release(uint32_t name)
 	}
 }
 
-/* a request whose one argument is the string TEXT; its size */
+/* a request whose one argument is the string TEXT (at most LIMIT bytes, its end included); its size */
 static uint32_t
-string_request(union message *message, const char *text)
+string_request_of(union message *message, const char *text, uint32_t limit)
 {
 	uint32_t n = (uint32_t)length(text) + 1;
 
+	if (n > limit) {
+		n = limit;
+	}
 	message->request.ndr = 0x0000000001000000ull;  /* NDR_record: little-endian, ASCII, IEEE floats */
 	message->request.offset = 0;
 	message->request.count = n;
 	for (uint32_t i = 0; i < n; i++) {
-		message->request.text[i] = text[i];
+		message->path.text[i] = i + 1 < n ? text[i] : '\0';
 	}
 	return (uint32_t)(sizeof(struct header) + 8 + 8 + ((n + 3) & ~3u));
+}
+
+static uint32_t
+string_request(union message *message, const char *text)
+{
+	return string_request_of(message, text, 128);
 }
 
 /* a routine whose answer is a string, into OUT (128 bytes); whether it answered */
@@ -214,4 +235,71 @@ command_ioreg(int argc, char **argv)
 	say("ioreg: ");
 	say_number(ioreg_entries);
 	say(" entries\n");
+}
+
+/*
+ * PATH KEY: a property of the registry entry at PATH (IOService:/, IODeviceTree:/chosen ...), as text
+ * if it is text (a list of strings as several), else in hexadecimal.
+ */
+void
+command_ioprop(int argc, char **argv)
+{
+	union message message;
+	char line[600];
+	long code;
+
+	if (argc != 3) {
+		say("ioprop PATH KEY: ioprop IOService:/ IOPlatformSerialNumber\n");
+		return;
+	}
+	uint32_t host = (uint32_t)trap8(TRAP_host_self, 0, 0, 0, 0, 0, 0, 0, 0);
+	uint32_t main_port = call_for_port(host, MIG_host_get_io_main, &message, sizeof(struct header), &code);
+	uint32_t entry = main_port != 0 ? call_for_port(main_port, MIG_io_registry_entry_from_path, &message,
+	    string_request_of(&message, argv[1], 512), &code) : 0;
+	if (entry == 0) {
+		say("ioprop: no entry at ");
+		say(argv[1]);
+		say("\n");
+		release(main_port);
+		return;
+	}
+	uint32_t size = string_request(&message, argv[2]);
+	*(uint32_t *)((uint8_t *)&message + size) = sizeof(message.bytes.bytes);       /* (dataCnt: how much it may give) */
+	long kr = call(entry, MIG_io_registry_entry_get_property_bytes, &message, size + 4);
+	release(entry);
+	release(main_port);
+	if (kr != 0 || message.bytes.code != 0 || message.bytes.count > sizeof(message.bytes.bytes)) {
+		say("ioprop: ");
+		say(argv[1]);
+		say(" has no ");
+		say(argv[2]);
+		say("\n");
+		return;
+	}
+	/* text: printable, each string ended by a 0 (a device tree's list of strings is several) */
+	uint32_t n = message.bytes.count, text = n > 0 && message.bytes.bytes[0] != '\0';
+	for (uint32_t i = 0; i < n; i++) {
+		uint8_t c = message.bytes.bytes[i];
+		text &= (c >= ' ' && c < 0x7f) || (c == '\0' && (i == n - 1 || message.bytes.bytes[i + 1] != '\0'));
+	}
+	size_t at = append(line, 0, sizeof(line), argv[2]);
+	at = append(line, at, sizeof(line), text ? " = \"" : " = <");
+	for (uint32_t i = 0; i < n && at + 4 < sizeof(line); i++) {
+		static const char hex[] = "0123456789abcdef";
+		uint8_t c = message.bytes.bytes[i];
+
+		if (text) {
+			if (c != '\0') {
+				line[at++] = (char)c;
+			} else if (i + 1 < n) {
+				at = append(line, at, sizeof(line), "\" \"");     /* (the next string of a list) */
+			}
+		} else {
+			line[at++] = hex[c >> 4];
+			line[at++] = hex[c & 15];
+		}
+	}
+	line[at] = '\0';
+	append(line, at, sizeof(line), text ? "\"\n" : ">\n");
+	say(line);
 }

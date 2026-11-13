@@ -79,6 +79,7 @@ void command_get(int argc, char **argv);
 void command_help(int argc, char **argv);
 void command_ifconfig(int argc, char **argv);
 void command_input(int argc, char **argv);
+void command_ioprop(int argc, char **argv);
 void command_ioreg(int argc, char **argv);
 void command_kevent(int argc, char **argv);
 void command_kill(int argc, char **argv);
