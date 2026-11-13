@@ -88,6 +88,7 @@ typed=(
 	'rm /tmp/notes/a'
 	'ls /tmp/notes'
 	'threads 2'
+	'locks 4'
 	'mmap /sbin/launchd'
 	'kevent 10'
 	'run /sbin/launchd crash null'
@@ -182,6 +183,8 @@ check "the serial number the loader made is the one IOKit gives user space" bash
 	[ -n \"\$serial\" ] && tr -d '\\r' < '$log' | grep -qx \"IOPlatformSerialNumber = \\\"\$serial\\\"\""
 check "a picture drawn in user space reaches the screen (IOSurface, the framebuffer's swap)" \
 	bash -c "grep -aq '^draw: a picture of [0-9]* x [0-9]* on the screen' '$log' && python3 '$HERE/screen_shows_draw.py' '$W/screen.png' > /dev/null"
+check "threads take turns under one lock, asleep in the kernel meanwhile (ulock_wait, ulock_wake)" \
+	grep -aqE "^locks: 4 threads added 800000 of 800000 under one lock, waited in the kernel [1-9][0-9]* times" "$log"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"

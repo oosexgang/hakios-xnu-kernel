@@ -76,6 +76,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `unix FILE` | FILE opened, its descriptor sent over a socket pair with a word (sendmsg, SCM_RIGHTS), and the file read through the descriptor that comes out. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
+| `locks [COUNT]` | Threads adding to one count under one lock, as `os_unfair_lock` makes one: a word, and the kernel's `ulock_wait` and `ulock_wake` for those that must wait. None of the count is lost. |
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | **IOKit** (`iokit.c`) | |
@@ -105,7 +106,8 @@ on its shell and checks what comes back:
   memory is its own, and it can become another program; a signal ends a process in the background, and a
   process's mistakes end it with SIGSEGV and SIGILL; a timer's signals reach a handler on time; a pipe
   carries what a child writes into it; a descriptor sent over a socket pair reads the file it was; two
-  threads run on the two processors at once; Mach messages go through a port and come back unchanged;
+  threads run on the two processors at once, and four take turns under one lock without losing a count;
+  Mach messages go through a port and come back unchanged;
   kqueue's timer keeps time and it sees a pipe become readable.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a mapped file is what reading it gives; memory of its own holds what is written and is all
