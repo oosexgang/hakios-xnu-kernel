@@ -6,13 +6,13 @@
 # the platform layer under osfmk: the scheduler's and the pmap's internals (MACH_KERNEL_PRIVATE)
 osfmk/arm64/generic_arm64_support.c
 osfmk/arm64/gic_v3_irq.c
-osfmk/arm64/hakios_cpu_idle.c
-osfmk/arm64/hakios_prof.c
+osfmk/arm64/cpu_idle.c
+osfmk/arm64/prof.c
 osfmk/arm64/loader_return.c
 osfmk/arm64/psci_smp.c
-osfmk/arm64/hakios_a64emu.c
+osfmk/arm64/a64emu.c
 osfmk/arm64/user_exception_trace.c
 
 # the network stack's and the MAC framework's private headers
-bsd/dev/hakios_net.c
+bsd/dev/board/net.c
 bsd/kern/kern_minimac.c

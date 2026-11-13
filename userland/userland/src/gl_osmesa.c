@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "hakios_gl.h"
+#include "board/gl.h"
 
 /* GL/osmesa.h of Mesa */
 #define OSMESA_RGBA                     0x1908

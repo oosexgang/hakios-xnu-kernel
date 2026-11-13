@@ -75,9 +75,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 ### Building or changing the kernel
 
 - **What the drivers share is written once.** Next to the headers they already shared (registers,
-  waits, RPMh, the command database, pins), `hakios_cache.h` has the cache maintenance and the barrier
-  that seven drivers each wrote out, `hakios_smmu.h` the SMMU's registers that four defined, `hakios_scm.h`
-  the call to TrustZone that three made, and `hakios_kernel.h` the kernel's own functions that 32
+  waits, RPMh, the command database, pins), `board/cache.h` has the cache maintenance and the barrier
+  that seven drivers each wrote out, `board/smmu.h` the SMMU's registers that four defined, `board/scm.h`
+  the call to TrustZone that three made, and `board/kernel.h` the kernel's own functions that 32
   declared for themselves. On a host the first two hold only the compiler, so a driver that uses them
   compiles into a host test as it is.
 
@@ -105,17 +105,17 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   the formats of what it prints, which the real build treats as errors. It does not build or link
   the kernel.
 - **What drivers share is written once.** Eleven drivers each had their own copy of the function that
-  writes to the loader's log: `hakios_say()` in `hakios_log.h`. Fourteen had their own register
-  access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
-  clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
-  `hakios_spmi.h`; the lookup in RPMh's command database, written out in eight, is
-  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`, and I2C by hand on two
-  of them, which three drivers had, is `hakios_i2c_gpio.h`. What
+  writes to the loader's log: `hakios_say()` in `board/log.h`. Fourteen had their own register
+  access, in three variants: `board/mmio.h` has the three and says when each is needed. Waits and the
+  clock are `board/time.h`. The PMIC arbiter's protocol, written out in three drivers, is
+  `board/spmi.h`; the lookup in RPMh's command database, written out in eight, is
+  `board/cmd_db.h`; a request to RPMh is `board/rpmh.h`; the SoC's pins are `board/tlmm.h`, and I2C by hand on two
+  of them, which three drivers had, is `board/i2c_gpio.h`. What
   the audio DSP's driver and the Wi-Fi's both had of the way to another processor is shared as
-  well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
-  GLINK's queues and the length of its messages (`hakios_glink_queue.h`), QRTR's framing
-  (`hakios_qrtr_frame.h`), the checks of a DSP's firmware image (`hakios_mdt.h`), the mailbox's and the
-  doorbells' registers and whether the mailbox is usable (`hakios_ipc.h`). Each that has logic has a test
+  well: the shared memory (`board/smem.h`), SMP2P's items (`board/smp2p.h`), the arithmetic of
+  GLINK's queues and the length of its messages (`board/glink_queue.h`), QRTR's framing
+  (`board/qrtr_frame.h`), the checks of a DSP's firmware image (`board/mdt.h`), the mailbox's and the
+  doorbells' registers and whether the mailbox is usable (`board/ipc.h`). Each that has logic has a test
   of its own; the four checks that wrapped in both drivers were the first to move there.
 - **The loader is parts by topic.** `loader/loader.c` was one file of 5100 lines; it is the entry
   point and a list of 24 parts in `loader/src/` now (the device tree's writer, the kernel's memory,
@@ -126,11 +126,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   the reader of Android's partition description (`workbench/loader_test.c`, `loader_window_test.c`,
   `loader_dsu_test.c`). A port's own memory map can be tried there.
 - **One list starts every driver.** The starts were spread over the touch queue's file, the audio
-  device's and `bsd_init()`; they are `bsd/dev/hakios_drivers.c` now, in the same order, and a new
+  device's and `bsd_init()`; they are `bsd/dev/board/drivers.c` now, in the same order, and a new
   driver is one line there. A test runs the list on every test board.
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
-  memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
-  from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
+  memory speed; those are `board/ddr.c` and `board/bench.c` now. It and the keys' driver work
+  from a board's data and are named so: `board/cpufreq.c`, `board/buttons.c`.
 - **The partition a write may reach is the board's.** The loader and the kernel each had the GPT
   entry of the first phone's own partition in their code: nothing could be written on another phone
   without changing both. It is `storage { }` of the board file; a board without it is never written.
@@ -186,7 +186,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   sum small: such an extent was taken. Found by the new test of that reader, which runs it on
   descriptions built to be wrong.
 - **An item of the processors' shared memory is given to a driver only if it lies inside it.** The
-  reader of that memory (`hakios_smem.h`) followed no header outside the area, but it gave out an
+  reader of that memory (`board/smem.h`) followed no header outside the area, but it gave out an
   item as its entry described it: an entry with more padding than length, or pushed past its
   partition by its header's padding, came out with an address or a length outside the area, which
   the Wi-Fi's and the audio DSP's drivers then read. Such an entry ends the walk now.
@@ -252,7 +252,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components`, looks
   for files that must never be published, and holds the Darwin side's copies of the kernel's device
-  interfaces (`userland/userland/src/hakios_*.h`) to what the kernel's say.
+  interfaces (`userland/userland/src/board/*.h`) to what the kernel's say.
 - **The host tests** (`workbench/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
@@ -279,12 +279,12 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   makes a phone's seed once and keeps it outside the checkout; `darwin/tools/boot26.py` passes it
   (`identity=`), so a phone is the same device at every boot. Without a seed the loader takes a random
   one, from the firmware's generator where it has one, which now also fills the kernel's random seed.
-- **Brightness and Auto-Brightness** (`hakios_backlight.c`, [docs/backlight.md](docs/backlight.md)).
+- **Brightness and Auto-Brightness** (`board/backlight.c`, [docs/backlight.md](docs/backlight.md)).
   Brightness is set by MIPI DCS through the Qualcomm DSI controller, or in software on boards without a
   description. The side button and the idle timer make the panel dark or dimmed. Tested on the host and
   under `qemu-aarch64`. Not yet verified on a phone. The default, `backlight=1`, only reads. There is
   no light sensor driver yet: the light reading is the sysctl `hw.backlight.lux`.
-- **A thermal limiter** (`hakios_thermal.c`, [docs/thermal.md](docs/thermal.md)). It reads the
+- **A thermal limiter** (`board/thermal.c`, [docs/thermal.md](docs/thermal.md)). It reads the
   temperature sensors and, when hot, lowers the CPU groups' frequency and caps the panel's brightness.
   Tested on the host and under `qemu-aarch64`. Not yet verified on a phone. The default, `thermal=1`,
   only logs the hottest sensor; `thermal=2` holds back.

@@ -91,7 +91,7 @@ extern void glReadPixels(int x, int y, int width, int height, unsigned format, u
 #define GL_COLOR_ATTACHMENT0            0x8ce0
 #define GL_FRAMEBUFFER                  0x8d40
 
-/* the kernel's GPU service takes pixels for the panel (iokit/Kernel/HakiosGPU.cpp: kHakiosShow) */
+/* the kernel's GPU service takes pixels for the panel (iokit/Kernel/BoardGPU.cpp: kHakiosShow) */
 struct show {
 	uint64_t pixels;
 	uint32_t width, height, row_bytes, pad;

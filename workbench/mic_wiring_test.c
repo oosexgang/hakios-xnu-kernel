@@ -1,5 +1,5 @@
 /*
- * Where the microphones' driver (kernel/overlay/bsd/dev/hakios_mic.c) takes the audio subsystem's blocks
+ * Where the microphones' driver (kernel/overlay/bsd/dev/board/mic.c) takes the audio subsystem's blocks
  * and pins from. The driver is compiled as it is into a host program; the registers are memory that
  * keeps what is written, and nothing of the codec or of SoundWire is modelled. What is tested, on a
  * made-up SoC whose lpass { } is no real chip's: the SoundWire pins the driver sets up are the SoC file's
@@ -63,9 +63,9 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
+#include "board/board.c"
 #define get mic_get
-#include "hakios_mic.c"
+#include "board/mic.c"
 #undef get
 #undef printf
 

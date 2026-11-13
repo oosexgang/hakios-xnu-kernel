@@ -62,7 +62,7 @@ extern void hakios_mic_quiesce(void);
 extern void hakios_bt_uart_quiesce(void);
 extern void hakios_ufs_quiesce(void);
 extern void hakios_ufs_close(void);
-extern void hakios_var_save_on_return(void);   /* bsd/dev/hakios_ufs.c: the data volume into the flash */
+extern void hakios_var_save_on_return(void);   /* bsd/dev/board/ufs.c: the data volume into the flash */
 void loader_checkpoint(uint64_t n);
 
 /* Also referenced from the early exception vector in start.s. */

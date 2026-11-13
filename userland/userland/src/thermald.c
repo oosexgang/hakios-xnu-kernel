@@ -1,7 +1,7 @@
 /*
  * thermald: the phone's heat, as Darwin hears about it.
  *
- * The kernel's thermal service (bsd/dev/hakios_thermal.c in hakios-xnu-kernel) reads the SoC's
+ * The kernel's thermal service (bsd/dev/board/thermal.c in hakios-xnu-kernel) reads the SoC's
  * sensors, slows the cores when they get hot, and keeps a pressure level in kern.hakios.thermal_pressure:
  * Darwin's own scale, 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping. On an iPhone it is
  * thermalmonitord that says how hot the phone is; here nobody would, so apps would never hear of it --

@@ -1,5 +1,5 @@
 /*
- * The SoC's pins as the part drivers share them (kernel/overlay/bsd/dev/hakios_tlmm.h), against a
+ * The SoC's pins as the part drivers share them (kernel/overlay/bsd/dev/board/tlmm.h), against a
  * model of the pin controller: what is written into a pin's configuration, that an output has its
  * level before it drives, and that only the pin asked for is touched.
  *
@@ -15,7 +15,7 @@ static void wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, val
 #define KERNEL 1
 static vm_offset_t tlmm;
 #define HAKIOS_TLMM tlmm
-#include "hakios_tlmm.h"
+#include "board/tlmm.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

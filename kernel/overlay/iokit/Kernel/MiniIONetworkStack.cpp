@@ -4,7 +4,7 @@
  *
  * The real one gives the BSD names (en0, en1, ...) to the IONetworkInterface objects of the
  * drivers, when the interface namer asks. Here interfaces are made with the BSD interface KPI
- * (bsd/dev/hakios_net.c) and are born with their names, so there is never anything to name.
+ * (bsd/dev/board/net.c) and are born with their names, so there is never anything to name.
  * But the namer wants this object all the same: until it has opened it, it does not say in
  * configd's store that the registry has gone quiet (the key Plugin:InterfaceNamer, "*QUIET*"),
  * and gives up only after five minutes ("*TIMEOUT*"). SystemConfiguration's

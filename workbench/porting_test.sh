@@ -53,7 +53,7 @@ says() {
 R=$W/repo
 mkdir -p "$R/kernel/overlay/bsd/dev" "$R/workbench"
 cp -r "$REPO/devices" "$REPO/tools" "$REPO/loader" "$R/"
-cp "$REPO"/kernel/overlay/bsd/dev/hakios_* "$R/kernel/overlay/bsd/dev/"
+cp -r "$REPO"/kernel/overlay/bsd/dev/board "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/workbench/fakekernel" "$R/workbench/"
 B="$R/tools/boards.py"
 
@@ -141,11 +141,11 @@ if command -v clang > /dev/null && command -v lld-link > /dev/null; then
 fi
 
 # --- steps 4 and 5: what the kernel takes the board for --------------------------------------------
-# A program of the kernel's own board code (hakios_board.c with the regenerated table) that answers for
+# A program of the kernel's own board code (board/board.c with the regenerated table) that answers for
 # the board named on its command line.
 cat > "$W/ask.c" <<'EOF'
 #include "fakekernel.h"
-#include "hakios_board.c"
+#include "board/board.c"
 int
 main(int argc, char **argv)
 {

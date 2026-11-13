@@ -6,11 +6,11 @@
 #   workbench/mutate.sh TEST SOURCE OLD NEW
 #
 #   TEST     a test that workbench/run.sh runs scenario by scenario: speaker_driver_test, loader_window_test, ...
-#   SOURCE   the file to break, as the test includes it: hakios_speaker.c, src/window.c, example_led.c
+#   SOURCE   the file to break, as the test includes it: board/speaker.c, src/window.c, example_led.c
 #   OLD NEW  the text to replace and what to put there; OLD is replaced where it first occurs
 #
 # for example
-#   workbench/mutate.sh ddr_driver_test hakios_ddr.c 'level == 0 ||' ''
+#   workbench/mutate.sh ddr_driver_test board/ddr.c 'level == 0 ||' ''
 #
 # Nothing of the repository is changed. Exit 0: a scenario failed (the change was caught); 1: none
 # did; 2: the change does not compile, or the arguments are wrong.
@@ -51,10 +51,10 @@ if [ "$(dirname "$original")" = "$(dirname "$test")" ]; then
 	test=$W/copy/$name.c
 fi
 "$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
-(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/hakios_focaltech_fw.h") || die "no stub for the touch firmware"
+(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/focaltech_fw.h") || die "no stub for the touch firmware"
 
 # (the flags of workbench/run.sh, the copy's directory first)
-flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")
+flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -iquote "$SRC/board" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")
 # the test has to take the copy, itself or through a file it includes: a change to a file it never sees is caught by nothing
 "$CC" "${flags[@]}" -MM "$test" 2> /dev/null | grep -qF "$W/copy/$source" || die "$name does not include $source"
 if ! "$CC" "${flags[@]}" "$HERE/fakekernel/fakekernel.c" "$test" -o "$W/test" 2> "$W/errors"; then

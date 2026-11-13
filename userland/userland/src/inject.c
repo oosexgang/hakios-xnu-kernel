@@ -47,8 +47,8 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#include "hakios_gl.h"
-#include "hakios_input.h"
+#include "board/gl.h"
+#include "board/input.h"
 
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 

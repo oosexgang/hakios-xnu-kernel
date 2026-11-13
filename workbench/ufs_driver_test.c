@@ -1,5 +1,5 @@
 /*
- * The storage's driver itself (kernel/overlay/bsd/dev/hakios_ufs.c), run as a host program: the one
+ * The storage's driver itself (kernel/overlay/bsd/dev/board/ufs.c), run as a host program: the one
  * place of the kernel from which a write can reach a phone's flash. It asks the loader, which stays on
  * core 0 with UEFI's driver, through a page of memory and a buffer. So the model here is that loader: a
  * thread that answers what the page asks, over a made-up disk, and that notes every request -- above all
@@ -37,8 +37,8 @@ said(const char *format, ...)
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #define printf said
-#include "hakios_board.c"
-#include "hakios_ufs.c"
+#include "board/board.c"
+#include "board/ufs.c"
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 #pragma GCC diagnostic pop
 
@@ -192,7 +192,7 @@ core0(void *unused __unused)
 void FlushPoC_DcacheRegion(vm_offset_t va __unused, size_t length __unused) { flushes++; }
 void loader_return(void) {}
 
-/* this kernel's own driver of the controller (hakios_ufshc.c) is not part of this: it is there, and not used */
+/* this kernel's own driver of the controller (board/ufshc.c) is not part of this: it is there, and not used */
 static unsigned switched_out;
 bool ufshc_probe(const struct ufshc_loader *loader __unused, bool only __unused) { return false; }
 bool ufshc_available(void) { return false; }

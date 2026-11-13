@@ -25,7 +25,7 @@
  *   restart                            kill the audio server (launchd starts it again when it is next asked for):
  *                                      what every program then sees as "media services were reset"
  *
- * The samples come out of /dev/hakios-audio (see sys/hakios_audio.h); a tone is something one
+ * The samples come out of /dev/hakios-audio (see sys/board/audio.h); a tone is something one
  * can recognize there without ears: two peaks in the spectrum, where they were put.
  */
 #include <AudioToolbox/AudioToolbox.h>

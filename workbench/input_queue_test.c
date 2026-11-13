@@ -1,5 +1,5 @@
 /*
- * The queue between the touch and key drivers and Darwin (kernel/overlay/bsd/dev/hakios_input.c, /dev/hakios-touch),
+ * The queue between the touch and key drivers and Darwin (kernel/overlay/bsd/dev/board/input.c, /dev/hakios-touch),
  * run as a host program: what a driver posts reaches a reader whole and in order, a queue nobody reads
  * keeps the newest, and the way out of a run with five fingers held is a driver's fingers' alone -- a
  * program that writes samples to the device (inject.c does) cannot end the run with them.
@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 #include "fakekernel.h"
-#include <sys/hakios_input.h>
+#include <sys/board/input.h>
 
 extern char log_text[];
 
@@ -33,7 +33,7 @@ loader_log_line(const char *line)
 /* (the kernel's printf takes %llu for a uint64_t, which on this host is an unsigned long of the same size) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat"
-#include "hakios_input.c"
+#include "board/input.c"
 #pragma GCC diagnostic pop
 
 static int failures;

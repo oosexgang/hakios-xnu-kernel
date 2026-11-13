@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "hakios_camera.h"
+#include "board/camera.h"
 
 struct isp_stats {
 	double          mean[3];        /* R, G, B above black, in 10-bit steps */

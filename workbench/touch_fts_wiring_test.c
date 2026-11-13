@@ -1,5 +1,5 @@
 /*
- * Where the FocalTech FT3658U driver (kernel/overlay/bsd/dev/hakios_fts.c) takes its wiring from. The
+ * Where the FocalTech FT3658U driver (kernel/overlay/bsd/dev/board/fts.c) takes its wiring from. The
  * driver is compiled as it is into a host program; nothing of the controller is modelled. What is
  * tested: every address, clock, vote and pin the driver uses is the board's (touch { } of its file); for
  * the phone the driver was written on they are the numbers that used to be in the code; for a board
@@ -26,8 +26,8 @@ void hakios_rpmh_unlock(void) { }
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
-#include "hakios_fts.c"
+#include "board/board.c"
+#include "board/fts.c"
 #undef printf
 
 static int failures;

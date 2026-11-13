@@ -1,5 +1,5 @@
 /*
- * The thermal limiter itself (kernel/overlay/bsd/dev/hakios_thermal.c),
+ * The thermal limiter itself (kernel/overlay/bsd/dev/board/thermal.c),
  * run as a host program on the fake kernel (fakekernel/) against a model of two TSENS controllers and the
  * three EPSS groups of a lahaina-family SoC. workbench/run.sh builds it for the host and for aarch64
  * under qemu-aarch64.
@@ -91,9 +91,9 @@ static unsigned scmi_asked;
 int hakios_scmi_perf_domain(unsigned domain __unused, uint32_t *found __unused, uint32_t *top __unused) { return 0; }
 int hakios_scmi_perf_set(unsigned domain __unused, uint32_t level __unused) { scmi_asked++; return -1; }
 
-#include "hakios_board.c"
+#include "board/board.c"
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_thermal.c"
+#include "board/thermal.c"
 
 /* ---- the scenarios ------------------------------------------------------------------------------ */
 

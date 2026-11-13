@@ -1,5 +1,5 @@
 /*
- * The vibration motor's driver itself (kernel/overlay/bsd/dev/hakios_haptic.c), run as a host program
+ * The vibration motor's driver itself (kernel/overlay/bsd/dev/board/haptic.c), run as a host program
  * against the model of the SoC's pins with the motor's chip on them: an I2C device (i2c_device_model.h)
  * that answers only while its reset pin is driven high. This driver moves a motor and switches a
  * boost converter; what is tested here is what it does before it writes anything to the chip, and
@@ -73,8 +73,8 @@ void hakios_haptic_quiesce(void);
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
 #define get haptic_get
-#include "hakios_board.c"
-#include "hakios_haptic.c"
+#include "board/board.c"
+#include "board/haptic.c"
 #undef get
 
 static int failures;

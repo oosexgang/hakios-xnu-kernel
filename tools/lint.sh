@@ -6,7 +6,7 @@
 #   - components pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
 #   - the copies of the kernel's device interfaces that the Darwin side compiles against
-#     (userland/userland/src/hakios_*.h of kernel/overlay/bsd/sys/) say what the kernel's say
+#     (userland/userland/src/board/*.h of kernel/overlay/bsd/sys/board/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -37,8 +37,8 @@ tools/check-publishable.sh > /dev/null || { tools/check-publishable.sh; failed=1
 seen_by_programs() {
 	sed '1,/^ \*\/$/d' "$1" | awk '/^#ifdef KERNEL$/ { skip = 1; next } skip && /^#endif/ { skip = 0; next } !skip'
 }
-for copy in userland/userland/src/hakios_*.h; do
-	kernel=kernel/overlay/bsd/sys/$(basename "$copy")
+for copy in userland/userland/src/board/*.h; do
+	kernel=kernel/overlay/bsd/sys/board/$(basename "$copy")
 	[ -f "$kernel" ] || continue
 	if ! diff -q <(seen_by_programs "$kernel") <(seen_by_programs "$copy") > /dev/null; then
 		echo "lint: $copy does not say what $kernel says to programs:"

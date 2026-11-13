@@ -149,9 +149,9 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t this_mpidr = READ_SYSREG(MPIDR_EL1) & 0xFFFFFF, kernel_mpidr = this_mpidr;
 	/* "cpus=N" or "cpumask=M" there too: the kernel may have more cores than the one it starts on */
 	int more_cores = 0, battery_requested = 0, ufs_requested = 0;
-	/* "torch=N" (not 0) there too: the phone's flashlight is the kernel's (bsd/dev/hakios_torch.c) */
+	/* "torch=N" (not 0) there too: the phone's flashlight is the kernel's (bsd/dev/board/torch.c) */
 	int torch_requested = 0;
-	/* "cam=5" there too: the phone's wide camera is Darwin's (bsd/dev/hakios_camera.c) */
+	/* "cam=5" there too: the phone's wide camera is Darwin's (bsd/dev/board/camera.c) */
 	int camera_requested = 0;
 	/* (the loader stays for run after run: what the last run's arguments said must not hold for this one) */
 	gamut_p3 = 0;
@@ -393,7 +393,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");
 	/*
-	 * which machine this is, for the kernel (bsd/dev/hakios_board.c finds the board's row by it): a board
+	 * which machine this is, for the kernel (bsd/dev/board/board.c finds the board's row by it): a board
 	 * the kernel has no row for gets no access to anything of a phone
 	 */
 	dt_prop_str(&w, "darwin-board", plat->name);
@@ -497,7 +497,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * The buttons, as the iPhone 17 Pro's own device tree has them (DeviceTree.v53ap): home-button-type 2,
 	 * no home button but the gesture -- MobileGestalt's HomeButtonType. Without the node Darwin 26 took the
 	 * phone for one with a home button ("Press home to open" on the lock screen, instead of swiping up).
-	 * No compatible: no driver matches it; the phone's real keys are the kernel's (bsd/dev/hakios_buttons.c).
+	 * No compatible: no driver matches it; the phone's real keys are the kernel's (bsd/dev/board/buttons.c).
 	 */
 	dt_begin(&w, "buttons");
 	dt_prop_u32(&w, "home-button-type", 2);

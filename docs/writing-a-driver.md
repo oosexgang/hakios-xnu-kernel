@@ -19,7 +19,7 @@ Each is one place in the example, but the one about waiting.
 | checks before it writes | What is there may not be what the driver expects: another part, a pin in use. Say so and leave it alone. | "is in use as function" |
 | says what it does | `hakios_say()` puts a line in the loader's log at once, where it can be read while the phone runs, and in the kernel's. The lines are also what the test checks. | every `hakios_say()` |
 | does not hold up the boot | Work that waits goes into a thread of the driver's own. | `kernel_thread_start()` |
-| declares its wait, then looks again | A thread that sleeps until it is poked reads its state, then sleeps. A poke between the two wakes nobody. So: `assert_wait()`, look once more at what the poke would have changed, `clear_wait()` and go round if it did, and only then `thread_block()`. A wait with a time (`assert_wait_timeout()`) is late at worst; one without sleeps on. | not in the example; `hakios_backlight.c` (`pokes`), `hakios_lx.c` |
+| declares its wait, then looks again | A thread that sleeps until it is poked reads its state, then sleeps. A poke between the two wakes nobody. So: `assert_wait()`, look once more at what the poke would have changed, `clear_wait()` and go round if it did, and only then `thread_block()`. A wait with a time (`assert_wait_timeout()`) is late at worst; one without sleeps on. | not in the example; `board/backlight.c` (`pokes`), `board/lx.c` |
 | leaves the hardware as it found it | On the way back to the loader each driver undoes what it did. Nothing there sleeps or takes a lock. | `example_led_quiesce()` |
 
 ## What a driver has at hand
@@ -29,25 +29,25 @@ hardware has a test of its own in `workbench/`.
 
 | Header | What it gives | Where the data is |
 | --- | --- | --- |
-| `hakios_board.h` | `hakios_board()`: the board's row, with every address. `hakios_board_has()`: whether the board lists a feature. | The device package and the SoC file |
-| `hakios_log.h` | `hakios_say()`: a line to both logs; to the loader's only where the kernel's may not be written. | — |
-| `hakios_mmio.h` | `rd()`, `wr()`: 32-bit registers. `HAKIOS_MMIO_SYNC` when a write must have arrived before the next line, `HAKIOS_MMIO_EXACT` for what the hypervisor imitates. With `HAKIOS_MMIO_TEST` they are the test's. | — |
-| `hakios_time.h` | `sleep_ms()`, `sleep_us()`, `spin_us()` (where nothing may sleep), `now_us()`. | — |
-| `hakios_kernel.h` | What of the kernel its headers do not offer to `bsd/dev`: `ml_io_map()`, `kvtophys()`, `thread_terminate()`, the loader's log, the RAM disk. | — |
-| `hakios_cache.h` | Memory another master reads or writes past the caches: `hakios_cache_clean()`, `hakios_cache_flush()`, `hakios_cache_invalidate()`; `hakios_barrier()`. On a host, only the compiler is held. | — |
-| `hakios_tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `pins { }` of the SoC file |
-| `hakios_i2c_gpio.h` | I2C by hand on two of those pins, for a part on a bus nobody here drives: the bus taken and given back, a start, a byte out, a byte in. | — |
-| `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `hakios_spmi_lock()`. | `spmi { }` |
-| `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `rpmh { }` |
-| `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `hakios_rpmh_lock()`. | `rpmh { }` |
-| `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `ipc { }` |
-| `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `ipc { }` |
-| `hakios_smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |
-| `hakios_glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | — |
-| `hakios_mdt.h` | A processor's firmware image as Qualcomm splits it: the header file checked, its segments, which are loaded and whether each lies in the processor's memory. | The board's `adsp { }`, `wifi { }` (the memory) |
-| `hakios_smmu.h` | The SMMU's registers (an MMU-500): stream matching, context banks, the translation settings. | `smmu { }` (where it is, and the parts' streams) |
-| `hakios_scm.h` | `hakios_scm_call()`: a call to TrustZone, made again while it is preempted; the peripheral authentication service's calls. | — |
-| `hakios_qrtr_frame.h` | QRTR's datagrams as they arrive over GLINK: the header in either version, and where the datagram's bytes are. | — |
+| `board/board.h` | `hakios_board()`: the board's row, with every address. `hakios_board_has()`: whether the board lists a feature. | The device package and the SoC file |
+| `board/log.h` | `hakios_say()`: a line to both logs; to the loader's only where the kernel's may not be written. | — |
+| `board/mmio.h` | `rd()`, `wr()`: 32-bit registers. `HAKIOS_MMIO_SYNC` when a write must have arrived before the next line, `HAKIOS_MMIO_EXACT` for what the hypervisor imitates. With `HAKIOS_MMIO_TEST` they are the test's. | — |
+| `board/time.h` | `sleep_ms()`, `sleep_us()`, `spin_us()` (where nothing may sleep), `now_us()`. | — |
+| `board/kernel.h` | What of the kernel its headers do not offer to `bsd/dev`: `ml_io_map()`, `kvtophys()`, `thread_terminate()`, the loader's log, the RAM disk. | — |
+| `board/cache.h` | Memory another master reads or writes past the caches: `hakios_cache_clean()`, `hakios_cache_flush()`, `hakios_cache_invalidate()`; `hakios_barrier()`. On a host, only the compiler is held. | — |
+| `board/tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `pins { }` of the SoC file |
+| `board/i2c_gpio.h` | I2C by hand on two of those pins, for a part on a bus nobody here drives: the bus taken and given back, a start, a byte out, a byte in. | — |
+| `board/spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `hakios_spmi_lock()`. | `spmi { }` |
+| `board/cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `rpmh { }` |
+| `board/rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `hakios_rpmh_lock()`. | `rpmh { }` |
+| `board/smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `ipc { }` |
+| `board/ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `ipc { }` |
+| `board/smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |
+| `board/glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | — |
+| `board/mdt.h` | A processor's firmware image as Qualcomm splits it: the header file checked, its segments, which are loaded and whether each lies in the processor's memory. | The board's `adsp { }`, `wifi { }` (the memory) |
+| `board/smmu.h` | The SMMU's registers (an MMU-500): stream matching, context banks, the translation settings. | `smmu { }` (where it is, and the parts' streams) |
+| `board/scm.h` | `hakios_scm_call()`: a call to TrustZone, made again while it is preempted; the peripheral authentication service's calls. | — |
+| `board/qrtr_frame.h` | QRTR's datagrams as they arrive over GLINK: the header in either version, and where the datagram's bytes are. | — |
 
 What is not there yet is written in the driver first, and moves to a header when a second driver
 needs it.
@@ -56,7 +56,7 @@ needs it.
 
 1. **Copy the example** to `kernel/overlay/bsd/dev/NAME.c`. A driver works on any board from its
    data; one of a single part is named after the part.
-2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `hakios_board.h` and its name in
+2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `board/board.h` and its name in
    `tools/boards.py`. An address the driver needs that no section has yet becomes a key:
    [devices/README.md](../devices/README.md), "Adding a kind of data", has the seven places.
 3. **Compile it** against an assembled tree, in a second, without the kernel toolchain:
@@ -74,7 +74,7 @@ needs it.
    scenario fails each time (`workbench/mutate.sh` does it in a copy and says which scenario caught the
    change): a test that passes whatever the driver does tests nothing.
 5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
-   as one more line of the list in `bsd/dev/hakios_drivers.c`, after what it needs (the list is
+   as one more line of the list in `bsd/dev/board/drivers.c`, after what it needs (the list is
    where every driver is started, in order; a driver decides for itself whether it has anything
    to do). Then `kernel/export.sh` ([kernel/README.md](../kernel/README.md)). That it compiles and
    links in the whole kernel is a build away, on any Linux machine, without theos: with LLVM's tools
@@ -85,8 +85,8 @@ needs it.
    that `uiomove()` fills what it is given, and says so of every read; the rest is worth a look.
 6. **Document it**: a comment in the file that names each boot argument as `name=…` (`make docs` puts
    them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md). A device node's
-   interface in `bsd/sys/hakios_*.h` that the Darwin side compiles against has a copy in
-   `userland/userland/src/`: change both (`make lint` holds what programs see of them to be the same).
+   interface in `bsd/sys/board/*.h` that the Darwin side compiles against has a copy in
+   `userland/userland/src/board/`: change both (`make lint` holds what programs see of them to be the same).
 7. **On the phone**: level 1 first. Send the log lines with the change, and say in the device
    package's README what was seen ([CONTRIBUTING.md](../CONTRIBUTING.md)).
 

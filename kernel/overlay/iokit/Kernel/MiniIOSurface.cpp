@@ -704,7 +704,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 		}
 		s->kpixels = (uint8_t *) s->clientMap->getVirtualAddress();
 		/* the pixels as they are now (see `snapshot`): rows to spare after them, as freedreno lays an image out
-		 * with its height aligned to four rows, and the page after (HakiosGPU.cpp clientSurfaceBuffer) */
+		 * with its height aligned to four rows, and the page after (BoardGPU.cpp clientSurfaceBuffer) */
 		s->snapshot = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
 		    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMapWriteCombineCache,
 		    (vm_size_t) round_page_64((uint64_t) alloc + 4 * (uint64_t) bpr) + PAGE_SIZE, PAGE_SIZE);

@@ -168,7 +168,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
   that driver for you.
 - If it has **the same part on other pins or another bus** and the driver has them in its code, the driver needs those made data. Move
-  the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
+  the constants into the board file and `board/board.h`, as the buttons' driver has its peripherals
   in `buttons { }`, the flashlight's in `torch { }`, the vibration motor's pins in `haptic { }` and the
   speaker amplifiers' bus and addresses in `speaker { }`:
   [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. Those
@@ -177,10 +177,10 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   `speaker_driver_test.c`), so a value of the first phone left in the code shows as a part that
   does not answer.
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
-  `hakios_board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
+  `board/board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
   and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
-  two of them, the PMICs, RPMh. `hakios_fts.c` beside `hakios_goodix.c` shows two parts of a kind:
-  two touch controllers, one interface to Darwin (`/dev/hakios-touch`, `bsd/sys/hakios_input.h`).
+  two of them, the PMICs, RPMh. `board/fts.c` beside `board/goodix.c` shows two parts of a kind:
+  two touch controllers, one interface to Darwin (`/dev/hakios-touch`, `bsd/sys/board/input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.
@@ -230,7 +230,7 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 
 Stated plainly, so nobody finds out the hard way:
 
-- **GPU.** `hakios_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
+- **GPU.** `board/adreno.c` starts an Adreno of the A660 family. What differed between the two phones
   is data (`gpu { }` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
   (`adreno { }` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
   (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on
@@ -240,7 +240,7 @@ Stated plainly, so nobody finds out the hard way:
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
 - **Sound, microphones, camera and Wi-Fi** are drivers of particular parts: a WCD938x codec on
   SoundWire, a WCN6750 radio on the SoC's Wi-Fi DSP, four camera sensor chips (`chips[]` in
-  `hakios_camera.c`) on an SM7325's camera blocks. They are the largest share of the work on a new
+  `board/camera.c`) on an SM7325's camera blocks. They are the largest share of the work on a new
   phone. Everything that differs between phones with those parts is data:
   - in the SoC file: where the blocks are (`pins { }`, `clocks { }`, `rpmh { }`, `ipc { }`, `lpass { }`,
     `camera { }`), the LPASS pins of the microphones' SoundWire (`lpass { }` `swr-tx-pins`), and the
@@ -267,7 +267,7 @@ Stated plainly, so nobody finds out the hard way:
   GPT entry in the board file's `storage { }`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
   every field (`loader/src/own_partition.c`), the kernel asks for one only there
-  (`bsd/dev/hakios_ufs.c`), and the firmware bounds it to the partition. A board without
+  (`bsd/dev/board/ufs.c`), and the firmware bounds it to the partition. A board without
   `storage { }` is never written; reading works, the data volume lives in RAM.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).

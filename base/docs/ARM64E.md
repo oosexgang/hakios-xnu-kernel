@@ -240,7 +240,7 @@ driver-API drift and SDK gaps, not bad hunks. They fall in three bounded groups:
   fell back to the generic arm64 config with `config_cpu_counters` on. Fix: restore a
   `MASTER.arm64.bcm2837` for xnu-12377 (the xnu-8796 one has `kperf kpc` but no `config_cpu_counters`
   /`monotonic`), reconciled with xnu-12377's option set.
-- **The port's drivers (~100): `hakios_camera.c`, `hakios_cpufreq.c`, `hakios_adreno.c`, ...**
+- **The port's drivers (~100): `board/camera.c`, `board/cpufreq.c`, `board/adreno.c`, ...**
   written against xnu-8796's `kmem_alloc` flags (`KMA_KOBJECT`/`KMA_DATA`) and other APIs that
   xnu-12377 renamed. Driver-layer porting.
 - **Three framework headers newer than the 16.5 SDK: `TrustCache/API.h`,
@@ -263,7 +263,7 @@ out of the public headers).
 
 The 122 that remain are three bounded jobs:
 
-- **The port's drivers (~90): `hakios_camera.c`, `hakios_cpufreq.c`, `hakios_adreno.c`,
+- **The port's drivers (~90): `board/camera.c`, `board/cpufreq.c`, `board/adreno.c`,
   `hakios_virtio_*`, ... and `kern_minimac.c`.** Written against xnu-8796's `kmem_alloc` flags
   (`KMA_KOBJECT`/`KMA_DATA`) and other APIs xnu-12377 renamed or moved. Systematic driver-layer port.
 - **The AMFI / CoreEntitlements subsystem (~11): `CoreEntitlements/V2/API.h` (pulled by

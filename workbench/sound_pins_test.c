@@ -1,5 +1,5 @@
 /*
- * Which pins the sound driver (kernel/overlay/bsd/dev/hakios_sound.c) sets up for the speakers' TDM
+ * Which pins the sound driver (kernel/overlay/bsd/dev/board/sound.c) sets up for the speakers' TDM
  * interface, and which it watches to see the interface's clock run. The driver is compiled as it is into
  * a host program; of the hardware only the pin controller's registers are modelled. What is tested: the
  * four pins it sets up are the board's speaker { } sound-pins, with the board's function; and the bit
@@ -60,9 +60,9 @@ struct fake_lock hakios_smmu_lock = { PTHREAD_MUTEX_INITIALIZER };
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
+#include "board/board.c"
 #define get sound_get
-#include "hakios_sound.c"
+#include "board/sound.c"
 #undef get
 #undef printf
 

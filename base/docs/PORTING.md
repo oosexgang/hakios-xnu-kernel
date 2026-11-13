@@ -48,11 +48,11 @@ Rebuild with `xnuloader/build.sh`; QEMU must still pick `qemu-virt` (no match = 
 What is generic: GICv3, the timer, PSCI SMP, the display (the UEFI's framebuffer), APFS and ramfs, the driver
 replacements, the return-to-loader path. What is specific to the first phone and needs looking at:
 
-- **touch**: `bsd/dev/hakios_goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
-  feeding `/dev/hakios-touch` (`bsd/dev/hakios_input.c`);
-- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `hakios_input.c`,
-  `hakios_cpufreq.c`, `osfmk/arm64/loader_return.c`;
-- **GPU / Wi-Fi / sound**: `hakios_adreno.c` (Adreno 642L), `hakios_wifi.c` (WCN6750 + ath11k), `hakios_audio.c`
+- **touch**: `bsd/dev/board/goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
+  feeding `/dev/hakios-touch` (`bsd/dev/board/input.c`);
+- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `board/input.c`,
+  `board/cpufreq.c`, `osfmk/arm64/loader_return.c`;
+- **GPU / Wi-Fi / sound**: `board/adreno.c` (Adreno 642L), `board/wifi.c` (WCN6750 + ath11k), `board/audio.c`
   — the same Qualcomm subsystems (SMEM, SMP2P, GLINK, QRTR, QMI) are reused, the addresses and firmware differ.
 
 Start with no extras: the system boots to the lock screen with only the framebuffer, touch and the CPU.

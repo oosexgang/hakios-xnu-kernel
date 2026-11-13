@@ -1,5 +1,5 @@
 /*
- * The CPU performance control over SCMI (kernel/overlay/bsd/dev/hakios_scmi_perf.c), run as a host program.
+ * The CPU performance control over SCMI (kernel/overlay/bsd/dev/board/scmi_perf.c), run as a host program.
  * The driver asks the firmware, through a channel in shared memory and a doorbell, for its version, its
  * domains and each one's level and limits, and sets levels only with scmi_perf=2. The model is that firmware:
  * a thread that answers what the shared memory asks when the doorbell rings, notes every message, and
@@ -132,8 +132,8 @@ channel(void)
 }
 
 #pragma GCC diagnostic ignored "-Wformat"
-#include "hakios_board.c"
-#include "hakios_scmi_perf.c"
+#include "board/board.c"
+#include "board/scmi_perf.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

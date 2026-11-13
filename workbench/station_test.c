@@ -1,5 +1,5 @@
 /*
- * The Wi-Fi station layer (kernel/overlay/bsd/dev/hakios_sta.c), run as a host program: what Darwin's Wi-Fi side asks
+ * The Wi-Fi station layer (kernel/overlay/bsd/dev/board/sta.c), run as a host program: what Darwin's Wi-Fi side asks
  * -- power, a scan, a join, a leave -- reaches the radio's driver one thing at a time on the layer's own thread, and
  * what comes of it is said back as events. The radio's driver is built outside this tree; here it is a model that
  * notes every call and answers as a scenario says, and that says more than there is room for.
@@ -10,7 +10,7 @@
 
 #include "fakekernel.h"
 #define KERNEL 1
-#include <sys/hakios_sta.h>
+#include <sys/board/sta.h>
 
 extern char log_text[];
 
@@ -110,7 +110,7 @@ static const struct hakios_sta_ops radio = {
 	.state = radio_state, .channels = radio_channels_of, .address = { 2, 0, 0, 0, 0, 1 },
 };
 
-#include "hakios_sta.c"
+#include "board/sta.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

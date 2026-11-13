@@ -23,7 +23,7 @@ Darwin 27's images.
 | `inject_backlight.c` | `libhakios-backlight.dylib`: tells SpringBoard that a display-mode change is complete (no display driver does), makes the idle timer's timeouts a day longer, and has the panel follow the mode through `hw.backlight.power`. | SpringBoard | Built by `inj26.sh`. |
 | `inject_brightness.c` | `libhakios-brightness.dylib`: the brightness slider and the Auto-Brightness switch, to the kernel's `hw.backlight.level` and `hw.backlight.auto`. | SpringBoard, backboardd, Preferences | Built by `inj26.sh`. Does nothing where the kernel has no backlight (`backlight=0`). |
 | `inject_poster.c` | `libhakios-poster.dylib`: the first wallpaper of a new device becomes the collections poster with the default wallpaper, which is drawn without Metal. | PosterBoard | Built by `inj26.sh`. The default wallpaper is the one `mkimage26.py` sets. |
-| `inject_statusbar.c` | Moves the status bar's leading items past a hole-punch camera at the top left, by the points the board gives. | SpringBoard, as part of `libhakios-sb.dylib`. Also built alone, as `libhakios-statusbar.dylib`. | Built by `inj26.sh`, with the generated `hakios_boards.h`. |
+| `inject_statusbar.c` | Moves the status bar's leading items past a hole-punch camera at the top left, by the points the board gives. | SpringBoard, as part of `libhakios-sb.dylib`. Also built alone, as `libhakios-statusbar.dylib`. | Built by `inj26.sh`, with the generated `user_boards.h`. |
 | `console_log.c` | `libhakios-console.dylib`: the standard error of its program goes to the console, so into the loader's log. | The programs named in `CONSOLE_LOG="NAME ..."` for `root26-darwin.sh`. | Built by `inj26.sh`. |
 | `inj26.sh` | Builds the five above as arm64e, with darwin-renoir's own libraries and the audio plug-in; puts SpringBoard's addresses of the Darwin build in (`BUILD`); runs `pacstrip` and `ldid` over each. Output: `obj26/` beside it, or `OBJ`. | `root26-darwin.sh` | darwin-renoir (`xnu-env.sh`, `userland/src/`), theos (`THEOS`: the iPhoneOS 16.5 SDK, `ldid`), `pacstrip` built, `mesa26e.sh` and `gl26.sh` run. |
 | `mesa26e.sh` | Mesa 26.2.5 (softpipe and freedreno, OSMesa) for arm64e: `libOSMesa.8.dylib`, into `obj26/`. | `gl26.sh`, the root images | darwin-renoir (`xnu-env.sh`, `xnu-deps/`, its `mk-mesa.sh` run once), theos, meson, ninja, `pacstrip` built. |
@@ -58,7 +58,7 @@ name, checks their types, and leaves alone what is not as it expects.
 The libraries and the images are the same for every phone. Three things are not:
 
 - **The status bar's shift:** `screen { } statusbar_leading_shift` of the board file, in points. `inj26.sh`
-  runs `tools/boards.py gen` and compiles the generated `hakios_boards.h` into the library, which finds
+  runs `tools/boards.py gen` and compiles the generated `user_boards.h` into the library, which finds
   its row at run time by the name in `/chosen/darwin-board`. So the library knows the boards whose
   packages were present when it was built: `tools/device.py add NAME` first. On a board that is not in
   the table, or gives no shift, it does nothing.

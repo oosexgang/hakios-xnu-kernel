@@ -3720,7 +3720,7 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  *                     texel, so every pixel of it can be counted.
  *
  * The pixels reach the panel through the kernel's own GPU service -- kHakiosShow,
- * iokit/Kernel/HakiosGPU.cpp, the selector src/gl_test.c already puts its triangle on the
+ * iokit/Kernel/BoardGPU.cpp, the selector src/gl_test.c already puts its triangle on the
  * screen with -- and that is what `./xl screenshot` reads. Said plainly because it
  * matters: THE PRESENTATION IS A COPY IN THE KERNEL AND IS NOT METAL'S. What is claimed
  * is that every one of the 2 592 000 pixels handed over was computed by this driver's
@@ -3792,7 +3792,7 @@ pic_texel_colour(unsigned x, unsigned y, unsigned char bgra[4])
 }
 
 /* The panel's pixels as this process holds them, and the request the kernel takes them in
- * (iokit/Kernel/HakiosGPU.cpp, struct hakios_show). Declared here and not included,
+ * (iokit/Kernel/BoardGPU.cpp, struct hakios_show). Declared here and not included,
  * because this program has no header of the kernel's -- exactly as src/gl_test.c does. */
 static unsigned char *pic_panel;
 
@@ -4980,8 +4980,8 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *       its fill and the bandwidth of one pass over the attachment. This attributes nothing
  *       it cannot see: it says "fixed" and "proportional to area", not "ours" and "theirs".
  *   (b) BY THE KERNEL'S OWN COUNTER, which needs the boot argument gpu_log=1 and a log to
- *       read afterwards. bsd/dev/hakios_adreno.c times every submission off the GPU's
- *       always-on counter and writes "tl: q <fence> took <us>" per submission; HakiosGPU.cpp
+ *       read afterwards. bsd/dev/board/adreno.c times every submission off the GPU's
+ *       always-on counter and writes "tl: q <fence> took <us>" per submission; BoardGPU.cpp
  *       prints, every five seconds in which something was submitted, "the GPU worked N us on
  *       each of M" with a histogram. Those lines land in the same run log as these, so the
  *       reader subtracts. This mode cannot print them itself and does not pretend to: what it
@@ -5237,7 +5237,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  * So the kernel now hands the numbers over: request kHakiosGPUWorked (0x7d) on HakiosGPU
  * answers hakios_gpu_worked()'s three outputs -- the microseconds the 3D core itself worked,
  * on how many submissions, and how many of those were under 0.1, 0.25, 0.5, 1, 2 and 4 ms --
- * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/hakios_adreno.c).
+ * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/board/adreno.c).
  * Reading it RESETS it, which is what makes bracketing a case possible: read once to zero,
  * draw, read again.
  *
@@ -5248,7 +5248,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  *     no work. So the first failure disables it for the run and says so in words; it never
  *     prints a zero that could be read as a measurement.
  *   - IT MUST SAY THAT IT TAKES THE NUMBERS AWAY. The kernel's own five-second report in
- *     HakiosGPU.cpp shares these counters, so a boot that runs this mode leaves gaps in those
+ *     BoardGPU.cpp shares these counters, so a boot that runs this mode leaves gaps in those
  *     lines. That is expected rather than a fault, and it is printed once.
  */
 struct tm_worked {
@@ -6444,7 +6444,7 @@ tm_queue(id<MTLCommandQueue> queue)
  *
  * This port has no drawable: a finished attachment reaches the panel by being read back into
  * this process (-getBytes:) and handed to the kernel's kHakiosShow, which copies it row by
- * row into the boot framebuffer (iokit/Kernel/HakiosGPU.cpp). Both halves are measured
+ * row into the boot framebuffer (iokit/Kernel/BoardGPU.cpp). Both halves are measured
  * because a frame rate that leaves them out is a frame rate for a game nobody can see.
  */
 static void

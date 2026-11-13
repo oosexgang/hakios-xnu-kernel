@@ -35,8 +35,8 @@ else
 	die "$XNU_SRC is not a tree made by kernel/assemble.sh (one of the old apply.sh, perhaps): move it away or set XNU_SRC"
 fi
 # A FocalTech controller's firmware is not ours to publish (tools/mk-focaltech-fw.py makes it from a phone):
-# an empty one keeps hakios_goodix.c compiling; a board without such a controller needs none
-FW=$XNU_SRC/bsd/dev/hakios_focaltech_fw.h
+# an empty one keeps board/goodix.c compiling; a board without such a controller needs none
+FW=$XNU_SRC/bsd/dev/board/focaltech_fw.h
 if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
 	focaltech_stub > "$FW"
@@ -46,7 +46,7 @@ fi
 # the same boards recompiles nothing for it.
 mkdir -p "$XNUDEPS/boards"
 "$HAKIOS/tools/boards.py" gen --out "$XNUDEPS/boards" | sed 's/^/build.sh: boards: /'
-update "$XNU_SRC/bsd/dev/hakios_board_table.h" < "$XNUDEPS/boards/hakios_board_table.h"
+update "$XNU_SRC/bsd/dev/board/board_table.h" < "$XNUDEPS/boards/board_table.h"
 
 # --- 2. the dependency directory --------------------------------------------------------------
 # Apple's open sources and the host tools (mig, tcsh, unifdef): a darwin-renoir checkout has them

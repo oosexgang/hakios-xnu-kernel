@@ -1,6 +1,6 @@
 /*
  * The arithmetic of GLINK's two queues that the drivers share
- * (kernel/overlay/bsd/dev/hakios_glink_queue.h): how much is unread, how much room there is, bytes
+ * (kernel/overlay/bsd/dev/board/glink_queue.h): how much is unread, how much room there is, bytes
  * taken out and put in around a queue's end -- and that marks the other processor may have written
  * anything into never lead outside the queue.
  *
@@ -9,7 +9,7 @@
 #include "fakekernel.h"
 
 #define KERNEL 1
-#include "hakios_glink_queue.h"
+#include "board/glink_queue.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

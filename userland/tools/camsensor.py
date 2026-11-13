@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Make the register tables of a camera sensor, as the kernel's camera driver reads them
-(bsd/dev/hakios_camera.c, boot-arg cam=2 and up), out of the sensor's module file of Android's camera
+(bsd/dev/board/camera.c, boot-arg cam=2 and up), out of the sensor's module file of Android's camera
 stack (/vendor/lib64/camera/com.qti.sensormodule.<name>.bin of the phone: the vendor's, kept in
 fw-camera/ and never in the repository; so is what this makes of it).
 
@@ -30,7 +30,7 @@ u32 }. The modes' own tables are res0, res1, ...
 The listing also gives each mode's colour filter order: the first word of its resolution element,
 colorFilterArrangement in CamX's order (0 BGGR, 1 GBRG, 2 GRBG, 3 RGGB, 4 mono; camera.qcom.so's
 TranslateColorFilterArrangement makes Android's of it by the table 3, 2, 1, 0, 5). It is not in the
-table: the driver's chips[] carries it (bsd/dev/hakios_camera.c).
+table: the driver's chips[] carries it (bsd/dev/board/camera.c).
 """
 import struct
 import sys

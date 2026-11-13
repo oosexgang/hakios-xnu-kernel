@@ -1,5 +1,5 @@
 /*
- * The flashlight's driver itself (kernel/overlay/bsd/dev/hakios_torch.c), run as a host program
+ * The flashlight's driver itself (kernel/overlay/bsd/dev/board/torch.c), run as a host program
  * against the model of the PMIC arbiter (spmi_model.h) with a flash LED module and the PMIC's
  * temperature alarm behind it. This driver writes to a PMIC, which makes the phone's supplies, so what
  * is tested first is what it must never do: a write to a register that is not one of the module's six,
@@ -85,11 +85,11 @@ uint32_t hakios_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
 void hakios_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
-/* the battery's temperature, which the driver asks for (bsd/dev/hakios_battery.c in the kernel) */
+/* the battery's temperature, which the driver asks for (bsd/dev/board/battery.c in the kernel) */
 static int battery_c = 30;
 int hakios_battery_temperature(void) { return battery_c; }
 
-/* the one lock of the bus is the buttons' driver's (bsd/dev/hakios_buttons.c) */
+/* the one lock of the bus is the buttons' driver's (bsd/dev/board/buttons.c) */
 static pthread_mutex_t bus = PTHREAD_MUTEX_INITIALIZER;
 void hakios_spmi_lock(void) { pthread_mutex_lock(&bus); }
 void hakios_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
@@ -102,8 +102,8 @@ void hakios_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
 #define HAKIOS_MMIO_TEST 1
 #define get torch_get
 #define alarm torch_alarm
-#include "hakios_board.c"
-#include "hakios_torch.c"
+#include "board/board.c"
+#include "board/torch.c"
 #undef get
 #undef alarm
 

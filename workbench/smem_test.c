@@ -1,6 +1,6 @@
 /*
  * The reading of the processors' shared memory that the drivers share
- * (kernel/overlay/bsd/dev/hakios_smem.h), against areas built here: one as a boot loader lays it out,
+ * (kernel/overlay/bsd/dev/board/smem.h), against areas built here: one as a boot loader lays it out,
  * and ones whose headers say wrong things, which the reading must not follow outside the area.
  *
  *   smem_test SCENARIO
@@ -8,8 +8,8 @@
 #include "fakekernel.h"
 
 #define KERNEL 1
-#include "hakios_smem.h"
-#include "hakios_smp2p.h"
+#include "board/smem.h"
+#include "board/smp2p.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

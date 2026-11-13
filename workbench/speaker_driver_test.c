@@ -1,5 +1,5 @@
 /*
- * The speaker amplifiers' driver itself (kernel/overlay/bsd/dev/hakios_speaker.c), run as a host
+ * The speaker amplifiers' driver itself (kernel/overlay/bsd/dev/board/speaker.c), run as a host
  * program against the model of the SoC's pins with two amplifiers on them (i2c_device_model.h: two
  * addresses, registers of two bytes) and a command database (cmd_db_image.h). What is tested: its
  * look, speaker_probe=1 and 2, which is to read and nothing else; and preparing the amplifiers for
@@ -95,8 +95,8 @@ void hakios_speaker_quiesce(void);
 #define HAKIOS_MMIO_TEST 1
 #define get speaker_get
 #define put speaker_put
-#include "hakios_board.c"
-#include "hakios_speaker.c"
+#include "board/board.c"
+#include "board/speaker.c"
 #undef get
 #undef put
 

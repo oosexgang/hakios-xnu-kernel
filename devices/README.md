@@ -98,13 +98,13 @@ tools/boards.py compare renoir --dts device-tree.dts        # a board and its So
 
 `tools/boards.py gen` writes three tables into `build/boards/`, for the boards that are there:
 
-- `hakios_board_table.h`, the kernel's. At boot the kernel looks up the name the loader passed in
+- `board_table.h`, the kernel's. At boot the kernel looks up the name the loader passed in
   `/chosen/darwin-board`. Drivers ask `hakios_board()` for addresses and
-  `hakios_board_has(HAKIOS_HAS_...)` before they start (`hakios_board.h` lists the features). A board
+  `hakios_board_has(HAKIOS_HAS_...)` before they start (`board/board.h` lists the features). A board
   that is not in the table gets no feature: nothing of a phone is touched on a machine nobody described.
 - `platforms.h`, the loader's, for the boards with a `loader { }` section. The loader tells them apart by
   the framebuffer address their UEFI reports.
-- `hakios_boards.h`, what the libraries injected into Darwin's processes know of a board (`screen { }`).
+- `user_boards.h`, what the libraries injected into Darwin's processes know of a board (`screen { }`).
   They read the board's name from `/chosen/darwin-board` in the registry.
 
 None of the three is kept in the repository. The builds make them (`kernel/build.sh`,
@@ -158,7 +158,7 @@ When a driver needs something of a device that no section has yet (an address, a
 directory), it becomes a key, not a constant in the driver. The `spmi { }` and `buttons { }` sections are a
 small example to copy; each step is one place:
 
-1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/hakios_board.h`),
+1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/board/board.h`),
    with a comment that says which file and section it comes from.
 2. **The schema.** The key and its type in `SOC_SCHEMA` or `BOARD_SCHEMA` of `tools/boards.py`: what
    the chip has goes in the SoC file, what one phone has goes in the board file.

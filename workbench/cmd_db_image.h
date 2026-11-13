@@ -6,7 +6,7 @@
 #ifndef CMD_DB_IMAGE_H
 #define CMD_DB_IMAGE_H
 
-#include "hakios_cmd_db.h"
+#include "board/cmd_db.h"
 
 #define SIZE            0x2000u
 static union {

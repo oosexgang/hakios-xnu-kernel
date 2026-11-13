@@ -14,101 +14,6 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Display, graphics and input
 
-### `bsd/dev/hakios_adreno.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `adreno` | adreno=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
-| `adreno_blind` | adreno_blind=1: the command processor is started with its microcode at an address where nothing is. |
-| `adreno_dirty` | adreno_dirty=1 makes every ending a panic's in this respect, to see that work. |
-| `adreno_fine` | adreno_fine=1 the newest step waits like that before every single access |
-| `adreno_keep` | With boot-arg adreno_keep=1 the steps are not undone: the GPU block stays as step 21 leaves it, the 3D core powered and taking commands, and the service HakiosGPU (iokit/Kernel/HakiosGPU.cpp) hands it to programs through the interface of Linux's msm driver, which is what Mesa's freedreno speaks. |
-| `adreno_only` | adreno_only=K step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them) |
-| `adreno_pause` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
-| `adreno_return` | adreno_return=1 when all is over, go back to the loader instead of starting the system |
-| `adreno_skip` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
-| `adreno_speed` | adreno_speed=N step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for) |
-| `adreno_stream1` | adreno_stream1=N step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core asks for. |
-| `adreno_watch` | adreno_watch=S after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last |
-| `display_clocks` | display_clocks=1: an opt-in, read-only look at the display clocks' state. |
-| `display_probe` | display_probe=1 before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written) |
-| `gpu` | gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is started while the system starts and kept for the window server to draw with (the service HakiosGPU; "the GPU kept on" below). |
-| `gpu_exact` | gpu_exact=0: the core does not wait to be idle before it notes the time |
-| `gpu_log` | gpu_log=1: a line for every submission and the time the core spent on it |
-| `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
-| `gpu_va` | gpu_va: 0 (the default) as it has always been. |
-
-### `bsd/dev/hakios_backlight.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `backlight` | backlight=1 the profile's backend, read only: the DSI controller's version and state logged |
-| `bl_auto` | bl_auto=1 automatic brightness from the start |
-| `bl_backend` | bl_backend=dcs\|soft\|none |
-| `bl_bytes` | bl_bytes=1\|2 how many bytes the panel's 0x51 takes; bl_le=1: least significant first |
-| `bl_dsi` | bl_dsi=ADDRESS the DSI controller's registers (physical) |
-| `bl_floor` | bl_floor=N backend soft: what is kept of a pixel at level 0, of 256 (default 24) |
-| `bl_le` | bl_bytes=1\|2 how many bytes the panel's 0x51 takes; bl_le=1: least significant first |
-| `bl_level` | bl_level=N the level at boot (default 600) |
-| `bl_max` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
-| `bl_min` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
-
-### `bsd/dev/hakios_buttons.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file (spmi { }), which peripherals the keys are on from the board file (buttons { }). |
-| `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
-| `touchscreen` | — |
-
-### `bsd/dev/hakios_drivers.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `touchscreen` | touchscreen=1: the touch screen, by the driver of the controller the board lists |
-
-### `bsd/dev/hakios_fts.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `fts_spi_hz` | — |
-| `fts_trace` | — |
-| `touch_flip` | — |
-| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments are the first phone's). |
-
-### `bsd/dev/hakios_goodix.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `touch_flip` | touch_flip: 1 = mirror left-right, 2 = mirror top-bottom |
-| `touch_lat` | With touch_lat=1 a line for every report read ("tl: c before US seen US read US": the look before, the look that found the line low, the report read), for measuring how long a touch takes to show (tools/latency.py). |
-| `touch_poll_us` | touch_poll_us=N: every N microseconds instead of 8000). |
-| `touch_rate` | touch_rate=480: the chip reports twice as often (a phone vendor's "game mode"; 240 otherwise) |
-| `touch_spi_hz` | touch_spi_hz=N: the bus at N Hz (Android's device tree gives the chip 5 MHz) |
-| `touchscreen` | Only with boot-arg touchscreen=1. |
-
-### `bsd/dev/hakios_input.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `touch_lat` | touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time), to be matched with the window server's lines about reading it (userland/src/inject.c), drawing (eagl.c) and the displa… |
-
-### `bsd/dev/hakios_virtio_input.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `virtio_input` | Only with boot-arg virtio_input=1: the bus address is QEMU's and means nothing on the phone. |
-
-### `iokit/Kernel/HakiosGPU.cpp`
-
-| Argument | What the source says |
-| --- | --- |
-| `gpu_cached` | freedreno; boot-arg gpu_cached=1 makes them ordinary memory, pushed out of the cache whenever the GPU is given something to do: see submit()). |
-| `gpu_client_snapshot` | gpu_client_snapshot, default 1) The pixels as they are now, copied into memory of the GPU's own, rather than the program's pages themselves: iconservicesagent hands the window server an icon made around its own memory and then draws the next picture -- a label -- into that same memory, and the icons… |
-| `gpu_fair_ms` | gpu_fair_ms=N: the GPU has one ring and no preemption, so a program that hands it frame after frame (the wallpaper's 40-55 ms ones, widgets) has the window server's frames wait behind all of them. |
-| `gpu_keep` | gpu_keep=0 (a test): none kept; gpu_keep=2: kept ones cleared when given again |
-| `touch_lat` | touch_lat=1: a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up (tools/frames.py). |
-
 ### `iokit/Kernel/MiniIOMobileFramebuffer.cpp`
 
 | Argument | What the source says |
@@ -119,7 +24,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fb_filter` | fb_filter=0: the picture is scaled to the panel nearest neighbour, as it once was. |
 | `fb_hz` | 60 Hz (boot-arg fb_hz=N: at N), with one colour mode, 8-bit RGB. |
 | `fb_queue` | By default two frames may wait (boot-arg fb_queue=1: one, as before): CoreAnimation draws on a clock of its own, and a SwapEnd held past its next tick makes that tick late, the clock going on from there (rc.jobs.fps: 28% of the frames over 16.7 ms with two, 33% with one). |
-| `fb_scan` | The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is read from). |
+| `fb_scan` | The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/board/adreno.c says where it is read from). |
 | `fb_scan_lead` | — |
 | `fb_small` | fb_small=0: the drawers anywhere, as before. |
 | `fb_threads` | fb_threads=N (1 to 8): so many processors scale a frame onto the panel together (see drawRows()). |
@@ -145,50 +50,6 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Power, CPU and temperature
 
-### `bsd/dev/hakios_battery.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `battery` | — |
-| `battery_shared_pa` | — |
-
-### `bsd/dev/hakios_bench.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `cpuload` | cpuload=MS: every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture): tl: u at US 7:NN 6:NN ... 1:NN the core's number (as in its MPIDR), then its share of the time it was not idle (interrupts included). |
-| `membench` | membench=1: how fast this processor reads, writes and copies memory, in MB a second (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which nobody here asks to be raised. |
-
-### `bsd/dev/hakios_cpufreq.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `cpufreq` | cpufreq=1 every group of cores that has a core of ours is asked for the top row of its table |
-
-### `bsd/dev/hakios_cputop.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `cputop` | cputop=S: every S seconds, the processes that took the most CPU time since the last time, by name and pid, and how many processes came and went meanwhile. |
-
-### `bsd/dev/hakios_ddr.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `ddr` | ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read. |
-| `ddr_rest` | the vote left for the loader (ddr_rest=N); see hakios_ddr_quiesce() |
-| `ddr_vote` | ddr_vote=N: N instead of the most (16383). |
-
-### `bsd/dev/hakios_thermal.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `th_clear` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
-| `th_critical` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
-| `th_period_ms` | th_period_ms=N how often it looks (default 1000) |
-| `th_trip` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
-| `thermal` | thermal=1 the hottest reading logged every ten seconds, nothing held back |
-
 ### `iokit/Kernel/GenericARMPE.cpp`
 
 | Argument | What the source says |
@@ -197,204 +58,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `machine_name` | machine_name=0: the plain "arm64" this used to be.) |
 | `small_cores_after` | later (boot-arg small_cores_after=S; 0: at once). |
 
-## Sound, camera, haptics, flashlight
-
-### `bsd/dev/hakios_adsp.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `adsp` | Once everything is up with adsp=1, the sound's path takes over (hakios_sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
-| `adsp_apr_wait` | — |
-| `adsp_listen` | — |
-| `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
-| `adsp_pause` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
-| `adsp_step` | adsp_step=N performs steps 1 to N and stops; as with wifi_step, a step says what it is about to touch before it touches it, and a step that does not find what it needs ends the sequence. adsp=1 is all of them, on a thread beside the system's start. |
-| `adsp_wait` | each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader when the steps are over). |
-| `battmgr` | The properties' numbers are this phone's firmware's, read with battmgr=2 and checked against what Android shows at the same moment (dumpsys battery, /sys/class/power_supply/battery): up to 9 they are those of Linux's qcom_battmgr.c (sm8350), from there on one more property comes before the temperatu… |
-
-### `bsd/dev/hakios_audio.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("xl sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
-| `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (hakios_guard.c, on the phone): what reaches the amplifiers. |
-| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (hakios_mic.c, mic=3), in both channels. |
-
-### `bsd/dev/hakios_camera.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `cam` | sensors, modes and frame headers are cam=5's, from the same tables in fw/, but nothing of the phone is touched: the frames are a colour chart made here -- eight bars (white, beige, red, yellow, green, cyan, blue, 18 % grey) over a grey ramp -- in RAW10 in the sensor's own Bayer order, as bright as t… |
-| `cam_after` | — |
-| `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/hakios-camera without the phone's camera. |
-| `cam_fake_fps` | — |
-| `cam_frames` | — |
-| `cam_gain` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
-| `cam_keep_mb` | — |
-| `cam_mode` | table ("resN": boot-arg cam_mode=N, or the mode with the fewest pixels: the macro's 1600x1200 RAW10 on one lane at 665.6 Mbit/s, 30 frames a second; the wide one's 1920x1080 RAW10 on three C-PHY trios at 3.11 Gbit/s each, 120 frames a second); the sensor's CSIPHY, CSID-lite 0's RX from that PHY and… |
-| `cam_pattern` | The OV02B10's own colour bars (cam_pattern=1) are still taken for GBRG, as before: the module file says nothing of them. |
-| `cam_sensor` | cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra"); without it, the board's test-sensor, and for cam=5 its darwin-sensor (the back camera; darwin-front, the front one). |
-| `cam_settle` | cam_settle=N sets it instead. |
-| `cam_shutter` | for a look in other light, written the sensor's way: cam_shutter= LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
-| `cam_vblank` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; S5KHM2SD: 0x0204, 32 is 1x), cam_vblank=LINES (the frame that much longer: OV02B10 0x14/0x15; |
-
-### `bsd/dev/hakios_haptic.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for Darwin until the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /… |
-| `haptic_effect` | and one short effect played (haptic_effect=N, default 1: Android's effect 0) |
-
-### `bsd/dev/hakios_mic.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `mic` | here happens unless boot-arg mic=N asks for it, with adsp=1 (hakios_adsp.c), which calls hakios_mic_dsp_up() once the DSP's audio services are up. |
-| `mic_adc` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
-| `mic_input` | mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) |
-| `mic_main` | clipped tone at about the bus clock / 560, whatever the microphone hears (mic_main=1 shows it). |
-| `mic_secs` | — |
-| `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's 175.5 Hz in the samples) |
-| `mic_test` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
-
-### `bsd/dev/hakios_sound.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `sound` | unless boot-arg sound=N asks for it, with adsp=1 (hakios_adsp.c), which starts the DSP and calls hakios_sound_dsp_up() once its audio services are up. |
-| `sound_below` | and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
-| `sound_gain` | — |
-| `sound_guard_as` | sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under Android's level (louder than they are) and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
-| `sound_pause` | — |
-| `sound_secs` | — |
-
-### `bsd/dev/hakios_speaker.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `speaker_probe` | ---- speaker_probe=N: a look ------------------------------------------------------------------------ |
-
-### `bsd/dev/hakios_torch.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `torch` | What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours w… |
-| `torch_max_s` | — |
-| `torch_secs` | — |
-
-### `bsd/dev/hakios_virtio_sound.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `virtio_sound` | Only with boot-arg virtio_sound=1: the bus address is QEMU's and means nothing on the phone. |
-
-## Wi-Fi and network
-
-### `bsd/dev/hakios_net.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `net_names` | net_names=1: a line for every name asked of a DNS server and for every TCP connection begun from here -- which is how to see what a system that has just been given a network does with it (up to NAMES_MAX lines). |
-| `net_trace` | net_trace=N: a line in the log for each of the first N frames, either way. |
-
-### `bsd/dev/hakios_virtio_net.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `virtio_net` | Only with boot-arg virtio_net=1: the bus address is QEMU's and means nothing on the phone. |
-
-### `bsd/dev/hakios_wifi.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/hakios_sta.h: Darwin's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network of fw/network joined… |
-| `wifi_again` | wifi_again=1 start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two |
-| `wifi_ask` | wifi_ask=1 step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer |
-| `wifi_dirty` | wifi_dirty=1 the DSP is not stopped: left as a kernel that died leaves it |
-| `wifi_file` | wifi_file=0 with wifi=1: the network of fw/network is not joined at the start |
-| `wifi_fine` | wifi_fine=1 such a step waits like that before every single write and call |
-| `wifi_listen` | wifi_listen=S how long step 14 waits for the Wi-Fi firmware's service (default 3) |
-| `wifi_loud` | (wifi_loud=1 with it: nothing is kept back, for looking into a start that goes wrong.) The rest of this comment is about the steps one by one, wifi_step=N, which is how all this was found out. |
-| `wifi_lx` | With wifi_lx=2 and wifi_smmu=2, 100 words of ring set-up go into the registers of copy engines 0, 1, 2, 3, 4, 5 and 7 without an abort, 510 buffers are posted on each of the three receiving rings, and 9 ms later the firmware's first message is in a buffer of copy engine 2: HTC's "ready" (2 credits o… |
-| `wifi_mac` | wifi_mac=A the radio's own address for the driver (hakios_wifi_radio_address() below; xl takes it from a file that is not in the repository) |
-| `wifi_new` | wifi_new=K steps K and later have not been seen to work (default: the last one) |
-| `wifi_pause` | wifi_pause=MS how long such a step waits after announcing a group of accesses (default 2200: the loader, watching from another core, notes the end of our log every two seconds, and after a silent reset that is all there is) |
-| `wifi_radio_read` | with wifi_radio_read=1, and only with the firmware in mission mode (outside it a read there has ended the kernel) Steps 1 to 5 are the survey; they write to nothing but the arbiter's command word. |
-| `wifi_return` | wifi_return=1 when all is over, go back to the loader instead of starting the system |
-| `wifi_step` | wifi_step=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
-| `wifi_wait` | wifi_wait=S how long step 11 watches for the DSP to say that it is up (default 10) |
-| `wifi_watch` | wifi_watch=S ... and how long it goes on watching once it has (default 3) |
-
-### `bsd/dev/hakios_wlfw.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `wifi_cal` | wifi_cal=1 adds what qmi.c does with cold-boot calibration switched on. |
-| `wifi_mission` | wifi_mission=1 adds what qmi.c is asked for next (ath11k_qmi_firmware_start()): the firmware's logging, the configuration, the mode "mission", after which the firmware has the radio on and the driver begins to use its registers. |
-| `wifi_ready` | — |
-
 ## Storage and file systems
-
-### `bsd/dev/hakios_apfs_check.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `apfs_check` | apfs_check=7 the one mode that writes: replace bytes inside a file of the container on apfs_dev where they lie, with the kernel's own bsd/miscfs/apfs/apfs_write.c, and read them back out of a container opened again from nothing (apfs_write_check below) |
-| `apfs_chunk` | — |
-| `apfs_contents` | apfs_contents=0: no file is read at all, only looked up and stat'ed -- how long the walk itself takes, the directories and the inodes. |
-| `apfs_depth` | apfs_depth=N go no deeper than N levels below where the walk starts (1 = only the entries of that directory; 0 = no limit). |
-| `apfs_dev` | apfs_dev=md1 the store volume (default rvblk0); its name must be HakiosStore |
-| `apfs_hash` | apfs_hash=0 reads every byte all the same and does not hash it (the sums are then not the ones to compare); hash_ticks is how long the hashing took otherwise. |
-| `apfs_max` | apfs_max=N stop after N entries (and say how memory stood on the way): for finding out what a walk that never comes back runs into |
-| `apfs_mnt` | apfs_mnt=/lib where to mount it for mode 6 (default /private/var/apfs-check) |
-| `apfs_skip` | apfs_skip=/a,/b directories not to go into, as paths inside the volume, comma separated. |
-| `apfs_store_len` | apfs_store_len=N how many bytes of payload (default 40000) |
-| `apfs_store_note` | apfs_store_note=N the writer's own number, kept in the header (default 0) |
-| `apfs_store_seed` | apfs_store_seed=N which pattern (default 1); a different seed is a different payload |
-| `apfs_subtree` | apfs_subtree=/usr walk only that part of the volume |
-| `apfs_threads` | apfs_threads=N how many, for mode 5 (default 4) |
-| `apfs_volume` | apfs_volume=ufs_darwin is the Darwin root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
-| `apfs_volume_at` | — |
-| `apfs_walkers` | apfs_walkers=N: one of N walkers; a subdirectory is left on the shared stack (par_push) |
-| `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
-| `apfs_write_byte` | apfs_write_byte=N what to fill them with (default 0xa5) |
-| `apfs_write_len` | apfs_write_len=N how many bytes (default 4096, at most APFS_WRITE_MAX) |
-| `apfs_write_path` | apfs_write_path=/hakios/x the file in it, by path from the volume's root |
-
-### `bsd/dev/hakios_sparse.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `apfs_sparse` | apfs_sparse=<offset>. |
-
-### `bsd/dev/hakios_ufs.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `ufs_bench` | ufs_bench=1: what one request through the loader costs, by size. |
-| `ufs_check` | ufs_check=1 reads, once at start, the partitions there are images of in the ROM's firmware-update/ (bluetooth, xbl, tz, ...) through the same path and prints an FNV-1a hash of as many bytes as each image has: tools/ufs-survey.py compares those with the images and with what the loader read itself bef… |
-| `ufs_native` | ufs_native=1: through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as expected; 2: only look; 3: a dry run -- the list in and out again, and in once more for the end of the run to take out, no command sent. |
-| `ufs_native_bench` | ufs_native_bench=1 (with ufs_native=1): what the flash gives with N reads in flight -- N threads each reading at random places of darwin, a size at a time -- MB/s and microseconds a read, for 1, 2, 4, 8, 16 and 31 threads. |
-| `ufs_native_check` | ufs_native_check=1: what this kernel's own driver reads is what the loader reads, byte for byte. |
-| `ufs_shared_pa` | page (ufs_shared_pa=) with the table of partitions, a request and an answer, and a buffer; this driver writes a request -- which partition, which blocks -- and core 0 reads them with that driver's ReadBlocks into the buffer (xnuloader/loader.c, block_poll). |
-| `ufs_write` | With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin, the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the Darwin volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that is where the data volume of D… |
-| `var_save_ms` | at most this long on the way out (var_save_ms=N) |
-
-### `bsd/dev/hakios_ufshc.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `ufs_native_buffer` | — |
-| `ufs_native_hang` | ufs_native_hang=N (a test of the loader's side): once N reads are done, the thread that has just rung a doorbell stops the kernel -- every processor spinning with interrupts off, this one included -- with reads in flight and this kernel's list in. |
-| `ufs_native_leave` | ufs_native_leave=1 (a test): the list left in at the end, for the loader |
-| `ufs_native_slots` | — |
-| `ufs_native_spin` | — |
-
-### `bsd/dev/hakios_virtio_blk.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `virtio_blk` | Only with boot-arg virtio_blk=1: the bus address is QEMU's and means nothing on the phone. |
 
 ### `bsd/miscfs/apfs/apfs_vfsops.c`
 
@@ -429,17 +93,339 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `systrace` | Bring-up aid: boot-arg systrace=1 logs every BSD system call that fails, |
 
-### `bsd/dev/hakios_bt_uart.c`
+### `bsd/dev/board/adreno.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `adreno` | adreno=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
+| `adreno_blind` | adreno_blind=1: the command processor is started with its microcode at an address where nothing is. |
+| `adreno_dirty` | adreno_dirty=1 makes every ending a panic's in this respect, to see that work. |
+| `adreno_fine` | adreno_fine=1 the newest step waits like that before every single access |
+| `adreno_keep` | With boot-arg adreno_keep=1 the steps are not undone: the GPU block stays as step 21 leaves it, the 3D core powered and taking commands, and the service HakiosGPU (iokit/Kernel/BoardGPU.cpp) hands it to programs through the interface of Linux's msm driver, which is what Mesa's freedreno speaks. |
+| `adreno_only` | adreno_only=K step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them) |
+| `adreno_pause` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
+| `adreno_return` | adreno_return=1 when all is over, go back to the loader instead of starting the system |
+| `adreno_skip` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
+| `adreno_speed` | adreno_speed=N step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for) |
+| `adreno_stream1` | adreno_stream1=N step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core asks for. |
+| `adreno_watch` | adreno_watch=S after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last |
+| `display_clocks` | display_clocks=1: an opt-in, read-only look at the display clocks' state. |
+| `display_probe` | display_probe=1 before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written) |
+| `gpu` | gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is started while the system starts and kept for the window server to draw with (the service HakiosGPU; "the GPU kept on" below). |
+| `gpu_exact` | gpu_exact=0: the core does not wait to be idle before it notes the time |
+| `gpu_log` | gpu_log=1: a line for every submission and the time the core spent on it |
+| `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
+| `gpu_va` | gpu_va: 0 (the default) as it has always been. |
+
+### `bsd/dev/board/adsp.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `adsp` | Once everything is up with adsp=1, the sound's path takes over (board/sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
+| `adsp_apr_wait` | — |
+| `adsp_listen` | — |
+| `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
+| `adsp_pause` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
+| `adsp_step` | adsp_step=N performs steps 1 to N and stops; as with wifi_step, a step says what it is about to touch before it touches it, and a step that does not find what it needs ends the sequence. adsp=1 is all of them, on a thread beside the system's start. |
+| `adsp_wait` | each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader when the steps are over). |
+| `battmgr` | The properties' numbers are this phone's firmware's, read with battmgr=2 and checked against what Android shows at the same moment (dumpsys battery, /sys/class/power_supply/battery): up to 9 they are those of Linux's qcom_battmgr.c (sm8350), from there on one more property comes before the temperatu… |
+
+### `bsd/dev/board/apfs_check.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `apfs_check` | apfs_check=7 the one mode that writes: replace bytes inside a file of the container on apfs_dev where they lie, with the kernel's own bsd/miscfs/apfs/apfs_write.c, and read them back out of a container opened again from nothing (apfs_write_check below) |
+| `apfs_chunk` | — |
+| `apfs_contents` | apfs_contents=0: no file is read at all, only looked up and stat'ed -- how long the walk itself takes, the directories and the inodes. |
+| `apfs_depth` | apfs_depth=N go no deeper than N levels below where the walk starts (1 = only the entries of that directory; 0 = no limit). |
+| `apfs_dev` | apfs_dev=md1 the store volume (default rvblk0); its name must be HakiosStore |
+| `apfs_hash` | apfs_hash=0 reads every byte all the same and does not hash it (the sums are then not the ones to compare); hash_ticks is how long the hashing took otherwise. |
+| `apfs_max` | apfs_max=N stop after N entries (and say how memory stood on the way): for finding out what a walk that never comes back runs into |
+| `apfs_mnt` | apfs_mnt=/lib where to mount it for mode 6 (default /private/var/apfs-check) |
+| `apfs_skip` | apfs_skip=/a,/b directories not to go into, as paths inside the volume, comma separated. |
+| `apfs_store_len` | apfs_store_len=N how many bytes of payload (default 40000) |
+| `apfs_store_note` | apfs_store_note=N the writer's own number, kept in the header (default 0) |
+| `apfs_store_seed` | apfs_store_seed=N which pattern (default 1); a different seed is a different payload |
+| `apfs_subtree` | apfs_subtree=/usr walk only that part of the volume |
+| `apfs_threads` | apfs_threads=N how many, for mode 5 (default 4) |
+| `apfs_volume` | apfs_volume=ufs_darwin is the Darwin root container on the phone's flash (ufs=2 for the loader, bootcpu=7). |
+| `apfs_volume_at` | — |
+| `apfs_walkers` | apfs_walkers=N: one of N walkers; a subdirectory is left on the shared stack (par_push) |
+| `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
+| `apfs_write_byte` | apfs_write_byte=N what to fill them with (default 0xa5) |
+| `apfs_write_len` | apfs_write_len=N how many bytes (default 4096, at most APFS_WRITE_MAX) |
+| `apfs_write_path` | apfs_write_path=/hakios/x the file in it, by path from the volume's root |
+
+### `bsd/dev/board/audio.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("xl sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
+| `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (board/guard.c, on the phone): what reaches the amplifiers. |
+| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (board/mic.c, mic=3), in both channels. |
+
+### `bsd/dev/board/backlight.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `backlight` | backlight=1 the profile's backend, read only: the DSI controller's version and state logged |
+| `bl_auto` | bl_auto=1 automatic brightness from the start |
+| `bl_backend` | bl_backend=dcs\|soft\|none |
+| `bl_bytes` | bl_bytes=1\|2 how many bytes the panel's 0x51 takes; bl_le=1: least significant first |
+| `bl_dsi` | bl_dsi=ADDRESS the DSI controller's registers (physical) |
+| `bl_floor` | bl_floor=N backend soft: what is kept of a pixel at level 0, of 256 (default 24) |
+| `bl_le` | bl_bytes=1\|2 how many bytes the panel's 0x51 takes; bl_le=1: least significant first |
+| `bl_level` | bl_level=N the level at boot (default 600) |
+| `bl_max` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
+| `bl_min` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
+
+### `bsd/dev/board/battery.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `battery` | — |
+| `battery_shared_pa` | — |
+
+### `bsd/dev/board/bench.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cpuload` | cpuload=MS: every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture): tl: u at US 7:NN 6:NN ... 1:NN the core's number (as in its MPIDR), then its share of the time it was not idle (interrupts included). |
+| `membench` | membench=1: how fast this processor reads, writes and copies memory, in MB a second (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which nobody here asks to be raised. |
+
+### `bsd/dev/board/bt_uart.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `bt` | bt=-1: read and log only; bt=1: power, UART and HCI identification; bt=0/absent: off. |
 
-### `bsd/dev/hakios_scmi_perf.c`
+### `bsd/dev/board/buttons.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file (spmi { }), which peripherals the keys are on from the board file (buttons { }). |
+| `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
+| `touchscreen` | — |
+
+### `bsd/dev/board/camera.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cam` | sensors, modes and frame headers are cam=5's, from the same tables in fw/, but nothing of the phone is touched: the frames are a colour chart made here -- eight bars (white, beige, red, yellow, green, cyan, blue, 18 % grey) over a grey ramp -- in RAW10 in the sensor's own Bayer order, as bright as t… |
+| `cam_after` | — |
+| `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/hakios-camera without the phone's camera. |
+| `cam_fake_fps` | — |
+| `cam_frames` | — |
+| `cam_gain` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
+| `cam_keep_mb` | — |
+| `cam_mode` | table ("resN": boot-arg cam_mode=N, or the mode with the fewest pixels: the macro's 1600x1200 RAW10 on one lane at 665.6 Mbit/s, 30 frames a second; the wide one's 1920x1080 RAW10 on three C-PHY trios at 3.11 Gbit/s each, 120 frames a second); the sensor's CSIPHY, CSID-lite 0's RX from that PHY and… |
+| `cam_pattern` | The OV02B10's own colour bars (cam_pattern=1) are still taken for GBRG, as before: the module file says nothing of them. |
+| `cam_sensor` | cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra"); without it, the board's test-sensor, and for cam=5 its darwin-sensor (the back camera; darwin-front, the front one). |
+| `cam_settle` | cam_settle=N sets it instead. |
+| `cam_shutter` | for a look in other light, written the sensor's way: cam_shutter= LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
+| `cam_vblank` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; S5KHM2SD: 0x0204, 32 is 1x), cam_vblank=LINES (the frame that much longer: OV02B10 0x14/0x15; |
+
+### `bsd/dev/board/cpufreq.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cpufreq` | cpufreq=1 every group of cores that has a core of ours is asked for the top row of its table |
+
+### `bsd/dev/board/cputop.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cputop` | cputop=S: every S seconds, the processes that took the most CPU time since the last time, by name and pid, and how many processes came and went meanwhile. |
+
+### `bsd/dev/board/ddr.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `ddr` | ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read. |
+| `ddr_rest` | the vote left for the loader (ddr_rest=N); see hakios_ddr_quiesce() |
+| `ddr_vote` | ddr_vote=N: N instead of the most (16383). |
+
+### `bsd/dev/board/drivers.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `touchscreen` | touchscreen=1: the touch screen, by the driver of the controller the board lists |
+
+### `bsd/dev/board/fts.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `fts_spi_hz` | — |
+| `fts_trace` | — |
+| `touch_flip` | — |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments are the first phone's). |
+
+### `bsd/dev/board/goodix.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `touch_flip` | touch_flip: 1 = mirror left-right, 2 = mirror top-bottom |
+| `touch_lat` | With touch_lat=1 a line for every report read ("tl: c before US seen US read US": the look before, the look that found the line low, the report read), for measuring how long a touch takes to show (tools/latency.py). |
+| `touch_poll_us` | touch_poll_us=N: every N microseconds instead of 8000). |
+| `touch_rate` | touch_rate=480: the chip reports twice as often (a phone vendor's "game mode"; 240 otherwise) |
+| `touch_spi_hz` | touch_spi_hz=N: the bus at N Hz (Android's device tree gives the chip 5 MHz) |
+| `touchscreen` | Only with boot-arg touchscreen=1. |
+
+### `bsd/dev/board/haptic.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for Darwin until the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /… |
+| `haptic_effect` | and one short effect played (haptic_effect=N, default 1: Android's effect 0) |
+
+### `bsd/dev/board/input.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `touch_lat` | touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time), to be matched with the window server's lines about reading it (userland/src/inject.c), drawing (eagl.c) and the displa… |
+
+### `bsd/dev/board/mic.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `mic` | here happens unless boot-arg mic=N asks for it, with adsp=1 (board/adsp.c), which calls hakios_mic_dsp_up() once the DSP's audio services are up. |
+| `mic_adc` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
+| `mic_input` | mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) |
+| `mic_main` | clipped tone at about the bus clock / 560, whatever the microphone hears (mic_main=1 shows it). |
+| `mic_secs` | — |
+| `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's 175.5 Hz in the samples) |
+| `mic_test` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
+
+### `bsd/dev/board/net.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `net_names` | net_names=1: a line for every name asked of a DNS server and for every TCP connection begun from here -- which is how to see what a system that has just been given a network does with it (up to NAMES_MAX lines). |
+| `net_trace` | net_trace=N: a line in the log for each of the first N frames, either way. |
+
+### `bsd/dev/board/scmi_perf.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `scmi_perf` | scmi_perf=2 each domain is also asked for its highest level (the UI is drawn by the CPUs); the level it was found at stays the floor that thermal=2 holds it back to |
+
+### `bsd/dev/board/sound.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `sound` | unless boot-arg sound=N asks for it, with adsp=1 (board/adsp.c), which starts the DSP and calls hakios_sound_dsp_up() once its audio services are up. |
+| `sound_below` | and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
+| `sound_gain` | — |
+| `sound_guard_as` | sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under Android's level (louder than they are) and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
+| `sound_pause` | — |
+| `sound_secs` | — |
+
+### `bsd/dev/board/sparse.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `apfs_sparse` | apfs_sparse=<offset>. |
+
+### `bsd/dev/board/speaker.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `speaker_probe` | ---- speaker_probe=N: a look ------------------------------------------------------------------------ |
+
+### `bsd/dev/board/thermal.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `th_clear` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
+| `th_critical` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
+| `th_period_ms` | th_period_ms=N how often it looks (default 1000) |
+| `th_trip` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
+| `thermal` | thermal=1 the hottest reading logged every ten seconds, nothing held back |
+
+### `bsd/dev/board/torch.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `torch` | What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours w… |
+| `torch_max_s` | — |
+| `torch_secs` | — |
+
+### `bsd/dev/board/ufs.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `ufs_bench` | ufs_bench=1: what one request through the loader costs, by size. |
+| `ufs_check` | ufs_check=1 reads, once at start, the partitions there are images of in the ROM's firmware-update/ (bluetooth, xbl, tz, ...) through the same path and prints an FNV-1a hash of as many bytes as each image has: tools/ufs-survey.py compares those with the images and with what the loader read itself bef… |
+| `ufs_native` | ufs_native=1: through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as expected; 2: only look; 3: a dry run -- the list in and out again, and in once more for the end of the run to take out, no command sent. |
+| `ufs_native_bench` | ufs_native_bench=1 (with ufs_native=1): what the flash gives with N reads in flight -- N threads each reading at random places of darwin, a size at a time -- MB/s and microseconds a read, for 1, 2, 4, 8, 16 and 31 threads. |
+| `ufs_native_check` | ufs_native_check=1: what this kernel's own driver reads is what the loader reads, byte for byte. |
+| `ufs_shared_pa` | page (ufs_shared_pa=) with the table of partitions, a request and an answer, and a buffer; this driver writes a request -- which partition, which blocks -- and core 0 reads them with that driver's ReadBlocks into the buffer (xnuloader/loader.c, block_poll). |
+| `ufs_write` | With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin, the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the Darwin volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that is where the data volume of D… |
+| `var_save_ms` | at most this long on the way out (var_save_ms=N) |
+
+### `bsd/dev/board/ufshc.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `ufs_native_buffer` | — |
+| `ufs_native_hang` | ufs_native_hang=N (a test of the loader's side): once N reads are done, the thread that has just rung a doorbell stops the kernel -- every processor spinning with interrupts off, this one included -- with reads in flight and this kernel's list in. |
+| `ufs_native_leave` | ufs_native_leave=1 (a test): the list left in at the end, for the loader |
+| `ufs_native_slots` | — |
+| `ufs_native_spin` | — |
+
+### `bsd/dev/board/virtio_blk.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `virtio_blk` | Only with boot-arg virtio_blk=1: the bus address is QEMU's and means nothing on the phone. |
+
+### `bsd/dev/board/virtio_input.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `virtio_input` | Only with boot-arg virtio_input=1: the bus address is QEMU's and means nothing on the phone. |
+
+### `bsd/dev/board/virtio_net.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `virtio_net` | Only with boot-arg virtio_net=1: the bus address is QEMU's and means nothing on the phone. |
+
+### `bsd/dev/board/virtio_sound.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `virtio_sound` | Only with boot-arg virtio_sound=1: the bus address is QEMU's and means nothing on the phone. |
+
+### `bsd/dev/board/wifi.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/board/sta.h: Darwin's Wi-Fi side does, through bsd/dev/board/apple80211.c), the network of fw/network joined if… |
+| `wifi_again` | wifi_again=1 start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two |
+| `wifi_ask` | wifi_ask=1 step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer |
+| `wifi_dirty` | wifi_dirty=1 the DSP is not stopped: left as a kernel that died leaves it |
+| `wifi_file` | wifi_file=0 with wifi=1: the network of fw/network is not joined at the start |
+| `wifi_fine` | wifi_fine=1 such a step waits like that before every single write and call |
+| `wifi_listen` | wifi_listen=S how long step 14 waits for the Wi-Fi firmware's service (default 3) |
+| `wifi_loud` | (wifi_loud=1 with it: nothing is kept back, for looking into a start that goes wrong.) The rest of this comment is about the steps one by one, wifi_step=N, which is how all this was found out. |
+| `wifi_lx` | With wifi_lx=2 and wifi_smmu=2, 100 words of ring set-up go into the registers of copy engines 0, 1, 2, 3, 4, 5 and 7 without an abort, 510 buffers are posted on each of the three receiving rings, and 9 ms later the firmware's first message is in a buffer of copy engine 2: HTC's "ready" (2 credits o… |
+| `wifi_mac` | wifi_mac=A the radio's own address for the driver (hakios_wifi_radio_address() below; xl takes it from a file that is not in the repository) |
+| `wifi_new` | wifi_new=K steps K and later have not been seen to work (default: the last one) |
+| `wifi_pause` | wifi_pause=MS how long such a step waits after announcing a group of accesses (default 2200: the loader, watching from another core, notes the end of our log every two seconds, and after a silent reset that is all there is) |
+| `wifi_radio_read` | with wifi_radio_read=1, and only with the firmware in mission mode (outside it a read there has ended the kernel) Steps 1 to 5 are the survey; they write to nothing but the arbiter's command word. |
+| `wifi_return` | wifi_return=1 when all is over, go back to the loader instead of starting the system |
+| `wifi_step` | wifi_step=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
+| `wifi_wait` | wifi_wait=S how long step 11 watches for the DSP to say that it is up (default 10) |
+| `wifi_watch` | wifi_watch=S ... and how long it goes on watching once it has (default 3) |
+
+### `bsd/dev/board/wlfw.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `wifi_cal` | wifi_cal=1 adds what qmi.c does with cold-boot calibration switched on. |
+| `wifi_mission` | wifi_mission=1 adds what qmi.c is asked for next (ath11k_qmi_firmware_start()): the firmware's logging, the configuration, the mode "mission", after which the firmware has the radio on and the driver begins to use its registers. |
+| `wifi_ready` | — |
 
 ### `bsd/kern/kern_exec.c`
 
@@ -466,6 +452,16 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `trace_sysctl` | hakios: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got ("sysctl: launchd[1] has no security.mac.foo"), the first 300 of them: a newer userland than the kernel looks up sysctls the kernel never had, and often abort()s on the answer. |
 
+### `iokit/Kernel/BoardGPU.cpp`
+
+| Argument | What the source says |
+| --- | --- |
+| `gpu_cached` | freedreno; boot-arg gpu_cached=1 makes them ordinary memory, pushed out of the cache whenever the GPU is given something to do: see submit()). |
+| `gpu_client_snapshot` | gpu_client_snapshot, default 1) The pixels as they are now, copied into memory of the GPU's own, rather than the program's pages themselves: iconservicesagent hands the window server an icon made around its own memory and then draws the next picture -- a label -- into that same memory, and the icons… |
+| `gpu_fair_ms` | gpu_fair_ms=N: the GPU has one ring and no preemption, so a program that hands it frame after frame (the wallpaper's 40-55 ms ones, widgets) has the window server's frames wait behind all of them. |
+| `gpu_keep` | gpu_keep=0 (a test): none kept; gpu_keep=2: kept ones cleared when given again |
+| `touch_lat` | touch_lat=1: a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up (tools/frames.py). |
+
 ### `iokit/Kernel/IOPMrootDomain.cpp`
 
 | Argument | What the source says |
@@ -484,13 +480,6 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `rd` | — |
 
-### `osfmk/arm64/hakios_prof.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `hakios_prof` | A sampling profiler for one process (boot-arg hakios_prof=NAME, e.g. backboardd): about 1000 times a second each other CPU running a thread of that process is interrupted (cpu_xcall) and the PC it was at is counted -- the user PC, or the kernel PC when the thread was in the kernel. |
-| `hakios_prof_secs` | — |
-
 ### `osfmk/arm64/loader_return.c`
 
 | Argument | What the source says |
@@ -508,6 +497,13 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `small_cores` | small_cores, read in ml_parse_cpu_topology() (before tunables are) |
+
+### `osfmk/arm64/prof.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `hakios_prof` | A sampling profiler for one process (boot-arg hakios_prof=NAME, e.g. backboardd): about 1000 times a second each other CPU running a thread of that process is interrupted (cpu_xcall) and the PC it was at is counted -- the user PC, or the kernel PC when the thread was in the kernel. |
+| `hakios_prof_secs` | — |
 
 ### `osfmk/arm64/user_exception_trace.c`
 

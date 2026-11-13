@@ -18,10 +18,10 @@
 #include <pexpert/pexpert.h>
 #include <sys/systm.h>
 
-#include "hakios_board.h"       /* which board this is and what it has */
-#include "hakios_log.h"         /* hakios_say(): a line in the loader's log, and the kernel's */
-#include "hakios_mmio.h"        /* rd(), wr(): registers, with the seam for the host test */
-#include "hakios_time.h"        /* sleep_ms(), spin_us(), now_us() */
+#include "board/board.h"       /* which board this is and what it has */
+#include "board/log.h"         /* hakios_say(): a line in the loader's log, and the kernel's */
+#include "board/mmio.h"        /* rd(), wr(): registers, with the seam for the host test */
+#include "board/time.h"        /* sleep_ms(), spin_us(), now_us() */
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
@@ -37,7 +37,7 @@ extern kern_return_t thread_terminate(thread_t thread);
 
 static vm_offset_t tlmm;
 #define HAKIOS_TLMM             tlmm
-#include "hakios_tlmm.h"        /* gpio_configure(), gpio_output(), gpio_set(), gpio_get() */
+#include "board/tlmm.h"        /* gpio_configure(), gpio_output(), gpio_set(), gpio_get() */
 
 static uint32_t level;
 static uint32_t found_cfg;      /* the pin's configuration as the boot loader left it */
@@ -79,7 +79,7 @@ led_thread(__unused void *parameter, __unused wait_result_t result)
 	thread_terminate(current_thread());
 }
 
-/* Called once at boot (a line in bsd/dev/hakios_input.c's start, or wherever the driver belongs). */
+/* Called once at boot (a line in bsd/dev/board/input.c's start, or wherever the driver belongs). */
 void
 example_led_init(void)
 {

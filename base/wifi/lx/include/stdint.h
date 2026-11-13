@@ -1,5 +1,5 @@
 /*
- * <stdint.h>, for the kernel's own headers that are read on this side (sys/hakios_qmi.h): in a
+ * <stdint.h>, for the kernel's own headers that are read on this side (sys/board/qmi.h): in a
  * FreeBSD kernel what it declares comes with these.
  */
 #include <sys/types.h>

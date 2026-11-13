@@ -2,7 +2,7 @@
  * These are register-traffic checks, not evidence that a physical controller has answered. */
 #include <unistd.h>
 #include "fakekernel.h"
-#include "hakios_board.h"
+#include "board/board.h"
 #include "spmi_model.h"
 #include "rsc_model.h"
 #include "tlmm_model.h"
@@ -260,9 +260,9 @@ vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
+#include "board/board.c"
 /* Avoid collisions with the model headers' rsc/model variables. */
-#include "hakios_bt_uart.c"
+#include "board/bt_uart.c"
 
 static void
 setup(void)

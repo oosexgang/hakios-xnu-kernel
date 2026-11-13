@@ -225,7 +225,7 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
  * back the value the real implementation computed; the status bar then shows whatever Darwin last
  * knew, which is better than crashing.
  * With adsp=1 the battery is a power source (the service HakiosBattery, an IOPMPowerSource:
- * iokit/Kernel/HakiosBattery.cpp), which powerd reads like an iPhone's own, and from it Darwin knows
+ * iokit/Kernel/BoardBattery.cpp), which powerd reads like an iPhone's own, and from it Darwin knows
  * everything by itself; once that service is there, the hooks hand everything to Darwin's own code.
  */
 static float  (*original_battery_level)(id self, SEL sel);

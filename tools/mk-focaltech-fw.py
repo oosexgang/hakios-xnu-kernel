@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Make bsd/dev/hakios_focaltech_fw.h, the firmware hakios_goodix.c loads into a FocalTech controller that
+# Make bsd/dev/board/focaltech_fw.h, the firmware board/goodix.c loads into a FocalTech controller that
 # boots without its own, from your phone's file (Android's /vendor/firmware/focaltech_ts_fw_*.bin); the
 # firmware is the vendor's and not ours to publish. A board with another controller needs none.
-#   mk-focaltech-fw.py focaltech_ts_fw_XXX.bin XNU_TREE/bsd/dev/hakios_focaltech_fw.h
+#   mk-focaltech-fw.py focaltech_ts_fw_XXX.bin XNU_TREE/bsd/dev/board/focaltech_fw.h
 import sys
 
 data = open(sys.argv[1], 'rb').read()

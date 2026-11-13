@@ -1,7 +1,7 @@
 /*
  * What Mesa's freedreno takes from libdrm's xf86drm.h, for a system without Linux's DRM: the
  * declarations here, the functions in hakios_drm.c, which carry the requests to the kernel's
- * GPU driver (the service HakiosGPU; iokit/Kernel/HakiosGPU.cpp) as calls of its user client.
+ * GPU driver (the service HakiosGPU; iokit/Kernel/BoardGPU.cpp) as calls of its user client.
  * tools/mk-mesa.sh puts both into Mesa's tree, where they are the "libdrm" freedreno is built
  * against. The request numbers and their structures are Linux's (Mesa's include/drm-uapi).
  */
@@ -59,7 +59,7 @@ void hakios_drm_unmap(int fd, uint32_t handle, void *address);
 
 /*
  * Not libdrm's either: what the memory of an IOSurface would be like as a buffer (the kernel's
- * request and its answer: struct hakios_surface in iokit/Kernel/HakiosGPU.cpp); 0, or -1 with
+ * request and its answer: struct hakios_surface in iokit/Kernel/BoardGPU.cpp); 0, or -1 with
  * errno. The buffer itself is made by drmPrimeFDToHandle(), which freedreno calls with its
  * table of buffers locked, so that a buffer on its way out and the same surface on its way in
  * cannot pass each other.

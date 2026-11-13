@@ -765,7 +765,7 @@ class Generate(Sandbox):
         self.assertIn('sensors: one node sensor@0 { ... } or more', self.problems())
 
     def test_the_chips_a_board_may_name_are_the_camera_drivers(self):
-        driver = (ROOT / 'kernel/overlay/bsd/dev/hakios_camera.c').read_text()
+        driver = (ROOT / 'kernel/overlay/bsd/dev/board/camera.c').read_text()
         listed = re.findall(r'^\t\{ "(\w+)", "camera-[\w-]+\.tab"', driver, re.M)
         self.assertEqual(tuple(listed), boards.CAMERA_CHIPS)
 
@@ -1460,14 +1460,14 @@ class Packages(Sandbox):
         out = self.dir / 'out'
         socs, found = boards.load()
         self.assertEqual(sorted(boards.write_generated(out, socs, found)),
-                         ['hakios_board_table.h', 'hakios_boards.h', 'platforms.h'])
-        stamp = (out / 'hakios_board_table.h').stat().st_mtime_ns
+                         ['board_table.h', 'platforms.h', 'user_boards.h'])
+        stamp = (out / 'board_table.h').stat().st_mtime_ns
         self.assertEqual(boards.write_generated(out, socs, found), [])
-        self.assertEqual((out / 'hakios_board_table.h').stat().st_mtime_ns, stamp)   # nothing to recompile for
+        self.assertEqual((out / 'board_table.h').stat().st_mtime_ns, stamp)   # nothing to recompile for
         # a board that says something new of its screen: user space's table, and only it
         path = self.dir / 'devices/phone/board.dts'
         path.write_text(path.read_text() + '/ {\n\tscreen {\n\t\tstatusbar-leading-shift = <24>;\n\t};\n};\n')
-        self.assertEqual(boards.write_generated(out, *boards.load()), ['hakios_boards.h'])
+        self.assertEqual(boards.write_generated(out, *boards.load()), ['user_boards.h'])
 
 
 class Repository(unittest.TestCase):
@@ -1543,7 +1543,7 @@ class Repository(unittest.TestCase):
                                       capture_output=True, text=True, env={**os.environ, **environment})
                 self.assertEqual(done.returncode, 0, done.stderr)
                 self.assertIn('phone-cmd, phone-keys, phone-video', done.stdout)
-                self.assertIn('.name = "phone-cmd"', (out / 'hakios_board_table.h').read_text())
+                self.assertIn('.name = "phone-cmd"', (out / 'board_table.h').read_text())
         finally:
             shutil.rmtree(out)
 

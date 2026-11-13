@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Make pictures of the frames the kernel's camera driver left in memory (boot-arg cam=3 and up;
-bsd/dev/hakios_camera.c), as the loader hands them over ("xl camera").
+bsd/dev/board/camera.c), as the loader hands them over ("xl camera").
 
 usage: camraw.py CAMERA.raw PREFIX [--bayer N]
 

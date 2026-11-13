@@ -14,7 +14,7 @@ int	lx_station_join(void);		/* lx_80211.c: join the network the kernel was given
 void	lx_station_say(void);		/* lx_80211.c: what has passed since */
 void	lx_station_leave(void);		/* lx_80211.c: leave it, and the interface down */
 int	lx_station_send(const unsigned char *frame, unsigned long length);	/* lx_80211.c: an Ethernet frame for the network */
-int	lx_station_offer(void);	/* lx_80211.c: the station given to the kernel to ask (sys/hakios_sta.h); 0, or an errno */
+int	lx_station_offer(void);	/* lx_80211.c: the station given to the kernel to ask (sys/board/sta.h); 0, or an errno */
 void	lx_station_withdraw(void);	/* lx_80211.c: ... and taken back */
 
 #endif

@@ -82,12 +82,12 @@
 #       -- and the increase at the big sizes is the GPU's fill and the bandwidth of one pass
 #       over the attachment. The test prints this subtraction itself.
 #   (b) BY THE KERNEL'S OWN COUNTER, from this same log. With gpu_log=1, bsd/dev/
-#       hakios_adreno.c times every submission off the GPU's always-on counter (19.2 ticks a
+#       board/adreno.c times every submission off the GPU's always-on counter (19.2 ticks a
 #       microsecond) and writes
 #
 #         tl: q <fence> took <microseconds>
 #
-#       and HakiosGPU.cpp prints, every five seconds in which something was submitted,
+#       and BoardGPU.cpp prints, every five seconds in which something was submitted,
 #       "the GPU worked N us on each of M (K under 0.1 ms, ...)". Those are the GPU's side.
 #       Subtract from the test's own median for the same case and the remainder is ours.
 #       Two cautions, both of them real: the per-submission lines are written one submission
@@ -105,7 +105,7 @@
 # THE PREDICTION THAT MATTERED MOST, AND IT WAS WRONG -- WHICH IS A RESULT
 #
 # Written down before the run: the kernel waits for a fence by POLLING every 200 microseconds
-# (GPU_ASK_AGAIN_US, iokit/Kernel/HakiosGPU.cpp), so the per-draw medians would land near
+# (GPU_ASK_AGAIN_US, iokit/Kernel/BoardGPU.cpp), so the per-draw medians would land near
 # multiples of 200 us and the cheapest big win would be in the kernel's poll.
 #
 # REFUTED BY MEASUREMENT. A 4x4 draw costs 41 us -- a fifth of the quantum -- so gpuWait sees the

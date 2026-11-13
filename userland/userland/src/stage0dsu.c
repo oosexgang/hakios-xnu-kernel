@@ -5,7 +5,7 @@
  *
  * The Darwin system volume is the Android DSU image on the phone's storage, which
  * the loader serves block by block as the partition "dsu" (ufs=2; the kernel's /dev/ufs_dsu,
- * bsd/dev/hakios_ufs.c): only what is read comes off the storage, so the system can be as big as
+ * bsd/dev/board/ufs.c): only what is read comes off the storage, so the system can be as big as
  * the DSU slot (15 GiB) instead of what fits in the kernel's memory window. This program mounts that
  * volume read only on /flash, makes it the root -- this image goes to /hakios, where the system
  * volume has the directory stage0 mounts it on otherwise (src/stage0.c) -- and runs init from there,

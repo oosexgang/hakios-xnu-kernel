@@ -1,5 +1,5 @@
 /*
- * rwtouch: replay touches through /dev/hakios-touch (see hakios_input.h).
+ * rwtouch: replay touches through /dev/hakios-touch (see board/input.h).
  *
  * usage: rwtouch STEP...
  *   wait SECONDS                 pause
@@ -33,7 +33,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "hakios_input.h"
+#include "board/input.h"
 
 static int device;
 

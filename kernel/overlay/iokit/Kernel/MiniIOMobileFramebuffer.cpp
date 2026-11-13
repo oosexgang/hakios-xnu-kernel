@@ -216,7 +216,7 @@ swapQueue(void)
  * Boot-arg touch_lat=1: a line for every swap handed over ("tl: s ID at US") and for every frame
  * put on the panel ("tl: v ID ready US shown US done US": the GPU done with it, its beat come, the
  * pixels in the panel's memory), in microseconds of mach_absolute_time, for measuring how long a
- * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/hakios_input.c).
+ * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/board/input.c).
  */
 static TUNABLE(uint32_t, gTouchLat, "touch_lat", 0);
 
@@ -242,7 +242,7 @@ recStep(void)
 #define REC_STEP        recStep()
 
 /*
- * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is
+ * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/board/adreno.c says where it is
  * read from). A command-mode panel: at each of its refreshes the display controller
  * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
  * rest. Two things follow from knowing when:
@@ -358,7 +358,7 @@ struct rec_frame {
 extern "C" uint64_t loader_recording[3];        /* { physical address, bytes, kernel address }: osfmk/arm64/loader_return.c */
 
 /*
- * The panel's light made in software (bsd/dev/hakios_backlight.c, backend soft: a machine whose panel's
+ * The panel's light made in software (bsd/dev/board/backlight.c, backend soft: a machine whose panel's
  * light cannot be set, QEMU among them): the frame is drawn into a copy in memory (as with fb_double)
  * and darkened on its way to the panel, so that a new level can be shown at once from that copy, also
  * when no new frame comes.

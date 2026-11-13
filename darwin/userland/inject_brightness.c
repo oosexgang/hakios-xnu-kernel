@@ -1,6 +1,6 @@
 /*
  * libhakios-brightness.dylib: Darwin's brightness slider and its automatic brightness switch, to the kernel's
- * backlight (hw.backlight.*: kernel/overlay/bsd/dev/hakios_backlight.c).
+ * backlight (hw.backlight.*: kernel/overlay/bsd/dev/board/backlight.c).
  *
  * On an iPhone the slider of Control Center and of Settings, and the switch of Auto-Brightness, are
  * properties of CoreBrightness: a process sets "DisplayBrightness" (0.0 to 1.0) or "DisplayBrightnessAuto"

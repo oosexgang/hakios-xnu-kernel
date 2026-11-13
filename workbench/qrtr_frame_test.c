@@ -1,12 +1,12 @@
 /*
- * QRTR's framing (kernel/overlay/bsd/dev/hakios_qrtr_frame.h), as it is: what another processor sends is
+ * QRTR's framing (kernel/overlay/bsd/dev/board/qrtr_frame.h), as it is: what another processor sends is
  * taken apart into a header and the place of a datagram, in either version of the header, and nothing
  * that does not fit what arrived is taken.
  *
  *   qrtr_frame_test SCENARIO
  */
 #include "fakekernel.h"
-#include "hakios_qrtr_frame.h"
+#include "board/qrtr_frame.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

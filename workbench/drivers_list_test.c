@@ -1,5 +1,5 @@
 /*
- * The list of drivers itself (kernel/overlay/bsd/dev/hakios_drivers.c), run as a host program with a
+ * The list of drivers itself (kernel/overlay/bsd/dev/board/drivers.c), run as a host program with a
  * stand-in for every driver's start function that only writes its name down. What is tested: each
  * start function is called once, in the order the drivers depend on each other, on every board; and
  * a board gets the driver of the touch controller it lists, and no other.
@@ -27,12 +27,12 @@ STARTS(hakios_camera_init) STARTS(hakios_virtio_blk_init) STARTS(hakios_sparse_i
 #define KERNEL 1
 #define APFS 1
 #define hakios_board_init real_board_init
-#include "hakios_board.c"
+#include "board/board.c"
 #undef hakios_board_init
 /* (the board is looked up as on a phone; that it was asked for is written down like the rest) */
 void hakios_board_init(void);
 void hakios_board_init(void) { strcat(started, "hakios_board_init "); real_board_init(); }
-#include "hakios_drivers.c"
+#include "board/drivers.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

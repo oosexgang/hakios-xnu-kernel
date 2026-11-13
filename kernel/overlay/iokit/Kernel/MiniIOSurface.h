@@ -119,13 +119,13 @@ public:
 	uint8_t *                       kpixels;        /* where the pixel memory starts in the kernel, either way */
 	/*
 	 * ... and for a surface made around its maker's memory, a copy of the pixels as they were when it was made (or
-	 * last written under a lock: snapshotSeed), which is what the GPU draws from (HakiosGPU.cpp). Its maker may draw
+	 * last written under a lock: snapshotSeed), which is what the GPU draws from (BoardGPU.cpp). Its maker may draw
 	 * the next picture into the same memory as soon as the surface is handed over -- iconservicesagent does, and the
 	 * icons on the home screen showed the labels of other icons -- and what was handed over is what was there then.
 	 */
 	IOBufferMemoryDescriptor *      snapshot;
 	uint32_t                        snapshotSeed;
-	uint32_t                        drawn;          /* the GPU's last submission that names the pixels (0: none; HakiosGPU.cpp) */
+	uint32_t                        drawn;          /* the GPU's last submission that names the pixels (0: none; BoardGPU.cpp) */
 	struct minisurf_result          info;           /* addresses not filled in */
 	struct minisurf_plane           planes[MINISURF_MAX_PLANES];
 	OSDictionary *                  values;
@@ -171,7 +171,7 @@ MiniIOSurface * MiniIOSurfaceCopy(uint32_t sid);
 void            MiniIOSurfaceCost(uint32_t * made, uint64_t * making, uint32_t * freed, uint64_t * freeing, uint32_t * again);
 /* Clear the memory that is kept of surfaces that are gone, for the next ones: when the caller has a moment. */
 void            MiniIOSurfaceClearKept(void);
-/* Wait, for so many milliseconds at most, until the GPU is done with a surface's pixels (HakiosGPU.cpp). */
+/* Wait, for so many milliseconds at most, until the GPU is done with a surface's pixels (BoardGPU.cpp). */
 bool            MiniIOSurfaceDrawn(MiniIOSurface * surface, uint64_t milliseconds);
 MiniIOSurface * MiniIOSurfaceCreateSimple(uint32_t width, uint32_t height, uint32_t pixelFormat);
 void            MiniIOSurfaceDrop(MiniIOSurface * surface);

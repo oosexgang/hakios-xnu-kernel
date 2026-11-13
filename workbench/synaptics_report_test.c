@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include "hakios_synaptics_report.h"
+#include "board/synaptics_report.h"
 
 int
 main(void)

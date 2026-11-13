@@ -1,5 +1,5 @@
 /*
- * The battery's driver itself (kernel/overlay/bsd/dev/hakios_battery.c), run as a host program. The
+ * The battery's driver itself (kernel/overlay/bsd/dev/board/battery.c), run as a host program. The
  * loader keeps the firmware's charger drivers and publishes what they say in a page of memory, written
  * while the kernel runs; the kernel only reads it. So the model here is that page, as a loader would
  * write it: whole, in the middle of an update, with values that cannot be, or not there at all.
@@ -65,7 +65,7 @@ publish(uint32_t flags, int soc, int mv, int ma, int c)
 	cache->sequence++;
 }
 
-/* what the kernel's power source would be handed (iokit/Kernel/HakiosBattery.cpp) */
+/* what the kernel's power source would be handed (iokit/Kernel/BoardBattery.cpp) */
 static unsigned reported, reported_size;
 void
 HakiosBatteryReport(const void *state __unused, unsigned size)
@@ -77,8 +77,8 @@ HakiosBatteryReport(const void *state __unused, unsigned size)
 /* the driver's includes are the kernel's: the fake kernel answers for them */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
-#include "hakios_board.c"
-#include "hakios_battery.c"
+#include "board/board.c"
+#include "board/battery.c"
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 
 static int failures;

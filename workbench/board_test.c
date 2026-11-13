@@ -1,5 +1,5 @@
 /*
- * Which board the kernel takes itself for (kernel/overlay/bsd/dev/hakios_board.c), against the table
+ * Which board the kernel takes itself for (kernel/overlay/bsd/dev/board/board.c), against the table
  * generated from the device packages: the row is picked by the loader's name, a board that is not known
  * has no feature at all, and hw.board.* says what was found. One scenario a process (the lookup is
  * done once), as the driver tests.
@@ -8,8 +8,8 @@
 
 extern char log_text[];
 
-#include "hakios_board.c"
-#include "hakios_adreno_profile.h"
+#include "board/board.c"
+#include "board/adreno_profile.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

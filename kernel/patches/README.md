@@ -23,7 +23,7 @@ a comment beside it in the code. This page is the map.
   (`prng_random.c`), bring-up checkpoints and the return to the loader instead of powering off.
 - CPUs without pointer authentication (ARMv8.2: Cortex-A78/A55 and older): PAC register accesses are
   guarded by `HAS_STD_PAC`; arm64e code runs as arm64 (see `bsd/dev/arm/kern_machdep.c` in 0006 and
-  `osfmk/arm64/hakios_a64emu.c` in the overlay).
+  `osfmk/arm64/a64emu.c` in the overlay).
 - Standard ARMv8.3 PAC, where a CPU has it: keys handed over by the loader and switched by the kernel.
 - Secondary cores started through PSCI. The slower cores are known from the device tree (`small-core`,
   `l2-access-penalty`); pairing them with faster ones for the scheduler is prepared but does nothing on

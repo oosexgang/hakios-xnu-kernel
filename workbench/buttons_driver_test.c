@@ -1,5 +1,5 @@
 /*
- * The buttons' driver itself (kernel/overlay/bsd/dev/hakios_buttons.c), run as a host program: the
+ * The buttons' driver itself (kernel/overlay/bsd/dev/board/buttons.c), run as a host program: the
  * kernel's interfaces are workbench/fakekernel, the registers a model of the SoC's PMIC arbiter (version 5,
  * as Linux's spmi-pmic-arb.c has it) with the two peripherals the keys are on behind it. Where the
  * arbiter is and which peripherals the keys are on is the board's data, so the model is built from
@@ -35,8 +35,8 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
-#include "hakios_buttons.c"
+#include "board/board.c"
+#include "board/buttons.c"
 
 /* ---- what the driver reports: the records it posts to the input queue --------------------------- */
 

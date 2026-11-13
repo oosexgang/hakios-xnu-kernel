@@ -247,7 +247,7 @@ def from_log(path, ks):
             # air_run waited on a fence and the GPU did not answer. The first
             # one of these poisons the whole boot: this port's driver latches
             # after one timeout and every later wait returns false at once
-            # (HakiosGPU.cpp), so everything after the first hang is unmeasured
+            # (BoardGPU.cpp), so everything after the first hang is unmeasured
             # rather than wrong.
             out[name] = ("hung", "the GPU did not finish within two seconds", b)
         elif "came back as" in text or "after the dispatch" in text:

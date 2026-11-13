@@ -40,7 +40,7 @@
  * HOW THE MEMORY GETS HERE. Four layers, and all four now exist:
  *
  *   the kernel     kHakiosSurface (0x7e) turns an IOSurface into a GPU buffer and reports
- *                  its size, offset, row length and geometry (HakiosGPU.cpp:821)
+ *                  its size, offset, row length and geometry (BoardGPU.cpp:821)
  *   the DRM shim   drmPrimeFDToHandle(fd, surface_id, &handle) -- the ID goes where Linux
  *                  puts a dmabuf descriptor (tools/mesa/hakios-drm/hakios_drm.c:189)
  *   freedreno      fd_bo_from_dmabuf_drm takes it ("what comes in here is an IOSurface, and
@@ -71,11 +71,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "hakios_drawable.h"
+#include "board/drawable.h"
 
 /*
  * The two requests this file needs, by the numbers the kernel answers them on
- * (xnu/files/iokit/Kernel/HakiosGPU.cpp:78-95): kHakiosSurface is this port's own and
+ * (xnu/files/iokit/Kernel/BoardGPU.cpp:78-95): kHakiosSurface is this port's own and
  * kDrmGemClose is Linux's. Repeated here rather than shared for the reason the structs are
  * repeated, and it is two lines.
  */
@@ -163,7 +163,7 @@ rwd_shared_connection(void)
 
 /*
  * One kHakiosSurface call. The kernel takes the struct in and hands the same struct back
- * filled (HakiosGPU.cpp:1283 and the common copy at the end of externalMethod), so in and
+ * filled (BoardGPU.cpp:1283 and the common copy at the end of externalMethod), so in and
  * out are one buffer of one size, and asking for fewer bytes back than were sent loses the
  * tail of the answer -- which is the one way to misuse this request.
  */
@@ -187,7 +187,7 @@ rwd_surface_call(io_connect_t connection, struct rwd_surface *surface, const cha
 		 * those two are translated. kIOReturnNotFound (0xe00002f0) is a surface ID the
 		 * kernel's table does not hold -- a surface from another process that was never
 		 * made shareable, or one already released. kIOReturnUnsupported (0xe00002c7) has
-		 * exactly one cause here (HakiosGPU.cpp:830): the surface was built around
+		 * exactly one cause here (BoardGPU.cpp:830): the surface was built around
 		 * memory the process already had, which is neither whole pages nor in rows the
 		 * GPU takes.
 		 */
@@ -451,7 +451,7 @@ rwd_format_of_metal(unsigned metal_pixel_format, uint32_t *fourcc, unsigned *byt
 		 * exists to avoid. The three things it needs are in docs/metal.md 10.46. */
 		rwd_say(why, why_size, "pixel format %u is %s: YCbCr in TWO PLANES, and this "
 		    "import serves one. Missing: per-plane offset and row length from the kernel "
-		    "(kHakiosSurface reports only the count, HakiosGPU.cpp:849), a Gallium "
+		    "(kHakiosSurface reports only the count, BoardGPU.cpp:849), a Gallium "
 		    "format for a biplanar Metal texture, and a YCbCr-to-RGB conversion. Refused "
 		    "whole rather than served as its luma plane, which would composite grey and "
 		    "look like a bug elsewhere", metal_pixel_format,

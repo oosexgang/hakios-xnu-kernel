@@ -97,7 +97,7 @@
  *       object map                          -- the bound that holds even if a tree was misread
  *
  * The bounds are deliberately three deep, after the fashion of the writes into the phone's
- * flash (bsd/dev/hakios_ufs.c): the file's own extents say which blocks are its contents, the
+ * flash (bsd/dev/board/ufs.c): the file's own extents say which blocks are its contents, the
  * extent-reference tree says the same blocks are that stream's and nobody else's, and a plain
  * range check refuses anything near the container's own structures whatever the trees said.
  * Then every block is read back and compared before the next one goes out.
@@ -247,7 +247,7 @@ extent_is_ours(struct apfs_btree *er, uint64_t stream_id, uint64_t phys, uint64_
  * One block out and read back again.  A device that says a write went through and then hands
  * back something else is the one failure no amount of checking above can catch, so every block
  * is compared before the next goes out -- the same bargain the writes into the phone's flash
- * make (bsd/dev/hakios_ufs.c).
+ * make (bsd/dev/board/ufs.c).
  */
 static int
 block_out(struct apfs_nx *nx, uint64_t block, const uint8_t *data, uint8_t *scratch)

@@ -11,7 +11,7 @@
 #
 # And one thing about that kernel, for whoever boots it next and not for this run: a kernel
 # built in a working copy where tools/mk-ath11k.sh has not run has no Wi-Fi driver in it (weak
-# stubs, bsd/dev/hakios_lx.c: "lx: THE DRIVER IS NOT BUILT IN"), which costs this experiment
+# stubs, bsd/dev/board/lx.c: "lx: THE DRIVER IS NOT BUILT IN"), which costs this experiment
 # nothing and costs a boot with wifi=1 everything.
 /hakios/bin/metal_props show
 /hakios/bin/metal_props on

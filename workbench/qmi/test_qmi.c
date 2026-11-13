@@ -1,5 +1,5 @@
 /*
- * Tests of the QMI helpers (kernel/overlay/bsd/dev/hakios_qmi.c) on the machine that builds
+ * Tests of the QMI helpers (kernel/overlay/bsd/dev/board/qmi.c) on the machine that builds
  * them; workbench/qmi/run.sh compiles and runs this, and workbench/run.sh runs that.
  *
  * Three kinds:
@@ -25,8 +25,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <sys/hakios_qmi.h>
-#include <sys/hakios_qrtr.h>
+#include <sys/board/qmi.h>
+#include <sys/board/qrtr.h>
 
 #define HZ 250                          /* what a Linux might have: qmi_txn_wait() must take it from here */
 #define msecs_to_jiffies(ms)    ((unsigned long)(ms) * HZ / 1000)

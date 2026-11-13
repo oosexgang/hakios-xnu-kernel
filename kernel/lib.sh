@@ -24,7 +24,7 @@ die() { echo "${0##*/}: $*" >&2; exit 1; }
 # from the device packages that are there when the kernel is built: tools/boards.py gen. The touch
 # firmware's header is matched by a pattern: a tree made before the drivers' files were renamed has it
 # under its older name, and it is still the build's, not a change of someone's.)
-TREE_EXCLUDES=(/BUILD/ '/bsd/dev/*_focaltech_fw.h' /bsd/dev/hakios_board_table.h '*.orig' '*.rej')
+TREE_EXCLUDES=(/BUILD/ /bsd/dev/board/focaltech_fw.h /bsd/dev/board/board_table.h '*.orig' '*.rej')
 
 # tree_excludes DIR: tell the tree's git which files are the build's. Written anew each time, so that
 # a tree made before the list grew learns of what was added.
@@ -37,7 +37,7 @@ tree_excludes() {
 }
 
 # A FocalTech controller's firmware is the vendor's and not ours to publish (tools/mk-focaltech-fw.py makes
-# the header from a phone's own file): this empty one keeps hakios_goodix.c compiling where there is none.
+# the header from a phone's own file): this empty one keeps board/goodix.c compiling where there is none.
 focaltech_stub() {
 	printf '%s\n' '/* A stub: no FocalTech firmware (see tools/mk-focaltech-fw.py) */' \
 		'#ifndef _HAKIOS_FOCALTECH_FW_H' '#define _HAKIOS_FOCALTECH_FW_H' '#define FOCALTECH_FW_LENGTH 0' \

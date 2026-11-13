@@ -49,9 +49,9 @@ The aim is that a new phone, on a known SoC or a new one, is a change to the fir
 ![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](assets/device-data.svg)
 
 ```
-device packages                     tools/boards.py gen        build/boards/hakios_board_table.h  (the kernel's table)
+device packages                     tools/boards.py gen        build/boards/board_table.h  (the kernel's table)
   (NAME/board.dts, NAME/soc.dtsi) ──────────────────────►      build/boards/platforms.h           (the loader's)
-  from the devices branch, or any    (run by the builds)        build/boards/hakios_boards.h       (the injected libraries')
+  from the devices branch, or any    (run by the builds)        build/boards/user_boards.h       (the injected libraries')
   directory on the search path
 ```
 
@@ -79,7 +79,7 @@ device packages                     tools/boards.py gen        build/boards/haki
 - The generated files are not committed. `tools/boards.py gen` writes them into `build/boards/`
   (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
   a directory of their own: `kernel/build.sh` (which puts the kernel's table
-  into the assembled tree as `bsd/dev/hakios_board_table.h`, only when it changed), `loader/build.sh`,
+  into the assembled tree as `bsd/dev/board/board_table.h`, only when it changed), `loader/build.sh`,
   `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `workbench/run.sh`. So the kernel, the loader and
   the libraries know the boards whose packages were present when they were built, and the data and the
   code cannot drift apart. Built with no package, they know only the emulator's board.
@@ -118,9 +118,9 @@ What the overlay provides, in the order a boot meets it:
    from RAM, and the RAM file system for `/private/var`.
 4. **Drivers** (`bsd/dev/`): display and GPU, touch, buttons, battery, sound, camera, Wi-Fi, storage,
    CPU frequency, backlight, thermal. Each does nothing until its boot argument asks. All of them
-   are started from one list, `bsd/dev/hakios_drivers.c`, which `bsd_init()` calls once: the list
+   are started from one list, `bsd/dev/board/drivers.c`, which `bsd_init()` calls once: the list
    has no knowledge of any board, a driver decides for itself whether it has anything to do.
-5. **What the drivers share** (`bsd/dev/hakios_*.h`): the board's data, the log, registers, waits,
+5. **What the drivers share** (the headers of `bsd/dev/board/`): the board's data, the log, registers, waits,
    the SoC's pins, the PMIC arbiter's protocol, RPMh's command database and a request to it, the
    way to the other processors (their shared memory, SMP2P, GLINK's queues and messages, QRTR's
    framing, a DSP's firmware image, the mailbox). What another processor sends is checked there, once,
@@ -128,8 +128,10 @@ What the overlay provides, in the order a boot meets it:
    on the host;
    [writing-a-driver.md](writing-a-driver.md) lists them.
 
-Naming: the project's files and symbols are `hakios_*` (`/dev/hakios-touch`, the `HakiosGPU`
-service), named for what they do; a driver of one part is named after the part. No name in the code
+Naming: what the port adds to the kernel lives in `board/` directories (`bsd/dev/board/`,
+`bsd/sys/board/`) or beside Apple's files under its own name (`iokit/Kernel/BoardGPU.cpp`,
+`osfmk/arm64/psci_smp.c`); the symbols are `hakios_*` (`/dev/hakios-touch`, the `HakiosGPU` service).
+Files are named for what they do; a driver of one part is named after the part. No name in the code
 says which phone it is for: that is the board's to say.
 
 More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../kernel/patches/README.md).

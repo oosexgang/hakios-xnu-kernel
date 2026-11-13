@@ -1,5 +1,5 @@
 /*
- * Darwin's Wi-Fi requests (kernel/overlay/bsd/dev/hakios_apple80211.c), run as a host program: SIOCGA80211 and
+ * Darwin's Wi-Fi requests (kernel/overlay/bsd/dev/board/apple80211.c), run as a host program: SIOCGA80211 and
  * SIOCSA80211 as wifid sends them, answered from the station layer -- here a model of it that answers as a
  * scenario says, and whose records come from a radio's driver built outside this tree, so may say more
  * than there is room for. What goes back into the caller's buffer never passes the length it gave, and
@@ -9,7 +9,7 @@
  */
 #include "fakekernel.h"
 #define KERNEL 1
-#include <sys/hakios_sta.h>
+#include <sys/board/sta.h>
 
 /* ---- the station layer ------------------------------------------------------------------------------- */
 
@@ -87,12 +87,12 @@ printed_has(const char *text)
 }
 
 /* (the fake kernel's get and set are the sysctls' helpers; the driver has its own) */
-#include <sys/hakios_input.h>                  /* (before printf is the test's: they name it in a format attribute) */
-#include <sys/hakios_net.h>
+#include <sys/board/input.h>                  /* (before printf is the test's: they name it in a format attribute) */
+#include <sys/board/net.h>
 #define get apple80211_get
 #define set apple80211_set
 #define printf driver_printf
-#include "hakios_apple80211.c"
+#include "board/apple80211.c"
 #undef get
 #undef set
 #undef printf

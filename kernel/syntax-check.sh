@@ -16,7 +16,7 @@
 #                   lines listed (a use of a value never set, a null pointer followed, a division by zero ...).
 #                   It reports and does not fail: it does not know that uiomove() fills what it is given,
 #                   for one, and says so of every read. What it says is for a person to judge.
-#   FILE...         files of kernel/overlay, as paths in the tree (bsd/dev/hakios_thermal.c); all of them
+#   FILE...         files of kernel/overlay, as paths in the tree (bsd/dev/board/thermal.c); all of them
 #                   if none is given
 #
 # What it cannot do: the files of kernel/syntax-check.skip need what only the real build has (headers
@@ -65,7 +65,7 @@ for header in debug.h mach_assert.h mach_ldebug.h mach/clock.h mach/clock_priv.h
 	: > "$gen/$header"
 done
 [ -z "$driverkit" ] || ln -s "$(cd "$driverkit" && pwd)" "$gen/DriverKit"
-focaltech_stub > "$gen/hakios_focaltech_fw.h"  # (found only where the tree has none: kernel/build.sh makes the same)
+focaltech_stub > "$gen/focaltech_fw.h"  # (found only where the tree has none: kernel/build.sh makes the same)
 # ... and the board table, for the device packages that are there (a kernel directory without the
 # repository's tools around it, as the tests make one, has no boards to compile)
 if [ -x "$KERNEL_DIR/../tools/boards.py" ]; then

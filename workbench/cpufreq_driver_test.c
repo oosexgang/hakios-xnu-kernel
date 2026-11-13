@@ -1,5 +1,5 @@
 /*
- * The CPU frequency driver itself (kernel/overlay/bsd/dev/hakios_cpufreq.c), run as a host program
+ * The CPU frequency driver itself (kernel/overlay/bsd/dev/board/cpufreq.c), run as a host program
  * against a model of the EPSS block: a frequency table and a "row wanted" register for each group of
  * cores, where the board's SoC file says they are. What is tested: every group that has a core of the
  * kernel's is asked for the top row of its own table, a group without one is left alone, and nothing
@@ -70,7 +70,7 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
-/* the driver's neighbours, which its start calls (bsd/dev/hakios_ddr.c, hakios_bench.c) */
+/* the driver's neighbours, which its start calls (bsd/dev/board/ddr.c, board/bench.c) */
 static unsigned load_meters, memory_votes, benchmarks;
 static bool vote_with_cpufreq;
 void hakios_cpuload_start(void) { load_meters++; }
@@ -81,8 +81,8 @@ void hakios_cpufreq_init(void);
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
-#include "hakios_cpufreq.c"
+#include "board/board.c"
+#include "board/cpufreq.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

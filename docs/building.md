@@ -101,7 +101,7 @@ The first run does everything, each step skipped when its result is there:
 4. **The kernel**: `../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837`.
 
 Every run makes the board table anew (`tools/boards.py gen`) and puts it in the tree as
-`bsd/dev/hakios_board_table.h`, only when it differs, so a build with the same boards recompiles
+`bsd/dev/board/board_table.h`, only when it differs, so a build with the same boards recompiles
 nothing for it.
 
 Later runs bring the tree up to date with the repository, touching only changed files, and rebuild

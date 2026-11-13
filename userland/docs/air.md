@@ -645,7 +645,7 @@ of counted. The numbers above are from suites where 11 of each conversion's 22 i
 
   What does remain for the kernel line is the latch: one timeout should not kill the GPU for the
   rest of a boot. Linux's `msm` does a hangcheck, a reset and an error return; this port latches
-  `gGPUReported` and answers every later wait at once (`HakiosGPU.cpp`). That is robustness
+  `gGPUReported` and answers every later wait at once (`BoardGPU.cpp`). That is robustness
   against bad input — worth having, and not the reason Apple's kernels do not run.
 
   **That latch now has a way out, behind a boot-arg — built, not yet run.** `gpu_recover=1`

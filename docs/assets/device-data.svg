@@ -54,9 +54,9 @@
       </g>
 
       <g font-size="22" font-weight="bold" text-anchor="middle">
-        <text x="220" y="374">hakios_board_table.h</text>
+        <text x="220" y="374">board_table.h</text>
         <text x="600" y="374">platforms.h</text>
-        <text x="980" y="374">hakios_boards.h</text>
+        <text x="980" y="374">user_boards.h</text>
         <text x="220" y="500">kernel</text>
         <text x="600" y="500">loader</text>
         <text x="980" y="500">injected libraries</text>

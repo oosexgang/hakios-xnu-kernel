@@ -1,9 +1,9 @@
 /*
- * Host tests of the thermal limiter's arithmetic (kernel/overlay/bsd/dev/hakios_thermal_core.h).
+ * Host tests of the thermal limiter's arithmetic (kernel/overlay/bsd/dev/board/thermal_core.h).
  */
 #include <stdio.h>
 
-#include "hakios_thermal_core.h"
+#include "board/thermal_core.h"
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

@@ -36,6 +36,6 @@ struct platform {
  * Generated from the repository's devices/NAME/board.dts (loader { }) and soc.dtsi (platform { }) by
  * tools/boards.py gen; a port to another device adds its files there (docs/porting.md), not code here.
  * The board's name goes to the kernel as /chosen/darwin-board, where the kernel finds its own row
- * (bsd/dev/hakios_board.c).
+ * (bsd/dev/board/board.c).
  */
 #include "platforms.h"

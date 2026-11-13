@@ -1,5 +1,5 @@
 /*
- * The lookup in RPMh's command database that the drivers share (kernel/overlay/bsd/dev/hakios_cmd_db.h),
+ * The lookup in RPMh's command database that the drivers share (kernel/overlay/bsd/dev/board/cmd_db.h),
  * against databases built here: one as a boot loader leaves it, and ones that say wrong things of
  * themselves, which the lookup must not follow outside the memory it was given.
  *

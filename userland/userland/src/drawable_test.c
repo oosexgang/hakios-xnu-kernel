@@ -38,7 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "hakios_drawable.h"
+#include "board/drawable.h"
 
 static int failed, checks;
 

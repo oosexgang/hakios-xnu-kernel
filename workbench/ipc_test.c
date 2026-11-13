@@ -1,12 +1,12 @@
 /*
- * What the drivers share of the way to the always-on processor (kernel/overlay/bsd/dev/hakios_ipc.h), as it
+ * What the drivers share of the way to the always-on processor (kernel/overlay/bsd/dev/board/ipc.h), as it
  * is: whether the mailbox that processor says is ours is one a message fits in, inside its block. Both
  * numbers are the other processor's.
  *
  *   ipc_test SCENARIO
  */
 #include "fakekernel.h"
-#include "hakios_ipc.h"
+#include "board/ipc.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

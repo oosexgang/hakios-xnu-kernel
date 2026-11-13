@@ -165,7 +165,7 @@ static bool rw_is_generic(id base, id values);
 #include <IOKit/IOKitLib.h>
 #include <dlfcn.h>
 
-#include "hakios_drawable.h"
+#include "board/drawable.h"
 #include "rw_null_air.h"            /* src/rw_null.metal: the generic uber shader's stand-in (rw_generic_mode) */
 #include <stdarg.h>
 #include <stdio.h>
@@ -1109,7 +1109,7 @@ ensure_spi(Class cls)
 }
 
 /* One request of this port's own gpu client, shaped like the msm ioctl it stands for
- * (iokit/Kernel/HakiosGPU.cpp: kMsmGetParam = 0x40, struct msm_param). The parameters
+ * (iokit/Kernel/BoardGPU.cpp: kMsmGetParam = 0x40, struct msm_param). The parameters
  * worth asking for are 0x03 CHIP_ID (with the speed bin in the high half), 0x02 GMEM_SIZE
  * and 0x04 MAX_FREQ. Mesa reaches the same client the same way. */
 static bool
@@ -1134,7 +1134,7 @@ gpu_param(io_connect_t gpu, uint32_t which, uint64_t *value)
 }
 
 /* The kernel's gpu interface, by the numbers its own header gives
- * (iokit/Kernel/HakiosGPU.cpp). */
+ * (iokit/Kernel/BoardGPU.cpp). */
 enum {
 	kDrmGemClose  = 0x09,
 	kMsmGetParam  = 0x40,

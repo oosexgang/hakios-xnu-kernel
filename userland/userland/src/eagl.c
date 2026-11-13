@@ -26,7 +26,7 @@
  * the GPU cannot address, a picture to be turned over) the texture is an ordinary one, filled
  * from the IOSurface when that has changed (its seed) and read back into it when a frame ends
  * (glFlush, glFinish), with nothing but OpenGL ES calls. Either way this file does not know
- * what draws: the library is reached through its gl* functions and the functions of hakios_gl.h.
+ * what draws: the library is reached through its gl* functions and the functions of board/gl.h.
  *
  * Where CoreAnimation relies on Darwin's library being what it is, this stands in between:
  * blue-first pixels into a texture called GL_RGBA (internal_format()), shaders that read
@@ -73,7 +73,7 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
-#include "hakios_gl.h"
+#include "board/gl.h"
 
 /* ---- OpenGL ES: the types, the few names used here, the library's functions --------------------- */
 

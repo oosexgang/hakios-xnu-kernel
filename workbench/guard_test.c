@@ -1,5 +1,5 @@
 /*
- * The speakers' guard itself (kernel/overlay/bsd/dev/hakios_guard.c), run as a host program: what
+ * The speakers' guard itself (kernel/overlay/bsd/dev/board/guard.c), run as a host program: what
  * stands between Darwin's samples and two small speakers where Android has an algorithm in the DSP.
  * It is integer arithmetic with no hardware under it, so everything it promises can be measured
  * here: the power that reaches a speaker stays under each of its three limits, no sample goes over
@@ -11,8 +11,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define KERNEL 1                        /* (the kernel's half of sys/hakios_audio.h) */
-#include "hakios_guard.c"
+#define KERNEL 1                        /* (the kernel's half of sys/board/audio.h) */
+#include "board/guard.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

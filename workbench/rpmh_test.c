@@ -1,5 +1,5 @@
 /*
- * A request to RPMh as the drivers share it (kernel/overlay/bsd/dev/hakios_rpmh.h), by itself, against
+ * A request to RPMh as the drivers share it (kernel/overlay/bsd/dev/board/rpmh.h), by itself, against
  * the model of a sequencer's first slot set (rsc_model.h): what is sent, and that the slot set is
  * left as it was found whatever RPMh does.
  *
@@ -12,7 +12,7 @@ static uint32_t rd(vm_offset_t address) { return rsc_model_rd(address); }
 static void wr(vm_offset_t address, uint32_t value) { rsc_model_wr(address, value); }
 
 #define KERNEL 1
-#include "hakios_rpmh.h"
+#include "board/rpmh.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

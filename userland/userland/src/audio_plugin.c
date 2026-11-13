@@ -17,7 +17,7 @@
  * Control Center that go with it. So this presents four devices under those names:
  *
  *   "Speaker"   a stereo output whose samples are written to /dev/hakios-audio, where the
- *               kernel takes them to whatever can play them (see sys/hakios_audio.h), and a
+ *               kernel takes them to whatever can play them (see sys/board/audio.h), and a
  *               stereo input that is always silent (on an iPhone: what the amplifiers measure)
  *   "Hawking"   one silent input and nothing else. The virtual audio device will not build the
  *               speaker route without a second virtual device of its own (its type 'vhaw', a
@@ -65,7 +65,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "hakios_audio.h"
+#include "board/audio.h"
 
 /* ---- the AudioServerPlugIn interface (macOS: CoreAudio/AudioServerPlugIn.h, AudioHardwareBase.h) ---- */
 
@@ -966,7 +966,7 @@ begin_end_io_operation(__unused AudioServerPlugInDriverRef driver, __unused Audi
 /*
  * What Darwin plays on the actuator -- the haptics: the system's feedbacks and the ringer's vibration,
  * CoreHaptics' patterns, UIKit's feedbacks, as waveforms of one channel -- goes to the kernel's motor
- * driver (/dev/hakios-haptic, bsd/dev/hakios_haptic.c, haptic=5), which plays Android's own
+ * driver (/dev/hakios-haptic, bsd/dev/board/haptic.c, haptic=5), which plays Android's own
  * waveforms on the phone's motor by it. (Darwin plays on this device at all only because the device
  * tree says the phone's haptics are "closed-loop": see mkidentity.py.) Said the first times, with
  * how loud.

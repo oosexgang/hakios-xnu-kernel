@@ -1,12 +1,12 @@
 /*
- * Host tests of the backlight's arithmetic (kernel/overlay/bsd/dev/hakios_backlight_core.h): workbench/run.sh
+ * Host tests of the backlight's arithmetic (kernel/overlay/bsd/dev/board/backlight_core.h): workbench/run.sh
  * builds this against the kernel's own header, so what is tested is what the kernel compiles.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "hakios_backlight_core.h"
+#include "board/backlight_core.h"
 
 static int failures, checks;
 

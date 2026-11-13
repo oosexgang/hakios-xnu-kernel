@@ -1,6 +1,6 @@
 /*
  * I2C by hand on two of the SoC's pins, as the part drivers share it
- * (kernel/overlay/bsd/dev/hakios_i2c_gpio.h), against the model of the pins (tlmm_model.h) with a
+ * (kernel/overlay/bsd/dev/board/i2c_gpio.h), against the model of the pins (tlmm_model.h) with a
  * device on the two lines that speaks I2C: it watches the lines for a start, takes its address and
  * bytes, acknowledges, gives bytes back, and can hold the clock low. What is tested is that the two
  * understand each other, that a line is never driven high, and that the pins are given back.
@@ -30,8 +30,8 @@ static void wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, val
 #define KERNEL 1
 static vm_offset_t tlmm;
 #define HAKIOS_TLMM tlmm
-#include "hakios_tlmm.h"
-#include "hakios_i2c_gpio.h"
+#include "board/tlmm.h"
+#include "board/i2c_gpio.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

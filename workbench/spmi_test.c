@@ -1,5 +1,5 @@
 /*
- * What the drivers of PMICs share (kernel/overlay/bsd/dev/hakios_spmi.h), by itself, against the
+ * What the drivers of PMICs share (kernel/overlay/bsd/dev/board/spmi.h), by itself, against the
  * model of the arbiter (spmi_model.h): that the arbiter is mapped where the board's SoC file says and
  * for the system it names, what a read and a write put on the bus, and what each status is said to
  * mean. The drivers' own tests cover what each does with it.
@@ -18,8 +18,8 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { maps++; retur
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
-#include "hakios_board.c"
-#include "hakios_spmi.h"
+#include "board/board.c"
+#include "board/spmi.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

@@ -14,7 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "hakios_boards.h"      /* generated from devices/NAME/board.dts by tools/boards.py gen */
+#include "user_boards.h"      /* generated from devices/NAME/board.dts by tools/boards.py gen */
 
 static const char *const providers[] = {
 	"_UIStatusBarVisualProvider_Split", "_UIStatusBarVisualProvider_Split828", "_UIStatusBarVisualProvider_Split1080",

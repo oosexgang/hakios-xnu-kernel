@@ -35,7 +35,7 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#include "hakios_input.h"
+#include "board/input.h"
 
 #define PREFIX          "hakios: "
 #define PREFIX26        "hakios26: "

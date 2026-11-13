@@ -1,5 +1,5 @@
 /*
- * The memory bandwidth vote itself (kernel/overlay/bsd/dev/hakios_ddr.c), run as a host program against
+ * The memory bandwidth vote itself (kernel/overlay/bsd/dev/board/ddr.c), run as a host program against
  * a model of the application processor's RPMh sequencer and a command database built here. This
  * driver writes to RPMh, which every part of the SoC depends on: what is tested first is what it
  * sends, to which resources, and that the command slots are left as they were found, also when RPMh
@@ -44,8 +44,8 @@ void hakios_ddr_quiesce(void);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_board.c"
-#include "hakios_ddr.c"
+#include "board/board.c"
+#include "board/ddr.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

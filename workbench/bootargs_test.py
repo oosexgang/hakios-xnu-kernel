@@ -62,8 +62,8 @@ class Repository(unittest.TestCase):
 
     def test_the_arguments_of_the_newer_drivers_are_described(self):
         found = bootargs.collect()
-        for file, name in (('bsd/dev/hakios_backlight.c', 'backlight'), ('bsd/dev/hakios_thermal.c', 'thermal'),
-                           ('bsd/dev/hakios_thermal.c', 'th_trip')):
+        for file, name in (('bsd/dev/board/backlight.c', 'backlight'), ('bsd/dev/board/thermal.c', 'thermal'),
+                           ('bsd/dev/board/thermal.c', 'th_trip')):
             self.assertTrue(found[file][name], f'{name} in {file} has no description')
 
 

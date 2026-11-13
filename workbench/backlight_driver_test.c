@@ -1,5 +1,5 @@
 /*
- * The backlight driver itself (kernel/overlay/bsd/dev/hakios_backlight.c),
+ * The backlight driver itself (kernel/overlay/bsd/dev/board/backlight.c),
  * run as a host program: the kernel's interfaces are workbench/fakekernel, the registers a model of the
  * hardware's (a Qualcomm DSI controller 2.5 and the display's clocks, as Linux's SDE driver and the phones'
  * device trees describe them). workbench/run.sh builds it for the host and for aarch64, the second run
@@ -227,9 +227,9 @@ ml_io_map(vm_offset_t phys, vm_size_t size __unused)
 
 /* ---- the driver, and the board table it reads (devices/, through tools/boards.py) -------------- */
 
-#include "hakios_board.c"
+#include "board/board.c"
 #define HAKIOS_MMIO_TEST 1
-#include "hakios_backlight.c"
+#include "board/backlight.c"
 
 /* ---- the scenarios ------------------------------------------------------------------------------ */
 
