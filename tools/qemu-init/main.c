@@ -98,7 +98,7 @@ static const struct {
 } commands[] = {
 	{ "help", "what this shell can do", command_help },
 	{ "about", "what the kernel says of itself", command_about },
-	{ "sysctl", "NAME... the kernel's value of each", command_sysctl },
+	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
 	{ "echo", "WORDS... say them", command_echo },
 	{ "ls", "[PATH...] what is in a directory", command_ls },
 	{ "cat", "FILE... what is in a file", command_cat },

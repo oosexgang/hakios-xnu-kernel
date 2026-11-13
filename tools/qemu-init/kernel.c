@@ -2,7 +2,8 @@
 #include "init.h"
 
 /*
- * A value as the kernel types it: its name to its numbers (sysctl 0.3, name2oid), their kind and format
+ * NAME[=VALUE]...: a value as the kernel types it, and with =VALUE set first: its name to its numbers
+ * (sysctl 0.3, name2oid), their kind and format
  * (0.4, oidfmt: CTLTYPE_INT, _STRING, _QUAD, and a format that says whether the number is signed), then
  * the value. What /usr/sbin/sysctl does, without it.
  */
@@ -34,6 +35,16 @@ command_sysctl(int argc, char **argv)
 		union { uint32_t kind; char bytes[64]; } format;
 		union { char text[512]; int32_t i32[128]; int64_t i64[64]; } value;
 
+		/* NAME=VALUE: the value set first (a string, or a number for a number) */
+		char *setting = argv[i];
+		while (*setting != '\0' && *setting != '=') {
+			setting++;
+		}
+		if (*setting == '=') {
+			*setting++ = '\0';
+		} else {
+			setting = NULL;
+		}
 		say(argv[i]);
 		say(": ");
 		if (syscall6(SYS___sysctl, (long)query, 2, (long)&mib[2], (long)&size, (long)argv[i], (long)length(argv[i])) < 0) {
@@ -51,6 +62,20 @@ command_sysctl(int argc, char **argv)
 		if (type == CTLTYPE_NODE) {
 			say("(a node: its children have the values)\n");
 			continue;
+		}
+		if (setting != NULL) {
+			int64_t number = setting[0] == '-' ? -(int64_t)parse_number(setting + 1) : (int64_t)parse_number(setting);
+			int32_t number32 = (int32_t)number;
+			const void *new_value = type == CTLTYPE_STRING ? (const void *)setting : type == CTLTYPE_INT ? (const void *)&number32 : &number;
+			size_t new_size = type == CTLTYPE_STRING ? length(setting) : type == CTLTYPE_INT ? 4 : 8;
+			long error = type == CTLTYPE_STRING || type == CTLTYPE_INT || type == CTLTYPE_QUAD ?
+			    syscall6(SYS___sysctl, (long)&mib[2], depth, 0, 0, (long)new_value, (long)new_size) : -22;
+			if (error < 0) {
+				say("(not taken: error ");
+				say_number((uint64_t)-error);
+				say(")\n");
+				continue;
+			}
 		}
 		size = sizeof(value) - 1;
 		if (syscall6(SYS___sysctl, (long)&mib[2], depth, (long)&value, (long)&size, 0, 0) < 0) {
