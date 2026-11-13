@@ -50,7 +50,8 @@ line at a time:
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. |
-| `mount apfs DEVICE DIR` | A disk's APFS volume, read only. |
+| `mount apfs DEVICE DIR`, `mount ramfs ramfs DIR` | A disk's APFS volume, read only; or the kernel's file system in memory, to be written. |
+| `mkdir DIR...`, `write FILE WORDS...`, `rm PATH...` | Directories and files made and removed (where a file system takes writing: ramfs). |
 | `input [COUNT]` | What the touch screen and the buttons say (`/dev/hakios-touch`), as the kernel's input path hands it on. |
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
@@ -71,7 +72,7 @@ out of QEMU at the frequency asked for (`workbench/tone_in_wav.py`); a button pr
 and a touch on its tablet reach the input device, the touch where it was made; a process started by the
 shell runs as its child and is waited for; the kernel's message buffer is read; Mach messages go through a
 port and come back unchanged; the date is this year's; a signal ends a process in the background; a pipe
-carries what a child writes into it; nothing panics.
+carries what a child writes into it; a file is written in ramfs, read back and removed; nothing panics.
 
 ## What it is not
 

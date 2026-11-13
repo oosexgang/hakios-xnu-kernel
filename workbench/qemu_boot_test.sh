@@ -6,7 +6,8 @@
 # gateway and serves this machine a page over TCP; reads a second disk on the virtio block device; plays a
 # tone on the virtio sound device (QEMU writes it to a WAV file); reads a button and a touch from QEMU's
 # keyboard and tablet; starts a process and waits for it; reads the kernel's messages; sends itself Mach
-# messages; tells the date; ends a process with a signal; and reads what a child writes into a pipe.
+# messages; tells the date; ends a process with a signal; reads what a child writes into a pipe; and
+# writes, reads and removes a file in the kernel's file system in memory.
 #
 #   workbench/qemu_boot_test.sh KERNEL
 #
@@ -33,8 +34,33 @@ XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { ec
 mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
 python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
+# what is typed on its console, a line at a time (--type takes them joined by a written \n)
+typed=(
+	'sysctl hw.ncpu hw.board.name kern.ostype'
+	'ifconfig en0 10.0.2.15'
+	'ping 10.0.2.2 2'
+	'serve 1'
+	'mount apfs /dev/rvblk0 /mnt'
+	'cat /mnt/hello.txt'
+	'tone 440 1'
+	'input 4'
+	'run /sbin/launchd ps'
+	'dmesg 3'
+	'mach 200'
+	'date'
+	'spawn /sbin/launchd sleep 60'
+	'kill ! 15'
+	'wait'
+	'pipe through the kernel'
+	'mount ramfs ramfs /tmp'
+	'mkdir /tmp/notes'
+	'write /tmp/notes/a kept in memory'
+	'cat /tmp/notes/a'
+	'rm /tmp/notes/a'
+	'ls /tmp/notes'
+)
 "$HERE/../tools/qemu-kernel.sh" --cpus 2 --ramdisk "$W/root.img" --disk "$W/data.img" --audio "$W/sound.wav" --boot-args rd=md0 --until 'a shell on the console|panic\(' \
-	--seconds 240 --type 'sysctl hw.ncpu hw.board.name kern.ostype\nifconfig en0 10.0.2.15\nping 10.0.2.2 2\nserve 1\nmount apfs /dev/rvblk0 /mnt\ncat /mnt/hello.txt\ntone 440 1\ninput 4\nrun /sbin/launchd ps\ndmesg 3\nmach 200\ndate\nspawn /sbin/launchd sleep 60\nkill ! 15\nwait\npipe through the kernel\n' \
+	--seconds 240 --type "$(printf '%s\\n' "${typed[@]}")" \
 	--forward 18080:80 --then "sleep 5; curl -s -m 30 http://127.0.0.1:18080/test > '$W/page'; QEMU_QMP='$W/qmp' python3 '$HERE/../base/qemu/touch.py' key home tap 0.5 0.25" \
 	--qmp "$W/qmp" --after 8 \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
@@ -68,6 +94,8 @@ check "Mach messages go to a port of its own and come back as they went" grep -a
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
 check "a signal ends a process in the background, and wait says so" grep -aqE "^wait: pid [0-9]+ ended by signal 15" "$log"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
+check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
+	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
 check "no panic" bash -c "! grep -aq 'panic(' '$log'"
 if [ $failed != 0 ]; then
 	echo "    (the serial log's last lines)"
