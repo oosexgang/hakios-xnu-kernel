@@ -1,0 +1,18 @@
+/dts-v1/;
+
+// A made-up chip without EPSS: two temperature controllers, and the CPU performance protocol's channel over
+// SCMI, whose domains are the groups of cores. Addresses where no real chip has them.
+/ {
+	name = "soc-scmi";
+	description = "A made-up chip for the tests, its speeds over SCMI";
+
+	thermal {
+		tsens = <0x0c263000 0x0c265000>;
+	};
+
+	scmi-perf {
+		shmem = <0x80a40000>;
+		mailbox = <0x1c900000>;
+		doorbell = <0x208>;
+	};
+};

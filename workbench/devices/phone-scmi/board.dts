@@ -1,0 +1,20 @@
+/dts-v1/;
+
+// A test phone whose chip has no EPSS block: its cores' speeds are the firmware's, asked over SCMI (as on an
+// SM8845). For the tests of what the drivers do on such a chip (workbench/thermal_driver_test.c).
+/ {
+	name = "phone-scmi";
+	description = "Test phone, its speeds over SCMI";
+	soc = "soc-scmi";
+
+	features = "cpufreq-scmi";
+
+	backlight {
+		type = "soft";
+	};
+
+	// (over SCMI the floors are where the firmware left each domain: these are for a chip with EPSS)
+	thermal {
+		floor-mhz = <1000 1100>;
+	};
+};

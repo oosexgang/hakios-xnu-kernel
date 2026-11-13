@@ -1542,7 +1542,7 @@ class Repository(unittest.TestCase):
                                       ['gen', '--out', str(out)],
                                       capture_output=True, text=True, env={**os.environ, **environment})
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertIn('phone-cmd, phone-keys, phone-video', done.stdout)
+                self.assertIn('phone-cmd, phone-keys, phone-scmi, phone-video', done.stdout)
                 self.assertIn('.name = "phone-cmd"', (out / 'board_table.h').read_text())
         finally:
             shutil.rmtree(out)
