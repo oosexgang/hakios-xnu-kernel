@@ -13,7 +13,8 @@
  *
  *   var_store save          pack /private/var into the store
  *   var_store load          unpack the newest good store into /private/var (init, at boot)
- *   var_store watch [SECS]  stay and save by itself: when the kernel says the run is ending, and
+ *   var_store watch [SECS]  stay and save by itself (var_store=1, or var_store=new: a new data volume
+ *                           this boot, not unpacked from the store): when the kernel says the run is ending, and
  *                           every SECS seconds besides (a launchd job of ours does this)
  *   var_store show          what the store holds, both slots
  *   var_store erase         forget both slots (the next boot starts empty again)
@@ -82,6 +83,10 @@ static const char *const SKIP[] = {
 	"log", "logs",          /* what the last boot said */
 	"db/diagnostics", "db/uuidtext",        /* logd's archive: tens of MB a boot, and remade */
 	"jb",                   /* the package prefix, grafted from the read-only image at every boot */
+	/* chronod's state (ChronoKit, the widgets' timelines): restored into a new boot under iOS 27 it had SpringBoard
+	 * stand at the boot logo, no frame drawn (found by halves with var_store_skip: everything else of the volume
+	 * restored, the boot came up); the widgets are made again instead */
+	"mobile/Library/chronod",
 	NULL,
 };
 
@@ -145,6 +150,101 @@ boot_arg_is(const char *name, const char *value)
 		}
 	}
 	return 0;
+}
+
+/*
+ * boot-arg var_store_skip=PATH,PATH...: these (relative to /private/var, each with what is under it) left out when the
+ * store is unpacked, though the archive keeps them: for finding what of a restored data volume a boot cannot live with,
+ * by halves, without saving again
+ */
+static unsigned skipped_load;
+static int skip_list_set;
+
+/* PATTERN (N bytes of it) against TEXT: '*' any run of characters, '/' too; "[A-M]" one of a range; anything else itself */
+static int
+glob_n(const char *pattern, size_t n, const char *text)
+{
+	if (n == 0) {
+		return *text == 0;
+	}
+	if (*pattern == '*') {
+		for (const char *t = text;; t++) {
+			if (glob_n(pattern + 1, n - 1, t)) {
+				return 1;
+			}
+			if (*t == 0) {
+				return 0;
+			}
+		}
+	}
+	if (*pattern == '[' && n >= 5 && pattern[2] == '-' && pattern[4] == ']') {
+		return *text >= pattern[1] && *text <= pattern[3] && glob_n(pattern + 5, n - 5, text + 1);
+	}
+	return *text == *pattern && *text != 0 && glob_n(pattern + 1, n - 1, text + 1);
+}
+
+static int
+load_skipped(const char *relative)
+{
+	static char list[1024];
+	static int read_once;
+
+	if (!read_once) {
+		static char args[1024];
+		size_t len = sizeof(args) - 1;
+		const char *at;
+
+		read_once = 1;
+		if (sysctlbyname("kern.bootargs", args, &len, NULL, 0) == 0) {
+			args[len < sizeof(args) ? len : sizeof(args) - 1] = 0;
+			for (at = args; *at;) {
+				while (*at == ' ') {
+					at++;
+				}
+				if (strncmp(at, "var_store_skip=", 15) == 0) {
+					size_t n = 0;
+
+					at += 15;
+					while (at[n] != 0 && at[n] != ' ' && n < sizeof(list) - 1) {
+						list[n] = at[n];
+						n++;
+					}
+					list[n] = 0;
+					skip_list_set = n != 0;
+					break;
+				}
+				while (*at && *at != ' ') {
+					at++;
+				}
+			}
+		}
+	}
+	for (const char *p = list; *p;) {
+		size_t n = 0;
+
+		while (p[n] != 0 && p[n] != ',') {
+			n++;
+		}
+		if (n != 0 && strncmp(relative, p, n) == 0 && (relative[n] == 0 || relative[n] == '/')) {
+			return 1;
+		}
+		if (n != 0 && glob_n(p, n, relative)) {
+			return 1;   /* (a pattern: mobile/Library/[A-M]* -- what it names and, '*' taking '/', what is under it) */
+		}
+		p += n;
+		if (*p == ',') {
+			p++;
+		}
+	}
+	return 0;
+}
+
+/* whether var_store_skip names anything at all */
+static int
+load_skipped_any(void)
+{
+	(void)load_skipped("\001");    /* (reads the list) */
+	return skip_list_set;
 }
 
 static long
@@ -535,6 +635,9 @@ link_name(uint64_t ino, const char *relative)
  * before them. One that does not fit is left out and counted.
  */
 static uint8_t xpack[XPACK];
+#define ACL_NAME        "com.hakios.acl"        /* the access control list in the archive (pack_xattrs) */
+static uint8_t acl[MAX_XATTR];                  /* the entry being made's, put on after its owner and mode */
+static size_t acl_size;
 
 static uint64_t
 pack_xattrs(uint32_t *count)
@@ -545,13 +648,16 @@ pack_xattrs(uint32_t *count)
 	uint64_t used = 0;
 
 	*count = 0;
-	if (n <= 0) {
-		return 0;
-	}
-	for (ssize_t i = 0; i < n && i < (ssize_t)sizeof(names); i += (ssize_t)strlen(names + i) + 1) {
+	for (ssize_t i = 0; n > 0 && i < n && i < (ssize_t)sizeof(names); i += (ssize_t)strlen(names + i) + 1) {
 		uint32_t namelen = (uint32_t)strlen(names + i), vlen;
-		ssize_t size = getxattr(path, names + i, value, sizeof(value), 0, XATTR_NOFOLLOW);
+		ssize_t size;
 
+		/* (com.apple.system.*, the kernel's own -- the access control list among them -- are not read or written as
+		 * attributes: the list is taken below) */
+		if (strncmp(names + i, "com.apple.system.", 17) == 0) {
+			continue;
+		}
+		size = getxattr(path, names + i, value, sizeof(value), 0, XATTR_NOFOLLOW);
 		if (size < 0) {
 			continue;
 		}
@@ -566,6 +672,30 @@ pack_xattrs(uint32_t *count)
 		memcpy(xpack + used + 8 + namelen, value, vlen);
 		used += 8 + namelen + vlen;
 		(*count)++;
+	}
+	/*
+	 * The access control list, as an attribute of ours (ACL_NAME): the kernel's struct kauth_filesec as lstat_extended
+	 * gives it, put back by chmod_extended. iOS 27's container manager makes its containers root's, 755, and gives the
+	 * program they are for its access by a list (systemgroup.com.apple.installcoordinationd and its Library, mode 0,
+	 * nobody's): without the list a restored volume had installcoordinationd abort at every start ("Failed to create
+	 * data directory", EACCES) and SpringBoard never answer a touch.
+	 */
+	{
+		struct stat st;
+		size_t size = sizeof(value);
+		const uint32_t namelen = (uint32_t)strlen(ACL_NAME);
+
+		if (lstat_extended(path, &st, value, &size) == 0 && size > 0 && size <= sizeof(value) &&
+		    used + 8 + namelen + size <= XPACK) {
+			const uint32_t vlen = (uint32_t)size;
+
+			memcpy(xpack + used, &namelen, sizeof(namelen));
+			memcpy(xpack + used + 4, &vlen, sizeof(vlen));
+			memcpy(xpack + used + 8, ACL_NAME, namelen);
+			memcpy(xpack + used + 8 + namelen, value, vlen);
+			used += 8 + namelen + vlen;
+			(*count)++;
+		}
 	}
 	return used;
 }
@@ -966,6 +1096,19 @@ unpack_one(int make)
 	if (make && !whole_path(relative, e.pathlen)) {
 		make = 0;               /* read past it: an archive is not to make names of its own choosing */
 	}
+	if (make && load_skipped(relative)) {
+		make = 0;               /* (var_store_skip) */
+		skipped_load++;
+	}
+	/* (what is under a directory of SKIP is not put back either: an archive saved before it was listed holds it) */
+	for (int i = 0; make && SKIP[i] != NULL; i++) {
+		const size_t n = strlen(SKIP[i]);
+
+		if (strncmp(relative, SKIP[i], n) == 0 && relative[n] == '/') {
+			make = 0;
+			skipped_load++;
+		}
+	}
 	if (make) {
 		switch (e.kind) {
 		case ENT_DIR:
@@ -986,6 +1129,7 @@ unpack_one(int make)
 		}
 	}
 	/* the attributes, before the contents, as they were packed */
+	acl_size = 0;   /* (this entry's list, if it has one) */
 	for (uint32_t i = 0; i < e.nxattr; i++) {
 		uint32_t namelen, vlen;
 
@@ -1003,7 +1147,10 @@ unpack_one(int make)
 			break;
 		}
 		name[namelen] = 0;
-		if (make && e.kind != ENT_HARDLINK) {
+		if (make && e.kind != ENT_HARDLINK && strcmp(name, ACL_NAME) == 0) {
+			memcpy(acl, value, vlen);
+			acl_size = vlen;
+		} else if (make && e.kind != ENT_HARDLINK) {
 			setxattr(path, name, value, vlen, 0, XATTR_NOFOLLOW);
 		}
 	}
@@ -1101,14 +1248,15 @@ unpack_one(int make)
 		return 1;
 	}
 	/*
-	 * Owner, then permissions, then the times (writing moved them), and the flags last of all:
-	 * one of them may be what keeps the file from being changed again.
+	 * Owner, then permissions, then the access control list, then the times (writing moved them), and the flags last of
+	 * all: one of them may be what keeps the file from being changed again.
 	 */
 	switch (e.kind) {
 	case ENT_DIR:
 		/* its flags wait for ENT_DIRTIME: one of them may be what stops anything being made in it */
 		chown(path, (int)e.uid, (int)e.gid);
 		chmod(path, (int)e.mode);
+		if (acl_size != 0) chmod_extended(path, KAUTH_UID_NONE, KAUTH_GID_NONE, -1, acl);
 		break;
 	case ENT_DIRTIME:
 		set_times(&e);
@@ -1124,6 +1272,7 @@ unpack_one(int make)
 	default:
 		chown(path, (int)e.uid, (int)e.gid);
 		chmod(path, (int)e.mode);
+		if (acl_size != 0) chmod_extended(path, KAUTH_UID_NONE, KAUTH_GID_NONE, -1, acl);
 		set_times(&e);
 		if (e.flags != 0) {
 			chflags(path, (int)e.flags);
@@ -1197,6 +1346,9 @@ load(void)
 	printf("var_store: %llu directories, %llu files (%llu bytes), %llu links back in /private/var\n",
 	    (unsigned long long)made_dirs, (unsigned long long)made_files, (unsigned long long)made_bytes,
 	    (unsigned long long)made_links);
+	if (skipped_load != 0) {
+		printf("var_store: %u entries left out (the skipped directories, var_store_skip)\n", skipped_load);
+	}
 	if (short_files != 0) {
 		printf("var_store: %llu files did not fit: %llu bytes of them are not there\n",
 		    (unsigned long long)short_files, (unsigned long long)lost_bytes);
@@ -1447,6 +1599,62 @@ main(int argc, char **argv, char **envp)
 	if (strcmp(what, "stamp") == 0) {
 		return stamp(argc > 2 ? argv[2] : "/private/var/hakios-stamp") ? 0 : 1;
 	}
+	/* ls DIR...: the names in each (there is no ls here) */
+	if (strcmp(what, "ls") == 0) {
+		static char buf[8192];
+
+		for (int i = 2; i < argc; i++) {
+			off_t position = 0;
+			ssize_t got;
+			int dir = open(argv[i], O_RDONLY | O_DIRECTORY, 0);
+
+			if (dir < 0) {
+				printf("var_store: ls: %s: %s\n", argv[i], strerror(errno));
+				continue;
+			}
+			while ((got = getdirentries(dir, buf, sizeof(buf), &position)) > 0) {
+				for (ssize_t at = 0; at < got; at += ((struct dirent *)(buf + at))->d_reclen) {
+					const char *name = ((struct dirent *)(buf + at))->d_name;
+
+					if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0) printf("var_store: ls: %s/%s\n", argv[i], name);
+				}
+			}
+			close(dir);
+		}
+		return 0;
+	}
+	/* stat PATH...: each directory on the way to PATH and PATH itself -- mode, owner, flags and the names of its extended
+	 * attributes -- for telling what a restored volume differs in from one a boot made (there is no ls here) */
+	if (strcmp(what, "stat") == 0) {
+		for (int i = 2; i < argc; i++) {
+			char path[1024];
+			size_t n = strlen(argv[i]);
+
+			if (n >= sizeof(path)) continue;
+			memcpy(path, argv[i], n + 1);
+			for (size_t at = 1; at <= n; at++) {
+				struct stat st;
+				char names[512];
+				ssize_t got;
+
+				if (at < n && path[at] != '/') continue;
+				path[at] = 0;
+				if (lstat(path, &st) != 0) {
+					printf("var_store: stat: %s: %s\n", path, strerror(errno));
+				} else {
+					got = listxattr(path, names, sizeof(names) - 1, 1);
+					for (ssize_t k = 0; got > 0 && k < got - 1; k++) {
+						if (names[k] == 0) names[k] = ',';
+					}
+					if (got > 0) names[got - 1] = 0;
+					printf("var_store: stat: mode %x %u:%u flags %x xattrs %s %s\n", st.st_mode, st.st_uid, st.st_gid, st.st_flags,
+					    got > 0 ? names : "-", path);
+				}
+				if (at < n) path[at] = '/';
+			}
+		}
+		return 0;
+	}
 	buffer = mmap(NULL, BUFFER, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	links = mmap(NULL, LINKS * sizeof(*links), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (buffer == MAP_FAILED || links == MAP_FAILED) {
@@ -1459,8 +1667,14 @@ main(int argc, char **argv, char **envp)
 		already = NULL;
 	}
 	if (strcmp(what, "watch") == 0) {
-		if (!boot_arg_is("var_store", "1")) {
+		/* (var_store=new as well: a data volume begun anew this boot, kept from now on -- init did not unpack the store) */
+		if (!boot_arg_is("var_store", "1") && !boot_arg_is("var_store", "new")) {
 			printf("var_store: not asked to keep the data volume (var_store=1): nothing to watch\n");
+			return 0;
+		}
+		/* (a boot that left parts of the store out is a look at it, not one to keep: the store stays as it was) */
+		if (load_skipped("") || load_skipped_any()) {
+			printf("var_store: var_store_skip: the store is only looked at this boot, not saved\n");
 			return 0;
 		}
 		return watch(argc > 2 ? (int)parse_number(argv[2]) : 0) ? 0 : 1;

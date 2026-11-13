@@ -1075,6 +1075,12 @@ restore_var(void)
 	int status = 0;
 	pid_t pid;
 
+	if (wanted != NULL && strcmp(wanted, "new") == 0) {
+		/* var_store=new: begun anew, the store not read -- what another system left in it (iOS 16.5's data
+		 * volume under iOS 27 has its data migrator run instead of SpringBoard) -- and saved at the end as with 1 */
+		printf("\n-- the data volume: a new one (var_store=new), the store not read --\n");
+		return;
+	}
 	if (wanted == NULL || strcmp(wanted, "1") != 0) {
 		return;
 	}
