@@ -294,7 +294,8 @@ static void
 presses_are_counted(void)
 {
 	phone("phone-cmd");
-	fake_delay_divisor = 20;                /* the summary comes after 10 s of looks: half a second here */
+	fake_delay_divisor = 5;                 /* the summary comes once, after 10 s of looks: two seconds here, for the
+	                                         * three presses to be made before it on a busy machine as well */
 	boot_args = "buttons=1";
 	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
