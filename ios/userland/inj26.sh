@@ -35,7 +35,7 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFo
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/userland/inject_statusbar.c"
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
-$DYN -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$US/src/audio_plugin.c"
+$DYN -DHAKIOS_IOS27 -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$US/src/audio_plugin.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-app.dylib -lobjc -o "$O/libhakios-app.dylib" "$O/src/inject_app.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-console.dylib -o "$O/libhakios-console.dylib" "$RN/userland/console_log.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/userland/inject_poster.c"

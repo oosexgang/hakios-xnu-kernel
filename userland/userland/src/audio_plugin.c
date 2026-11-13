@@ -213,12 +213,38 @@ struct device {
 	UInt64 periods;                 /* whole timestamp periods since */
 };
 
+#define MIC_SOURCE              'imic'
+/*
+ * iOS 26/27 (HAKIOS_IOS27; the identity an iPhone 11, N104): VirtualAudio takes the device "Codec" for the built-in
+ * microphone and makes its port of the product's four microphones (bottom, back, front, the second bottom one:
+ * 'imic', 'smic', 'fmic', 'lmic', from its transducer database, not from us), whose chains take four channels
+ * (Library/Audio/Tunings/N104/VAD: busChannelCounts 4, an AUChannelSelector). A route with more microphones than the
+ * codec says it has input channels is refused ("could not get input device"), and the codec says so only through the
+ * custom property 'MCCs' (MaxInputChannelCount; 2 when not said). So here the codec has four input channels, each the
+ * same samples of the phone's one microphone, declares 'MCCs' with 4, and its data source control has the four and
+ * takes any of them as the current ones (VirtualAudio sets all four at once: 16 bytes).
+ */
+#ifdef HAKIOS_IOS27
+#define CODEC_CHANNELS          4
+static const UInt32 mic_sources[] = { 'imic', 'smic', 'fmic', 'lmic' };
+static const char *const mic_names[] = { "Bottom", "Back", "Front", "Bottom 2" };
+#else
+#define CODEC_CHANNELS          1
+static const UInt32 mic_sources[] = { MIC_SOURCE };
+static const char *const mic_names[] = { "Bottom" };
+#endif
+#define MIC_SOURCES             (sizeof(mic_sources) / sizeof(mic_sources[0]))
+static UInt32 mic_selected[MIC_SOURCES] = { MIC_SOURCE };
+static UInt32 mic_selected_count = 1;
+#define CUSTOM_MAX_INPUT_CHANNELS 'MCCs'        /* the codec's custom property: { "MaxInputChannelCount": N } */
+#define CUSTOM_TYPE_PROPERTY_LIST 'plst'        /* kAudioServerPlugInCustomPropertyDataTypeCFPropertyList */
+
 static struct device devices[] = {
 	{ .object = OBJECT_SPEAKER, .uid = CFSTR("Speaker"), .output = OBJECT_SPEAKER_OUTPUT, .input = OBJECT_SPEAKER_INPUT,
 	  .output_channels = HAKIOS_AUDIO_CHANNELS, .input_channels = 2 },
 	{ .object = OBJECT_HAWKING, .uid = CFSTR("Hawking"), .input = OBJECT_HAWKING_INPUT, .input_channels = 1 },
 	{ .object = OBJECT_ACTUATOR, .uid = CFSTR("Actuator"), .output = OBJECT_ACTUATOR_OUTPUT, .output_channels = 1 },
-	{ .object = OBJECT_CODEC, .uid = CFSTR("Codec"), .input = OBJECT_CODEC_INPUT, .input_channels = 1 },
+	{ .object = OBJECT_CODEC, .uid = CFSTR("Codec"), .input = OBJECT_CODEC_INPUT, .input_channels = CODEC_CHANNELS },
 };
 #define DEVICES                 (sizeof(devices) / sizeof(devices[0]))
 
@@ -230,7 +256,6 @@ static struct device devices[] = {
  * has them as a data source control on the input, which the HAL answers those properties from. There
  * is one microphone here, at the bottom: 'imic', the iPhone's internal (bottom) one.
  */
-#define MIC_SOURCE              'imic'
 #define MANUFACTURER            CFSTR("redwood")
 /* how often a device says where its clock is, in frames: also the largest I/O buffer the HAL will use */
 #define TIMESTAMP_PERIOD        16384
@@ -469,14 +494,26 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
 			WORD(0);
 			break;
 		case kAudioSelectorControlPropertyCurrentItem:
+			for (UInt32 i = 0; i < mic_selected_count; i++) {
+				LIST(mic_selected[i]);
+			}
+			break;
 		case kAudioSelectorControlPropertyAvailableItems:
-			WORD(MIC_SOURCE);
+			for (UInt32 i = 0; i < MIC_SOURCES; i++) {
+				LIST(mic_sources[i]);
+			}
 			break;
 		case kAudioSelectorControlPropertyItemName:
-			if (qualifier_size == sizeof(UInt32) && qualifier != NULL && *(const UInt32 *)qualifier == MIC_SOURCE) {
-				STRING(CFSTR("Bottom"));
-			} else {
-				STRING(CFSTR(""));
+			STRING(CFSTR(""));
+			for (UInt32 i = 0; i < MIC_SOURCES && qualifier_size == sizeof(UInt32) && qualifier != NULL; i++) {
+				if (*(const UInt32 *)qualifier == mic_sources[i]) {
+					static CFStringRef names[MIC_SOURCES];
+
+					if (names[i] == NULL) {
+						names[i] = CFStringCreateWithCString(NULL, mic_names[i], kCFStringEncodingUTF8);
+					}
+					STRING(names[i]);
+				}
 			}
 			break;
 		}
@@ -592,6 +629,34 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
 			v.u.range.mMinimum = v.u.range.mMaximum = HAKIOS_AUDIO_RATE;
 			v.size = sizeof(AudioValueRange);
 			break;
+#ifdef HAKIOS_IOS27
+		case 'cust':                    /* kAudioObjectPropertyCustomPropertyInfoList: the codec's 'MCCs' */
+			if (d->object == OBJECT_CODEC) {
+				v.u.words[0] = CUSTOM_MAX_INPUT_CHANNELS;
+				v.u.words[1] = CUSTOM_TYPE_PROPERTY_LIST;
+				v.u.words[2] = 0;       /* no qualifier */
+				v.size = 3 * sizeof(UInt32);
+			} else {
+				v.empty = true;
+			}
+			break;
+		case CUSTOM_MAX_INPUT_CHANNELS:
+			if (d->object == OBJECT_CODEC) {
+				static CFDictionaryRef channels;
+
+				if (channels == NULL) {
+					int n = CODEC_CHANNELS;
+					CFNumberRef count = CFNumberCreate(NULL, kCFNumberIntType, &n);
+					const void *key = CFSTR("MaxInputChannelCount"), *value = count;
+
+					channels = CFDictionaryCreate(NULL, &key, &value, 1, &kCFTypeDictionaryKeyCallBacks,
+					    &kCFTypeDictionaryValueCallBacks);
+					CFRelease(count);
+				}
+				STRING((CFStringRef)channels);  /* (a property list given with a reference of its own, as a string is) */
+			}
+			break;
+#endif
 		case kAudioDevicePropertyPreferredChannelsForStereo:
 			v.u.words[0] = 1;
 			v.u.words[1] = 2;
@@ -642,7 +707,7 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
  * What the HAL (or the virtual audio device through it) asks of an object that it does not have,
  * the first times for each object, selector and scope: what a device it will not take may lack.
  */
-#define UNKNOWN_TOLD            64
+#define UNKNOWN_TOLD            256
 static UInt32 unknown_told[UNKNOWN_TOLD][3];
 static unsigned unknown_count;
 
@@ -798,9 +863,31 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
 		return 0;
 	}
 	if (object == OBJECT_CODEC_SOURCE) {
-		/* the one microphone there is */
-		return size == sizeof(UInt32) ? (*(const UInt32 *)data == MIC_SOURCE ? 0 : kAudioHardwareIllegalOperationError) :
-		       kAudioHardwareBadPropertySizeError;
+		/* one or more of the microphones listed (VirtualAudio sets all of a port's at once); all of them are the one there is */
+		const UInt32 *items = data, count = size / sizeof(UInt32);
+		AudioObjectPropertyAddress changed = { kAudioSelectorControlPropertyCurrentItem, kAudioObjectPropertyScopeGlobal, 0 };
+
+		if (size == 0 || size % sizeof(UInt32) != 0 || count > MIC_SOURCES) {
+			return kAudioHardwareBadPropertySizeError;
+		}
+		for (UInt32 i = 0; i < count; i++) {
+			bool known = false;
+
+			for (UInt32 j = 0; j < MIC_SOURCES; j++) {
+				known = known || items[i] == mic_sources[j];
+			}
+			if (!known) {
+				return kAudioHardwareIllegalOperationError;
+			}
+		}
+		pthread_mutex_lock(&lock);
+		memcpy(mic_selected, items, size);
+		mic_selected_count = count;
+		pthread_mutex_unlock(&lock);
+		if (host != NULL) {
+			host->PropertiesChanged(host, OBJECT_CODEC_SOURCE, 1, &changed);
+		}
+		return 0;
 	}
 	if (address->mSelector == kAudioStreamPropertyIsActive) {
 		if (size != sizeof(UInt32)) {
@@ -857,7 +944,7 @@ codec_close(void)
 }
 
 static void
-codec_read(int16_t *samples, UInt32 frames)
+codec_read_mono(int16_t *samples, UInt32 frames)
 {
 	ssize_t got = mic >= 0 ? read(mic, samples, (size_t)frames * 2) : -1;
 	UInt32 have = got > 0 ? (UInt32)got / 2 : 0;
@@ -877,6 +964,29 @@ codec_read(int16_t *samples, UInt32 frames)
 	}
 	mic_frames += frames;
 	mic_heard += have;
+}
+
+/* the codec's input: the microphone's samples in each of its CODEC_CHANNELS channels */
+static void
+codec_read(int16_t *samples, UInt32 frames)
+{
+#if CODEC_CHANNELS > 1
+	static int16_t mono[4096];
+
+	for (UInt32 done = 0; done < frames;) {
+		UInt32 n = frames - done < 4096 ? frames - done : 4096;
+
+		codec_read_mono(mono, n);
+		for (UInt32 i = 0; i < n; i++) {
+			for (UInt32 c = 0; c < CODEC_CHANNELS; c++) {
+				samples[(done + i) * CODEC_CHANNELS + c] = mono[i];
+			}
+		}
+		done += n;
+	}
+#else
+	codec_read_mono(samples, frames);
+#endif
 }
 
 static OSStatus
