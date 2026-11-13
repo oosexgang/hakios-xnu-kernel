@@ -138,7 +138,8 @@ if [ -n "$reached" ] && [ -n "$typed" ] && kill -0 "$qemu" 2> /dev/null; then
 	python3 - "$W/console" "$typed" "$log" <<'PY'
 import socket, sys, threading, time
 console, typed, log = sys.argv[1:4]
-prompts = lambda: open(log, 'rb').read().count(b'\n# ')
+# (at a line's start, or after the screen was cleared: clear's ESC [ H ESC [ 2 J)
+prompts = lambda: (lambda text: text.count(b'\n# ') + text.count(b'\x1b[2J# '))(open(log, 'rb').read())
 def wait_for(count):
     for _ in range(1800):
         if prompts() >= count:
