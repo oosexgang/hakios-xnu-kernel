@@ -33,7 +33,9 @@ Where things are in `overlay/`:
 ```sh
 kernel/build.sh             # or: kernel/build.sh -j12
 make kernel-check           # every file compiled and the whole kernel linked, with LLVM's tools and no
-                            # theos, the warnings of HakiOS' files listed: a check, not a kernel to boot
+                            # theos, the warnings of HakiOS' files listed
+tools/qemu-kernel.sh --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
+                            # the kernel booted in QEMU, until it waits for its root
 ```
 
 The first run makes the tree next to the repository (`../xnu-12377-hakios`), then the build

@@ -57,11 +57,12 @@ Requirements:
     in its `sdks` repository, and `git clone --depth 1 --filter=blob:none --sparse
     https://github.com/theos/sdks && git -C sdks sparse-checkout set iPhoneOS16.5.sdk` fetches that one
     directory (233 MB). `DARWIN_SDK` says where it is. `kernel/host/llvm` makes up for what LLVM's linker
-    and libtool take differently. **The kernel this makes is not one to boot**: `ld64.lld` does not
-    implement `-image_base`, `-segaddr` and `-segment_order`, with which XNU lays the kernel out, and
-    says so. What it shows is that every file compiles and the whole kernel links, on any Linux
-    machine, in minutes. So that it is not booted by mistake, the build moves it aside:
-    `…/mach.development.bcm2837.llvm-link-check`, and the usual path has no kernel.
+    and libtool take differently. `ld64.lld` does not implement `-image_base`, `-segment_order` or
+    `-static`, with which XNU lays the kernel out: the link names the segments so that lld puts them in
+    the order XNU asserts, and `kernel/host/llvm/place-kernel.py` moves the image to the kernel's
+    address and gives it a kernel's load commands. The kernel this makes **boots in QEMU**
+    (`tools/qemu-kernel.sh`, below); on a phone it has not been tried, and the team's kernels are linked
+    by theos' `ld64`.
 
   `kernel/build.sh` takes theos' when it is there and LLVM's otherwise; `TOOLCHAIN=cctools` or
   `TOOLCHAIN=llvm` chooses. `make kernel-check` is the check with LLVM's tools and the compiler's
@@ -123,6 +124,18 @@ port reuses, `DEVELOPMENT`, plain arm64.
 
 If `kernel/build.sh` says the tree "is not a tree made by kernel/assemble.sh", it found one made by
 the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
+
+## The kernel in QEMU
+
+```sh
+tools/qemu-kernel.sh --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
+```
+
+QEMU's `virt` machine with a real UEFI starts the loader, which takes the kernel from a payload and
+gives it the emulator's board (`devices/qemu-virt`), as a phone's firmware does. The kernel's console
+goes to the serial port (kept in `qemu-kernel.log`) and, with `-v`, to the screen (ramfb). With no root
+it gets as far as waiting for one ("Waiting on ... Apple_HFS"), which is where the script stops;
+`--ramdisk FILE --boot-args rd=md0` gives it one. Needs `qemu-system-arm` and `qemu-efi-aarch64`.
 
 ## What has been verified, and where
 
