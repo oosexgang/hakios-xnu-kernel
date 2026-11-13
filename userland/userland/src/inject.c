@@ -1554,6 +1554,242 @@ dyld_count_start(const char *arguments)
 	say("hakios: dyldcount=1: dyld's address-to-image questions counted by call site, and dyld's callers sampled\n");
 }
 
+/*
+ * Boot-arg waitstack=1: where the window server's busy threads stand, running or waiting. Every two milliseconds each
+ * other thread that has had processor time in the last 50 ms (one waiting for ever is left out) is stopped and its
+ * program counter and first frames taken; every five seconds the stacks seen most often are said, each frame an
+ * unslid address of the shared cache (ipsw dyld a2s on the host names it) or IMAGE+OFFSET for one outside it. What a
+ * thread that draws a frame waits on between frames is then a stack among the first. CoreAnimation's own threads
+ * (com.apple.coreanimation.*), whose stacks run deeper than the frames kept: waiting, the ten innermost frames, "|",
+ * then the outermost; running, "run |" and the outermost alone -- which of the run loop's callouts it is in. (iOS 27.2:
+ * the frame is drawn by IOMFBServer::thread_body's run loop on display_timer_callback; a frame_info thread beside it;
+ * the render thread found waiting on the Metal plug-in's surface lock inside MetalContext::get_surface.)
+ */
+#define WS_SLOTS 512
+#define WS_DEPTH 20
+#define WS_THREADS 96
+static struct {
+	uint64_t key;
+	uint32_t count;
+	char name[20];
+	uintptr_t frames[WS_DEPTH];
+} ws_seen[WS_SLOTS];
+static struct {
+	mach_port_name_t port;
+	uint64_t cpu;
+	unsigned changed, seen;         /* (seen: the last look that found it; a thread gone is let go, its slot reused) */
+} ws_threads[WS_THREADS];
+
+static void
+ws_frame(char *out, size_t size, uintptr_t address, uintptr_t cache, size_t cache_length)
+{
+	Dl_info info = { 0 };
+
+	if (address >= cache && address < cache + cache_length) {
+		snprintf(out, size, " %lx", (unsigned long)(address - slide));
+	} else if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+		const char *base = strrchr(info.dli_fname, '/');
+
+		snprintf(out, size, " %s+%lx", base != NULL ? base + 1 : info.dli_fname,
+		    (unsigned long)(address - (uintptr_t)info.dli_fbase));
+	} else {
+		snprintf(out, size, " ?%lx", (unsigned long)address);
+	}
+}
+
+static void *
+ws_sampler(void *unused)
+{
+	size_t cache_length = 0;
+	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&cache_length);
+	unsigned ticks = 0, samples = 0, lost = 0;
+
+	(void)unused;
+	pthread_setname_np("hakios.waitstack");
+	for (;;) {
+		thread_act_array_t threads;
+		mach_msg_type_number_t count = 0;
+		const thread_t self = mach_thread_self();
+
+		usleep(2000);
+		ticks++;
+		if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+			for (mach_msg_type_number_t t = 0; t < count; t++) {
+				thread_basic_info_data_t basic;
+				thread_extended_info_data_t ext;
+				mach_msg_type_number_t bn = THREAD_BASIC_INFO_COUNT, en = THREAD_EXTENDED_INFO_COUNT;
+				arm_thread_state64_t st;
+				mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
+				uint64_t cpu;
+				unsigned slot;
+				bool active;
+
+				if (threads[t] == self || thread_info(threads[t], THREAD_BASIC_INFO, (thread_info_t)&basic, &bn) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				cpu = (uint64_t)basic.user_time.seconds * 1000000 + basic.user_time.microseconds +
+				    (uint64_t)basic.system_time.seconds * 1000000 + basic.system_time.microseconds;
+				for (slot = 0; slot < WS_THREADS && ws_threads[slot].port != threads[t]; slot++) {
+				}
+				if (slot == WS_THREADS) {
+					for (slot = 0; slot < WS_THREADS && ws_threads[slot].port != 0 && ws_threads[slot].seen + 1 >= ticks; slot++) {
+					}
+					if (slot == WS_THREADS) {
+						mach_port_deallocate(mach_task_self(), threads[t]);
+						continue;
+					}
+					ws_threads[slot].port = 0;
+				}
+				ws_threads[slot].seen = ticks;
+				if (ws_threads[slot].port != threads[t]) {
+					ws_threads[slot].port = threads[t];
+					ws_threads[slot].cpu = cpu;
+					ws_threads[slot].changed = 0;
+				} else if (ws_threads[slot].cpu != cpu) {
+					ws_threads[slot].cpu = cpu;
+					ws_threads[slot].changed = ticks;
+				}
+				active = ws_threads[slot].changed != 0 && ticks - ws_threads[slot].changed <= 25;
+				if (!active || thread_suspend(threads[t]) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				if (thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) == KERN_SUCCESS) {
+					uintptr_t frames[WS_DEPTH] = { 0 }, all[64], fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st);
+					unsigned got = 0, n = 0;
+					uint64_t key = 1469598103934665603ull;
+
+					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_pc(st), ptrauth_key_function_pointer);
+					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_lr(st), ptrauth_key_return_address);
+					for (int d = 0; d < 80 && n < 64 && fp != 0 && (fp & 7) == 0; d++) {
+						uint64_t frame[2];
+						vm_size_t read = 0;
+
+						if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
+						    &read) != KERN_SUCCESS || read != sizeof(frame)) {
+							break;
+						}
+						const uintptr_t ret = (uintptr_t)ptrauth_strip((void *)(uintptr_t)frame[1], ptrauth_key_return_address);
+
+						if (ret != 0 && ret != all[n - 1]) {
+							all[n++] = ret;
+						}
+						fp = (uintptr_t)frame[0];
+					}
+					ext.pth_name[0] = 0;
+					thread_info(threads[t], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &en);
+					/* CoreAnimation's threads (waitstack=1): the two innermost frames, a 0, and the outermost ones -- which
+					 * of the run loop's callouts it is in; every other thread its innermost frames */
+					if (strncmp(ext.pth_name, "com.apple.coreanim", 18) == 0 && n > WS_DEPTH) {
+						uint32_t before = 0;
+						vm_size_t read = 0;
+						/* in a system call (the instruction before the pc an svc): where it waits; running: anywhere, 2 */
+						const bool waiting = vm_read_overwrite(mach_task_self(), (vm_address_t)(all[0] - 4), 4,
+						    (vm_address_t)(uintptr_t)&before, &read) == KERN_SUCCESS && read == 4 && before == 0xd4001001u;
+
+						/* waiting: its ten innermost frames (who asked for the lock or the message), then the
+						 * outermost nine; running: only where in the run loop */
+						const unsigned inner = waiting ? 10 : 0;
+
+						if (!waiting) {
+							frames[got++] = 2;
+						}
+						for (unsigned i = 0; i < inner && i < n; i++) {
+							frames[got++] = all[i];
+						}
+						frames[got++] = 1;
+						for (unsigned i = n > WS_DEPTH - got ? n - (WS_DEPTH - got) : 0; i < n && got < WS_DEPTH; i++) {
+							frames[got++] = all[i];
+						}
+					} else {
+						for (unsigned i = 0; i < n && got < WS_DEPTH; i++) {
+							frames[got++] = all[i];
+						}
+					}
+					for (unsigned i = 0; i < WS_DEPTH; i++) {
+						key = (key ^ frames[i]) * 1099511628211ull;
+					}
+					for (const char *c = ext.pth_name; *c != 0 && c < ext.pth_name + 19; c++) {
+						key = (key ^ (uint8_t)*c) * 1099511628211ull;
+					}
+					samples++;
+					{
+						unsigned i = (unsigned)(key % WS_SLOTS), k = 0;
+
+						while (k < WS_SLOTS && ws_seen[i].count != 0 && ws_seen[i].key != key) {
+							i = (i + 1) % WS_SLOTS;
+							k++;
+						}
+						if (k == WS_SLOTS) {
+							lost++;
+						} else {
+							if (ws_seen[i].count == 0) {
+								ws_seen[i].key = key;
+								memcpy(ws_seen[i].frames, frames, sizeof(frames));
+								strlcpy(ws_seen[i].name, ext.pth_name, sizeof(ws_seen[i].name));
+							}
+							ws_seen[i].count++;
+						}
+					}
+				}
+				thread_resume(threads[t]);
+				mach_port_deallocate(mach_task_self(), threads[t]);
+			}
+			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
+		}
+		mach_port_deallocate(mach_task_self(), self);
+		if (ticks % 2500 != 0) {
+			continue;
+		}
+		say("hakios: waitstack: %u samples of busy threads in 5 s (%u stacks past %u)\n", samples, lost, WS_SLOTS);
+		for (unsigned k = 0; k < 24; k++) {
+			unsigned best = WS_SLOTS;
+			char line[900];
+			size_t used;
+
+			for (unsigned i = 0; i < WS_SLOTS; i++) {
+				if (ws_seen[i].count != 0 && (best == WS_SLOTS || ws_seen[i].count > ws_seen[best].count)) {
+					best = i;
+				}
+			}
+			if (best == WS_SLOTS || ws_seen[best].count < 5) {
+				break;
+			}
+			used = (size_t)snprintf(line, sizeof(line), "hakios: waitstack: %u [%s]", ws_seen[best].count,
+			    ws_seen[best].name[0] != 0 ? ws_seen[best].name : "-");
+			for (unsigned i = 0; i < WS_DEPTH && ws_seen[best].frames[i] != 0 && used < sizeof(line) - 40; i++) {
+				if (ws_seen[best].frames[i] == 1 || ws_seen[best].frames[i] == 2) {
+					used += (size_t)snprintf(line + used, sizeof(line) - used, ws_seen[best].frames[i] == 1 ? " |" : " run");
+					continue;
+				}
+				ws_frame(line + used, sizeof(line) - used, ws_seen[best].frames[i], cache, cache_length);
+				used += strlen(line + used);
+			}
+			snprintf(line + used, sizeof(line) - used, "\n");
+			write(2, line, strlen(line));
+			ws_seen[best].count = 0;
+		}
+		memset(ws_seen, 0, sizeof(ws_seen));
+		samples = lost = 0;
+	}
+	return NULL;
+}
+
+static void
+wait_stack_start(const char *arguments)
+{
+	pthread_t thread;
+
+	if (strstr(arguments, "waitstack=1") == NULL) {
+		return;
+	}
+	if (pthread_create(&thread, NULL, ws_sampler, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	say("hakios: waitstack=1: the stacks of the busy threads sampled every 2 ms, said every 5 s\n");
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1582,6 +1818,7 @@ hakios_init(void)
 			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
 		}
 		dyld_count_start(arguments);
+		wait_stack_start(arguments);
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for
 		 * CoreAnimation's own switches (CA_LOG_TRIPLE_BUFFERING=1, CA_FORCE_DOUBLE_BUFFERING=1 ...).
