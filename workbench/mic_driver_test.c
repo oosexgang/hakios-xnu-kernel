@@ -600,6 +600,78 @@ the_latest_lines_said_again(void)
 	CHECK(strcmp(log_text + strlen(log_text) - strlen(last), last) == 0, "to the last: %s", log_text + strlen(log_text) - 40);
 }
 
+/* ---- the ring Darwin's audio server reads (/dev/hakios-mic) ---- */
+
+static int16_t heard[RING_FRAMES], got[RING_FRAMES];
+static uint64_t put_so_far;
+
+/* `count' more frames heard: each the number of the frame it is (mod 32768) */
+static void
+hear(uint32_t count)
+{
+	int16_t samples[1000];
+
+	while (count > 0) {
+		uint32_t n = count < 1000 ? count : 1000;
+
+		for (uint32_t i = 0; i < n; i++) {
+			samples[i] = (int16_t)((put_so_far + i) & 0x7fff);
+		}
+		ring_put(samples, n);
+		put_so_far += n;
+		count -= n;
+	}
+}
+
+/* what a read of `frames' gives, in frames; whether they run on one from the other from `first' */
+static uint32_t
+read_frames(uint32_t frames, int first, bool *in_order)
+{
+	struct uio uio = { .base = (char *)got, .resid = frames * 2, .to_kernel = false };
+	uint32_t n;
+
+	mic_dev_read(0, &uio, 0);
+	n = (uint32_t)(frames * 2 - uio.resid) / 2;
+	*in_order = true;
+	for (uint32_t i = 0; i < n; i++) {
+		*in_order &= got[i] == (int16_t)((first + (int)i) & 0x7fff);
+	}
+	return n;
+}
+
+/*
+ * Nothing is given until 40 ms are there; then what has come, in order, the reader kept 40 ms behind; a read
+ * that finds too little takes it all and waits for 40 ms again; more than 100 ms waiting, and the oldest
+ * is skipped; frames run on across the ring's end.
+ */
+static void
+the_ring_darwin_reads(void)
+{
+	uint64_t skipped;
+	bool in_order;
+
+	ring = heard;
+	hear(1000);
+	CHECK(read_frames(480, 0, &in_order) == 0, "nothing before 40 ms are there");
+	hear(1000);
+	CHECK(read_frames(480, 0, &in_order) == 480 && in_order, "then from the first frame, in order");
+	CHECK(read_frames(0, 0, &in_order) == 0, "a read of nothing is nothing");
+	CHECK(read_frames(2000, 480, &in_order) == 1520 && in_order && ring_dry == 1, "too little: all of it, once dry (%llu)",
+	    (unsigned long long)ring_dry);
+	hear(1000);
+	CHECK(read_frames(480, 2000, &in_order) == 0, "and nothing again until 40 ms are there");
+	hear(5000);
+	CHECK(read_frames(480, 8000 - RING_KEEP, &in_order) == 480 && in_order && ring_skipped == 6000 - RING_KEEP,
+	    "more than 100 ms waiting: the oldest skipped, the reader 40 ms behind (%llu skipped)", (unsigned long long)ring_skipped);
+	hear(16384 - 8000 + 1000);      /* (frames 15464 to 17383 waiting: across the ring's end) */
+	CHECK(read_frames(RING_KEEP, 17384 - RING_KEEP, &in_order) == RING_KEEP && in_order, "across the ring's end, in order");
+	CHECK(ring_dry == 1, "a read of just what was there did not run dry (%llu)", (unsigned long long)ring_dry);
+	skipped = ring_skipped;
+	hear(RING_MOST);
+	CHECK(read_frames(480, 17384, &in_order) == 480 && in_order && ring_skipped == skipped,
+	    "100 ms waiting, and not more: nothing skipped (%llu)", (unsigned long long)(ring_skipped - skipped));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -612,7 +684,7 @@ main(int argc, char **argv)
 		{ "reads_over_the_bus", reads_over_the_bus }, { "an_answer_for_another_read", an_answer_for_another_read },
 		{ "a_full_fifo", a_full_fifo }, { "an_answer_a_while_after", an_answer_a_while_after }, { "no_answer_at_all", no_answer_at_all }, { "the_codec_found", the_codec_found }, { "the_codec_not_there", the_codec_not_there },
 		{ "the_codec_set_up", the_codec_set_up }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
-		{ "the_codec_does_not_take_it", the_codec_does_not_take_it },
+		{ "the_codec_does_not_take_it", the_codec_does_not_take_it }, { "the_ring_darwin_reads", the_ring_darwin_reads },
 	};
 
 	if (argc < 2) {
