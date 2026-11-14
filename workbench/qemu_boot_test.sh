@@ -167,6 +167,10 @@ typed=(
 	'run /tmp/notes/script with words'
 	'chmod 644 /tmp/notes/script'
 	'run /tmp/notes/script'
+	'write /tmp/notes/junk not a program'
+	'chmod 755 /tmp/notes/junk'
+	'run /tmp/notes/junk'
+	'fork /tmp/notes/junk'
 	'descriptors /tmp/notes/offsets'
 	'stat /tmp/notes/offsets'
 	'write /tmp/notes/old-name one'
@@ -365,6 +369,9 @@ check "three pieces written in one writev read back in one readv, into pieces of
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
 	grep -aqE '^random: getentropy gave two that differ \(and EINVAL past 256\); /dev/random: 65536 bytes, each value [0-9]+ to [0-9]+ times of 256: even' "$shell"
+check "a file that is not a program is not run, by posix_spawn or by execve (ENOEXEC)" \
+	bash -c "grep -aq '^run: /tmp/notes/junk does not start: error 8 (ENOEXEC)' '$shell' &&
+		grep -aq '^fork: the child cannot become /tmp/notes/junk: error 8 (ENOEXEC)' '$shell'"
 check "a script run through the program its #! line names, given the script's path and words; not run once it may not be" \
 	bash -c "cat '$shell' | grep -A2 -x '# run /tmp/notes/script with words' | tail -2 | tr '\n' '|' |
 			grep -qE '^/tmp/notes/script with words\|run: pid [0-9]+ exited with 0\|\$' &&
