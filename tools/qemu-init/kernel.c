@@ -170,6 +170,12 @@ sysctl_one(char *name)
 			say(n ? " " : "");
 			is_unsigned ? say_number((uint64_t)value.i64[n]) : say_signed(value.i64[n]);
 		}
+	} else if (same(fmt, "S,timeval") && size == 16) {
+		/* (a struct timeval: seconds since 1970 and microseconds, as kern.boottime has it) */
+		say_number((uint64_t)value.i64[0]);
+		say(" s ");
+		say_number((uint32_t)value.i32[2]);
+		say(" us since 1970");
 	} else {
 		say("(");
 		say_number(size);
