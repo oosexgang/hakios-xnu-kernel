@@ -532,6 +532,7 @@ command_fill(int argc, char **argv)
 #define SYS_pread               153
 #define SYS_pwrite              154
 #define SYS_lseek               199
+#define SYS_fstat64             339
 #define O_RDWR                  2
 #define O_APPEND                8
 #define O_NONBLOCK              4
@@ -549,7 +550,8 @@ read_is(long fd, const char *want, long n)
 /*
  * FILE (made anew): what descriptors do, as BSD has them -- an offset moved by lseek, pread and pwrite that move
  * none, a dup's offset the same as its original's, dup2 onto a number of one's choosing, O_APPEND writing at the
- * end whatever the offset, and a non-blocking pipe with nothing in it saying EAGAIN
+ * end whatever the offset, a file read and written after its name is taken away (unlink) until it is closed,
+ * and a non-blocking pipe with nothing in it saying EAGAIN
  */
 void
 command_descriptors(int argc, char **argv)
@@ -558,11 +560,12 @@ command_descriptors(int argc, char **argv)
 	size_t at;
 	long fd, copy, pipe_result;
 	int ends[2];
-	struct { const char *what; int ok; } said[7];
+	struct { const char *what; int ok; } said[8];
+	struct stat64_head st;
 	int n = 0, all = 1;
 
 	if (argc != 2) {
-		say("descriptors FILE (made anew)\n");
+		say("descriptors FILE (made anew, and taken away)\n");
 		return;
 	}
 	fd = syscall6(SYS_open, (long)argv[1], O_RDWR | O_CREAT | O_TRUNC, 0644, 0, 0, 0);
@@ -589,6 +592,13 @@ command_descriptors(int argc, char **argv)
 	said[n].what = "O_APPEND";
 	said[n++].ok = fd >= 0 && syscall6(SYS_lseek, fd, 0, 0, 0, 0, 0) == 0 && syscall6(SYS_write, fd, (long)"!", 1, 0, 0, 0) == 1 &&
 	    syscall6(SYS_pread, fd, (long)two, 1, 10, 0, 0) == 1 && two[0] == '!';
+	/* (the file's name taken away while it is open: the file lives on, nameless, until it is closed) */
+	said[n].what = "a file open after its unlink";
+	said[n++].ok = fd >= 0 && syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0) == 0 &&
+	    syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0) == -2 &&
+	    syscall6(SYS_fstat64, fd, (long)&st, 0, 0, 0, 0) == 0 && st.nlink == 0 && st.size == 11 &&
+	    syscall6(SYS_pwrite, fd, (long)"?", 1, 11, 0, 0) == 1 && syscall6(SYS_pread, fd, (long)two, 2, 10, 0, 0) == 2 &&
+	    bytes_same(two, "!?", 2);
 	if (fd >= 0) {
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 	}
