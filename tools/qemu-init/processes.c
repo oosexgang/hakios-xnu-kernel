@@ -442,9 +442,12 @@ command_fork(int argc, char **argv)
 	if (in_child) {
 		forked_value = 2;               /* the child's page, copied on this write: not the parent's */
 		if (argc > 1) {
-			syscall6(SYS_execve, (long)argv[1], (long)(argv + 1), (long)environment, 0, 0, 0);
+			long error = syscall6(SYS_execve, (long)argv[1], (long)(argv + 1), (long)environment, 0, 0, 0);
+
 			say("fork: the child cannot become ");
 			say(argv[1]);
+			say(": ");
+			say_error(error);
 			say("\n");
 			syscall6(SYS_exit, 127, 0, 0, 0, 0, 0);
 		}
