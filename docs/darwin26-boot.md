@@ -209,3 +209,44 @@ What stood between Darwin 27 and its home screen, in order:
 14. **Heat remains unresolved.** Before graphics removal, a status-bar inspection run reached a GPU
     sensor reading of 69.1°C. The current configuration disables the GPU but still selects fixed CPU
     EPSS rows; it has no Renoir thermal capping. Lower temperature has not been verified.
+
+## Darwin 27 in QEMU (2026-11-14)
+
+Darwin 27.2 (24B119, iPhone12,1 files) on this repository's kernel (xnu-12377, built by LLVM) under QEMU
+`virt` with four `cortex-a76` processors and TCG: the lock screen, the home screen with its icons and
+labels, Control Center (opened by a swipe through the virtio tablet) and Settings → General → About
+("iOS Version 27.2", "iPhone 11"). Graphics are CoreAnimation's software renderer, as `gpu=0` on the phone.
+The small image was darwin-redwood's root (its `stage0` and `init`), with `userland/userland/mkjobs.py`'s
+jobs and three of our libraries; the system image `mkimage26.py --prune`'s. What it took, in order:
+
+1. **The IPSW on Linux.** Its disk images are Apple Encrypted Archives: `darwin/tools/aea.py` decrypts them
+   from the IPSW's URL, reading each once (cryptex 6,178,209,792 bytes, root file system 9,265,217,536,
+   every segment authenticated). One read of the root file system ended early without an error, and a
+   short read was taken for the end of a segment ("segment 96 of cluster 33 does not authenticate"):
+   `aea.py` now takes a short read up again where it stopped, and `decrypt ... 33` went on from there.
+2. **Memory.** The system image (4.27 GB) is staged in RAM next to the kernel, so with 8 GB the loader's
+   window was 5.2 GB and Darwin had about 500 MB: free memory went to 7 MB and the memory killer took
+   daemons. With 10 GB (`-m 10G`, the image at 0xFC000000) the window is 7.26 GB and 2.5 GB stay available.
+3. **The device.** `loader/identity.h` describes iPhone18,1 (V53), a device with exclaves: SpringBoard
+   asked the secure-indicator manager for its "Camera" indicator, found no ExclaveOS cryptex and threw
+   `CASecureIndicatorLayerInvalidName` (`CA_DISABLE_SECURE_INDICATOR=1` in the job did not avoid it).
+   A loader built with the identity of the files' own device (`mkidentity.py` over
+   `Firmware/all_flash/DeviceTree.n104ap.im4p`, the LZFSE payload of the IM4P) says iPhone12,1, and
+   SpringBoard drew its first frame.
+4. **Our libraries without cctools.** `clang -target arm64e` with `ld64.lld` writes an arm64 Mach-O with
+   classic binding opcodes, and dyld refused it in an arm64e process ("bad bind opcode 0x00"). Built for
+   arm64 with `-Wl,-fixup_chains` (chained fixups, `DYLD_CHAINED_PTR_64`) and the header's CPU subtype
+   set to arm64e (0x80000002) before `ldid -S`, all three load: `libhakios26.dylib` (from
+   `userland/userland/src/inject26.c`: touch, buttons, framebuffer swaps) into backboardd, SpringBoard and
+   PosterBoard, `libhakios-backlight.dylib` and the SpringBoard library with 24B119's activation hook.
+5. **lsd.** On the first boot LaunchServices registers every application; under TCG this held SpringBoard's
+   main thread for about ten minutes (its stacks, named from the cache's symbol tables, wait in
+   `_LSSetSchemeHandler` on lsd). The lock screen came some twelve minutes after power-on.
+6. **Watchdogs.** Every application was killed while starting ("Provision violated for watchdog
+   process-launch", 10 s of real time). `FBDisableWatchdog`, `BKNoWatchdogs` and the
+   `FBLaunchWatchdog*Scale*` keys (20) in mobile's `com.apple.frontboard` and `com.apple.springboard`
+   preferences let Settings start and go two levels deep.
+
+Still open there: the Weather and Calendar widgets stay white, libEDR in backboardd retries its lookup
+of `com.apple.libEDR.Notification` without end (tens of thousands of lines with `OS_ACTIVITY_DT_MODE`), and
+nearbyd aborts at start (`ConstructRegulatoryTxPowerTableMap`).

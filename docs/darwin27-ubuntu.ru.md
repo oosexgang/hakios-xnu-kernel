@@ -19,10 +19,11 @@ fastboot, после перезагрузки снова Android.
 
 Darwin 27 до домашнего экрана доходил на **renoir** (Snapdragon 780G), последний раз 10.11.2026.
 На redwood Darwin 26/27 ещё не загружался; macan загружался, но его драйверов пока нет в основной ветке
-(их README на ветке `devices` говорят, что работает). В QEMU Darwin 27 не запускается (его образы
-сделаны для телефонов), но само ядро там загружается до своей оболочки и проверяется целиком: сеть,
-диски, файлы, звук, ввод, процессы, потоки, память, IOKit и экран, на двух и на четырёх процессорах
-(шаг 3, `make qemu`).
+(их README на ветке `devices` говорят, что работает). В QEMU Darwin 27 тоже доходит до домашнего экрана
+(14.11.2026: экран блокировки, домашний экран, Пункт управления, «Настройки» → «Об этом устройстве»:
+iOS 27.2); что для этого нужно, описано в [darwin26-boot.md](darwin26-boot.md), раздел «Darwin 27 in
+QEMU». Само ядро в QEMU загружается и до своей оболочки и проверяется там целиком: сеть, диски, файлы,
+звук, ввод, процессы, потоки, память, IOKit и экран, на двух и на четырёх процессорах (шаг 3, `make qemu`).
 
 ## Что сделано
 
@@ -111,8 +112,21 @@ tools/qemu-kernel.sh --cpus 2 --ramdisk root.img --boot-args rd=md0 --until 'a s
 
 ## 4. IPSW Darwin 27.2
 
-Нужна сборка **24B119**, файлы **iPhone12,1**. Распакуйте IPSW (например, утилитой `ipsw`) в
-`$DK/darwin27` так:
+Нужна сборка **24B119**, файлы **iPhone12,1**. Образы дисков в IPSW Darwin 26/27 зашифрованы (AEA).
+`darwin/tools/aea.py` расшифровывает их на Linux прямо из IPSW на CDN Apple, по range-запросам, не
+скачивая IPSW целиком (нужны `python3-cryptography` и `liblzfse1`):
+
+```sh
+IPSW=https://updates.cdn-apple.com/2026FallFCS/22a2de9b-5ef9-44b7-9ace-62f861167fd8/iPhone12,1_27.2_24B119_Restore.ipsw
+python3 darwin/tools/aea.py list "$IPSW"                                   # что в IPSW
+python3 darwin/tools/aea.py decrypt "$IPSW" 141-10128-227.dmg.aea cryptex-os.dmg   # cryptex системы, 6,2 ГБ
+python3 darwin/tools/aea.py decrypt "$IPSW" 141-08279-215.dmg.aea rootfs.dmg       # корневая ФС, 9,3 ГБ
+python3 darwin/tools/aea.py get "$IPSW" 141-08824-244.dmg cryptex-app.dmg         # cryptex приложений (не зашифрован)
+```
+
+Если загрузка оборвалась, `decrypt ... N` продолжает с кластера `N` (номер виден по размеру файла: кластер
+равен 256 МБ). Дальше образы открывает `7z` (версии 23 или новее читают APFS); файлы, сжатые LZBITMAP, 7z
+оставляет пустыми, их доделывает `unzbm`. Разложите всё в `$DK/darwin27` так:
 
 ```
 darwin27/rootfs/           корневая файловая система
