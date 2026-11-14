@@ -45,6 +45,16 @@ command_ps(int argc, char **argv)
 
 #define SYS_wait4               7
 #define SYS_posix_spawn         244
+#define SYS_munmap              73
+#define SYS_mmap                197
+#define SYS_mprotect            74
+#define SYS_ftruncate           201
+#define SYS_shm_open            266
+#define SYS_shm_unlink          267
+#define O_RDWR                  2
+#define O_CREAT_EXCL            (0x200 | 0x800)
+#define PROT_RW                 3
+#define MAP_SHARED              1
 
 /* how a process ended, as wait4 says it, after WHO ("run: "), in one line */
 static void
@@ -494,8 +504,19 @@ command_crash(int argc, char **argv)
 		__asm__ volatile ("udf #0");
 	} else if (argc == 2 && same(argv[1], "breakpoint")) {
 		__asm__ volatile ("brk #0");
+	} else if (argc == 2 && same(argv[1], "readonly")) {
+		/* a page of its own, written, then made read only (mprotect) and written again */
+		volatile long *page = (volatile long *)syscall6(SYS_mmap, 0, 16384, PROT_RW, 0x1002, -1, 0);   /* MAP_PRIVATE | MAP_ANON */
+
+		if ((long)page < 0) {
+			say("crash: no page\n");
+			return;
+		}
+		page[0] = 1;
+		syscall6(SYS_mprotect, (long)page, 16384, 1, 0, 0, 0);
+		page[0] = 2;
 	}
-	say("crash KIND: null, illegal or breakpoint\n");
+	say("crash KIND: null, illegal, breakpoint or readonly\n");
 }
 
 /* ---- signals caught: alarm ---- */
@@ -718,15 +739,6 @@ command_fork(int argc, char **argv)
 
 /* ---- locks: threads that take turns, as os_unfair_lock makes them, through ulock_wait and ulock_wake ---- */
 
-#define SYS_munmap              73
-#define SYS_mmap                197
-#define SYS_ftruncate           201
-#define SYS_shm_open            266
-#define SYS_shm_unlink          267
-#define O_RDWR                  2
-#define O_CREAT_EXCL            (0x200 | 0x800)
-#define PROT_RW                 3
-#define MAP_SHARED              1
 
 /*
  * [NAME]: memory two processes share by a name (POSIX shared memory: shm_open, ftruncate, mmap MAP_SHARED):
