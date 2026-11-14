@@ -938,8 +938,8 @@ apfs_pool_start(void)
 		thread_deallocate(th);
 		OSIncrementAtomic((volatile SInt32 *)&apfs_pool_threads);
 	}
-	printf("apfs: %u threads on a request of many pieces (%u helpers)\n", want,
-	    apfs_pool_threads);
+	printf("apfs: %u thread%s on a request of many pieces (%u helper%s)\n", want, want == 1 ? "" : "s",
+	    apfs_pool_threads, apfs_pool_threads == 1 ? "" : "s");
 }
 
 /* ------------------------------------------------------------------ mount */
