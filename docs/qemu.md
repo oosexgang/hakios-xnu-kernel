@@ -82,6 +82,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `fork [PROGRAM [ARGUMENTS]]` | A copy of this process: the child writes a value of its memory, which the parent's copy must not see; or, given a program, becomes it (execve). |
 | `crash null`, `illegal`, `breakpoint` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint; the shell sees the signal the kernel made of it. |
 | `alarm [COUNT]` | A timer of a tenth of a second (setitimer) whose SIGALRM a handler of its own catches, and sigreturn puts the thread back. |
+| `shm [NAME]` | Memory shared by a name (shm_open, ftruncate, mmap MAP_SHARED) with a forked child, which writes into it; the parent sees the writes, and the name is taken away (shm_unlink). |
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `unix FILE` | FILE opened, its descriptor sent over a socket pair with a word (sendmsg, SCM_RIGHTS), and the file read through the descriptor that comes out. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
@@ -114,10 +115,10 @@ on its shell and checks what comes back:
 - **Processes.** A process started by the shell runs as its child and is waited for; a forked child's
   memory is its own, and it can become another program; a signal ends a process in the background, and a
   process's mistakes end it with SIGSEGV and SIGILL; a timer's signals reach a handler on time; a pipe
-  carries what a child writes into it; a descriptor sent over a socket pair reads the file it was; two
-  threads run on the two processors at once, and four take turns under one lock without losing a count;
-  Mach messages go through a port and come back unchanged;
-  kqueue's timer keeps time and it sees a pipe become readable.
+  carries what a child writes into it, and so does memory shared by name; a descriptor sent over a socket
+  pair reads the file it was; two threads run on the two processors at once, and four take turns under
+  one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
+  timer keeps time and it sees a pipe become readable.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
   symbolic link to it is read through; extended attributes are set, replaced, listed and taken away;
