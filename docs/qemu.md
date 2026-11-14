@@ -60,6 +60,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
 | `sysctl -a [PREFIX]` | Every name the kernel has, from one to the next (sysctl 0.2 and 0.1), and the value of each under PREFIX. |
 | `vm` | The virtual memory's pages (free, active, wired, in the compressor) and its faults, as `vm_stat` asks them: host_statistics64 in a MIG message to the host's port. |
+| `random [KB]` | The kernel's random bytes: two from getentropy differ, and it gives no more than 256 at once; KB of /dev/random (64 without) has every byte value in it, none under half or over twice its share. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `uptime`, `date` | The time since boot; the time of day, UTC, as the kernel has it from QEMU's clock. |
 | **Files** (`files.c`; their pages, and memory: `memory.c`) | |
@@ -75,6 +76,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, owner, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `files [LIMIT]` | The limit on a process's descriptors lowered (setrlimit), files opened until the kernel says no (EMFILE), and all put back. |
 | `descriptors FILE` | A file made anew and what descriptors do with it, as BSD has them: lseek, pread and pwrite (which move no offset), a dup's offset shared, dup2, O_APPEND, and an empty non-blocking pipe's EAGAIN. |
+| `vectors FILE` | A file made from three pieces in one writev, read back in one readv into three pieces of other sizes: the bytes in order. |
 | `fill FILE BYTES` | A file of made-up bytes (byte i is i * 7 mod 251), written in pieces of 16 KB, for `hash` to check against this computer's. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
 | `mmap-write FILE` | The file mapped shared and every byte of it turned over through the mapping, then msync'd: reading the file must give the turned bytes (its file system's page-out). |
@@ -150,7 +152,7 @@ on its shell and checks what comes back:
   written, and so do bytes written through a shared mapping of it; a mapped file is what reading it gives;
   memory of its own holds what is written and is all given back, each of its pages a fault Mach's counts
   see; the kernel keeps a process's time, none of it while asleep, and filling new pages as the kernel's;
-  values are set through sysctl; the kernel's messages are read; the date is this year's.
+  values are set through sysctl; the kernel's random bytes are as even as random bytes are; the kernel's messages are read; the date is this year's.
 - **IOKit.** Its registry answers in MIG messages, and the serial number the loader made is the one it
   gives user space; a picture drawn on a surface and swapped onto the screen is what QEMU's screen shows
   (`workbench/screen_shows_draw.py`).
