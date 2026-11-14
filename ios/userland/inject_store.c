@@ -146,7 +146,12 @@
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 
 #define CACHE_BASE 0x180000000UL                /* where the cache was built to be, before the slide */
-#define STOREFRONT "143469-2,8"                 /* what bag.itunes.apple.com returned for this device */
+/*
+ * The storefront answered for an account that has none. 16.5 used 143469-2,8; on iOS 26/27 the App Store's
+ * own bag fetch carries 143469-2,29 (its "apps3" media type), which is also the one the working catalog of
+ * 16.5 was recorded with, so the suffix is matched to what this store asks with rather than left at 8.
+ */
+#define STOREFRONT "143469-2,29"
 
 static uintptr_t slide;
 static bool watch_only;         /* accountsd: looked at, never changed (see the constructor) */
@@ -181,6 +186,7 @@ enum {
 	COUNT_finishResultError, COUNT_thenWithBlock, COUNT_continueWithBlock, COUNT_bagValue,
 	COUNT_resultBefore, COUNT_afterUpdating, COUNT_addCookies4, COUNT_fpDeviceType, COUNT_brotli,
 	COUNT_processStream, COUNT_updateStorefront, COUNT_addCookiesBlocking, COUNT_dataTaskCreated,
+	COUNT_storefrontMedia,
 	COUNT_last
 };
 static const char *const counted[COUNT_last] = {
@@ -210,6 +216,7 @@ static const char *const counted[COUNT_last] = {
 	"-[ACAccountStore _updateStorefrontInLocalAccount:]",
 	"ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies: (answered empty)",
 	"-[NSURLSession dataTaskWithRequest:...] (created, not resumed)",
+	"-[ACAccount ams_storefrontForMediaType:]",
 };
 static unsigned long entered[COUNT_last];
 /*
@@ -1247,6 +1254,7 @@ watch_for_faults(void)
 /* ---- the storefront, answered ----------------------------------------------------------------- */
 
 static id (*old_ams_storefront)(id, SEL);
+static id (*old_ams_storefront_media)(id, SEL, id);
 static id (*old_cached_storefront)(id, SEL);
 static id (*old_bag_storefront)(id, SEL, id);
 static id (*old_bag_storefront_active)(id, SEL, id);
@@ -1277,6 +1285,33 @@ new_ams_storefront(id self, SEL _cmd)
 		say("hakios: store: ams_storefront was %s, now " STOREFRONT "\n", text_of(was, buffer, sizeof(buffer)));
 	}
 	returned[COUNT_ams_storefront]++;
+	return was != NULL ? was : (id)storefront;
+}
+
+/*
+ * The same answer for the accessor that takes a media type. -[ACAccount ams_storefront] is the door most of
+ * AMS goes through, but not the one that decides whether an account counts as having a storefront at all:
+ * -[AMSBagActiveAccountProvider _handleFetchedLocalAccount:fetchError:mustContainStorefront:mediaType:error:]
+ * (0x18c836398 on 24B119) asks the account -ams_storefrontForMediaType: and, with nothing back, makes
+ * AMSErrorDomain 7 "Local account found but has missing storefront" -- which is in every run's log while
+ * ams_storefront is answered eighteen times. So the two are hooked together; with only one of them the
+ * account the bag provider hands on has no storefront and the chain stops there.
+ */
+static id
+new_ams_storefront_media(id self, SEL _cmd, id media_type)
+{
+	entered[COUNT_storefrontMedia]++;
+	id was = old_ams_storefront_media != NULL ? old_ams_storefront_media(self, _cmd, media_type) : NULL;
+	static bool said;
+
+	if (!said) {
+		char one[64], two[128];
+
+		said = true;
+		say("hakios: store: ams_storefrontForMediaType:%s was %s, now " STOREFRONT "\n",
+		    text_of(media_type, one, sizeof(one)), text_of(was, two, sizeof(two)));
+	}
+	returned[COUNT_storefrontMedia]++;
 	return was != NULL ? was : (id)storefront;
 }
 
@@ -1579,9 +1614,42 @@ one_report(unsigned seconds)
  * somebody taps it, a minute and a half later, so a single report at 150 s falls past the end of
  * the run for one of them -- and the app's side of the story went missing in exactly that way.
  */
+/*
+ * What this process calls itself. AdPlatforms says "Client bundle id com.apple.AppStore (executable: ...)
+ * is nil, not allow listed or not entitled to use signing", which reads as though the bundle identifier
+ * were missing, and a client that cannot name itself would ask for nothing. Said plainly here, so the
+ * wording of that line is not taken for a measurement.
+ *
+ * NOT FROM THE CONSTRUCTOR. A library dyld inserts is initialized before the frameworks only the main
+ * program asks for, and this one links CoreFoundation, not Foundation: in appstored -- which gets this
+ * library and the Mescal one and nothing else -- NSBundle here ran before Foundation had initialized, and
+ * +[NSString stringWithFormat:] inside it met an NSString that was still the abstract class, so Foundation
+ * called __NSRequestConcreteObject to complain, which formats its complaint with stringWithFormat, which
+ * met the same abstract class... appstored overflowed its stack in that loop and launchd restarted it into
+ * the same crash, 43 times in one run (logs/172213-run.log), so nothing served the App Store's requests.
+ * The App Store itself hid this: every application also gets libhakios-statusbar.dylib, which does link
+ * Foundation and therefore initializes it first. Said from the reporting thread instead, long after
+ * everything is up. (The library now links Foundation as well, which fixes the order; this stays, because
+ * a constructor is the wrong place to ask a framework anything.)
+ */
+static void
+tell_who_i_am(void)
+{
+	id bundle = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSBundle"), sel_registerName("mainBundle"));
+	id ident = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundleIdentifier")) : NULL;
+	id path = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundlePath")) : NULL;
+	char one[120], two[200];
+
+	say("hakios: store: this process calls itself %s at %s\n",
+	    ident != NULL ? text_of(ident, one, sizeof(one)) : "(nil)",
+	    path != NULL ? text_of(path, two, sizeof(two)) : "(nil)");
+}
+
 static void *
 late_report(__unused void *ignored)
 {
+	sleep(5);
+	tell_who_i_am();
 	/*
 	 * Every fifteen seconds, to the end of the run. The loader keeps the first 256 KB and the last
 	 * 1 MB of a run's log and drops everything between, and with iOS and REST=1 the middle is most
@@ -1806,6 +1874,231 @@ new_xpc_mach_service(const char *name, void *queue, unsigned long flags)
  */
 
 /*
+ * THE XPC SESSIONS JetEngine OPENS. The App Store's page is drawn by JetEngine (JetUI.JULoadingViewController
+ * is the "Loading..." the screen stays on), and JetEngine talks to its daemon -- jetpackassetd, which keeps
+ * the JetPack bundles the pages are made of -- over an XPC *session*, the Swift one, not NSXPCConnection:
+ * JetEngine/DaemonSession.swift. Its line "[Daemon] XPC session (sendSync) cancelled: { Error
+ * domain=XPC.XPCRichError, code=1 }" is in every run, a second after the app opens, and after it the app
+ * asks the network for nothing at all. A session is a different pair of functions from a connection, which
+ * is why naming connections never showed it, so the three that matter are named here with the rich error
+ * each one gives back. Safe to leave on: say() writes to /dev/console with write(2) and sends no message.
+ */
+typedef char *(*rich_desc_fn)(void *);
+static rich_desc_fn rich_desc;
+static rich_desc_fn xpc_desc;           /* xpc_copy_description: what was asked and what came back */
+static void *(*old_session_create)(const char *, void *, unsigned long long, void **);
+static bool (*old_session_activate)(void *, void **);
+static void *(*old_session_send_sync)(void *, void *, void **);
+
+static void
+say_rich(const char *what, const char *name, void *error)
+{
+	char *why = error != NULL && rich_desc != NULL ? rich_desc(error) : NULL;
+
+	say("hakios: store: xpc session %s%s%s: %s\n", what, name != NULL ? " " : "", name != NULL ? name : "",
+	    why != NULL ? why : (error != NULL ? "an error with no description" : "ok"));
+	free(why);
+}
+
+static void *
+new_session_create(const char *name, void *queue, unsigned long long flags, void **error)
+{
+	void *session = old_session_create(name, queue, flags, error);
+
+	say_rich(session != NULL ? "made for" : "NOT made for", name, error != NULL ? *error : NULL);
+	return session;
+}
+
+static bool
+new_session_activate(void *session, void **error)
+{
+	bool ok = old_session_activate(session, error);
+
+	say_rich(ok ? "activated" : "NOT activated", NULL, error != NULL ? *error : NULL);
+	return ok;
+}
+
+/*
+ * The message itself, not only whether it was answered. The session to jetpackassetd is made, activated
+ * and answered -- and the App Store still asks the network for nothing, so what matters is what JetEngine
+ * asked its daemon for and what the daemon said back. xpc_copy_description prints a whole dictionary;
+ * only the first part of each is kept, which is where the keys are.
+ */
+static void
+say_xpc(const char *what, void *object)
+{
+	char *text = object != NULL && xpc_desc != NULL ? xpc_desc(object) : NULL;
+
+	say("hakios: store: xpc %s %.700s\n", what, text != NULL ? text : "(nothing)");
+	free(text);
+}
+
+static void *
+new_session_send_sync(void *session, void *message, void **error)
+{
+	void *reply;
+
+	say_xpc("asks:", message);
+	reply = old_session_send_sync(session, message, error);
+	say_rich(reply != NULL ? "answered a sync message" : "gave NO answer to a sync message", NULL,
+	    error != NULL ? *error : NULL);
+	say_xpc("answer:", reply);
+	return reply;
+}
+
+/* xpc_session_send_message takes the session and the message and RETURNS the rich error (nil when it went). */
+static void *(*old_session_send)(void *, void *);
+
+static void *
+new_session_send(void *session, void *message)
+{
+	void *error;
+
+	say_xpc("sends one way:", message);
+	error = old_session_send(session, message);
+	say_rich(error == NULL ? "sent one way" : "FAILED to send one way", NULL, error);
+	return error;
+}
+
+/*
+ * EVERY os_log MESSAGE, WHATEVER ITS LEVEL (exec_env=NAME:OS_ACTIVITY_DT_MODE=1;HAKIOS_ALL_LOGS=1).
+ * Apple's own lines are the best account of what the store is waiting for, but most of them are debug or
+ * info, which os_log drops before formatting. The documented switch for that is a plist under
+ * /Library/Preferences/Logging/Subsystems (root26-ios.sh LOGGING_DEBUG=...), and on this port it changes
+ * nothing: the App Store said the same twenty-four lines with com.apple.AppleMediaServices, com.apple.JetEngine
+ * and four more set to Debug as without them, so whatever reads those files here does not reach the process.
+ * This asks the question in the process instead: os_log_type_enabled is what every os_log(_impl) call asks
+ * before it formats anything, so answering yes turns all of them on. Nothing else is changed -- where the
+ * line goes is still OS_ACTIVITY_DT_MODE's business (standard error, which libhakios-console.dylib puts on
+ * the console). Off unless asked for: the answer is a flood.
+ */
+static bool
+all_logs_enabled(__unused void *log, __unused unsigned char type)
+{
+	return true;
+}
+
+/*
+ * ... and the message itself, said by us rather than by os_log. Answering "enabled" turned nothing on in
+ * the log of run 193452 -- twelve lines from the App Store, half of what the same run says without it --
+ * so where the formatted line goes in OS_ACTIVITY_DT_MODE is not a question this process answers. What
+ * every enabled message does pass through is _os_log_impl, and its fourth argument is the format string,
+ * which names the message even with its arguments left out ("Skipping GUID parameter addition as bag was
+ * not provided" is a format string with no arguments at all). So both are hooked: everything is enabled,
+ * and every message that then reaches _os_log_impl has its format put on the console by us.
+ */
+static void (*old_log_impl)(void *, void *, unsigned char, const char *, unsigned char *, unsigned int);
+
+/*
+ * NOT USED, and kept only so the next person does not try it again: hooking _os_log_impl kills the App
+ * Store. With every message said on the console the app passed no launch milestone and ended by signal 9
+ * (run 194658); with only the messages whose format holds one of the words below -- a handful of lines --
+ * it died the same way, a second after our constructor and before the next line of ours (run 195845), so
+ * what kills it is the hook on that function, not the writing. A function this far down (every framework
+ * in the process logs through it, and so does whatever ElleKit's own hooking does) is not one to replace.
+ */
+static const char *const log_words[] = { "et", "ack", "age", "oad", "ag", "torefront", "aemon", "oken",
+	"atalog", "ccount", "etch", "rror", "ail" };
+
+static void
+new_log_impl(void *dso, void *log, unsigned char type, const char *format, unsigned char *buffer,
+    unsigned int size)
+{
+	static unsigned said;
+
+	if (format != NULL && said < 4000) {
+		for (unsigned i = 0; i < sizeof(log_words) / sizeof(log_words[0]); i++) {
+			if (strstr(format, log_words[i]) != NULL) {
+				said++;
+				say("hakios: oslog %u: %.200s\n", (unsigned)type, format);
+				break;
+			}
+		}
+	}
+	old_log_impl(dso, log, type, format, buffer, size);
+}
+
+static void
+hook_all_logs(MSHookFunction_t hook)
+{
+	const char *wanted = getenv("HAKIOS_ALL_LOGS");
+	static bool (*old_type_enabled)(void *, unsigned char);
+	void *target = dlsym(RTLD_DEFAULT, "os_log_type_enabled");
+	void *impl = dlsym(RTLD_DEFAULT, "_os_log_impl");
+
+	if (wanted == NULL || *wanted == '0' || hook == NULL || target == NULL) {
+		return;
+	}
+	(void)impl, (void)new_log_impl, (void)old_log_impl, (void)log_words;
+	hook(target, (void *)all_logs_enabled, (void **)&old_type_enabled);
+	say("hakios: store: every os_log level is answered enabled\n");
+}
+
+/*
+ * ... and the asynchronous one, which is the one that matters. A JetPack is asked for with a reply handler,
+ * not synchronously: with only the sync and one-way sends named, the App Store looked as though it said
+ * nothing to its daemon after "initialize" -- a silence that was ours, not the app's.
+ */
+static void (*old_session_send_async)(void *, void *, void *);
+
+static void
+new_session_send_async(void *session, void *message, void *handler)
+{
+	/*
+	 * The message only. Unlike the one-way send, this one does not hand back a rich error: taking what
+	 * it leaves in x0 for one and asking it to describe itself killed the App Store at the first
+	 * message (run 201010, a fault in xpc_rich_error_copy_description).
+	 */
+	say_xpc("asks with a reply handler:", message);
+	old_session_send_async(session, message, handler);
+}
+
+static void
+hook_xpc_sessions(void)
+{
+	const char *wanted = getenv("HAKIOS_XPC_SESSIONS");
+	void *substrate;
+	MSHookFunction_t hook;
+	void *create, *activate, *send;
+
+	if (wanted != NULL && *wanted == '0') {
+		return;
+	}
+	substrate = dlopen("/var/jb/usr/lib/libsubstrate.dylib", RTLD_NOW);
+	if (substrate == NULL) {
+		substrate = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+	}
+	hook = substrate != NULL ? (MSHookFunction_t)dlsym(substrate, "MSHookFunction") : NULL;
+	create = dlsym(RTLD_DEFAULT, "xpc_session_create_mach_service");
+	activate = dlsym(RTLD_DEFAULT, "xpc_session_activate");
+	send = dlsym(RTLD_DEFAULT, "xpc_session_send_message_with_reply_sync");
+	rich_desc = (rich_desc_fn)dlsym(RTLD_DEFAULT, "xpc_rich_error_copy_description");
+	xpc_desc = (rich_desc_fn)dlsym(RTLD_DEFAULT, "xpc_copy_description");
+	{
+		void *one_way = dlsym(RTLD_DEFAULT, "xpc_session_send_message");
+		void *with_reply = dlsym(RTLD_DEFAULT, "xpc_session_send_message_with_reply_async");
+
+		if (hook != NULL && one_way != NULL) {
+			hook(one_way, (void *)new_session_send, (void **)&old_session_send);
+		}
+		if (hook != NULL && with_reply != NULL) {
+			hook(with_reply, (void *)new_session_send_async, (void **)&old_session_send_async);
+		}
+	}
+	if (hook == NULL || create == NULL || activate == NULL || send == NULL) {
+		say("hakios: store: xpc sessions are not named (substrate %s, create %s, activate %s, send %s)\n",
+		    hook != NULL ? "yes" : "no", create != NULL ? "yes" : "no", activate != NULL ? "yes" : "no",
+		    send != NULL ? "yes" : "no");
+		return;
+	}
+	hook_all_logs(hook);
+	hook(create, (void *)new_session_create, (void **)&old_session_create);
+	hook(activate, (void *)new_session_activate, (void **)&old_session_activate);
+	hook(send, (void *)new_session_send_sync, (void **)&old_session_send_sync);
+	say("hakios: store: xpc sessions will be named\n");
+}
+
+/*
  * Off unless asked for (exec_env=NAME:HAKIOS_NAME_SERVICES=1). Naming services means saying a line from
  * inside the function that opens a connection, and where a process's os_log goes to logd over XPC rather
  * than to standard error, logging opens connections: the line about a connection opens a connection,
@@ -1985,6 +2278,47 @@ new_add_guid(id self, SEL cmd, void *request, void *bag, BOOL preserve)
 	say("hakios: store: a request is being built: %.200s (bag %s)\n", text, bag != NULL ? "given" : "NOT given");
 	keep_bag((id)bag, "the GUID step");
 	old_add_guid(self, cmd, request, bag, preserve);
+}
+
+/*
+ * ... and the two that take a URL to match against as well, which are the ones AMS really uses here:
+ * "Skipping GUID parameter addition as bag was not provided" is said over and over in this port's App
+ * Store while addGUIDParameterToRequest:bag:preservingQueryEncoding: is never entered, so the line comes
+ * from these. They name the request the store is building when it has no bag -- the request that never
+ * goes out.
+ */
+static void (*old_add_guid_matching)(id, SEL, void *, void *, void *, BOOL);
+static void (*old_add_guid_header_matching)(id, SEL, void *, void *, void *);
+
+static void
+say_request(const char *what, void *request, void *url_matched, void *bag)
+{
+	id url = request != NULL ? ((id (*)(id, SEL))objc_msgSend)((id)request, sel_registerName("URL")) : NULL;
+	char text[300] = "(no URL)", matched[200] = "(none)";
+
+	if (url != NULL) {
+		text_of(url, text, sizeof(text));
+	}
+	if (url_matched != NULL) {
+		text_of((id)url_matched, matched, sizeof(matched));
+	}
+	say("hakios: store: %s %.200s (matching %.120s, bag %s)\n", what, text, matched,
+	    bag != NULL ? "given" : "NOT given");
+	keep_bag((id)bag, what);
+}
+
+static void
+new_add_guid_matching(id self, SEL cmd, void *request, void *url_matched, void *bag, BOOL preserve)
+{
+	say_request("a request wants a GUID parameter:", request, url_matched, bag);
+	old_add_guid_matching(self, cmd, request, url_matched, bag, preserve);
+}
+
+static void
+new_add_guid_header_matching(id self, SEL cmd, void *request, void *url_matched, void *bag)
+{
+	say_request("a request wants a GUID header:", request, url_matched, bag);
+	old_add_guid_header_matching(self, cmd, request, url_matched, bag);
 }
 
 static void
@@ -2561,6 +2895,8 @@ static struct replacement replacements[] = {
 	{ "ISAMSBagShim", "_bagValueForKey:valueType:", false, (IMP)new_bagValue_store, (IMP *)&old_bagValue_store, false },
 	/* the door every consumer of a storefront goes through */
 	{ "ACAccount", "ams_storefront", false, (IMP)new_ams_storefront, (IMP *)&old_ams_storefront, false },
+	{ "ACAccount", "ams_storefrontForMediaType:", false, (IMP)new_ams_storefront_media,
+	  (IMP *)&old_ams_storefront_media, false },
 	{ "ACAccount", "ams_copyStorefrontFromAccount:", false, (IMP)new_copy_storefront, (IMP *)&old_copy_storefront, false },
 	/* and the ones particular callers knock at instead */
 	{ "AMSBagNetworkDataSource", "cachedStorefront", false, (IMP)new_cached_storefront, (IMP *)&old_cached_storefront, false },
@@ -2613,6 +2949,10 @@ static struct replacement replacements[] = {
 	  (IMP)new_add_guid, (IMP *)&old_add_guid, false },
 	{ "AMSURLRequestDecoration", "_addGUIDParameterToRequest:fromPromise:shouldPreserveEncoding:", true,
 	  (IMP)new_add_guid_promise, (IMP *)&old_add_guid_promise, false },
+	{ "AMSURLRequestDecoration", "addGUIDParameterToRequest:matchingURL:bag:preservingQueryEncoding:", true,
+	  (IMP)new_add_guid_matching, (IMP *)&old_add_guid_matching, false },
+	{ "AMSURLRequestDecoration", "addGUIDHeaderToRequest:matchingURL:bag:", true,
+	  (IMP)new_add_guid_header_matching, (IMP *)&old_add_guid_header_matching, false },
 	{ "SSURLConnectionRequest", "shouldMescalSign", false, (IMP)new_should_mescal,
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
@@ -2759,7 +3099,14 @@ hakios_store_init(void)
 		}
 		return;
 	}
-	if (name == NULL || (strcmp(name, "appstored") != 0 && strcmp(name, "AppStore") != 0)) {
+	/*
+	 * jetpackassetd as well: the App Store's pages are JetPacks, and JetEngine asks that daemon for them
+	 * (it answers the app's "prewarm" with "success" and takes its "initialize"), but the daemon itself
+	 * fetches over the network with a bag of its own -- so it needs the same storefront answered, and its
+	 * requests and errors are worth the same table as the store's.
+	 */
+	if (name == NULL || (strcmp(name, "appstored") != 0 && strcmp(name, "AppStore") != 0
+	    && strcmp(name, "jetpackassetd") != 0)) {
 		return;
 	}
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
@@ -2768,24 +3115,9 @@ hakios_store_init(void)
 	fairplay_device_type = CFStringCreateWithCString(NULL, FAIRPLAY_DEVICE_TYPE, kCFStringEncodingUTF8);
 	who = name;
 	ssv_anisette = (ssv_anisette_fn)dlsym(RTLD_DEFAULT, "SSVAnisetteAddHeadersToURLRequest");
-	{
-		/*
-		 * What this process calls itself. AdPlatforms says "Client bundle id com.apple.AppStore
-		 * (executable: ...) is nil, not allow listed or not entitled to use signing", which reads as
-		 * though the bundle identifier were missing, and a client that cannot name itself would ask
-		 * for nothing. Said plainly here, so the wording of that line is not taken for a measurement.
-		 */
-		id bundle = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSBundle"), sel_registerName("mainBundle"));
-		id ident = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundleIdentifier")) : NULL;
-		id path = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundlePath")) : NULL;
-		char one[120], two[200];
-
-		say("hakios: store: this process calls itself %s at %s\n",
-		    ident != NULL ? text_of(ident, one, sizeof(one)) : "(nil)",
-		    path != NULL ? text_of(path, two, sizeof(two)) : "(nil)");
-	}
 	say("hakios: store(%s): ours is in, storefront to answer with is " STOREFRONT ", anisette primitive %s\n",
 	    name, ssv_anisette != NULL ? "found" : "NOT found");
+	hook_xpc_sessions();
 	{
 		pthread_t thread;
 

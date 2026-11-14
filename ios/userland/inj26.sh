@@ -46,7 +46,7 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios-mescal.dylib -framework Fo
 # (ios/userland/inject_kc.c, 16.5's: it needs the prefix's MSHookFunction; root26-ios.sh SIGNIN=1)
 $DYN -O2 -fblocks -dynamiclib -install_name /redwood/lib/libhakios-kc.dylib -framework CoreFoundation \
 	-framework Security -lobjc -o "$O/libhakios-kc.dylib" "$RN/userland/inject_kc.c"
-$DYN -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -framework Foundation -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"

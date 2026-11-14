@@ -16,6 +16,7 @@
  *                         title if there is one, and the answer's own "x-" headers -- where Apple's
  *                         services say what they decided (X-Set-Apple-Store-Front; rc.jobs.store)
  *   reach NAME            what SCNetworkReachability says: the question applications ask first
+ *   nwpath SECONDS        what Network.framework says about the path, and again on every change
  *   wait SECONDS
  *   wifi                  what the job com.hakios.wifi runs in every image: if the kernel was
  *                         started with wifi=1, wait for the radio's interface (en0) to appear,
@@ -55,6 +56,7 @@
  */
 #import <Foundation/Foundation.h>
 #include <SystemConfiguration/SCNetworkReachability.h>
+#include <Network/Network.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
@@ -630,6 +632,38 @@ announce(const char *interface, double period)
 	}
 }
 
+/*
+ * nwpath SECONDS: what Network.framework says about the path, which is a different question from
+ * SCNetworkReachability's and is the one some frameworks ask before they fetch anything. The App Store's
+ * page engine watches it (JetEngine.NWPathNetworkInquiry.didChangeNotification is posted in the App Store
+ * on this port), and an engine that believes there is no path asks for nothing and leaves "Loading..." on
+ * the screen -- which is the screen this port shows. Said once at the start and again on every change.
+ */
+static void
+nwpath(double seconds_to_watch)
+{
+	nw_path_monitor_t monitor = nw_path_monitor_create();
+	static const char *const status_names[] = { "invalid", "satisfied", "unsatisfied", "satisfiable" };
+
+	nw_path_monitor_set_queue(monitor, dispatch_get_main_queue());
+	nw_path_monitor_set_update_handler(monitor, ^(nw_path_t path) {
+		nw_path_status_t status = nw_path_get_status(path);
+		const char *name = (unsigned)status < 4 ? status_names[(unsigned)status] : "?";
+
+		printf("net_test: nwpath %s (%d): wifi %d, wired %d, cellular %d, loopback %d; "
+		    "IPv4 %d, IPv6 %d, DNS %d; expensive %d, constrained %d\n", name, (int)status,
+		    nw_path_uses_interface_type(path, nw_interface_type_wifi),
+		    nw_path_uses_interface_type(path, nw_interface_type_wired),
+		    nw_path_uses_interface_type(path, nw_interface_type_cellular),
+		    nw_path_uses_interface_type(path, nw_interface_type_loopback),
+		    nw_path_has_ipv4(path), nw_path_has_ipv6(path), nw_path_has_dns(path),
+		    nw_path_is_expensive(path), nw_path_is_constrained(path));
+	});
+	nw_path_monitor_start(monitor);
+	[[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:seconds_to_watch]];
+	nw_path_monitor_cancel(monitor);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -663,6 +697,8 @@ main(int argc, char **argv)
 				fetch(argv[++i]);
 			} else if (strcmp(step, "reach") == 0 && i + 1 < argc) {
 				reach(argv[++i]);
+			} else if (strcmp(step, "nwpath") == 0 && i + 1 < argc) {
+				nwpath(atof(argv[++i]));
 			} else if (strcmp(step, "wait") == 0 && i + 1 < argc) {
 				usleep((useconds_t)(atof(argv[++i]) * 1e6));
 			} else if (strcmp(step, "wifi") == 0) {

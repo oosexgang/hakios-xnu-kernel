@@ -41,7 +41,7 @@ for prog in init stage0 child var_store; do
 	$CC -I"$US/libmini" $LD -o "$OBJ/$prog" "$US/src/$prog.c" "$OBJ/mini.o" "$OBJ/start.o"
 done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
-$DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o "$OBJ/net_test" "$US/src/net_test.m"
+$DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -framework Network -o "$OBJ/net_test" "$US/src/net_test.m"
 "$PACSTRIP" macho "$OBJ/net_test" "$OBJ/net_test.strip" > /dev/null && mv "$OBJ/net_test.strip" "$OBJ/net_test"
 # touches, buttons and notifications for job lists (RC_JOBS=...; usage in its source): a swipe up unlocks, as a finger does
 $DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
