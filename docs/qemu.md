@@ -73,6 +73,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `umask [MODE]`, `chown UID:GID PATH...` | What a new file is made without, and whose a file is. |
 | `chflags FLAGS PATH...` | A file's flags (chflags, in hexadecimal; `stat` says them): UF_IMMUTABLE (2) keeps it from being written, renamed or removed, UF_APPEND (4) lets it only be added to. |
 | `access PATH...` | Whether this process may read, write and run each (access(), by the real user and group: `as` shows another's). |
+| `cp SOURCE TARGET` | The file's bytes into a new file of its permissions (a program too: set-user-ID, it runs as its owner). |
 | `truncate FILE BYTES` | A file cut short, or grown: what it grew by must read as zeros, not as what the file held before it was cut. |
 | `touch FILE [SECONDS]` | A file made if it is not there and its times set (utimes), to now or to a second given; the times lstat then says. |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, owner, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
@@ -91,6 +92,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `get ADDRESS PORT [PATH]`, `udp ADDRESS PORT WORDS...` | A page asked for over HTTP (TCP's connect, as a client): its size, the time it took and its FNV-1a hash, and the page itself if it is short; a datagram sent and its answer read. 10.0.2.2 is this computer. |
 | **Processes** (`processes.c`; between them: `ipc.c`; threads: `threads.c`) | |
 | `ps` | The processes (proc_info). |
+| `id` | This process's user and group, real and effective (a set-user-ID program's effective user is its file's owner). |
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait`, `sleep SECONDS` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended; a pause. |
 | `fork [PROGRAM [ARGUMENTS]]` | A copy of this process: the child writes a value of its memory, which the parent's copy must not see; or, given a program, becomes it (execve). |
