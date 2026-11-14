@@ -47,6 +47,7 @@ three_writes(void)
 	sequencer();
 	CHECK(hakios_rpmh_send(TCS, address, data, 3) == NULL, "done");
 	CHECK(rsc.triggers == 1 && rsc.sends == 3, "one request of three: %u, %u", rsc.triggers, rsc.sends);
+	CHECK(rsc.wait_at_trigger == 0x7, "the answers of all three waited for, and of no other: %#x", rsc.wait_at_trigger);
 	for (unsigned i = 0; i < 3; i++) {
 		CHECK(rsc.sent[i].address == address[i] && rsc.sent[i].data == data[i] && rsc.sent[i].message == 0x10108,
 		    "command %u: %#x <- %u, message %#x", i, rsc.sent[i].address, rsc.sent[i].data, rsc.sent[i].message);
