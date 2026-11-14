@@ -160,6 +160,7 @@ typed=(
 	'flock /tmp/notes/private'
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
+	'cloexec /etc/motd'
 	'random'
 	'write /tmp/notes/script #!/sbin/launchd echo'
 	'chmod 755 /tmp/notes/script'
@@ -357,6 +358,9 @@ check "bytes of a file locked (fcntl F_SETLK): another process kept off them, re
 check "a file renamed onto another's name takes its place, and a directory cannot be moved into itself (EINVAL)" \
 	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/new-name' | tail -1 | grep -qx 'one' &&
 		grep -aq '^stat: /tmp/notes/old-name: error 2 (ENOENT)' '$shell' && grep -aq '^mv: .*error 22 (EINVAL)' '$shell'"
+check "descriptors marked close-on-exec (O_CLOEXEC, F_DUPFD_CLOEXEC) close as a program starts, and only they (dup2 leaves the mark behind)" \
+	bash -c "grep -aq '^cloexec: O_CLOEXEC and F_DUPFD_CLOEXEC mark a descriptor FD_CLOEXEC, dup and dup2 do not' '$shell' &&
+		grep -aq '^fds: 10 open, 11 closed, 12 open' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
