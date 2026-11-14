@@ -108,6 +108,25 @@ within(void)
 	CHECK(mdt_within(&s, 0xfff00000ull, 0x100000), "and inside a region that reaches it");
 }
 
+/* exactly at each limit: the least a header can be, the most the driver is handed, three segments and the most it
+ * takes; a segment with as much in its file as in memory, and an empty one at the memory's very end */
+static void
+boundaries(void)
+{
+	struct elf_segment s = { .type = MDT_LOAD, .paddr = 0x9f000000, .file_size = 0x2000, .memory_size = 0x2000 };
+	uint64_t size = header(3, 0);
+
+	CHECK(size == MDT_ELF_HEADER + 3 * MDT_SEGMENT && mdt_segment_count(file, size, MOST, LARGEST) == 3,
+	    "three segments and nothing more: a header of the least size");
+	header(MOST, 0);
+	CHECK(mdt_segment_count(file, LARGEST, MOST, LARGEST) == MOST, "as many segments as the driver takes, in a file as large as it is handed");
+	CHECK(mdt_segment_count(NULL, LARGEST, MOST, LARGEST) == 0, "no header, whatever its size: not one, and nothing read");
+	CHECK(mdt_within(&s, 0x9f000000, 0x100000), "as much in its file as in memory");
+	s.paddr = 0x9f100000;
+	s.file_size = s.memory_size = 0;
+	CHECK(mdt_within(&s, 0x9f000000, 0x100000), "nothing, at the memory's very end");
+}
+
 static void
 whole(void)
 {
@@ -121,7 +140,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "headers", headers }, { "segments", segments }, { "within", within }, { "whole", whole },
+		{ "headers", headers }, { "segments", segments }, { "within", within }, { "whole", whole }, { "boundaries", boundaries },
 	};
 
 	if (argc < 2) {
