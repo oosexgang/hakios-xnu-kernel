@@ -818,6 +818,39 @@ not_listed(void)
 	CHECK(model.reads == 0 && model.writes == 0, "nor at the run's end");
 }
 
+/*
+ * The edges of the file's shape: 0x50 bytes is the least, a megabyte the most; 64 entries the most; a table that
+ * ends just where the file does fits. (The table moved behind everything else, in a file of its own, to have
+ * room for 64 entries.)
+ */
+static void
+acf_edges(void)
+{
+	static uint8_t big[0x1c00];
+
+	file();
+	amplifiers[0].device = 0;
+	amplifiers[1].device = 1;
+	(void)acf_profiles(acf, 0x4f);
+	CHECK(logged("the configuration file is 79 bytes: not one of Awinic's"), "79 bytes refused: %s", log_text);
+	(void)acf_profiles(acf, 0x50);
+	(void)acf_profiles(acf, 0x100000);
+	CHECK(!logged("is 80 bytes") && !logged("is 1048576 bytes"), "80 bytes and a megabyte are not refused for their size");
+	(void)acf_profiles(acf, 0x100001);
+	CHECK(logged("is 1048577 bytes"), "a byte more than a megabyte is");
+
+	memcpy(big, acf, sizeof(acf));
+	memcpy(big + 0x1000, acf + 0x50, 5 * 0x30);
+	put32(big + 0x3c, 0x1000);
+	put32(big + 0x38, 64);
+	put32(big + 0x34, 64 * 0x30);
+	CHECK(acf_profiles(big, sizeof(big)), "64 entries, the table ending where the file does: taken: %s", log_text);
+	put32(big + 0x38, 65);
+	put32(big + 0x34, 65 * 0x30);
+	(void)acf_profiles(big, sizeof(big) + 0x30);
+	CHECK(logged("the configuration file's table (65 entries"), "65 are not: %s", log_text);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -830,6 +863,7 @@ main(int argc, char **argv)
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
 		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "run_ends", run_ends }, { "not_listed", not_listed },
+		{ "acf_edges", acf_edges },
 	};
 
 	if (argc < 2) {
