@@ -170,6 +170,7 @@ struct replacement {
 static struct replacement replacements[];
 static size_t replacement_count(void);
 static void image_added(const struct mach_header *header, intptr_t image_slide);
+static const char *knob(const char *name);     /* a switch from /var/hakios-store.conf; see knob() */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -796,6 +797,50 @@ new_updateStorefront(id self, SEL cmd, void *account)
 	 * at every launch (logs/120122-run.log.live in hakios-sm7325, named by ios/userland/uncaught.c). nil is
 	 * safe to message whatever the real return type is, which is this file's own rule for the answers beside it.
 	 */
+	/*
+	 * ... unless the phone asks for the account instead (HAKIOS_UPDATE_RETURNS_ACCOUNT=1). With the
+	 * FairPlay call cut, AMS gets past the device type and reaches a step it never reached before:
+	 * "Failed to save account with updated storefront -- No account was provided", twelve times in a
+	 * run that had none of it before. nil is what caused that, so the other answer is worth a run: a
+	 * finished promise holding the local account, which is what its sibling
+	 * (_ams_localiTunesAccountForAccountMediaType:updateStorefront:) already answers with.
+	 */
+	{
+		/*
+		 * ... or let AMS do it (HAKIOS_REAL_UPDATE_STOREFRONT=1). The nil here was put in to stop an
+		 * unrecognized selector at launch; with FairPlay cut the path has changed under it, so what
+		 * the original does now is a question the phone can answer in a minute.
+		 */
+		const char *real = knob("HAKIOS_REAL_UPDATE_STOREFRONT");
+
+		if (real != NULL && *real != '0' && old_updateStorefront != NULL) {
+			static bool said;
+
+			if (!said) {
+				said = true;
+				say("hakios: store: _updateStorefrontInLocalAccount: left to AMS itself\n");
+			}
+			return old_updateStorefront(self, cmd, account);
+		}
+	}
+	{
+		const char *account_back = knob("HAKIOS_UPDATE_RETURNS_ACCOUNT");
+
+		if (account_back != NULL && *account_back != '0') {
+			Class promise_class = objc_getClass("AMSPromise");
+			id local = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
+			id promise = promise_class != Nil ? ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
+			    sel_registerName("promiseWithResult:"), local) : NULL;
+			static bool said;
+
+			if (!said) {
+				said = true;
+				say("hakios: store: INJECTED _updateStorefrontInLocalAccount: answered a finished "
+				    "promise holding %s\n", local != NULL ? "the local account" : "nothing");
+			}
+			return promise;
+		}
+	}
 	say("hakios: store: INJECTED _updateStorefrontInLocalAccount: answered nil at once, no update\n");
 	return NULL;
 }
@@ -998,6 +1043,29 @@ static id
 new_errorWith(id self, SEL cmd, void *domain, long code, void *info)
 {
 	note_error((id)domain, code);
+	/*
+	 * ... and WHO made it. An error says what went wrong and never where: "Failed to save account with
+	 * updated storefront -- No account was provided" is said sixteen times in a run and every method of
+	 * ours that could be its source is never entered, so the maker is named here by its return address
+	 * (unslid, which is what ipsw dyld a2s takes).
+	 */
+	{
+		/* ... and four frames of it: the first is only AMS's error factory, never the caller. */
+		unsigned long *frame = (unsigned long *)__builtin_frame_address(0);
+		char line[160];
+		size_t used = 0;
+
+		for (int i = 0; i < 5 && frame != NULL && ((unsigned long)frame & 7) == 0; i++) {
+			int w = snprintf(line + used, sizeof(line) - used, " %lx", frame[1] - slide);
+
+			if (w < 0 || (size_t)w >= sizeof(line) - used) {
+				break;
+			}
+			used += (size_t)w;
+			frame = (unsigned long *)frame[0];
+		}
+		say("hakios: store: an error is made from%s\n", used != 0 ? line : " (nowhere)");
+	}
 	log_live_error((id)domain, code, (id)info);
 	return old_errorWith(self, cmd, domain, code, info);
 }
@@ -1838,11 +1906,55 @@ static id (*old_active_account_type)(id, SEL, void *);
  */
 static IMP old_restricted_region;
 
+/*
+ * A SWITCH THE PHONE CAN BE GIVEN WITHOUT BUILDING AN IMAGE. Every switch here used to come from the boot
+ * line (exec_env=NAME:VAR=1), which means a new image and a new boot for each one: eight minutes a question,
+ * nearly all of it waiting. /var/hakios-store.conf is read instead, once per process, as lines NAME=VALUE
+ * (# starts a comment); a switch that is not in the file falls back to the environment, so the boot line
+ * still works. /var is kept across runs (var_store=1) and is writable over SSH, so a question now costs
+ * writing a line, killing the application and opening it again -- seconds, inside one boot.
+ */
+static const char *
+knob(const char *name)
+{
+	static char text[2048];
+	static size_t length;
+	static bool read_already;
+	size_t want = strlen(name);
+
+	if (!read_already) {
+		int fd = open("/var/hakios-store.conf", O_RDONLY);
+		ssize_t got = fd >= 0 ? read(fd, text, sizeof(text) - 1) : -1;
+
+		read_already = true;
+		if (fd >= 0) {
+			close(fd);
+		}
+		length = got > 0 ? (size_t)got : 0;
+		text[length] = 0;
+		for (size_t i = 0; i < length; i++) {
+			if (text[i] == '\n' || text[i] == '\r' || text[i] == '#') {
+				text[i] = 0;
+			}
+		}
+	}
+	for (size_t i = 0; i < length;) {
+		const char *line = text + i;
+		size_t n = strlen(line);
+
+		if (n > want && strncmp(line, name, want) == 0 && line[want] == '=') {
+			return line + want + 1;
+		}
+		i += n + 1;
+	}
+	return getenv(name);
+}
+
 static long long
 no_restricted_region(id self, SEL cmd, void *bag)
 {
 	static int told;
-	const char *keep = getenv("HAKIOS_KEEP_REGION_WAIT");
+	const char *keep = knob("HAKIOS_KEEP_REGION_WAIT");
 
 	if (keep != NULL && *keep != '0') {
 		return ((long long (*)(id, SEL, void *))old_restricted_region)(self, cmd, bag);
@@ -2091,7 +2203,7 @@ new_log_impl(void *dso, void *log, unsigned char type, const char *format, unsig
 static void
 hook_all_logs(MSHookFunction_t hook)
 {
-	const char *wanted = getenv("HAKIOS_ALL_LOGS");
+	const char *wanted = knob("HAKIOS_ALL_LOGS");
 	static bool (*old_type_enabled)(void *, unsigned char);
 	void *target = dlsym(RTLD_DEFAULT, "os_log_type_enabled");
 	void *impl = dlsym(RTLD_DEFAULT, "_os_log_impl");
@@ -2159,10 +2271,100 @@ new_session_from_connection(void *connection, void *a, void *b, void *c)
 	return session;
 }
 
+/*
+ * FAIRPLAY, ANSWERED BEFORE ANYTHING CAN BLOCK IN IT.
+ *
+ * -[AMSUserAgent _sharedComponentFairPlayDeviceType] is already answered by this library, and on 16.5
+ * that was enough. On iOS 27 it is not: a thread of the App Store sits in that method's dispatch_once
+ * block -- _AMSFairPlayGetDeviceType -> the obfuscated FairPlay code -> mach_msg, with no reply ever --
+ * in every report of every run, including the runs where our answer was installed and used. The two are
+ * not a contradiction: the first call happens before a method of ours exists, and that one thread stays
+ * in there for the life of the process while everything the store wants to ask queues behind it. (16.5
+ * found the same wall from the other side: fairplayd.H2 starts, decides there is nothing here and leaves
+ * at once, 34 times in six minutes -- userland/src/inject_fairplay.c, which is worth reading before
+ * anyone writes a kernel driver for this. It never opens an IOKit user client at all.)
+ *
+ * So the C function is replaced as well, from the constructor, before a line is said or a method is
+ * looked at. It answers "no" the way the real one does when FairPlay has nothing for it -- a non-zero
+ * status, with its out-parameters untouched -- and never asks the daemon. HAKIOS_NO_FAIRPLAY_HOOK=1 in
+ * /var/hakios-store.conf puts it back, to see the stall again without building anything.
+ */
+static int (*old_fp_get_device_type)(void *);
+
+static int
+new_fp_get_device_type(void *out)
+{
+	static bool said;
+
+	(void)out;
+	if (!said) {
+		said = true;
+		say("hakios: store: AMSFairPlayGetDeviceType answered an error, without asking FairPlay\n");
+	}
+	return 1;
+}
+
+static MSHookFunction_t
+substrate_hook(void)
+{
+	void *substrate = dlopen("/var/jb/usr/lib/libsubstrate.dylib", RTLD_NOW);
+
+	if (substrate == NULL) {
+		substrate = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+	}
+	return substrate != NULL ? (MSHookFunction_t)dlsym(substrate, "MSHookFunction") : NULL;
+}
+
+static void
+hook_fairplay(void)
+{
+	const char *off = knob("HAKIOS_NO_FAIRPLAY_HOOK");
+	MSHookFunction_t hook = substrate_hook();
+	/*
+	 * dlsym never finds it: _AMSFairPlayGetDeviceType is in AppleMediaServices' local symbols, not its
+	 * exports (the name is in the cache's symbol table, which is why a2s prints it). So it is taken at
+	 * its address, 0x18c912aa4 unslid on 24B119, the same way inj26.sh takes SpringBoard's methods --
+	 * and only when the shared cache is where this build's is, which is what the slide is measured from.
+	 */
+	void *target = dlsym(RTLD_DEFAULT, "AMSFairPlayGetDeviceType");
+
+	if (target == NULL && slide != 0 && objc_getClass("AMSUserAgent") != Nil) {
+		target = (void *)(0x18c912aa4UL + slide);
+	}
+
+	static bool said, done;
+
+	if (done) {
+		return;
+	}
+	if ((off != NULL && *off != '0') || hook == NULL || target == NULL) {
+		/*
+		 * AppleMediaServices is not in the process when a library dyld inserted is initialized, so
+		 * this is tried again from image_added as each image arrives -- before that image's own
+		 * initializers run, which is early enough that nothing of AMS has called FairPlay yet.
+		 */
+		if (!said) {
+			said = true;
+			say("hakios: store: FairPlay's own function is NOT replaced yet (%s)\n",
+			    off != NULL && *off != '0' ? "asked not to" : hook == NULL ? "no substrate"
+			    : "AppleMediaServices is not loaded yet; will try again as images arrive");
+		}
+		if (off != NULL && *off != '0') {
+			done = true;
+		}
+		return;
+	}
+	done = true;
+	hook(target, (void *)new_fp_get_device_type, (void **)&old_fp_get_device_type);
+	say("hakios: store: AMSFairPlayGetDeviceType (%p) is replaced before anything can block in it\n",
+	    target);
+	(void)0;
+}
+
 static void
 hook_xpc_sessions(void)
 {
-	const char *wanted = getenv("HAKIOS_XPC_SESSIONS");
+	const char *wanted = knob("HAKIOS_XPC_SESSIONS");
 	void *substrate;
 	MSHookFunction_t hook;
 	void *create, *activate, *send;
@@ -2227,7 +2429,7 @@ hook_xpc_sessions(void)
 static void
 hook_mach_services(void)
 {
-	const char *wanted = getenv("HAKIOS_NAME_SERVICES");
+	const char *wanted = knob("HAKIOS_NAME_SERVICES");
 
 	if (wanted == NULL || *wanted == '0') {
 		return;
@@ -2300,11 +2502,132 @@ who_i_am(void)
 	return name != NULL ? name : "?";
 }
 
+/*
+ * AN ACCOUNT WHERE THE PHONE HAS NONE (HAKIOS_FAKE_ACCOUNT=1).
+ *
+ * -[ACAccountStore ams_localiTunesAccount] answers nil here, and AMS says so sixteen times a run --
+ * "Local account not found", through XPC, which is accountsd's answer and not ours. iOS makes that
+ * record itself on a device that has been set up; this one has never been, so nothing ever made it.
+ * Everything the store does afterwards is about an account: the storefront is saved into one, the bag
+ * is fetched for one, and AppStoreKit's own launch (its BootstrapPhase goes initialLoad -> onboarding
+ * -> presentingContent) does not leave the first phase. So one is made here, of the iTunes Store type
+ * and nothing else: no DSID, no credentials, not saved to the database. Our storefront answers already
+ * reply for any account, so an account that exists is an account with a storefront.
+ */
+static id made_account;         /* the one we made, recognised again by its address */
+
+static id
+fabricated_account(id store)
+{
+	id *const madep = &made_account;
+#define made (*madep)
+	Class account_class = objc_getClass("ACAccount");
+	id type;
+
+	if (made != NULL || account_class == Nil) {
+		return made;
+	}
+	type = ((id (*)(id, SEL, id))objc_msgSend)(store, sel_registerName("accountTypeWithAccountTypeIdentifier:"),
+	    (id)CFSTR("com.apple.account.iTunes"));
+	{
+		/* What the database actually gives this process, which is how to tell a row accountsd cannot
+		 * read from a row it reads and does not like. */
+		id all = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("accounts"));
+		long n = all != NULL ? ((long (*)(id, SEL))objc_msgSend)(all, sel_registerName("count")) : -1;
+		char text[200] = "?";
+
+		say("hakios: store: this store has %ld account(s); the iTunes type is %s; they are %.150s\n",
+		    n, type != NULL ? "there" : "MISSING", all != NULL ? text_of(all, text, sizeof(text)) : "(nil)");
+	}
+	if (type == NULL) {
+		say("hakios: store: no iTunes account type in this process: no account made\n");
+		return NULL;
+	}
+	made = ((id (*)(id, SEL))objc_msgSend)((id)account_class, sel_registerName("alloc"));
+	made = made != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(made, sel_registerName("initWithAccountType:"),
+	    type) : NULL;
+	say("hakios: store: INJECTED a local iTunes account (%p), which this phone has none of\n", (void *)made);
+	{
+		/*
+		 * What AMS means by "local", read off the two constants -[ACAccount ams_isLocalAccount]
+		 * compares against (0x18c82ee18 on 24B119): an iTunes account that either has a boolean
+		 * account property set, or whose identifier is one particular string. Both live in __DATA
+		 * and are only readable once the fixups are done, which is here and not on this machine.
+		 * They say what a row in Accounts3.sqlite would have to hold for accountsd itself to answer
+		 * "the local account" -- which is the answer the store asks for over XPC and still does not get.
+		 */
+		id key = *(id *)(uintptr_t)(0x1e0951b58UL + slide);
+		id ident = *(id *)(uintptr_t)(0x1e2eb6610UL + slide);
+		char one[80] = "?", two[80] = "?";
+
+		say("hakios: store: a local account is one with the property \"%s\" or the identifier \"%s\"\n",
+		    text_of(key, one, sizeof(one)), text_of(ident, two, sizeof(two)));
+	}
+	return made;
+#undef made
+}
+
+/*
+ * ... and it has to say it is the local one. With an account where there was none, AMS gets one step
+ * further and stops at "Attempted adding cookies to non-local account": the account it was handed does
+ * not answer -ams_isLocalAccount, which on a real phone is a property of the record in the database.
+ * Only ours is answered; every other account is left to AMS.
+ */
+static BOOL (*old_is_local_account)(id, SEL);
+
+static BOOL
+new_is_local_account(id self, SEL cmd)
+{
+	if (self != NULL && self == made_account) {
+		static bool said;
+
+		if (!said) {
+			said = true;
+			say("hakios: store: the account we made says it is the local one\n");
+		}
+		return YES;
+	}
+	return old_is_local_account != NULL ? old_is_local_account(self, cmd) : NO;
+}
+
 static id
 local_account_of(id store, const char *who)
 {
 	id account = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
 	static int told;
+
+	{
+		/* What the database gives this process, said once whatever else happens. */
+		static bool counted;
+
+		if (!counted) {
+			id all = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("accounts"));
+			id type = ((id (*)(id, SEL, id))objc_msgSend)(store,
+			    sel_registerName("accountTypeWithAccountTypeIdentifier:"),
+			    (id)CFSTR("com.apple.account.iTunes"));
+			long n = all != NULL ? ((long (*)(id, SEL))objc_msgSend)(all, sel_registerName("count")) : -1;
+			char text[200] = "?";
+
+			counted = true;
+			id of_type = type != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(store,
+			    sel_registerName("accountsWithAccountType:"), type) : NULL;
+			long m = of_type != NULL ? ((long (*)(id, SEL))objc_msgSend)(of_type,
+			    sel_registerName("count")) : -1;
+			char two[260] = "?";
+
+			say("hakios: store: the accounts database gives this process %ld account(s), the iTunes "
+			    "type %s and %ld of that type: %.200s\n", n, type != NULL ? "is there" : "is MISSING",
+			    m, of_type != NULL ? text_of(of_type, two, sizeof(two)) : "(nil)");
+			(void)text;
+		}
+	}
+	if (account == NULL) {
+		const char *fake = knob("HAKIOS_FAKE_ACCOUNT");
+
+		if (fake != NULL && *fake != '0') {
+			account = fabricated_account(store);
+		}
+	}
 
 	if (!told) {
 		told = 1;
@@ -2687,6 +3010,13 @@ new_accountForMediaType(id self, SEL cmd, void *media_type, BOOL update_storefro
 	(void)cmd, (void)media_type, (void)update_storefront;
 	entered[COUNT_afterUpdating]++;
 	account = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
+	if (account == NULL) {
+		const char *fake = knob("HAKIOS_FAKE_ACCOUNT");
+
+		if (fake != NULL && *fake != '0') {
+			account = fabricated_account(self);
+		}
+	}
 	promise = promise_class != Nil ? ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
 	    sel_registerName("promiseWithResult:"), account) : NULL;
 	returned[COUNT_afterUpdating]++;
@@ -3041,6 +3371,8 @@ static struct replacement replacements[] = {
 	{ "ACAccount", "ams_storefront", false, (IMP)new_ams_storefront, (IMP *)&old_ams_storefront, false },
 	{ "ACAccount", "ams_storefrontForMediaType:", false, (IMP)new_ams_storefront_media,
 	  (IMP *)&old_ams_storefront_media, false },
+	{ "ACAccount", "ams_isLocalAccount", false, (IMP)new_is_local_account,
+	  (IMP *)&old_is_local_account, false },
 	{ "ACAccount", "ams_copyStorefrontFromAccount:", false, (IMP)new_copy_storefront, (IMP *)&old_copy_storefront, false },
 	/* and the ones particular callers knock at instead */
 	{ "AMSBagNetworkDataSource", "cachedStorefront", false, (IMP)new_cached_storefront, (IMP *)&old_cached_storefront, false },
@@ -3164,6 +3496,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 	if (watch_only) {
 		return;
 	}
+	hook_fairplay();                /* as soon as AppleMediaServices is there, before it runs */
 	for (size_t i = 0; i < sizeof(replacements) / sizeof(replacements[0]); i++) {
 		struct replacement *r = &replacements[i];
 		Class cls;
@@ -3257,12 +3590,30 @@ hakios_store_init(void)
 	}
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
 	watch_for_faults();
-	storefront = CFStringCreateWithCString(NULL, STOREFRONT, kCFStringEncodingUTF8);
-	fairplay_device_type = CFStringCreateWithCString(NULL, FAIRPLAY_DEVICE_TYPE, kCFStringEncodingUTF8);
-	who = name;
-	ssv_anisette = (ssv_anisette_fn)dlsym(RTLD_DEFAULT, "SSVAnisetteAddHeadersToURLRequest");
-	say("hakios: store(%s): ours is in, storefront to answer with is " STOREFRONT ", anisette primitive %s\n",
-	    name, ssv_anisette != NULL ? "found" : "NOT found");
+	hook_fairplay();                /* first of all: the one call that never comes back */
+	{
+		/*
+		 * The storefront, and whether anything is replaced at all, from the phone (see knob()).
+		 * HAKIOS_NO_HOOKS=1 makes this process a watcher: the same library, the same lines on the
+		 * console, and not one method of the process changed -- the control for every answer this
+		 * library gives, without building an image for it.
+		 */
+		const char *wanted = knob("HAKIOS_STOREFRONT");
+		const char *nothing = knob("HAKIOS_NO_HOOKS");
+
+		storefront = CFStringCreateWithCString(NULL, wanted != NULL ? wanted : STOREFRONT,
+		    kCFStringEncodingUTF8);
+		if (nothing != NULL && *nothing != '0') {
+			watch_only = true;
+		}
+		fairplay_device_type = CFStringCreateWithCString(NULL, FAIRPLAY_DEVICE_TYPE,
+		    kCFStringEncodingUTF8);
+		who = name;
+		ssv_anisette = (ssv_anisette_fn)dlsym(RTLD_DEFAULT, "SSVAnisetteAddHeadersToURLRequest");
+		say("hakios: store(%s): ours is in, storefront to answer with is %s, anisette primitive %s%s\n",
+		    name, wanted != NULL ? wanted : STOREFRONT, ssv_anisette != NULL ? "found" : "NOT found",
+		    watch_only ? ", AND NOTHING IS REPLACED (HAKIOS_NO_HOOKS)" : "");
+	}
 	hook_xpc_sessions();
 	{
 		pthread_t thread;

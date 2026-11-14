@@ -293,8 +293,20 @@ echo "/redwood/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
 echo "/redwood/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
 # STOREFRONT=1: the App Store's SAP (Mescal) signature from the host's sapd, and a storefront answered, so the
 # storefront-token request is signed and amp-api returns the catalog (ios/userland/inject_store.c, inject_mescal.m).
+# STORE_FROM_VAR=1 puts the store library in /var instead, with a copy of it in var.skel so it is always
+# there at the first exec. /var is writable and kept across runs, so the library can be replaced over SSH
+# between two launches of the App Store -- a change to it then costs a rebuild of one dylib and a kill, not
+# a new image and a new boot (the difference is about eight minutes a question).
 if [ -n "${STOREFRONT:-}" ]; then
-	echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
+	if [ -n "${STORE_FROM_VAR:-}" ]; then
+		mkdir -p $T/var/hakios
+		cp "$OBJ/libhakios-store.dylib" $T/var/hakios/libhakios-store.dylib
+		printf 'd\t755\t0\t0\t/private/var/hakios\n' >> $T/etc/var.skel
+		printf 'f\t644\t0\t0\t/private/var/hakios/libhakios-store.dylib\t/var/hakios/libhakios-store.dylib\n' >> $T/etc/var.skel
+		echo "/var/hakios/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
+	else
+		echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
+	fi
 	echo "/redwood/lib/libhakios-mescal.dylib appstored itunesstored AppStore" >> $T/etc/inject.conf
 fi
 # SIGNIN=1: and the keychain class that Apple ID sign-in cannot store here (ios/userland/inject_kc.c). Apart
