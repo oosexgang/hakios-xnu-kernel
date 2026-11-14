@@ -261,6 +261,26 @@ static uint64_t n(const char *name) { return get64(name); }
 
 /* ---- scenarios ------------------------------------------------------------------------------------ */
 
+/* a device numbered one past the last partition (made by hand: the driver makes none) is no device: not opened,
+ * no size, nothing asked of it, nothing read through the kernel's own driver */
+static void
+one_past_the_last(void)
+{
+	uint32_t size = 0, past;
+	uint8_t data[512];
+
+	loader("");
+	hakios_ufs_init();
+	past = ufs_parts;                       /* (the partitions and the unit the loader lists: the unit is no device) */
+
+	CHECK(ufs_parts >= 3, "the loader's list: %u", ufs_parts);
+	CHECK(ufs_open(makedev(ufs_cmajor, past), FREAD, 0, NULL) == ENXIO && ufs_open(makedev(ufs_bmajor, past), FREAD, 0, NULL) == ENXIO,
+	    "not opened");
+	CHECK(ufs_psize(makedev(ufs_bmajor, past)) == -1 && ufs_psize(makedev(ufs_bmajor, 0)) > 0, "no size");
+	CHECK(ufs_ioctl(makedev(ufs_bmajor, past), DKIOCGETBLOCKSIZE, (caddr_t)&size, 0, NULL) == ENXIO, "nothing answered");
+	CHECK(ufs_read_native(past, 0, data, sizeof(data)) == ENXIO, "nothing read through the kernel's own driver");
+}
+
 /* the partitions become devices, the whole units do not; a disk answers what a program asks of it */
 static void
 partitions_listed(void)
@@ -700,7 +720,7 @@ main(int argc, char **argv)
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
 		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
 		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
-		{ "off_without_the_loader", off_without_the_loader, 1 },
+		{ "off_without_the_loader", off_without_the_loader, 1 }, { "one_past_the_last", one_past_the_last, 1 },
 	};
 
 	if (argc < 2) {
