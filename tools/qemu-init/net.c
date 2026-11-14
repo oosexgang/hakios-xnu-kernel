@@ -377,8 +377,17 @@ command_serve(int argc, char **argv)
 		if (peer < 0) {
 			break;
 		}
-		long got = syscall6(SYS_read, peer, (long)request, sizeof(request) - 1, 0, 0, 0);
-		request[got > 0 ? got : 0] = '\0';
+		/* (the request read to the end of its headers: TCP may bring it in several pieces) */
+		long got = 0;
+		for (long n; got < (long)sizeof(request) - 1 &&
+		    (n = syscall6(SYS_read, peer, (long)(request + got), sizeof(request) - 1 - got, 0, 0, 0)) > 0;) {
+			got += n;
+			request[got] = '\0';
+			if (got >= 4 && same(request + got - 4, "\r\n\r\n")) {
+				break;
+			}
+		}
+		request[got] = '\0';
 		for (long i = 0; i < got; i++) {
 			if (request[i] == '\r' || request[i] == '\n') {
 				request[i] = '\0';
@@ -440,10 +449,14 @@ command_get(int argc, char **argv)
 		syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 		return;
 	}
-	const char *const request[] = { "GET ", path, " HTTP/1.0\r\nHost: ", argv[1], "\r\nUser-Agent: qemu-init\r\n\r\n" };
-	for (int i = 0; i < 5; i++) {
-		syscall6(SYS_write, sock, (long)request[i], (long)length(request[i]), 0, 0, 0);
-	}
+	/* (the request in one write) */
+	char request[640];
+	size_t at = append(request, 0, sizeof(request), "GET ");
+	at = append(request, at, sizeof(request), path);
+	at = append(request, at, sizeof(request), " HTTP/1.0\r\nHost: ");
+	at = append(request, at, sizeof(request), argv[1]);
+	at = append(request, at, sizeof(request), "\r\nUser-Agent: qemu-init\r\n\r\n");
+	syscall6(SYS_write, sock, (long)request, (long)at, 0, 0, 0);
 	/*
 	 * The first 16 KB kept (the head, and a small body to show); all of it counted, timed and hashed
 	 * (FNV-1a over the body, for the other side to compare), however long it is.
