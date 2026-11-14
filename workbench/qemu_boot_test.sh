@@ -175,6 +175,11 @@ typed=(
 	'cat /tmp/notes/dangling'
 	'rm /tmp/notes/loop-a /tmp/notes/loop-b /tmp/notes/dangling'
 	'rm /tmp'
+	'mkdir /tmp/notes/tree /tmp/notes/tree/a /tmp/notes/tree/b /tmp/notes/empty'
+	'stat /tmp/notes/tree'
+	'mv /tmp/notes/tree/a /tmp/notes/empty'
+	'stat /tmp/notes/tree /tmp/notes/empty /tmp/notes/tree/a'
+	'rm /tmp/notes/tree/b /tmp/notes/empty /tmp/notes/tree'
 	'write /tmp/notes/fixed fixed'
 	'chflags 2 /tmp/notes/fixed'
 	'write /tmp/notes/fixed changed'
@@ -414,6 +419,11 @@ check "paths as BSD has them: symbolic links that lead to each other (ELOOP), a 
 		grep -aqE '^/tmp/notes/vectors: -rw-r--r-- 1 link, inode [0-9]+, 38 bytes' '$shell' &&
 		grep -aq '^cat: /tmp/notes/dangling: error 2 (ENOENT)' '$shell' && grep -aq '^rm: /tmp: error 16 (EBUSY)' '$shell' &&
 		! grep -aq '^rm: /tmp/notes/loop\|^rm: /tmp/notes/dangling\|^rm: /tmp/notes/to-vectors' '$shell'"
+check "a directory's links: two, and one more for each directory in it; one moved out takes its link along, and renamed onto an empty directory takes its place" \
+	bash -c "grep -aqE '^/tmp/notes/tree: drwxr-xr-x 4 links, inode [0-9]+' '$shell' &&
+		grep -aqE '^/tmp/notes/tree: drwxr-xr-x 3 links, inode [0-9]+' '$shell' &&
+		grep -aqE '^/tmp/notes/empty: drwxr-xr-x 2 links, inode [0-9]+' '$shell' &&
+		grep -aq '^stat: /tmp/notes/tree/a: error 2 (ENOENT)' '$shell' && ! grep -aq '^rm: /tmp/notes/tree' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
