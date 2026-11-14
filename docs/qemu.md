@@ -107,7 +107,8 @@ on its shell and checks what comes back:
   about 7). The kernel's log has no timestamp with more than a second of microseconds.
 - **The network.** `en0` attaches with its link up and takes an address; QEMU's gateway answers its
   pings; its TCP serves this computer a page and 4 MB, and asks it for a page and 4 MB, every byte checked
-  (`workbench/qemu_host.py` is this computer's side); a datagram is answered.
+  (`workbench/qemu_host.py` is this computer's side); a datagram is answered; over the loopback, one of
+  its processes serves another a million bytes, every one checked.
 - **The devices.** A second disk on the virtio block device is read whole and through its APFS volume,
   by hashes; a tone comes out of the virtio sound device at the frequency asked for
   (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard and a touch on its tablet reach the
