@@ -250,6 +250,32 @@ diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
  	pmap_clear_user_ttb();
  	flush_mmu_tlb();
  #endif
+diff --git a/osfmk/arm/commpage/commpage.c b/osfmk/arm/commpage/commpage.c
+--- a/osfmk/arm/commpage/commpage.c
++++ b/osfmk/arm/commpage/commpage.c
+@@ -449,6 +449,22 @@ commpage_init_arm_optional_features_isar0(uint64_t *commpage_bits)
+ 	gARM_FEAT_AES = 1;
+ 	gARM_FEAT_SHA256 = 1;
+ 	bits |= kHasARMv8Crypto;
++#else
++	/*
++	 * A board configuration that does not say (this port's, for every phone it runs on): what the
++	 * processor says of itself. Qualcomm's cores and QEMU's all have the four; programs then use them.
++	 */
++	if ((isar0 & ID_AA64ISAR0_EL1_AES_MASK) >= ID_AA64ISAR0_EL1_AES_EN &&
++	    (isar0 & ID_AA64ISAR0_EL1_SHA1_MASK) >= ID_AA64ISAR0_EL1_SHA1_EN &&
++	    (isar0 & ID_AA64ISAR0_EL1_SHA2_MASK) >= ID_AA64ISAR0_EL1_SHA2_EN) {
++		gARM_FEAT_AES = 1;
++		gARM_FEAT_SHA1 = 1;
++		gARM_FEAT_SHA256 = 1;
++		gARM_FEAT_PMULL = (isar0 & ID_AA64ISAR0_EL1_AES_MASK) >= ID_AA64ISAR0_EL1_AES_PMULL_EN;
++		if (gARM_FEAT_PMULL) {
++			bits |= kHasARMv8Crypto;
++		}
++	}
+ #endif /* __ARM_V8_CRYPTO_EXTENSIONS__ */
+ 
+ 	*commpage_bits |= bits;
 diff --git a/osfmk/arm/machine_cpuid.c b/osfmk/arm/machine_cpuid.c
 --- a/osfmk/arm/machine_cpuid.c
 +++ b/osfmk/arm/machine_cpuid.c
