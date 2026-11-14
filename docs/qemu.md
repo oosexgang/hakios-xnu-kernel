@@ -60,7 +60,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `vm` | The virtual memory's pages (free, active, wired, in the compressor) and its faults, as `vm_stat` asks them: host_statistics64 in a MIG message to the host's port. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `uptime`, `date` | The time since boot; the time of day, UTC, as the kernel has it from QEMU's clock. |
-| **Files** (`files.c`) | |
+| **Files** (`files.c`; their pages, and memory: `memory.c`) | |
 | `ls [PATH]`, `cat FILE` | Directories (this one, without a PATH) and files: getdirentries64, lstat64, read. |
 | `hash FILE...` | Each file or device read to its end, timed, and its FNV-1a hash, for this machine to compare. |
 | `mount apfs DEVICE DIR`, `mount ramfs ramfs DIR` | A disk's APFS volume, read only; or the kernel's file system in memory, to be written. |
