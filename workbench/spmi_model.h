@@ -40,6 +40,8 @@ struct spmi_peripheral {
 
 static struct spmi_model {
 	uint32_t core, cnfg, observer, channels;        /* observer: this system's part of the block */
+	uint32_t channel_map;           /* version 8: where its table of channels is (its cnfg a word a channel, its observer
+	                                 * and write channels closer together); 0: version 5 */
 	uint32_t version, ee;
 	uint32_t says_channels;         /* what the arbiter says of its number of channels, if not the model's own */
 	uint32_t map[SPMI_CHANNELS], owner[SPMI_CHANNELS];
@@ -106,12 +108,56 @@ spmi_get(struct spmi_peripheral *p, uint8_t reg)
 	return value;
 }
 
+/* version 8: the version and the number of channels in its core, the tables of channels apart, a word each; the
+ * observer 0x20 a channel, the write channels 0x200 (the lock held) */
+static inline uint32_t
+spmi_v8_rd(uintptr_t address)
+{
+	uint32_t said = spmi.says_channels ? spmi.says_channels - 1 : SPMI_CHANNELS;
+
+	if (address >= spmi.core && address < spmi.core + 0x1100) {
+		uint32_t reg = (uint32_t)(address - spmi.core);
+
+		return reg == 0x000 ? spmi.version : reg == 0x004 ? said : 0;
+	}
+	if (address >= spmi.channel_map && address < spmi.channel_map + 0x8000) {
+		uint32_t n = (uint32_t)(address - spmi.channel_map) / 4;
+
+		spmi.past_the_table += n >= said;
+		return n < SPMI_CHANNELS ? spmi.map[n] >> 8 : 0;
+	}
+	if (address >= spmi.cnfg && address < spmi.cnfg + 0x8000) {
+		uint32_t n = (uint32_t)(address - spmi.cnfg) / 4;
+
+		spmi.past_the_table += n >= said;
+		return n < SPMI_CHANNELS ? spmi.owner[n] : 0;
+	}
+	if (address >= spmi.observer && address < spmi.observer + 0x20 * SPMI_CHANNELS) {
+		uint32_t channel = (uint32_t)(address - spmi.observer) / 0x20, reg = (uint32_t)(address - spmi.observer) % 0x20;
+
+		return reg == 0x08 ? spmi.status[channel] : reg == 0x18 ? spmi.data0[channel] : reg == 0x1c ? spmi.data1[channel] : 0;
+	}
+	if (spmi.channels != 0 && address >= spmi.channels && address < spmi.channels + 0x200ull * SPMI_CHANNELS) {
+		uint32_t channel = (uint32_t)((address - spmi.channels) / 0x200), reg = (uint32_t)((address - spmi.channels) % 0x200);
+
+		return reg == 0x08 ? spmi.wstatus[channel] : 0;
+	}
+	spmi.elsewhere++;
+	fprintf(stderr, "MODEL: a read at %#lx, where nothing of the version 8 arbiter is\n", (unsigned long)address);
+	return 0;
+}
+
 static inline uint32_t
 spmi_model_rd(uintptr_t address)
 {
 	uint32_t value = 0;
 
 	pthread_mutex_lock(&spmi.lock);
+	if (spmi.channel_map != 0) {
+		value = spmi_v8_rd(address);
+		pthread_mutex_unlock(&spmi.lock);
+		return value;
+	}
 	if (address >= spmi.core && address < spmi.core + 0x1100) {
 		uint32_t reg = (uint32_t)(address - spmi.core);
 
@@ -149,10 +195,14 @@ spmi_model_rd(uintptr_t address)
 static inline void
 spmi_model_wr(uintptr_t address, uint32_t value)
 {
+	/* (version 8: the observer 0x20 a channel, the write channels 0x200) */
+	uint32_t observer_channel = spmi.channel_map ? 0x20 : 0x80, write_channel = spmi.channel_map ? 0x200 : 0x10000;
+
 	pthread_mutex_lock(&spmi.lock);
-	if (address >= spmi.observer && address < spmi.observer + 0x80 * SPMI_CHANNELS && (address - spmi.observer) % 0x80 == 0) {
+	if (address >= spmi.observer && address < spmi.observer + observer_channel * SPMI_CHANNELS &&
+	    (address - spmi.observer) % observer_channel == 0) {
 		/* a system's read: "count bytes from register reg on" */
-		uint32_t channel = (uint32_t)(address - spmi.observer) / 0x80, reg = value >> 4 & 0xff, count = (value & 7) + 1;
+		uint32_t channel = (uint32_t)(address - spmi.observer) / observer_channel, reg = value >> 4 & 0xff, count = (value & 7) + 1;
 		struct spmi_peripheral *p = spmi_peripheral_of(channel);
 		uint8_t bytes[8] = { 0 };
 
@@ -178,8 +228,8 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 			spmi.data1[channel] = bytes[4] | bytes[5] << 8 | bytes[6] << 16 | (uint32_t)bytes[7] << 24;
 			spmi.status[channel] = SPMI_DONE;
 		}
-	} else if (spmi.channels != 0 && address >= spmi.channels && address < spmi.channels + 0x10000ull * SPMI_CHANNELS) {
-		uint32_t channel = (uint32_t)((address - spmi.channels) / 0x10000), reg = (uint32_t)((address - spmi.channels) % 0x10000);
+	} else if (spmi.channels != 0 && address >= spmi.channels && address < spmi.channels + (uint64_t)write_channel * SPMI_CHANNELS) {
+		uint32_t channel = (uint32_t)((address - spmi.channels) / write_channel), reg = (uint32_t)((address - spmi.channels) % write_channel);
 		struct spmi_peripheral *p = spmi_peripheral_of(channel);
 
 		if (reg == 0x10) {
