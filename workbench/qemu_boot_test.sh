@@ -204,6 +204,14 @@ typed=(
 	'opens /tmp/notes/opened'
 	'watch /tmp/notes/watched'
 	'dir-walk /tmp/notes/many 300'
+	'write /tmp/notes/one-name x'
+	'ln /tmp/notes/one-name /tmp/notes/other-name'
+	'mv /tmp/notes/one-name /tmp/notes/other-name'
+	'stat /tmp/notes/one-name'
+	'mkdir /tmp/notes/a-dir /tmp/notes/full-dir /tmp/notes/full-dir/inside'
+	'mv /tmp/notes/a-dir /tmp/notes/other-name'
+	'mv /tmp/notes/other-name /tmp/notes/a-dir'
+	'mv /tmp/notes/a-dir /tmp/notes/full-dir'
 	'mkdir /tmp/notes/from /tmp/notes/to /tmp/notes/from/moving'
 	'cd /tmp/notes/from/moving'
 	'mv /tmp/notes/from/moving /tmp/notes/to/moved'
@@ -522,6 +530,10 @@ check "ramfs filled: a write past its room refused (ENOSPC), the file kept to wh
 		grep -aq '^write: 2 bytes to /tmp/notes/other/one-more' '$shell'"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
+check "rename as POSIX has it: two names of one file left both; a directory onto a file (ENOTDIR), a file onto a directory (EISDIR), onto one not empty (ENOTEMPTY)" \
+	bash -c "grep -aqE '^/tmp/notes/one-name: -rw-r--r-- 2 links' '$shell' &&
+		grep -aq '^mv: /tmp/notes/a-dir: error 20 (ENOTDIR)' '$shell' && grep -aq '^mv: /tmp/notes/other-name: error 21 (EISDIR)' '$shell' &&
+		grep -aq '^mv: /tmp/notes/a-dir: error 66 (ENOTEMPTY)' '$shell'"
 check "a directory moved to another takes its .. and its link along; the shell's own directory moved, its path follows it" \
 	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes/to/moved' &&
 		grep -aqE '^/tmp/notes/from: drwxr-xr-x 2 links, inode ([0-9]+)' '$shell' &&
