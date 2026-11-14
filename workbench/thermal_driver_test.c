@@ -356,6 +356,56 @@ bad_policy(void)
 	CHECK((int32_t)get("trip") == 700 && (int32_t)get("clear") == 620, "%d %d", (int32_t)get("trip"), (int32_t)get("clear"));
 }
 
+/* a clear no lower than the trip: as bad */
+static void
+clear_at_the_trip(void)
+{
+	phone(500);
+	boot_args = "thermal=2 th_trip=800 th_clear=800 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(logged("the defaults") && (int32_t)get("trip") == 700, "a clear at the trip is refused: %s", log_text);
+}
+
+/* thermal=0, said: as if not said */
+static void
+said_off(void)
+{
+	phone(900);
+	boot_args = "thermal=0";
+	hakios_thermal_init();
+	usleep(100000);
+	CHECK(writes == 0 && foreign == 0 && !logged("thermal:"), "nothing touched or said: %s", log_text);
+}
+
+/* how often it looks: a reading taken at the start, and the sensor hotter right after; is it read again soon? */
+static bool
+read_again_within(const char *boot, unsigned ms)
+{
+	phone(900);
+	boot_args = boot;
+	hakios_thermal_init();
+	WAIT_FOR(get("hottest") == 900, 1000);
+	temperature(0, 3, 950);
+	usleep(ms * 1000);
+	return get("hottest") == 950;
+}
+
+/* th_period_ms=10000, the longest: not read again for ten seconds */
+static void
+slowest_period(void)
+{
+	CHECK(!read_again_within("thermal=1 th_period_ms=10000", 1500), "not read again in 1.5 s: %d", (int32_t)get("hottest"));
+}
+
+/* th_period_ms=50, shorter than the shortest: a second, as without it */
+static void
+too_short_a_period(void)
+{
+	CHECK(!read_again_within("thermal=1 th_period_ms=50", 300), "not read again in 0.3 s: %d", (int32_t)get("hottest"));
+	usleep(1000000);
+	CHECK(get("hottest") == 950, "read again within the second after: %d", (int32_t)get("hottest"));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -363,7 +413,8 @@ main(int argc, char **argv)
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "critical", critical }, { "never_raises", never_raises }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
-		{ "bad_policy", bad_policy }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
+		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
+		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
 	};
 
 	if (argc < 2) {
