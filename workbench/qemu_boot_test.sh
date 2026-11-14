@@ -150,6 +150,12 @@ typed=(
 	'as 501:20 access /tmp/notes/shared /tmp/notes'
 	'as 502:20 access /tmp/notes/shared'
 	'as 503:30 access /tmp/notes/shared'
+	'as 501:20 touch /tmp/notes/shared 5'
+	'as 502:20 touch /tmp/notes/shared'
+	'chmod 666 /tmp/notes/shared'
+	'as 502:20 touch /tmp/notes/shared'
+	'as 502:20 touch /tmp/notes/shared 7'
+	'as 501:20 chown 501:30 /tmp/notes/shared'
 	'cp /sbin/launchd /tmp/notes/su'
 	'chmod 6757 /tmp/notes/su'
 	'stat /tmp/notes/su'
@@ -405,6 +411,11 @@ check "what each may do with a file of mode 640 (access): its owner read and wri
 		grep -aq '^access: /tmp/notes: read yes, write no, run yes$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read yes, write no, run no$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read no, write no, run no$' '$shell'"
+check "a file's times: its owner sets any, another who may write it only now, one who may not none; its owner gives it to no group of another's" \
+	bash -c "grep -aq '^touch: /tmp/notes/shared: accessed 5, modified 5, ' '$shell' &&
+		grep -aq '^touch: /tmp/notes/shared: error 13 (EACCES)' '$shell' &&
+		grep -aqE '^touch: /tmp/notes/shared: accessed 1[0-9]{9}, modified 1[0-9]{9}, ' '$shell' &&
+		grep -aq '^touch: /tmp/notes/shared: error 1 (EPERM)' '$shell' && grep -aq '^chown: /tmp/notes/shared: error 1 (EPERM)' '$shell'"
 check "a set-user-ID and set-group-ID program runs as its file's owner and group; written or cut by another, it is no longer either (as HFS and UFS have it)" \
 	bash -c "grep -aqE '^/tmp/notes/su: -rwsr-srwx 1 link, inode [0-9]+, [0-9]+ bytes, owner 0:0' '$shell' &&
 		grep -aqE '^/tmp/notes/su: -rwxr-xrwx 1 link' '$shell' &&
