@@ -198,7 +198,10 @@ port. None may fail.
 
 `workbench/qemu_smp_test.sh` (part of `make qemu` too) boots on four: all of them start and run, programs
 are told four, four threads of a program run side by side and eight take turns under one lock without
-losing a count. Then on one, where nothing is sent to another processor: threads and the lock all the same.
+losing a count; and what goes between processes and through ramfs is tried with the processes on any of
+the four: a lock on a file's bytes, a named pipe, a signal held while blocked, a directory emptied as it is
+read, a file watched through kqueue, files mapped private and shared, datagrams, a file size limit. Then on
+one, where nothing is sent to another processor: threads and the lock all the same.
 
 ## What it is not
 
