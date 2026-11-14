@@ -1694,6 +1694,75 @@ new_should_mescal(id self, SEL cmd)
 	return (is_token && !was) ? YES : was;
 }
 
+/*
+ * The storefront header IS put on the token request (it is among its 8), so that decoration runs while the
+ * request is still mutable and with a bag in hand -- which is what the absinthe (Mescal) step needs and
+ * never gets. This hooks the storefront step, and for the token request asks the absinthe step with the
+ * same bag (or the kept one), so the signature is made where AMS never asks for it.
+ */
+/*
+ * What appstored itself waits on. It logs "[Bag] Fetching current account", gets the account (null) and
+ * never speaks again, and none of the hooks above are entered in it -- because it does not ask for the
+ * local account at all: its binary names -[ACAccountStore ams_activeiTunesAccountForMediaType:] (and
+ * ams_activeiTunesAccount). Those are answered here with the local account as it is, so the daemon stops
+ * waiting and its XPC answers the App Store again.
+ */
+static id (*old_active_account)(id, SEL);
+static id (*old_active_account_type)(id, SEL, void *);
+
+static id
+local_account_of(id store, const char *who)
+{
+	id account = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
+	static int told;
+
+	if (!told) {
+		told = 1;
+		say("hakios: store: %s answered at once, %s\n", who, account != NULL ? "the local account" : "nothing");
+	}
+	return account;
+}
+
+static id
+new_active_account(id self, SEL cmd)
+{
+	(void)cmd;
+	return local_account_of(self, "ams_activeiTunesAccount");
+}
+
+static id
+new_active_account_type(id self, SEL cmd, void *media_type)
+{
+	(void)cmd, (void)media_type;
+	return local_account_of(self, "ams_activeiTunesAccountForMediaType:");
+}
+
+static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
+static void (*old_add_storefront_header)(id, SEL, void *, void *, void *, void *);
+
+static void
+new_add_storefront_header(id self, SEL cmd, void *request, void *account, void *media_type, void *bag)
+{
+	char text[300] = "(no URL)";
+	id url = request != NULL ? ((id (*)(id, SEL))objc_msgSend)((id)request, sel_registerName("URL")) : NULL;
+
+	keep_bag((id)bag, "the storefront header step");
+	old_add_storefront_header(self, cmd, request, account, media_type, bag);
+	if (url != NULL) {
+		text_of(url, text, sizeof(text));
+	}
+	say("hakios: store: STOREFRONT header step for %.140s, bag %s\n", text, bag != NULL ? "given" : "(nil)");
+	if (strstr(text, "apiToken") != NULL && old_add_absinthe != NULL) {
+		void *use = bag != NULL ? bag : (void *)seen_bag;
+
+		say("hakios: store: the token request: asking the absinthe step for a signature (bag %s)\n",
+		    use != NULL ? "in hand" : "STILL NONE");
+		old_add_absinthe((id)objc_getClass("AMSURLRequestDecoration"),
+		    sel_registerName("addAbsintheHeadersToRequest:buyParams:bag:shouldUseRemoteSigningIfAvailable:"),
+		    request, NULL, use, NO);
+	}
+}
+
 /* where a bag is handed over for a request that has one: the GUID step, which names the lack of one */
 static void (*old_add_guid)(id, SEL, void *, void *, BOOL);
 
@@ -1703,8 +1772,6 @@ new_add_guid(id self, SEL cmd, void *request, void *bag, BOOL preserve)
 	keep_bag((id)bag, "the GUID step");
 	old_add_guid(self, cmd, request, bag, preserve);
 }
-
-static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
 
 static void
 new_add_absinthe(id self, SEL cmd, void *request, void *buy_params, void *bag, BOOL remote_signing)
@@ -2332,6 +2399,12 @@ static struct replacement replacements[] = {
 	  (IMP)new_add_guid, (IMP *)&old_add_guid, false },
 	{ "SSURLConnectionRequest", "shouldMescalSign", false, (IMP)new_should_mescal,
 	  (IMP *)&old_should_mescal, false },
+	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
+	  (IMP)new_add_storefront_header, (IMP *)&old_add_storefront_header, false },
+	{ "ACAccountStore", "ams_activeiTunesAccount", false, (IMP)new_active_account,
+	  (IMP *)&old_active_account, false },
+	{ "ACAccountStore", "ams_activeiTunesAccountForMediaType:", false, (IMP)new_active_account_type,
+	  (IMP *)&old_active_account_type, false },
 	{ "NSMutableURLRequest", "ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies:", false,
 	  (IMP)new_addCookiesBlocking, (IMP *)&old_addCookiesBlocking, false },
 	{ "ACAccountStore", "_updateStorefrontInLocalAccount:", false, (IMP)new_updateStorefront,
