@@ -212,6 +212,10 @@ typed=(
 	'ln /tmp/notes/one-name /tmp/notes/other-name'
 	'mv /tmp/notes/one-name /tmp/notes/other-name'
 	'stat /tmp/notes/one-name'
+	'write /tmp/notes/replacing new'
+	'mv /tmp/notes/replacing /tmp/notes/other-name'
+	'stat /tmp/notes/one-name /tmp/notes/other-name'
+	'cat /tmp/notes/one-name /tmp/notes/other-name'
 	'mkdir /tmp/notes/a-dir /tmp/notes/full-dir /tmp/notes/full-dir/inside'
 	'mv /tmp/notes/a-dir /tmp/notes/other-name'
 	'mv /tmp/notes/other-name /tmp/notes/a-dir'
@@ -543,6 +547,9 @@ check "rename as POSIX has it: two names of one file left both; a directory onto
 	bash -c "grep -aqE '^/tmp/notes/one-name: -rw-r--r-- 2 links' '$shell' &&
 		grep -aq '^mv: /tmp/notes/a-dir: error 20 (ENOTDIR)' '$shell' && grep -aq '^mv: /tmp/notes/other-name: error 21 (EISDIR)' '$shell' &&
 		grep -aq '^mv: /tmp/notes/a-dir: error 66 (ENOTEMPTY)' '$shell'"
+check "a file renamed onto one of another's two names takes that name; the other keeps the old file, with one link" \
+	bash -c "grep -aqE '^/tmp/notes/one-name: -rw-r--r-- 1 link' '$shell' && grep -aqE '^/tmp/notes/other-name: -rw-r--r-- 1 link' '$shell' &&
+		cat '$shell' | grep -A2 -x '# cat /tmp/notes/one-name /tmp/notes/other-name' | tail -2 | tr '\n' '|' | grep -qx 'x|new|'"
 check "a directory moved to another takes its .. and its link along; the shell's own directory moved, its path follows it" \
 	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes/to/moved' &&
 		grep -aqE '^/tmp/notes/from: drwxr-xr-x 2 links, inode ([0-9]+)' '$shell' &&
