@@ -291,6 +291,12 @@ echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences
 echo "/redwood/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
 # Camera.app: its preview's picture given a size where AVFoundation leaves it none (ios/userland/inject_camera_app.c)
 echo "/redwood/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
+# STOREFRONT=1: the App Store's SAP (Mescal) signature from the host's sapd, and a storefront answered, so the
+# storefront-token request is signed and amp-api returns the catalog (ios/userland/inject_store.c, inject_mescal.m).
+if [ -n "${STOREFRONT:-}" ]; then
+	echo "/redwood/lib/libhakios-store.dylib appstored amsaccountsd AppStore" >> $T/etc/inject.conf
+	echo "/redwood/lib/libhakios-mescal.dylib appstored itunesstored AppStore" >> $T/etc/inject.conf
+fi
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys

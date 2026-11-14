@@ -39,6 +39,10 @@ $DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /redwood/lib/libhakios
 # Camera.app's preview given a size where AVFoundation leaves it none (ios/userland/inject_camera_app.c)
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/userland/inject_camera_app.c"
 # (libhakios-statusbar.dylib, in every application, also names an uncaught exception on the console: ios/userland/uncaught.c)
+# the App Store's SAP (Mescal) signature, made by the host's sapd, and the storefront it answers with
+# (ios/userland/inject_mescal.m and inject_store.c; root26-ios.sh STOREFRONT=1 injects them into the store daemons)
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-mescal.dylib -framework Foundation -lobjc -fobjc-arc -o "$O/libhakios-mescal.dylib" "$RN/userland/inject_mescal.m"
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"

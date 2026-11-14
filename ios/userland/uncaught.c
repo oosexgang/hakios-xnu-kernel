@@ -71,9 +71,43 @@ uncaught(id exception)
 	}
 }
 
+/*
+ * A file URL from a nil path throws NSInvalidArgumentException, which nothing catches: Camera and Photos
+ * aborted after photographs, in the reply of -[LNClientConnection fetchAppShortcutParametersForMangledName:
+ * withCompletionHandler:] -- App Intents builds a URL from a provider's support path, which is nil for a
+ * provider this minimal image has no file for (fileproviderd and BackgroundShortcutRunner abort the same
+ * way). A nil path is given a nil URL instead of a thrown exception: the one shortcut is skipped, not the app.
+ * NSURL's documented answer to a nil path is to throw, so no correct caller reaches this -- it only changes
+ * the crashing case. (The two-argument init is what +fileURLWithPath: and the one-argument init reach.)
+ */
+static id (*original_file_url)(id, SEL, id, BOOL);
+
+static id
+file_url_with_path(id self, SEL selector, id path, BOOL is_directory)
+{
+	static int told;
+
+	if (path == nil) {
+		if (!told) {
+			told = 1;
+			say("hakios: %s: a file URL from a nil path given nil, not an exception (App Intents)\n", getprogname());
+		}
+		((void (*)(id, SEL))objc_msgSend)(self, sel_registerName("release"));
+		return nil;
+	}
+	return original_file_url(self, selector, path, is_directory);
+}
+
 __attribute__((constructor))
 static void
 uncaught_init(void)
 {
+	Class url = objc_getClass("NSURL");
+	Method m = url != Nil ? class_getInstanceMethod(url, sel_registerName("initFileURLWithPath:isDirectory:")) : NULL;
+
 	previous_handler = objc_setUncaughtExceptionHandler(uncaught);
+	if (m != NULL) {
+		original_file_url = (id (*)(id, SEL, id, BOOL))method_getImplementation(m);
+		method_setImplementation(m, (IMP)file_url_with_path);
+	}
 }
