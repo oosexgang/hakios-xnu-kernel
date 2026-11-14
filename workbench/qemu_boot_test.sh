@@ -100,7 +100,11 @@ typed=(
 	'mach 200'
 	'date'
 	'spawn /sbin/launchd sleep 60'
+	'as 501:20 kill ! 15'
 	'kill ! 15'
+	'wait'
+	'as 501:20 spawn /sbin/launchd sleep 3'
+	'ps'
 	'wait'
 	'pipe through the kernel'
 	'mount ramfs ramfs /tmp'
@@ -350,6 +354,10 @@ check "the kernel's message buffer is read (dmesg)" bash -c "cat '$shell' | sed 
 check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
 check "a signal ends a process in the background, and wait says so" grep -aqE "^wait: pid [0-9]+ ended by signal 15" "$log"
+check "a user who is not root sends no signal to root's process (EPERM); a process whose parent ends is the first process's, and waited for by it" \
+	bash -c "grep -aq '^kill: error 1 (EPERM)' '$shell' &&
+		cat '$shell' | sed -n '/^# ps\$/,/^# /p' | grep -qE '^ +[0-9]+ +1 +501 +launchd\$' &&
+		grep -aqE '^wait: pid [0-9]+ exited with 0' '$shell'"
 check "clear empties the screen as a VT100 does, and the shell's prompt follows" grep -aq $'\x1b\\[H\x1b\\[2J# ' "$log"
 check "every value of the kernel's is read (sysctl -a: over a thousand names), and nothing panics for it" \
 	bash -c "grep -aoE '^sysctl: [0-9]+ names, of the [0-9]+ the kernel has' '$log' | awk '{ exit !(\$2 > 1000 && \$2 == \$6) }'"
