@@ -89,6 +89,20 @@ struct stat64_head {                    /* the start of Darwin's struct stat64, 
 	char            rest[64];
 };
 
+#define SYS_fork                2
+/* fork() answers in x0 (the other's pid) and x1 (1 in the child); -errno if it failed */
+static inline long
+syscall_fork(int *in_child)
+{
+	register long x0 __asm__("x0") = 0, x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = SYS_fork;
+	long failed;
+
+	__asm__ volatile ("svc #0x80\n\tcset %[failed], cs" : "+r"(x0), "+r"(x1), [failed] "=r"(failed) : "r"(x16) : "memory", "cc");
+	*in_child = !failed && x1 != 0;
+	return failed ? -x0 : x0;
+}
+
 /* text.c: the console (the descriptor what is said goes to), words and numbers, the time */
 extern int console;
 size_t length(const char *s);
