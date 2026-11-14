@@ -123,6 +123,17 @@ board_without_touch(void)
 	CHECK(logged("touch: touchscreen=1, but this board's board.dts lists no touch controller"), "said: %s", log_text);
 }
 
+/* touchscreen=0 is not asking for it: nothing said either */
+static void
+board_without_touch_turned_off(void)
+{
+	board = "phone-keys";
+	boot_args = "touchscreen=0";
+	hakios_drivers_init();
+	all_once("");
+	CHECK(!logged("touch:"), "nothing is said: %s", log_text);
+}
+
 static void
 board_without_touch_not_asked(void)
 {
@@ -149,6 +160,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "board_with_ft3658u", board_with_ft3658u }, { "board_with_goodix", board_with_goodix },
 		{ "board_without_touch", board_without_touch }, { "board_without_touch_not_asked", board_without_touch_not_asked },
+		{ "board_without_touch_turned_off", board_without_touch_turned_off },
 		{ "unknown_board", unknown_board },
 	};
 
