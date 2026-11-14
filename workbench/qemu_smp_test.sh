@@ -2,7 +2,8 @@
 # The kernel on four processors in QEMU: all four started through PSCI and running, the kernel saying so to
 # programs; four threads of a program running side by side (on a computer with four processors of its own,
 # taking well under the time of one doing it all); eight threads taking turns under one lock without losing
-# a count; and nothing panicking.
+# a count; and nothing panicking. Then on one processor, where nothing is sent to another: threads and the
+# lock all the same.
 #
 #   workbench/qemu_smp_test.sh KERNEL
 #
@@ -47,7 +48,18 @@ else
 fi
 check "eight threads take turns under one lock and lose no count" grep -qE '^locks: 8 threads added 1600000 of 1600000 under one lock' "$W/log"
 check "no panic" bash -c "! grep -aq 'panic(' '$W/log'"
+
+"$HERE/../tools/qemu-kernel.sh" --cpus 1 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
+	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu\nthreads 2\nlocks 4\n' \
+	--log "$W/serial1.log" "$KERNEL" > "$W/out1" 2>&1
+tr -d '\r' < "$W/serial1.log" > "$W/log1"
+check "on one processor: it starts, and programs are told one" bash -c "grep -q 'all started: 1 processor running' '$W/log1' &&
+	grep -qx 'hw.ncpu: 1' '$W/log1'"
+check "on one processor: two threads take turns on it, and four under one lock lose no count" bash -c "
+	grep -qE '^threads: 2 threads on 1 processor did in' '$W/log1' &&
+	grep -qE '^locks: 4 threads added 800000 of 800000 under one lock' '$W/log1' && ! grep -aq 'panic(' '$W/log1'"
 if [ $failed != 0 ]; then
 	tail -15 "$W/log" | sed 's/^/    /'
+	tail -15 "$W/log1" | sed 's/^/    /'
 fi
 exit $failed
