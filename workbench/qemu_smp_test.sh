@@ -21,7 +21,7 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { echo "FAIL the root does not build"; exit 1; }
 "$HERE/../tools/qemu-kernel.sh" --cpus 4 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
-	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\nmount ramfs ramfs /tmp\nwrite /tmp/l x\nbyte-locks /tmp/l\nfifo /tmp/f\nmask\nrun /sbin/launchd mask\ndir-walk /tmp/many 500\nwatch /tmp/watched\nfill /tmp/big 1000000\nmmap-private /tmp/big\n' \
+	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\nmount ramfs ramfs /tmp\nwrite /tmp/l x\nbyte-locks /tmp/l\nfifo /tmp/f\nmask\nrun /sbin/launchd mask\ndir-walk /tmp/many 500\nwatch /tmp/watched\nfill /tmp/big 1000000\nmmap-private /tmp/big\nmmap-coherent /tmp/big\ndgram\nfsize /tmp/limited 1000\n' \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 tr -d '\r' < "$W/serial.log" > "$W/log"
 
@@ -53,10 +53,13 @@ check "a lock on a file's bytes held against a child, and a named pipe between t
 	grep -aq '^fifo: /tmp/f: read \"written by a child\"' '$W/log'"
 check "on four processors, a signal from a child waits while blocked, and is caught once let through" \
 	grep -aq '^mask: SIGUSR1 from pid [0-9]*: held while blocked (pending, not caught), caught once let through' "$W/log"
-check "on four processors, a directory emptied as it is read, a file watched through kqueue, a file mapped private" bash -c "
+check "on four processors, a directory emptied as it is read, a file watched through kqueue, files mapped private and shared, datagrams, a file size limit" bash -c "
 	grep -aq '^dir-walk: 500 made, 500 read in [0-9]* reads; removed as read: 500, the directory then empty' '$W/log' &&
 	grep -aq '^watch: written: write extend; chmod: attrib; linked: link; renamed: rename; removed: delete link' '$W/log' &&
-	grep -aq '^mmap-private: /tmp/big: the private mapping turned, the file as it was' '$W/log'"
+	grep -aq '^mmap-private: /tmp/big: the private mapping turned, the file as it was' '$W/log' &&
+	grep -aq '^mmap-coherent: /tmp/big: a write in a page seen through the mapping at once, and one across two pages; written through it, read at once' '$W/log' &&
+	grep -aq '^dgram: sent 5, 300, 1; looked at 5, then read 5, 300, 1' '$W/log' &&
+	grep -aq '^fsize: /tmp/limited: 1000 of 2000 written; past the limit, a write EFBIG, a truncate EFBIG' '$W/log'"
 check "no panic" bash -c "! grep -aq 'panic(' '$W/log'"
 
 "$HERE/../tools/qemu-kernel.sh" --cpus 1 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
