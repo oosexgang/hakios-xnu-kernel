@@ -1819,6 +1819,36 @@ new_afterUpdating(id self, SEL cmd, void *storefront)
 }
 
 /*
+ * The same wait on iOS 26/27, where that selector is gone: AppleMediaServices asks
+ * -[ACAccountStore _ams_localiTunesAccountForAccountMediaType:updateStorefront:] instead. Without it
+ * answered, appstored stops at "[Bag] Fetching current account" with the account (null) and never
+ * speaks again, so the App Store's XPC session to it is cancelled and the screen stays on Loading
+ * (logs/121112-run.log.live in hakios-sm7325). Answered the same way -- the local account as it is, no
+ * storefront update, no wait -- but inside a promise that is already finished: on iOS 26/27 this answers
+ * a promise, not the account, and its caller sends the answer -addSuccessBlock:, which an ACAccount does
+ * not know (the App Store died of that selector, logs/122602-run.log.live). +[AMSPromise promiseWithResult:]
+ * is the finished one.
+ */
+static id (*old_accountForMediaType)(id, SEL, void *, BOOL);
+static id
+new_accountForMediaType(id self, SEL cmd, void *media_type, BOOL update_storefront)
+{
+	Class promise_class = objc_getClass("AMSPromise");
+	id account, promise;
+
+	(void)cmd, (void)media_type, (void)update_storefront;
+	entered[COUNT_afterUpdating]++;
+	account = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
+	promise = promise_class != Nil ? ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
+	    sel_registerName("promiseWithResult:"), account) : NULL;
+	returned[COUNT_afterUpdating]++;
+	say("hakios: store: _ams_localiTunesAccountForAccountMediaType:updateStorefront: answered at once with a "
+	    "finished promise, %s (promise %s)\n", account != NULL ? "the local account" : "nothing",
+	    promise != NULL ? "made" : "NOT MADE: no AMSPromise");
+	return promise;
+}
+
+/*
  * The synchronous wait itself. Four of the daemon's eleven threads sit in
  * -[AMSBagValue valueWithError:] -> -[AMSPromise resultWithError:] -> resultBeforeDate:error: ->
  * NSConditionLock, which is a thread blocked until the bag loads. Who does that, and whether one of
@@ -2205,6 +2235,8 @@ static struct replacement replacements[] = {
 	  false },
 	{ "ACAccountStore", "_ams_localiTunesAccountAfterUpdatingStorefront:", false, (IMP)new_afterUpdating,
 	  (IMP *)&old_afterUpdating, false },
+	{ "ACAccountStore", "_ams_localiTunesAccountForAccountMediaType:updateStorefront:", false,
+	  (IMP)new_accountForMediaType, (IMP *)&old_accountForMediaType, false },
 	{ "NSMutableURLRequest", "ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies:", false,
 	  (IMP)new_addCookiesBlocking, (IMP *)&old_addCookiesBlocking, false },
 	{ "ACAccountStore", "_updateStorefrontInLocalAccount:", false, (IMP)new_updateStorefront,
