@@ -100,12 +100,14 @@ make kernel-check                                      # ядро инструм
 make qemu                                              # загрузка в QEMU: проверки из оболочки, тесты XNU (kernPOST=1), четыре процессора
 tools/qemu-root.sh root.img                            # корень из программ этого репозитория
 tools/qemu-kernel.sh --cpus 2 --ramdisk root.img --boot-args rd=md0 --until 'a shell on the console' \
-    --type 'help\nioreg 3\nthreads\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
+    --type 'help\nioreg 3\nthreads\nas 501:20 id\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
 ```
 
 Самому поработать в оболочке ядра: `tools/qemu-kernel.sh --interactive --cpus 2 --ramdisk root.img
 --boot-args rd=md0 <ядро>` (консоль в этом терминале, выход Ctrl-C; с `--window` ещё и экран в окне).
-Что умеет оболочка в QEMU и что проверяет `make qemu`: [qemu.md](qemu.md).
+Что умеет оболочка в QEMU и что проверяет `make qemu`: [qemu.md](qemu.md). Команда `as UID:GID КОМАНДА`
+выполняет команду от имени другого пользователя: так видно, что ядро не позволяет тому, кто не root
+(`as 501:20 kill 1`, `as 501:20 chown 0:0 ФАЙЛ`).
 
 ## 4. IPSW Darwin 27.2
 
