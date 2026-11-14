@@ -86,6 +86,8 @@ second_version(void)
 	length = version2(200, 24, 0);
 	CHECK(qrtr_frame(message, 100, &header, &at) == QRTR_FRAME_SIZE_WRONG, "options past what arrived: not taken");
 	CHECK(qrtr_frame(message, 15, &header, &at) == QRTR_FRAME_NO_DATAGRAM, "less than its header: no datagram");
+	version2(0, 24, 24);
+	CHECK(qrtr_frame(message, 16, &header, &at) == QRTR_FRAME_SIZE_WRONG, "its header alone: a header, of a datagram not there");
 }
 
 /* sizes that would wrap a sum of offset and size */
