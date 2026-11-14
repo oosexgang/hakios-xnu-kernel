@@ -91,3 +91,4 @@ KERNEL ?= ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
 qemu:
 	workbench/qemu_boot_test.sh $(KERNEL)
 	workbench/qemu_post_test.sh $(KERNEL)
+	workbench/qemu_smp_test.sh $(KERNEL)
