@@ -365,9 +365,15 @@ command_serve(int argc, char **argv)
 		syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 		return;
 	}
-	say("serving on port 80: ");
-	say_number((uint64_t)count);
-	say(count > 1 ? " requests\n" : " request\n");
+	{
+		/* (in one write: run from spawn, a line said in pieces may have the shell's prompt put in its middle) */
+		char line[64];
+		size_t at = append(line, 0, sizeof(line), "serving on port 80: ");
+
+		at = append_number(line, at, sizeof(line), (uint64_t)count);
+		at = append(line, at, sizeof(line), count > 1 ? " requests\n" : " request\n");
+		say(line);
+	}
 	for (int served = 0; served < count; served++) {
 		struct sockaddr_in from;
 		uint32_t size = sizeof(from);
