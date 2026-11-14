@@ -115,6 +115,8 @@ void command_ps(int argc, char **argv);
 void command_rm(int argc, char **argv);
 void command_echo_udp(int argc, char **argv);
 void command_unix_name(int argc, char **argv);
+void command_fill(int argc, char **argv);
+void command_mmap_write(int argc, char **argv);
 void command_shm(int argc, char **argv);
 void command_vm(int argc, char **argv);
 void command_stat(int argc, char **argv);

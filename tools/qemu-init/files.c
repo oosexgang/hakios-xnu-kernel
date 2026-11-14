@@ -1,4 +1,4 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, mmap */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, fill, mmap, mmap-write */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -561,4 +561,102 @@ command_memory(int argc, char **argv)
 	say(" MB with it, ");
 	say_number(free_megabytes());
 	say(" MB after\n");
+}
+
+#define SYS_msync               65
+#define PROT_WRITE              2
+#define MAP_SHARED              1
+#define MS_SYNC                 0x10
+
+/* FILE BYTES: a file of that many bytes made up as they go (byte i is i * 7 mod 251), written in pieces of 16 KB */
+void
+command_fill(int argc, char **argv)
+{
+	static uint8_t chunk[16384];
+	uint64_t bytes = argc == 3 ? parse_number(argv[2]) : 0, done = 0;
+	long fd;
+
+	if (argc != 3 || bytes == 0) {
+		say("fill FILE BYTES\n");
+		return;
+	}
+	fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0, 0);
+	if (fd < 0) {
+		say_failed("fill", argv[1], fd);
+		return;
+	}
+	while (done < bytes) {
+		uint64_t n = bytes - done < sizeof(chunk) ? bytes - done : sizeof(chunk);
+
+		for (uint64_t i = 0; i < n; i++) {
+			chunk[i] = (uint8_t)((done + i) * 7 % 251);
+		}
+		long wrote = syscall6(SYS_write, fd, (long)chunk, (long)n, 0, 0, 0);
+		if (wrote != (long)n) {
+			say_failed("fill", argv[1], wrote < 0 ? wrote : -28);
+			break;
+		}
+		done += n;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	say("fill: ");
+	say(argv[1]);
+	say(", ");
+	say_number(done);
+	say(" bytes\n");
+}
+
+/*
+ * FILE: the file mapped shared and written through the mapping -- every byte turned over (b ^ 0xff) -- then
+ * msync'd and unmapped: what reading it then gives must be the turned bytes (the file system's page-out)
+ */
+void
+command_mmap_write(int argc, char **argv)
+{
+	static uint8_t buffer[16384];
+	struct stat64_head st;
+	uint64_t before = 0xcbf29ce484222325ull, after = 0xcbf29ce484222325ull, read_back = 0xcbf29ce484222325ull;
+	long fd, mapped, all = 0;
+
+	if (argc != 2) {
+		say("mmap-write FILE\n");
+		return;
+	}
+	fd = syscall6(SYS_open, (long)argv[1], 2 /* O_RDWR */, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_fstat64, fd, (long)&st, 0, 0, 0, 0) != 0 || st.size <= 0) {
+		say_failed("mmap-write", argv[1], fd < 0 ? fd : -22);
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	mapped = syscall6(SYS_mmap, 0, st.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (mapped < 0) {
+		say_failed("mmap-write", argv[1], mapped);
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		return;
+	}
+	for (int64_t i = 0; i < st.size; i++) {
+		uint8_t *b = (uint8_t *)mapped + i;
+
+		before = fnv(before, b, 1);
+		*b ^= 0xff;
+		after = fnv(after, b, 1);
+	}
+	syscall6(SYS_msync, mapped, st.size, MS_SYNC, 0, 0, 0);
+	syscall6(SYS_munmap, mapped, st.size, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0);
+	for (long got; fd >= 0 && (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += got) {
+		read_back = fnv(read_back, buffer, got);
+	}
+	if (fd >= 0) {
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	say("mmap-write: ");
+	say(argv[1]);
+	say(", ");
+	say_number((uint64_t)st.size);
+	say(all == st.size && read_back == after && after != before ? " bytes turned through the mapping, and read so\n" :
+	    " bytes: what is read is NOT what the mapping wrote\n");
 }
