@@ -67,7 +67,8 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `df` | The file systems mounted (getfsstat, each asked now): where, of what kind, from what, their size and room, and which are read only. |
 | `mkdir DIR...`, `write FILE WORDS...`, `rm PATH...` | Directories and files made and removed (where a file system takes writing: ramfs). |
 | `xattr FILE [NAME VALUE]`, `xattr -d FILE NAME` | A file's extended attributes listed with their values, one set, one taken away (ramfs keeps them). |
-| `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
+| `umask [MODE]`, `chown UID:GID PATH...` | What a new file is made without, and whose a file is. |
+| `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, owner, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `files [LIMIT]` | The limit on a process's descriptors lowered (setrlimit), files opened until the kernel says no (EMFILE), and all put back. |
 | `descriptors FILE` | A file made anew and what descriptors do with it, as BSD has them: lseek, pread and pwrite (which move no offset), a dup's offset shared, dup2, O_APPEND, and an empty non-blocking pipe's EAGAIN. |
 | `fill FILE BYTES` | A file of made-up bytes (byte i is i * 7 mod 251), written in pieces of 16 KB, for `hash` to check against this computer's. |
@@ -129,15 +130,16 @@ on its shell and checks what comes back:
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
   timer keeps time and it sees a pipe become readable, and so do poll and select.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
-  removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
-  symbolic link to it is read through; a file moves from one directory to another, and ramfs refuses what
-  BSD refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set, replaced, listed and taken away;
-  relative paths start from the shell's own directory; descriptors do what BSD's do; a process gets no more descriptors than its
-  limit; three megabytes written into ramfs read back as written, and so do bytes written through a
-  shared mapping of it; a mapped file is what reading it gives; memory of its own holds what is written and is all
-  given back, each of its pages a fault Mach's counts see; the kernel keeps a process's time, none of
-  it while asleep, and filling new pages as the kernel's; values are set through sysctl; the kernel's
-  messages are read; the date is this year's.
+  removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
+  link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
+  refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set,
+  replaced, listed and taken away; relative paths start from the shell's own directory; a file made under
+  a mask is made without what it masks, and is given to another owner; descriptors do what BSD's do; a
+  process gets no more descriptors than its limit; three megabytes written into ramfs read back as
+  written, and so do bytes written through a shared mapping of it; a mapped file is what reading it gives;
+  memory of its own holds what is written and is all given back, each of its pages a fault Mach's counts
+  see; the kernel keeps a process's time, none of it while asleep, and filling new pages as the kernel's;
+  values are set through sysctl; the kernel's messages are read; the date is this year's.
 - **IOKit.** Its registry answers in MIG messages, and the serial number the loader made is the one it
   gives user space; a picture drawn on a surface and swapped onto the screen is what QEMU's screen shows
   (`workbench/screen_shows_draw.py`).
