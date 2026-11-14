@@ -150,13 +150,15 @@ void
 say_error(long error)
 {
 	static const struct { int number; const char *name; } names[] = {
-		{ 1, "EPERM" }, { 2, "ENOENT" }, { 3, "ESRCH" }, { 4, "EINTR" }, { 5, "EIO" }, { 9, "EBADF" }, { 10, "ECHILD" },
-		{ 12, "ENOMEM" }, { 13, "EACCES" }, { 14, "EFAULT" }, { 16, "EBUSY" }, { 17, "EEXIST" }, { 18, "EXDEV" },
-		{ 20, "ENOTDIR" }, { 21, "EISDIR" }, { 22, "EINVAL" }, { 24, "EMFILE" }, { 28, "ENOSPC" }, { 30, "EROFS" },
-		{ 31, "EMLINK" }, { 35, "EAGAIN" }, { 36, "EINPROGRESS" }, { 45, "ENOTSUP" }, { 48, "EADDRINUSE" },
-		{ 49, "EADDRNOTAVAIL" }, { 50, "ENETDOWN" }, { 51, "ENETUNREACH" }, { 54, "ECONNRESET" }, { 60, "ETIMEDOUT" },
-		{ 61, "ECONNREFUSED" }, { 62, "ELOOP" }, { 63, "ENAMETOOLONG" }, { 65, "EHOSTUNREACH" }, { 66, "ENOTEMPTY" },
-		{ 78, "ENOSYS" }, { 93, "ENOATTR" },
+		{ 1, "EPERM" }, { 2, "ENOENT" }, { 3, "ESRCH" }, { 4, "EINTR" }, { 5, "EIO" }, { 7, "E2BIG" },
+		{ 8, "ENOEXEC" }, { 9, "EBADF" }, { 10, "ECHILD" }, { 12, "ENOMEM" }, { 13, "EACCES" },
+		{ 14, "EFAULT" }, { 16, "EBUSY" }, { 17, "EEXIST" }, { 18, "EXDEV" }, { 20, "ENOTDIR" },
+		{ 21, "EISDIR" }, { 22, "EINVAL" }, { 24, "EMFILE" }, { 28, "ENOSPC" }, { 30, "EROFS" },
+		{ 31, "EMLINK" }, { 32, "EPIPE" }, { 35, "EAGAIN" }, { 36, "EINPROGRESS" }, { 45, "ENOTSUP" },
+		{ 48, "EADDRINUSE" }, { 49, "EADDRNOTAVAIL" }, { 50, "ENETDOWN" }, { 51, "ENETUNREACH" },
+		{ 54, "ECONNRESET" }, { 60, "ETIMEDOUT" }, { 61, "ECONNREFUSED" }, { 62, "ELOOP" },
+		{ 63, "ENAMETOOLONG" }, { 65, "EHOSTUNREACH" }, { 66, "ENOTEMPTY" }, { 78, "ENOSYS" },
+		{ 86, "EBADARCH" }, { 88, "EBADMACHO" }, { 93, "ENOATTR" },
 	};
 	uint64_t number = (uint64_t)(error < 0 ? -error : error);
 
