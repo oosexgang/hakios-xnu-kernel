@@ -175,6 +175,10 @@ typed=(
 	'cat /tmp/notes/dangling'
 	'rm /tmp/notes/loop-a /tmp/notes/loop-b /tmp/notes/dangling'
 	'rm /tmp'
+	'mkdir /tmp/notes/other'
+	'mount ramfs ramfs /tmp/notes/other'
+	'mv /tmp/notes/vectors /tmp/notes/other/vectors'
+	'ln /tmp/notes/vectors /tmp/notes/other/vectors'
 	'mkdir /tmp/notes/tree /tmp/notes/tree/a /tmp/notes/tree/b /tmp/notes/empty'
 	'stat /tmp/notes/tree'
 	'mv /tmp/notes/tree/a /tmp/notes/empty'
@@ -331,7 +335,7 @@ check "poll and select wait out their timeout on an empty pipe, and find it read
 		awk '{ exit !(\$9 >= 95 && \$9 < 1000 && \$14 >= 95 && \$14 < 1000) }'"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
-	bash -c "cat '$shell' | grep -qx 'kept in memory' && cat '$shell' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
+	bash -c "cat '$shell' | grep -qx 'kept in memory' && cat '$shell' | sed -n '/^# ls \\/tmp\\/notes/,/^# /p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
 # (b and d one file, by its inode; c renamed to d, so gone; s a symbolic link to b, read through)
 check "a file has two names (link), one renamed, its mode changed, and a symbolic link to it is read through" \
 	bash -c "cat '$shell' | awk '
@@ -427,6 +431,8 @@ check "a directory's links: two, and one more for each directory in it; one move
 		grep -aq '^stat: /tmp/notes/tree/a: error 2 (ENOENT)' '$shell' && ! grep -aq '^rm: /tmp/notes/tree' '$shell'"
 check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writable, and with 512 bytes read out it does" \
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
+check "a file is not moved, or linked, from one file system to another (EXDEV)" \
+	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
