@@ -100,6 +100,8 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
 | `locks [COUNT]` | Threads adding to one count under one lock, as `os_unfair_lock` makes one: a word, and the kernel's `ulock_wait` and `ulock_wake` for those that must wait. None of the count is lost. |
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
+| `fifo PATH` | A named pipe made in ramfs (mkfifo): a forked child opens it to write, the shell to read, each open waiting for the other's. |
+| `flock FILE` | The file locked: a child's try, without waiting, is refused (EAGAIN); once it is let go, a child's is taken. |
 | `poll` | poll and select on a pipe: empty, each waits out its 100 ms and finds nothing; with a byte in it, each finds it readable at once. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | **IOKit** (`iokit.c`) | |
@@ -132,14 +134,18 @@ on its shell and checks what comes back:
   carries what a child writes into it, and so does memory shared by name; a descriptor sent over a socket
   pair reads the file it was, and a socket in ramfs is reached by its name; two threads run on the two processors at once, and four take turns under
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
-  timer keeps time and it sees a pipe become readable, and so do poll and select.
+  timer keeps time and it sees a pipe become readable, and so do poll and select; a named pipe in ramfs
+  carries what a child writes into it, and a lock on a file keeps another process out until it is let go; a
+  script runs through the program its `#!` line names; a user who is not root reads what is theirs and not
+  what is another's, and may lower a process's priority, not raise it.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
   link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
   refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set,
   replaced, listed and taken away; relative paths start from the shell's own directory; a file made under
   a mask is made without what it masks, and is given to another owner; descriptors do what BSD's do; a
-  process gets no more descriptors than its limit; three megabytes written into ramfs read back as
+  process gets no more descriptors than its limit; a file cut short and grown again reads as zeros past
+  where it was cut, and its times are set to a second given; three megabytes written into ramfs read back as
   written, and so do bytes written through a shared mapping of it; a mapped file is what reading it gives;
   memory of its own holds what is written and is all given back, each of its pages a fault Mach's counts
   see; the kernel keeps a process's time, none of it while asleep, and filling new pages as the kernel's;
