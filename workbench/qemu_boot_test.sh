@@ -116,6 +116,7 @@ typed=(
 	'xattr /tmp/notes/b'
 	'xattr -d /tmp/notes/b com.example.size'
 	'files 20'
+	'unix-name /tmp/notes/socket'
 	'cd /tmp/notes'
 	'pwd'
 	'cat b'
@@ -240,6 +241,8 @@ check "the kernel keeps a process's time (getrusage): asleep it uses none, and i
 		awk '{ exit !(\$13 > \$8) }'"
 check "the kernel holds a process to its limit of descriptors (setrlimit): the 20th is refused with EMFILE" \
 	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24 \(EMFILE\)' "$log"
+check "a socket by name in ramfs: a child connects to it there and writes, and the name is taken away after" \
+	grep -aq '^unix-name: /tmp/notes/socket (a socket in the file system): a child connected and wrote: by its name' "$log"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
