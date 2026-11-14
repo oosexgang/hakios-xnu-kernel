@@ -116,10 +116,45 @@ struct fake_lock hakios_smmu_lock = { PTHREAD_MUTEX_INITIALIZER };
 #undef printf
 
 /* (the audio DSP's driver, the amplifiers', the guard's and Darwin's audio device: these scenarios reach none of them) */
-bool
-hakios_adsp_apr(uint8_t service __unused, uint16_t port __unused, uint32_t token __unused, uint32_t opcode __unused,
-    const void *payload __unused, uint32_t length __unused, uint32_t wait_ms __unused, struct hakios_apr_answer *answer __unused)
+/* the audio DSP: answers as a scenario puts them (none put: "done"), and what it was asked */
+enum dsp_answer { DSP_RESULT, DSP_SILENT, DSP_OWN_ANSWER, DSP_ANOTHER_RESULT };
+static struct { enum dsp_answer how; uint32_t status; } dsp_script[16];
+static unsigned dsp_put, dsp_asked;
+static struct { uint8_t service; uint16_t port; uint32_t opcode; } dsp_heard[16];
+
+static void
+dsp_will(enum dsp_answer how, uint32_t status)
 {
+	dsp_script[dsp_put].how = how;
+	dsp_script[dsp_put].status = status;
+	dsp_put++;
+}
+
+bool
+hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token __unused, uint32_t opcode, const void *payload __unused,
+    uint32_t length __unused, uint32_t wait_ms __unused, struct hakios_apr_answer *answer)
+{
+	unsigned n = dsp_asked++ % 16;
+
+	dsp_heard[n].service = service;
+	dsp_heard[n].port = port;
+	dsp_heard[n].opcode = opcode;
+	memset(answer, 0, sizeof(*answer));
+	switch (dsp_script[n].how) {
+	case DSP_SILENT:
+		return false;
+	case DSP_OWN_ANSWER:
+		answer->opcode = opcode + 1;
+		answer->length = 4;
+		return true;
+	case DSP_RESULT:
+	case DSP_ANOTHER_RESULT:
+		answer->opcode = APR_BASIC_RSP_RESULT;
+		answer->length = 8;
+		answer->words[0] = dsp_script[n].how == DSP_ANOTHER_RESULT ? opcode + 1 : opcode;
+		answer->words[1] = dsp_script[n].status;
+		return true;
+	}
 	return false;
 }
 void hakios_adsp_apr_events(hakios_apr_events_t handler __unused) { }
@@ -360,6 +395,35 @@ the_streams_events(void)
 	CHECK(!events(APR_SVC_ASM, 0, 0x12345, WRITE_TOKEN, ok, 16) && underflows == 1 && written_done == 4, "anything else: not taken");
 }
 
+/* ---- the DSP's answers to the driver's commands ------------------------------------------------------- */
+
+/* done, refused by name, not answered, answered for another command; its own answer when one is waited for */
+static void
+the_dsps_answers(void)
+{
+	dsp_will(DSP_RESULT, 0);
+	CHECK(command("a command", APR_SVC_ASM, 0x12, 0x100, NULL, 0, 0, NULL) && dsp_heard[0].service == APR_SVC_ASM &&
+	    dsp_heard[0].port == 0x12, "done, to the service and port asked");
+	CHECK(logged("sound: a command: done"), "said: %s", log_text);
+	dsp_will(DSP_RESULT, 13);
+	CHECK(!command("a refused one", APR_SVC_AFE, 0, 0x101, NULL, 0, 0, NULL) && logged("a refused one: REFUSED: aborted"),
+	    "refused by name: %s", log_text);
+	dsp_will(DSP_SILENT, 0);
+	CHECK(!command("unanswered", APR_SVC_AFE, 0, 0x102, NULL, 0, 0, NULL) && logged("unanswered (opcode 0x102 to service 4, port 0): NO ANSWER"),
+	    "no answer: %s", log_text);
+	dsp_will(DSP_ANOTHER_RESULT, 0);
+	CHECK(!command("for another", APR_SVC_AFE, 0, 0x103, NULL, 0, 0, NULL) && logged("for another: an answer not expected"),
+	    "a result for another command: %s", log_text);
+	dsp_will(DSP_OWN_ANSWER, 0);
+	CHECK(command("asked", APR_SVC_ADM, 0, 0x200, NULL, 0, 0x201, NULL), "its own answer, waited for");
+	dsp_will(DSP_RESULT, 0);
+	CHECK(!command("asked again", APR_SVC_ADM, 0, 0x200, NULL, 0, 0x201, NULL), "a good result is not the answer waited for");
+	dsp_will(DSP_OWN_ANSWER, 0);
+	CHECK(!command("not waited for", APR_SVC_ADM, 0, 0x200, NULL, 0, 0, NULL), "nor an answer to a command that waits for none");
+	dsp_will(DSP_OWN_ANSWER, 0);
+	CHECK(!command("another's", APR_SVC_ADM, 0, 0x200, NULL, 0, 0x300, NULL), "nor another command's answer");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -368,7 +432,7 @@ main(int argc, char **argv)
 		{ "not_at_the_first_phones", not_at_the_first_phones, 1 }, { "no_frames", no_frames, 1 },
 		{ "smmu_set_up", smmu_set_up, 1 }, { "smmu_let_through", smmu_let_through, 1 },
 		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
-		{ "the_streams_events", the_streams_events, 1 },
+		{ "the_streams_events", the_streams_events, 1 }, { "the_dsps_answers", the_dsps_answers, 1 },
 	};
 	char name[64];
 	const char *colon;
