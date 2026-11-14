@@ -168,6 +168,8 @@ void command_umask(int argc, char **argv);
 void command_chown(int argc, char **argv);
 void command_chflags(int argc, char **argv);
 void command_access(int argc, char **argv);
+void command_cp(int argc, char **argv);
+void command_id(int argc, char **argv);
 void command_truncate(int argc, char **argv);
 void command_vectors(int argc, char **argv);
 void command_touch(int argc, char **argv);

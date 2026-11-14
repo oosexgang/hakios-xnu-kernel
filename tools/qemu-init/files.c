@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -908,4 +908,38 @@ command_access(int argc, char **argv)
 		append(line, at, sizeof(line), "\n");
 		say(line);
 	}
+}
+
+/* SOURCE TARGET: the file's bytes into a new file of the same permissions */
+void
+command_cp(int argc, char **argv)
+{
+	static char buffer[16384];
+	struct stat64_head st;
+	long from, to, got, error;
+
+	if (argc != 3) {
+		say("cp SOURCE TARGET\n");
+		return;
+	}
+	if ((error = syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0)) != 0 ||
+	    (from = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0)) < 0) {
+		say_failed("cp", argv[1], error != 0 ? error : from);
+		return;
+	}
+	if ((to = syscall6(SYS_open, (long)argv[2], O_WRONLY | O_CREAT | O_TRUNC, st.mode & 07777, 0, 0, 0)) < 0) {
+		say_failed("cp", argv[2], to);
+		syscall6(SYS_close, from, 0, 0, 0, 0, 0);
+		return;
+	}
+	while ((got = syscall6(SYS_read, from, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0) {
+		if (syscall6(SYS_write, to, (long)buffer, got, 0, 0, 0) != got) {
+			say("cp: ");
+			say(argv[2]);
+			say(": not all written\n");
+			break;
+		}
+	}
+	syscall6(SYS_close, from, 0, 0, 0, 0, 0);
+	syscall6(SYS_close, to, 0, 0, 0, 0, 0);
 }

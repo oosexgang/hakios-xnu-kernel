@@ -1,5 +1,5 @@
 /* tools/qemu-init: processes and their signals and descriptors: ps, run, spawn, kill, wait, sleep, kevent, crash,
- * alarm, fork, mask, fds, cloexec */
+ * alarm, fork, mask, fds, cloexec, id */
 #include "init.h"
 
 #define PROC_INFO_CALL_LISTPIDS 1
@@ -544,4 +544,30 @@ command_cloexec(int argc, char **argv)
 	if (marked >= 0) {
 		syscall6(SYS_close, marked, 0, 0, 0, 0, 0);
 	}
+}
+
+#define SYS_getuid              24
+#define SYS_geteuid             25
+#define SYS_getgid              47
+#define SYS_getegid             43
+
+/* who this process is: its real and effective user and group */
+void
+command_id(int argc, char **argv)
+{
+	char line[96];
+	size_t at;
+
+	(void)argc;
+	(void)argv;
+	at = append(line, 0, sizeof(line), "id: user ");
+	at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getuid, 0, 0, 0, 0, 0, 0));
+	at = append(line, at, sizeof(line), ", effective ");
+	at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_geteuid, 0, 0, 0, 0, 0, 0));
+	at = append(line, at, sizeof(line), "; group ");
+	at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getgid, 0, 0, 0, 0, 0, 0));
+	at = append(line, at, sizeof(line), ", effective ");
+	at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getegid, 0, 0, 0, 0, 0, 0));
+	append(line, at, sizeof(line), "\n");
+	say(line);
 }
