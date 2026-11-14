@@ -144,10 +144,12 @@ prompts = lambda: (lambda text: text.count(b'\n# ') + text.count(b'\x1b[2J# '))(
 def wait_for(count, line=''):
     for _ in range(1800):
         if prompts() >= count:
-            return
+            return count
         time.sleep(0.1)
-    # (a prompt not at a line's start is not seen: every line after then waits its three minutes)
+    # (a prompt not at a line's start is not seen; counted from what has come, the lines after do not each wait
+    # their three minutes for it)
     sys.stderr.write('qemu-kernel: no prompt came back in 3 minutes after: %s\n' % line.strip())
+    return prompts()
 s = socket.socket(socket.AF_UNIX)
 s.connect(console)
 # what the port says comes to this socket too: it is read and let go (QEMU's log has it), or the socket
@@ -179,7 +181,7 @@ for text in typed.replace('\\n', '\n').splitlines(keepends=True):
         s.sendall(b'\x15')
         time.sleep(0.5)
     done += 1
-    wait_for(done, text)
+    done = wait_for(done, text)
 time.sleep(0.5)
 PY
 	[ -z "$then_pid" ] || wait "$then_pid"
