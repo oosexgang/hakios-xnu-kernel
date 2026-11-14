@@ -160,25 +160,9 @@ fts_ahb_clock_ready(uint32_t status)
 	return !(status & CLOCK_OFF) || (status & (1u << 1));
 }
 
-static uint32_t
-rcg_rate(uint32_t cfg, uint32_t m, uint32_t not_n_minus_m)
-{
-	static const uint32_t parent[8] = { XO_HZ, 600000000, 0, 0, 0, 0, 300000000, 0 };
-	uint64_t hz = parent[cfg >> 8 & 7];
-	uint32_t divider = cfg & 0x1f, mode = cfg >> 12 & 3;
-
-	if (divider) {
-		hz = hz * 2 / (divider + 1);
-	}
-	if (mode) {
-		uint32_t n = (~not_n_minus_m & 0xffff) + (m & 0xffff);
-
-		if (n) {
-			hz = hz * (m & 0xffff) / n;
-		}
-	}
-	return (uint32_t)hz;
-}
+#define GENI_SPI_NAME           "fts"
+#include "geni_spi.h"               /* the engine's registers, SPI set up, a transfer, a recovery;
+                                         * the engine's clock's rate */
 
 static bool
 clocks_on(uint32_t target_hz)
@@ -235,8 +219,6 @@ clocks_on(uint32_t target_hz)
 
 #define SE_PHYS                 ((vm_offset_t)WIRED->serial_engine)
 #define SE_SIZE                 0x4000UL
-#define GENI_SPI_NAME           "fts"
-#include "geni_spi.h"               /* the engine's registers, SPI set up, a transfer, a recovery */
 
 /* GPIO mode-0 fallback when boot firmware leaves GENI restricted to GPI DMA. */
 static unsigned bitbang_in, bitbang_out;
