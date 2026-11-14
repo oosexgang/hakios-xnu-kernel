@@ -368,6 +368,7 @@ static const struct {
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
 	{ "fifo", "PATH a named pipe: a child writes into it, this process reads", command_fifo },
 	{ "flock", "FILE the file locked: another process cannot have it, until it is let go", command_flock },
+	{ "byte-locks", "FILE bytes of the file locked (fcntl): another process kept off them, not off others", command_byte_locks },
 	{ "poll", "poll and select on a pipe, empty and with a byte in it", command_poll },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 	{ NULL, "IOKit", NULL },

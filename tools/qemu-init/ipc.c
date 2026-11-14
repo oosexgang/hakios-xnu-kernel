@@ -1,6 +1,6 @@
 /* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
  * memory shared by name, Mach messages, waiting on descriptors, a named pipe, a lock on a file: pipe, unix,
- * unix-name, shm, mach, poll, fifo, flock */
+ * unix-name, shm, mach, poll, fifo, flock, byte-locks */
 #include "init.h"
 
 #define SYS_wait4               7
@@ -523,5 +523,97 @@ command_flock(int argc, char **argv)
 	}
 	at = append(line, at, sizeof(line), "; let go, another's try ");
 	at = append(line, at, sizeof(line), after == 0 ? "taken\n" : "REFUSED\n");
+	say(line);
+}
+
+#define SYS_fcntl               92
+#define F_GETLK                 7
+#define F_SETLK                 8
+#define F_RDLCK                 1
+#define F_UNLCK                 2
+#define F_WRLCK                 3
+
+struct byte_lock {                      /* Darwin's struct flock */
+	int64_t start, len;
+	int32_t pid;
+	int16_t type, whence;
+};
+
+static long
+lock_bytes(long fd, int command, int16_t type, int64_t start, int64_t len, struct byte_lock *out)
+{
+	struct byte_lock l = { .start = start, .len = len, .pid = 0, .type = type, .whence = 0 /* SEEK_SET */ };
+	long error = syscall6(SYS_fcntl, fd, command, (long)&l, 0, 0, 0);
+
+	if (out != NULL) {
+		*out = l;
+	}
+	return error;
+}
+
+/* FILE: bytes 0 to 9 of it locked to write (fcntl F_SETLK); in a child, a lock on 5 to 14 refused, on 10 to 19
+ * taken, F_GETLK naming this process as what is in the way, and a lock to read 0 to 9 refused too; let go,
+ * the child's lock on 0 to 9 taken */
+void
+command_byte_locks(int argc, char **argv)
+{
+	char line[256];
+	struct byte_lock in_way;
+	int in_child = 0;
+	int32_t status = 0;
+	long fd, error, pid, self = syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0);
+	size_t at;
+	int seen;
+
+	if (argc != 2) {
+		say("byte-locks FILE\n");
+		return;
+	}
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_RDWR, 0, 0, 0, 0)) < 0 ||
+	    (error = lock_bytes(fd, F_SETLK, F_WRLCK, 0, 10, NULL)) != 0) {
+		say_failed("byte-locks", argv[1], fd < 0 ? fd : error);
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("byte-locks: no child\n");
+		return;
+	}
+	if (in_child) {
+		/* (a process's locks are its own: the child's descriptor, inherited or not, holds none of the parent's) */
+		long mine = syscall6(SYS_open, (long)argv[1], O_RDWR, 0, 0, 0, 0);
+		int bits = 0;
+
+		bits |= lock_bytes(mine, F_SETLK, F_WRLCK, 5, 10, NULL) == -35 ? 1 : 0;
+		bits |= lock_bytes(mine, F_SETLK, F_WRLCK, 10, 10, NULL) == 0 ? 2 : 0;
+		bits |= lock_bytes(mine, F_GETLK, F_WRLCK, 0, 0, &in_way) == 0 && in_way.type == F_WRLCK &&
+		    in_way.pid == self && in_way.start == 0 && in_way.len == 10 ? 4 : 0;
+		bits |= lock_bytes(mine, F_SETLK, F_RDLCK, 0, 10, NULL) == -35 ? 8 : 0;
+		syscall6(SYS_exit, bits, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	seen = (status >> 8) & 0xff;
+	lock_bytes(fd, F_SETLK, F_UNLCK, 0, 10, NULL);
+	if ((pid = syscall_fork(&in_child)) >= 0 && in_child) {
+		long mine = syscall6(SYS_open, (long)argv[1], O_RDWR, 0, 0, 0, 0);
+
+		syscall6(SYS_exit, lock_bytes(mine, F_SETLK, F_WRLCK, 0, 10, NULL) == 0 ? 16 : 0, 0, 0, 0, 0, 0);
+	}
+	if (pid >= 0) {
+		syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+		seen |= (status >> 8) & 0xff;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "byte-locks: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": 0 to 9 held; another's on 5 to 14 ");
+	at = append(line, at, sizeof(line), seen & 1 ? "refused" : "NOT refused");
+	at = append(line, at, sizeof(line), ", on 10 to 19 ");
+	at = append(line, at, sizeof(line), seen & 2 ? "taken" : "NOT taken");
+	at = append(line, at, sizeof(line), seen & 4 ? ", F_GETLK names the holder" : ", F_GETLK does NOT name the holder");
+	at = append(line, at, sizeof(line), seen & 8 ? ", a read lock refused" : ", a read lock NOT refused");
+	at = append(line, at, sizeof(line), seen & 16 ? "; let go, taken\n" : "; let go, NOT taken\n");
 	say(line);
 }
