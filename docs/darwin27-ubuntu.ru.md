@@ -21,7 +21,8 @@ Darwin 27 до домашнего экрана доходил на **renoir** (S
 На redwood Darwin 26/27 ещё не загружался; macan загружался, но его драйверов пока нет в основной ветке
 (их README на ветке `devices` говорят, что работает). В QEMU Darwin 27 не запускается (его образы
 сделаны для телефонов), но само ядро там загружается до своей оболочки и проверяется целиком: сеть,
-диски, звук, ввод, процессы, потоки, IOKit (шаг 3, `make qemu`).
+диски, файлы, звук, ввод, процессы, потоки, память, IOKit и экран, на двух и на четырёх процессорах
+(шаг 3, `make qemu`).
 
 ## Что сделано
 
@@ -96,7 +97,7 @@ kernel/build.sh
 
 ```sh
 make kernel-check                                      # ядро инструментами LLVM (THEOS не нужен)
-make qemu                                              # загрузка в QEMU, проверки из оболочки и собственные тесты XNU (kernPOST=1)
+make qemu                                              # загрузка в QEMU: проверки из оболочки, тесты XNU (kernPOST=1), четыре процессора
 tools/qemu-root.sh root.img                            # корень из программ этого репозитория
 tools/qemu-kernel.sh --cpus 2 --ramdisk root.img --boot-args rd=md0 --until 'a shell on the console' \
     --type 'help\nioreg 3\nthreads\n' --screen screen.png ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
