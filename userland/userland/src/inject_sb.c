@@ -928,9 +928,19 @@ layers(void)
 
 	say("hakios: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
 	if (authentication != NULL) {
-		say("hakios: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
-		    SEND(BOOL, authentication, "isAuthenticated") ? "" : "NOT ", SEND(BOOL, authentication, "hasPasscodeSet") ? "a" : "no",
-		    SEND(BOOL, authentication, "inSecureDisplayMode") ? "" : "not ");
+		/* (each asked only where the controller has it: iOS 27's has no inSecureDisplayMode, and asking it ended
+		 * SpringBoard, an unrecognized selector, at every com.hakios.layers) */
+		Class controller = object_getClass(authentication);
+		int authenticated = class_respondsToSelector(controller, sel_registerName("isAuthenticated")) ?
+		    SEND(BOOL, authentication, "isAuthenticated") : -1;
+		int passcode = class_respondsToSelector(controller, sel_registerName("hasPasscodeSet")) ?
+		    SEND(BOOL, authentication, "hasPasscodeSet") : -1;
+		int secure = class_respondsToSelector(controller, sel_registerName("inSecureDisplayMode")) ?
+		    SEND(BOOL, authentication, "inSecureDisplayMode") : -1;
+
+		say("hakios: layers: the user is %s, %s passcode, the display %s\n",
+		    authenticated < 0 ? "?" : authenticated ? "authenticated" : "NOT authenticated",
+		    passcode < 0 ? "? a" : passcode ? "a" : "no", secure < 0 ? "? in secure mode" : secure ? "in secure mode" : "not in secure mode");
 	}
 	for (long i = 0; windows != NULL && i < SEND(long, windows, "count"); i++) {
 		id w = SEND1(id, windows, "objectAtIndex:", long, i);
