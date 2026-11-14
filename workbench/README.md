@@ -129,6 +129,9 @@ tests are built with from these and the repository's own boards.
 - **One scenario a process.** Drivers keep their state in statics; a test's `main` lists its
   scenarios when called without one, and `run.sh` runs each in a process of its own, on the host and
   under qemu-aarch64.
+- **Let the driver's threads finish.** A scenario that returns while a thread of the driver still writes
+  to the log or to stdout ends its process under that thread: now and then (more often under
+  qemu-aarch64) the C library aborts on the way out. Wait for the driver's last word before returning.
 - **Wait for everything you then check.** A driver's thread writes its values one after another. A
   test that waits for the first and then compares the second passes a thousand times and fails once
   on a busy machine: `WAIT_FOR(a && b, ms)` before `CHECK(a && b, ...)`, not `WAIT_FOR(a, ms)`. `EVENTUALLY(cond, ms,
@@ -142,6 +145,9 @@ tests are built with from these and the repository's own boards.
   workbench/mutate.sh ddr_driver_test board/ddr.c 'level == 0 ||' ''
   # caught by: not_listed_not_asked
   ```
+
+  The same text as OLD and NEW changes nothing: the test as it is, with what each scenario that fails
+  says -- the first thing to run on a test being written, one test and not all of `run.sh`.
 
   `workbench/mutants.py TEST SOURCE` makes the simple changes itself -- each comparison turned the other
   way or made inclusive, each `&&` made `||` -- runs every one, and prints those no scenario noticed.
