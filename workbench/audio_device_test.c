@@ -215,6 +215,58 @@ no_recording(void)
 	CHECK(!hakios_audio_recording_fed() && !hakios_audio_recording_mic(), "no recording: nothing wanted");
 }
 
+/* a writer that keeps writing for over a second: the rate it wrote at is said too */
+static void
+rate_said(void)
+{
+	hakios_audio_init();
+	hakios_audio_set_sink("a test's sink", sink);
+	for (int i = 0; i < 5; i++) {
+		CHECK(play(9600, 4000) == 0, "a fifth of a second written");
+		usleep(300 * 1000);             /* (under the half second that ends a stretch) */
+	}
+	EVENTUALLY(logged("hakios-audio: 1.00 s written at "), 15000, "the rate of a second and more of writing: %s", log_text);
+}
+
+/* a level of 8 is still silence, 9 is sound */
+static void
+silence_ends_at_8(void)
+{
+	hakios_audio_init();
+	hakios_audio_set_sink("a test's sink", sink);
+	CHECK(play(4800, 8) == 0, "written at 8");
+	EVENTUALLY(logged("0.00 s of it sound"), 15000, "silence: %s", log_text);
+	CHECK(play(4800, 9) == 0, "written at 9");
+	EVENTUALLY(logged("0.10 s of it sound"), 15000, "sound: %s", log_text);
+}
+
+/* rec_sound=0 is no recording */
+static void
+rec_sound_zero(void)
+{
+	boot_args = "rec_sound=0";
+	hakios_audio_init();
+	CHECK(!logged("recording the first") && loader_sound[2] == 0, "none made: %s", log_text);
+}
+
+/* a recording that is full takes nothing more, and the microphone's says it wants no more */
+static void
+full_takes_no_more(void)
+{
+	static int16_t frames[2 * 24000];
+	uint64_t used;
+
+	boot_args = "rec_sound=1 rec_sound_mic=1";
+	hakios_audio_init();
+	hakios_audio_record_fed(frames, 24000);
+	CHECK(hakios_audio_recording_mic(), "half full: more wanted");
+	hakios_audio_record_fed(frames, 24000);
+	used = loader_sound[1];
+	CHECK(!hakios_audio_recording_mic(), "the second it was made for is full: no more wanted");
+	hakios_audio_record_fed(frames, 100);
+	CHECK(loader_sound[1] == used, "and nothing more is taken: %llu, %llu", (unsigned long long)loader_sound[1], (unsigned long long)used);
+}
+
 /* the volume Darwin sets is kept for the speakers' driver, with how many times it was set */
 static void
 volume(void)
@@ -240,7 +292,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "played_and_said", played_and_said }, { "sink_full", sink_full }, { "whole_frames", whole_frames },
-		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume },
+		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume }, { "rate_said", rate_said }, { "silence_ends_at_8", silence_ends_at_8 },
+		{ "rec_sound_zero", rec_sound_zero }, { "full_takes_no_more", full_takes_no_more },
 		{ "fed_recording", fed_recording }, { "mic_recording", mic_recording }, { "no_recording", no_recording },
 	};
 
