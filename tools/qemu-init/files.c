@@ -18,6 +18,16 @@ say_mode(uint16_t mode)
 	for (int i = 0; i < 9; i++) {
 		text[1 + i] = (mode >> (8 - i)) & 1 ? "rwxrwxrwx"[i] : '-';
 	}
+	/* set-user-ID, set-group-ID, sticky: in the place of their x, s (t) over an x, S (T) without one */
+	if (mode & 04000) {
+		text[3] = text[3] == 'x' ? 's' : 'S';
+	}
+	if (mode & 02000) {
+		text[6] = text[6] == 'x' ? 's' : 'S';
+	}
+	if (mode & 01000) {
+		text[9] = text[9] == 'x' ? 't' : 'T';
+	}
 	text[10] = '\0';
 	say(text);
 }
