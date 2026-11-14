@@ -126,7 +126,8 @@ on its shell and checks what comes back:
   timer keeps time and it sees a pipe become readable.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
-  symbolic link to it is read through; extended attributes are set, replaced, listed and taken away;
+  symbolic link to it is read through; a file moves from one directory to another, and ramfs refuses what
+  BSD refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set, replaced, listed and taken away;
   relative paths start from the shell's own directory; a process gets no more descriptors than its
   limit; three megabytes written into ramfs read back as written, and so do bytes written through a
   shared mapping of it; a mapped file is what reading it gives; memory of its own holds what is written and is all
