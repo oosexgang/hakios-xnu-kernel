@@ -138,6 +138,12 @@ typed=(
 	'umask 022'
 	'chown 501:20 /tmp/notes/private'
 	'stat /tmp/notes/private'
+	'as 501:20 cat /tmp/notes/private'
+	'as 502:20 cat /tmp/notes/private'
+	'as 502:20 write /tmp/notes/theirs x'
+	'as 501:20 chown 0:0 /tmp/notes/private'
+	'as 501:20 as 0:0 echo root again'
+	'as 501:20 sysctl kern.maxfiles=100'
 	'fill /tmp/notes/cut 10000'
 	'truncate /tmp/notes/cut 100'
 	'hash /tmp/notes/cut'
@@ -298,6 +304,11 @@ check "a file moved from one directory to another reads as it was, and the direc
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
 check "a file made under a mask of 077 is its owner's alone, and is given to another (umask, chown)" \
 	grep -aqE '^/tmp/notes/private: -rw------- 1 link, inode [0-9]+, 2 bytes, owner 501:20' "$shell"
+check "a user who is not root reads a file of their own, not another's, and cannot give a file away, be root again or set the kernel's values" \
+	bash -c "cat '$shell' | grep -A2 -x '# as 501:20 cat /tmp/notes/private' | tr '\n' '|' | grep -qx '# as 501:20 cat /tmp/notes/private|as: user 501 (effective 501), group 20|x|' &&
+		grep -aq '^cat: /tmp/notes/private: error 13 (EACCES)' '$shell' && grep -aq '^write: /tmp/notes/theirs: error 13 (EACCES)' '$shell' &&
+		grep -aq '^chown: /tmp/notes/private: error 1 (EPERM)' '$shell' && grep -aq '^as: 0:0 cannot be had: error 1 (EPERM)' '$shell' &&
+		grep -aq '^kern.maxfiles: (not taken: error 1 (EPERM))' '$shell' && ! grep -aqx 'root again' '$shell'"
 check "a file cut short keeps its start, and grown again reads as zeros past it, not as what it held (truncate)" \
 	bash -c "grep -aq '^truncate: /tmp/notes/cut: 10000 bytes, now 100\$' '$shell' &&
 		grep -aq '^/tmp/notes/cut: 100 bytes in [0-9]* ms, fnv1a $cut_hash' '$shell' &&
