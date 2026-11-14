@@ -4,7 +4,7 @@
 # mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's), and /sbin/launchd run.
 # What is typed on its shell then tries the rest of the kernel:
 #   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way;
-#     a million bytes over the loopback between two of its processes
+#     a million bytes and a datagram over the loopback between two of its processes
 #     (TCP both ways); a datagram answered (workbench/qemu_host.py is this computer's side)
 #   - the devices: a second disk (virtio block, APFS), read whole and through its file system; a tone
 #     (virtio sound, which QEMU writes to a WAV file); a button and a touch from QEMU's keyboard and tablet
@@ -77,6 +77,10 @@ typed=(
 	'spawn /sbin/launchd serve 1'
 	'sleep 1'
 	'get 127.0.0.1 80 /bytes/1000000'
+	'wait'
+	'spawn /sbin/launchd echo-udp 7777 1'
+	'sleep 1'
+	'udp 127.0.0.1 7777 over the loopback'
 	'wait'
 	'hash /dev/rvblk0'
 	'mount apfs /dev/rvblk0 /mnt'
@@ -171,6 +175,8 @@ check "... and 4 MB of it arrive whole (the same FNV-1a hash as here)" \
 	grep -aq "^get: HTTP/1.0 200 OK, 4194304 bytes of body in [0-9]* ms, fnv1a $big_hash" "$log"
 check "TCP over the loopback between two of its own processes: a million bytes from a server in the background, every one checked" \
 	grep -aq "^get: HTTP/1.0 200 OK, 1000000 bytes of body in [0-9]* ms, fnv1a $made_hash" "$log"
+check "a datagram over the loopback to another of its processes, and sent back" \
+	grep -aq "^udp: 17 bytes back from 127.0.0.1: over the loopback" "$log"
 check "a datagram goes to this computer and its answer comes back" grep -aq "^udp: 18 bytes back from 10.0.2.2: echoed: a datagram" "$log"
 check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
