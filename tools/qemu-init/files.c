@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, fill, mmap, mmap-write,
- * descriptors */
+ * descriptors, df */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -750,4 +750,50 @@ command_descriptors(int argc, char **argv)
 	}
 	at = append(line, at - 1, sizeof(line), all ? ": as BSD has them\n" : ": NOT all as BSD has them\n");
 	say(line);
+}
+
+#define SYS_getfsstat64         347
+#define MNT_WAIT                1       /* (asked of each file system now, not as it was at its mount) */
+
+struct statfs64 {                       /* Darwin's struct statfs (64-bit inodes) */
+	uint32_t bsize;
+	int32_t iosize;
+	uint64_t blocks, bfree, bavail, files, ffree;
+	int32_t fsid[2];
+	uint32_t owner, type, flags, fssubtype;
+	char fstypename[16], mntonname[1024], mntfromname[1024];
+	uint32_t reserved[8];
+};
+
+/* the file systems mounted: where, of what kind, from what, and their size and room in KB (getfsstat64) */
+void
+command_df(int argc, char **argv)
+{
+	static struct statfs64 all[16];
+	long n = syscall6(SYS_getfsstat64, (long)all, sizeof(all), MNT_WAIT, 0, 0, 0);
+
+	(void)argc;
+	(void)argv;
+	if (n < 0) {
+		say("df: ");
+		say_error(n);
+		say("\n");
+		return;
+	}
+	for (long i = 0; i < n && i < 16; i++) {
+		char line[256];
+		size_t at = append(line, 0, sizeof(line), all[i].mntonname);
+
+		at = append(line, at, sizeof(line), ": ");
+		at = append(line, at, sizeof(line), all[i].fstypename);
+		at = append(line, at, sizeof(line), " from ");
+		at = append(line, at, sizeof(line), all[i].mntfromname);
+		at = append(line, at, sizeof(line), ", ");
+		at = append_number(line, at, sizeof(line), all[i].blocks * all[i].bsize / 1024);
+		at = append(line, at, sizeof(line), " KB, ");
+		at = append_number(line, at, sizeof(line), all[i].bavail * all[i].bsize / 1024);
+		at = append(line, at, sizeof(line), " KB free");
+		at = append(line, at, sizeof(line), all[i].flags & 1 ? ", read only\n" : "\n");
+		say(line);
+	}
 }

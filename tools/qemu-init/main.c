@@ -209,6 +209,7 @@ static const struct {
 	{ "cat", "FILE... what is in a file", command_cat },
 	{ "hash", "FILE... each read to its end, timed, hashed", command_hash },
 	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
+	{ "df", "the file systems mounted, their size and room", command_df },
 	{ "mkdir", "DIR... new directories", command_mkdir },
 	{ "write", "FILE WORDS... the words as all of a file", command_write },
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
