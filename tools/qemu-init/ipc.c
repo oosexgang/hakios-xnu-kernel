@@ -1,0 +1,347 @@
+/* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
+ * memory shared by name, Mach messages: pipe, unix, unix-name, shm, mach */
+#include "init.h"
+
+#define SYS_wait4               7
+#define SYS_posix_spawn         244
+#define SYS_munmap              73
+#define SYS_mmap                197
+#define SYS_ftruncate           201
+#define SYS_shm_open            266
+#define SYS_shm_unlink          267
+#define O_RDWR                  2
+#define O_CREAT_EXCL            (0x200 | 0x800)
+#define PROT_RW                 3
+#define MAP_SHARED              1
+
+/* WORDS...: the words through a pipe: a child (this program, "echo") writes them into it, this process reads */
+void
+command_pipe(int argc, char **argv)
+{
+	static char text[4096];
+	char *environment[] = { NULL }, *child[WORDS + 4] = { "/sbin/launchd", NULL, "echo" }, to[16] = ">";
+	int ends[2], c = 3;
+	int32_t pid = 0, status = 0;
+
+	if (syscall_pipe(ends) != 0) {
+		say("pipe: no pipe\n");
+		return;
+	}
+	/* (">N": the child says what it says into its descriptor N, which is the pipe's end it inherits) */
+	to[1] = (char)('0' + ends[1] / 10);
+	to[2] = (char)('0' + ends[1] % 10);
+	child[1] = to;
+	for (int i = 1; i < argc && c < WORDS + 3; i++) {
+		child[c++] = argv[i];
+	}
+	child[c] = NULL;
+	long error = syscall6(SYS_posix_spawn, (long)&pid, (long)child[0], 0, (long)child, (long)environment, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);    /* (the child's copy is the one left: its end is the pipe's) */
+	long all = 0, got;
+	while (error == 0 && all < (long)sizeof(text) - 1 &&
+	    (got = syscall6(SYS_read, ends[0], (long)text + all, (long)sizeof(text) - 1 - all, 0, 0, 0)) > 0) {
+		all += got;
+	}
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	if (error != 0) {
+		say("pipe: the child does not start\n");
+		return;
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	text[all] = '\0';
+	say("pipe: ");
+	say_number((uint64_t)all);
+	say(" bytes from pid ");
+	say_number((uint64_t)pid);
+	say(": ");
+	say(text);
+}
+
+#define TRAP_port_allocate      -16
+#define TRAP_port_mod_refs      -19
+#define TRAP_task_self          -28
+#define TRAP_mach_msg2          -47
+#define MACH_PORT_RIGHT_RECEIVE 1
+#define MACH_MSG_TYPE_MAKE_SEND 20
+#define MACH64_SEND_MSG         0x1ull
+#define MACH64_RCV_MSG          0x2ull
+#define MACH64_SEND_MQ_CALL     0x400000000ull  /* (mach_msg2: what the destination is, a message queue) */
+
+struct mach_message {
+	uint32_t bits, size, remote_port, local_port, voucher_port;
+	int32_t id;
+	uint64_t number;
+	uint8_t trailer[200];           /* what the kernel adds on receiving */
+};
+
+/* [COUNT]: COUNT messages (1000 if not said) sent to a port and received from it, and the time each took */
+void
+command_mach(int argc, char **argv)
+{
+	unsigned count = argc > 1 ? parse_number(argv[1]) : 1000;
+	uint32_t self = (uint32_t)trap8(TRAP_task_self, 0, 0, 0, 0, 0, 0, 0, 0), port = 0;
+	static struct mach_message message;
+
+	if (count < 1 || count > 1000000) {
+		say("mach [COUNT]: 1 to 1000000 messages\n");
+		return;
+	}
+	long kr = trap8(TRAP_port_allocate, self, MACH_PORT_RIGHT_RECEIVE, (long)&port, 0, 0, 0, 0, 0);
+	if (kr != 0) {
+		say("mach: no port (error ");
+		say_number((uint64_t)kr);
+		say(")\n");
+		return;
+	}
+	int64_t start = now_us();
+	unsigned done = 0;
+	const uint32_t size = 32;       /* the header and the number */
+
+	for (; done < count; done++) {
+		message.bits = MACH_MSG_TYPE_MAKE_SEND;         /* (the remote port's right, made from the receive right) */
+		message.size = size;
+		message.remote_port = port;
+		message.local_port = message.voucher_port = 0;
+		message.id = (int32_t)done;
+		message.number = 0x6d616368ull * done;
+		kr = trap8(TRAP_mach_msg2, (long)&message, (long)(MACH64_SEND_MSG | MACH64_RCV_MSG | MACH64_SEND_MQ_CALL),
+		    (long)(MACH_MSG_TYPE_MAKE_SEND | (uint64_t)size << 32), port, (long)((uint64_t)done << 32),
+		    (long)((uint64_t)port << 32), sizeof(message), 0);
+		if (kr != 0 || message.id != (int32_t)done || message.number != 0x6d616368ull * done) {
+			say("mach: message ");
+			say_number(done);
+			say(kr != 0 ? " was not sent or received (error " : " came back other than it went (");
+			say_number((uint64_t)kr);
+			say(")\n");
+			break;
+		}
+	}
+	int64_t took = now_us() - start;
+	trap8(TRAP_port_mod_refs, self, port, MACH_PORT_RIGHT_RECEIVE, -1, 0, 0, 0, 0);
+	if (done == count) {
+		say("mach: ");
+		say_number(count);
+		say(" messages to itself through a port, ");
+		say_number((uint64_t)(took * 1000 / count));
+		say(" ns each\n");
+	}
+}
+
+/* ---- a socket pair, and a descriptor sent through it ---- */
+
+#define SYS_recvmsg             27
+#define SYS_sendmsg             28
+#define SYS_socketpair          135
+#define AF_UNIX                 1
+#define SOCK_STREAM             1
+#define SOL_SOCKET              0xffff
+#define SCM_RIGHTS              1
+
+struct iovec {
+	void *base;
+	size_t length;
+};
+
+struct msghdr {
+	void *name;
+	uint32_t name_length;
+	struct iovec *iov;
+	int32_t iov_count;
+	void *control;
+	uint32_t control_length;
+	int32_t flags;
+};
+
+struct rights {                         /* a cmsghdr with one descriptor (aligned to 4, as Darwin's are) */
+	uint32_t length;
+	int32_t level, type, fd;
+};
+
+/* FILE: FILE opened, its descriptor sent over a socket pair (SCM_RIGHTS) with a word, and read through
+ * the descriptor that comes out of the other end */
+void
+command_unix(int argc, char **argv)
+{
+	char word[16] = "sent", got[16], text[128];
+	int32_t ends[2];
+
+	if (argc != 2) {
+		say("unix FILE\n");
+		return;
+	}
+	long fd = syscall6(SYS_open, (long)argv[1], 0, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_socketpair, AF_UNIX, SOCK_STREAM, 0, (long)ends, 0, 0) != 0) {
+		say(fd < 0 ? "unix: the file cannot be read\n" : "unix: no socket pair\n");
+		return;
+	}
+	struct iovec out = { word, 5 }, in = { got, sizeof(got) };
+	struct rights sent = { sizeof(sent), SOL_SOCKET, SCM_RIGHTS, (int32_t)fd }, came = { 0, 0, 0, -1 };
+	struct msghdr message = { 0, 0, &out, 1, &sent, sizeof(sent), 0 };
+	long n = syscall6(SYS_sendmsg, ends[0], (long)&message, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);         /* (the one in flight keeps the file open) */
+	struct msghdr received = { 0, 0, &in, 1, &came, sizeof(came), 0 };
+	if (n == 5) {
+		n = syscall6(SYS_recvmsg, ends[1], (long)&received, 0, 0, 0, 0);
+	}
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	if (n != 5 || came.type != SCM_RIGHTS || came.fd < 0) {
+		say("unix: the descriptor did not come through\n");
+		return;
+	}
+	long length = syscall6(SYS_read, came.fd, (long)text, sizeof(text) - 1, 0, 0, 0);
+	syscall6(SYS_close, came.fd, 0, 0, 0, 0, 0);
+	text[length > 0 ? length : 0] = '\0';
+	for (long i = 0; i < length; i++) {
+		if (text[i] == '\n') {
+			text[i] = '\0';
+			break;
+		}
+	}
+	char line[200];
+	size_t at = append(line, 0, sizeof(line), "unix: \"");
+	at = append(line, at, sizeof(line), got);
+	at = append_number(line, append(line, at, sizeof(line), "\" and descriptor "), sizeof(line), (uint64_t)came.fd);
+	at = append(line, append(line, at, sizeof(line), " came through; it reads: "), sizeof(line), text);
+	append(line, at, sizeof(line), "\n");
+	say(line);
+}
+
+#define SYS_socket              97
+#define SYS_connect             98
+#define SYS_accept              30
+#define SYS_bind                104
+#define SYS_listen              106
+#define SYS_unlink              10
+#define SYS_lstat64             340
+
+struct sockaddr_un {
+	uint8_t len, family;
+	char path[104];
+};
+
+/*
+ * PATH: a socket by name in a file system (AF_UNIX, bound to PATH, where the file system keeps a node of
+ * its own for it): a forked child connects to it by the name and writes, the shell reads what it wrote
+ */
+void
+command_unix_name(int argc, char **argv)
+{
+	struct sockaddr_un here = { sizeof(here), AF_UNIX, { 0 } };
+	struct { int32_t dev; uint16_t mode, nlink; char rest[200]; } st;
+	char got[64], line[200];
+	int in_child = 0;
+	int32_t status = 0;
+	long listener, peer, n = 0, pid;
+	size_t at;
+
+	if (argc != 2 || length(argv[1]) >= sizeof(here.path)) {
+		say("unix-name PATH\n");
+		return;
+	}
+	copy_bytes(here.path, argv[1], length(argv[1]) + 1);
+	listener = syscall6(SYS_socket, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+	n = listener < 0 ? listener : syscall6(SYS_bind, listener, (long)&here, sizeof(here), 0, 0, 0);
+	if (n == 0) {
+		n = syscall6(SYS_listen, listener, 1, 0, 0, 0, 0);
+	}
+	if (n != 0) {
+		say("unix-name: ");
+		say(argv[1]);
+		say(" cannot be bound: ");
+		say_error(n);
+		say("\n");
+		if (listener >= 0) {
+			syscall6(SYS_close, listener, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	pid = syscall_fork(&in_child);
+	if (in_child) {
+		long sock = syscall6(SYS_socket, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+
+		if (sock >= 0 && syscall6(SYS_connect, sock, (long)&here, sizeof(here), 0, 0, 0) == 0) {
+			syscall6(SYS_write, sock, (long)"by its name", 11, 0, 0, 0);
+		}
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	n = 0;
+	peer = pid > 0 ? syscall6(SYS_accept, listener, 0, 0, 0, 0, 0) : -1;
+	if (peer >= 0) {
+		for (long more; n < (long)sizeof(got) - 1 && (more = syscall6(SYS_read, peer, (long)(got + n), sizeof(got) - 1 - n, 0, 0, 0)) > 0;) {
+			n += more;
+		}
+		syscall6(SYS_close, peer, 0, 0, 0, 0, 0);
+	}
+	got[n] = '\0';
+	if (pid > 0) {
+		syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	}
+	at = append(line, 0, sizeof(line), "unix-name: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	if (syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0) == 0 && (st.mode & 0170000) == 0140000) {
+		at = append(line, at, sizeof(line), " (a socket in the file system)");
+	}
+	at = append(line, at, sizeof(line), n > 0 ? ": a child connected and wrote: " : ": nothing came");
+	at = append(line, at, sizeof(line), got);
+	append(line, at, sizeof(line), "\n");
+	say(line);
+	syscall6(SYS_close, listener, 0, 0, 0, 0, 0);
+	syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0);
+}
+
+/*
+ * [NAME]: memory two processes share by a name (POSIX shared memory: shm_open, ftruncate, mmap MAP_SHARED):
+ * a forked child writes into it, the parent reads what the child wrote, then the name is taken away
+ */
+void
+command_shm(int argc, char **argv)
+{
+	const char *name = argc > 1 ? argv[1] : "/qemu-init.shm";
+	int in_child = 0;
+	int32_t status = 0;
+	long fd = syscall6(SYS_shm_open, (long)name, O_RDWR | O_CREAT_EXCL, 0600, 0, 0, 0), pid;
+	volatile uint64_t *shared;
+	char line[160];
+	size_t at;
+
+	if (fd < 0) {
+		say("shm: ");
+		say(name);
+		say(": ");
+		say_error(fd);
+		say("\n");
+		return;
+	}
+	if (syscall6(SYS_ftruncate, fd, 16384, 0, 0, 0, 0) != 0 ||
+	    (long)(shared = (volatile uint64_t *)syscall6(SYS_mmap, 0, 16384, PROT_RW, MAP_SHARED, fd, 0)) < 0) {
+		say("shm: not sized or not mapped\n");
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		syscall6(SYS_shm_unlink, (long)name, 0, 0, 0, 0, 0);
+		return;
+	}
+	shared[0] = 1;
+	shared[2047] = 1;
+	pid = syscall_fork(&in_child);
+	if (in_child) {
+		shared[0] = 0x5a5a;             /* (into the same pages: the parent sees it) */
+		shared[2047] = 0xa5a5;
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	if (pid < 0 || syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0) != pid) {
+		say("shm: no child, or not waited for\n");
+	} else {
+		at = append(line, 0, sizeof(line), "shm: ");
+		at = append(line, at, sizeof(line), name);
+		at = append(line, at, sizeof(line), shared[0] == 0x5a5a && shared[2047] == 0xa5a5 ?
+		    ": 16 KB shared with a child, its writes seen at both ends" : ": the child's writes are NOT seen");
+		append(line, at, sizeof(line), "\n");
+		say(line);
+	}
+	syscall6(SYS_munmap, (long)shared, 16384, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	if (syscall6(SYS_shm_unlink, (long)name, 0, 0, 0, 0, 0) != 0 ||
+	    syscall6(SYS_shm_open, (long)name, O_RDWR, 0, 0, 0, 0) >= 0) {
+		say("shm: the name was not taken away\n");
+	}
+}
