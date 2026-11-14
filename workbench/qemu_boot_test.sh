@@ -151,6 +151,9 @@ typed=(
 	'truncate /tmp/notes/cut 100'
 	'hash /tmp/notes/cut'
 	'truncate /tmp/notes/cut 70000'
+	'truncate /tmp/notes/cut 4000000000'
+	'stat /tmp/notes/cut'
+	'truncate /tmp/notes/cut 0'
 	'truncate /etc/motd 3'
 	'touch /tmp/notes/old 1000000000'
 	'touch /tmp/notes/new'
@@ -343,10 +346,12 @@ check "a process's priority set and read back (setpriority, getpriority); a user
 			grep -qx '# nice -5 nice 10 echo niced|nice: priority -5|nice: priority 10|niced|' &&
 		cat '$shell' | grep -A4 -x '# as 501:20 nice 10 nice 15 echo later' | tail -2 | tr '\n' '|' | grep -qx 'nice: priority 15|later|' &&
 		cat '$shell' | grep -A3 -x '# as 501:20 nice 10 nice 5 echo sooner' | tail -1 | grep -qx 'nice: 5 not had: error 13 (EACCES)'"
-check "a file cut short keeps its start, and grown again reads as zeros past it, not as what it held (truncate)" \
+check "a file cut short keeps its start, and grown again reads as zeros past it, not as what it held (truncate); and grown to 4 GB" \
 	bash -c "grep -aq '^truncate: /tmp/notes/cut: 10000 bytes, now 100\$' '$shell' &&
 		grep -aq '^/tmp/notes/cut: 100 bytes in [0-9]* ms, fnv1a $cut_hash' '$shell' &&
 		grep -aq '^truncate: /tmp/notes/cut: 100 bytes, now 70000; what it grew by reads as zeros' '$shell' &&
+		grep -aq '^truncate: /tmp/notes/cut: 70000 bytes, now 4000000000; what it grew by reads as zeros (its first and last 64 KB)' '$shell' &&
+		grep -aqE '^/tmp/notes/cut: -rw-r--r-- 1 link, inode [0-9]+, 4000000000 bytes' '$shell' &&
 		grep -aq '^truncate: /etc/motd: error 30 (EROFS)' '$shell'"
 check "a file's times set to a second given, and to now (utimes); not on the read-only root" \
 	bash -c "grep -aq '^touch: /tmp/notes/old: accessed 1000000000, modified 1000000000, changed ' '$shell' &&
