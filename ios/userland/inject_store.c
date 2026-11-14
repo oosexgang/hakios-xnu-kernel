@@ -2644,6 +2644,66 @@ fabricated_account(id store)
  * Only ours is answered; every other account is left to AMS.
  */
 /*
+ * THE ACCOUNT THAT CAN ALSO BE A PROMISE.
+ *
+ * -[ACAccountStore ams_localiTunesAccount] is sent two different messages by two different callers here:
+ * -continueWithBlock:, which is a promise's, and -ams_storefrontForMediaType:, which is an account's.
+ * Answering with one shape kills the caller that wanted the other -- measured both ways round, and both
+ * inside amsaccountsd alone, so it is not a question of which process. So the account answers the
+ * promise's message as well: the block is called at once with the account and no error (through the
+ * block's own invoke pointer, so this file needs no block support), and what comes back is a finished
+ * promise, which is what a caller that chains expects to hold.
+ */
+struct block_layout {
+	void *isa;
+	int flags;
+	int reserved;
+	void (*invoke)(void *, ...);
+};
+
+static id
+account_continue_with_block(id self, SEL cmd, void *block)
+{
+	struct block_layout *b = block;
+	Class promise_class = objc_getClass("AMSPromise");
+	static bool said;
+
+	(void)cmd;
+	if (!said) {
+		said = true;
+		say("hakios: store: the account was sent a promise's message; the block is called with the "
+		    "account itself\n");
+	}
+	if (b != NULL && b->invoke != NULL) {
+		b->invoke(b, self, NULL);
+	}
+	return promise_class != Nil ? ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
+	    sel_registerName("promiseWithResult:"), NULL) : NULL;
+}
+
+static void
+teach_account_to_be_a_promise(void)
+{
+	static bool done;
+	Class account_class = objc_getClass("ACAccount");
+
+	if (done || account_class == Nil) {
+		return;
+	}
+	done = true;
+	/* only if it has none of its own: an answer of ours must never replace an answer of theirs */
+	if (class_getInstanceMethod(account_class, sel_registerName("continueWithBlock:")) == NULL) {
+		class_addMethod(account_class, sel_registerName("continueWithBlock:"),
+		    (IMP)account_continue_with_block, "@@:@?");
+	}
+	if (class_getInstanceMethod(account_class, sel_registerName("thenWithBlock:")) == NULL) {
+		class_addMethod(account_class, sel_registerName("thenWithBlock:"),
+		    (IMP)account_continue_with_block, "@@:@?");
+	}
+	say("hakios: store: ACAccount now answers -continueWithBlock: and -thenWithBlock:\n");
+}
+
+/*
  * THE DOOR ITSELF. -[ACAccountStore ams_localiTunesAccount] is what every one of AMS's account paths
  * calls, and on this phone it answers nil: the accounts database has no account and no account type,
  * because iOS fills that table when a device is set up and this one never has been. Two hooks of ours
@@ -2664,6 +2724,7 @@ new_local_itunes_account(id self, SEL cmd)
 	}
 	fake = knob("HAKIOS_FAKE_ACCOUNT");
 	account = fake != NULL && *fake != '0' ? fabricated_account(self) : NULL;
+	teach_account_to_be_a_promise();
 	/*
 	 * ... as a finished promise where the caller wants one (HAKIOS_LOCAL_ACCOUNT_IS_PROMISE=1). In
 	 * amsaccountsd the answer is sent -continueWithBlock:, which an ACAccount does not know: the daemon
@@ -2679,8 +2740,7 @@ new_local_itunes_account(id self, SEL cmd)
 		 * ways round, one run each.
 		 */
 		const char *as_promise = knob("HAKIOS_LOCAL_ACCOUNT_IS_PROMISE");
-		bool daemon = who != NULL && strcmp(who, "amsaccountsd") == 0;
-		Class promise_class = daemon && (as_promise == NULL || *as_promise != '0')
+		Class promise_class = as_promise != NULL && *as_promise != '0'
 		    ? objc_getClass("AMSPromise") : Nil;
 
 		if (promise_class != Nil) {
