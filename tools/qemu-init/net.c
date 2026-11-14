@@ -553,3 +553,35 @@ command_udp(int argc, char **argv)
 	say(back);
 	say("\n");
 }
+
+/* PORT [COUNT]: datagrams on that UDP port sent back to whoever sent them, COUNT of them (1 if not said) */
+void
+command_echo_udp(int argc, char **argv)
+{
+	unsigned port = argc > 1 ? parse_number(argv[1]) : 0, count = argc > 2 ? parse_number(argv[2]) : 1;
+	struct sockaddr_in here = { 16, AF_INET, (uint16_t)(port >> 8 | (port & 0xff) << 8), { 0 }, { 0 } }, from;
+	char datagram[1500];
+
+	if (port < 1 || port > 65535 || count < 1 || count > 100) {
+		say("echo-udp PORT [COUNT]: a port, 1 to 100 datagrams\n");
+		return;
+	}
+	long sock = syscall6(SYS_socket, AF_INET, SOCK_DGRAM, 0, 0, 0, 0);
+	if (sock < 0 || syscall6(SYS_bind, sock, (long)&here, sizeof(here), 0, 0, 0) < 0) {
+		say("echo-udp: the port cannot be had\n");
+		if (sock >= 0) {
+			syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	for (unsigned n = 0; n < count; n++) {
+		uint32_t size = sizeof(from);
+		long got = syscall6(SYS_recvfrom, sock, (long)datagram, sizeof(datagram), 0, (long)&from, (long)&size);
+
+		if (got < 0 || syscall6(SYS_sendto, sock, (long)datagram, got, 0, (long)&from, size) != got) {
+			say("echo-udp: a datagram lost\n");
+			break;
+		}
+	}
+	syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
+}

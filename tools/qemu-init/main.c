@@ -226,6 +226,7 @@ static const struct {
 	{ "serve", "[COUNT] a page over HTTP on port 80 (or /bytes/N: N bytes)", command_serve },
 	{ "get", "ADDRESS PORT [PATH] a page asked for over HTTP", command_get },
 	{ "udp", "ADDRESS PORT WORDS... a datagram, and its answer", command_udp },
+	{ "echo-udp", "PORT [COUNT] datagrams on a UDP port sent back", command_echo_udp },
 	{ NULL, "processes", NULL },
 	{ "ps", "the processes", command_ps },
 	{ "run", "PROGRAM [ARGUMENTS] a process of its own, waited for", command_run },
