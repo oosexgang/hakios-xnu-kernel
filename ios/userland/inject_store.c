@@ -1716,6 +1716,23 @@ new_should_mescal(id self, SEL cmd)
 static id (*old_active_account)(id, SEL);
 static id (*old_active_account_type)(id, SEL, void *);
 
+/*
+ * Which service the daemon is talking to. appstored hangs in a synchronous Mach message inside
+ * AppleMediaServices' Swift code (thread 3: mach_msg_overwrite), and the message says nothing about
+ * whom it is for. Every Mach-service connection names itself here, so the last one made before the
+ * silence is the service that never answers.
+ */
+static id (*old_xpc_init)(id, SEL, id, unsigned long);
+
+static id
+new_xpc_init(id self, SEL cmd, id name, unsigned long options)
+{
+	char text[160];
+
+	say("hakios: store: XPC connection to %s\n", name != NULL ? text_of(name, text, sizeof(text)) : "(no name)");
+	return old_xpc_init(self, cmd, name, options);
+}
+
 static const char *
 who_i_am(void)
 {
@@ -2418,6 +2435,8 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
 	  (IMP)new_add_storefront_header, (IMP *)&old_add_storefront_header, false },
+	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
+	  (IMP *)&old_xpc_init, false },
 	{ "ACAccountStore", "ams_activeiTunesAccount", false, (IMP)new_active_account,
 	  (IMP *)&old_active_account, false },
 	{ "ACAccountStore", "ams_activeiTunesAccountForMediaType:", false, (IMP)new_active_account_type,
