@@ -174,7 +174,6 @@ command_mach(int argc, char **argv)
 }
 
 #define SYS_kill                37
-#define SYS_pipe                42
 
 /* SECONDS: nothing, for that long */
 void
@@ -250,20 +249,6 @@ command_wait(int argc, char **argv)
 		return;
 	}
 	say_ended("wait: ", (int32_t)pid, status);
-}
-
-/* pipe() gives its two ends in x0 and x1 */
-static long
-syscall_pipe(int ends[2])
-{
-	register long x0 __asm__("x0") = 0, x1 __asm__("x1") = 0;
-	register long x16 __asm__("x16") = SYS_pipe;
-	long failed;
-
-	__asm__ volatile ("svc #0x80\n\tcset %[failed], cs" : "+r"(x0), "+r"(x1), [failed] "=r"(failed) : "r"(x16) : "memory", "cc");
-	ends[0] = (int)x0;
-	ends[1] = (int)x1;
-	return failed ? -x0 : 0;
 }
 
 /* WORDS...: the words through a pipe: a child (this program, "echo") writes them into it, this process reads */

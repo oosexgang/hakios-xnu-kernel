@@ -63,6 +63,21 @@ trap8(long number, long a, long b, long c, long d, long e, long f, long g, long 
 	return x0;
 }
 
+/* pipe(): the two ends come back in x0 and x1, not in memory; 0, or -errno */
+#define SYS_pipe                42
+static inline long
+syscall_pipe(int ends[2])
+{
+	register long x0 __asm__("x0") = 0, x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = SYS_pipe;
+	long failed;
+
+	__asm__ volatile ("svc #0x80\n\tcset %[failed], cs" : "+r"(x0), "+r"(x1), [failed] "=r"(failed) : "r"(x16) : "memory", "cc");
+	ends[0] = (int)x0;
+	ends[1] = (int)x1;
+	return failed ? -x0 : 0;
+}
+
 /* text.c: the console (the descriptor what is said goes to), words and numbers, the time */
 extern int console;
 size_t length(const char *s);
