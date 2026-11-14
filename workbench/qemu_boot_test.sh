@@ -184,6 +184,10 @@ check "a signal ends a process in the background, and wait says so" grep -aqE "^
 check "clear empties the screen as a VT100 does, and the shell's prompt follows" grep -aq $'\x1b\\[H\x1b\\[2J# ' "$log"
 check "every value of the kernel's is read (sysctl -a: over a thousand names), and nothing panics for it" \
 	bash -c "grep -aoE '^sysctl: [0-9]+ names, of the [0-9]+ the kernel has' '$log' | awk '{ exit !(\$2 > 1000 && \$2 == \$6) }'"
+# (QEMU's Cortex-A76 has the crypto extensions: AES with PMULL, SHA-1 and SHA-256, which programs choose their
+# code by)
+check "programs are told the processor's crypto extensions (hw.optional.arm.FEAT_AES, _PMULL, _SHA1, _SHA256)" \
+	bash -c "for f in AES PMULL SHA1 SHA256; do tr -d '\\r' < '$log' | grep -qx \"hw.optional.arm.FEAT_\$f: 1\" || exit 1; done"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
