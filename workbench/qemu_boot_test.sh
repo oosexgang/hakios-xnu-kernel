@@ -145,6 +145,7 @@ typed=(
 	'locks 4'
 	'mmap /sbin/launchd'
 	'kevent 10'
+	'poll'
 	'run /sbin/launchd crash null'
 	'run /sbin/launchd crash illegal'
 	'run /sbin/launchd crash readonly'
@@ -239,6 +240,9 @@ check "memory shared by name with a forked child (POSIX shared memory) carries i
 	bash -c "test \$(grep -ac '^shm: /qemu-init.shm: 16 KB shared with a child, its writes seen at both ends' '$log') = 2"
 check "a signal blocked is held, pending, and caught once let through (sigprocmask, sigpending)" \
 	grep -aqE '^mask: SIGUSR1 from pid [0-9]+: held while blocked \(pending, not caught\), caught once let through' "$log"
+check "poll and select wait out their timeout on an empty pipe, and find it readable with a byte in it" \
+	bash -c "grep -aoE '^poll: an empty pipe: poll 0 ready after [0-9]+ ms, select 0 after [0-9]+ ms; with a byte in it: poll 1 \\(readable\\), select 1' '$log' |
+		awk '{ exit !(\$9 >= 95 && \$9 < 1000 && \$14 >= 95 && \$14 < 1000) }'"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "cat '$shell' | grep -qx 'kept in memory' && cat '$shell' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
