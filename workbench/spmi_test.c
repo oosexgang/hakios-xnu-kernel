@@ -1,7 +1,7 @@
 /*
  * What the drivers of PMICs share (kernel/overlay/bsd/dev/board/spmi.h), by itself, against the
- * model of the arbiter (spmi_model.h): that the arbiter is mapped where the board's SoC file says and
- * for the system it names, what a read and a write put on the bus, and what each status is said to
+ * model of the arbiter (spmi_model.h), of version 5 and of version 8: that the arbiter is mapped where the
+ * board's SoC file says and for the system it names, what a read and a write put on the bus, and what each status is said to
  * mean. The drivers' own tests cover what each does with it.
  *
  *   spmi_test SCENARIO      one scenario a process: the model keeps its state in statics
@@ -48,6 +48,74 @@ phone(const char *name)
 	for (unsigned i = 0; i < 256; i++) {
 		chip.reg[i] = (uint8_t)(i ^ 0xa5);
 	}
+}
+
+/* ---- version 8 ------------------------------------------------------------------------------------------ */
+
+/* a SoC file whose spmi { } has a channel-map: the model's tables where it says, the arbiter of version 8 */
+static void
+version_8(void)
+{
+	phone("phone-scmi");
+	spmi.channel_map = hakios_board()->spmi.channel_map;
+	spmi.observer = hakios_board()->spmi.observer;
+	spmi.version = 0x80000000;
+}
+
+/* taken: its channels from its own register (13 bits of it), whose each one is from the table apart */
+static void
+v8_mapped(void)
+{
+	version_8();
+	spmi.says_channels = 1000 + 1;
+	CHECK(hakios_spmi_map(&arb) && arb.version == 0x80000000 && arb.channels == 1000 && arb.map != 0, "taken: %#x, %u channels",
+	    arb.version, arb.channels);
+	CHECK(SPMI_ID_OF(hakios_spmi_channel_map(&arb, 9)) == chip.id && hakios_spmi_channel_map(&arb, 30) == 0,
+	    "the table apart says whose a channel is: %#x", hakios_spmi_channel_map(&arb, 9));
+	CHECK(hakios_spmi_channel_owner(&arb, 5) == 1 && hakios_spmi_channel_owner(&arb, 9) == 0, "... and its cnfg who writes through it");
+	CHECK(spmi.elsewhere == 0 && spmi.past_the_table == 0, "%u accesses where nothing of the arbiter is", spmi.elsewhere);
+}
+
+/* reads through the observer at 0x20 a channel, writes at 0x200 a channel, as version 5's otherwise */
+static void
+v8_reads_and_writes(void)
+{
+	uint8_t bytes[2] = { 0 };
+	vm_offset_t ours;
+
+	version_8();
+	CHECK(hakios_spmi_map(&arb), "mapped");
+	CHECK(hakios_spmi_observer(&arb, 9) == arb.observer + 9 * 0x20, "channel 9 read at 0x120 into the observer");
+	CHECK(hakios_spmi_read(hakios_spmi_observer(&arb, 9), 0x40, bytes, 2) == NULL && bytes[0] == (0x40 ^ 0xa5) &&
+	    bytes[1] == (0x41 ^ 0xa5), "two registers read: %#x %#x", bytes[0], bytes[1]);
+	ours = hakios_spmi_map_write(9);
+	CHECK(ours == hakios_board()->spmi.channels + 9 * 0x200, "channel 9 written at 0x1200 into the channels");
+	CHECK(hakios_spmi_write(ours, 0x46, 0x80) == NULL && spmi_get(&chip, 0x46) == 0x80 && chip.writes == 1, "written");
+	CHECK(SAME(hakios_spmi_write(hakios_spmi_map_write(5), 0x46, 0x11), SPMI_SAYS_DENIED), "another system's: refused");
+	CHECK(spmi.elsewhere == 0, "%u accesses where nothing of the arbiter is", spmi.elsewhere);
+}
+
+/* what this code does not know of version 8: an earlier version where the SoC file says 8, another system than
+ * the first, an arbiter that says it has no channels */
+static void
+v8_not_taken(void)
+{
+	static struct hakios_board copy;
+
+	version_8();
+	spmi.version = 0x70000000;
+	CHECK(!hakios_spmi_map(&arb), "version 7 with a table of channels: not taken");
+	spmi.version = 0x80000000;
+	spmi.says_channels = 0 + 1;
+	CHECK(!hakios_spmi_map(&arb), "no channels: not taken");
+	spmi.says_channels = 0x2000 + 1;
+	CHECK(!hakios_spmi_map(&arb), "8192, which its 13 bits say as none: not taken");
+	spmi.says_channels = 0x2000;
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 0x1fff, "8191, as many as the tables hold: taken (%u)", arb.channels);
+	copy = *hakios_board();
+	copy.spmi.ee = 1;
+	found = &copy;
+	CHECK(!hakios_spmi_map(&arb), "this system the arbiter's second: not taken");
 }
 
 /* the arbiter of a board: its version, how many channels, who we are to it */
@@ -203,6 +271,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "mapped", mapped }, { "channels_not_said", channels_not_said }, { "another_soc", another_soc }, { "no_arbiter", no_arbiter }, { "another_version", another_version },
 		{ "reads", reads }, { "writes", writes }, { "no_answer", no_answer }, { "statuses", statuses },
+		{ "v8_mapped", v8_mapped }, { "v8_reads_and_writes", v8_reads_and_writes }, { "v8_not_taken", v8_not_taken },
 	};
 
 	if (argc < 2) {
