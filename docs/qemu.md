@@ -75,7 +75,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `touch FILE [SECONDS]` | A file made if it is not there and its times set (utimes), to now or to a second given; the times lstat then says. |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, owner, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `files [LIMIT]` | The limit on a process's descriptors lowered (setrlimit), files opened until the kernel says no (EMFILE), and all put back. |
-| `descriptors FILE` | A file made anew and what descriptors do with it, as BSD has them: lseek, pread and pwrite (which move no offset), a dup's offset shared, dup2, O_APPEND, and an empty non-blocking pipe's EAGAIN. |
+| `descriptors FILE` | A file made anew and what descriptors do with it, as BSD has them: lseek, pread and pwrite (which move no offset), a dup's offset shared, dup2, O_APPEND, a file read and written after its unlink until it is closed, and an empty non-blocking pipe's EAGAIN. |
 | `vectors FILE` | A file made from three pieces in one writev, read back in one readv into three pieces of other sizes: the bytes in order. |
 | `fill FILE BYTES` | A file of made-up bytes (byte i is i * 7 mod 251), written in pieces of 16 KB, for `hash` to check against this computer's. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
