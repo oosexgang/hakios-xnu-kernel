@@ -181,14 +181,21 @@ command_write(int argc, char **argv)
 		say_failed("write", argv[1], fd);
 		return;
 	}
-	long written = 0;
-	for (int i = 2; i < argc; i++) {
+	long written = 0, error = 0, got;
+	for (int i = 2; i < argc && error == 0; i++) {
 		long n = (long)length(argv[i]);
 
-		written += syscall6(SYS_write, fd, (long)argv[i], n, 0, 0, 0) == n ? n : 0;
-		written += syscall6(SYS_write, fd, (long)(i + 1 < argc ? " " : "\n"), 1, 0, 0, 0) == 1;
+		if ((got = syscall6(SYS_write, fd, (long)argv[i], n, 0, 0, 0)) < 0 ||
+		    (got = syscall6(SYS_write, fd, (long)(i + 1 < argc ? " " : "\n"), 1, 0, 0, 0)) < 0) {
+			error = got;            /* (said: a write the file system refused, ENOSPC as often as not) */
+		} else {
+			written += n + 1;
+		}
 	}
 	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	if (error != 0) {
+		say_failed("write", argv[1], error);
+	}
 	say("write: ");
 	say_number((uint64_t)written);
 	say(" bytes to ");
