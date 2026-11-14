@@ -80,7 +80,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait`, `sleep SECONDS` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended; a pause. |
 | `fork [PROGRAM [ARGUMENTS]]` | A copy of this process: the child writes a value of its memory, which the parent's copy must not see; or, given a program, becomes it (execve). |
-| `crash null`, `illegal`, `breakpoint` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint; the shell sees the signal the kernel made of it. |
+| `crash null`, `illegal`, `breakpoint`, `readonly` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint, a write to a page made read only (mprotect); the shell sees the signal the kernel made of it. |
 | `alarm [COUNT]` | A timer of a tenth of a second (setitimer) whose SIGALRM a handler of its own catches, and sigreturn puts the thread back. |
 | `shm [NAME]` | Memory shared by a name (shm_open, ftruncate, mmap MAP_SHARED) with a forked child, which writes into it; the parent sees the writes, and the name is taken away (shm_unlink). |
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
@@ -114,7 +114,7 @@ on its shell and checks what comes back:
   input device, the touch where it was made.
 - **Processes.** A process started by the shell runs as its child and is waited for; a forked child's
   memory is its own, and it can become another program; a signal ends a process in the background, and a
-  process's mistakes end it with SIGSEGV and SIGILL; a timer's signals reach a handler on time; a pipe
+  process's mistakes end it with SIGSEGV, SIGILL and SIGBUS; a timer's signals reach a handler on time; a pipe
   carries what a child writes into it, and so does memory shared by name; a descriptor sent over a socket
   pair reads the file it was; two threads run on the two processors at once, and four take turns under
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
