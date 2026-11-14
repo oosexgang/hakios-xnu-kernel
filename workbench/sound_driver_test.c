@@ -424,6 +424,51 @@ the_dsps_answers(void)
 	CHECK(!command("another's", APR_SVC_ADM, 0, 0x200, NULL, 0, 0x300, NULL), "nor another command's answer");
 }
 
+/*
+ * What Darwin writes, through the ring to the periods the DSP plays: each frame's left and right in their
+ * places and in order, its loudest sample kept, silence (no more than 8) not taken for sound, no more taken
+ * than there is room for, and the indices running on past 2^32.
+ */
+static void
+darwins_frames_through_the_ring(void)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	const int16_t frames[] = { 100, -200, 300, 5, -5, 7, 30000, -31000 }, quiet[] = { 8, -8, 0, 3 };
+	const int16_t *samples = periods;
+	bool in_order = true;
+
+	buffer = (vm_offset_t)periods;
+	CHECK(darwin_sink(frames, 4) == 4 && ring_head == 4, "four frames taken: head %u", ring_head);
+	CHECK(darwin_peak == 31000, "the loudest sample kept: %u", darwin_peak);
+	CHECK(last_sound_us != 0, "sound heard");
+	period_fill_darwin(0);
+	for (unsigned i = 0; i < 8; i++) {
+		in_order &= samples[i] == frames[i];
+	}
+	CHECK(in_order, "the period has them as written: %d %d %d %d", samples[0], samples[1], samples[2], samples[3]);
+	CHECK(samples[8] == 0 && samples[2 * PERIOD_FRAMES - 1] == 0, "the rest of the period silence");
+	CHECK(ring_tail == 4 && fed_frames == 4 && silent_frames == PERIOD_FRAMES - 4, "tail %u, fed %llu, silent %llu",
+	    ring_tail, (unsigned long long)fed_frames, (unsigned long long)silent_frames);
+
+	last_sound_us = 0;
+	darwin_peak = 0;
+	CHECK(darwin_sink(quiet, 2) == 2 && last_sound_us == 0, "8 and less is silence, not sound");
+	darwin_peak = 200;
+	CHECK(darwin_sink(frames + 2, 1) == 1 && darwin_peak == 300, "a louder left alone raises the peak: %u", darwin_peak);
+
+	ring_tail = ring_head = 0u - 2;         /* (two frames before the indices wrap) */
+	CHECK(darwin_sink(frames, 4) == 4 && ring_head == 2, "taken across the wrap: head %u", ring_head);
+	period_fill_darwin(1);
+	in_order = true;
+	for (unsigned i = 0; i < 8; i++) {
+		in_order &= periods[4096 / 2 + i] == frames[i];      /* (a period every 4096 bytes) */
+	}
+	CHECK(in_order && ring_tail == 2, "and given out in order across it");
+
+	ring_head = ring_tail + RING_FRAMES - 2;
+	CHECK(darwin_sink(frames, 4) == 2 && ring_head == ring_tail + RING_FRAMES, "no more than the room: head %u", ring_head);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -433,6 +478,7 @@ main(int argc, char **argv)
 		{ "smmu_set_up", smmu_set_up, 1 }, { "smmu_let_through", smmu_let_through, 1 },
 		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
 		{ "the_streams_events", the_streams_events, 1 }, { "the_dsps_answers", the_dsps_answers, 1 },
+		{ "darwins_frames_through_the_ring", darwins_frames_through_the_ring, 1 },
 	};
 	char name[64];
 	const char *colon;
