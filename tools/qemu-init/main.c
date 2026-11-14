@@ -238,6 +238,7 @@ static const struct {
 	{ "crash", "KIND this process stopped by a mistake (in a child: run)", command_crash },
 	{ "alarm", "[COUNT] a timer's signals caught by a handler", command_alarm },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
+	{ "unix-name", "PATH a socket by name in a file system: a child connects to it", command_unix_name },
 	{ "shm", "[NAME] memory shared by name with a child (shm_open, mmap MAP_SHARED)", command_shm },
 	{ "unix", "FILE its descriptor sent through a socket pair, and read", command_unix },
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },

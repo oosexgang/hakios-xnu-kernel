@@ -737,6 +737,89 @@ command_fork(int argc, char **argv)
 	say(line);
 }
 
+#define SYS_socket              97
+#define SYS_connect             98
+#define SYS_accept              30
+#define SYS_bind                104
+#define SYS_listen              106
+#define SYS_unlink              10
+#define SYS_lstat64             340
+
+struct sockaddr_un {
+	uint8_t len, family;
+	char path[104];
+};
+
+/*
+ * PATH: a socket by name in a file system (AF_UNIX, bound to PATH, where the file system keeps a node of
+ * its own for it): a forked child connects to it by the name and writes, the shell reads what it wrote
+ */
+void
+command_unix_name(int argc, char **argv)
+{
+	struct sockaddr_un here = { sizeof(here), AF_UNIX, { 0 } };
+	struct { int32_t dev; uint16_t mode, nlink; char rest[200]; } st;
+	char got[64], line[200];
+	int in_child = 0;
+	int32_t status = 0;
+	long listener, peer, n = 0, pid;
+	size_t at;
+
+	if (argc != 2 || length(argv[1]) >= sizeof(here.path)) {
+		say("unix-name PATH\n");
+		return;
+	}
+	copy_bytes(here.path, argv[1], length(argv[1]) + 1);
+	listener = syscall6(SYS_socket, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+	n = listener < 0 ? listener : syscall6(SYS_bind, listener, (long)&here, sizeof(here), 0, 0, 0);
+	if (n == 0) {
+		n = syscall6(SYS_listen, listener, 1, 0, 0, 0, 0);
+	}
+	if (n != 0) {
+		say("unix-name: ");
+		say(argv[1]);
+		say(" cannot be bound: ");
+		say_error(n);
+		say("\n");
+		if (listener >= 0) {
+			syscall6(SYS_close, listener, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	pid = syscall_fork(&in_child);
+	if (in_child) {
+		long sock = syscall6(SYS_socket, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+
+		if (sock >= 0 && syscall6(SYS_connect, sock, (long)&here, sizeof(here), 0, 0, 0) == 0) {
+			syscall6(SYS_write, sock, (long)"by its name", 11, 0, 0, 0);
+		}
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	n = 0;
+	peer = pid > 0 ? syscall6(SYS_accept, listener, 0, 0, 0, 0, 0) : -1;
+	if (peer >= 0) {
+		for (long more; n < (long)sizeof(got) - 1 && (more = syscall6(SYS_read, peer, (long)(got + n), sizeof(got) - 1 - n, 0, 0, 0)) > 0;) {
+			n += more;
+		}
+		syscall6(SYS_close, peer, 0, 0, 0, 0, 0);
+	}
+	got[n] = '\0';
+	if (pid > 0) {
+		syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	}
+	at = append(line, 0, sizeof(line), "unix-name: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	if (syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0) == 0 && (st.mode & 0170000) == 0140000) {
+		at = append(line, at, sizeof(line), " (a socket in the file system)");
+	}
+	at = append(line, at, sizeof(line), n > 0 ? ": a child connected and wrote: " : ": nothing came");
+	at = append(line, at, sizeof(line), got);
+	append(line, at, sizeof(line), "\n");
+	say(line);
+	syscall6(SYS_close, listener, 0, 0, 0, 0, 0);
+	syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0);
+}
+
 /* ---- locks: threads that take turns, as os_unfair_lock makes them, through ulock_wait and ulock_wake ---- */
 
 
