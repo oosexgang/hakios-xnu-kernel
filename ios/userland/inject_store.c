@@ -1710,6 +1710,14 @@ new_should_mescal(id self, SEL cmd)
 static id (*old_active_account)(id, SEL);
 static id (*old_active_account_type)(id, SEL, void *);
 
+static const char *
+who_i_am(void)
+{
+	const char *name = getprogname();
+
+	return name != NULL ? name : "?";
+}
+
 static id
 local_account_of(id store, const char *who)
 {
@@ -1718,7 +1726,10 @@ local_account_of(id store, const char *who)
 
 	if (!told) {
 		told = 1;
-		say("hakios: store: %s answered at once, %s\n", who, account != NULL ? "the local account" : "nothing");
+		char text[260];
+
+		say("hakios: store(%s): %s answered at once, %s\n", who_i_am(), who,
+		    account != NULL ? text_of(account, text, sizeof(text)) : "nothing");
 	}
 	return account;
 }
