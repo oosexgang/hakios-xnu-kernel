@@ -2,8 +2,8 @@
 # The kernel on four processors in QEMU: all four started through PSCI and running, the kernel saying so to
 # programs; four threads of a program running side by side (on a computer with four processors of its own,
 # taking well under the time of one doing it all); eight threads taking turns under one lock without losing
-# a count; and nothing panicking. Then on one processor, where nothing is sent to another: threads and the
-# lock all the same.
+# a count; a lock on a file's bytes, a named pipe and a blocked signal between processes; and nothing
+# panicking. Then on one processor, where nothing is sent to another: threads and the lock all the same.
 #
 #   workbench/qemu_smp_test.sh KERNEL
 #
@@ -20,7 +20,7 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { echo "FAIL the root does not build"; exit 1; }
 "$HERE/../tools/qemu-kernel.sh" --cpus 4 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
-	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\n' \
+	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\nmount ramfs ramfs /tmp\nwrite /tmp/l x\nbyte-locks /tmp/l\nfifo /tmp/f\nmask\nrun /sbin/launchd mask\n' \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 tr -d '\r' < "$W/serial.log" > "$W/log"
 
@@ -47,6 +47,11 @@ else
 		grep -qE '^threads: 4 threads on 4 processors did in' "$W/log"
 fi
 check "eight threads take turns under one lock and lose no count" grep -qE '^locks: 8 threads added 1600000 of 1600000 under one lock' "$W/log"
+check "a lock on a file's bytes held against a child, and a named pipe between two processes, on four processors" bash -c "
+	grep -aq \"^byte-locks: /tmp/l: 0-9 held; another's 5-14 refused (to read too), 10-19 taken, F_GETLK names the holder; let go, taken\" '$W/log' &&
+	grep -aq '^fifo: /tmp/f: read \"written by a child\"' '$W/log'"
+check "on four processors, a signal from a child waits while blocked, and is caught once let through" \
+	grep -aq '^mask: SIGUSR1 from pid [0-9]*: held while blocked (pending, not caught), caught once let through' "$W/log"
 check "no panic" bash -c "! grep -aq 'panic(' '$W/log'"
 
 "$HERE/../tools/qemu-kernel.sh" --cpus 1 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
