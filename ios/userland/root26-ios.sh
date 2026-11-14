@@ -289,6 +289,8 @@ echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences
 # cameracaptured, iOS 27's camera daemon: the flashlight's server given the kernel's flashlight (src:
 # ios/userland/inject_capture.c). It does nothing where the kernel has none (boot-arg torch=3).
 echo "/redwood/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
+# Camera.app: its preview's picture given a size where AVFoundation leaves it none (ios/userland/inject_camera_app.c)
+echo "/redwood/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys

@@ -182,9 +182,9 @@ static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
  * well, under the others, and the four-byte layers drawn after it in that swap are laid over it by their alpha
  * (premultiplied, as CoreAnimation renders them). iOS hands a video to the display as a layer of its own and leaves a
  * transparent hole for it in the layer of everything else; without, the hole is a black one (Camera.app's preview).
- * Off by default: every other swap is drawn as before either way.
+ * On by default (fb_yuv=0: such a layer is left out, as before); a swap without one is drawn as before either way.
  */
-static TUNABLE(uint32_t, gYUV, "fb_yuv", 0);
+static TUNABLE(uint32_t, gYUV, "fb_yuv", 1);
 /*
  * Boot-arg fb_small=0: the drawers anywhere, as before. By default, on a phone with slower cores
  * (renoir: three Cortex-A55 beside four A78), the presenter and its helpers are bound to those, one
