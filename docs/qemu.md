@@ -102,6 +102,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
 | `fifo PATH` | A named pipe made in ramfs (mkfifo): a forked child opens it to write, the shell to read, each open waiting for the other's. |
 | `flock FILE` | The file locked: a child's try, without waiting, is refused (EAGAIN); once it is let go, a child's is taken. |
+| `byte-locks FILE` | Bytes 0 to 9 of the file locked to write (fcntl F_SETLK): a child's lock on 5 to 14 is refused, to read too, and one on 10 to 19 taken; F_GETLK names the shell as what is in the way; let go, the child has them. |
 | `poll` | poll and select on a pipe: empty, each waits out its 100 ms and finds nothing; with a byte in it, each finds it readable at once. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | **IOKit** (`iokit.c`) | |
@@ -135,7 +136,7 @@ on its shell and checks what comes back:
   pair reads the file it was, and a socket in ramfs is reached by its name; two threads run on the two processors at once, and four take turns under
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
   timer keeps time and it sees a pipe become readable, and so do poll and select; a named pipe in ramfs
-  carries what a child writes into it, and a lock on a file keeps another process out until it is let go; a
+  carries what a child writes into it, and a lock on a file, or on some of its bytes, keeps another process out until it is let go; a
   script runs through the program its `#!` line names; a user who is not root reads what is theirs and not
   what is another's, and may lower a process's priority, not raise it.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
