@@ -122,6 +122,15 @@ typed=(
 	'xattr -d /tmp/notes/b com.example.size'
 	'files 20'
 	'unix-name /tmp/notes/socket'
+	'mkdir /tmp/notes/x /tmp/notes/y'
+	'write /tmp/notes/x/f moved across'
+	'mkdir /tmp/notes/x'
+	'rm /tmp/notes/x'
+	'mv /tmp/notes/x/f /tmp/notes/y/g'
+	'ln /tmp/notes/x /tmp/notes/z'
+	'cat /tmp/notes/y/g'
+	'rm /tmp/notes/y/g /tmp/notes/y /tmp/notes/x'
+	'stat /tmp/notes/x'
 	'fill /tmp/notes/big 3000000'
 	'hash /tmp/notes/big'
 	'mmap-write /tmp/notes/big'
@@ -252,6 +261,12 @@ check "the kernel holds a process to its limit of descriptors (setrlimit): the 2
 	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24 \(EMFILE\)' "$log"
 check "a socket by name in ramfs: a child connects to it there and writes, and the name is taken away after" \
 	grep -aq '^unix-name: /tmp/notes/socket (a socket in the file system): a child connected and wrote: by its name' "$log"
+check "ramfs says what BSD says: a directory that is there (EEXIST), one not empty (ENOTEMPTY), a hard link to a directory (EPERM)" \
+	bash -c "grep -aq '^mkdir: /tmp/notes/x: error 17 (EEXIST)' '$log' && grep -aq '^rm: /tmp/notes/x: error 66 (ENOTEMPTY)' '$log' &&
+		grep -aq '^ln: /tmp/notes/z: error 1 (EPERM)' '$log'"
+check "a file moved from one directory to another reads as it was, and the directories once emptied are taken away" \
+	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# cat /tmp/notes/y/g' | grep -qx 'moved across' &&
+		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
 check "three megabytes written into ramfs read back as written, and written through a shared mapping read back so (its page-out)" \
 	bash -c "grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $filled_hash' '$log' &&
 		grep -aq '^mmap-write: /tmp/notes/big, 3000000 bytes turned through the mapping, and read so' '$log' &&
