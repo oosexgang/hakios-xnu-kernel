@@ -151,6 +151,7 @@ said(const char *format, ...)
 }
 
 #define printf said
+#define XO_HZ 19200000
 #define GENI_SPI_NAME "touch"
 #include "board/geni_spi.h"
 #undef printf
@@ -173,6 +174,21 @@ set_up(void)
 	CHECK(*reg(0x260) == 0x0007f8fe && *reg(0x284) == 0x0007f8fe, "four bytes a word, the first lowest");
 	CHECK(geni_spi_init(5000000) == NULL && *reg(0x048) == (4u << 4 | 1), "5 MHz asked: not over it, 4.8");
 	CHECK(geni_spi_init(40000000) == NULL && *reg(0x048) == (1u << 4 | 1), "more than the clock: undivided");
+}
+
+/* the engine's clock's rate, as its RCG's registers make it: the crystal, GPLL0 or its half, divided by halves, M/N */
+static void
+clock_rates(void)
+{
+	CHECK(rcg_rate(0, 0, 0) == 19200000, "the crystal: %u", rcg_rate(0, 0, 0));
+	CHECK(rcg_rate(1u << 8, 0, 0) == 600000000, "GPLL0");
+	CHECK(rcg_rate(6u << 8, 0, 0) == 300000000, "GPLL0 halved");
+	CHECK(rcg_rate(1u << 8 | 3, 0, 0) == 300000000, "GPLL0 divided by 2 (a divider of 3: 2 x 2 - 1)");
+	CHECK(rcg_rate(1u << 8 | 4, 0, 0) == 240000000, "... by 2.5 (4)");
+	CHECK(rcg_rate(6u << 8 | 2u << 12 | 1, 1, (uint32_t)~(25u - 1)) == 12000000, "GPLL0 halved, M/N 1/25: 12 MHz: %u",
+	    rcg_rate(6u << 8 | 2u << 12 | 1, 1, (uint32_t)~(25u - 1)));
+	CHECK(rcg_rate(2u << 12, 1, (uint32_t)~(0u)) == 19200000, "an M/N of N 0 (NOT(N - M) all ones, N = 0): undivided");
+	CHECK(rcg_rate(3u << 8, 0, 0) == 0, "a source this does not know: none");
 }
 
 /* an engine that cannot be used for this: said, and nothing set up */
@@ -264,7 +280,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "set_up", set_up }, { "not_for_spi", not_for_spi }, { "transfers", transfers }, { "one_way", one_way },
+		{ "set_up", set_up }, { "clock_rates", clock_rates }, { "not_for_spi", not_for_spi }, { "transfers", transfers }, { "one_way", one_way },
 		{ "an_error", an_error }, { "busy_and_deaf", busy_and_deaf },
 	};
 
