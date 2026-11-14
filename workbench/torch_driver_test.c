@@ -407,16 +407,16 @@ pmic_hot(void)
 	never();
 }
 
-/* trouble before the light: it is never lit */
+/* trouble before the light: it is never lit (at 45 C, the hottest the battery may be: already too hot) */
 static void
 battery_hot(void)
 {
 	phone("phone-video");
-	battery_c = 46;
+	battery_c = 45;
 	boot_args = "torch=2 torch_secs=1";
 	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
-	CHECK(logged("not lit: the battery is at 46 C"), "said in the log: %s", log_text);
+	CHECK(logged("not lit: the battery is at 45 C"), "said in the log: %s", log_text);
 	CHECK(times_lit == 0 && spmi.writes == 0, "not lit, nothing written (%u writes)", spmi.writes);
 	never();
 }
