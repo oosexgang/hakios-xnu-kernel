@@ -149,6 +149,7 @@ says what each test covers and what it leaves out.
 | `board/input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
 | `board/sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `board/goodix.c`, `board/fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
+| `board/geni_spi.h` (the touch drivers' SPI) | `geni_spi_test.c` | the serial engine in its FIFO mode, with a device that answers each byte, and that can say an error, stay busy or take no cancel |
 
 The two touch drivers, the camera's, the sound's and the microphones' are compiled into host programs too, but
 nothing of their parts is modelled: their tests cover the wiring only. The Wi-Fi, DSP, GPU and storage drivers have no such test: they
