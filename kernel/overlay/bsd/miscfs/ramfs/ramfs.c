@@ -5,7 +5,7 @@
  * bring-up system has no storage driver, so /private/var and /tmp are kept
  * here. Everything is lost at shutdown.
  *
- * Nodes (files, directories, symlinks, socket names) are plain kernel
+ * Nodes (files, directories, symlinks, socket names, named pipes) are plain kernel
  * structures; a directory is a list of (name, node) entries, so hard links
  * are just two entries naming one node. File contents are kept in
  * individually allocated pages hanging off the node. That copy is the truth:
@@ -46,6 +46,7 @@
 #include <sys/xattr.h>
 #include <uuid/uuid.h>
 #include <vfs/vfs_support.h>
+#include <miscfs/fifofs/fifo.h>          /* (after sys/vnode_internal.h: it needs vfs_context_t) */
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>
 
@@ -134,6 +135,7 @@ extern unsigned int vm_page_free_count;      /* osfmk/vm/vm_resident.c, for a re
 static LCK_GRP_DECLARE(ramfs_lck_grp, "ramfs");
 
 extern int(**ramfs_vnodeop_p)(void *);
+extern int(**ramfs_fifoop_p)(void *);
 
 /* ------------------------------------------------------------------------ */
 /* Nodes                                                                    */
@@ -497,7 +499,12 @@ ramfs_vget_locked(struct ramfs_mount *rm, struct ramfs_node *node, vnode_t dvp, 
 	param.vnfs_str = "ramfs";
 	param.vnfs_dvp = dvp;
 	param.vnfs_fsnode = node;
+#if FIFO && SOCKETS
+	/* a named pipe: fifofs does its opening, reading and writing; its attributes and its end are ramfs' */
+	param.vnfs_vops = node->rn_type == VFIFO ? ramfs_fifoop_p : ramfs_vnodeop_p;
+#else
 	param.vnfs_vops = ramfs_vnodeop_p;
+#endif
 	param.vnfs_markroot = (node == rm->rm_root);
 	param.vnfs_filesize = node->rn_type == VREG ? (off_t)node->rn_size : 0;
 	param.vnfs_cnp = cnp;
@@ -833,14 +840,20 @@ ramfs_symlink(struct vnop_symlink_args *ap)
 	return ramfs_make(ap->a_dvp, ap->a_vpp, ap->a_cnp, ap->a_vap, VLNK, ap->a_target);
 }
 
-/* Only the name of a local socket can be made here (bind); devices live in devfs. */
+/* The name of a local socket (bind) and a named pipe (mkfifo) can be made here; devices live in devfs. */
 static int
 ramfs_mknod(struct vnop_mknod_args *ap)
 {
-	if (ap->a_vap->va_type != VSOCK) {
+	enum vtype type = ap->a_vap->va_type;
+
+#if FIFO && SOCKETS
+	if (type != VSOCK && type != VFIFO) {
+#else
+	if (type != VSOCK) {
+#endif
 		return ENOTSUP;
 	}
-	return ramfs_make(ap->a_dvp, ap->a_vpp, ap->a_cnp, ap->a_vap, VSOCK, NULL);
+	return ramfs_make(ap->a_dvp, ap->a_vpp, ap->a_cnp, ap->a_vap, type, NULL);
 }
 
 static int
@@ -1919,6 +1932,37 @@ const struct vnodeopv_desc ramfs_vnodeop_opv_desc = {
 	.opv_desc_vector_p = &ramfs_vnodeop_p,
 	.opv_desc_ops = ramfs_vnodeop_entries
 };
+
+#if FIFO && SOCKETS
+/* a named pipe's vnode: its data goes through fifofs' socket pair; its name, attributes and end are ours */
+int(**ramfs_fifoop_p)(void *);
+const struct vnodeopv_entry_desc ramfs_fifoop_entries[] = {
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)fifo_lookup },
+	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC)fifo_open },
+	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC)fifo_close },
+	{ .opve_op = &vnop_getattr_desc, .opve_impl = (VOPFUNC)ramfs_getattr },
+	{ .opve_op = &vnop_setattr_desc, .opve_impl = (VOPFUNC)ramfs_setattr },
+	{ .opve_op = &vnop_read_desc, .opve_impl = (VOPFUNC)fifo_read },
+	{ .opve_op = &vnop_write_desc, .opve_impl = (VOPFUNC)fifo_write },
+	{ .opve_op = &vnop_ioctl_desc, .opve_impl = (VOPFUNC)fifo_ioctl },
+	{ .opve_op = &vnop_select_desc, .opve_impl = (VOPFUNC)fifo_select },
+	{ .opve_op = &vnop_fsync_desc, .opve_impl = (VOPFUNC)nop_fsync },
+	{ .opve_op = &vnop_inactive_desc, .opve_impl = (VOPFUNC)ramfs_inactive },
+	{ .opve_op = &vnop_reclaim_desc, .opve_impl = (VOPFUNC)ramfs_reclaim },
+	{ .opve_op = &vnop_pathconf_desc, .opve_impl = (VOPFUNC)fifo_pathconf },
+	{ .opve_op = &vnop_advlock_desc, .opve_impl = (VOPFUNC)err_advlock },
+	{ .opve_op = &vnop_getxattr_desc, .opve_impl = (VOPFUNC)ramfs_getxattr },
+	{ .opve_op = &vnop_setxattr_desc, .opve_impl = (VOPFUNC)ramfs_setxattr },
+	{ .opve_op = &vnop_removexattr_desc, .opve_impl = (VOPFUNC)ramfs_removexattr },
+	{ .opve_op = &vnop_listxattr_desc, .opve_impl = (VOPFUNC)ramfs_listxattr },
+	{ .opve_op = (struct vnodeop_desc *)NULL, .opve_impl = (VOPFUNC)NULL }
+};
+const struct vnodeopv_desc ramfs_fifoop_opv_desc = {
+	.opv_desc_vector_p = &ramfs_fifoop_p,
+	.opv_desc_ops = ramfs_fifoop_entries
+};
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Mount operations                                                         */

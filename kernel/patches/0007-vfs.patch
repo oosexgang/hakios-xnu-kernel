@@ -363,13 +363,14 @@ diff --git a/bsd/vfs/vfs_conf.c b/bsd/vfs/vfs_conf.c
  #if MOCKFS
  	/* If we are configured for it, mockfs should always be the last standard entry (and thus the last FS we attempt mountroot with) */
  	{
-@@ -297,6 +356,15 @@ extern const struct vnodeopv_desc devfs_fdesc_vnodeop_opv_desc;
+@@ -297,6 +356,16 @@ extern const struct vnodeopv_desc devfs_fdesc_vnodeop_opv_desc;
  extern const struct vnodeopv_desc mockfs_vnodeop_opv_desc;
  #endif /* MOCKFS */
  
 +
 +#if RAMFS
 +extern const struct vnodeopv_desc ramfs_vnodeop_opv_desc;
++extern const struct vnodeopv_desc ramfs_fifoop_opv_desc;
 +#endif /* RAMFS */
 +
 +#if APFS
@@ -379,12 +380,15 @@ diff --git a/bsd/vfs/vfs_conf.c b/bsd/vfs/vfs_conf.c
  extern const struct vnodeopv_desc nullfs_vnodeop_opv_desc;
  extern const struct vnodeopv_desc bindfs_vnodeop_opv_desc;
  
-@@ -326,5 +394,11 @@ const struct vnodeopv_desc *vfs_opv_descs[] = {
+@@ -326,5 +395,14 @@ const struct vnodeopv_desc *vfs_opv_descs[] = {
  #if MOCKFS
  	&mockfs_vnodeop_opv_desc,
  #endif /* MOCKFS */
 +#if RAMFS
 +	&ramfs_vnodeop_opv_desc,
++#if FIFO && SOCKETS
++	&ramfs_fifoop_opv_desc,
++#endif
 +#endif /* RAMFS */
 +#if APFS
 +	&apfs_vnodeop_opv_desc,
