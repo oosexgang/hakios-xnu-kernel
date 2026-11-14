@@ -1779,6 +1779,31 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		if (s == NULL) {
 			continue;
 		}
+		if (s->info.bytesPerElement == 4 && s->info.planeCount == 0 && fOver) {
+			/* fb_yuv: how much of this layer lets the video through, row by row, for the first swaps with one */
+			static unsigned profiled;
+
+			if (profiled < 3) {
+				char line[512];
+				size_t n = 0;
+				const uint8_t * px = s->pixels();
+
+				profiled++;
+				for (uint32_t y = 0; px != NULL && y < s->info.height && n + 16 < sizeof(line); y += s->info.height >= 24 ? s->info.height / 24 : 1) {
+					const uint32_t * row = (const uint32_t *) (px + (size_t) y * s->info.bytesPerRow);
+					uint32_t clear = 0, solid = 0;
+
+					for (uint32_t x = 0; x < s->info.width; x += 8) {
+						uint32_t a = row[x] >> 24;
+						clear += a == 0;
+						solid += a == 255;
+					}
+					n += (size_t) snprintf(line + n, sizeof(line) - n, " %u:%u/%u", y, clear, solid);
+				}
+				IOLog("MiniIOMobileFramebuffer: fb_yuv: layer %u over the video (%ux%u), row: clear/opaque of every 8th pixel:%s\n",
+				    layer, s->info.width, s->info.height, line);
+			}
+		}
 		if (s->info.bytesPerElement == 4 && s->info.planeCount == 0) {
 			if (!fGraphics) {
 				/* the first picture: the kernel's text console must stop drawing over it */
