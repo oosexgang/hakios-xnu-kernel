@@ -294,7 +294,7 @@ echo "/redwood/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
 # STOREFRONT=1: the App Store's SAP (Mescal) signature from the host's sapd, and a storefront answered, so the
 # storefront-token request is signed and amp-api returns the catalog (ios/userland/inject_store.c, inject_mescal.m).
 if [ -n "${STOREFRONT:-}" ]; then
-	echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore}" >> $T/etc/inject.conf
+	echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
 	echo "/redwood/lib/libhakios-mescal.dylib appstored itunesstored AppStore" >> $T/etc/inject.conf
 fi
 # The kernel matches executable names, not the build template's @apps token.

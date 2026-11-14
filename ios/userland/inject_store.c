@@ -149,6 +149,7 @@ extern const void *_dyld_get_shared_cache_range(size_t *length);
 #define STOREFRONT "143469-2,8"                 /* what bag.itunes.apple.com returned for this device */
 
 static uintptr_t slide;
+static bool watch_only;         /* accountsd: looked at, never changed (see the constructor) */
 static bool g_absinthe_only;    /* amsaccountsd: install only the ISAMSBagShim absinthe-requests row */
 static CFStringRef storefront;
 
@@ -2486,6 +2487,9 @@ replacement_count(void)
 static void
 image_added(__unused const struct mach_header *header, __unused intptr_t image_slide)
 {
+	if (watch_only) {
+		return;
+	}
 	for (size_t i = 0; i < sizeof(replacements) / sizeof(replacements[0]); i++) {
 		struct replacement *r = &replacements[i];
 		Class cls;
@@ -2547,6 +2551,25 @@ hakios_store_init(void)
 	 * (amsaccountsd also carries this library but is left untouched: running even the absinthe-only
 	 * path there made the App Store catalog stop connecting, so that experiment is reverted.)
 	 */
+	/*
+	 * And accountsd, but only to be looked at: appstored's account query to it times out after two
+	 * seconds and the connection it makes next never returns, while accountsd serves other clients in
+	 * the same run. Nothing of ours is replaced there -- this library hooks ACAccountStore, which is
+	 * accountsd's own job -- so it only names the services it connects to and dumps its threads.
+	 */
+	if (name != NULL && strcmp(name, "accountsd") == 0) {
+		pthread_t watcher;
+
+		watch_only = true;      /* the periodic report calls image_added again: it must not replace anything */
+
+		slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
+		who = name;
+		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
+		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
+			pthread_detach(watcher);
+		}
+		return;
+	}
 	if (name == NULL || (strcmp(name, "appstored") != 0 && strcmp(name, "AppStore") != 0)) {
 		return;
 	}
