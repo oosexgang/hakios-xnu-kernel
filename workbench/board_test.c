@@ -99,6 +99,31 @@ every_feature_said(void)
 	CHECK(strlen(all) + 1 == HAKIOS_FEATURES_TEXT, "room for all the names is %u, they take %zu", HAKIOS_FEATURES_TEXT, strlen(all) + 1);
 }
 
+/* the line of features into a buffer too small for it: cut where it ends, never past it; and a board whose
+ * features word has bits past the names there are says the names there are and no more */
+static void
+features_cut_short(void)
+{
+	struct hakios_board all = { .features = 0xffffffffu };
+	char text[64];
+	size_t first = strlen(hakios_feature_names[0]);
+
+	for (size_t size = 1; size < sizeof(text); size++) {
+		memset(text, 0x5a, sizeof(text));
+		features_text(&all, text, size);
+		CHECK(strlen(text) < size && text[size] == 0x5a, "a buffer of %zu: %zu bytes of text, nothing past it", size,
+		    strlen(text));
+	}
+	features_text(&all, text, first + 1);
+	CHECK(strcmp(text, hakios_feature_names[0]) == 0, "room for the first name and its end: it alone: %s", text);
+	{
+		static char line[HAKIOS_FEATURES_TEXT];
+
+		features_text(&all, line, sizeof(line));
+		CHECK(strlen(line) + 1 == HAKIOS_FEATURES_TEXT, "every name, and none past the last: %zu", strlen(line));
+	}
+}
+
 /* the GPU as its driver is handed it: the board's gpu { }, with "off" before the speeds */
 static void
 gpu_a642(void)
@@ -293,7 +318,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "known_phone", known_phone }, { "every_feature_said", every_feature_said }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
+		{ "known_phone", known_phone }, { "every_feature_said", every_feature_said }, { "features_cut_short", features_cut_short }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
 		{ "emulator", emulator }, { "unknown", unknown }, { "unnamed", unnamed }, { "almost_named", almost_named }, { "table", table },
 	};
 
