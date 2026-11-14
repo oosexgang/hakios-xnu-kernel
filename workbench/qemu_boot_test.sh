@@ -120,6 +120,8 @@ typed=(
 	'vm'
 	'time sleep 1'
 	'unix /etc/motd'
+	'shm'
+	'shm'
 	'fork'
 	'fork /sbin/launchd echo became'
 	'ioreg 3'
@@ -188,6 +190,9 @@ check "every value of the kernel's is read (sysctl -a: over a thousand names), a
 # code by)
 check "programs are told the processor's crypto extensions (hw.optional.arm.FEAT_AES, _PMULL, _SHA1, _SHA256)" \
 	bash -c "for f in AES PMULL SHA1 SHA256; do tr -d '\\r' < '$log' | grep -qx \"hw.optional.arm.FEAT_\$f: 1\" || exit 1; done"
+# (twice: the name taken away the first time is made anew the second, O_EXCL)
+check "memory shared by name with a forked child (POSIX shared memory) carries its writes, and its name is taken away" \
+	bash -c "test \$(grep -ac '^shm: /qemu-init.shm: 16 KB shared with a child, its writes seen at both ends' '$log') = 2"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
