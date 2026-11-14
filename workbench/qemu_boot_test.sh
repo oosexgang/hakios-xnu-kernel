@@ -114,6 +114,7 @@ typed=(
 	'kevent 10'
 	'run /sbin/launchd crash null'
 	'run /sbin/launchd crash illegal'
+	'run /sbin/launchd crash readonly'
 	'alarm 5'
 	'vm'
 	'time memory 128'
@@ -232,8 +233,9 @@ check "threads of its own run on both processors at once" bash -c "grep -aoE '^t
 check "a program's file mapped (its pages from APFS) is what reading it gives" grep -aq "^mmap: /sbin/launchd, [0-9]* bytes: its pages and its reads agree" "$log"
 check "kqueue delivers a timer's events on time, and a pipe's readiness" \
 	bash -c "grep -aoE '^kevent: 10 timer events of 50 ms in [0-9]+ ms; a pipe with 5 bytes in it is readable' '$log' | awk '{ exit !(\$9 >= 450 && \$9 < 1500) }'"
-check "a process's mistakes reach it as signals: a bad address SIGSEGV, an undefined instruction SIGILL" \
-	bash -c "grep -aqE 'run: pid [0-9]+ ended by signal 11' '$log' && grep -aqE 'run: pid [0-9]+ ended by signal 4' '$log'"
+check "a process's mistakes reach it as signals: a bad address SIGSEGV, an undefined instruction SIGILL, a write to a page made read only (mprotect) SIGBUS" \
+	bash -c "grep -aqE 'run: pid [0-9]+ ended by signal 11' '$log' && grep -aqE 'run: pid [0-9]+ ended by signal 4' '$log' &&
+		grep -aqE 'run: pid [0-9]+ ended by signal 10' '$log'"
 check "a timer's signals are caught by a handler and the thread goes back where it was (sigreturn)" \
 	bash -c "grep -aoE '^alarm: 5 SIGALRM caught by a handler in [0-9]+ ms' '$log' | awk '{ exit !(\$9 >= 450 && \$9 < 1500) }'"
 check "memory of its own is given, holds what is written, and is all given back" \
