@@ -424,6 +424,27 @@ the_dsps_answers(void)
 	CHECK(!command("another's", APR_SVC_ADM, 0, 0x200, NULL, 0, 0x300, NULL), "nor another command's answer");
 }
 
+/* sound=0, or none: the DSP's coming up starts nothing and says nothing */
+static void
+said_off(void)
+{
+	boot_args = getenv("SOUND_CASE")[0] == '0' ? "sound=0" : "";
+	hakios_sound_dsp_up();
+	CHECK(!logged("sound:") && level == 0, "nothing said or kept: %s", log_text);
+	CHECK(tlmm.phys == 0 && apps_smmu.phys == 0, "nothing looked for: the pins at %#llx, the SMMU at %#llx",
+	    (unsigned long long)tlmm.phys, (unsigned long long)apps_smmu.phys);
+}
+
+/* a board whose board.dts lists no amplifiers: what the DSP would be told is not for it */
+static void
+no_amplifiers(void)
+{
+	board = "phone-cmd";
+	boot_args = "sound=1";
+	hakios_sound_dsp_up();
+	CHECK(logged("sound: disabled: this board's board.dts lists no \"speaker-aw88261\"") && level == 0, "said: %s", log_text);
+}
+
 /*
  * What Darwin writes, through the ring to the periods the DSP plays: each frame's left and right in their
  * places and in order, its loudest sample kept, silence (no more than 8) not taken for sound, no more taken
@@ -478,7 +499,8 @@ main(int argc, char **argv)
 		{ "smmu_set_up", smmu_set_up, 1 }, { "smmu_let_through", smmu_let_through, 1 },
 		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
 		{ "the_streams_events", the_streams_events, 1 }, { "the_dsps_answers", the_dsps_answers, 1 },
-		{ "darwins_frames_through_the_ring", darwins_frames_through_the_ring, 1 },
+		{ "darwins_frames_through_the_ring", darwins_frames_through_the_ring, 1 }, { "said_off", said_off, 2 },
+		{ "no_amplifiers", no_amplifiers, 1 },
 	};
 	char name[64];
 	const char *colon;
