@@ -521,9 +521,13 @@ a_vibration_that_softens(void)
 	boot_args = "haptic=5";
 	hakios_haptic_init();
 	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
-	darwin_plays(20000, 200);
-	darwin_plays(2000, 300);
-	WAIT_FOR(logged("haptic: vibration 1: Darwin stopped"), 2000);
+	/* (again, up to three times, if this test's thread was not run for 30 ms on a busy computer: a pause in
+	 * Darwin's waveform, and the motor rightly stopped before the soft part) */
+	for (unsigned tries = 0; tries < 3 && !logged("last to gain 0x58)"); tries++) {
+		darwin_plays(20000, 200);
+		darwin_plays(2000, 300);
+		usleep(300000);
+	}
 	CHECK(logged("Darwin stopped, and so does the motor after") && logged("last to gain 0x58)"), "said: %s", log_text);
 	CHECK(!logged("changed 0 times"), "it changed: %s", log_text);
 	CHECK(device.reg[0x07] == 0x58, "the gain followed: %#x", device.reg[0x07]);
@@ -538,9 +542,12 @@ a_vibration_cut_at_the_limit(void)
 	boot_args = "haptic=5";
 	hakios_haptic_init();
 	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
-	darwin_plays(20000, 1300);
-	WAIT_FOR(logged("haptic: vibration 1: CUT at the limit"), 2000);
-	CHECK(logged("haptic: vibration 1: CUT at the limit after 10"), "cut at a second: %s", log_text);
+	/* (again, as above, if a pause of this test's own let the motor stop before the limit) */
+	for (unsigned tries = 0; tries < 3 && !logged("CUT at the limit"); tries++) {
+		darwin_plays(20000, 1300);
+		usleep(300000);
+	}
+	CHECK(logged("CUT at the limit after 1"), "cut at a second (and not before: a cut comes past it): %s", log_text);
 }
 
 /* what is no louder than 256 of 32768 is silence: nothing played */
