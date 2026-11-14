@@ -56,6 +56,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `cd [DIR]`, `pwd` | The directory relative paths start from (chdir), and the kernel's path of it (F_GETPATH, as getcwd() asks it). |
 | **The kernel** (`kernel.c`) | |
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
+| `sysctl -a [PREFIX]` | Every name the kernel has, from one to the next (sysctl 0.2 and 0.1), and the value of each under PREFIX. |
 | `vm` | The virtual memory's pages (free, active, wired, in the compressor) and its faults, as `vm_stat` asks them: host_statistics64 in a MIG message to the host's port. |
 | `dmesg [LINES]` | The kernel's latest messages (proc_info's message buffer call). |
 | `uptime`, `date` | The time since boot; the time of day, UTC, as the kernel has it from QEMU's clock. |
