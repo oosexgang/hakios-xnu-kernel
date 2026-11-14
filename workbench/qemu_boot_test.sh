@@ -150,6 +150,10 @@ typed=(
 	'as 501:20 access /tmp/notes/shared /tmp/notes'
 	'as 502:20 access /tmp/notes/shared'
 	'as 503:30 access /tmp/notes/shared'
+	'as 501:20 xattr /tmp/notes/private user.note mine'
+	'as 502:20 xattr /tmp/notes/private user.note theirs'
+	'as 502:20 xattr /tmp/notes/private'
+	'as 501:20 xattr /tmp/notes/private'
 	'as 501:20 touch /tmp/notes/shared 5'
 	'as 502:20 touch /tmp/notes/shared'
 	'chmod 666 /tmp/notes/shared'
@@ -411,6 +415,9 @@ check "what each may do with a file of mode 640 (access): its owner read and wri
 		grep -aq '^access: /tmp/notes: read yes, write no, run yes$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read yes, write no, run no$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read no, write no, run no$' '$shell'"
+check "a file's extended attributes are its owner's to set and read; another, who may not read the file, neither sets nor lists them" \
+	bash -c "grep -aq '^xattr: user.note: error 13 (EACCES)' '$shell' && grep -aq '^xattr: /tmp/notes/private: error 13 (EACCES)' '$shell' &&
+		cat '$shell' | grep -A2 -x '# as 501:20 xattr /tmp/notes/private' | tail -1 | grep -qx 'user.note = mine'"
 check "a file's times: its owner sets any, another who may write it only now, one who may not none; its owner gives it to no group of another's" \
 	bash -c "grep -aq '^touch: /tmp/notes/shared: accessed 5, modified 5, ' '$shell' &&
 		grep -aq '^touch: /tmp/notes/shared: error 13 (EACCES)' '$shell' &&
