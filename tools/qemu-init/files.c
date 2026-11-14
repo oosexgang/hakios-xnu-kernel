@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp, fsize */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -942,4 +942,64 @@ command_cp(int argc, char **argv)
 	}
 	syscall6(SYS_close, from, 0, 0, 0, 0, 0);
 	syscall6(SYS_close, to, 0, 0, 0, 0, 0);
+}
+
+#define RLIMIT_FSIZE            1
+#define SYS_wait4               7
+#define SYS_sigaction           46
+#define SIGXFSZ                 25
+
+/*
+ * FILE BYTES: in a child whose files may be no larger than BYTES (setrlimit RLIMIT_FSIZE), SIGXFSZ ignored: the
+ * file written anew with twice BYTES (cut at BYTES), written again past them (EFBIG), and cut to more (EFBIG)
+ */
+void
+command_fsize(int argc, char **argv)
+{
+	static char bytes[8192];
+	struct { uint64_t current, most; } limit;
+	struct { long handler, trampoline; uint32_t mask; int32_t flags; } ignore = { 1 /* SIG_IGN */, 0, 0, 0 };
+	unsigned most = argc == 3 ? parse_number(argv[2]) : 0;
+	int in_child = 0;
+	int32_t status = 0;
+	long pid;
+
+	if (argc != 3 || most == 0 || most > sizeof(bytes) / 2) {
+		say("fsize FILE BYTES (1 to 4096)\n");
+		return;
+	}
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("fsize: no child\n");
+		return;
+	}
+	if (in_child) {
+		char line[200];
+		size_t at;
+		long fd = -1, first, second, cut;      /* (fd: the compiler does not know that exit does not return) */
+
+		limit.current = limit.most = most;
+		if (syscall6(SYS_sigaction, SIGXFSZ, (long)&ignore, 0, 0, 0, 0) != 0 ||
+		    syscall6(SYS_setrlimit, RLIMIT_FSIZE, (long)&limit, 0, 0, 0, 0) != 0 ||
+		    (fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0, 0)) < 0) {
+			say("fsize: the limit cannot be had, or the file\n");
+			syscall6(SYS_exit, 1, 0, 0, 0, 0, 0);
+		}
+		first = syscall6(SYS_write, fd, (long)bytes, 2 * most, 0, 0, 0);
+		second = syscall6(SYS_write, fd, (long)bytes, 1, 0, 0, 0);
+		cut = syscall6(SYS_truncate, (long)argv[1], most + 1, 0, 0, 0, 0);
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		at = append(line, 0, sizeof(line), "fsize: ");
+		at = append(line, at, sizeof(line), argv[1]);
+		at = append(line, at, sizeof(line), ": ");
+		at = append_number(line, at, sizeof(line), (uint64_t)(first < 0 ? 0 : first));
+		at = append(line, at, sizeof(line), " of ");
+		at = append_number(line, at, sizeof(line), 2 * most);
+		at = append(line, at, sizeof(line), " written; past the limit, a write ");
+		at = append(line, at, sizeof(line), second == -27 ? "EFBIG" : "NOT EFBIG");
+		at = append(line, at, sizeof(line), ", a truncate ");
+		at = append(line, at, sizeof(line), cut == -27 ? "EFBIG\n" : "NOT EFBIG\n");
+		say(line);
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
 }
