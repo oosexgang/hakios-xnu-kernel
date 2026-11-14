@@ -1787,31 +1787,33 @@ new_xpc_mach_service(const char *name, void *queue, unsigned long flags)
 }
 
 /*
- * A synchronous message and its answer. appstored never finishes starting and never serves
- * com.apple.appstored.xpc.request, so the App Store's sendSync to it is cancelled over and over; the
- * thread that holds the daemon is in mach_msg inside AppleMediaServices' Swift code, and the service
- * it is waiting on cannot be read from the stack. A message that is sent and never answered leaves its
- * "asks" line with no "answered" beside it, which names the service that never replies.
+ * A synchronous message and its answer were named here too ("asks SERVICE" before the send, "answered
+ * by SERVICE" after), and that measurement is done: in appstored every sync message is answered
+ * (mobileactivationd, accountsd, cfprefsd, runningboard) and in the App Store all ninety-six are, so
+ * neither is deadlocked on XPC. The hook is gone because it cannot be left on: saying anything inside it
+ * sends another synchronous message wherever a process's os_log goes to logd over XPC rather than to
+ * standard error, and appstored died of that recursion -- ten stack overflows in one run, where the run
+ * before, whose only difference was that its os_log went to standard error, had none. A re-entrancy guard
+ * cut it to one and silenced the measurement, which is the shape of a diagnostic that breaks what it
+ * measures. Naming the services a process opens (above) is safe and stays.
  */
-typedef void *(*xpc_send_sync_t)(void *, void *);
-static xpc_send_sync_t old_xpc_send_sync;
 
-static void *
-new_xpc_send_sync(void *connection, void *message)
-{
-	static unsigned long long n;
-	unsigned long long mine = ++n;
-	void *reply;
-
-	say("hakios: store: sync message #%llu asks %s\n", mine, service_name(connection));
-	reply = old_xpc_send_sync(connection, message);
-	say("hakios: store: sync message #%llu answered by %s\n", mine, service_name(connection));
-	return reply;
-}
-
+/*
+ * Off unless asked for (exec_env=NAME:HAKIOS_NAME_SERVICES=1). Naming services means saying a line from
+ * inside the function that opens a connection, and where a process's os_log goes to logd over XPC rather
+ * than to standard error, logging opens connections: the line about a connection opens a connection,
+ * which is logged. appstored died of that recursion -- stack overflows that appeared only in the runs
+ * whose os_log was not redirected, and that no re-entrancy guard removed entirely. A diagnostic that
+ * breaks what it measures is not left on.
+ */
 static void
 hook_mach_services(void)
 {
+	const char *wanted = getenv("HAKIOS_NAME_SERVICES");
+
+	if (wanted == NULL || *wanted == '0') {
+		return;
+	}
 	void *substrate = dlopen("/var/jb/usr/lib/libsubstrate.dylib", RTLD_NOW);
 	MSHookFunction_t hook;
 	void *target;
@@ -1831,11 +1833,6 @@ hook_mach_services(void)
 	}
 	hook(target, (void *)new_xpc_mach_service, (void **)&old_xpc_mach_service);
 	say("hakios: store: mach services will be named (xpc_connection_create_mach_service at %p)\n", target);
-	target = dlsym(RTLD_DEFAULT, "xpc_connection_send_message_with_reply_sync");
-	if (target != NULL) {
-		hook(target, (void *)new_xpc_send_sync, (void **)&old_xpc_send_sync);
-		say("hakios: store: synchronous messages will be named too\n");
-	}
 }
 
 /*
