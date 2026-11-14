@@ -173,7 +173,8 @@ on its shell and checks what comes back:
   where it was cut, and its times are set to a second given; a process's files are held to its limit
   (RLIMIT_FSIZE); ramfs filled refuses more, and has its room back once a file goes; a directory of hundreds
   of files is read a little at a time, and emptied as it is read; a file changed is seen through kqueue;
-  a file moves to no other file system; three megabytes written into ramfs read back as
+  a file moves to no other file system, and the .. of one mounted on a directory leads to that directory's
+  parent; three megabytes written into ramfs read back as
   written, and so do bytes written through a shared mapping of it, while a private mapping's writes stay its
   own; a file written while mapped is seen through the mapping at once, and what is written through the
   mapping is read at once; a mapped file is what reading it gives;
