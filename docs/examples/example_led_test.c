@@ -13,9 +13,9 @@
 
 extern char log_text[];
 
-/* 1. The seam: with HAKIOS_MMIO_TEST the driver's rd() and wr() are these, and they are the model. */
+/* 1. The seam: with HAKIOS_MMIO_TEST the driver's rd() and wr() are hakios_test_rd() and hakios_test_wr() (after
+ * the driver, below: it counts what it sees), and they are the model. */
 uint32_t hakios_test_rd(vm_offset_t address) { return tlmm_model_rd(address); }
-void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 /* 2. The driver itself, unchanged, and the kernel's board code it asks. */
@@ -24,6 +24,25 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 #define HAKIOS_MMIO_TEST 1
 #include "board/board.c"
 #include "example_led.c"
+
+/* the light is on: the pin an output, driven high */
+static bool
+lit(void)
+{
+	return (model.cfg[LED_PIN] & 1u << 9) && (model.io[LED_PIN] & 2);
+}
+
+/* (the times it came on, counted as the driver writes: a test that looked now and then could miss one, its
+ * thread not run for a while on a busy computer) */
+static unsigned ons;
+void
+hakios_test_wr(vm_offset_t address, uint32_t value)
+{
+	bool was = lit();
+
+	tlmm_model_wr(address, value);
+	ons += !was && lit();
+}
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -105,19 +124,10 @@ look_only(void)
 static void
 blinks(void)
 {
-	unsigned ons = 0;
-	bool was = false;
-
 	phone("phone-cmd");
 	boot_args = "led=2";
 	example_led_init();
-	for (int waited = 0; !logged("led: done") && waited < 5000; waited += 1) {
-		bool lit = (model.cfg[LED_PIN] & 1u << 9) && (model.io[LED_PIN] & 2);
-
-		ons += lit && !was;
-		was = lit;
-		usleep(1000);
-	}
+	WAIT_FOR(logged("led: done"), 5000);
 	CHECK(logged("led: blinked 3 times") && ons == 3, "three times: seen %u: %s", ons, log_text);
 	CHECK((model.io[LED_PIN] & 2) == 0, "off at the end");
 	CHECK(model.drove_wrong == 0, "the pin had its level before it became an output");
