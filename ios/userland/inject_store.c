@@ -1756,11 +1756,57 @@ typedef void (*MSHookFunction_t)(void *symbol, void *replace, void **result);
 typedef void *(*xpc_mach_service_t)(const char *, void *, unsigned long);
 static xpc_mach_service_t old_xpc_mach_service;
 
+/* which connection is which, so a message that never comes back can be named by its service */
+#define SERVICES 32
+static struct { void *connection; char name[72]; } service_of[SERVICES];
+static unsigned services_known;
+
+static const char *
+service_name(void *connection)
+{
+	for (unsigned i = 0; i < services_known && i < SERVICES; i++) {
+		if (service_of[i].connection == connection) {
+			return service_of[i].name;
+		}
+	}
+	return "(a connection we did not see opened)";
+}
+
 static void *
 new_xpc_mach_service(const char *name, void *queue, unsigned long flags)
 {
+	void *connection = old_xpc_mach_service(name, queue, flags);
+
 	say("hakios: store: mach service opened: %s\n", name != NULL ? name : "(no name)");
-	return old_xpc_mach_service(name, queue, flags);
+	if (connection != NULL && name != NULL && services_known < SERVICES) {
+		service_of[services_known].connection = connection;
+		snprintf(service_of[services_known].name, sizeof(service_of[0].name), "%s", name);
+		services_known++;
+	}
+	return connection;
+}
+
+/*
+ * A synchronous message and its answer. appstored never finishes starting and never serves
+ * com.apple.appstored.xpc.request, so the App Store's sendSync to it is cancelled over and over; the
+ * thread that holds the daemon is in mach_msg inside AppleMediaServices' Swift code, and the service
+ * it is waiting on cannot be read from the stack. A message that is sent and never answered leaves its
+ * "asks" line with no "answered" beside it, which names the service that never replies.
+ */
+typedef void *(*xpc_send_sync_t)(void *, void *);
+static xpc_send_sync_t old_xpc_send_sync;
+
+static void *
+new_xpc_send_sync(void *connection, void *message)
+{
+	static unsigned long long n;
+	unsigned long long mine = ++n;
+	void *reply;
+
+	say("hakios: store: sync message #%llu asks %s\n", mine, service_name(connection));
+	reply = old_xpc_send_sync(connection, message);
+	say("hakios: store: sync message #%llu answered by %s\n", mine, service_name(connection));
+	return reply;
 }
 
 static void
@@ -1785,6 +1831,11 @@ hook_mach_services(void)
 	}
 	hook(target, (void *)new_xpc_mach_service, (void **)&old_xpc_mach_service);
 	say("hakios: store: mach services will be named (xpc_connection_create_mach_service at %p)\n", target);
+	target = dlsym(RTLD_DEFAULT, "xpc_connection_send_message_with_reply_sync");
+	if (target != NULL) {
+		hook(target, (void *)new_xpc_send_sync, (void **)&old_xpc_send_sync);
+		say("hakios: store: synchronous messages will be named too\n");
+	}
 }
 
 /*
@@ -2678,6 +2729,22 @@ hakios_store_init(void)
 	fairplay_device_type = CFStringCreateWithCString(NULL, FAIRPLAY_DEVICE_TYPE, kCFStringEncodingUTF8);
 	who = name;
 	ssv_anisette = (ssv_anisette_fn)dlsym(RTLD_DEFAULT, "SSVAnisetteAddHeadersToURLRequest");
+	{
+		/*
+		 * What this process calls itself. AdPlatforms says "Client bundle id com.apple.AppStore
+		 * (executable: ...) is nil, not allow listed or not entitled to use signing", which reads as
+		 * though the bundle identifier were missing, and a client that cannot name itself would ask
+		 * for nothing. Said plainly here, so the wording of that line is not taken for a measurement.
+		 */
+		id bundle = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSBundle"), sel_registerName("mainBundle"));
+		id ident = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundleIdentifier")) : NULL;
+		id path = bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(bundle, sel_registerName("bundlePath")) : NULL;
+		char one[120], two[200];
+
+		say("hakios: store: this process calls itself %s at %s\n",
+		    ident != NULL ? text_of(ident, one, sizeof(one)) : "(nil)",
+		    path != NULL ? text_of(path, two, sizeof(two)) : "(nil)");
+	}
 	say("hakios: store(%s): ours is in, storefront to answer with is " STOREFRONT ", anisette primitive %s\n",
 	    name, ssv_anisette != NULL ? "found" : "NOT found");
 	{
