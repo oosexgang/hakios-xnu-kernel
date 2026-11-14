@@ -68,6 +68,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `xattr FILE [NAME VALUE]`, `xattr -d FILE NAME` | A file's extended attributes listed with their values, one set, one taken away (ramfs keeps them). |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `files [LIMIT]` | The limit on a process's descriptors lowered (setrlimit), files opened until the kernel says no (EMFILE), and all put back. |
+| `descriptors FILE` | A file made anew and what descriptors do with it, as BSD has them: lseek, pread and pwrite (which move no offset), a dup's offset shared, dup2, O_APPEND, and an empty non-blocking pipe's EAGAIN. |
 | `fill FILE BYTES` | A file of made-up bytes (byte i is i * 7 mod 251), written in pieces of 16 KB, for `hash` to check against this computer's. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
 | `mmap-write FILE` | The file mapped shared and every byte of it turned over through the mapping, then msync'd: reading the file must give the turned bytes (its file system's page-out). |
@@ -128,7 +129,7 @@ on its shell and checks what comes back:
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
   symbolic link to it is read through; a file moves from one directory to another, and ramfs refuses what
   BSD refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set, replaced, listed and taken away;
-  relative paths start from the shell's own directory; a process gets no more descriptors than its
+  relative paths start from the shell's own directory; descriptors do what BSD's do; a process gets no more descriptors than its
   limit; three megabytes written into ramfs read back as written, and so do bytes written through a
   shared mapping of it; a mapped file is what reading it gives; memory of its own holds what is written and is all
   given back, each of its pages a fault Mach's counts see; the kernel keeps a process's time, none of
