@@ -581,8 +581,8 @@ check "three megabytes written into ramfs read back as written, and written thro
 		grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $turned_hash' '$log'"
 check "three megabytes mapped private and written through: the mapping has its own copies, the file is as it was" \
 	grep -aq '^mmap-private: /tmp/notes/big: the private mapping turned, the file as it was' "$shell"
-check "a file written while it is mapped: the mapping has the bytes at once, in a page and across two" \
-	grep -aq '^mmap-coherent: /tmp/notes/big: a write in a page seen through the mapping at once, and one across two pages' "$shell"
+check "a file written while it is mapped: the mapping has the bytes at once, in a page and across two; and read() has at once what is written through the mapping" \
+	grep -aq '^mmap-coherent: /tmp/notes/big: a write in a page seen through the mapping at once, and one across two pages; written through it, read at once' "$shell"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		cat '$shell' | grep -A1 -x '# cat b' | grep -qx 'six b'"
