@@ -139,7 +139,11 @@ typed=(
 	'stat /tmp/notes/x'
 	'umask 077'
 	'write /tmp/notes/private x'
+	'umask 027'
+	'mkdir /tmp/notes/masked'
+	'write /tmp/notes/masked/file x'
 	'umask 022'
+	'stat /tmp/notes/masked /tmp/notes/masked/file'
 	'chown 501:20 /tmp/notes/private'
 	'stat /tmp/notes/private'
 	'as 501:20 cat /tmp/notes/private'
@@ -440,6 +444,8 @@ check "ramfs says what BSD says: a directory that is there (EEXIST), one not emp
 check "a file moved from one directory to another reads as it was, and the directories once emptied are taken away" \
 	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/y/g' | grep -qx 'moved across' &&
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
+check "a directory and a file made under a mask of 027 are made without what it masks (0755 and 0644 asked for)" \
+	bash -c "grep -aqE '^/tmp/notes/masked: drwxr-x--- 2 links' '$shell' && grep -aqE '^/tmp/notes/masked/file: -rw-r----- 1 link' '$shell'"
 check "a file made under a mask of 077 is its owner's alone, and is given to another (umask, chown)" \
 	grep -aqE '^/tmp/notes/private: -rw------- 1 link, inode [0-9]+, 2 bytes, owner 501:20' "$shell"
 check "a user who is not root reads a file of their own, not another's, and cannot give a file away, be root again or set the kernel's values" \
