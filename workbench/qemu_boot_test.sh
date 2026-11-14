@@ -144,6 +144,12 @@ typed=(
 	'as 501:20 chown 0:0 /tmp/notes/private'
 	'as 501:20 as 0:0 echo root again'
 	'as 501:20 sysctl kern.maxfiles=100'
+	'write /tmp/notes/shared x'
+	'chmod 640 /tmp/notes/shared'
+	'chown 501:20 /tmp/notes/shared'
+	'as 501:20 access /tmp/notes/shared /tmp/notes'
+	'as 502:20 access /tmp/notes/shared'
+	'as 503:30 access /tmp/notes/shared'
 	'nice -5 nice 10 echo niced'
 	'as 501:20 nice 10 nice 15 echo later'
 	'as 501:20 nice 10 nice 5 echo sooner'
@@ -378,6 +384,11 @@ check "a user who is not root reads a file of their own, not another's, and cann
 		grep -aq '^cat: /tmp/notes/private: error 13 (EACCES)' '$shell' && grep -aq '^write: /tmp/notes/theirs: error 13 (EACCES)' '$shell' &&
 		grep -aq '^chown: /tmp/notes/private: error 1 (EPERM)' '$shell' && grep -aq '^as: 0:0 cannot be had: error 1 (EPERM)' '$shell' &&
 		grep -aq '^kern.maxfiles: (not taken: error 1 (EPERM))' '$shell' && ! grep -aqx 'root again' '$shell'"
+check "what each may do with a file of mode 640 (access): its owner read and write, its group read, the rest nothing; a directory of root's searched, not written" \
+	bash -c "grep -aq '^access: /tmp/notes/shared: read yes, write yes, run no$' '$shell' &&
+		grep -aq '^access: /tmp/notes: read yes, write no, run yes$' '$shell' &&
+		grep -aq '^access: /tmp/notes/shared: read yes, write no, run no$' '$shell' &&
+		grep -aq '^access: /tmp/notes/shared: read no, write no, run no$' '$shell'"
 check "a process's priority set and read back (setpriority, getpriority); a user who is not root may put theirs later, not sooner (EACCES)" \
 	bash -c "cat '$shell' | grep -A3 -x '# nice -5 nice 10 echo niced' | tr '\n' '|' |
 			grep -qx '# nice -5 nice 10 echo niced|nice: priority -5|nice: priority 10|niced|' &&
