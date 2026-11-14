@@ -1,6 +1,6 @@
 /* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
  * memory shared by name, Mach messages, waiting on descriptors, a named pipe, a lock on a file: pipe, unix,
- * unix-name, shm, mach, poll, fifo, flock, byte-locks, pipe-size */
+ * unix-name, shm, mach, poll, fifo, flock, byte-locks, pipe-size, dgram */
 #include "init.h"
 
 #define SYS_wait4               7
@@ -661,5 +661,65 @@ command_pipe_size(int argc, char **argv)
 	at = append(line, at, sizeof(line), last == -35 ? " bytes, then EAGAIN; full, " : " bytes, then NOT EAGAIN; full, ");
 	at = append(line, at, sizeof(line), full == 0 ? "not writable" : "WRITABLE");
 	at = append(line, at, sizeof(line), after ? "; 512 read out, writable again\n" : "; 512 read out, NOT writable again\n");
+	say(line);
+}
+
+#define SOCK_DGRAM              2
+#define SYS_recvfrom            29
+#define SYS_sendto              133
+#define SYS_shutdown            134
+#define MSG_PEEK                0x2
+#define MSG_TRUNC               0x10
+#define MSG_NOSIGNAL            0x80000
+
+/*
+ * Datagrams through a socket pair (AF_UNIX, SOCK_DGRAM): three of 5, 300 and 1 bytes come out as three of
+ * those sizes, in order; one looked at (MSG_PEEK) is still there; one longer than the room it is read into is
+ * cut to it (Darwin's MSG_TRUNC says no more); shut down for sending, a send is refused (EPIPE, and with
+ * "signal", SIGPIPE ends the process)
+ */
+void
+command_dgram(int argc, char **argv)
+{
+	static char out[300], in[400];
+	static const long sizes[] = { 5, 300, 1 };
+	char line[240];
+	int ends[2];
+	long got[3], peek, again, cut, after;
+	size_t at;
+
+	for (unsigned i = 0; i < sizeof(out); i++) {
+		out[i] = (char)('a' + i % 26);
+	}
+	if (syscall6(SYS_socketpair, AF_UNIX, SOCK_DGRAM, 0, (long)ends, 0, 0) != 0) {
+		say("dgram: no socket pair\n");
+		return;
+	}
+	for (unsigned i = 0; i < 3; i++) {
+		syscall6(SYS_sendto, ends[0], (long)out, sizes[i], 0, 0, 0);
+	}
+	peek = syscall6(SYS_recvfrom, ends[1], (long)in, sizeof(in), MSG_PEEK, 0, 0);
+	for (unsigned i = 0; i < 3; i++) {
+		got[i] = syscall6(SYS_recvfrom, ends[1], (long)in, sizeof(in), 0, 0, 0);
+	}
+	syscall6(SYS_sendto, ends[0], (long)out, 300, 0, 0, 0);
+	cut = syscall6(SYS_recvfrom, ends[1], (long)in, 100, MSG_TRUNC, 0, 0);
+	syscall6(SYS_shutdown, ends[0], 1 /* SHUT_WR */, 0, 0, 0, 0);
+	/* (MSG_NOSIGNAL: without it the send's SIGPIPE ends this process -- the first one, and the kernel with it;
+	 * "dgram signal", in a child, leaves it out to see that) */
+	after = syscall6(SYS_sendto, ends[0], (long)out, 1, argc > 1 && same(argv[1], "signal") ? 0 : MSG_NOSIGNAL, 0, 0);
+	again = in[99] == out[99];
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "dgram: sent 5, 300, 1; looked at ");
+	at = append_number(line, at, sizeof(line), (uint64_t)(peek < 0 ? 0 : peek));
+	at = append(line, at, sizeof(line), ", then read ");
+	for (unsigned i = 0; i < 3; i++) {
+		at = append_number(line, at, sizeof(line), (uint64_t)(got[i] < 0 ? 0 : got[i]));
+		at = append(line, at, sizeof(line), i < 2 ? ", " : "; 300 into 100: ");
+	}
+	at = append_number(line, at, sizeof(line), (uint64_t)(cut < 0 ? 0 : cut));
+	at = append(line, at, sizeof(line), again ? " said (its first 100 as sent)" : " said (NOT as sent)");
+	at = append(line, at, sizeof(line), after == -32 ? "; shut down, a send EPIPE\n" : "; shut down, a send NOT EPIPE\n");
 	say(line);
 }
