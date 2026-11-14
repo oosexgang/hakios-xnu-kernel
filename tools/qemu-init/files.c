@@ -671,7 +671,8 @@ command_df(int argc, char **argv)
 #define SYS_utimes              138
 #define O_CREAT                 0x200
 
-/* FILE BYTES: the file cut to BYTES, or grown to it (truncate); what it grew by read back, which is zeros */
+/* FILE BYTES: the file cut to BYTES, or grown to it (truncate); what it grew by read back, which is zeros (of a file
+ * grown by more than 128 KB, the first and last 64 KB of it) */
 void
 command_truncate(int argc, char **argv)
 {
@@ -699,19 +700,26 @@ command_truncate(int argc, char **argv)
 	at = append(line, at, sizeof(line), " bytes, now ");
 	at = append_number(line, at, sizeof(line), (uint64_t)st.size);
 	if ((uint64_t)st.size > was && (fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0)) >= 0) {
-		uint64_t off = was;
+		/* (of a file grown far, its first and last 64 KB of what it grew by: reading gigabytes would take minutes) */
+		uint64_t size = (uint64_t)st.size, off = was, read = 0, skip_to = size - was > 131072 ? size - 65536 : size;
 		long got = 1;
 
-		while (off < (uint64_t)st.size &&
-		    (got = syscall6(SYS_pread, fd, (long)buffer, sizeof(buffer), (long)off, 0, 0)) > 0) {
+		while (off < size && (got = syscall6(SYS_pread, fd, (long)buffer, sizeof(buffer), (long)off, 0, 0)) > 0) {
 			for (long i = 0; i < got; i++) {
 				nonzero += buffer[i] != 0;
 			}
 			off += (uint64_t)got;
+			read += (uint64_t)got;
+			if (off >= was + 65536 && off < skip_to) {
+				off = skip_to;
+			}
 		}
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
-		at = append(line, at, sizeof(line), off < (uint64_t)st.size ? "; what it grew by does NOT all read back" :
+		at = append(line, at, sizeof(line), off < size ? "; what it grew by does NOT all read back" :
 		    nonzero == 0 ? "; what it grew by reads as zeros" : "; what it grew by is NOT all zeros");
+		if (read < size - was) {
+			at = append(line, at, sizeof(line), " (its first and last 64 KB)");
+		}
 	}
 	at = append(line, at, sizeof(line), "\n");
 	say(line);
