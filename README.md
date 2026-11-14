@@ -49,8 +49,9 @@ brings it into a checkout.
   sanitizers, the porting guide is run on a made-up phone, the kernel sources are verified against
   Apple's release and compiled for syntax, types and the formats of what they print, on every push.
 - **The kernel in QEMU.** It boots on the emulator as on a phone, to a shell of its own, and its
-  network, disks, files, sound, input, processes, threads, memory, IOKit and screen are tried there
-  ([docs/qemu.md](docs/qemu.md), `make qemu`).
+  network, disks, files, sound, input, processes, threads, memory, IOKit and screen are tried there, with
+  what BSD has a kernel refuse a user, a program and a file system; it runs its own tests there too, and
+  boots on four processors and on one ([docs/qemu.md](docs/qemu.md), `make qemu`).
 - **Pinned inputs.** Everything taken from elsewhere is in [`components`](components), at an
   exact version.
 
