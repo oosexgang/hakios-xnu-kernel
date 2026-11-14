@@ -1,5 +1,5 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files,
- * hash, fill, descriptors, df */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
+ * xattr, files, hash, fill, descriptors, df, truncate, touch */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -655,4 +655,96 @@ command_df(int argc, char **argv)
 		at = append(line, at, sizeof(line), all[i].flags & 1 ? ", read only\n" : "\n");
 		say(line);
 	}
+}
+
+#define SYS_truncate            200
+#define SYS_utimes              138
+#define O_CREAT                 0x200
+
+/* FILE BYTES: the file cut to BYTES, or grown to it (truncate); what it grew by read back, which is zeros */
+void
+command_truncate(int argc, char **argv)
+{
+	struct stat64_head st;
+	char buffer[512], line[200];
+	unsigned bytes = argc == 3 ? parse_number(argv[2]) : 0;
+	uint64_t was, nonzero = 0;
+	size_t at;
+	long error, fd;
+
+	if (argc != 3 || (bytes == 0 && !same(argv[2], "0"))) {
+		say("truncate FILE BYTES\n");
+		return;
+	}
+	if ((error = syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0)) != 0 ||
+	    (was = (uint64_t)st.size, error = syscall6(SYS_truncate, (long)argv[1], bytes, 0, 0, 0, 0)) != 0 ||
+	    (error = syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0)) != 0) {
+		say_failed("truncate", argv[1], error);
+		return;
+	}
+	at = append(line, 0, sizeof(line), "truncate: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": ");
+	at = append_number(line, at, sizeof(line), was);
+	at = append(line, at, sizeof(line), " bytes, now ");
+	at = append_number(line, at, sizeof(line), (uint64_t)st.size);
+	if ((uint64_t)st.size > was && (fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0)) >= 0) {
+		uint64_t off = was;
+		long got = 1;
+
+		while (off < (uint64_t)st.size &&
+		    (got = syscall6(SYS_pread, fd, (long)buffer, sizeof(buffer), (long)off, 0, 0)) > 0) {
+			for (long i = 0; i < got; i++) {
+				nonzero += buffer[i] != 0;
+			}
+			off += (uint64_t)got;
+		}
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		at = append(line, at, sizeof(line), off < (uint64_t)st.size ? "; what it grew by does NOT all read back" :
+		    nonzero == 0 ? "; what it grew by reads as zeros" : "; what it grew by is NOT all zeros");
+	}
+	at = append(line, at, sizeof(line), "\n");
+	say(line);
+}
+
+/* FILE [SECONDS]: the file made if it is not there, and its times set: to now, or to SECONDS since 1970 (utimes);
+ * the times it has then */
+void
+command_touch(int argc, char **argv)
+{
+	struct { int64_t sec; int32_t usec, pad; } times[2];
+	struct stat64_head st;
+	char line[200];
+	size_t at;
+	long error, fd;
+
+	if (argc < 2 || argc > 3 || (argc == 3 && parse_number(argv[2]) == 0 && !same(argv[2], "0"))) {
+		say("touch FILE [SECONDS]\n");
+		return;
+	}
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT, 0666, 0, 0, 0)) < 0) {
+		say_failed("touch", argv[1], fd);
+		return;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	if (argc == 3) {
+		times[0].sec = times[1].sec = parse_number(argv[2]);
+		times[0].usec = times[1].usec = times[0].pad = times[1].pad = 0;
+	}
+	if ((error = syscall6(SYS_utimes, (long)argv[1], argc == 3 ? (long)times : 0, 0, 0, 0, 0)) != 0 ||
+	    (error = syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0)) != 0) {
+		say_failed("touch", argv[1], error);
+		return;
+	}
+	/* (struct stat's times: accessed, modified, changed, born, each seconds and nanoseconds) */
+	at = append(line, 0, sizeof(line), "touch: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": accessed ");
+	at = append_number(line, at, sizeof(line), (uint64_t)st.times[0]);
+	at = append(line, at, sizeof(line), ", modified ");
+	at = append_number(line, at, sizeof(line), (uint64_t)st.times[2]);
+	at = append(line, at, sizeof(line), ", changed ");
+	at = append_number(line, at, sizeof(line), (uint64_t)st.times[4]);
+	at = append(line, at, sizeof(line), "\n");
+	say(line);
 }

@@ -218,6 +218,8 @@ static const struct {
 	{ "mv", "OLD NEW renamed", command_mv },
 	{ "chmod", "MODE PATH... the permissions (octal)", command_chmod },
 	{ "chown", "UID:GID PATH... whose files are", command_chown },
+	{ "truncate", "FILE BYTES cut to that size, or grown with zeros", command_truncate },
+	{ "touch", "FILE [SECONDS] made if not there; its times set, to now or SECONDS since 1970 (utimes)", command_touch },
 	{ "umask", "[MODE] what a new file is made without (octal)", command_umask },
 	{ "xattr", "FILE [NAME VALUE] | -d FILE NAME extended attributes: listed, set, taken away", command_xattr },
 	{ "files", "[LIMIT] files opened until the kernel's limit on descriptors says no", command_files },
