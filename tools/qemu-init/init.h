@@ -113,6 +113,7 @@ void command_ping(int argc, char **argv);
 void command_pipe(int argc, char **argv);
 void command_ps(int argc, char **argv);
 void command_rm(int argc, char **argv);
+void command_shm(int argc, char **argv);
 void command_vm(int argc, char **argv);
 void command_stat(int argc, char **argv);
 void command_ln(int argc, char **argv);

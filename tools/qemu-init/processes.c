@@ -718,6 +718,72 @@ command_fork(int argc, char **argv)
 
 /* ---- locks: threads that take turns, as os_unfair_lock makes them, through ulock_wait and ulock_wake ---- */
 
+#define SYS_munmap              73
+#define SYS_mmap                197
+#define SYS_ftruncate           201
+#define SYS_shm_open            266
+#define SYS_shm_unlink          267
+#define O_RDWR                  2
+#define O_CREAT_EXCL            (0x200 | 0x800)
+#define PROT_RW                 3
+#define MAP_SHARED              1
+
+/*
+ * [NAME]: memory two processes share by a name (POSIX shared memory: shm_open, ftruncate, mmap MAP_SHARED):
+ * a forked child writes into it, the parent reads what the child wrote, then the name is taken away
+ */
+void
+command_shm(int argc, char **argv)
+{
+	const char *name = argc > 1 ? argv[1] : "/qemu-init.shm";
+	int in_child = 0;
+	int32_t status = 0;
+	long fd = syscall6(SYS_shm_open, (long)name, O_RDWR | O_CREAT_EXCL, 0600, 0, 0, 0), pid;
+	volatile uint64_t *shared;
+	char line[160];
+	size_t at;
+
+	if (fd < 0) {
+		say("shm: ");
+		say(name);
+		say(": ");
+		say_error(fd);
+		say("\n");
+		return;
+	}
+	if (syscall6(SYS_ftruncate, fd, 16384, 0, 0, 0, 0) != 0 ||
+	    (long)(shared = (volatile uint64_t *)syscall6(SYS_mmap, 0, 16384, PROT_RW, MAP_SHARED, fd, 0)) < 0) {
+		say("shm: not sized or not mapped\n");
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		syscall6(SYS_shm_unlink, (long)name, 0, 0, 0, 0, 0);
+		return;
+	}
+	shared[0] = 1;
+	shared[2047] = 1;
+	pid = syscall_fork(&in_child);
+	if (in_child) {
+		shared[0] = 0x5a5a;             /* (into the same pages: the parent sees it) */
+		shared[2047] = 0xa5a5;
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	if (pid < 0 || syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0) != pid) {
+		say("shm: no child, or not waited for\n");
+	} else {
+		at = append(line, 0, sizeof(line), "shm: ");
+		at = append(line, at, sizeof(line), name);
+		at = append(line, at, sizeof(line), shared[0] == 0x5a5a && shared[2047] == 0xa5a5 ?
+		    ": 16 KB shared with a child, its writes seen at both ends" : ": the child's writes are NOT seen");
+		append(line, at, sizeof(line), "\n");
+		say(line);
+	}
+	syscall6(SYS_munmap, (long)shared, 16384, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	if (syscall6(SYS_shm_unlink, (long)name, 0, 0, 0, 0, 0) != 0 ||
+	    syscall6(SYS_shm_open, (long)name, O_RDWR, 0, 0, 0, 0) >= 0) {
+		say("shm: the name was not taken away\n");
+	}
+}
+
 #define SYS_ulock_wait          515
 #define SYS_ulock_wake          516
 #define UL_COMPARE_AND_WAIT     1
