@@ -119,8 +119,13 @@ command_cat(int argc, char **argv)
 			say_failed("cat", argv[i], fd);
 			continue;
 		}
+		char last = '\n';
 		for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0;) {
 			syscall6(SYS_write, console, (long)buffer, got, 0, 0, 0);
+			last = buffer[got - 1];
+		}
+		if (last != '\n') {
+			say("\n");             /* (a file that does not end a line: the prompt still starts one) */
 		}
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 	}
