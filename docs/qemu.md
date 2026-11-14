@@ -153,7 +153,11 @@ on its shell and checks what comes back:
   carries what a child writes into it, and a lock on a file, or on some of its bytes, keeps another process out until it is let go; a
   script runs through the program its `#!` line names; a user who is not root reads what is theirs and not
   what is another's, and may lower a process's priority, not raise it; a set-user-ID program runs as its file's
-  owner until a user who is not root writes it; in a sticky directory a file is removed by its owner alone.
+  owner until a user who is not root writes it; in a sticky directory a file is removed by its owner alone;
+  a user who is not root sends no signal to root's process, and a process whose parent ends is the first
+  process's; descriptors marked close-on-exec are closed in a program started, and only they; datagrams keep
+  their sizes, and a send after shutdown is EPIPE, or SIGPIPE; a pipe holds 64 KB; a file that is not a program
+  is not run.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
   link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
@@ -163,7 +167,10 @@ on its shell and checks what comes back:
   replaced, listed and taken away; relative paths start from the shell's own directory; a file made under
   a mask is made without what it masks, and is given to another owner; descriptors do what BSD's do; a
   process gets no more descriptors than its limit; a file cut short and grown again reads as zeros past
-  where it was cut, and its times are set to a second given; three megabytes written into ramfs read back as
+  where it was cut, and its times are set to a second given; a process's files are held to its limit
+  (RLIMIT_FSIZE); ramfs filled refuses more, and has its room back once a file goes; a directory of hundreds
+  of files is read a little at a time, and emptied as it is read; a file changed is seen through kqueue;
+  a file moves to no other file system; three megabytes written into ramfs read back as
   written, and so do bytes written through a shared mapping of it; a mapped file is what reading it gives;
   memory of its own holds what is written and is all given back, each of its pages a fault Mach's counts
   see; the kernel keeps a process's time, none of it while asleep, and filling new pages as the kernel's;
