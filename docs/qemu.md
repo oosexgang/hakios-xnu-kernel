@@ -74,6 +74,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
 | `ping ADDRESS` | ICMP echo on a datagram socket, through the virtio network driver. |
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. `GET /bytes/N` gets N bytes made up as they go (byte i is i * 7 mod 251), for TCP to send a lot. |
+| `echo-udp PORT [COUNT]` | Datagrams on a UDP port sent back to whoever sent them (a process in the background, for `udp 127.0.0.1 PORT` over the loopback). |
 | `get ADDRESS PORT [PATH]`, `udp ADDRESS PORT WORDS...` | A page asked for over HTTP (TCP's connect, as a client): its size, the time it took and its FNV-1a hash, and the page itself if it is short; a datagram sent and its answer read. 10.0.2.2 is this computer. |
 | **Processes** (`processes.c`) | |
 | `ps` | The processes (proc_info). |
@@ -108,7 +109,7 @@ on its shell and checks what comes back:
 - **The network.** `en0` attaches with its link up and takes an address; QEMU's gateway answers its
   pings; its TCP serves this computer a page and 4 MB, and asks it for a page and 4 MB, every byte checked
   (`workbench/qemu_host.py` is this computer's side); a datagram is answered; over the loopback, one of
-  its processes serves another a million bytes, every one checked.
+  its processes serves another a million bytes, every one checked, and sends a datagram back.
 - **The devices.** A second disk on the virtio block device is read whole and through its APFS volume,
   by hashes; a tone comes out of the virtio sound device at the frequency asked for
   (`workbench/tone_in_wav.py`); a button pressed on QEMU's keyboard and a touch on its tablet reach the
