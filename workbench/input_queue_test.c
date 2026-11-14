@@ -149,7 +149,6 @@ lifted_in_time(void)
 	usleep(100 * 1000);
 	CHECK(returned == 0, "a little after it landed again: not yet");
 	EVENTUALLY(returned == 1, 3000, "then the run ends");
-	/* (fingers beyond the 32 a driver can number are not counted) */
 }
 
 /* a sixth finger landing while five are held does not put the end off: the time runs from the fifth */
@@ -164,6 +163,47 @@ a_sixth_finger_changes_nothing(void)
 	hakios_touch_post(HAKIOS_TOUCH_DOWN, 5, 0, 0);
 	usleep(900 * 1000);                     /* 1.9 s from the fifth; 0.9 s from the sixth */
 	CHECK(returned == 1, "the run ended 1.5 s after the fifth finger, not the sixth: %u", returned);
+}
+
+/* six held and one lifted: five are still held, and the run ends all the same */
+static void
+six_and_one_lifted(void)
+{
+	hakios_input_init();
+	fake_delay_divisor = 2;                 /* the hold: 750 ms here */
+	for (unsigned f = 0; f < 6; f++) {
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
+	}
+	hakios_touch_post(HAKIOS_TOUCH_UP, 5, 0, 0);
+	EVENTUALLY(returned == 1, 3000, "five still held: the run ends: %u", returned);
+}
+
+/* a finger numbered past the 32 a driver can number is no finger: four and that one do not end the run */
+static void
+finger_32_is_none(void)
+{
+	hakios_input_init();
+	fake_delay_divisor = 2;
+	for (unsigned f = 1; f < 5; f++) {
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
+	}
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 32, 0, 0);
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 33, 0, 0);
+	usleep(1500 * 1000);
+	CHECK(returned == 0, "four fingers and two that are none: nothing ends");
+}
+
+/* fingers a driver says before the input path is set up are counted for nothing, and harm nothing */
+static void
+fingers_before_the_start(void)
+{
+	for (unsigned f = 0; f < 5; f++) {
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
+	}
+	hakios_input_init();
+	fake_delay_divisor = 2;
+	usleep(1500 * 1000);
+	CHECK(returned == 0, "nothing ends of what came before the start");
 }
 
 /* a program writing five fingers down does not end the run */
@@ -200,6 +240,19 @@ a_fault_halfway(void)
 	CHECK(take(got, 3) == 1 && got[0].x == 0, "the first record, and the read does not fail");
 }
 
+/* without touch_lat, or with touch_lat=0: no such lines */
+static void
+latency_lines_off(const char *arguments)
+{
+	boot_args = arguments;
+	hakios_input_init();
+	hakios_touch_post(HAKIOS_TOUCH_MOVE, 2, 300, 400);
+	CHECK(!logged("tl: "), "\"%s\": no line: %s", boot_args, log_text);
+}
+
+static void latency_lines_not_asked(void) { latency_lines_off(""); }
+static void latency_lines_zero(void) { latency_lines_off("touch_lat=0"); }
+
 /* touch_lat=1: a line for every sample, for the latency tool */
 static void
 latency_lines_on(void)
@@ -218,6 +271,9 @@ main(int argc, char **argv)
 		{ "five_fingers_end_the_run", five_fingers_end_the_run }, { "lifted_in_time", lifted_in_time },
 		{ "written_fingers_do_not_count", written_fingers_do_not_count }, { "latency_lines_on", latency_lines_on },
 		{ "a_sixth_finger_changes_nothing", a_sixth_finger_changes_nothing }, { "a_fault_halfway", a_fault_halfway },
+		{ "six_and_one_lifted", six_and_one_lifted }, { "finger_32_is_none", finger_32_is_none },
+		{ "fingers_before_the_start", fingers_before_the_start }, { "latency_lines_not_asked", latency_lines_not_asked },
+		{ "latency_lines_zero", latency_lines_zero },
 	};
 
 	if (argc < 2) {
