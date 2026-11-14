@@ -1636,6 +1636,95 @@ static void *(*old_addAnisette)(id, SEL, void *, void *, void *);
 static SEL anisette_cmd;
 static void *anisette_account, *anisette_type, *anisette_bag;
 
+/*
+ * The Mescal signature on iOS 26/27 is put on by +[AMSURLRequestDecoration addAbsintheHeadersToRequest:
+ * buyParams:bag:shouldUseRemoteSigningIfAvailable:], which needs the bag: the bag's "absinthe-requests"
+ * says which requests are signed at all, and it is what finally asks -[AMSMescalSession signData:bag:error:]
+ * (our sapd). The storefront-token request is built with no bag ("Skipping GUID parameter addition as bag
+ * was not provided"), so nothing is signed and the token is refused. This says whether the absinthe step is
+ * reached and what bag it is handed; a bag seen anywhere else is kept so it can be handed over here.
+ */
+static id seen_bag;
+
+static void
+keep_bag(id bag, const char *where)
+{
+	static int told;
+
+	if (bag == NULL || seen_bag != NULL) {
+		return;
+	}
+	seen_bag = (id)CFRetain((CFTypeRef)bag);
+	if (!told) {
+		told = 1;
+		say("hakios: store: a bag is kept from %s, to hand to the absinthe step\n", where);
+	}
+}
+
+/*
+ * Who decides the storefront-token request is signed at all. The absinthe step above is reached only for
+ * the bag's own request; the token request never goes through it, so nothing asks for a Mescal signature
+ * and the token is refused. In StoreServices the decision is -[SSURLConnectionRequest shouldMescalSign]
+ * (its policy comes from -[SSVURLBagInterpreter mescalSignaturePolicyForRequestURL:]). This says what it
+ * answers and for which URL, and answers YES for the token request, so the signing path is entered and
+ * reaches -[AMSMescalSession signData:bag:error:] -- ours, which asks sapd.
+ *
+ * MEASURED, AND IT IS NOT THIS: on iOS 27 the hook is taken and NEVER entered (logs/124717-run.log.live),
+ * so the App Store's token request is not a StoreServices request at all. It is kept to say so: the
+ * request is AMS's, and what decides AMS does not sign it is still to be found.
+ */
+static BOOL (*old_should_mescal)(id, SEL);
+
+static BOOL
+new_should_mescal(id self, SEL cmd)
+{
+	BOOL was = old_should_mescal != NULL ? old_should_mescal(self, cmd) : NO;
+	char text[300] = "(no URL)";
+	id url = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("URL"));
+	bool is_token;
+
+	if (url != NULL) {
+		text_of(url, text, sizeof(text));
+	} else {
+		text_of(self, text, sizeof(text));
+	}
+	is_token = strstr(text, "apiToken") != NULL;
+	say("hakios: store: shouldMescalSign %d for %.150s%s\n", was ? 1 : 0, text,
+	    is_token && !was ? "  -> answered YES (the token request)" : "");
+	return (is_token && !was) ? YES : was;
+}
+
+/* where a bag is handed over for a request that has one: the GUID step, which names the lack of one */
+static void (*old_add_guid)(id, SEL, void *, void *, BOOL);
+
+static void
+new_add_guid(id self, SEL cmd, void *request, void *bag, BOOL preserve)
+{
+	keep_bag((id)bag, "the GUID step");
+	old_add_guid(self, cmd, request, bag, preserve);
+}
+
+static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
+
+static void
+new_add_absinthe(id self, SEL cmd, void *request, void *buy_params, void *bag, BOOL remote_signing)
+{
+	char urltext[260] = "(no request)";
+	id url = request != NULL ? ((id (*)(id, SEL))objc_msgSend)((id)request, sel_registerName("URL")) : NULL;
+
+	if (url != NULL) {
+		text_of(url, urltext, sizeof(urltext));
+	}
+	if (bag == NULL && seen_bag != NULL) {
+		say("hakios: store: ABSINTHE step for %.120s had NO bag: handed the kept one\n", urltext);
+		bag = (void *)seen_bag;
+	} else {
+		say("hakios: store: ABSINTHE step for %.120s, bag %s, remote signing %d\n", urltext,
+		    bag != NULL ? "given" : "(nil) and none kept", remote_signing ? 1 : 0);
+	}
+	old_add_absinthe(self, cmd, request, buy_params, bag, remote_signing);
+}
+
 static id
 new_data_task_promise(id self, SEL _cmd, id request)
 {
@@ -2237,6 +2326,12 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_afterUpdating, false },
 	{ "ACAccountStore", "_ams_localiTunesAccountForAccountMediaType:updateStorefront:", false,
 	  (IMP)new_accountForMediaType, (IMP *)&old_accountForMediaType, false },
+	{ "AMSURLRequestDecoration", "addAbsintheHeadersToRequest:buyParams:bag:shouldUseRemoteSigningIfAvailable:",
+	  true, (IMP)new_add_absinthe, (IMP *)&old_add_absinthe, false },
+	{ "AMSURLRequestDecoration", "addGUIDParameterToRequest:bag:preservingQueryEncoding:", true,
+	  (IMP)new_add_guid, (IMP *)&old_add_guid, false },
+	{ "SSURLConnectionRequest", "shouldMescalSign", false, (IMP)new_should_mescal,
+	  (IMP *)&old_should_mescal, false },
 	{ "NSMutableURLRequest", "ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies:", false,
 	  (IMP)new_addCookiesBlocking, (IMP *)&old_addCookiesBlocking, false },
 	{ "ACAccountStore", "_updateStorefrontInLocalAccount:", false, (IMP)new_updateStorefront,
