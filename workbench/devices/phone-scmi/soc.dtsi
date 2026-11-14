@@ -1,13 +1,25 @@
 /dts-v1/;
 
-// A made-up chip without EPSS: two temperature controllers, and the CPU performance protocol's channel over
-// SCMI, whose domains are the groups of cores. Addresses where no real chip has them.
+// A made-up chip without EPSS: two temperature controllers, the CPU performance protocol's channel over
+// SCMI, whose domains are the groups of cores, and a PMIC arbiter of version 8. Addresses where no real chip
+// has them.
 / {
 	name = "soc-scmi";
 	description = "A made-up chip for the tests, its speeds over SCMI";
 
 	thermal {
 		tsens = <0x0c263000 0x0c265000>;
+	};
+
+	// A version 8 PMIC arbiter: its table of channels apart from its core (channel-map), its observer this
+	// system's alone.
+	spmi {
+		core = <0x0c400000>;
+		cnfg = <0x0c420000>;
+		channel-map = <0x0c3f0000>;
+		observer = <0x0c4c0000>;
+		channels = <0x0c500000>;
+		ee = <0>;
 	};
 
 	scmi-perf {
