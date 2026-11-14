@@ -62,6 +62,11 @@ big_hash=$(fnv1a "$W/www/big.bin")
 # what the shell's serve makes up for /bytes/N (byte i is i * 7 mod 251), a million of them
 python3 -c 'import sys; open(sys.argv[1], "wb").write(bytes(i * 7 % 251 for i in range(1000000)))' "$W/made.bin"
 made_hash=$(fnv1a "$W/made.bin")
+# ... three million of them, as fill writes them into ramfs, and each turned over (b ^ 0xff) as mmap-write turns them
+python3 -c 'import sys; d = bytes(i * 7 % 251 for i in range(3000000)); open(sys.argv[1], "wb").write(d)
+open(sys.argv[2], "wb").write(bytes(b ^ 0xff for b in d))' "$W/filled.bin" "$W/turned.bin"
+filled_hash=$(fnv1a "$W/filled.bin")
+turned_hash=$(fnv1a "$W/turned.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'clear'
@@ -117,6 +122,10 @@ typed=(
 	'xattr -d /tmp/notes/b com.example.size'
 	'files 20'
 	'unix-name /tmp/notes/socket'
+	'fill /tmp/notes/big 3000000'
+	'hash /tmp/notes/big'
+	'mmap-write /tmp/notes/big'
+	'hash /tmp/notes/big'
 	'cd /tmp/notes'
 	'pwd'
 	'cat b'
@@ -243,6 +252,10 @@ check "the kernel holds a process to its limit of descriptors (setrlimit): the 2
 	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24 \(EMFILE\)' "$log"
 check "a socket by name in ramfs: a child connects to it there and writes, and the name is taken away after" \
 	grep -aq '^unix-name: /tmp/notes/socket (a socket in the file system): a child connected and wrote: by its name' "$log"
+check "three megabytes written into ramfs read back as written, and written through a shared mapping read back so (its page-out)" \
+	bash -c "grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $filled_hash' '$log' &&
+		grep -aq '^mmap-write: /tmp/notes/big, 3000000 bytes turned through the mapping, and read so' '$log' &&
+		grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $turned_hash' '$log'"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
