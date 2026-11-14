@@ -608,12 +608,12 @@ command_byte_locks(int argc, char **argv)
 	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 	at = append(line, 0, sizeof(line), "byte-locks: ");
 	at = append(line, at, sizeof(line), argv[1]);
-	at = append(line, at, sizeof(line), ": 0 to 9 held; another's on 5 to 14 ");
+	/* (short: a line of the screen is 140 characters) */
+	at = append(line, at, sizeof(line), ": 0-9 held; another's 5-14 ");
 	at = append(line, at, sizeof(line), seen & 1 ? "refused" : "NOT refused");
-	at = append(line, at, sizeof(line), ", on 10 to 19 ");
-	at = append(line, at, sizeof(line), seen & 2 ? "taken" : "NOT taken");
+	at = append(line, at, sizeof(line), seen & 8 ? " (to read too)" : " (NOT to read)");
+	at = append(line, at, sizeof(line), seen & 2 ? ", 10-19 taken" : ", 10-19 NOT taken");
 	at = append(line, at, sizeof(line), seen & 4 ? ", F_GETLK names the holder" : ", F_GETLK does NOT name the holder");
-	at = append(line, at, sizeof(line), seen & 8 ? ", a read lock refused" : ", a read lock NOT refused");
 	at = append(line, at, sizeof(line), seen & 16 ? "; let go, taken\n" : "; let go, NOT taken\n");
 	say(line);
 }

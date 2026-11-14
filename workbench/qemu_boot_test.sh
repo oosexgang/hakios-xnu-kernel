@@ -358,7 +358,7 @@ check "a named pipe in ramfs (mkfifo): what a child writes into it is read out o
 check "a file locked (flock): another process's try refused, without waiting (EAGAIN), and taken once it is let go" \
 	grep -aq "^flock: /tmp/notes/private: held, another's try refused (error 35); let go, another's try taken" "$shell"
 check "bytes of a file locked (fcntl F_SETLK): another process kept off them, read or write, and not off the bytes after; F_GETLK names the holder" \
-	grep -aq "^byte-locks: /tmp/notes/private: 0 to 9 held; another's on 5 to 14 refused, on 10 to 19 taken, F_GETLK names the holder, a read lock refused; let go, taken" "$shell"
+	grep -aq "^byte-locks: /tmp/notes/private: 0-9 held; another's 5-14 refused (to read too), 10-19 taken, F_GETLK names the holder; let go, taken" "$shell"
 check "a file renamed onto another's name takes its place, and a directory cannot be moved into itself (EINVAL)" \
 	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/new-name' | tail -1 | grep -qx 'one' &&
 		grep -aq '^stat: /tmp/notes/old-name: error 2 (ENOENT)' '$shell' && grep -aq '^mv: .*error 22 (EINVAL)' '$shell'"
