@@ -32,6 +32,7 @@
 #include <sys/dirent.h>
 #include <sys/errno.h>
 #include <sys/fcntl.h>
+#include <sys/kauth.h>
 #include <sys/mount_internal.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
@@ -1383,6 +1384,13 @@ ramfs_write(struct vnop_write_args *ap)
 
 		lck_mtx_lock(&rm->rm_lock);
 		ramfs_touch(node, true);
+		/*
+		 * Written by anybody but root: no longer run as its owner or its group. What was changed may not be what
+		 * was made set-user-ID (HFS, APFS and UFS do the same on a write).
+		 */
+		if ((node->rn_mode & (S_ISUID | S_ISGID)) && !kauth_cred_issuser(vfs_context_ucred(ap->a_context))) {
+			node->rn_mode &= ~(S_ISUID | S_ISGID);
+		}
 		new_size = node->rn_size;
 		lck_mtx_unlock(&rm->rm_lock);
 
