@@ -14,7 +14,6 @@
 #include <fcntl.h>
 #include <math.h>
 #include <objc/message.h>
-#include <objc/objc-exception.h>
 #include <objc/runtime.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -217,44 +216,6 @@ hook_layout(void)
 	}
 }
 
-/*
- * An exception nothing catches is named on the console before Camera aborts: its log does not reach ours, and the
- * kernel's backtrace of the abort shows only where NSXPC rethrew it (logs/093853-run.log in hakios-sm7325, after
- * a photograph: -[_NSXPCConnectionRequestedReplies endTransactionForSequence:completionHandler:] from a reply of
- * -[LNClientConnection fetchAppShortcutParametersForMangledName:withCompletionHandler:]). The addresses are where
- * it was thrown, with the shared cache's slide the kernel's line gives.
- */
-static objc_uncaught_exception_handler previous_handler;
-
-static void
-uncaught(id exception)
-{
-	id name = ((id (*)(id, SEL))objc_msgSend)(exception, sel_registerName("name"));
-	id reason = ((id (*)(id, SEL))objc_msgSend)(exception, sel_registerName("reason"));
-	id addresses = ((id (*)(id, SEL))objc_msgSend)(exception, sel_registerName("callStackReturnAddresses"));
-	long count = addresses != nil ? ((long (*)(id, SEL))objc_msgSend)(addresses, sel_registerName("count")) : 0;
-	const char *n = name != nil ? ((const char *(*)(id, SEL))objc_msgSend)(name, sel_registerName("UTF8String")) : NULL;
-	const char *r = reason != nil ? ((const char *(*)(id, SEL))objc_msgSend)(reason, sel_registerName("UTF8String")) : NULL;
-	char line[200];
-	size_t used = 0;
-
-	say("hakios: Camera: uncaught %s: %.220s\n", n != NULL ? n : "?", r != NULL ? r : "(no reason)");
-	for (long i = 0; i < count && i < 16; i++) {
-		id number = ((id (*)(id, SEL, long))objc_msgSend)(addresses, sel_registerName("objectAtIndex:"), i);
-		unsigned long a = ((unsigned long (*)(id, SEL))objc_msgSend)(number, sel_registerName("unsignedLongValue"));
-		int w = snprintf(line + used, sizeof(line) - used, " %lx", a);
-
-		if (w < 0 || (size_t)w >= sizeof(line) - used) {
-			break;
-		}
-		used += (size_t)w;
-	}
-	say("hakios: Camera: thrown from%s\n", used != 0 ? line : " (no addresses)");
-	if (previous_handler != NULL) {
-		previous_handler(exception);         /* (CoreFoundation's: its "Terminating app" line) */
-	}
-}
-
 __attribute__((constructor))
 static void
 camera_app_init(void)
@@ -266,7 +227,6 @@ camera_app_init(void)
 	if (name == NULL || strcmp(name, "Camera") != 0 || layer == Nil) {
 		return;
 	}
-	previous_handler = objc_setUncaughtExceptionHandler(uncaught);
 	preview_class = objc_getClass("AVCaptureVideoPreviewLayer");
 	bounds = class_getInstanceMethod(layer, sel_registerName("setBounds:"));
 	frame = class_getInstanceMethod(layer, sel_registerName("setFrame:"));
