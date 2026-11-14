@@ -6253,6 +6253,32 @@ run_steps(void)
 	printf("mpss: over after step %u; %s\n", done, last_write);
 }
 
+/*
+ * Until the modem's image can be found: in the small image, or on the root. With the iOS volume on the flash as
+ * the root (root_apfs=) there is a root before that one, the loader's resident image, from the kernel's start
+ * until init has moved to the flash: a look then found no /fw/modem.mdt and step 2 failed, or not, by how the boot
+ * went (logs/025909-run.log in hakios-sm7325 against 012423). Two minutes at most.
+ */
+static void
+wait_for_image(void)
+{
+	vfs_context_t context = vfs_context_kernel();
+	uint64_t size;
+
+	for (unsigned waited = 0; waited < 600; waited++) {
+		vnode_t vnode = NULLVP;
+
+		if (hakios_image_file("fw", "modem.mdt", &size, NULL) != NULL) {
+			return;
+		}
+		if (rootvnode != NULLVP && vnode_lookup("/fw/modem.mdt", 0, &vnode, context) == 0) {
+			vnode_put(vnode);
+			return;
+		}
+		sleep_ms(200);
+	}
+}
+
 /* modem_step=N: the steps once the root is there, then back to the loader if modem_return=1 says so. */
 static void
 steps_thread(__unused void *parameter, __unused wait_result_t result)
@@ -6260,6 +6286,7 @@ steps_thread(__unused void *parameter, __unused wait_result_t result)
 	for (unsigned waited = 0; waited < 300 && rootvnode == NULLVP; waited++) {
 		sleep_ms(200);
 	}
+	wait_for_image();
 	if (rootvnode == NULLVP) {
 		printf("mpss: no root file system within a minute: the steps are not performed\n");
 	} else {
@@ -6282,6 +6309,7 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 	for (unsigned waited = 0; waited < 300 && rootvnode == NULLVP; waited++) {
 		sleep_ms(200);
 	}
+	wait_for_image();
 	run_steps();
 	for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
 		services += qrtr_servers[i].there;
