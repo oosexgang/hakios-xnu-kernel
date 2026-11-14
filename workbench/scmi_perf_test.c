@@ -46,6 +46,9 @@ static volatile uint32_t domains = 3;
 static volatile uint32_t levels[4] = { 1000, 1001, 1002, 1003 };
 static unsigned sets;
 static bool missing_level;
+static int short_of = -1;               /* a message answered with one word fewer than it should be (0x3: none) */
+static int top_at_level = -1;           /* a domain whose limits' top is its level now, or that less one */
+static int top_below_level = -1;
 
 static void
 answer(uint32_t status, const uint32_t *words, unsigned n)
@@ -55,6 +58,9 @@ answer(uint32_t status, const uint32_t *words, unsigned n)
 		shmem[0x20 / 4 + i] = words[i];
 	}
 	shmem[0x14 / 4] = 8 + 4 * n;            /* the header, the status and the words */
+	if (n > 0 && (int)(shmem[0x18 / 4] & 0xff) == short_of) {
+		shmem[0x14 / 4] = short_of == 0x3 ? 8 : shmem[0x14 / 4] - 4;  /* (a domain's attributes: none at all) */
+	}
 }
 
 static void *
@@ -107,6 +113,10 @@ firmware(void *unused __unused)
 			answer(0, attributes, 4);
 		} else if (message == 0x6) {
 			uint32_t limits[2] = { 3000 + in, 300 + in };   /* max, min */
+
+			if ((int)in == top_at_level || (int)in == top_below_level) {
+				limits[0] = levels[in] - ((int)in == top_below_level);
+			}
 
 			answer(0, limits, 2);
 		} else {
@@ -270,6 +280,46 @@ incomplete_domains_are_not_exposed(void)
 	CHECK(sets == 1 && levels[1] == 1001 && levels[2] == 1002, "only the complete prefix raised");
 }
 
+/* answers one word short: of the version or the attributes, no protocol; of a level or the limits, not that domain;
+ * a domain's attributes with none: not said, the domain all the same */
+static void
+short_answers(void)
+{
+	const char *which = getenv("SCMI_CASE");
+	unsigned i = which ? (unsigned)atoi(which) : 0;
+	static const int messages[] = { 0x0, 0x1, 0x8, 0x6, 0x3 };
+	uint32_t found, top;
+
+	channel();
+	short_of = messages[i];
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	if (i < 2) {
+		CHECK(logged("SCMI performance protocol unavailable") && !hakios_scmi_perf_domain(0, &found, &top), "case %u: none: %s", i,
+		    log_text);
+	} else if (i < 4) {
+		CHECK(!hakios_scmi_perf_domain(0, &found, &top), "case %u: the first domain not handed on: %s", i, log_text);
+	} else {
+		CHECK(hakios_scmi_perf_domain(0, &found, &top) && !logged("domain 0 attributes"),
+		    "case %u: no attributes said, the domain all the same: %s", i, log_text);
+	}
+}
+
+/* a domain whose limits' top is its level now is one; one whose top is under it is not */
+static void
+top_at_the_level(void)
+{
+	uint32_t found = 0, top = 0;
+
+	channel();
+	top_at_level = 0;
+	top_below_level = 1;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(hakios_scmi_perf_domain(0, &found, &top) && found == 1000 && top == 1000, "the top at the level: %u, %u", found, top);
+	CHECK(!hakios_scmi_perf_domain(1, &found, &top), "a top under the level: not handed on");
+}
+
 /* (the board is looked up once a process: another board is another scenario) */
 static void
 board_without_it(void)
@@ -291,6 +341,7 @@ main(int argc, char **argv)
 		{ "raises_when_asked", raises_when_asked, 1 },
 		{ "sets_are_clamped_and_errors_preserve_state", sets_are_clamped_and_errors_preserve_state, 1 },
 		{ "incomplete_domains_are_not_exposed", incomplete_domains_are_not_exposed, 1 },
+		{ "short_answers", short_answers, 5 }, { "top_at_the_level", top_at_the_level, 1 },
 	};
 
 	if (argc < 2) {
