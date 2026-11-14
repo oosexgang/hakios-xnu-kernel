@@ -147,7 +147,8 @@ on its shell and checks what comes back:
   timer keeps time and it sees a pipe become readable, and so do poll and select; a named pipe in ramfs
   carries what a child writes into it, and a lock on a file, or on some of its bytes, keeps another process out until it is let go; a
   script runs through the program its `#!` line names; a user who is not root reads what is theirs and not
-  what is another's, and may lower a process's priority, not raise it.
+  what is another's, and may lower a process's priority, not raise it; a set-user-ID program runs as its file's
+  owner until a user who is not root writes it; in a sticky directory a file is removed by its owner alone.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
   link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
