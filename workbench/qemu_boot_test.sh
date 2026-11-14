@@ -200,6 +200,8 @@ typed=(
 	'flock /tmp/notes/private'
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
+	'fsize /tmp/notes/limited 1000'
+	'stat /tmp/notes/limited'
 	'ln -s /tmp/notes/loop-b /tmp/notes/loop-a'
 	'ln -s /tmp/notes/loop-a /tmp/notes/loop-b'
 	'cat /tmp/notes/loop-a'
@@ -495,6 +497,9 @@ check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writabl
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
+check "a process's files no larger than its limit (RLIMIT_FSIZE): a write cut there, one past it and a truncate past it refused (EFBIG)" \
+	bash -c "grep -aq '^fsize: /tmp/notes/limited: 1000 of 2000 written; past the limit, a write EFBIG, a truncate EFBIG' '$shell' &&
+		grep -aqE '^/tmp/notes/limited: -rw-r--r-- 1 link, inode [0-9]+, 1000 bytes' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
