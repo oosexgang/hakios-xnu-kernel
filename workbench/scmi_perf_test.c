@@ -224,7 +224,9 @@ only_when_asked(void)
 	hakios_scmi_perf_init();
 	boot_args = "scmi_perf=3";
 	hakios_scmi_perf_init();
-	CHECK(asked_n == 0 && log_text[0] == 0, "not without scmi_perf=1 or 2: %s", log_text);
+	boot_args = "scmi_perf=0";
+	hakios_scmi_perf_init();
+	CHECK(asked_n == 0 && log_text[0] == 0, "not without scmi_perf=1 or 2 (none, 3, 0): %s", log_text);
 }
 
 /* mode 2 raises each complete domain to its allowed top, keeping the found level as its floor */
