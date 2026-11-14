@@ -511,6 +511,54 @@ a_vibration_for_darwin(void)
 	CHECK(device.reg[0x0a] == 11 && device.reg[0x12] == 0xf0, "waveform 11, until told to stop: %u %#x", device.reg[0x0a], device.reg[0x12]);
 }
 
+/* a vibration that goes soft: its strength follows Darwin's down (2000 of 32768: five eighths of Android's gain and
+ * a little more, 0x58); Darwin stops, and so does the motor */
+static void
+a_vibration_that_softens(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	darwin_plays(20000, 200);
+	darwin_plays(2000, 300);
+	WAIT_FOR(logged("haptic: vibration 1: Darwin stopped"), 2000);
+	CHECK(logged("Darwin stopped, and so does the motor after") && logged("last to gain 0x58)"), "said: %s", log_text);
+	CHECK(!logged("changed 0 times"), "it changed: %s", log_text);
+	CHECK(device.reg[0x07] == 0x58, "the gain followed: %#x", device.reg[0x07]);
+}
+
+/* ... and one that goes on past the limit is cut there */
+static void
+a_vibration_cut_at_the_limit(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	darwin_plays(20000, 1300);
+	WAIT_FOR(logged("haptic: vibration 1: CUT at the limit"), 2000);
+	CHECK(logged("haptic: vibration 1: CUT at the limit after 10"), "cut at a second: %s", log_text);
+}
+
+/* what is no louder than 256 of 32768 is silence: nothing played */
+static void
+a_whisper_is_not_played(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	register_written[0x09] = false;
+	darwin_plays(256, 300);
+	usleep(200000);
+	CHECK(!logged("haptic: tap") && !logged("haptic: vibration"), "nothing played: %s", log_text);
+	CHECK(!register_written[0x09], "the chip not started");
+}
+
 /* a board that does not list the part, and a SoC file without the pins */
 static void
 not_listed(void)
@@ -536,6 +584,8 @@ main(int argc, char **argv)
 		{ "ram_reads_back_wrong", ram_reads_back_wrong }, { "an_effect_played", an_effect_played },
 		{ "the_last_short_effect", the_last_short_effect }, { "not_a_short_effect", not_a_short_effect },
 		{ "a_tap_for_darwin", a_tap_for_darwin }, { "a_vibration_for_darwin", a_vibration_for_darwin },
+		{ "a_vibration_that_softens", a_vibration_that_softens },
+		{ "a_vibration_cut_at_the_limit", a_vibration_cut_at_the_limit }, { "a_whisper_is_not_played", a_whisper_is_not_played },
 	};
 
 	if (argc < 2) {
