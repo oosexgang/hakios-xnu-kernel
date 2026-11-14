@@ -80,7 +80,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `serve [COUNT]` | A page over HTTP on port 80: the kernel's TCP from listen to close. `GET /bytes/N` gets N bytes made up as they go (byte i is i * 7 mod 251), for TCP to send a lot. |
 | `echo-udp PORT [COUNT]` | Datagrams on a UDP port sent back to whoever sent them (a process in the background, for `udp 127.0.0.1 PORT` over the loopback). |
 | `get ADDRESS PORT [PATH]`, `udp ADDRESS PORT WORDS...` | A page asked for over HTTP (TCP's connect, as a client): its size, the time it took and its FNV-1a hash, and the page itself if it is short; a datagram sent and its answer read. 10.0.2.2 is this computer. |
-| **Processes** (`processes.c`) | |
+| **Processes** (`processes.c`; between them: `ipc.c`; threads: `threads.c`) | |
 | `ps` | The processes (proc_info). |
 | `run PROGRAM [ARGUMENTS]` | A process of its own (posix_spawn), waited for (wait4): `run /sbin/launchd ps` is this program again, which, not being pid 1, does the one command and ends. |
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait`, `sleep SECONDS` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended; a pause. |
