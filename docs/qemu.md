@@ -72,6 +72,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `xattr FILE [NAME VALUE]`, `xattr -d FILE NAME` | A file's extended attributes listed with their values, one set, one taken away (ramfs keeps them). |
 | `umask [MODE]`, `chown UID:GID PATH...` | What a new file is made without, and whose a file is. |
 | `chflags FLAGS PATH...` | A file's flags (chflags, in hexadecimal; `stat` says them): UF_IMMUTABLE (2) keeps it from being written, renamed or removed, UF_APPEND (4) lets it only be added to. |
+| `access PATH...` | Whether this process may read, write and run each (access(), by the real user and group: `as` shows another's). |
 | `truncate FILE BYTES` | A file cut short, or grown: what it grew by must read as zeros, not as what the file held before it was cut. |
 | `touch FILE [SECONDS]` | A file made if it is not there and its times set (utimes), to now or to a second given; the times lstat then says. |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, owner, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
