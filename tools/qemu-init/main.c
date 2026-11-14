@@ -231,6 +231,53 @@ command_as(int argc, char **argv)
 	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
 }
 
+#define SYS_setpriority         96
+#define SYS_getpriority         100
+#define PRIO_PROCESS            0
+
+/* N COMMAND...: the command in a child whose priority is N, -20 (first) to 20 (last) (setpriority); only root may
+ * put a process before others (a negative N) */
+static void
+command_nice(int argc, char **argv)
+{
+	int negative = argc > 1 && argv[1][0] == '-';
+	unsigned n = argc > 1 ? parse_number(argv[1] + negative) : 0;
+	int in_child = 0;
+	int32_t status = 0;
+	long pid, error, now;
+
+	if (argc < 3 || n > 20 || (n == 0 && !same(argv[1] + negative, "0"))) {
+		say("nice N COMMAND [ARGUMENTS] (N from -20 to 20)\n");
+		return;
+	}
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("nice: no child: ");
+		say_error(pid);
+		say("\n");
+		return;
+	}
+	if (in_child) {
+		char line[96];
+		size_t at;
+
+		if ((error = syscall6(SYS_setpriority, PRIO_PROCESS, 0, negative ? -(long)n : (long)n, 0, 0, 0)) != 0) {
+			say("nice: ");
+			say(argv[1]);
+			say(" not had: ");
+			say_error(error);
+			say("\n");
+			syscall6(SYS_exit, 126, 0, 0, 0, 0, 0);
+		}
+		now = syscall6(SYS_getpriority, PRIO_PROCESS, 0, 0, 0, 0, 0);
+		at = append(line, 0, sizeof(line), now < 0 ? "nice: priority -" : "nice: priority ");
+		at = append_number(line, at, sizeof(line), (uint64_t)(now < 0 ? -now : now));
+		at = append(line, at, sizeof(line), "\n");
+		say(line);
+		syscall6(SYS_exit, run_words(argc - 2, argv + 2) ? 0 : 127, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+}
+
 /* the screen emptied and the cursor at its top: VT100's, which the kernel's video console and a terminal on the
  * serial port both take */
 static void
@@ -260,6 +307,7 @@ static const struct {
 	{ "clear", "the screen emptied", command_clear },
 	{ "time", "COMMAND... how long it took, and of the processors' time (getrusage)", command_time },
 	{ "as", "UID:GID COMMAND... the command as that user and group, in a child", command_as },
+	{ "nice", "N COMMAND... the command in a child of that priority, -20 (first) to 20 (last)", command_nice },
 	{ "cd", "[DIR] where relative paths start from", command_cd },
 	{ "pwd", "where that is", command_pwd },
 	{ NULL, "the kernel", NULL },
