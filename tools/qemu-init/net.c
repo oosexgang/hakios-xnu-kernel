@@ -462,7 +462,7 @@ command_get(int argc, char **argv)
 	 * (FNV-1a over the body, for the other side to compare), however long it is.
 	 */
 	long all = 0, kept = 0, body = -1;
-	uint64_t hash = 0xcbf29ce484222325ull;
+	uint64_t hash = FNV1A_START;
 	int64_t start = now_us();
 	static char chunk[65536];
 	for (long got; (got = syscall6(SYS_read, sock, (long)chunk, sizeof(chunk), 0, 0, 0)) > 0; all += got) {
@@ -471,7 +471,7 @@ command_get(int argc, char **argv)
 				response[kept++] = chunk[i];
 			}
 			if (body >= 0) {
-				hash = (hash ^ (uint8_t)chunk[i]) * 0x100000001b3ull;
+				hash = fnv1a(hash, chunk + i, 1);
 			} else if (all + i >= 3 && kept == all + i + 1 && response[all + i - 3] == '\r' && response[all + i - 2] == '\n' &&
 			    response[all + i - 1] == '\r' && response[all + i] == '\n') {
 				body = all + i + 1;     /* (the head ends here; what follows is the body) */

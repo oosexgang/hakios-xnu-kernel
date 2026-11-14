@@ -83,6 +83,8 @@ extern int console;
 size_t length(const char *s);
 int same(const char *a, const char *b);
 int bytes_same(const void *a, const void *b, size_t n);
+#define FNV1A_START             0xcbf29ce484222325ull
+uint64_t fnv1a(uint64_t hash, const void *bytes, long n);
 void say(const char *s);
 void say_number(uint64_t n);
 void say_error(long error);             /* "error N (ENAME)", of a -errno */

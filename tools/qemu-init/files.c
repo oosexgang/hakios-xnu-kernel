@@ -422,16 +422,6 @@ command_files(int argc, char **argv)
 #define PROT_READ               1
 #define MAP_PRIVATE             2
 
-/* FNV-1a, over bytes, from where it got to */
-static uint64_t
-fnv(uint64_t hash, const uint8_t *bytes, long n)
-{
-	for (long i = 0; i < n; i++) {
-		hash = (hash ^ bytes[i]) * 0x100000001b3ull;
-	}
-	return hash;
-}
-
 /* FILE...: each read to its end, timed, and its FNV-1a hash (a device as well as a file) */
 void
 command_hash(int argc, char **argv)
@@ -444,10 +434,10 @@ command_hash(int argc, char **argv)
 			say_failed("hash", argv[i], fd);
 			continue;
 		}
-		uint64_t hash = 0xcbf29ce484222325ull, all = 0;
+		uint64_t hash = FNV1A_START, all = 0;
 		int64_t start = now_us();
 		for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += (uint64_t)got) {
-			hash = fnv(hash, buffer, got);
+			hash = fnv1a(hash, buffer, got);
 		}
 		int64_t took = now_us() - start;
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
@@ -494,10 +484,10 @@ command_mmap(int argc, char **argv)
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 		return;
 	}
-	uint64_t by_pages = fnv(0xcbf29ce484222325ull, (const uint8_t *)mapped, st.size), by_reads = 0xcbf29ce484222325ull;
+	uint64_t by_pages = fnv1a(FNV1A_START, (const uint8_t *)mapped, st.size), by_reads = FNV1A_START;
 	long all = 0;
 	for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += got) {
-		by_reads = fnv(by_reads, buffer, got);
+		by_reads = fnv1a(by_reads, buffer, got);
 	}
 	syscall6(SYS_munmap, mapped, st.size, 0, 0, 0, 0);
 	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
@@ -621,7 +611,7 @@ command_mmap_write(int argc, char **argv)
 {
 	static uint8_t buffer[16384];
 	struct stat64_head st;
-	uint64_t before = 0xcbf29ce484222325ull, after = 0xcbf29ce484222325ull, read_back = 0xcbf29ce484222325ull;
+	uint64_t before = FNV1A_START, after = FNV1A_START, read_back = FNV1A_START;
 	long fd, mapped, all = 0;
 
 	if (argc != 2) {
@@ -645,16 +635,16 @@ command_mmap_write(int argc, char **argv)
 	for (int64_t i = 0; i < st.size; i++) {
 		uint8_t *b = (uint8_t *)mapped + i;
 
-		before = fnv(before, b, 1);
+		before = fnv1a(before, b, 1);
 		*b ^= 0xff;
-		after = fnv(after, b, 1);
+		after = fnv1a(after, b, 1);
 	}
 	syscall6(SYS_msync, mapped, st.size, MS_SYNC, 0, 0, 0);
 	syscall6(SYS_munmap, mapped, st.size, 0, 0, 0, 0);
 	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 	fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0);
 	for (long got; fd >= 0 && (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0; all += got) {
-		read_back = fnv(read_back, buffer, got);
+		read_back = fnv1a(read_back, buffer, got);
 	}
 	if (fd >= 0) {
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);

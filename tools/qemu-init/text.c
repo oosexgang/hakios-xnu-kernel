@@ -182,3 +182,13 @@ bytes_same(const void *a, const void *b, size_t n)
 	}
 	return 1;
 }
+
+/* FNV-1a, over n bytes, from where it got to (FNV1A_START for none yet) */
+uint64_t
+fnv1a(uint64_t hash, const void *bytes, long n)
+{
+	for (long i = 0; i < n; i++) {
+		hash = (hash ^ ((const uint8_t *)bytes)[i]) * 0x100000001b3ull;
+	}
+	return hash;
+}
