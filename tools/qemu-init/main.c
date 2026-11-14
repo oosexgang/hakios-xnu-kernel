@@ -167,6 +167,70 @@ command_time(int argc, char **argv)
 	syscall6(SYS_write, console, (long)line, (long)at, 0, 0, 0);
 }
 
+#define SYS_wait4               7
+#define SYS_setuid              23
+#define SYS_getuid              24
+#define SYS_geteuid             25
+#define SYS_getgid              47
+#define SYS_setgroups           80
+#define SYS_setgid              181
+
+/* UID:GID COMMAND...: the command in a child that has become that user and group (setgroups, setgid, setuid):
+ * what the kernel lets a user who is not root do and not do */
+static void
+command_as(int argc, char **argv)
+{
+	unsigned uid = 0, gid = 0;
+	const char *c = argc > 1 ? argv[1] : "";
+	int in_child = 0;
+	int32_t status = 0;
+	long pid, error;
+
+	for (; *c >= '0' && *c <= '9'; c++) {
+		uid = uid * 10 + (unsigned)(*c - '0');
+	}
+	if (*c == ':') {
+		for (c++; *c >= '0' && *c <= '9'; c++) {
+			gid = gid * 10 + (unsigned)(*c - '0');
+		}
+	}
+	if (argc < 3 || *c != '\0' || c == argv[1]) {
+		say("as UID:GID COMMAND [ARGUMENTS]\n");
+		return;
+	}
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("as: no child: ");
+		say_error(pid);
+		say("\n");
+		return;
+	}
+	if (in_child) {
+		char line[128];
+		size_t at;
+
+		if ((error = syscall6(SYS_setgroups, 1, (long)&gid, 0, 0, 0, 0)) != 0 ||
+		    (error = syscall6(SYS_setgid, gid, 0, 0, 0, 0, 0)) != 0 ||
+		    (error = syscall6(SYS_setuid, uid, 0, 0, 0, 0, 0)) != 0) {
+			say("as: ");
+			say(argv[1]);
+			say(" cannot be had: ");
+			say_error(error);
+			say("\n");
+			syscall6(SYS_exit, 126, 0, 0, 0, 0, 0);
+		}
+		at = append(line, 0, sizeof(line), "as: user ");
+		at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getuid, 0, 0, 0, 0, 0, 0));
+		at = append(line, at, sizeof(line), " (effective ");
+		at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_geteuid, 0, 0, 0, 0, 0, 0));
+		at = append(line, at, sizeof(line), "), group ");
+		at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getgid, 0, 0, 0, 0, 0, 0));
+		at = append(line, at, sizeof(line), "\n");
+		say(line);
+		syscall6(SYS_exit, run_words(argc - 2, argv + 2) ? 0 : 127, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+}
+
 /* the screen emptied and the cursor at its top: VT100's, which the kernel's video console and a terminal on the
  * serial port both take */
 static void
@@ -195,6 +259,7 @@ static const struct {
 	{ "echo", "WORDS... say them", command_echo },
 	{ "clear", "the screen emptied", command_clear },
 	{ "time", "COMMAND... how long it took, and of the processors' time (getrusage)", command_time },
+	{ "as", "UID:GID COMMAND... the command as that user and group, in a child", command_as },
 	{ "cd", "[DIR] where relative paths start from", command_cd },
 	{ "pwd", "where that is", command_pwd },
 	{ NULL, "the kernel", NULL },
