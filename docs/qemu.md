@@ -97,6 +97,8 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `alarm [COUNT]` | A timer of a tenth of a second (setitimer) whose SIGALRM a handler of its own catches, and sigreturn puts the thread back. |
 | `unix-name PATH` | A socket bound to a name in a file system (AF_UNIX; ramfs keeps a node for it): a forked child connects to it by the name and writes, the shell reads it. |
 | `shm [NAME]` | Memory shared by a name (shm_open, ftruncate, mmap MAP_SHARED) with a forked child, which writes into it; the parent sees the writes, and the name is taken away (shm_unlink). |
+| `fds N...` | Whether each descriptor is open in this process (fcntl F_GETFD). |
+| `cloexec FILE` | Descriptors of the file marked FD_CLOEXEC (by O_CLOEXEC and F_DUPFD_CLOEXEC) and not (by dup2, which leaves the mark behind): a program started with posix_spawn has the unmarked ones, and not the marked, which closed as it started. |
 | `pipe WORDS...` | The words through a pipe: a child writes them into it (`/sbin/launchd >N echo ...`, its descriptor N), the shell reads them. |
 | `unix FILE` | FILE opened, its descriptor sent over a socket pair with a word (sendmsg, SCM_RIGHTS), and the file read through the descriptor that comes out. |
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
