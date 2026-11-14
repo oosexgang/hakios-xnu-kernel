@@ -228,6 +228,7 @@ typed=(
 	'locks 4'
 	'mmap /sbin/launchd'
 	'kevent 10'
+	'pipe-size'
 	'poll'
 	'run /sbin/launchd crash null'
 	'run /sbin/launchd crash illegal'
@@ -424,6 +425,8 @@ check "a directory's links: two, and one more for each directory in it; one move
 		grep -aqE '^/tmp/notes/tree: drwxr-xr-x 3 links, inode [0-9]+' '$shell' &&
 		grep -aqE '^/tmp/notes/empty: drwxr-xr-x 2 links, inode [0-9]+' '$shell' &&
 		grep -aq '^stat: /tmp/notes/tree/a: error 2 (ENOENT)' '$shell' && ! grep -aq '^rm: /tmp/notes/tree' '$shell'"
+check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writable, and with 512 bytes read out it does" \
+	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
