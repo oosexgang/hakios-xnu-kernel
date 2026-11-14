@@ -201,6 +201,7 @@ typed=(
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
 	'fsize /tmp/notes/limited 1000'
+	'opens /tmp/notes/opened'
 	'stat /tmp/notes/limited'
 	'ln -s /tmp/notes/loop-b /tmp/notes/loop-a'
 	'ln -s /tmp/notes/loop-a /tmp/notes/loop-b'
@@ -497,6 +498,8 @@ check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writabl
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
+check "open as BSD has it: O_EXCL of a file there (EEXIST), O_NOFOLLOW of a link (ELOOP), O_DIRECTORY of a file (ENOTDIR), a directory to write (EISDIR)" \
+	grep -aq '^opens: .*through the link: as BSD has them' "$shell"
 check "a process's files no larger than its limit (RLIMIT_FSIZE): a write cut there, one past it and a truncate past it refused (EFBIG)" \
 	bash -c "grep -aq '^fsize: /tmp/notes/limited: 1000 of 2000 written; past the limit, a write EFBIG, a truncate EFBIG' '$shell' &&
 		grep -aqE '^/tmp/notes/limited: -rw-r--r-- 1 link, inode [0-9]+, 1000 bytes' '$shell'"
