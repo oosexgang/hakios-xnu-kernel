@@ -10,7 +10,8 @@
 #     --screen FILE     a picture of the screen, as a PNG, when it stops
 #     --type TEXT       once the --until text is there, type TEXT on the console (\n: the end of a line; the
 #                       serial port is the console's keyboard), a line once the shell's prompt "# " is back
-#                       after the last one, then wait --after seconds (default 5)
+#                       after the last one (at a line's start), then wait --after seconds (default 5); a line
+#                       nothing of which is echoed within 15 s is killed (Ctrl-U) and typed again
 #     --log FILE        the serial log (default: qemu-kernel.log in the working directory)
 #     --boot-args ARGS  added to the kernel's boot arguments (-v, the verbose console on the screen, is
 #                       there unless --quiet)
