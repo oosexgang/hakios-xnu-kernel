@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp, fsize */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp, fsize, opens */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -1002,4 +1002,68 @@ command_fsize(int argc, char **argv)
 		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
 	}
 	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+}
+
+#define O_EXCL                  0x800
+#define O_NOFOLLOW              0x100
+
+/* FILE (made anew, and a symbolic link to it beside it, FILE-link): what open says as BSD has it -- O_EXCL of one
+ * that is there, O_NOFOLLOW of a link, O_DIRECTORY of a file, a directory opened to write */
+void
+command_opens(int argc, char **argv)
+{
+	char link[256], line[300];
+	struct { const char *what; long error, wanted; } said[5];
+	size_t at, n = 0;
+	long fd;
+	int all = 1;
+
+	if (argc != 2 || length(argv[1]) > sizeof(link) - 6) {
+		say("opens FILE (made anew)\n");
+		return;
+	}
+	at = append(link, 0, sizeof(link), argv[1]);
+	append(link, at, sizeof(link), "-link");
+	syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0);
+	syscall6(SYS_unlink, (long)link, 0, 0, 0, 0, 0);
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_EXCL, 0644, 0, 0, 0)) < 0 ||
+	    syscall6(SYS_symlink, (long)argv[1], (long)link, 0, 0, 0, 0) != 0) {
+		say_failed("opens", argv[1], fd < 0 ? fd : -1);
+		return;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	said[n].what = "O_EXCL of one there";
+	said[n].wanted = -17;
+	said[n++].error = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_EXCL, 0644, 0, 0, 0);
+	said[n].what = "O_NOFOLLOW of a link";
+	said[n].wanted = -62;
+	said[n++].error = syscall6(SYS_open, (long)link, O_RDONLY | O_NOFOLLOW, 0, 0, 0, 0);
+	said[n].what = "O_DIRECTORY of a file";
+	said[n].wanted = -20;
+	said[n++].error = syscall6(SYS_open, (long)argv[1], O_RDONLY | O_DIRECTORY, 0, 0, 0, 0);
+	said[n].what = "a directory to write";
+	said[n].wanted = -21;
+	said[n++].error = syscall6(SYS_open, (long)"/tmp", O_WRONLY, 0, 0, 0, 0);
+	said[n].what = "through the link";
+	said[n].wanted = 0;
+	fd = syscall6(SYS_open, (long)link, O_RDONLY, 0, 0, 0, 0);
+	said[n++].error = fd >= 0 ? 0 : fd;
+	if (fd >= 0) {
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	at = append(line, 0, sizeof(line), "opens:");
+	for (size_t i = 0; i < n; i++) {
+		int ok = said[i].error == said[i].wanted;
+
+		if (!ok && said[i].error >= 0 && said[i].wanted != 0) {
+			syscall6(SYS_close, said[i].error, 0, 0, 0, 0, 0);      /* (opened after all) */
+		}
+		all &= ok;
+		at = append(line, at, sizeof(line), " ");
+		at = append(line, at, sizeof(line), said[i].what);
+		at = append(line, at, sizeof(line), ok ? "," : " WRONG,");
+	}
+	append(line, at - 1, sizeof(line), all ? ": as BSD has them\n" : ": NOT all as BSD has them\n");
+	say(line);
+	syscall6(SYS_unlink, (long)link, 0, 0, 0, 0, 0);
 }
