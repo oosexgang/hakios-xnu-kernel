@@ -1733,10 +1733,17 @@ static id (*old_active_account_type)(id, SEL, void *);
  * region; nothing about the catalog depends on it here. Both values it reads are answered at once,
  * without touching the bag, so the thread never blocks: no restricted region, and no interval to sync on.
  */
+static IMP old_restricted_region;
+
 static long long
-no_restricted_region(__unused id self, __unused SEL cmd, __unused void *bag)
+no_restricted_region(id self, SEL cmd, void *bag)
 {
 	static int told;
+	const char *keep = getenv("HAKIOS_KEEP_REGION_WAIT");
+
+	if (keep != NULL && *keep != '0') {
+		return ((long long (*)(id, SEL, void *))old_restricted_region)(self, cmd, bag);
+	}
 
 	if (!told) {
 		told = 1;
@@ -2610,8 +2617,9 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
 	  (IMP)new_add_storefront_header, (IMP *)&old_add_storefront_header, false },
+	/* HAKIOS_KEEP_REGION_WAIT=1 leaves these alone, to compare the screen with and without the answer */
 	{ "AMSSyncRestrictedRegionTask", "storefrontContainsRestrictedRegionsValueFromBag:", true,
-	  (IMP)no_restricted_region, NULL, false },
+	  (IMP)no_restricted_region, &old_restricted_region, false },
 	{ "AMSSyncRestrictedRegionTask", "durationOfSyncRestrictedRegionValueFromBag:", true,
 	  (IMP)no_restricted_region, NULL, false },
 	{ "AMSDefaults", "enableRemoteSecuritySigning", true, (IMP)no_remote_signing, NULL, false },
