@@ -192,12 +192,81 @@ permitted_or_said(void)
 	CHECK(said, "and said, with why");
 }
 
+/* ---- a command into a slot (hc_place): a slot of this test's memory, never rung ---------------------------- */
+
+static uint32_t slot_utrd[8], slot_ucd[(1024 + 16 * 8) / 4];
+
+static struct hc_slot
+a_slot(void)
+{
+	struct hc_slot s = { .number = 3, .utrd = slot_utrd, .ucd = slot_ucd, .ucd_pa = 0x8a000000ull, .data_pa = 0x1c0000000ull };
+
+	memset(slot_utrd, 0xee, sizeof(slot_utrd));
+	memset(slot_ucd, 0xee, sizeof(slot_ucd));
+	return s;
+}
+
+/* a read of 1 MB and 4 KB: its PRD table five entries, four of 256 KB and the rest, at the slot's buffer */
+static void
+a_read_placed(void)
+{
+	struct hc_slot s = a_slot();
+	struct hc_cmd c;
+	uint32_t bytes = (1u << 20) + 4096;
+
+	hc_make_read(&c, 0, 3, 100, bytes / 4096);
+	CHECK(hc_place(&s, &c, bytes) == 0, "placed: %s", log_text);
+	CHECK(memcmp(slot_ucd, c.upiu, sizeof(c.upiu)) == 0 && slot_utrd[0] == c.dw0, "the UPIU and the descriptor's first word");
+	CHECK(slot_ucd[8] == 0 && slot_ucd[UCD_PRDT / 4 - 1] == 0, "the response cleared");
+	CHECK(slot_utrd[2] == OCS_INVALID && slot_utrd[4] == 0x8a000000u && slot_utrd[5] == 0, "not yet done, its descriptor's address");
+	CHECK(slot_utrd[7] == ((UCD_PRDT / 4u) << 16 | 5), "five entries at the table's place: %#x", slot_utrd[7]);
+	for (uint32_t n = 0; n < 5; n++) {
+		const uint32_t *prd = slot_ucd + (UCD_PRDT + 16 * n) / 4;
+		uint64_t pa = 0x1c0000000ull + (uint64_t)n * (256u << 10);
+
+		CHECK(prd[0] == (uint32_t)pa && prd[1] == (uint32_t)(pa >> 32) && prd[2] == 0, "entry %u at %#llx", n, (unsigned long long)pa);
+		CHECK(prd[3] == (n < 4 ? (256u << 10) - 1 : 4095u), "entry %u: %u bytes less one", n, prd[3]);
+	}
+	CHECK(slot_ucd[(UCD_PRDT + 16 * 5) / 4] == 0xeeeeeeeeu, "and no sixth");
+}
+
+/* a whole number of entries: no empty one after them; no data: no entry at all */
+static void
+entries_exactly(void)
+{
+	struct hc_slot s = a_slot();
+	struct hc_cmd c;
+
+	hc_make_read(&c, 0, 1, 0, 128);         /* 512 KB */
+	CHECK(hc_place(&s, &c, 128 * 4096) == 0 && (slot_utrd[7] & 0xffff) == 2, "two entries: %u", slot_utrd[7] & 0xffff);
+	CHECK(slot_ucd[(UCD_PRDT + 16) / 4 + 3] == (256u << 10) - 1, "the second whole");
+	s = a_slot();
+	hc_make_tur(&c, 0, 2);
+	CHECK(hc_place(&s, &c, 0) == 0 && (slot_utrd[7] & 0xffff) == 0, "TEST UNIT READY: none");
+}
+
+/* what the whitelist refuses goes into no slot: nothing of it is written */
+static void
+a_write_not_placed(void)
+{
+	struct hc_slot s = a_slot();
+	struct hc_cmd c;
+
+	hc_make_read(&c, 0, 1, 0, 1);
+	c.upiu[1] = UPIU_FLAG_WRITE;
+	c.upiu[16] = 0x2a;
+	c.dw0 = UTRD_CT_UFS | UTRD_DD_OUT;
+	CHECK(hc_place(&s, &c, 4096) == EPERM, "refused");
+	CHECK(slot_ucd[0] == 0xeeeeeeeeu && slot_utrd[0] == 0xeeeeeeeeu, "and the slot untouched");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "own_cases", own_cases }, { "every_operation", every_operation }, { "everything_else", everything_else },
 		{ "read_lengths", read_lengths }, { "units_past_the_eighth", units_past_the_eighth }, { "permitted_or_said", permitted_or_said },
+		{ "a_read_placed", a_read_placed }, { "entries_exactly", entries_exactly }, { "a_write_not_placed", a_write_not_placed },
 	};
 
 	if (argc < 2) {
