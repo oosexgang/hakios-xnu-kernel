@@ -155,5 +155,7 @@ tests are built with from these and the repository's own boards.
   `workbench/mutants.py TEST SOURCE` makes the simple changes itself -- each comparison turned the other
   way or made inclusive, each `&&` made `||` -- runs every one, and prints those no scenario noticed.
   Some of those change nothing (a `>` that may as well be `>=` when two equal values give the same
-  result); the rest are scenarios to write.
+  result); the rest are scenarios to write. A change that leaves a scenario waiting forever is caught when
+  its time runs out, two minutes by default: `MUTATE_SECONDS=20 workbench/mutants.py ...` makes a run over a
+  driver whose scenarios wait take minutes and not hours.
 - Add it to `workbench/run.sh`.
