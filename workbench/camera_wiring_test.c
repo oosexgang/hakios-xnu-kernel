@@ -40,7 +40,15 @@ vm_offset_t ml_io_map_unmappable(vm_offset_t phys, vm_size_t size __unused, unsi
 uint64_t kvtophys(vm_offset_t va) { return va; }
 int kmem_alloc(void *map __unused, vm_offset_t *address __unused, vm_size_t size __unused, int flags __unused, int tag __unused) { return 1; }
 void kmem_free(void *map __unused, vm_offset_t address __unused, vm_size_t size __unused) { }
-const uint8_t *hakios_wifi_file(const char *name __unused, uint64_t *size __unused) { return NULL; }
+/* the small image's files: none, but for a sensor's table a scenario makes (camera_table) */
+static const uint8_t *table_file;
+static uint64_t table_size;
+const uint8_t *
+hakios_wifi_file(const char *name __unused, uint64_t *size)
+{
+	*size = table_size;
+	return table_file;
+}
 void hakios_rpmh_lock(void) { }
 void hakios_rpmh_unlock(void) { }
 void hakios_spmi_lock(void) { }
@@ -351,6 +359,65 @@ pm8008_whitelist(void)
 	CHECK(!pm8008_put(PM8008_CHIP, MISC_CHIP_ENABLE, 0, false), "after a fault: not even the enable");
 }
 
+/* a sensor's table (RWCTAB02): its head, `modes' modes, two power sequences of `power' entries, and `tables' */
+static uint8_t table[4096];
+
+static uint64_t
+make_table(uint32_t modes, uint32_t power, uint32_t tables)
+{
+	struct ctab_head head = { .slave = 0x20, .address_bytes = 2, .data_bytes = 1, .id_address = 0x300b, .id = 0x16, .id_mask = 0xff,
+		                  .modes = modes };
+	uint8_t *at = table + sizeof(head) + modes * sizeof(struct ctab_mode);
+
+	memset(table, 0, sizeof(table));
+	memcpy(head.magic, "RWCTAB02", 8);
+	memcpy(table, &head, sizeof(head));
+	for (int p = 0; p < 2; p++) {
+		memcpy(at, p ? "power-of" : "power-on", 8);
+		memcpy(at + 8, &power, 4);
+		at += 12 + power * sizeof(struct ctab_entry);
+	}
+	memcpy(at, &tables, 4);
+	return (uint64_t)(at + 4 - table);
+}
+
+/* whether ctab_load() takes the table as made, `size' bytes of it */
+static bool
+takes(uint64_t size)
+{
+	table_file = table;
+	table_size = size;
+	return ctab_load();
+}
+
+/*
+ * A sensor's table taken only when it is one: its magic, 1 to 16 modes, and the two power sequences and the
+ * count of tables all within the file -- a file cut anywhere short of its end is refused, not read past
+ */
+static void
+camera_table(void)
+{
+	uint64_t whole;
+
+	board = "phone-video";
+	CHECK(sensors_from_board(), "the board's sensors");
+	hw = &sensors[2];
+	whole = make_table(2, 3, 0);
+	CHECK(takes(whole), "a table as it should be: %s", log_text);
+	CHECK(ctab->modes == 2 && ctab_power == table + sizeof(struct ctab_head) + 2 * sizeof(struct ctab_mode) &&
+	    ctab_tables == table + whole - 4, "its parts where they are");
+	CHECK(!takes(whole - 1) && !takes(whole - 4 - 12) && !takes(sizeof(struct ctab_head) - 1) && !takes(0), "cut short: refused");
+	CHECK(!takes(whole - 4 - 12 - 3 * sizeof(struct ctab_entry) - 1), "cut in the second power sequence: refused");
+	CHECK(takes(make_table(16, 0, 0)), "16 modes");
+	CHECK(!takes(make_table(17, 0, 0)) && !takes(make_table(0, 0, 0)), "17 modes, or none: refused");
+	whole = make_table(1, 0, 0);
+	table[7] = '3';
+	CHECK(!takes(whole), "another magic: refused");
+	whole = make_table(1, 0, 0);
+	memcpy(table + sizeof(struct ctab_head) + sizeof(struct ctab_mode) + 8, &(uint32_t){ 0x40000000 }, 4);
+	CHECK(!takes(whole), "a power sequence that says it is longer than the file: refused");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -359,6 +426,7 @@ main(int argc, char **argv)
 		{ "pgpio_only_anothers_channel", pgpio_only_anothers_channel }, { "pgpio_five_registers", pgpio_five_registers },
 		{ "pgpio_dropped", pgpio_dropped }, { "pgpio_given_up", pgpio_given_up }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
 		{ "clock_plan", clock_plan }, { "pm8008_whitelist", pm8008_whitelist },
+		{ "camera_table", camera_table },
 	};
 
 	if (argc < 2) {
