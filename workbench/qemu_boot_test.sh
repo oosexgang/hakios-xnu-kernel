@@ -149,6 +149,7 @@ typed=(
 	'run /sbin/launchd crash illegal'
 	'run /sbin/launchd crash readonly'
 	'alarm 5'
+	'run /sbin/launchd mask'
 	'vm'
 	'time memory 128'
 	'vm'
@@ -236,6 +237,8 @@ check "programs are told the processor's crypto extensions (hw.optional.arm.FEAT
 # (twice: the name taken away the first time is made anew the second, O_EXCL)
 check "memory shared by name with a forked child (POSIX shared memory) carries its writes, and its name is taken away" \
 	bash -c "test \$(grep -ac '^shm: /qemu-init.shm: 16 KB shared with a child, its writes seen at both ends' '$log') = 2"
+check "a signal blocked is held, pending, and caught once let through (sigprocmask, sigpending)" \
+	grep -aqE '^mask: SIGUSR1 from pid [0-9]+: held while blocked \(pending, not caught\), caught once let through' "$log"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "cat '$shell' | grep -qx 'kept in memory' && cat '$shell' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
