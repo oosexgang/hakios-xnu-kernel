@@ -78,9 +78,9 @@ command_run(int argc, char **argv)
 	if (error != 0) {
 		say("run: ");
 		say(argv[1]);
-		say(" does not start (");
+		say(" does not start: ");
 		say_error(error);
-		say(")\n");
+		say("\n");
 		return;
 	}
 	if (syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0) != pid) {
@@ -196,9 +196,9 @@ command_spawn(int argc, char **argv)
 	if (error != 0) {
 		say("spawn: ");
 		say(argv[1]);
-		say(" does not start (");
+		say(" does not start: ");
 		say_error(error);
-		say(")\n");
+		say("\n");
 		return;
 	}
 	last_spawned = pid;
@@ -683,9 +683,9 @@ command_fork(int argc, char **argv)
 	forked_value = 1;
 	long pid = syscall_fork(&in_child);
 	if (pid < 0) {
-		say("fork: no copy (");
+		say("fork: no copy: ");
 		say_error(pid);
-		say(")\n");
+		say("\n");
 		return;
 	}
 	if (in_child) {
