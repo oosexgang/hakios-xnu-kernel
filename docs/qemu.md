@@ -115,6 +115,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `flock FILE` | The file locked: a child's try, without waiting, is refused (EAGAIN); once it is let go, a child's is taken. |
 | `byte-locks FILE` | Bytes 0 to 9 of the file locked to write (fcntl F_SETLK): a child's lock on 5 to 14 is refused, to read too, and one on 10 to 19 taken; F_GETLK names the shell as what is in the way; let go, the child has them. |
 | `watch FILE` | A file made anew and watched through kqueue (EVFILT_VNODE) while it is written, its mode changed, linked, renamed and removed: what each gives (NOTE_WRITE and NOTE_EXTEND, NOTE_ATTRIB, NOTE_LINK, NOTE_RENAME, NOTE_DELETE). |
+| `dgram [signal]` | Datagrams through a socket pair (AF_UNIX, SOCK_DGRAM): three of 5, 300 and 1 bytes read as three of those sizes, one looked at first (MSG_PEEK) still there, one longer than its room cut to it, and a send after shutdown refused (EPIPE); with `signal` (in a child: `run`), SIGPIPE ends the process. |
 | `pipe-size` | A pipe filled a byte at a time without waiting, until the kernel says EAGAIN: how much it holds; full, poll does not find it writable, and with 512 bytes (PIPE_BUF) read out of it, it does. |
 | `poll` | poll and select on a pipe: empty, each waits out its 100 ms and finds nothing; with a byte in it, each finds it readable at once. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
