@@ -140,11 +140,11 @@ calls, turnstiles and gates, the VM, the arm64 platform's PAN, speculation guard
 mungers ...), some thirty of them and over a thousand checks, each said as PASS or FAIL on the serial
 port. None may fail.
 
-## Four processors
+## Four processors, and one
 
 `workbench/qemu_smp_test.sh` (part of `make qemu` too) boots on four: all of them start and run, programs
 are told four, four threads of a program run side by side and eight take turns under one lock without
-losing a count.
+losing a count. Then on one, where nothing is sent to another processor: threads and the lock all the same.
 
 ## What it is not
 
