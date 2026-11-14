@@ -14,7 +14,7 @@ static uint32_t engine[0x1000], clocks[0x60000 / 4];
 static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_starts, rpmh_count;
 static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
-static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version;
+static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
 static bool rcg_stuck, rx_error, coalesced, sw_low;
 static uint8_t tx[8], rx[512];
 static unsigned tx_size, rx_size, rx_pos;
@@ -84,6 +84,7 @@ peer(void)
 	if (loopback) {
 		/* Internal engine loopback works even when the external controller is silent. */
 		memcpy(rx, tx, tx_size);
+		rx[2] ^= garbled ? 0xff : 0;    /* (loopback_garbled: a byte comes back changed) */
 		rx_size = tx_size;
 		rx_pos = 0;
 		engine[0x610 / 4] = stuck_tx ? 0 : 1;
@@ -364,7 +365,7 @@ main(int argc, char **argv)
 {
 	static const char *const scenarios[] = { "off", "zero", "no_feature", "invalid_mode", "look", "wrong_protocol", "unsupported_arbiter", "full",
 	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
-	    "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio" };
+	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -424,6 +425,7 @@ main(int argc, char **argv)
 		rcg_stuck = !strcmp(scenario, "rcg_timeout");
 		stuck_tx = !strcmp(scenario, "tx_timeout");
 		bad_reset = !strcmp(scenario, "bad_reset");
+		garbled = !strcmp(scenario, "loopback_garbled");
 		short_version = !strcmp(scenario, "short_version");
 		cc_version = !strcmp(scenario, "cc_version");
 		rx_error = !strcmp(scenario, "rx_error");
@@ -449,7 +451,12 @@ main(int argc, char **argv)
 			CHECK(logged("product id 0x7750, patch version 0x1234, ROM version 0x5678, SoC id 0x11223344"), "decoded version: %s", log_text);
 			CHECK(logged("identification complete") && tx_commands == 2, "both commands completed");
 			CHECK(loopbacks == 1 && read_starts == 2 && rx_cancels == 1, "first configuration succeeds after loopback RX restart");
-			CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
+			if (garbled) {
+				/* (said, and nothing more: the controller may still answer, and it does) */
+				CHECK(logged("loopback: 5 of 5 bytes back\n") && !logged(", the same"), "a changed byte is not the same: %s", log_text);
+			} else {
+				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
+			}
 			CHECK(en.reg[0x44] == 0x80, "enable high until quiesce");
 			packing_and_clock();
 			unsigned count = rpmh_count;
