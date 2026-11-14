@@ -197,6 +197,21 @@ stuck_midbyte(void)
 	never();
 }
 
+/* cut off at the first bit of a byte: the nine clocks of a whole byte free it, the last of them too */
+static void
+stuck_nine_clocks(void)
+{
+	unsigned clocks = 0;
+
+	a_bus();
+	device.midbyte = 9;
+	lines();
+	device.was_sda = false;
+	CHECK(i2c_gpio_unwedge(&bus, &clocks) && clocks == 9, "freed at the ninth clock: %u", clocks);
+	i2c_gpio_give_back(&bus);
+	never();
+}
+
 /* a line that nine clocks do not free, or the clock line itself held: left alone */
 static void
 stuck_for_good(void)
@@ -234,6 +249,25 @@ clock_held(void)
 	never();
 }
 
+/* a device that holds the clock low for good is not waited for for ever: the transfer goes on without it, and fails */
+static void
+clock_held_for_good(void)
+{
+	uint64_t start = mach_absolute_time(), taken;
+	bool acked;
+
+	a_bus();
+	device.stretch = 1000000;
+	CHECK(i2c_gpio_take(&bus), "taken");
+	i2c_gpio_start(&bus);
+	acked = i2c_gpio_write(&bus, ADDRESS << 1) && i2c_gpio_write(&bus, 0x30) && i2c_gpio_write(&bus, 0x99);
+	i2c_gpio_stop(&bus);
+	i2c_gpio_give_back(&bus);
+	absolutetime_to_nanoseconds(mach_absolute_time() - start, &taken);
+	CHECK(device.reg[0x30] != 0x99 || !acked, "not written as if nothing happened");
+	CHECK(taken < 1000000000ull, "given up within a second: %llu ns", (unsigned long long)taken);
+}
+
 /* the pins go back to whatever they were, not to one fixed setting */
 static void
 given_back(void)
@@ -257,7 +291,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "a_write", a_write }, { "a_read", a_read }, { "every_bit", every_bit }, { "nobody_there", nobody_there },
 		{ "not_at_rest", not_at_rest }, { "stuck_midbyte", stuck_midbyte }, { "stuck_for_good", stuck_for_good },
-		{ "clock_held", clock_held }, { "given_back", given_back },
+		{ "clock_held", clock_held }, { "clock_held_for_good", clock_held_for_good }, { "stuck_nine_clocks", stuck_nine_clocks }, { "given_back", given_back },
 	};
 
 	if (argc < 2) {
