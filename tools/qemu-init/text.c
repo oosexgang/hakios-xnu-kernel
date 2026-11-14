@@ -170,3 +170,15 @@ say_error(long error)
 		}
 	}
 }
+
+/* the n bytes at a are those at b */
+int
+bytes_same(const void *a, const void *b, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		if (((const uint8_t *)a)[i] != ((const uint8_t *)b)[i]) {
+			return 0;
+		}
+	}
+	return 1;
+}

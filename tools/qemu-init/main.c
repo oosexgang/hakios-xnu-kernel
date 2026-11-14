@@ -218,6 +218,7 @@ static const struct {
 	{ "chmod", "MODE PATH... the permissions (octal)", command_chmod },
 	{ "xattr", "FILE [NAME VALUE] | -d FILE NAME extended attributes: listed, set, taken away", command_xattr },
 	{ "files", "[LIMIT] files opened until the kernel's limit on descriptors says no", command_files },
+	{ "descriptors", "FILE lseek, pread, pwrite, dup, dup2, O_APPEND, a non-blocking pipe", command_descriptors },
 	{ "fill", "FILE BYTES a file of made-up bytes (byte i is i * 7 mod 251)", command_fill },
 	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
 	{ "mmap-write", "FILE the file written through a shared mapping, and read back", command_mmap_write },

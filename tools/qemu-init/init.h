@@ -82,6 +82,7 @@ syscall_pipe(int ends[2])
 extern int console;
 size_t length(const char *s);
 int same(const char *a, const char *b);
+int bytes_same(const void *a, const void *b, size_t n);
 void say(const char *s);
 void say_number(uint64_t n);
 void say_error(long error);             /* "error N (ENAME)", of a -errno */
@@ -131,6 +132,7 @@ void command_rm(int argc, char **argv);
 void command_echo_udp(int argc, char **argv);
 void command_unix_name(int argc, char **argv);
 void command_fill(int argc, char **argv);
+void command_descriptors(int argc, char **argv);
 void command_mmap_write(int argc, char **argv);
 void command_shm(int argc, char **argv);
 void command_vm(int argc, char **argv);

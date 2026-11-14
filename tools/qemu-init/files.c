@@ -1,4 +1,5 @@
-/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, fill, mmap, mmap-write */
+/* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, xattr, files, fill, mmap, mmap-write,
+ * descriptors */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -659,4 +660,89 @@ command_mmap_write(int argc, char **argv)
 	say_number((uint64_t)st.size);
 	say(all == st.size && read_back == after && after != before ? " bytes turned through the mapping, and read so\n" :
 	    " bytes: what is read is NOT what the mapping wrote\n");
+}
+
+#define SYS_dup                 41
+#define SYS_fcntl               92
+#define SYS_dup2                90
+#define SYS_pread               153
+#define SYS_pwrite              154
+#define SYS_lseek               199
+#define O_RDWR                  2
+#define O_APPEND                8
+#define O_NONBLOCK              4
+#define F_SETFL                 4
+
+/* the n bytes at `at' of what was read are those of `want' */
+static int
+read_is(long fd, const char *want, long n)
+{
+	char got[16];
+
+	return n <= (long)sizeof(got) && syscall6(SYS_read, fd, (long)got, n, 0, 0, 0) == n && bytes_same(got, want, (size_t)n);
+}
+
+/*
+ * FILE (made anew): what descriptors do, as BSD has them -- an offset moved by lseek, pread and pwrite that move
+ * none, a dup's offset the same as its original's, dup2 onto a number of one's choosing, O_APPEND writing at the
+ * end whatever the offset, and a non-blocking pipe with nothing in it saying EAGAIN
+ */
+void
+command_descriptors(int argc, char **argv)
+{
+	char line[400], two[2];
+	size_t at;
+	long fd, copy, pipe_result;
+	int ends[2];
+	struct { const char *what; int ok; } said[7];
+	int n = 0, all = 1;
+
+	if (argc != 2) {
+		say("descriptors FILE (made anew)\n");
+		return;
+	}
+	fd = syscall6(SYS_open, (long)argv[1], O_RDWR | O_CREAT | O_TRUNC, 0644, 0, 0, 0);
+	if (fd < 0) {
+		say_failed("descriptors", argv[1], fd);
+		return;
+	}
+	syscall6(SYS_write, fd, (long)"0123456789", 10, 0, 0, 0);
+	said[n].what = "lseek";
+	said[n++].ok = syscall6(SYS_lseek, fd, 3, 0 /* SEEK_SET */, 0, 0, 0) == 3 && read_is(fd, "345", 3);
+	said[n].what = "pread";
+	said[n++].ok = syscall6(SYS_pread, fd, (long)two, 2, 7, 0, 0) == 2 && bytes_same(two, "78", 2) && read_is(fd, "6", 1);
+	said[n].what = "pwrite";
+	said[n++].ok = syscall6(SYS_pwrite, fd, (long)"ab", 2, 0, 0, 0) == 2 && read_is(fd, "7", 1);
+	copy = syscall6(SYS_dup, fd, 0, 0, 0, 0, 0);
+	said[n].what = "a dup's offset";
+	said[n++].ok = copy >= 0 && read_is(copy, "8", 1) && read_is(fd, "9", 1);
+	said[n].what = "dup2";
+	said[n++].ok = syscall6(SYS_dup2, fd, 20, 0, 0, 0, 0) == 20 && syscall6(SYS_lseek, 20, 0, 0, 0, 0, 0) == 0 && read_is(fd, "ab", 2);
+	syscall6(SYS_close, 20, 0, 0, 0, 0, 0);
+	syscall6(SYS_close, copy, 0, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	fd = syscall6(SYS_open, (long)argv[1], O_RDWR | O_APPEND, 0, 0, 0, 0);
+	said[n].what = "O_APPEND";
+	said[n++].ok = fd >= 0 && syscall6(SYS_lseek, fd, 0, 0, 0, 0, 0) == 0 && syscall6(SYS_write, fd, (long)"!", 1, 0, 0, 0) == 1 &&
+	    syscall6(SYS_pread, fd, (long)two, 1, 10, 0, 0) == 1 && two[0] == '!';
+	if (fd >= 0) {
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	pipe_result = syscall_pipe(ends);
+	said[n].what = "a non-blocking pipe's EAGAIN";
+	said[n++].ok = pipe_result == 0 && syscall6(SYS_fcntl, ends[0], F_SETFL, O_NONBLOCK, 0, 0, 0) == 0 &&
+	    syscall6(SYS_read, ends[0], (long)two, 1, 0, 0, 0) == -35;
+	if (pipe_result == 0) {
+		syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+		syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	}
+	at = append(line, 0, sizeof(line), "descriptors:");
+	for (int i = 0; i < n; i++) {
+		all &= said[i].ok;
+		at = append(line, at, sizeof(line), " ");
+		at = append(line, at, sizeof(line), said[i].what);
+		at = append(line, at, sizeof(line), said[i].ok ? "," : " WRONG,");
+	}
+	at = append(line, at - 1, sizeof(line), all ? ": as BSD has them\n" : ": NOT all as BSD has them\n");
+	say(line);
 }
