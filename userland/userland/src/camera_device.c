@@ -277,6 +277,9 @@ struct prop {
 
 static const struct prop stream_props[] = {
 	{ "PortType", "String", "ReadOnly" }, { "UniqueID", "String", "ReadOnly" }, { "NonLocalizedName", "String", "ReadOnly" },
+#ifdef HAKIOS_IOS27
+	{ "ModuleInfo", "Collection", "ReadOnly" },             /* (cameras[].module_sensor_id) */
+#endif
 	{ "SupportedFormatsArray", "Collection", "ReadOnly" }, { "FocalLength", "Number", "ReadOnly" },
 	{ "LensFNumber", "Number", "ReadOnly" }, { "PixelSize", "Number", "ReadOnly" },
 	{ "MaxZoomFactor", "Number", "ReadOnly" }, { "SupportedColorSpaces", "Collection", "ReadOnly" },
@@ -457,6 +460,14 @@ static const struct camera {
 	bool            turned;         /* its sensor the other way up from the iPhone's: the pictures turned half round */
 	double          focal_length, f_number, pixel_size, fov;
 	struct fmt      formats[FORMATS];       /* those there are (width 0 after the last) */
+	/*
+	 * The camera module's sensor, as ModuleInfo's "sensorID" (0: not answered). cameracaptured looks it up
+	 * in CMCapture.framework/<the identity's model>/CameraSetup.plist (TuningParameters, "0x0503") for the
+	 * camera's tuning and its camera information. Without it the camera had no information at all: no
+	 * BaseZoomFactor, read as 0, which the preview stitcher divides by, so the preview's crop was NaN, the
+	 * Preview Scaler's picture 16x16 and every transfer -21774 (a dark preview).
+	 */
+	uint32_t        module_sensor_id;
 } cameras[2] = {
 #ifdef HAKIOS_IOS27
 	/*
@@ -466,10 +477,10 @@ static const struct camera {
 	 */
 	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.25, 1.8, 1.4, 68.0,
 	  { { 4224, 3168, 60, true, 0, 0, 4032, 3024 }, { 4224, 3168, 30, true, 2304, 1728, 4224, 2376 },
-	    { 4224, 2384, 60, true, 0, 0, 4224, 2376 } } },
+	    { 4224, 2384, 60, true, 0, 0, 4224, 2376 } }, 0x0503 },       /* N104's DefaultSensorIDs */
 	{ 2, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", true, 2.71, 2.2, 1.0, 70.0,
 	  { { 4032, 3024, 30, true, 0, 0, 4032, 3024 }, { 4032, 3024, 30, true, 2112, 1584, 4032, 2268 },
-	    { 4032, 2272, 30, true, 0, 0, 4032, 2268 } } },
+	    { 4032, 2272, 30, true, 0, 0, 4032, 2268 } }, 0x0514 },
 #else
 	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.0, 1.8, 1.22, 65.0,
 	  { { 4032, 3024, 30 }, { 4224, 2376, 60 } } },        /* "Photo", "Video-60" */
@@ -529,6 +540,21 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	(void)allocator;
 	if (key_is(key, "PortType")) {
 		value = CFRetain(s->port);
+	} else if (key_is(key, "ModuleInfo") && s->camera->module_sensor_id != 0) {
+		CFMutableDictionaryRef info = (CFMutableDictionaryRef)new_dict();
+
+		put(info, "sensorID", number_i(s->camera->module_sensor_id));
+		/*
+		 * With a sensor known, the motion processing (FigMotionProcessingUtilities) asks the module's lens,
+		 * focus actuator and stabilisation integrator as well, and fails the stream's start without them
+		 * ("lensIDcf && actuatorIDcf && integratorIDcf", -12783: the session never ran). The tuning's
+		 * FocalLengthCharacterization knows lens 1 with actuator 1 on the back camera, and lens 1 with none
+		 * (a fixed focus) on the front one.
+		 */
+		put(info, "ModuleLensID", number_i(1));
+		put(info, "ModuleActuatorID", number_i(port_front != NULL && CFEqual(s->port, port_front) ? 0 : 1));
+		put(info, "ModuleIntegratorID", number_i(1));
+		value = info;
 	} else if (key_is(key, "UniqueID") || key_is(key, "ModelID")) {
 		value = CFStringCreateWithCString(NULL, s->camera->unique_id, kCFStringEncodingUTF8);
 	} else if (key_is(key, "NonLocalizedName") || key_is(key, "LocalizedName")) {

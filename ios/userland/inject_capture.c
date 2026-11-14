@@ -55,6 +55,7 @@ static unsigned level_said;
 
 static void
 say(const char *format, ...) __printflike(1, 2);
+static void preview_path(void);
 
 static void
 say(const char *format, ...)
@@ -452,13 +453,53 @@ camera_init(void)
 		original_quality = (int_getter)was;
 	}
 	replace("BWGNRNode", "renderSampleBuffer:forInput:", "v@:^{}@", (IMP)gnr_render, NULL);
+	/*
+	 * The preview stitcher joins the wide camera's preview with the ultra wide's (the frame's outside); there is
+	 * one camera here, and its Core Image kernels (BWPreviewStitcherNodeCoreImageArchive's, compiled anew by
+	 * our Metal compiler) gave pictures of zeros: the preview's frames were displayed (BWImageQueueSinkNode, about
+	 * 8 a second) and every one of them was black, green where the zoom button's glass took its colour. The wide
+	 * camera's buffer is passed on as it is; the Preview Scaler after it makes it the preview's size.
+	 */
+	replace("BWPreviewStitcherNode", "renderSampleBuffer:forInput:", "v@:^{}@", (IMP)gnr_render, NULL);
 	if (replace("BWNodeOutput", "emitSampleBuffer:", "v@:^{}", (IMP)emit_sample_buffer, &was)) {
 		original_emit = (emit_fn)was;
 	}
 	replace_class_method("BWCoreImageFilterRenderer", "prewarmPortraitFilterVersion:semanticStyleFilters:", "v@:IB",
 	    (IMP)no_prewarm, NULL);
+	preview_path();
 	register_hevc_encoder();
 	say("hakios: cameracaptured: the camera is the kernel's (/dev/hakios-camera)\n");
+}
+
+/*
+ * The Preview Scaler (a BWPixelTransferNode of the preview sink, crop mode 1) crops each buffer to the rect in its
+ * metadata ("FinalCropRect"), which the preview stitcher wrote NaN (its camera information has no base zoom factor
+ * here): the transfer from a NaN rect is -21774 and the preview stays dark. In crop mode 0 the node takes the whole
+ * buffer: the preview is the camera's picture as it is, its overscan included, but a picture.
+ */
+typedef void (*crop_mode_fn)(id, SEL, int);
+static crop_mode_fn original_set_crop_mode;
+
+static void
+set_crop_mode(id self, SEL sel, int mode)
+{
+	static int told;
+
+	if (mode == 1 && !told) {
+		told = 1;
+		say("hakios: cameracaptured: a pixel transfer's crop mode 1 (the buffer's FinalCropRect) taken as 0\n");
+	}
+	original_set_crop_mode(self, sel, mode == 1 ? 0 : mode);
+}
+
+static void
+preview_path(void)
+{
+	IMP crop;
+
+	if (replace("BWPixelTransferNode", "setCropMode:", "v@:i", (IMP)set_crop_mode, &crop)) {
+		original_set_crop_mode = (crop_mode_fn)crop;
+	}
 }
 
 /* CMCapture may come after this library: the methods are replaced once its classes are there */
