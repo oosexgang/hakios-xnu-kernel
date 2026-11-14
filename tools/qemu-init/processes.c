@@ -344,6 +344,74 @@ command_alarm(int argc, char **argv)
 	say(" ms\n");
 }
 
+/* ---- signals held back: a mask ---- */
+
+#define SYS_getppid             39
+#define SYS_sigprocmask         48
+#define SYS_sigpending          52
+#define SIGUSR1                 30
+#define SIG_BLOCK               1
+#define SIG_UNBLOCK             2
+
+static volatile uint32_t usr1s;
+
+static void
+on_usr1(int signal)
+{
+	(void)signal;
+	usr1s++;
+}
+
+/*
+ * SIGUSR1 blocked (sigprocmask), then sent by a forked child: it waits, pending (sigpending), its handler not
+ * run; let through, the handler runs, once
+ */
+void
+command_mask(int argc, char **argv)
+{
+	struct sigaction_in action = { on_usr1, signal_trampoline, 0, 0 }, none = { 0, 0, 0, 0 };
+	uint32_t usr1 = 1u << (SIGUSR1 - 1), was = 0, pending = 0;
+	int in_child = 0;
+	int32_t status = 0;
+	uint32_t before, after;
+	long pid;
+	char line[200];
+	size_t at;
+
+	(void)argc;
+	(void)argv;
+	if (syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0) == 1) {
+		say("mask: not in the first process, which nobody may signal (run /sbin/launchd mask)\n");
+		return;
+	}
+	if (syscall6(SYS_sigaction, SIGUSR1, (long)&action, 0, 0, 0, 0) != 0) {
+		say("mask: SIGUSR1 cannot be caught\n");
+		return;
+	}
+	usr1s = 0;
+	syscall6(SYS_sigprocmask, SIG_BLOCK, (long)&usr1, (long)&was, 0, 0, 0);
+	pid = syscall_fork(&in_child);
+	if (in_child) {
+		syscall6(SYS_kill, syscall6(SYS_getppid, 0, 0, 0, 0, 0, 0), SIGUSR1, 1, 0, 0, 0);
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	if (pid > 0) {
+		syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	}
+	syscall6(SYS_sigpending, (long)&pending, 0, 0, 0, 0, 0);
+	before = usr1s;
+	syscall6(SYS_sigprocmask, SIG_UNBLOCK, (long)&usr1, 0, 0, 0, 0);
+	after = usr1s;
+	syscall6(SYS_sigprocmask, 3 /* SIG_SETMASK */, (long)&was, 0, 0, 0, 0);
+	syscall6(SYS_sigaction, SIGUSR1, (long)&none, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "mask: SIGUSR1 from pid ");
+	at = append_number(line, at, sizeof(line), (uint64_t)(pid > 0 ? pid : 0));
+	at = append(line, at, sizeof(line), (pending & usr1) && before == 0 ? ": held while blocked (pending, not caught)" :
+	    ": NOT held while blocked");
+	at = append(line, at, sizeof(line), after == 1 ? ", caught once let through\n" : ", NOT caught once let through\n");
+	syscall6(SYS_write, console, (long)line, (long)at, 0, 0, 0);
+}
+
 /* ---- fork: a copy of this process ---- */
 
 #define SYS_execve              59
