@@ -108,6 +108,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `fifo PATH` | A named pipe made in ramfs (mkfifo): a forked child opens it to write, the shell to read, each open waiting for the other's. |
 | `flock FILE` | The file locked: a child's try, without waiting, is refused (EAGAIN); once it is let go, a child's is taken. |
 | `byte-locks FILE` | Bytes 0 to 9 of the file locked to write (fcntl F_SETLK): a child's lock on 5 to 14 is refused, to read too, and one on 10 to 19 taken; F_GETLK names the shell as what is in the way; let go, the child has them. |
+| `pipe-size` | A pipe filled a byte at a time without waiting, until the kernel says EAGAIN: how much it holds; full, poll does not find it writable, and with 512 bytes (PIPE_BUF) read out of it, it does. |
 | `poll` | poll and select on a pipe: empty, each waits out its 100 ms and finds nothing; with a byte in it, each finds it readable at once. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | **IOKit** (`iokit.c`) | |
