@@ -1724,6 +1724,70 @@ static id (*old_active_account)(id, SEL);
 static id (*old_active_account_type)(id, SEL, void *);
 
 /*
+ * The wait that holds the App Store. A thread of its own sits for ever in
+ *   +[AMSSyncRestrictedRegionTask performSync] -> durationOfSyncRestrictedRegionValueFromBag:
+ *   -> -[AMSBagValue valueWithError:] -> -[AMSPromise resultWithError:] -> resultBeforeDate:error:
+ *   -> -[NSCondition waitUntilDate:]
+ * -- a synchronous read of a bag value whose promise is never finished, which is the same family of
+ * wait this file was written to cut on 16.5. The task syncs whether the storefront is in a restricted
+ * region; nothing about the catalog depends on it here. Both values it reads are answered at once,
+ * without touching the bag, so the thread never blocks: no restricted region, and no interval to sync on.
+ */
+static long long
+no_restricted_region(__unused id self, __unused SEL cmd, __unused void *bag)
+{
+	static int told;
+
+	if (!told) {
+		told = 1;
+		say("hakios: store: the restricted-region sync is answered at once: no region, no interval\n");
+	}
+	return 0;
+}
+
+/*
+ * Every Mach service this process opens, including the ones opened by the C interface. The NSXPCConnection
+ * hook below names only the Objective-C ones, and AppleMediaServices' Swift code opens its own with
+ * xpc_connection_create_mach_service -- which is the kind of call appstored is stuck in. An inline hook
+ * (the prefix's MSHookFunction, as inject_kc.c uses) names those too, so the service that never answers
+ * can be named instead of guessed.
+ */
+typedef void (*MSHookFunction_t)(void *symbol, void *replace, void **result);
+typedef void *(*xpc_mach_service_t)(const char *, void *, unsigned long);
+static xpc_mach_service_t old_xpc_mach_service;
+
+static void *
+new_xpc_mach_service(const char *name, void *queue, unsigned long flags)
+{
+	say("hakios: store: mach service opened: %s\n", name != NULL ? name : "(no name)");
+	return old_xpc_mach_service(name, queue, flags);
+}
+
+static void
+hook_mach_services(void)
+{
+	void *substrate = dlopen("/var/jb/usr/lib/libsubstrate.dylib", RTLD_NOW);
+	MSHookFunction_t hook;
+	void *target;
+
+	if (substrate == NULL) {
+		substrate = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+	}
+	if (substrate == NULL) {
+		say("hakios: store: no substrate: mach services are not named\n");
+		return;
+	}
+	hook = (MSHookFunction_t)dlsym(substrate, "MSHookFunction");
+	target = dlsym(RTLD_DEFAULT, "xpc_connection_create_mach_service");
+	if (hook == NULL || target == NULL) {
+		say("hakios: store: no MSHookFunction or no xpc_connection_create_mach_service\n");
+		return;
+	}
+	hook(target, (void *)new_xpc_mach_service, (void **)&old_xpc_mach_service);
+	say("hakios: store: mach services will be named (xpc_connection_create_mach_service at %p)\n", target);
+}
+
+/*
  * Where the Mescal signature is made on iOS 26/27, and why ours was never asked for. The absinthe step
  * does not sign anything itself: it asks +[AMSDefaults enableRemoteSecuritySigning] and then either
  * -[AMSSigningSecurityService headersForRequest:buyParams:bag:] (another process's service) or
@@ -2464,6 +2528,10 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
 	  (IMP)new_add_storefront_header, (IMP *)&old_add_storefront_header, false },
+	{ "AMSSyncRestrictedRegionTask", "storefrontContainsRestrictedRegionsValueFromBag:", true,
+	  (IMP)no_restricted_region, NULL, false },
+	{ "AMSSyncRestrictedRegionTask", "durationOfSyncRestrictedRegionValueFromBag:", true,
+	  (IMP)no_restricted_region, NULL, false },
 	{ "AMSDefaults", "enableRemoteSecuritySigning", true, (IMP)no_remote_signing, NULL, false },
 	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
@@ -2595,6 +2663,7 @@ hakios_store_init(void)
 		slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
 		who = name;
 		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
+		hook_mach_services();
 		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
 			pthread_detach(watcher);
 		}
@@ -2618,5 +2687,6 @@ hakios_store_init(void)
 			pthread_detach(thread);
 		}
 	}
+	hook_mach_services();
 	_dyld_register_func_for_add_image(image_added);         /* also called for every image already there */
 }
