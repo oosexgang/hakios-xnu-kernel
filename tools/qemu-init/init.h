@@ -167,6 +167,8 @@ void command_chown(int argc, char **argv);
 void command_truncate(int argc, char **argv);
 void command_touch(int argc, char **argv);
 void command_poll(int argc, char **argv);
+void command_fifo(int argc, char **argv);
+void command_flock(int argc, char **argv);
 void command_descriptors(int argc, char **argv);
 void command_mmap_write(int argc, char **argv);
 void command_shm(int argc, char **argv);

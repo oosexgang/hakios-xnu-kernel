@@ -1,8 +1,10 @@
 /* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
- * memory shared by name, Mach messages, waiting on descriptors: pipe, unix, unix-name, shm, mach, poll */
+ * memory shared by name, Mach messages, waiting on descriptors, a named pipe, a lock on a file: pipe, unix,
+ * unix-name, shm, mach, poll, fifo, flock */
 #include "init.h"
 
 #define SYS_wait4               7
+#define SYS_unlink              10
 #define SYS_posix_spawn         244
 #define SYS_munmap              73
 #define SYS_mmap                197
@@ -212,7 +214,6 @@ command_unix(int argc, char **argv)
 #define SYS_accept              30
 #define SYS_bind                104
 #define SYS_listen              106
-#define SYS_unlink              10
 #define SYS_lstat64             340
 
 struct sockaddr_un {
@@ -410,4 +411,117 @@ command_poll(int argc, char **argv)
 	at = append_number(line, at, sizeof(line), (uint64_t)full_select);
 	at = append(line, at, sizeof(line), "\n");
 	syscall6(SYS_write, console, (long)line, (long)at, 0, 0, 0);
+}
+
+#define SYS_mkfifo              132
+#define SYS_flock               131
+#define O_RDONLY                0
+#define LOCK_EX                 2
+#define LOCK_NB                 4
+#define LOCK_UN                 8
+
+/* PATH: a named pipe made (mkfifo); a child opens it to write a line, this process to read it -- each open waits
+ * for the other end's */
+void
+command_fifo(int argc, char **argv)
+{
+	char text[64], line[160];
+	int in_child = 0;
+	int32_t status = 0;
+	long error, pid, fd, got;
+	size_t at;
+
+	if (argc != 2) {
+		say("fifo PATH\n");
+		return;
+	}
+	if ((error = syscall6(SYS_mkfifo, (long)argv[1], 0600, 0, 0, 0, 0)) != 0) {
+		say_failed("fifo", argv[1], error);
+		return;
+	}
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("fifo: no child\n");
+		return;
+	}
+	if (in_child) {
+		fd = syscall6(SYS_open, (long)argv[1], O_WRONLY, 0, 0, 0, 0);
+		syscall6(SYS_exit, fd >= 0 && syscall6(SYS_write, fd, (long)"written by a child", 18, 0, 0, 0) == 18 ? 0 : 1,
+		    0, 0, 0, 0, 0);
+	}
+	fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0);
+	at = 0;
+	if (fd >= 0) {
+		while (at < sizeof(text) - 1 && (got = syscall6(SYS_read, fd, (long)(text + at), (long)(sizeof(text) - 1 - at), 0, 0, 0)) > 0) {
+			at += (size_t)got;      /* (to the end: the child's exit closes its end) */
+		}
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	text[at] = '\0';
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "fifo: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	if (fd < 0) {
+		at = append(line, at, sizeof(line), ": not opened to read\n");
+	} else {
+		at = append(line, at, sizeof(line), ": read \"");
+		at = append(line, at, sizeof(line), text);
+		at = append(line, at, sizeof(line), status == 0 ? "\"\n" : "\"; the child's write failed\n");
+	}
+	say(line);
+}
+
+/* in a child: the file opened anew (a description of its own) and locked without waiting; its error, or 0 */
+static long
+lock_elsewhere(const char *path)
+{
+	int in_child = 0;
+	int32_t status = 0;
+	long pid = syscall_fork(&in_child), fd;
+
+	if (pid < 0) {
+		return pid;
+	}
+	if (in_child) {
+		fd = syscall6(SYS_open, (long)path, O_RDONLY, 0, 0, 0, 0);
+		syscall6(SYS_exit, fd < 0 ? 255 : -syscall6(SYS_flock, fd, LOCK_EX | LOCK_NB, 0, 0, 0, 0), 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+	return -(long)((status >> 8) & 0xff);
+}
+
+/* FILE: the file locked (flock): another process's try, without waiting, refused; let go, another's taken */
+void
+command_flock(int argc, char **argv)
+{
+	char line[200];
+	long fd, error, held, after;
+	size_t at;
+
+	if (argc != 2) {
+		say("flock FILE\n");
+		return;
+	}
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0)) < 0 ||
+	    (error = syscall6(SYS_flock, fd, LOCK_EX, 0, 0, 0, 0)) != 0) {
+		say_failed("flock", argv[1], fd < 0 ? fd : error);
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	held = lock_elsewhere(argv[1]);
+	syscall6(SYS_flock, fd, LOCK_UN, 0, 0, 0, 0);
+	after = lock_elsewhere(argv[1]);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "flock: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": held, another's try ");
+	at = append(line, at, sizeof(line), held == 0 ? "TAKEN" : "refused (error ");
+	if (held != 0) {
+		at = append_number(line, at, sizeof(line), (uint64_t)-held);
+		at = append(line, at, sizeof(line), ")");
+	}
+	at = append(line, at, sizeof(line), "; let go, another's try ");
+	at = append(line, at, sizeof(line), after == 0 ? "taken\n" : "REFUSED\n");
+	say(line);
 }
