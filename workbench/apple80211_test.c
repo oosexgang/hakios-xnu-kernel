@@ -22,7 +22,8 @@ static unsigned joins, scans;
 
 bool hakios_sta_present(void) { return true; }
 bool hakios_sta_powered(void) { return true; }
-int hakios_sta_ask_power(bool on) { (void)on; return 0; }
+static int power_asked = -1;              /* (what the last power request asked for: 1 on, 0 off) */
+int hakios_sta_ask_power(bool on) { power_asked = on; return 0; }
 int hakios_sta_ask_leave(void) { return 0; }
 void hakios_sta_state(struct hakios_sta_state *out) { *out = state; }
 
@@ -44,7 +45,7 @@ hakios_sta_channels(struct hakios_sta_channel *channels, unsigned most)
 
 	for (; n < 4 && n < most; n++) {
 		channels[n].frequency = frequencies[n];
-		channels[n].flags = frequencies[n] == 5500 ? HAKIOS_STA_CHANNEL_RADAR : 0;
+		channels[n].flags = frequencies[n] == 5500 ? HAKIOS_STA_CHANNEL_RADAR : frequencies[n] == 5180 ? HAKIOS_STA_CHANNEL_PASSIVE : 0;
 	}
 	return n;
 }
@@ -268,6 +269,16 @@ join(void)
 
 	assoc.key_length = 7;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "a passphrase of 7 bytes");
+	assoc.key_length = 64;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "and of 64");
+	assoc.key_length = 8;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && asked_join.passphrase_length == 8, "but of 8");
+	assoc.key_length = 63;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && asked_join.passphrase_length == 63, "and of 63");
+	assoc.key_cipher = CIPHER_PMK;
+	assoc.key_length = 31;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "a key that is not 32 bytes");
+	assoc.key_cipher = CIPHER_PASSPHRASE;
 	assoc.key_length = 10;
 	assoc.ssid_length = 33;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "a name of 33 bytes");
@@ -279,7 +290,7 @@ join(void)
 	assoc.key_length = 32;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && asked_join.passphrase_length == 0 &&
 	    asked_join.security == HAKIOS_STA_WPA2_PSK, "the key itself");
-	CHECK(joins == 2, "nothing refused reached the station: %u", joins);
+	CHECK(joins == 4, "nothing refused reached the station (four taken): %u", joins);
 
 	/* how it went, in Apple80211's numbers */
 	static const struct { int status; int32_t result; } outcomes[] = { { 0, 1 }, { EAUTH, 21 }, { ETIMEDOUT, 9 }, { EIO, 2 } };
@@ -388,6 +399,46 @@ a_cut_off_element(void)
 	CHECK(result.elements_length == 4, "the elements given as heard: %u", result.elements_length);
 }
 
+/* the radio's power asked for, on and off; the state in Apple80211's numbers; the access point's address once joined */
+static void
+power_and_state(void)
+{
+	struct { uint32_t version, radios, state[4]; } power = { 1, 1, { 1 } };
+	static const struct { enum hakios_sta_phase phase; int32_t state; } states[] = {
+		{ HAKIOS_STA_IDLE, 0 }, { HAKIOS_STA_SCANNING, 1 }, { HAKIOS_STA_JOINING, 2 }, { HAKIOS_STA_JOINED, 4 },
+	};
+	struct apple80211req answered;
+	uint8_t address[6];
+
+	CHECK(request(true, 19, &power, sizeof(power), NULL) == 0 && power_asked == 1, "on");
+	power.state[0] = 0;
+	CHECK(request(true, 19, &power, sizeof(power), NULL) == 0 && power_asked == 0, "off");
+	power_asked = -1;
+	CHECK(request(true, 19, &power, sizeof(power) - 1, NULL) == EINVAL && power_asked == -1, "a request cut short");
+	for (unsigned i = 0; i < 4; i++) {
+		state.phase = states[i].phase;
+		CHECK(request(false, 13, NULL, 0, &answered) == 0 && answered.req_val == states[i].state, "phase %u: %d", i,
+		    answered.req_val);
+	}
+	memcpy(state.bss.bssid, "\x02\x11\x22\x33\x44\x55", 6);
+	CHECK(request(false, 9, address, sizeof(address), NULL) == 0 && memcmp(address, state.bss.bssid, 6) == 0, "the address");
+	state.phase = HAKIOS_STA_JOINING;
+	CHECK(request(false, 9, address, sizeof(address), NULL) == ENXIO, "none before it is joined");
+}
+
+/* each channel's DFS and passive marks (CHANNELS_INFO, 207): 5500 MHz is radar's, 5180 passive */
+static void
+channels_marked(void)
+{
+	static struct apple80211_channels_info info;
+
+	CHECK(request(false, 207, &info, sizeof(info), NULL) == 0 && info.count == 4, "four: %u", info.count);
+	CHECK(info.number[0] == 1 && info.number[2] == 36 && info.number[3] == 100, "numbered: %u %u %u", info.number[0],
+	    info.number[2], info.number[3]);
+	CHECK(!info.dfs[0] && !info.dfs[1] && !info.dfs[2] && info.dfs[3], "DFS on 5500 alone");
+	CHECK(!info.passive[0] && !info.passive[1] && info.passive[2] && !info.passive[3], "passive on 5180 alone");
+}
+
 /* what is not built is said to be that, and nothing is asked about a network that is not joined */
 static void
 refusals(void)
@@ -413,6 +464,7 @@ main(int argc, char **argv)
 		{ "scan_results", scan_results }, { "radio_says_too_much", radio_says_too_much }, { "caller_room", caller_room },
 		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "channels_by_number", channels_by_number },
 		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
+		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked },
 	};
 
 	if (argc < 2) {
