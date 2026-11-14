@@ -31,6 +31,18 @@ say_mode(uint16_t mode)
 	say(text);
 }
 
+/* "WHAT: PATH: error N (ENAME)" */
+static void
+say_failed(const char *what, const char *path, long error)
+{
+	say(what);
+	say(": ");
+	say(path);
+	say(": ");
+	say_error(error);
+	say("\n");
+}
+
 static void
 list(const char *path)
 {
@@ -103,8 +115,7 @@ command_cat(int argc, char **argv)
 	for (int i = 1; i < argc; i++) {
 		long fd = syscall6(SYS_open, (long)argv[i], O_RDONLY, 0, 0, 0, 0);
 		if (fd < 0) {
-			say(argv[i]);
-			say(": cannot be read\n");
+			say_failed("cat", argv[i], fd);
 			continue;
 		}
 		for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0;) {
@@ -145,17 +156,6 @@ command_mount(int argc, char **argv)
 #define SYS_rmdir               137
 #define O_CREAT                 0x200
 #define O_TRUNC                 0x400
-
-static void
-say_failed(const char *what, const char *path, long error)
-{
-	say(what);
-	say(": ");
-	say(path);
-	say(": ");
-	say_error(error);
-	say("\n");
-}
 
 /* DIR...: new directories */
 void
@@ -352,7 +352,9 @@ command_xattr(int argc, char **argv)
 
 		say(names + at);
 		if (got < 0) {
-			say(": cannot be read\n");
+			say(": cannot be read, ");
+			say_error(got);
+			say("\n");
 			continue;
 		}
 		value[got] = '\0';
@@ -433,8 +435,7 @@ command_hash(int argc, char **argv)
 	for (int i = 1; i < argc; i++) {
 		long fd = syscall6(SYS_open, (long)argv[i], O_RDONLY, 0, 0, 0, 0);
 		if (fd < 0) {
-			say(argv[i]);
-			say(": cannot be read\n");
+			say_failed("hash", argv[i], fd);
 			continue;
 		}
 		uint64_t hash = 0xcbf29ce484222325ull, all = 0;
