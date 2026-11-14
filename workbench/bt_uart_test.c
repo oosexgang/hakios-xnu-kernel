@@ -264,6 +264,11 @@ vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) 
 /* Avoid collisions with the model headers' rsc/model variables. */
 #include "board/bt_uart.c"
 
+/* a scenario's resources in the command database: one of them not a regulator's (VRM), or not there at all */
+static int odd_resource = -1;
+static uint32_t odd_address;
+static const char *odd_name;
+
 static void
 setup(void)
 {
@@ -294,6 +299,10 @@ setup(void)
 	struct resource list[7];
 	for (unsigned i = 0; i < 7; i++) {
 		list[i] = (struct resource){ i == 6 ? b->bluetooth.rf_clock : b->bluetooth.supplies[i], 0x40000 + 0x100 * i, NULL, 0 };
+	}
+	if (odd_resource >= 0) {
+		list[odd_resource].address = odd_address != 0 ? odd_address : list[odd_resource].address;
+		list[odd_resource].name = odd_name != NULL ? odd_name : list[odd_resource].name;
 	}
 	slave(0, 4, list, 7);
 }
@@ -354,7 +363,8 @@ int
 main(int argc, char **argv)
 {
 	static const char *const scenarios[] = { "off", "zero", "no_feature", "invalid_mode", "look", "wrong_protocol", "unsupported_arbiter", "full",
-	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper" };
+	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
+	    "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -372,8 +382,32 @@ main(int argc, char **argv)
 		fprintf(stderr, "%-20s %s\n", scenario, failures ? "FAILED" : "ok");
 		return failures ? 1 : 0;
 	}
+	/* what is refused before anything is written, and what it is said as */
+	static const struct { const char *scenario, *said; } refusals[] = {
+		{ "not_vrm", "resource is not VRM" }, { "missing_resource", "resource is not VRM" },
+		{ "enable_not_ours", "no owned enable GPIO channel" }, { "enable_not_gpio", "enable GPIO is not LV/MV" },
+	};
+	const char *refused = NULL;
+
+	for (unsigned i = 0; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
+		refused = !strcmp(scenario, refusals[i].scenario) ? refusals[i].said : refused;
+	}
+	if (!strcmp(scenario, "not_vrm")) {
+		odd_resource = 2;
+		odd_address = 0x30200;          /* (an ARC resource's, slave kind 3) */
+	} else if (!strcmp(scenario, "missing_resource")) {
+		odd_resource = 6;
+		odd_name = "nothing.lvl";       /* (the RF clock's name nowhere in the database) */
+	}
 	setup();
 	boot_args = "bt=1";
+	if (!strcmp(scenario, "enable_not_ours")) {
+		spmi.map[7] = 0;                /* (only another system's alias of the enable GPIO is left) */
+	} else if (!strcmp(scenario, "enable_not_gpio")) {
+		en.reg[5] = 0x09;               /* (a subtype that is no LV/MV GPIO's) */
+	} else if (!strcmp(scenario, "mv_gpio")) {
+		en.reg[5] = 0x13;               /* (the last of the LV/MV subtypes) */
+	}
 	if (!strcmp(scenario, "off") || !strcmp(scenario, "zero")) {
 		boot_args = !strcmp(scenario, "off") ? "" : "bt=0";
 		hakios_bt_uart_init();
@@ -399,9 +433,10 @@ main(int argc, char **argv)
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
 		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
 		run();
-		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look")) {
+		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look") || refused != NULL) {
 			CHECK(!en.writes && !rsc.writes && !model.writes && !tx_commands, "inspection/refusal performs no hardware changes");
 			if (wrong_protocol) { CHECK(logged("SE protocol is not UART"), "protocol refusal logged"); }
+			if (refused != NULL) { CHECK(logged(refused), "refusal logged: %s", log_text); }
 		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error) {
 			CHECK(logged("bring-up stopped; powering down") && !logged("identification complete"), "failure is explicit: %s", log_text);
 			CHECK(!en.reg[0x44], "failure powers down");
