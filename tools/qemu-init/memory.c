@@ -1,11 +1,13 @@
 /* tools/qemu-init: memory -- a file's pages mapped and checked against its reads, written through a shared
- * mapping, and memory of its own: mmap, mmap-write, memory */
+ * mapping, written through a private one (the file left as it was), and memory of its own: mmap, mmap-write,
+ * mmap-private, memory */
 #include "init.h"
 
 #define O_RDONLY                0
 #define SYS_munmap              73
 #define SYS_mmap                197
 #define SYS_fstat64             339
+#define SYS_lseek               199
 #define PROT_READ               1
 #define MAP_PRIVATE             2
 
@@ -171,4 +173,61 @@ command_mmap_write(int argc, char **argv)
 	say_number((uint64_t)st.size);
 	say(all == st.size && read_back == after && after != before ? " bytes turned through the mapping, and read so\n" :
 	    " bytes: what is read is NOT what the mapping wrote\n");
+}
+
+/*
+ * FILE: the file mapped private and every byte of it turned over through the mapping: the mapping has the
+ * turned bytes (its own copies of the pages, made at the first write to each), the file what it had -- read
+ * through another mapping, shared, and through read()
+ */
+void
+command_mmap_private(int argc, char **argv)
+{
+	static uint8_t buffer[16384];
+	struct stat64_head st;
+	uint64_t file_before = FNV1A_START, mine = FNV1A_START, shared_after = FNV1A_START, read_after = FNV1A_START;
+	long fd, private, shared;
+	int turned = 1;
+
+	if (argc != 2) {
+		say("mmap-private FILE\n");
+		return;
+	}
+	fd = syscall6(SYS_open, (long)argv[1], 2 /* O_RDWR */, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_fstat64, fd, (long)&st, 0, 0, 0, 0) != 0 || st.size <= 0) {
+		say_failed("mmap-private", argv[1], fd < 0 ? fd : -22);
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	private = syscall6(SYS_mmap, 0, st.size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	shared = syscall6(SYS_mmap, 0, st.size, PROT_READ, MAP_SHARED, fd, 0);
+	if (private < 0 || shared < 0) {
+		say_failed("mmap-private", argv[1], private < 0 ? private : shared);
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		return;
+	}
+	for (int64_t i = 0; i < st.size; i++) {
+		uint8_t *b = (uint8_t *)private + i;
+
+		file_before = fnv1a(file_before, b, 1);
+		*b ^= 0xff;
+	}
+	for (int64_t i = 0; i < st.size; i++) {
+		turned &= ((uint8_t *)private)[i] == (uint8_t)(((uint8_t *)shared)[i] ^ 0xff);
+	}
+	mine = fnv1a(mine, (const void *)private, st.size);
+	shared_after = fnv1a(shared_after, (const void *)shared, st.size);
+	syscall6(SYS_munmap, private, st.size, 0, 0, 0, 0);
+	syscall6(SYS_munmap, shared, st.size, 0, 0, 0, 0);
+	syscall6(SYS_lseek, fd, 0, 0, 0, 0, 0);
+	for (long got; (got = syscall6(SYS_read, fd, (long)buffer, sizeof(buffer), 0, 0, 0)) > 0;) {
+		read_after = fnv1a(read_after, buffer, got);
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	say("mmap-private: ");
+	say(argv[1]);
+	say(turned && mine != file_before ? ": the private mapping turned" : ": the private mapping NOT turned");
+	say(shared_after == file_before && read_after == file_before ? ", the file as it was\n" : ", the file CHANGED\n");
 }
