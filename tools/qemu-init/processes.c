@@ -1,5 +1,5 @@
 /* tools/qemu-init: processes and their signals and descriptors: ps, run, spawn, kill, wait, sleep, kevent, crash,
- * alarm, fork, mask, fds, cloexec, id */
+ * alarm, fork, mask, fds, cloexec, id, watch */
 #include "init.h"
 
 #define PROC_INFO_CALL_LISTPIDS 1
@@ -570,4 +570,95 @@ command_id(int argc, char **argv)
 	at = append_number(line, at, sizeof(line), (uint64_t)syscall6(SYS_getegid, 0, 0, 0, 0, 0, 0));
 	append(line, at, sizeof(line), "\n");
 	say(line);
+}
+
+#define EVFILT_VNODE            (-4)
+#define EV_CLEAR                0x20
+#define NOTE_DELETE             0x01
+#define NOTE_WRITE              0x02
+#define NOTE_EXTEND             0x04
+#define NOTE_ATTRIB             0x08
+#define NOTE_LINK               0x10
+#define NOTE_RENAME             0x20
+#define SYS_link                9
+#define SYS_unlink              10
+#define SYS_chmod               15
+#define SYS_rename              128
+
+/* the events one kevent() gave on the file within a second, as names */
+static void
+watched(char *line, size_t *at, size_t size, long kq, const char *what)
+{
+	struct kevent64 got;
+	struct { int64_t seconds; long nanoseconds; } second = { 1, 0 };
+	static const struct { uint32_t bit; const char *name; } notes[] = {
+		{ NOTE_DELETE, "delete" }, { NOTE_WRITE, "write" }, { NOTE_EXTEND, "extend" }, { NOTE_ATTRIB, "attrib" },
+		{ NOTE_LINK, "link" }, { NOTE_RENAME, "rename" },
+	};
+	long n = syscall6(SYS_kevent, kq, 0, 0, (long)&got, 1, (long)&second);
+
+	*at = append(line, *at, size, *at > 7 ? "; " : " ");
+	*at = append(line, *at, size, what);
+	*at = append(line, *at, size, ":");
+	if (n != 1) {
+		*at = append(line, *at, size, " NOTHING");
+		return;
+	}
+	for (unsigned i = 0; i < sizeof(notes) / sizeof(notes[0]); i++) {
+		if (got.fflags & notes[i].bit) {
+			*at = append(line, *at, size, " ");
+			*at = append(line, *at, size, notes[i].name);
+		}
+	}
+}
+
+/* FILE: the file watched through kqueue (EVFILT_VNODE) while it is written, added to, changed in mode, linked,
+ * renamed and removed; what each gives */
+void
+command_watch(int argc, char **argv)
+{
+	struct kevent64 change;
+	struct { int64_t seconds; long nanoseconds; } no_wait = { 0, 0 };
+	char line[300], other[256], moved[256];
+	size_t at;
+	long kq, fd;
+
+	if (argc != 2 || length(argv[1]) > sizeof(other) - 8) {
+		say("watch FILE (made anew)\n");
+		return;
+	}
+	at = append(other, 0, sizeof(other), argv[1]);
+	append(other, at, sizeof(other), "-link");
+	append(moved, append(moved, 0, sizeof(moved), argv[1]), sizeof(moved), "-moved");
+	syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0);
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | 0x200 /* O_CREAT */, 0644, 0, 0, 0)) < 0 ||
+	    (kq = syscall6(SYS_kqueue, 0, 0, 0, 0, 0, 0)) < 0) {
+		say("watch: no file, or no kqueue\n");
+		return;
+	}
+	change = (struct kevent64){ .ident = (uint64_t)fd, .filter = EVFILT_VNODE, .flags = EV_ADD | EV_CLEAR,
+		                    .fflags = NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME };
+	if (syscall6(SYS_kevent, kq, (long)&change, 1, 0, 0, 0) != 0) {
+		say("watch: the file cannot be watched\n");
+		syscall6(SYS_close, kq, 0, 0, 0, 0, 0);
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		return;
+	}
+	at = append(line, 0, sizeof(line), "watch:");
+	syscall6(SYS_write, fd, (long)"more", 4, 0, 0, 0);
+	watched(line, &at, sizeof(line), kq, "written");
+	syscall6(SYS_chmod, (long)argv[1], 0600, 0, 0, 0, 0);
+	watched(line, &at, sizeof(line), kq, "chmod");
+	syscall6(SYS_link, (long)argv[1], (long)other, 0, 0, 0, 0);
+	watched(line, &at, sizeof(line), kq, "linked");
+	syscall6(SYS_unlink, (long)other, 0, 0, 0, 0, 0);
+	(void)syscall6(SYS_kevent, kq, 0, 0, (long)&change, 1, (long)&no_wait);      /* (the second link's going: not watched) */
+	syscall6(SYS_rename, (long)argv[1], (long)moved, 0, 0, 0, 0);
+	watched(line, &at, sizeof(line), kq, "renamed");
+	syscall6(SYS_unlink, (long)moved, 0, 0, 0, 0, 0);
+	watched(line, &at, sizeof(line), kq, "removed");
+	append(line, at, sizeof(line), "\n");
+	say(line);
+	syscall6(SYS_close, kq, 0, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 }

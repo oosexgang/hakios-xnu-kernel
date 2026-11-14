@@ -380,6 +380,7 @@ static const struct {
 	{ "flock", "FILE the file locked: another process cannot have it, until it is let go", command_flock },
 	{ "byte-locks", "FILE bytes of the file locked (fcntl): another process kept off them, not off others", command_byte_locks },
 	{ "pipe-size", "how much a pipe holds, and when poll finds it writable", command_pipe_size },
+	{ "watch", "FILE what kqueue says of the file as it is written, changed, linked, renamed, removed", command_watch },
 	{ "poll", "poll and select on a pipe, empty and with a byte in it", command_poll },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 	{ NULL, "IOKit", NULL },
