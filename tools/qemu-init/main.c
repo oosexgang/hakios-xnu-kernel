@@ -199,7 +199,7 @@ static const struct {
 	{ "pwd", "where that is", command_pwd },
 	{ NULL, "the kernel", NULL },
 	{ "about", "what the kernel says of itself", command_about },
-	{ "sysctl", "NAME[=VALUE]... the kernel's value of each, set if given", command_sysctl },
+	{ "sysctl", "NAME[=VALUE]... | -a [PREFIX] the kernel's values, set if given; all of them", command_sysctl },
 	{ "vm", "the virtual memory's pages and faults (host_statistics64)", command_vm },
 	{ "dmesg", "[LINES] the kernel's latest messages", command_dmesg },
 	{ "uptime", "how long the kernel has run", command_uptime },

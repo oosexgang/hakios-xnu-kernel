@@ -26,84 +26,158 @@ say_signed(int64_t n)
 	}
 }
 
+static void sysctl_one(char *name);
+
+/* NAME is PREFIX, or under it (PREFIX.something); every name is under the empty one */
+static int
+under_prefix(const char *name, const char *prefix, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		if (name[i] != prefix[i]) {
+			return 0;
+		}
+	}
+	return name[n] == '\0' || name[n] == '.' || n == 0;
+}
+
+/*
+ * -a [PREFIX]: every name the kernel has (sysctl 0.2, next: from one leaf to the one after; 0.1, the name of
+ * one), and the value of each under PREFIX; how many there were
+ */
+static void
+sysctl_all(const char *prefix)
+{
+	int next[CTL_MAXNAME + 2] = { 0, 2 }, name_of[CTL_MAXNAME + 2] = { 0, 1 }, oid[CTL_MAXNAME];
+	unsigned depth = 0, all = 0, under = 0;
+	size_t prefix_length = length(prefix);
+	char name[256];
+
+	for (;;) {
+		size_t size = sizeof(oid);
+
+		for (unsigned i = 0; i < depth; i++) {
+			next[2 + i] = oid[i];
+		}
+		if (syscall6(SYS___sysctl, (long)next, depth + 2, (long)oid, (long)&size, 0, 0) < 0 || size == 0) {
+			break;
+		}
+		depth = (unsigned)(size / sizeof(int));
+		for (unsigned i = 0; i < depth; i++) {
+			name_of[2 + i] = oid[i];
+		}
+		size = sizeof(name) - 1;
+		if (syscall6(SYS___sysctl, (long)name_of, depth + 2, (long)name, (long)&size, 0, 0) < 0) {
+			continue;
+		}
+		name[size] = '\0';
+		if (under_prefix(name, "sysctl", 6)) {
+			continue;               /* (sysctl's own: reading sysctl.debug prints the whole tree on the console) */
+		}
+		all++;
+		if (!under_prefix(name, prefix, prefix_length)) {
+			continue;
+		}
+		under++;
+		sysctl_one(name);
+	}
+	say("sysctl: ");
+	say_number(under);
+	say(prefix_length ? " names under " : " names");
+	say(prefix_length ? prefix : "");
+	say(", of the ");
+	say_number(all);
+	say(" the kernel has\n");
+}
+
 void
 command_sysctl(int argc, char **argv)
 {
-	for (int i = 1; i < argc; i++) {
-		int query[2] = { 0, 3 }, mib[CTL_MAXNAME + 2] = { 0, 4 };
-		size_t size = CTL_MAXNAME * sizeof(int);
-		union { uint32_t kind; char bytes[64]; } format;
-		union { char text[512]; int32_t i32[128]; int64_t i64[64]; } value;
-
-		/* NAME=VALUE: the value set first (a string, or a number for a number) */
-		char *setting = argv[i];
-		while (*setting != '\0' && *setting != '=') {
-			setting++;
-		}
-		if (*setting == '=') {
-			*setting++ = '\0';
-		} else {
-			setting = NULL;
-		}
-		say(argv[i]);
-		say(": ");
-		if (syscall6(SYS___sysctl, (long)query, 2, (long)&mib[2], (long)&size, (long)argv[i], (long)length(argv[i])) < 0) {
-			say("(no such name)\n");
-			continue;
-		}
-		unsigned depth = (unsigned)(size / sizeof(int));
-		size = sizeof(format);
-		if (syscall6(SYS___sysctl, (long)mib, depth + 2, (long)&format, (long)&size, 0, 0) < 0) {
-			say("(no format)\n");
-			continue;
-		}
-		const char *fmt = format.bytes + sizeof(uint32_t);
-		int type = (int)(format.kind & CTLTYPE_MASK), is_unsigned = fmt[1] == 'U';
-		if (type == CTLTYPE_NODE) {
-			say("(a node: its children have the values)\n");
-			continue;
-		}
-		if (setting != NULL) {
-			int64_t number = setting[0] == '-' ? -(int64_t)parse_number(setting + 1) : (int64_t)parse_number(setting);
-			int32_t number32 = (int32_t)number;
-			const void *new_value = type == CTLTYPE_STRING ? (const void *)setting : type == CTLTYPE_INT ? (const void *)&number32 : &number;
-			size_t new_size = type == CTLTYPE_STRING ? length(setting) : type == CTLTYPE_INT ? 4 : 8;
-			long error = type == CTLTYPE_STRING || type == CTLTYPE_INT || type == CTLTYPE_QUAD ?
-			    syscall6(SYS___sysctl, (long)&mib[2], depth, 0, 0, (long)new_value, (long)new_size) : -22;
-			if (error < 0) {
-				say("(not taken: ");
-				say_error(error);
-				say(")\n");
-				continue;
-			}
-		}
-		size = sizeof(value) - 1;
-		if (syscall6(SYS___sysctl, (long)&mib[2], depth, (long)&value, (long)&size, 0, 0) < 0) {
-			say("(the kernel will not say)\n");
-			continue;
-		}
-		if (type == CTLTYPE_STRING) {
-			value.text[size] = '\0';
-			say(size > 1 ? value.text : "(empty)");
-		} else if (type == CTLTYPE_INT && size >= 4) {
-			for (size_t n = 0; n < size / 4; n++) {
-				say(n ? " " : "");
-				is_unsigned ? say_number((uint32_t)value.i32[n]) : say_signed(value.i32[n]);
-			}
-		} else if (type == CTLTYPE_QUAD && size >= 8) {
-			for (size_t n = 0; n < size / 8; n++) {
-				say(n ? " " : "");
-				is_unsigned ? say_number((uint64_t)value.i64[n]) : say_signed(value.i64[n]);
-			}
-		} else {
-			say("(");
-			say_number(size);
-			say(" bytes of ");
-			say(fmt);
-			say(")");
-		}
-		say("\n");
+	if (argc > 1 && same(argv[1], "-a")) {
+		sysctl_all(argc > 2 ? argv[2] : "");
+		return;
 	}
+	for (int i = 1; i < argc; i++) {
+		sysctl_one(argv[i]);
+	}
+}
+
+/* NAME[=VALUE] */
+static void
+sysctl_one(char *name)
+{
+	int query[2] = { 0, 3 }, mib[CTL_MAXNAME + 2] = { 0, 4 };
+	size_t size = CTL_MAXNAME * sizeof(int);
+	union { uint32_t kind; char bytes[64]; } format;
+	union { char text[512]; int32_t i32[128]; int64_t i64[64]; } value;
+
+	/* NAME=VALUE: the value set first (a string, or a number for a number) */
+	char *setting = name;
+	while (*setting != '\0' && *setting != '=') {
+		setting++;
+	}
+	if (*setting == '=') {
+		*setting++ = '\0';
+	} else {
+		setting = NULL;
+	}
+	say(name);
+	say(": ");
+	if (syscall6(SYS___sysctl, (long)query, 2, (long)&mib[2], (long)&size, (long)name, (long)length(name)) < 0) {
+		say("(no such name)\n");
+		return;
+	}
+	unsigned depth = (unsigned)(size / sizeof(int));
+	size = sizeof(format);
+	if (syscall6(SYS___sysctl, (long)mib, depth + 2, (long)&format, (long)&size, 0, 0) < 0) {
+		say("(no format)\n");
+		return;
+	}
+	const char *fmt = format.bytes + sizeof(uint32_t);
+	int type = (int)(format.kind & CTLTYPE_MASK), is_unsigned = fmt[1] == 'U';
+	if (type == CTLTYPE_NODE) {
+		say("(a node: its children have the values)\n");
+		return;
+	}
+	if (setting != NULL) {
+		int64_t number = setting[0] == '-' ? -(int64_t)parse_number(setting + 1) : (int64_t)parse_number(setting);
+		int32_t number32 = (int32_t)number;
+		const void *new_value = type == CTLTYPE_STRING ? (const void *)setting : type == CTLTYPE_INT ? (const void *)&number32 : &number;
+		size_t new_size = type == CTLTYPE_STRING ? length(setting) : type == CTLTYPE_INT ? 4 : 8;
+		long error = type == CTLTYPE_STRING || type == CTLTYPE_INT || type == CTLTYPE_QUAD ?
+		    syscall6(SYS___sysctl, (long)&mib[2], depth, 0, 0, (long)new_value, (long)new_size) : -22;
+		if (error < 0) {
+			say("(not taken: ");
+			say_error(error);
+			say(")\n");
+			return;
+		}
+	}
+	size = sizeof(value) - 1;
+	if (syscall6(SYS___sysctl, (long)&mib[2], depth, (long)&value, (long)&size, 0, 0) < 0) {
+		say("(the kernel will not say)\n");
+		return;
+	}
+	if (type == CTLTYPE_STRING) {
+		value.text[size] = '\0';
+		say(size > 1 ? value.text : "(empty)");
+	} else if (type == CTLTYPE_INT && size >= 4) {
+		for (size_t n = 0; n < size / 4; n++) {
+			say(n ? " " : "");
+			is_unsigned ? say_number((uint32_t)value.i32[n]) : say_signed(value.i32[n]);
+		}
+	} else if (type == CTLTYPE_QUAD && size >= 8) {
+		for (size_t n = 0; n < size / 8; n++) {
+			say(n ? " " : "");
+			is_unsigned ? say_number((uint64_t)value.i64[n]) : say_signed(value.i64[n]);
+		}
+	} else {
+		say("(");
+		say_number(size);
+		say(" bytes of ");
+		say(fmt);
+		say(")");
+	}
+	say("\n");
 }
 
 /*
