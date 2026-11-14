@@ -284,6 +284,8 @@ typed=(
 	'locks 4'
 	'mmap /sbin/launchd'
 	'kevent 10'
+	'dgram'
+	'run /sbin/launchd dgram signal'
 	'pipe-size'
 	'poll'
 	'run /sbin/launchd crash null'
@@ -508,6 +510,9 @@ check "a directory's links: two, and one more for each directory in it; one move
 		grep -aqE '^/tmp/notes/tree: drwxr-xr-x 3 links, inode [0-9]+' '$shell' &&
 		grep -aqE '^/tmp/notes/empty: drwxr-xr-x 2 links, inode [0-9]+' '$shell' &&
 		grep -aq '^stat: /tmp/notes/tree/a: error 2 (ENOENT)' '$shell' && ! grep -aq '^rm: /tmp/notes/tree' '$shell'"
+check "datagrams through a socket pair keep their sizes and order; a peek leaves one there; one longer than its room is cut; a send after shutdown is EPIPE, or SIGPIPE ends the sender" \
+	bash -c "grep -aq '^dgram: sent 5, 300, 1; looked at 5, then read 5, 300, 1; 300 into 100: 100 said (its first 100 as sent); shut down, a send EPIPE' '$shell' &&
+		grep -aqE '^run: pid [0-9]+ ended by signal 13' '$shell'"
 check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writable, and with 512 bytes read out it does" \
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "ramfs filled: a write past its room refused (ENOSPC), the file kept to what fitted; the file removed, its room is there again" \
