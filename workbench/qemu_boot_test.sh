@@ -167,6 +167,14 @@ typed=(
 	'chmod 644 /tmp/notes/script'
 	'run /tmp/notes/script'
 	'descriptors /tmp/notes/offsets'
+	'stat /tmp/notes/offsets'
+	'write /tmp/notes/old-name one'
+	'write /tmp/notes/new-name two'
+	'mv /tmp/notes/old-name /tmp/notes/new-name'
+	'cat /tmp/notes/new-name'
+	'stat /tmp/notes/old-name'
+	'mkdir /tmp/notes/up'
+	'mv /tmp/notes/up /tmp/notes/up/down'
 	'fill /tmp/notes/big 3000000'
 	'df'
 	'hash /tmp/notes/big'
@@ -346,6 +354,9 @@ check "a file locked (flock): another process's try refused, without waiting (EA
 	grep -aq "^flock: /tmp/notes/private: held, another's try refused (error 35); let go, another's try taken" "$shell"
 check "bytes of a file locked (fcntl F_SETLK): another process kept off them, read or write, and not off the bytes after; F_GETLK names the holder" \
 	grep -aq "^byte-locks: /tmp/notes/private: 0 to 9 held; another's on 5 to 14 refused, on 10 to 19 taken, F_GETLK names the holder, a read lock refused; let go, taken" "$shell"
+check "a file renamed onto another's name takes its place, and a directory cannot be moved into itself (EINVAL)" \
+	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/new-name' | tail -1 | grep -qx 'one' &&
+		grep -aq '^stat: /tmp/notes/old-name: error 2 (ENOENT)' '$shell' && grep -aq '^mv: .*error 22 (EINVAL)' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
@@ -354,8 +365,8 @@ check "a script run through the program its #! line names, given the script's pa
 	bash -c "cat '$shell' | grep -A2 -x '# run /tmp/notes/script with words' | tail -2 | tr '\n' '|' |
 			grep -qE '^/tmp/notes/script with words\|run: pid [0-9]+ exited with 0\|\$' &&
 		grep -aq '^run: /tmp/notes/script does not start: error 13 (EACCES)' '$shell'"
-check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
-	grep -aq '^descriptors: .*: as BSD has them' "$log"
+check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a file open after its unlink, a non-blocking pipe's EAGAIN" \
+	bash -c "grep -aq '^descriptors: .*a file open after its unlink.*: as BSD has them' '$log' && grep -aq '^stat: /tmp/notes/offsets: error 2 (ENOENT)' '$shell'"
 check "the mounted file systems listed (getfsstat): the root and the second disk APFS, read only, devfs, and ramfs with three megabytes of it used" \
 	bash -c "grep -aqE '^/: apfs from .*, read only' '$shell' && grep -aqE '^/mnt: apfs from /dev/rvblk0, .*, read only' '$shell' &&
 		grep -aq '^/dev: devfs from devfs' '$shell' &&
