@@ -63,6 +63,7 @@ typed=(
 	'clear'
 	'sysctl hw.ncpu hw.board.name kern.ostype'
 	'sysctl kern.maxfiles=20000 kern.procname=shell'
+	'sysctl -a'
 	'ifconfig en0 10.0.2.15'
 	'ping 10.0.2.2 2'
 	'serve 2'
@@ -181,6 +182,8 @@ check "Mach messages go to a port of its own and come back as they went" grep -a
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
 check "a signal ends a process in the background, and wait says so" grep -aqE "^wait: pid [0-9]+ ended by signal 15" "$log"
 check "clear empties the screen as a VT100 does, and the shell's prompt follows" grep -aq $'\x1b\\[H\x1b\\[2J# ' "$log"
+check "every value of the kernel's is read (sysctl -a: over a thousand names), and nothing panics for it" \
+	bash -c "grep -aoE '^sysctl: [0-9]+ names, of the [0-9]+ the kernel has' '$log' | awk '{ exit !(\$2 > 1000 && \$2 == \$6) }'"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
 	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
