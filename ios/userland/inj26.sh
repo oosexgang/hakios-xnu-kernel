@@ -36,6 +36,9 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFound
 # (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
 $DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
+# Camera.app's preview given a size where AVFoundation leaves it none (ios/userland/inject_camera_app.c; a probe for now:
+# root26-ios.sh INJECT_MORE="/redwood/lib/libhakios-camapp.dylib Camera", with boot-arg fb_yuv=1)
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/userland/inject_camera_app.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"

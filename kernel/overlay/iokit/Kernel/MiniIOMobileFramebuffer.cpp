@@ -178,6 +178,14 @@ static TUNABLE(uint32_t, gDoubleBuffer, "fb_double", 0);
  */
 static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
 /*
+ * Boot-arg fb_yuv=1: a swap layer of two planes ('420f', '420v': a video's frames, the camera's preview) is drawn as
+ * well, under the others, and the four-byte layers drawn after it in that swap are laid over it by their alpha
+ * (premultiplied, as CoreAnimation renders them). iOS hands a video to the display as a layer of its own and leaves a
+ * transparent hole for it in the layer of everything else; without, the hole is a black one (Camera.app's preview).
+ * Off by default: every other swap is drawn as before either way.
+ */
+static TUNABLE(uint32_t, gYUV, "fb_yuv", 0);
+/*
  * Boot-arg fb_small=0: the drawers anywhere, as before. By default, on a phone with slower cores
  * (renoir: three Cortex-A55 beside four A78), the presenter and its helpers are bound to those, one
  * each, and there are no more of them than there are such cores. Kernel threads run above every
@@ -479,6 +487,7 @@ public:
 	uint64_t        fDiffPixels;
 	uint32_t        fDiffLeft, fDiffTop, fDiffRight, fDiffBottom;
 	/* the screen recording, if one was asked for */
+	bool            fOver;                  /* fb_yuv: the layer drawn now goes over what is there, by its alpha */
 	uint32_t *      fColumn;                /* drawLayer(): source column for every panel column */
 	uint16_t *      fColumnWeight;          /* ... with fb_filter: how much of the column after it, of 256 */
 	uint32_t *      fBlendRow;              /* ... and a row of the picture blended from two (fBlendRowSize pixels) */
@@ -498,6 +507,7 @@ public:
 	static void presenterMain(void * self, wait_result_t result);
 	void reportFrameTimes(void);
 	void drawLayer(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
+	bool drawYUV(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
 	void drawRows(const struct RowJob * job, int32_t y0, int32_t y1, uint32_t * blendRow);
 	void drawShare(const struct RowJob * job, unsigned share, uint32_t * blendRow);
 	static void helperMain(void * self, wait_result_t result);
@@ -923,6 +933,25 @@ blend(uint32_t a, uint32_t b, uint32_t w)
 	return rb | ga;
 }
 
+/* A premultiplied pixel `s` over `d` (fb_yuv). */
+static inline uint32_t
+over(uint32_t s, uint32_t d)
+{
+	uint32_t a = s >> 24, k = 255 - a;
+
+	if (a == 255) {
+		return s;
+	}
+	if (a == 0 && (s & 0xffffff) == 0) {
+		return d;
+	}
+	uint32_t rb = (s & 0xff00ff) + (((d & 0xff00ff) * k + 0x800080) >> 8 & 0xff00ff);
+	uint32_t ga = (s >> 8 & 0xff00ff) + (((d >> 8 & 0xff00ff) * k + 0x800080) >> 8 & 0xff00ff);
+
+	/* (premultiplied: a channel is at most the alpha, so each sum stays within its byte) */
+	return (rb & 0xff00ff) | (ga & 0xff00ff) << 8;
+}
+
 /*
  * Where the middle of the `i`th of `out` pixels falls among `in` of them, in 256ths of a pixel,
  * kept within the first and the last.
@@ -944,7 +973,7 @@ struct RowJob {
 	const uint8_t * pixels;
 	uint32_t        stride;
 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
-	bool            filter, unscaled;
+	bool            filter, unscaled, over;
 	uint64_t        target;                 /* the panel's readout it is for (scanWaitRows()) */
 };
 
@@ -968,6 +997,14 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 		to = (uint32_t *) ((fBackBuffer ? fBackBuffer : fBase) + (size_t) y * fRowBytes);
 		if (job->unscaled) {
 			/* not scaled at all */
+			if (job->over) {
+				const uint32_t * row = (const uint32_t *) (pixels + (size_t) (sy + y - py0) * stride) + sx;
+
+				for (int32_t x = 0; x < sw; x++) {
+					to[px0 + x] = over(row[x], to[px0 + x]);
+				}
+				continue;
+			}
 			memcpy(to + px0, pixels + (size_t) (sy + y - py0) * stride + (size_t) sx * 4, (size_t) sw * 4);
 			continue;
 		}
@@ -1015,8 +1052,13 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 
 			for (uint32_t i = 0, n = (uint32_t) (cx1 - cx0); i < n; i++) {
 				uint32_t c = column[i], w = weights[i], a = from[c];
+				uint32_t value = w == 0 || a == from[c + 1] ? a : blend(a, from[c + 1], w);
 
-				out[i] = w == 0 || a == from[c + 1] ? a : blend(a, from[c + 1], w);
+				out[i] = job->over ? over(value, out[i]) : value;
+			}
+		} else if (job->over) {
+			for (int32_t x = cx0; x < cx1; x++) {
+				to[x] = over(from[fColumn[x]], to[x]);
 			}
 		} else {
 			for (int32_t x = cx0; x < cx1; x++) {
@@ -1249,6 +1291,75 @@ IOMobileFramebuffer::copyBackBuffer(void)
 
 
 /*
+ * fb_yuv: a rectangle of a two-plane YCbCr surface ('420f' full range, '420v' video range: luma, then interleaved
+ * Cb Cr at half size each way) on the screen, by nearest neighbour, on this thread, BT.601 as CoreVideo's camera
+ * buffers say. Where the layer's numbers do not make sense nothing is drawn. Whether it drew anything.
+ */
+bool
+IOMobileFramebuffer::drawYUV(MiniIOSurface * s, const int32_t * src, const int32_t * dst)
+{
+	const struct minisurf_plane * luma = &s->planes[0], * chroma = &s->planes[1];
+	const uint8_t * base = s->pixels();
+	const bool video = s->info.pixelFormat == FOURCC('4', '2', '0', 'v');
+	int32_t sx = src[0], sy = src[1], sw = src[2], sh = src[3];
+	int32_t dx = dst[0], dy = dst[1], dw = dst[2], dh = dst[3];
+	int32_t px0, py0, px1, py1;
+
+	if (base == NULL || s->info.planeCount != 2 || luma->width == 0 || luma->height == 0 || chroma->width == 0 ||
+	    chroma->height == 0) {
+		return false;
+	}
+	if (sw <= 0 || sh <= 0) {
+		sx = sy = 0;
+		sw = (int32_t) luma->width;
+		sh = (int32_t) luma->height;
+	}
+	if (dw <= 0 || dh <= 0) {
+		dx = dy = 0;
+		dw = (int32_t) fWidth;
+		dh = (int32_t) fHeight;
+	}
+	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > luma->width || (uint32_t) (sy + sh) > luma->height) {
+		return false;
+	}
+	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
+	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
+	px1 = (int32_t) ((int64_t) (dx + dw) * fPanelWidth / fWidth);
+	py1 = (int32_t) ((int64_t) (dy + dh) * fPanelHeight / fHeight);
+	if (px1 <= px0 || py1 <= py0) {
+		return false;
+	}
+	for (int32_t y = py0 > 0 ? py0 : 0; y < py1 && (uint32_t) y < fPanelHeight; y++) {
+		const int32_t row = sy + (int32_t) ((int64_t) (y - py0) * sh / (py1 - py0));
+		const uint8_t * yl = base + luma->offset + (size_t) row * luma->bytesPerRow;
+		const uint8_t * cl = base + chroma->offset + (size_t) (row / 2 < (int32_t) chroma->height ? row / 2 :
+		    (int32_t) chroma->height - 1) * chroma->bytesPerRow;
+		uint32_t * to = (uint32_t *) ((fBackBuffer ? fBackBuffer : fBase) + (size_t) y * fRowBytes);
+
+		for (int32_t x = px0 > 0 ? px0 : 0; x < px1 && (uint32_t) x < fPanelWidth; x++) {
+			const int32_t column = sx + (int32_t) ((int64_t) (x - px0) * sw / (px1 - px0));
+			const int32_t c2 = (column / 2 < (int32_t) chroma->width ? column / 2 : (int32_t) chroma->width - 1) * 2;
+			int32_t yv = yl[column], cb = cl[c2] - 128, cr = cl[c2 + 1] - 128;
+			int32_t r, g, b;
+
+			if (video) {
+				yv = (yv - 16) * 298 >> 8;
+				cb = cb * 255 / 224;
+				cr = cr * 255 / 224;
+			}
+			r = yv + (359 * cr >> 8);
+			g = yv - ((88 * cb + 183 * cr) >> 8);
+			b = yv + (454 * cb >> 8);
+			r = r < 0 ? 0 : r > 255 ? 255 : r;
+			g = g < 0 ? 0 : g > 255 ? 255 : g;
+			b = b < 0 ? 0 : b > 255 ? 255 : b;
+			to[x] = 0xff000000u | (uint32_t) r << 16 | (uint32_t) g << 8 | (uint32_t) b;
+		}
+	}
+	return true;
+}
+
+/*
  * Put a rectangle of a 32-bit surface on the screen. `dst` is in display coordinates; the
  * panel may be of another size, and the layer itself may be scaled: both are done in one
  * step, bilinear (or nearest neighbour: fb_filter=0).
@@ -1335,6 +1446,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	job.filter = filter;
 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
 	job.target = fScanTarget;
+	job.over = fOver;
 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
 		drawRows(&job, py0, py1, fBlendRow);
 		return;
@@ -1602,6 +1714,23 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		    swapWord(swap, SWAP_ID), fSwapsShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)),
 		    swapWord(swap, SWAP_SURFACE(2)), swapWord(swap, SWAP_SURFACE(3)), set, swapWord(swap, SWAP_LAYERS_CLEARED));
 	}
+	fOver = false;
+	/* fb_yuv: the video layers first, under the rest (see gYUV) */
+	for (unsigned layer = 0; gYUV != 0 && layer < SWAP_LAYERS; layer++) {
+		MiniIOSurface * s = surfaces[layer];
+		int32_t src[4], dst[4];
+
+		if (s == NULL || s->info.planeCount != 2) {
+			continue;
+		}
+		memcpy(src, swap + SWAP_SOURCE(layer), sizeof(src));
+		memcpy(dst, swap + SWAP_DEST(layer), sizeof(dst));
+		OSIncrementAtomic((volatile SInt32 *) &s->shownReading);
+		if (drawYUV(s, src, dst)) {
+			fOver = true;
+		}
+		OSDecrementAtomic((volatile SInt32 *) &s->shownReading);
+	}
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
 		int32_t src[4], dst[4];
@@ -1617,7 +1746,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		}
 		if (sid == 0) {
 			/* the bottom layer taken away: nothing is shown, the screen is black */
-			if (layer == 0 && (set & 1) && fGraphics) {
+			if (layer == 0 && (set & 1) && fGraphics && !fOver) {        /* (fb_yuv: not over the video drawn) */
 				/*
 				 * Plain aligned stores, not bzero: the panel's memory is device memory under the phone's
 				 * hypervisor, and bzero's DC ZVA and unaligned stores fault there ("Unaligned kernel data

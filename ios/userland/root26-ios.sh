@@ -140,6 +140,8 @@ cat > "$T/etc/inject.conf" <<'CONF'
 CONF
 # (libhakios-tweaks: the package manager's tweaks, in Settings, where a tweak's own pane belongs; SpringBoard's
 # library opens it by itself. libhakios-app: what killed Sileo, the prefix's application. As on 16.5.)
+# INJECT_MORE="LIBRARY NAME ...": one more line of etc/inject.conf, as it is (a library of $OBJ under /redwood/lib, for a probe)
+[ -z "${INJECT_MORE:-}" ] || echo "$INJECT_MORE" >> $T/etc/inject.conf
 # LAYERS="NAME ...": these applications write down their layer tree on the notification com.hakios.layers
 [ -z "${LAYERS:-}" ] || echo "/redwood/lib/libhakios-layers.dylib $LAYERS" >> $T/etc/inject.conf
 # WAITSTACK_SB=1: libhakios.dylib in SpringBoard as well, for its thread sampler (boot-arg waitstack=sb, inject.c)
