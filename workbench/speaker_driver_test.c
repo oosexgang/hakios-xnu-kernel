@@ -851,6 +851,23 @@ acf_edges(void)
 	CHECK(logged("the configuration file's table (65 entries"), "65 are not: %s", log_text);
 }
 
+/* the first amplifier's Music profile (the file's first block) changed at `at' to `value': refused as no list of
+ * 16-bit registers */
+static void
+not_a_list(unsigned at, uint32_t value)
+{
+	file();
+	amplifiers[0].device = 0;
+	amplifiers[1].device = 1;
+	put32(acf + 0x50 + 6 * 0x30 + at, value);
+	CHECK(!acf_profiles(acf, acf_size) && logged("device 0's Music profile is not a list of 16-bit registers"),
+	    "refused: %s", log_text);
+}
+
+static void eight_bit_numbers(void) { not_a_list(0x20, 1); }
+static void eight_bit_values(void) { not_a_list(0x24, 1); }
+static void a_register_fewer(void) { not_a_list(0x3c, 7); }      /* (its length still that of 8) */
+
 int
 main(int argc, char **argv)
 {
@@ -863,7 +880,8 @@ main(int argc, char **argv)
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
 		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "run_ends", run_ends }, { "not_listed", not_listed },
-		{ "acf_edges", acf_edges },
+		{ "acf_edges", acf_edges }, { "eight_bit_numbers", eight_bit_numbers }, { "eight_bit_values", eight_bit_values },
+		{ "a_register_fewer", a_register_fewer },
 	};
 
 	if (argc < 2) {
