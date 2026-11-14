@@ -227,6 +227,10 @@ typed=(
 	'mount ramfs ramfs /tmp/notes/other'
 	'mv /tmp/notes/vectors /tmp/notes/other/vectors'
 	'ln /tmp/notes/vectors /tmp/notes/other/vectors'
+	'fill /tmp/notes/other/full 900000000'
+	'write /tmp/notes/other/one-more x'
+	'rm /tmp/notes/other/full'
+	'write /tmp/notes/other/one-more x'
 	'mkdir /tmp/notes/tree /tmp/notes/tree/a /tmp/notes/tree/b /tmp/notes/empty'
 	'stat /tmp/notes/tree'
 	'mv /tmp/notes/tree/a /tmp/notes/empty'
@@ -506,6 +510,11 @@ check "a directory's links: two, and one more for each directory in it; one move
 		grep -aq '^stat: /tmp/notes/tree/a: error 2 (ENOENT)' '$shell' && ! grep -aq '^rm: /tmp/notes/tree' '$shell'"
 check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writable, and with 512 bytes read out it does" \
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
+check "ramfs filled: a write past its room refused (ENOSPC), the file kept to what fitted; the file removed, its room is there again" \
+	bash -c "grep -aq '^fill: /tmp/notes/other/full: error 28 (ENOSPC)' '$shell' &&
+		grep -aqE '^fill: /tmp/notes/other/full, [0-9]{9} bytes' '$shell' &&
+		grep -aq '^write: /tmp/notes/other/one-more: error 28 (ENOSPC)' '$shell' &&
+		grep -aq '^write: 2 bytes to /tmp/notes/other/one-more' '$shell'"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
 check "a directory moved to another takes its .. and its link along; the shell's own directory moved, its path follows it" \
