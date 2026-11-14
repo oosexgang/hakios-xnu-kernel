@@ -78,8 +78,8 @@ command_run(int argc, char **argv)
 	if (error != 0) {
 		say("run: ");
 		say(argv[1]);
-		say(" does not start (error ");
-		say_number((uint64_t)-error);
+		say(" does not start (");
+		say_error(error);
 		say(")\n");
 		return;
 	}
@@ -196,8 +196,8 @@ command_spawn(int argc, char **argv)
 	if (error != 0) {
 		say("spawn: ");
 		say(argv[1]);
-		say(" does not start (error ");
-		say_number((uint64_t)-error);
+		say(" does not start (");
+		say_error(error);
 		say(")\n");
 		return;
 	}
@@ -220,8 +220,8 @@ command_kill(int argc, char **argv)
 	}
 	long error = syscall6(SYS_kill, pid, signal, 1, 0, 0, 0);
 	if (error != 0) {
-		say("kill: error ");
-		say_number((uint64_t)-error);
+		say("kill: ");
+		say_error(error);
 		say("\n");
 	}
 }
@@ -683,8 +683,8 @@ command_fork(int argc, char **argv)
 	forked_value = 1;
 	long pid = syscall_fork(&in_child);
 	if (pid < 0) {
-		say("fork: no copy (error ");
-		say_number((uint64_t)-pid);
+		say("fork: no copy (");
+		say_error(pid);
 		say(")\n");
 		return;
 	}

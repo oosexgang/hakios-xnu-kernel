@@ -98,8 +98,8 @@ command_cd(int argc, char **argv)
 	if (error != 0) {
 		say("cd: ");
 		say(argc > 1 ? argv[1] : "/");
-		say(": error ");
-		say_number((uint64_t)-error);
+		say(": ");
+		say_error(error);
 		say("\n");
 	}
 }

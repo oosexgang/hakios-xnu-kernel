@@ -128,8 +128,8 @@ command_mount(int argc, char **argv)
 	/* (a disk read only; ramfs, the kernel's file system in memory, to be written) */
 	long error = syscall6(SYS_mount, (long)argv[1], (long)argv[3], same(argv[1], "ramfs") ? 0 : MNT_RDONLY, (long)argv[2], 0, 0);
 	if (error < 0) {
-		say("mount: not mounted, error ");
-		say_number((uint64_t)-error);
+		say("mount: not mounted, ");
+		say_error(error);
 		say("\n");
 		return;
 	}
@@ -152,8 +152,8 @@ say_failed(const char *what, const char *path, long error)
 	say(what);
 	say(": ");
 	say(path);
-	say(": error ");
-	say_number((uint64_t)-error);
+	say(": ");
+	say_error(error);
 	say("\n");
 }
 
@@ -399,8 +399,8 @@ command_files(int argc, char **argv)
 	say_number(limit);
 	say(" descriptors, the last ");
 	say_number(opened ? (uint64_t)fds[opened - 1] : 0);
-	say("; then error ");
-	say_number((uint64_t)-fd);
+	say("; then ");
+	say_error(fd);
 	say("\n");
 	while (opened > 0) {
 		syscall6(SYS_close, fds[--opened], 0, 0, 0, 0, 0);
@@ -481,8 +481,8 @@ command_mmap(int argc, char **argv)
 	}
 	long mapped = syscall6(SYS_mmap, 0, st.size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (mapped < 0) {
-		say("mmap: not mapped, error ");
-		say_number((uint64_t)-mapped);
+		say("mmap: not mapped, ");
+		say_error(mapped);
 		say("\n");
 		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
 		return;
@@ -531,8 +531,8 @@ command_memory(int argc, char **argv)
 	uint64_t size = (uint64_t)megabytes << 20, before = free_megabytes();
 	long mapped = syscall6(SYS_mmap, 0, (long)size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (mapped < 0) {
-		say("memory: not given, error ");
-		say_number((uint64_t)-mapped);
+		say("memory: not given, ");
+		say_error(mapped);
 		say("\n");
 		return;
 	}

@@ -71,8 +71,8 @@ command_sysctl(int argc, char **argv)
 			long error = type == CTLTYPE_STRING || type == CTLTYPE_INT || type == CTLTYPE_QUAD ?
 			    syscall6(SYS___sysctl, (long)&mib[2], depth, 0, 0, (long)new_value, (long)new_size) : -22;
 			if (error < 0) {
-				say("(not taken: error ");
-				say_number((uint64_t)-error);
+				say("(not taken: ");
+				say_error(error);
 				say(")\n");
 				continue;
 			}

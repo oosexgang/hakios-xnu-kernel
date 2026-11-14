@@ -434,8 +434,8 @@ command_get(int argc, char **argv)
 	syscall6(SYS_setsockopt, sock, SOL_SOCKET, SO_RCVTIMEO, (long)&wait, sizeof(wait), 0);
 	long error = syscall6(SYS_connect, sock, (long)&to, sizeof(to), 0, 0, 0);
 	if (error != 0) {
-		say("get: no connection, error ");
-		say_number((uint64_t)-error);
+		say("get: no connection, ");
+		say_error(error);
 		say("\n");
 		syscall6(SYS_close, sock, 0, 0, 0, 0, 0);
 		return;
