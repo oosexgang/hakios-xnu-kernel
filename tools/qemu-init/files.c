@@ -186,9 +186,13 @@ void
 command_rm(int argc, char **argv)
 {
 	for (int i = 1; i < argc; i++) {
-		long error = syscall6(SYS_unlink, (long)argv[i], 0, 0, 0, 0, 0);
-		if (error != 0) {
-			error = syscall6(SYS_rmdir, (long)argv[i], 0, 0, 0, 0, 0);
+		/* (a directory by rmdir, anything else by unlink: the error said is the one of the call that fits; a file
+		 * that will not go is not said to be "not a directory") */
+		struct stat64_head st;
+		long error = syscall6(SYS_lstat64, (long)argv[i], (long)&st, 0, 0, 0, 0);
+
+		if (error == 0) {
+			error = syscall6((st.mode & 0170000) == 0040000 ? SYS_rmdir : SYS_unlink, (long)argv[i], 0, 0, 0, 0, 0);
 		}
 		if (error != 0) {
 			say_failed("rm", argv[i], error);
