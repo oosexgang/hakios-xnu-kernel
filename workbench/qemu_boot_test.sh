@@ -150,6 +150,19 @@ typed=(
 	'as 501:20 access /tmp/notes/shared /tmp/notes'
 	'as 502:20 access /tmp/notes/shared'
 	'as 503:30 access /tmp/notes/shared'
+	'cp /sbin/launchd /tmp/notes/su'
+	'chmod 6757 /tmp/notes/su'
+	'stat /tmp/notes/su'
+	'as 501:20 run /tmp/notes/su id'
+	'as 501:20 write -a /tmp/notes/su changed'
+	'stat /tmp/notes/su'
+	'as 501:20 run /tmp/notes/su id'
+	'mkdir /tmp/notes/sticky'
+	'chmod 1777 /tmp/notes/sticky'
+	'as 501:20 write /tmp/notes/sticky/mine x'
+	'as 502:20 rm /tmp/notes/sticky/mine'
+	'as 501:20 rm /tmp/notes/sticky/mine'
+	'stat /tmp/notes/sticky /tmp/notes/sticky/mine'
 	'nice -5 nice 10 echo niced'
 	'as 501:20 nice 10 nice 15 echo later'
 	'as 501:20 nice 10 nice 5 echo sooner'
@@ -389,6 +402,14 @@ check "what each may do with a file of mode 640 (access): its owner read and wri
 		grep -aq '^access: /tmp/notes: read yes, write no, run yes$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read yes, write no, run no$' '$shell' &&
 		grep -aq '^access: /tmp/notes/shared: read no, write no, run no$' '$shell'"
+check "a set-user-ID and set-group-ID program runs as its file's owner and group; written by another, it is no longer either (as HFS and UFS have it)" \
+	bash -c "grep -aqE '^/tmp/notes/su: -rwsr-srwx 1 link, inode [0-9]+, [0-9]+ bytes, owner 0:0' '$shell' &&
+		grep -aqE '^/tmp/notes/su: -rwxr-xrwx 1 link' '$shell' &&
+		cat '$shell' | grep -A2 -x '# as 501:20 run /tmp/notes/su id' | sed -n 3p | tr '\n' '|' | grep -q '^id: user 501, effective 0; group 20, effective 0|' &&
+		cat '$shell' | grep -A2 -x '# as 501:20 run /tmp/notes/su id' | grep -q '^id: user 501, effective 501; group 20, effective 20'"
+check "in a sticky directory a file is removed by its owner alone (EACCES to another)" \
+	bash -c "grep -aqE '^/tmp/notes/sticky: drwxrwxrwt' '$shell' && grep -aq '^rm: /tmp/notes/sticky/mine: error 13 (EACCES)' '$shell' &&
+		grep -aq '^stat: /tmp/notes/sticky/mine: error 2 (ENOENT)' '$shell'"
 check "a process's priority set and read back (setpriority, getpriority); a user who is not root may put theirs later, not sooner (EACCES)" \
 	bash -c "cat '$shell' | grep -A3 -x '# nice -5 nice 10 echo niced' | tr '\n' '|' |
 			grep -qx '# nice -5 nice 10 echo niced|nice: priority -5|nice: priority 10|niced|' &&
