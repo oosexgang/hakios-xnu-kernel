@@ -274,10 +274,16 @@ say(const char *format, ...)
 	 * report read by position belongs to whichever process happened to be writing -- the lines are
 	 * interleaved, not grouped. Every line names its own program instead.
 	 */
-	if (strncmp(line, "hakios: store: ", 16) == 0) {
+	if (strncmp(line, "hakios: store: ", 15) == 0) {
 		char named[sizeof(line) + 32];
 
-		n = snprintf(named, sizeof(named), "hakios: %s: %s", who, line + 16);
+		/*
+		 * 15, the length of the prefix -- not 16. Comparing 16 bytes compared the literal's own NUL
+		 * against the first character of the rest, which never matches, so no line was ever renamed:
+		 * every line said "store" and the two processes' reports read as one. That is what made the
+		 * daemon look as if none of its hooks ran.
+		 */
+		n = snprintf(named, sizeof(named), "hakios: %s: %s", who, line + 15);
 		if (n > (int)sizeof(named) - 1) {
 			n = sizeof(named) - 1;
 		}
