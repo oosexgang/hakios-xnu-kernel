@@ -225,7 +225,10 @@ command_stat(int argc, char **argv)
 		say_number(st.ino);
 		say(", ");
 		say_number((uint64_t)st.size);
-		say(" bytes");
+		say(" bytes, owner ");
+		say_number(st.uid);
+		say(":");
+		say_number(st.gid);
 		if ((st.mode & 0170000) == 0120000 &&
 		    (n = syscall6(SYS_readlink, (long)argv[i], (long)target, sizeof(target) - 1, 0, 0, 0)) >= 0) {
 			target[n] = '\0';
@@ -266,6 +269,62 @@ command_mv(int argc, char **argv)
 	error = syscall6(SYS_rename, (long)argv[1], (long)argv[2], 0, 0, 0, 0);
 	if (error != 0) {
 		say_failed("mv", argv[1], error);
+	}
+}
+
+#define SYS_chown               16
+#define SYS_umask               60
+
+/* [MODE]: the mask of permissions a new file is made without (octal), set if given; the one there was is said */
+void
+command_umask(int argc, char **argv)
+{
+	unsigned mode = 0;
+	const char *c = argc > 1 ? argv[1] : "";
+	long was;
+
+	for (; *c >= '0' && *c <= '7'; c++) {
+		mode = mode * 8 + (unsigned)(*c - '0');
+	}
+	if (argc > 2 || *c != '\0' || mode > 0777) {
+		say("umask [MODE] (MODE in octal)\n");
+		return;
+	}
+	was = syscall6(SYS_umask, (long)mode, 0, 0, 0, 0, 0);
+	if (argc == 1) {
+		syscall6(SYS_umask, was, 0, 0, 0, 0, 0);        /* (only looked at) */
+	}
+	say("umask: ");
+	say_number((uint64_t)(was >> 6 & 7));
+	say_number((uint64_t)(was >> 3 & 7));
+	say_number((uint64_t)(was & 7));
+	say(argc > 1 ? " before\n" : "\n");
+}
+
+/* UID:GID PATH...: whose each is */
+void
+command_chown(int argc, char **argv)
+{
+	unsigned uid = 0, gid = 0;
+	const char *c = argc > 1 ? argv[1] : "";
+
+	for (; *c >= '0' && *c <= '9'; c++) {
+		uid = uid * 10 + (unsigned)(*c - '0');
+	}
+	if (*c == ':') {
+		for (c++; *c >= '0' && *c <= '9'; c++) {
+			gid = gid * 10 + (unsigned)(*c - '0');
+		}
+	}
+	if (argc < 3 || *c != '\0') {
+		say("chown UID:GID PATH...\n");
+		return;
+	}
+	for (int i = 2; i < argc; i++) {
+		long error = syscall6(SYS_chown, (long)argv[i], uid, gid, 0, 0, 0);
+		if (error != 0) {
+			say_failed("chown", argv[i], error);
+		}
 	}
 }
 

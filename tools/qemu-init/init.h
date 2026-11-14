@@ -162,6 +162,8 @@ void command_unix_name(int argc, char **argv);
 void command_fill(int argc, char **argv);
 void command_df(int argc, char **argv);
 void command_mask(int argc, char **argv);
+void command_umask(int argc, char **argv);
+void command_chown(int argc, char **argv);
 void command_poll(int argc, char **argv);
 void command_descriptors(int argc, char **argv);
 void command_mmap_write(int argc, char **argv);
