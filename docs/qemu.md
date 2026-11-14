@@ -86,6 +86,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `spawn PROGRAM [ARGUMENTS]`, `kill PID [SIGNAL]`, `wait`, `sleep SECONDS` | A process in the background, a signal to it (`kill !`: the one spawned last), and how it ended; a pause. |
 | `fork [PROGRAM [ARGUMENTS]]` | A copy of this process: the child writes a value of its memory, which the parent's copy must not see; or, given a program, becomes it (execve). |
 | `crash null`, `illegal`, `breakpoint`, `readonly` | In a child (`run /sbin/launchd crash null`): a bad address, an undefined instruction, a breakpoint, a write to a page made read only (mprotect); the shell sees the signal the kernel made of it. |
+| `mask` | In a child (`run /sbin/launchd mask`: nobody may signal the first process): SIGUSR1 blocked (sigprocmask) and sent by a child of its own; it waits, pending (sigpending), and its handler runs once it is let through. |
 | `alarm [COUNT]` | A timer of a tenth of a second (setitimer) whose SIGALRM a handler of its own catches, and sigreturn puts the thread back. |
 | `unix-name PATH` | A socket bound to a name in a file system (AF_UNIX; ramfs keeps a node for it): a forked child connects to it by the name and writes, the shell reads it. |
 | `shm [NAME]` | Memory shared by a name (shm_open, ftruncate, mmap MAP_SHARED) with a forked child, which writes into it; the parent sees the writes, and the name is taken away (shm_unlink). |
@@ -121,7 +122,7 @@ on its shell and checks what comes back:
   input device, the touch where it was made.
 - **Processes.** A process started by the shell runs as its child and is waited for; a forked child's
   memory is its own, and it can become another program; a signal ends a process in the background, and a
-  process's mistakes end it with SIGSEGV, SIGILL and SIGBUS; a timer's signals reach a handler on time; a pipe
+  process's mistakes end it with SIGSEGV, SIGILL and SIGBUS; a timer's signals reach a handler on time, and a signal blocked waits until it is let through; a pipe
   carries what a child writes into it, and so does memory shared by name; a descriptor sent over a socket
   pair reads the file it was, and a socket in ramfs is reached by its name; two threads run on the two processors at once, and four take turns under
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
