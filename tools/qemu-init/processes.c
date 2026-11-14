@@ -1,4 +1,5 @@
-/* tools/qemu-init: processes and their signals: ps, run, spawn, kill, wait, sleep, kevent, crash, alarm, fork */
+/* tools/qemu-init: processes and their signals and descriptors: ps, run, spawn, kill, wait, sleep, kevent, crash,
+ * alarm, fork, mask, fds, cloexec */
 #include "init.h"
 
 #define PROC_INFO_CALL_LISTPIDS 1
@@ -464,4 +465,80 @@ command_fork(int argc, char **argv)
 	}
 	append(line, at, sizeof(line), "\n");
 	say(line);
+}
+
+#define SYS_fcntl               92
+#define F_GETFD                 1
+#define FD_CLOEXEC              1
+#define O_CLOEXEC               0x1000000
+#define F_DUPFD_CLOEXEC         67
+#define SYS_dup2                90
+
+/* N...: whether each descriptor is open in this process (fcntl F_GETFD); what a program started with them has */
+void
+command_fds(int argc, char **argv)
+{
+	char line[160];
+	size_t at = append(line, 0, sizeof(line), "fds:");
+
+	if (argc < 2) {
+		say("fds N...\n");
+		return;
+	}
+	for (int i = 1; i < argc && at < sizeof(line) - 24; i++) {
+		at = append(line, at, sizeof(line), " ");
+		at = append(line, at, sizeof(line), argv[i]);
+		at = append(line, at, sizeof(line),
+		    syscall6(SYS_fcntl, parse_number(argv[i]), F_GETFD, 0, 0, 0, 0) >= 0 ? " open," : " closed,");
+	}
+	append(line, at - 1, sizeof(line), "\n");
+	say(line);
+}
+
+/* FILE: the file opened with O_CLOEXEC (so marked FD_CLOEXEC), and three descriptors made of it and of a plain one:
+ * 10 by dup2 of the plain one, 11 by F_DUPFD_CLOEXEC (marked), 12 by dup2 of the marked one (which leaves the
+ * mark behind); a program started (posix_spawn) has 10 and 12, and not 11, which closed as it started. (Numbers
+ * well up: the program's own first open, of its console, takes the lowest free.) */
+void
+command_cloexec(int argc, char **argv)
+{
+	char *environment[] = { NULL };
+	char *child[] = { "/sbin/launchd", "fds", "10", "11", "12", NULL };
+	int32_t pid = 0, status = 0;
+	long plain, marked, error;
+	int ok;
+
+	if (argc != 2) {
+		say("cloexec FILE\n");
+		return;
+	}
+	plain = syscall6(SYS_open, (long)argv[1], 0, 0, 0, 0, 0);
+	marked = syscall6(SYS_open, (long)argv[1], O_CLOEXEC, 0, 0, 0, 0);
+	if (plain < 0 || marked < 0) {
+		say_failed("cloexec", argv[1], plain < 0 ? plain : marked);
+	} else {
+		ok = syscall6(SYS_fcntl, marked, F_GETFD, 0, 0, 0, 0) == FD_CLOEXEC &&
+		    syscall6(SYS_dup2, plain, 10, 0, 0, 0, 0) == 10 && syscall6(SYS_fcntl, 10, F_GETFD, 0, 0, 0, 0) == 0 &&
+		    syscall6(SYS_fcntl, marked, F_DUPFD_CLOEXEC, 11, 0, 0, 0) == 11 &&
+		    syscall6(SYS_fcntl, 11, F_GETFD, 0, 0, 0, 0) == FD_CLOEXEC &&
+		    syscall6(SYS_dup2, marked, 12, 0, 0, 0, 0) == 12 && syscall6(SYS_fcntl, 12, F_GETFD, 0, 0, 0, 0) == 0;
+		say(ok ? "cloexec: O_CLOEXEC and F_DUPFD_CLOEXEC mark a descriptor FD_CLOEXEC, dup and dup2 do not\n" :
+		    "cloexec: the descriptors are NOT marked as BSD marks them\n");
+		if ((error = syscall6(SYS_posix_spawn, (long)&pid, (long)child[0], 0, (long)child, (long)environment, 0)) != 0) {
+			say("cloexec: no program started: ");
+			say_error(error);
+			say("\n");
+		} else {
+			syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+		}
+	}
+	for (long fd = 10; fd <= 12; fd++) {
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	if (plain >= 0) {
+		syscall6(SYS_close, plain, 0, 0, 0, 0, 0);
+	}
+	if (marked >= 0) {
+		syscall6(SYS_close, marked, 0, 0, 0, 0, 0);
+	}
 }

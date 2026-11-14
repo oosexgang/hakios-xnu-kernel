@@ -361,6 +361,8 @@ static const struct {
 	{ "crash", "KIND this process stopped by a mistake (in a child: run)", command_crash },
 	{ "alarm", "[COUNT] a timer's signals caught by a handler", command_alarm },
 	{ "mask", "SIGUSR1 blocked, sent by a child, pending, then let through (in a child: run)", command_mask },
+	{ "fds", "N... whether each descriptor is open here", command_fds },
+	{ "cloexec", "FILE descriptors of it marked FD_CLOEXEC and not: a program started has only the unmarked", command_cloexec },
 	{ "pipe", "WORDS... the words through a pipe", command_pipe },
 	{ "unix-name", "PATH a socket by name in a file system: a child connects to it", command_unix_name },
 	{ "shm", "[NAME] memory shared by name with a child (shm_open, mmap MAP_SHARED)", command_shm },
