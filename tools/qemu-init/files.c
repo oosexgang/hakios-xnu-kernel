@@ -140,6 +140,7 @@ command_mount(int argc, char **argv)
 #define SYS_rmdir               137
 #define O_CREAT                 0x200
 #define O_TRUNC                 0x400
+#define O_APPEND                8
 
 /* DIR...: new directories */
 void
@@ -157,11 +158,15 @@ command_mkdir(int argc, char **argv)
 void
 command_write(int argc, char **argv)
 {
+	int adding = argc > 1 && same(argv[1], "-a");     /* -a: added to its end (O_APPEND), not written anew */
+
+	argc -= adding;
+	argv += adding;
 	if (argc < 2) {
-		say("write FILE WORDS...\n");
+		say("write [-a] FILE WORDS...\n");
 		return;
 	}
-	long fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0, 0);
+	long fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | (adding ? O_APPEND : O_TRUNC), 0644, 0, 0, 0);
 	if (fd < 0) {
 		say_failed("write", argv[1], fd);
 		return;
@@ -538,7 +543,6 @@ command_fill(int argc, char **argv)
 #define SYS_lseek               199
 #define SYS_fstat64             339
 #define O_RDWR                  2
-#define O_APPEND                8
 #define O_NONBLOCK              4
 #define F_SETFL                 4
 
@@ -673,7 +677,6 @@ command_df(int argc, char **argv)
 
 #define SYS_truncate            200
 #define SYS_utimes              138
-#define O_CREAT                 0x200
 
 /* FILE BYTES: the file cut to BYTES, or grown to it (truncate); what it grew by read back, which is zeros (of a file
  * grown by more than 128 KB, the first and last 64 KB of it) */

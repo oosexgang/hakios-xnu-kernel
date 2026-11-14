@@ -325,7 +325,7 @@ static const struct {
 	{ "mount", "TYPE DEVICE DIR a disk's file system (read only), or ramfs", command_mount },
 	{ "df", "the file systems mounted, their size and room", command_df },
 	{ "mkdir", "DIR... new directories", command_mkdir },
-	{ "write", "FILE WORDS... the words as all of a file", command_write },
+	{ "write", "[-a] FILE WORDS... the words as all of a file; -a: added to its end", command_write },
 	{ "rm", "PATH... files, or empty directories, gone", command_rm },
 	{ "stat", "PATH... kind, permissions, links, inode, size, owner; where a symbolic link points", command_stat },
 	{ "ln", "[-s] TARGET NAME another name for a file; -s a symbolic link", command_ln },
