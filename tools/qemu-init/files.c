@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -238,6 +238,19 @@ command_stat(int argc, char **argv)
 		say_number(st.uid);
 		say(":");
 		say_number(st.gid);
+		uint32_t flags;
+
+		copy_bytes(&flags, st.rest + 12, 4);    /* (st_blocks, st_blksize, then st_flags) */
+		if (flags != 0) {
+			say(", flags 0x");
+			for (int shift = 28; shift >= 0; shift -= 4) {
+				if ((flags >> shift) != 0) {
+					char digit[2] = { "0123456789abcdef"[(flags >> shift) & 0xf], '\0' };
+
+					say(digit);
+				}
+			}
+		}
 		if ((st.mode & 0170000) == 0120000 &&
 		    (n = syscall6(SYS_readlink, (long)argv[i], (long)target, sizeof(target) - 1, 0, 0, 0)) >= 0) {
 			target[n] = '\0';
@@ -817,4 +830,31 @@ command_vectors(int argc, char **argv)
 	at = append(line, at, sizeof(line), read == (long)sizeof(whole) - 1 && bytes_same(back, whole, sizeof(whole) - 1) ?
 	    ", in order\n" : ", NOT as written\n");
 	say(line);
+}
+
+#define SYS_chflags             34
+
+/* FLAGS PATH...: a file's flags (chflags), FLAGS in hexadecimal: 2 UF_IMMUTABLE, 4 UF_APPEND, 0x20000 SF_IMMUTABLE */
+void
+command_chflags(int argc, char **argv)
+{
+	uint32_t flags = 0;
+	const char *c = argc > 1 ? argv[1] : "";
+
+	if (c[0] == '0' && c[1] == 'x') {
+		c += 2;
+	}
+	for (; (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'); c++) {
+		flags = flags * 16 + (uint32_t)(*c <= '9' ? *c - '0' : *c - 'a' + 10);
+	}
+	if (argc < 3 || *c != '\0') {
+		say("chflags FLAGS PATH... (FLAGS in hexadecimal)\n");
+		return;
+	}
+	for (int i = 2; i < argc; i++) {
+		long error = syscall6(SYS_chflags, (long)argv[i], flags, 0, 0, 0, 0);
+		if (error != 0) {
+			say_failed("chflags", argv[i], error);
+		}
+	}
 }
