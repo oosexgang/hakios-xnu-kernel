@@ -131,6 +131,7 @@ typed=(
 	'cat /tmp/notes/y/g'
 	'rm /tmp/notes/y/g /tmp/notes/y /tmp/notes/x'
 	'stat /tmp/notes/x'
+	'descriptors /tmp/notes/offsets'
 	'fill /tmp/notes/big 3000000'
 	'hash /tmp/notes/big'
 	'mmap-write /tmp/notes/big'
@@ -168,6 +169,11 @@ typed=(
 	--qmp "$W/qmp" --after 8 --screen "$W/screen.png" \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 log=$W/serial.log
+# what the shell said, without the kernel's own lines that come every minute whatever is typed (where one fell
+# into a command's answer, a check of the line after the command, or of the lines up to the next prompt, would
+# see it), and without the carriage returns
+shell=$W/shell.log
+tr -d '\r' < "$log" | grep -av '^memory: free \|^net: so far ' | sed 's/^# memory: free .*/# /; s/^# net: so far .*/# /' > "$shell"
 check "the loader takes the kernel and jumps to it" grep -aq "jumping to" "$log"
 check "the kernel starts and says its version" grep -aq "^Darwin Kernel Version" "$log"
 check "it finds the emulator's board" grep -aq "^board: qemu-virt" "$log"
@@ -178,18 +184,18 @@ check "the root is mounted from the RAM disk" grep -aq 'apfs: volume 0 "Root"' "
 check "its first process runs, as pid 1" grep -aq "user space: /sbin/launchd, pid 1" "$log"
 check "... and hears from the kernel what it is" grep -aq "board      qemu-virt" "$log"
 check "its shell reads the console and answers with the kernel's values, typed" \
-	bash -c "tr -d '\\r' < '$log' | grep -qx 'hw.ncpu: 2' && tr -d '\\r' < '$log' | grep -qx 'kern.ostype: Darwin'"
+	bash -c "cat '$shell' | grep -qx 'hw.ncpu: 2' && cat '$shell' | grep -qx 'kern.ostype: Darwin'"
 check "the kernel takes values set: a number, and its own name for the process" \
-	bash -c "tr -d '\\r' < '$log' | grep -qx 'kern.maxfiles: 20000' && tr -d '\\r' < '$log' | grep -qx 'kern.procname: shell'"
-check "en0 takes an address and comes up" bash -c "tr -d '\\r' < '$log' | grep -qx $'\\tinet 10.0.2.15'"
+	bash -c "cat '$shell' | grep -qx 'kern.maxfiles: 20000' && cat '$shell' | grep -qx 'kern.procname: shell'"
+check "en0 takes an address and comes up" bash -c "cat '$shell' | grep -qx $'\\tinet 10.0.2.15'"
 check "QEMU's gateway answers its pings, through the virtio network driver" grep -aq "2 sent, 2 answered" "$log"
 check "its TCP serves a page to this machine, through QEMU's forwarded port" grep -q "^Served by /sbin/launchd" "$W/page"
 check "... and sends this computer 4 MB, every byte as it should be" python3 -c 'import sys
 data = open(sys.argv[1], "rb").read()
 sys.exit(not (len(data) == 4194304 and all(b == i * 7 % 251 for i, b in enumerate(data))))' "$W/sent.bin"
 check "... which it saw asked for" grep -aq "GET /test HTTP" "$log"
-check "it asks this computer for a page over TCP, as a client" bash -c "tr -d '\\r' < '$log' | grep -q '^get: HTTP/1.0 200 OK, 38 bytes of body' &&
-	tr -d '\\r' < '$log' | grep -qx 'a page from the computer QEMU runs on'"
+check "it asks this computer for a page over TCP, as a client" bash -c "cat '$shell' | grep -q '^get: HTTP/1.0 200 OK, 38 bytes of body' &&
+	cat '$shell' | grep -qx 'a page from the computer QEMU runs on'"
 check "... and 4 MB of it arrive whole (the same FNV-1a hash as here)" \
 	grep -aq "^get: HTTP/1.0 200 OK, 4194304 bytes of body in [0-9]* ms, fnv1a $big_hash" "$log"
 check "TCP over the loopback between two of its own processes: a million bytes from a server in the background, every one checked" \
@@ -205,17 +211,17 @@ check "... and a file of 3 MB in its APFS volume, as it was put there" grep -aq 
 check "its sound device plays a tone of 440 Hz, through the virtio sound driver" \
 	bash -c "python3 '$HERE/tone_in_wav.py' '$W/sound.wav' 440 > /dev/null"
 check "a button pressed on the virtio keyboard reaches the input device" \
-	bash -c "tr -d '\\r' < '$log' | grep -qx 'button down home' && tr -d '\\r' < '$log' | grep -qx 'button up home'"
+	bash -c "cat '$shell' | grep -qx 'button down home' && cat '$shell' | grep -qx 'button up home'"
 check "... and a touch on the virtio tablet, where it was made" grep -aq "touch down finger 0 at 3276[0-9],1638[0-9]" "$log"
 check "it starts a process of its own (posix_spawn), which runs as its child" grep -aqE "^ +[0-9]+ +1 +0  launchd" "$log"
 check "... and waits for it to end, as it ended" grep -aqE "^run: pid [0-9]+ exited with 0" "$log"
 # (no wait for a clock that is not there: the first process starts some seconds after the kernel, not 30 more)
-check "the kernel starts its first process within 20 seconds of its own start" bash -c "tr -d '\\r' < '$log' |
+check "the kernel starts its first process within 20 seconds of its own start" bash -c "cat '$shell' |
 	grep -aoE '^\\[ *[0-9]+\\.[0-9]+\\]: load_init_program: attempting to load /sbin/launchd' | tr -d '[]:' | awk '{ exit !(\$1 < 20) }'"
 # (microseconds from the timebase's own frequency: QEMU's 62.5 MHz is no whole number of MHz)
-check "the kernel's timestamps have no more than a second's microseconds" bash -c "tr -d '\\r' < '$log' |
+check "the kernel's timestamps have no more than a second's microseconds" bash -c "cat '$shell' |
 	grep -aoE '^\\[ *[0-9]+\\.[0-9]+\\]' | awk -F. '{ n++; if (length(\$2) != 7) bad++ } END { exit !(n > 0 && bad == 0) }'"
-check "the kernel's message buffer is read (dmesg)" bash -c "tr -d '\\r' < '$log' | sed -n '/^# dmesg/,\$p' | grep -qE '^\\[ *[0-9]+\\.[0-9]+\\]: '"
+check "the kernel's message buffer is read (dmesg)" bash -c "cat '$shell' | sed -n '/^# dmesg/,\$p' | grep -qE '^\\[ *[0-9]+\\.[0-9]+\\]: '"
 check "Mach messages go to a port of its own and come back as they went" grep -aq "^mach: 200 messages to itself through a port" "$log"
 check "it knows the date (QEMU's clock)" grep -aqE "^$(date -u +%Y)-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC" "$log"
 check "a signal ends a process in the background, and wait says so" grep -aqE "^wait: pid [0-9]+ ended by signal 15" "$log"
@@ -225,16 +231,16 @@ check "every value of the kernel's is read (sysctl -a: over a thousand names), a
 # (QEMU's Cortex-A76 has the crypto extensions: AES with PMULL, SHA-1 and SHA-256, which programs choose their
 # code by)
 check "programs are told the processor's crypto extensions (hw.optional.arm.FEAT_AES, _PMULL, _SHA1, _SHA256)" \
-	bash -c "for f in AES PMULL SHA1 SHA256; do tr -d '\\r' < '$log' | grep -qx \"hw.optional.arm.FEAT_\$f: 1\" || exit 1; done"
+	bash -c "for f in AES PMULL SHA1 SHA256; do cat '$shell' | grep -qx \"hw.optional.arm.FEAT_\$f: 1\" || exit 1; done"
 # (twice: the name taken away the first time is made anew the second, O_EXCL)
 check "memory shared by name with a forked child (POSIX shared memory) carries its writes, and its name is taken away" \
 	bash -c "test \$(grep -ac '^shm: /qemu-init.shm: 16 KB shared with a child, its writes seen at both ends' '$log') = 2"
 check "a pipe carries what a child writes into it" grep -aqE "^pipe: 19 bytes from pid [0-9]+: through the kernel" "$log"
 check "a file is written in the kernel's file system in memory (ramfs), read back, and removed" \
-	bash -c "tr -d '\\r' < '$log' | grep -qx 'kept in memory' && tr -d '\\r' < '$log' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
+	bash -c "cat '$shell' | grep -qx 'kept in memory' && cat '$shell' | sed -n '/^# ls \\/tmp\\/notes/,\$p' | grep -c '  \\.\\.\\?\$' | grep -qx 2"
 # (b and d one file, by its inode; c renamed to d, so gone; s a symbolic link to b, read through)
 check "a file has two names (link), one renamed, its mode changed, and a symbolic link to it is read through" \
-	bash -c "tr -d '\\r' < '$log' | awk '
+	bash -c "cat '$shell' | awk '
 		/^\/tmp\/notes\/b: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { b = \$6 }
 		/^\/tmp\/notes\/d: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { d = \$6 }
 		/^\/tmp\/notes\/s: l[-rwx]{9} 1 link, inode [0-9]+, 12 bytes -> \/tmp\/notes\/b\$/ { s = 1 }
@@ -243,7 +249,7 @@ check "a file has two names (link), one renamed, its mode changed, and a symboli
 		cat && NR == cat + 1 && /^six b\$/ { read = 1 }
 		END { exit !(b != \"\" && b == d && s && c && read) }'"
 check "extended attributes are set, replaced, listed and taken away; one taken away twice is not there (ENOATTR)" \
-	bash -c "tr -d '\\r' < '$log' | sed -n '/^# xattr \/tmp\/notes\/b\$/,/^# /p' | grep -v '^#' | tr '\\n' '|' |
+	bash -c "cat '$shell' | sed -n '/^# xattr \/tmp\/notes\/b\$/,/^# /p' | grep -v '^#' | tr '\\n' '|' |
 		grep -qx 'com.example.colour = green|' && grep -aq '^xattr: com.example.size: error 93 (ENOATTR)' '$log'"
 # (128 MB are 8192 pages of 16 KB, each a fault the kernel fills with zeros, give or take a page the program
 # touched before: Mach's counts see them)
@@ -265,15 +271,17 @@ check "ramfs says what BSD says: a directory that is there (EEXIST), one not emp
 	bash -c "grep -aq '^mkdir: /tmp/notes/x: error 17 (EEXIST)' '$log' && grep -aq '^rm: /tmp/notes/x: error 66 (ENOTEMPTY)' '$log' &&
 		grep -aq '^ln: /tmp/notes/z: error 1 (EPERM)' '$log'"
 check "a file moved from one directory to another reads as it was, and the directories once emptied are taken away" \
-	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# cat /tmp/notes/y/g' | grep -qx 'moved across' &&
+	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/y/g' | grep -qx 'moved across' &&
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
+check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
+	grep -aq '^descriptors: .*: as BSD has them' "$log"
 check "three megabytes written into ramfs read back as written, and written through a shared mapping read back so (its page-out)" \
 	bash -c "grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $filled_hash' '$log' &&
 		grep -aq '^mmap-write: /tmp/notes/big, 3000000 bytes turned through the mapping, and read so' '$log' &&
 		grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $turned_hash' '$log'"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
-	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
-		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
+	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
+		cat '$shell' | grep -A1 -x '# cat b' | grep -qx 'six b'"
 # (two threads on two processors take well under the time of one doing it all: they do run side by side)
 check "threads of its own run on both processors at once" bash -c "grep -aoE '^threads: 2 threads on 2 processors did in [0-9]+ ms what one does in [0-9]+ ms' '$log' |
 	awk '{ exit !(\$9 * 10 < \$15 * 8) }'"
@@ -291,11 +299,11 @@ check "memory of its own is given, holds what is written, and is all given back"
 check "a descriptor sent over a socket pair (SCM_RIGHTS) comes out and reads the file it was" \
 	grep -aq '^unix: "sent" and descriptor [0-9]* came through; it reads: This root was made by tools/qemu-root.sh' "$log"
 check "fork copies the process: a write in the child's copy is not the parent's" grep -aqE "^fork: child [0-9]+ saw 2 in its copy, the parent still 1" "$log"
-check "... and the child becomes another program (execve)" bash -c "tr -d '\\r' < '$log' | grep -qx became && grep -aqE '^fork: child [0-9]+ ran it and exited with 0' '$log'"
+check "... and the child becomes another program (execve)" bash -c "cat '$shell' | grep -qx became && grep -aqE '^fork: child [0-9]+ ran it and exited with 0' '$log'"
 check "IOKit's registry answers MIG messages: its root, and the platform expert under it" \
 	bash -c "grep -aq '^+-o Root  <class IORegistryEntry>' '$log' && grep -aq '+-o GenericARMPE  <class GenericARMPE>' '$log'"
 check "the serial number the loader made is the one IOKit gives user space" bash -c "serial=\$(grep -aoE 'identity: serial number [A-Z0-9]+' '$log' | awk '{ print \$4 }') &&
-	[ -n \"\$serial\" ] && tr -d '\\r' < '$log' | grep -qx \"IOPlatformSerialNumber = \\\"\$serial\\\"\""
+	[ -n \"\$serial\" ] && cat '$shell' | grep -qx \"IOPlatformSerialNumber = \\\"\$serial\\\"\""
 check "a picture drawn in user space reaches the screen (IOSurface, the framebuffer's swap)" \
 	bash -c "grep -aq '^draw: a picture of [0-9]* x [0-9]* on the screen' '$log' && python3 '$HERE/screen_shows_draw.py' '$W/screen.png' > /dev/null"
 check "threads take turns under one lock, asleep in the kernel meanwhile (ulock_wait, ulock_wake)" \
