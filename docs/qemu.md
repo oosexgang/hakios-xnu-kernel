@@ -68,7 +68,9 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `xattr FILE [NAME VALUE]`, `xattr -d FILE NAME` | A file's extended attributes listed with their values, one set, one taken away (ramfs keeps them). |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
 | `files [LIMIT]` | The limit on a process's descriptors lowered (setrlimit), files opened until the kernel says no (EMFILE), and all put back. |
+| `fill FILE BYTES` | A file of made-up bytes (byte i is i * 7 mod 251), written in pieces of 16 KB, for `hash` to check against this computer's. |
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
+| `mmap-write FILE` | The file mapped shared and every byte of it turned over through the mapping, then msync'd: reading the file must give the turned bytes (its file system's page-out). |
 | `memory MB` | That much memory of its own (anonymous mmap), a word on every page written and read back; the kernel's free memory before, with it and after. |
 | **The network** (`net.c`) | |
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
@@ -126,7 +128,8 @@ on its shell and checks what comes back:
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
   symbolic link to it is read through; extended attributes are set, replaced, listed and taken away;
   relative paths start from the shell's own directory; a process gets no more descriptors than its
-  limit; a mapped file is what reading it gives; memory of its own holds what is written and is all
+  limit; three megabytes written into ramfs read back as written, and so do bytes written through a
+  shared mapping of it; a mapped file is what reading it gives; memory of its own holds what is written and is all
   given back, each of its pages a fault Mach's counts see; the kernel keeps a process's time, none of
   it while asleep, and filling new pages as the kernel's; values are set through sysctl; the kernel's
   messages are read; the date is this year's.
