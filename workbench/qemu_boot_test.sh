@@ -67,6 +67,8 @@ python3 -c 'import sys; d = bytes(i * 7 % 251 for i in range(3000000)); open(sys
 open(sys.argv[2], "wb").write(bytes(b ^ 0xff for b in d))' "$W/filled.bin" "$W/turned.bin"
 filled_hash=$(fnv1a "$W/filled.bin")
 turned_hash=$(fnv1a "$W/turned.bin")
+head -c 100 "$W/filled.bin" > "$W/cut.bin"
+cut_hash=$(fnv1a "$W/cut.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'clear'
@@ -136,6 +138,14 @@ typed=(
 	'umask 022'
 	'chown 501:20 /tmp/notes/private'
 	'stat /tmp/notes/private'
+	'fill /tmp/notes/cut 10000'
+	'truncate /tmp/notes/cut 100'
+	'hash /tmp/notes/cut'
+	'truncate /tmp/notes/cut 70000'
+	'truncate /etc/motd 3'
+	'touch /tmp/notes/old 1000000000'
+	'touch /tmp/notes/new'
+	'touch /etc/motd 5'
 	'descriptors /tmp/notes/offsets'
 	'fill /tmp/notes/big 3000000'
 	'df'
@@ -288,6 +298,15 @@ check "a file moved from one directory to another reads as it was, and the direc
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
 check "a file made under a mask of 077 is its owner's alone, and is given to another (umask, chown)" \
 	grep -aqE '^/tmp/notes/private: -rw------- 1 link, inode [0-9]+, 2 bytes, owner 501:20' "$shell"
+check "a file cut short keeps its start, and grown again reads as zeros past it, not as what it held (truncate)" \
+	bash -c "grep -aq '^truncate: /tmp/notes/cut: 10000 bytes, now 100\$' '$shell' &&
+		grep -aq '^/tmp/notes/cut: 100 bytes in [0-9]* ms, fnv1a $cut_hash' '$shell' &&
+		grep -aq '^truncate: /tmp/notes/cut: 100 bytes, now 70000; what it grew by reads as zeros' '$shell' &&
+		grep -aq '^truncate: /etc/motd: error 30 (EROFS)' '$shell'"
+check "a file's times set to a second given, and to now (utimes); not on the read-only root" \
+	bash -c "grep -aq '^touch: /tmp/notes/old: accessed 1000000000, modified 1000000000, changed ' '$shell' &&
+		grep -a '^touch: /tmp/notes/new: ' '$shell' | awk '{ exit !(\$4 == \$6 && \$6 > 1700000000) }' &&
+		grep -aq '^touch: /etc/motd: error 30 (EROFS)' '$shell'"
 check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
 	grep -aq '^descriptors: .*: as BSD has them' "$log"
 check "the mounted file systems listed (getfsstat): the root and the second disk APFS, read only, devfs, and ramfs with three megabytes of it used" \
