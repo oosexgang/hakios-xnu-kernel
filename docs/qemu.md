@@ -87,7 +87,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `mmap FILE` | The file mapped, its pages brought in by its file system, and checked against what reading it gives. |
 | `mmap-write FILE` | The file mapped shared and every byte of it turned over through the mapping, then msync'd: reading the file must give the turned bytes (its file system's page-out). |
 | `mmap-private FILE` | The file mapped private and every byte turned over through the mapping: the mapping has the turned bytes (its own copies of the pages), and the file, through a shared mapping and through read(), what it had. |
-| `mmap-coherent FILE` | The file mapped shared and every page of it read through the mapping, then written with pwrite in a page and across two: the mapping has the bytes at once (ramfs brings the cached pages up to date in place). |
+| `mmap-coherent FILE` | The file mapped shared and every page of it read through the mapping, then written with pwrite in a page and across two: the mapping has the bytes at once (ramfs brings the cached pages up to date in place); and what is written through the mapping, read() has at once, no msync between. |
 | `memory MB` | That much memory of its own (anonymous mmap), a word on every page written and read back; the kernel's free memory before, with it and after. |
 | **The network** (`net.c`) | |
 | `ifconfig [NAME ADDRESS]` | The interfaces and their addresses; brings one up with an address. |
