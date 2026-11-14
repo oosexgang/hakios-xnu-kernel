@@ -54,6 +54,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `help`, `echo WORDS...`, `clear` | The commands, by group; words said back; the screen emptied (VT100's, which the kernel's video console takes). |
 | `time COMMAND...` | How long a command took on the clock, and of the processors' time in user space and in the kernel (getrusage). |
 | `as UID:GID COMMAND...` | The command in a child that has become that user and group (setgroups, setgid, setuid): what the kernel lets a user who is not root do, and what it does not (EACCES, EPERM). |
+| `nice N COMMAND...` | The command in a child of that priority (setpriority, getpriority): -20 runs first, 20 last; only root may put a process sooner. |
 | `cd [DIR]`, `pwd` | The directory relative paths start from (chdir), and the kernel's path of it (F_GETPATH, as getcwd() asks it). |
 | **The kernel** (`kernel.c`) | |
 | `about`, `sysctl NAME[=VALUE]...` | The kernel's values, typed as the kernel types them (sysctl 0.3 and 0.4); with `=VALUE`, set first (`kern.hostname` only a platform binary may set). |
