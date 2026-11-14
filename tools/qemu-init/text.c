@@ -192,3 +192,15 @@ fnv1a(uint64_t hash, const void *bytes, long n)
 	}
 	return hash;
 }
+
+/* "WHAT: PATH: error N (ENAME)" */
+void
+say_failed(const char *what, const char *path, long error)
+{
+	say(what);
+	say(": ");
+	say(path);
+	say(": ");
+	say_error(error);
+	say("\n");
+}

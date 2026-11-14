@@ -78,6 +78,17 @@ syscall_pipe(int ends[2])
 	return failed ? -x0 : 0;
 }
 
+/* lstat64 and fstat64 answer with this (the start of Darwin's struct stat64; the rest is room) */
+struct stat64_head {                    /* the start of Darwin's struct stat64, up to st_size */
+	int32_t         dev;
+	uint16_t        mode, nlink;
+	uint64_t        ino;
+	uint32_t        uid, gid, rdev, pad;
+	int64_t         times[8];       /* access, modification, change, birth: seconds and nanoseconds */
+	int64_t         size;
+	char            rest[64];
+};
+
 /* text.c: the console (the descriptor what is said goes to), words and numbers, the time */
 extern int console;
 size_t length(const char *s);
@@ -88,6 +99,7 @@ uint64_t fnv1a(uint64_t hash, const void *bytes, long n);
 void say(const char *s);
 void say_number(uint64_t n);
 void say_error(long error);             /* "error N (ENAME)", of a -errno */
+void say_failed(const char *what, const char *path, long error);       /* "WHAT: PATH: error N (ENAME)" */
 size_t append(char *line, size_t at, size_t size, const char *text);       /* (a line said in one write, */
 size_t append_number(char *line, size_t at, size_t size, uint64_t n);      /*  which the kernel's own lines do not cut) */
 void say_padded(uint64_t n, int width);
