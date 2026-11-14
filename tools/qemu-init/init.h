@@ -171,6 +171,7 @@ void command_access(int argc, char **argv);
 void command_cp(int argc, char **argv);
 void command_fsize(int argc, char **argv);
 void command_opens(int argc, char **argv);
+void command_dir_walk(int argc, char **argv);
 void command_id(int argc, char **argv);
 void command_watch(int argc, char **argv);
 void command_truncate(int argc, char **argv);

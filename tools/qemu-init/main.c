@@ -342,6 +342,7 @@ static const struct {
 	{ "files", "[LIMIT] files opened until the kernel's limit on descriptors says no", command_files },
 	{ "fsize", "FILE BYTES files no larger than BYTES (RLIMIT_FSIZE): writes cut, then refused", command_fsize },
 	{ "opens", "FILE O_EXCL, O_NOFOLLOW, O_DIRECTORY and a directory to write, as BSD has them", command_opens },
+	{ "dir-walk", "DIR COUNT a directory of COUNT files read a little at a time; emptied as it is read", command_dir_walk },
 	{ "descriptors", "FILE lseek, pread, pwrite, dup, dup2, O_APPEND, a non-blocking pipe", command_descriptors },
 	{ "vectors", "FILE three pieces written in one writev, read back in one readv", command_vectors },
 	{ "fill", "FILE BYTES a file of made-up bytes (byte i is i * 7 mod 251)", command_fill },

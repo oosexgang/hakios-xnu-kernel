@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp, fsize, opens */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access, cp, fsize, opens, dir-walk */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -1066,4 +1066,90 @@ command_opens(int argc, char **argv)
 	append(line, at - 1, sizeof(line), all ? ": as BSD has them\n" : ": NOT all as BSD has them\n");
 	say(line);
 	syscall6(SYS_unlink, (long)link, 0, 0, 0, 0, 0);
+}
+
+/* DIR's entries from where `base' is, read in `room' bytes at a time; each name given to `each' (not . or ..) */
+static long
+walk(long fd, int64_t *base, size_t room, void (*each)(const char *dir, const char *name), const char *dir)
+{
+	char buffer[4096];
+	long names = 0, got = syscall6(SYS_getdirentries64, fd, (long)buffer, (long)room, (long)base, 0, 0);
+
+	for (long at = 0; at < got;) {
+		uint16_t reclen = *(uint16_t *)(buffer + at + 16);
+		const char *name = buffer + at + 21;
+
+		if (!(name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))) {
+			names++;
+			if (each != NULL) {
+				each(dir, name);
+			}
+		}
+		at += reclen;
+	}
+	return got <= 0 ? -1 : names;
+}
+
+static void
+remove_one(const char *dir, const char *name)
+{
+	char path[512];
+
+	append(path, append(path, append(path, 0, sizeof(path), dir), sizeof(path), "/"), sizeof(path), name);
+	syscall6(SYS_unlink, (long)path, 0, 0, 0, 0, 0);
+}
+
+/*
+ * DIR COUNT: COUNT files made in DIR (made anew); its entries read 512 bytes at a time, all of them once;
+ * then read again and each batch removed as it comes, as a program that empties a directory does: none is
+ * passed over, and the directory is empty at the end
+ */
+void
+command_dir_walk(int argc, char **argv)
+{
+	unsigned count = argc == 3 ? parse_number(argv[2]) : 0;
+	char path[512], line[200];
+	long fd, n, seen = 0, removed = 0, calls = 0, left;
+	int64_t base = 0;
+	size_t at;
+
+	if (count == 0 || count > 1000 || length(argv[1]) > 400) {
+		say("dir-walk DIR COUNT (1 to 1000)\n");
+		return;
+	}
+	if ((n = syscall6(SYS_mkdir, (long)argv[1], 0755, 0, 0, 0, 0)) != 0) {
+		say_failed("dir-walk", argv[1], n);
+		return;
+	}
+	for (unsigned i = 0; i < count; i++) {
+		at = append(path, 0, sizeof(path), argv[1]);
+		at = append(path, at, sizeof(path), "/entry-");
+		append_number(path, at, sizeof(path), i);
+		if ((fd = syscall6(SYS_open, (long)path, O_WRONLY | O_CREAT, 0644, 0, 0, 0)) >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+	}
+	fd = syscall6(SYS_open, (long)argv[1], O_RDONLY | O_DIRECTORY, 0, 0, 0, 0);
+	while ((n = walk(fd, &base, 512, NULL, NULL)) >= 0) {
+		seen += n;
+		calls++;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	fd = syscall6(SYS_open, (long)argv[1], O_RDONLY | O_DIRECTORY, 0, 0, 0, 0);
+	base = 0;
+	while ((n = walk(fd, &base, 512, remove_one, argv[1])) >= 0) {
+		removed += n;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	left = syscall6(SYS_rmdir, (long)argv[1], 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "dir-walk: ");
+	at = append_number(line, at, sizeof(line), count);
+	at = append(line, at, sizeof(line), " made, ");
+	at = append_number(line, at, sizeof(line), (uint64_t)seen);
+	at = append(line, at, sizeof(line), " read in ");
+	at = append_number(line, at, sizeof(line), (uint64_t)calls);
+	at = append(line, at, sizeof(line), " reads; removed as read: ");
+	at = append_number(line, at, sizeof(line), (uint64_t)removed);
+	at = append(line, at, sizeof(line), left == 0 ? ", the directory then empty\n" : ", the directory NOT empty\n");
+	say(line);
 }
