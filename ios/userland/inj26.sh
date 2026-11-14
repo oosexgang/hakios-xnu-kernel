@@ -36,6 +36,9 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFound
 # (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
 $DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
+# the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
+# program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/userland/inject_statusbar.c"
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
