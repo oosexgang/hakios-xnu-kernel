@@ -163,7 +163,8 @@ on its shell and checks what comes back:
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
   link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
-  refuses (a directory that is there, one not empty, a hard link to one); paths fail as BSD's do
+  refuses (a directory that is there, one not empty, a hard link to one), and renames as POSIX has it (two
+  names of one file onto each other, a directory onto a file or onto one not empty); paths fail as BSD's do
   (symbolic links that lead to each other, a file taken for a directory, a mount point removed); a file's
   flags keep it from being changed, or let it only be added to; extended attributes are set,
   replaced, listed and taken away; relative paths start from the shell's own directory; a file made under
@@ -173,7 +174,9 @@ on its shell and checks what comes back:
   (RLIMIT_FSIZE); ramfs filled refuses more, and has its room back once a file goes; a directory of hundreds
   of files is read a little at a time, and emptied as it is read; a file changed is seen through kqueue;
   a file moves to no other file system; three megabytes written into ramfs read back as
-  written, and so do bytes written through a shared mapping of it; a mapped file is what reading it gives;
+  written, and so do bytes written through a shared mapping of it, while a private mapping's writes stay its
+  own; a file written while mapped is seen through the mapping at once, and what is written through the
+  mapping is read at once; a mapped file is what reading it gives;
   memory of its own holds what is written and is all given back, each of its pages a fault Mach's counts
   see; the kernel keeps a process's time, none of it while asleep, and filling new pages as the kernel's;
   values are set through sysctl; the kernel's random bytes are as even as random bytes are; the kernel's messages are read; the date is this year's.
