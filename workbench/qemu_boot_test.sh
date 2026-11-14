@@ -133,6 +133,7 @@ typed=(
 	'stat /tmp/notes/x'
 	'descriptors /tmp/notes/offsets'
 	'fill /tmp/notes/big 3000000'
+	'df'
 	'hash /tmp/notes/big'
 	'mmap-write /tmp/notes/big'
 	'hash /tmp/notes/big'
@@ -275,6 +276,10 @@ check "a file moved from one directory to another reads as it was, and the direc
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
 check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
 	grep -aq '^descriptors: .*: as BSD has them' "$log"
+check "the mounted file systems listed (getfsstat): the root and the second disk APFS, read only, devfs, and ramfs with three megabytes of it used" \
+	bash -c "grep -aqE '^/: apfs from .*, read only' '$shell' && grep -aqE '^/mnt: apfs from /dev/rvblk0, .*, read only' '$shell' &&
+		grep -aq '^/dev: devfs from devfs' '$shell' &&
+		grep -aoE '^/tmp: ramfs from ramfs, [0-9]+ KB, [0-9]+ KB free' '$shell' | tail -1 | awk '{ exit !(\$5 - \$7 >= 2900) }'"
 check "three megabytes written into ramfs read back as written, and written through a shared mapping read back so (its page-out)" \
 	bash -c "grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $filled_hash' '$log' &&
 		grep -aq '^mmap-write: /tmp/notes/big, 3000000 bytes turned through the mapping, and read so' '$log' &&
