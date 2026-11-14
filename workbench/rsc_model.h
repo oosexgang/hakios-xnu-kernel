@@ -22,6 +22,7 @@ static struct {
 	/* what was sent: each trigger's commands */
 	struct { uint32_t address, data, message; } sent[8];
 	unsigned sends, triggers, writes, elsewhere;
+	uint32_t wait_at_trigger;       /* which commands' answers were to be waited for, when the last was sent */
 	unsigned changed_while_sent;    /* a command or which are enabled, written while the trigger was set */
 } rsc;
 
@@ -76,6 +77,7 @@ rsc_model_wr(vm_offset_t address, uint32_t value)
 		if (!was && (value & 1u << 24) && (value & 1u << 16)) {
 			/* triggered: every enabled command goes to RPMh */
 			rsc.triggers++;
+			rsc.wait_at_trigger = rsc.wait;
 			for (unsigned c = 0; c < COMMANDS; c++) {
 				if ((rsc.enabled & 1u << c) && rsc.sends < 8) {
 					rsc.sent[rsc.sends].address = rsc.address[c];
