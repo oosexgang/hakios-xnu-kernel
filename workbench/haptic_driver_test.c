@@ -439,6 +439,32 @@ an_effect_played(void)
 	CHECK(register_written[0x07], "at the gain set");
 }
 
+/* haptic_effect=10: the last of the short ones is played; 11 is not one of them, and waveform 1 is played instead */
+static void
+effect_played(const char *boot, unsigned played)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(12, 40);
+	boot_args = boot;
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(device.reg[0x0a] == played, "waveform %u played (%u)", played, device.reg[0x0a]);
+}
+
+static void
+the_last_short_effect(void)
+{
+	effect_played("haptic=4 haptic_effect=10", 10);
+	CHECK(logged("haptic: waveform 10 is played once"), "said: %s", log_text);
+}
+
+static void
+not_a_short_effect(void)
+{
+	effect_played("haptic=4 haptic_effect=11", 1);
+	CHECK(logged("haptic: waveform 1 is played once") && !logged("waveform 11"), "said: %s", log_text);
+}
+
 /* what Darwin plays on its actuator, `ms' of it at that level, written in 5 ms pieces as the audio server writes */
 static void
 darwin_plays(int16_t level, unsigned ms)
@@ -508,6 +534,7 @@ main(int argc, char **argv)
 		{ "write_does_not_stick", write_does_not_stick }, { "fault_reported", fault_reported }, { "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
 		{ "waveforms_loaded", waveforms_loaded }, { "waveforms_do_not_add_up", waveforms_do_not_add_up },
 		{ "ram_reads_back_wrong", ram_reads_back_wrong }, { "an_effect_played", an_effect_played },
+		{ "the_last_short_effect", the_last_short_effect }, { "not_a_short_effect", not_a_short_effect },
 		{ "a_tap_for_darwin", a_tap_for_darwin }, { "a_vibration_for_darwin", a_vibration_for_darwin },
 	};
 
