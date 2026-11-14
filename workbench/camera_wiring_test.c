@@ -6,6 +6,8 @@
  * phone's cameras that is, field for field, the table the driver used to carry; and a board that names a
  * chip or a clock the driver does not know, or no sensor, is refused with the reason; and the clocks' rates
  * and dividers the driver works out of the SoC file's PLL configurations are the ones it had written in.
+ * Besides: the PM8008i's registers a write may reach (its chip enable, the sensor's own LDOs' set point, mode
+ * and enable, nothing else), and a sensor's table (RWCTAB02) taken only when it is whole.
  *
  *   camera_wiring_test SCENARIO
  */

@@ -143,7 +143,7 @@ says what each test covers and what it leaves out.
 | `board/audio.c` | `audio_device_test.c` | (none: a program's writes and volume in, a sink and the recording's memory out) |
 | `board/sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
 | `board/apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
-| `board/camera.c` (its sensors, its PMIC GPIO) | `camera_wiring_test.c` | the PMIC arbiter with the PM8008i's reset GPIO behind it (`spmi_model.h`); otherwise only where it takes its sensors from |
+| `board/camera.c` (its sensors, its PMIC GPIO, the PM8008i's writes, its tables) | `camera_wiring_test.c` | the PMIC arbiter with the PM8008i's reset GPIO behind it (`spmi_model.h`); a sensor's table as the small image would hold it; otherwise where it takes its sensors from |
 | `board/sound.c` (its pins, the SMMU, the stream's events) | `sound_driver_test.c` | the pin controller's registers, with pins that toggle; the apps SMMU's, with what the boot chain set up |
 | `board/mic.c` (its blocks, pins, DSP, SoundWire, codec) | `mic_driver_test.c` | registers that keep what is written; the DSP as a script of answers; the TX SoundWire master's link and command FIFO, with the codec's registers behind it |
 | `board/input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
