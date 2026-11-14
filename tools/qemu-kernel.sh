@@ -140,11 +140,13 @@ import socket, sys, threading, time
 console, typed, log = sys.argv[1:4]
 # (at a line's start, or after the screen was cleared: clear's ESC [ H ESC [ 2 J)
 prompts = lambda: (lambda text: text.count(b'\n# ') + text.count(b'\x1b[2J# '))(open(log, 'rb').read())
-def wait_for(count):
+def wait_for(count, line=''):
     for _ in range(1800):
         if prompts() >= count:
             return
         time.sleep(0.1)
+    # (a prompt not at a line's start is not seen: every line after then waits its three minutes)
+    sys.stderr.write('qemu-kernel: no prompt came back in 3 minutes after: %s\n' % line.strip())
 s = socket.socket(socket.AF_UNIX)
 s.connect(console)
 # what the port says comes to this socket too: it is read and let go (QEMU's log has it), or the socket
@@ -159,11 +161,24 @@ threading.Thread(target=drain, daemon=True).start()
 wait_for(1)                                     # (the first prompt, which the --until text may come before)
 done = prompts()
 for text in typed.replace('\\n', '\n').splitlines(keepends=True):
-    for c in text.encode():
-        s.sendall(bytes([c]))
-        time.sleep(0.05)
+    # a line whose keys the kernel lost while it wrote a line of its own: nothing of it echoed by the console's
+    # tty and no prompt after a while -- killed (Ctrl-U, the tty's kill character) and typed again
+    for attempt in range(3):
+        start = len(open(log, 'rb').read())
+        for c in text.encode():
+            s.sendall(bytes([c]))
+            time.sleep(0.05)
+        for _ in range(150):
+            if prompts() > done:
+                break
+            time.sleep(0.1)
+        echoed = text.strip().encode()[:3] in open(log, 'rb').read()[start:]
+        if prompts() > done or echoed or not text.strip():
+            break
+        s.sendall(b'\x15')
+        time.sleep(0.5)
     done += 1
-    wait_for(done)
+    wait_for(done, text)
 time.sleep(0.5)
 PY
 	[ -z "$then_pid" ] || wait "$then_pid"
