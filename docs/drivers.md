@@ -148,11 +148,14 @@ says what each test covers and what it leaves out.
 | `board/mic.c` (its blocks, pins, DSP, SoundWire, codec) | `mic_driver_test.c` | registers that keep what is written; the DSP as a script of answers; the TX SoundWire master's link and command FIFO, with the codec's registers behind it |
 | `board/input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
 | `board/sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
-| `board/goodix.c`, `board/fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
+| `board/goodix.c`, `board/fts.c` (their wiring) | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
+| `board/goodix.c`, `board/fts.c` (their reports), `board/fts_protocol.h` | `touch_reports_test.c`, `touch_fts_reports_test.c` | (none: a controller's reports in, touches out) |
 | `board/geni_spi.h` (the touch drivers' SPI) | `geni_spi_test.c` | the serial engine in its FIFO mode, with a device that answers each byte, and that can say an error, stay busy or take no cancel |
 
 The two touch drivers, the camera's, the sound's and the microphones' are compiled into host programs too, but
-nothing of their parts is modelled: their tests cover the wiring only. The Wi-Fi, DSP, GPU and storage drivers have no such test: they
+not all of their parts are modelled: the touch drivers' tests cover their wiring and what they make of a
+controller's reports, not the talk with the controller; the others' cover their wiring, and the sound's and the
+microphones' the rings Darwin writes and reads. The Wi-Fi, DSP, GPU and storage drivers have no such test: they
 are checked for syntax, types and the formats of what they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one
