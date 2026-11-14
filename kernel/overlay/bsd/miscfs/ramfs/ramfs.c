@@ -63,6 +63,7 @@ struct ramfs_dirent {
 	struct ramfs_node *rd_node;
 	char              *rd_name;             /* rd_namelen bytes and a terminator */
 	uint32_t           rd_namelen;
+	uint64_t           rd_cookie;           /* where readdir finds it: the directory's count of entries made */
 };
 
 /* An extended attribute: Darwin keeps container metadata, ACLs and much else in them. */
@@ -92,8 +93,9 @@ struct ramfs_node {
 
 	/* directory */
 	struct ramfs_node  *rn_parent;          /* NULL once the directory has been removed */
-	TAILQ_HEAD(, ramfs_dirent) rn_entries;
+	TAILQ_HEAD(, ramfs_dirent) rn_entries;  /* in the order they were made: their cookies rising */
 	uint32_t            rn_nentries;
+	uint64_t            rn_cookies;         /* entries ever made in it; the next one's cookie is this and 2 */
 
 	/* regular file */
 	void              **rn_pages;           /* rn_nslots slots; NULL is a hole that reads as zeros */
@@ -443,6 +445,7 @@ static void
 ramfs_dir_add(struct ramfs_node *dir, struct ramfs_dirent *de, struct ramfs_node *node)
 {
 	de->rd_node = node;
+	de->rd_cookie = 2 + dir->rn_cookies++;  /* (0 and 1 are . and ..) */
 	TAILQ_INSERT_TAIL(&dir->rn_entries, de, rd_link);
 	dir->rn_nentries++;
 	ramfs_touch(dir, true);
@@ -1423,7 +1426,7 @@ ramfs_readdir(struct vnop_readdir_args *ap)
 	struct ramfs_node *dir = RAMFS_NODE(vp);
 	struct ramfs_mount *rm = dir->rn_mount;
 	struct ramfs_dirent *de;
-	off_t start = uio_offset(uio), pos = 0;
+	off_t start = uio_offset(uio), pos = 0;     /* (positions are cookies: . 0, .. 1, an entry its own) */
 	size_t room = (size_t)MIN((user_ssize_t)PAGE_SIZE, uio_resid(uio));
 	size_t used = 0;
 	uint32_t entry = 0;
@@ -1441,6 +1444,11 @@ ramfs_readdir(struct vnop_readdir_args *ap)
 	buf = kalloc_data(PAGE_SIZE, Z_WAITOK | Z_NOFAIL);
 
 	lck_mtx_lock(&rm->rm_lock);
+	/*
+	 * A position is where an entry stays for as long as it is there: entries removed before it do not move it.
+	 * A byte count from the first entry would: a program that removes what it has read, reading on, would pass
+	 * over as many entries as it removed.
+	 */
 	de = TAILQ_FIRST(&dir->rn_entries);
 	for (;; entry++) {
 		struct dirent d;
@@ -1466,19 +1474,24 @@ ramfs_readdir(struct vnop_readdir_args *ap)
 			d.d_type = (uint8_t)IFTODT(VTTOIF(de->rd_node->rn_type));
 			d.d_namlen = (uint8_t)de->rd_namelen;
 			name = de->rd_name;
+		}
+		pos = entry < 2 ? (off_t)entry : (off_t)de->rd_cookie;
+		if (entry >= 2) {
 			de = TAILQ_NEXT(de, rd_link);
 		}
 		d.d_reclen = (uint16_t)RAMFS_DIRSIZ(d.d_namlen);
 		if (pos >= start) {
 			if (used + d.d_reclen > room) {
-				break;
+				break;                  /* (the next read begins with this one: pos) */
 			}
 			memcpy(d.d_name, name, d.d_namlen);
 			memcpy(buf + used, &d, d.d_reclen);
 			used += d.d_reclen;
 			count++;
 		}
-		pos += d.d_reclen;
+	}
+	if (eof) {
+		pos = (off_t)(2 + dir->rn_cookies);     /* (past every entry there is, and any made later is after it) */
 	}
 	lck_mtx_unlock(&rm->rm_lock);
 
