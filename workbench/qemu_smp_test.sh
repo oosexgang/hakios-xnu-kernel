@@ -2,8 +2,9 @@
 # The kernel on four processors in QEMU: all four started through PSCI and running, the kernel saying so to
 # programs; four threads of a program running side by side (on a computer with four processors of its own,
 # taking well under the time of one doing it all); eight threads taking turns under one lock without losing
-# a count; a lock on a file's bytes, a named pipe and a blocked signal between processes; and nothing
-# panicking. Then on one processor, where nothing is sent to another: threads and the lock all the same.
+# a count; a lock on a file's bytes, a named pipe and a blocked signal between processes; a directory
+# emptied as it is read, a file watched and one mapped private; and nothing panicking. Then on one processor,
+# where nothing is sent to another: threads and the lock all the same.
 #
 #   workbench/qemu_smp_test.sh KERNEL
 #
@@ -20,7 +21,7 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 XNU_CLANG_DIR=$L "$HERE/../tools/qemu-root.sh" "$W/root.img" > /dev/null || { echo "FAIL the root does not build"; exit 1; }
 "$HERE/../tools/qemu-kernel.sh" --cpus 4 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
-	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\nmount ramfs ramfs /tmp\nwrite /tmp/l x\nbyte-locks /tmp/l\nfifo /tmp/f\nmask\nrun /sbin/launchd mask\n' \
+	--until 'a shell on the console|panic\(' --seconds 600 --type 'sysctl hw.ncpu hw.activecpu\nthreads 4\nlocks 8\nmount ramfs ramfs /tmp\nwrite /tmp/l x\nbyte-locks /tmp/l\nfifo /tmp/f\nmask\nrun /sbin/launchd mask\ndir-walk /tmp/many 500\nwatch /tmp/watched\nfill /tmp/big 1000000\nmmap-private /tmp/big\n' \
 	--log "$W/serial.log" "$KERNEL" > "$W/out" 2>&1
 tr -d '\r' < "$W/serial.log" > "$W/log"
 
@@ -52,6 +53,10 @@ check "a lock on a file's bytes held against a child, and a named pipe between t
 	grep -aq '^fifo: /tmp/f: read \"written by a child\"' '$W/log'"
 check "on four processors, a signal from a child waits while blocked, and is caught once let through" \
 	grep -aq '^mask: SIGUSR1 from pid [0-9]*: held while blocked (pending, not caught), caught once let through' "$W/log"
+check "on four processors, a directory emptied as it is read, a file watched through kqueue, a file mapped private" bash -c "
+	grep -aq '^dir-walk: 500 made, 500 read in [0-9]* reads; removed as read: 500, the directory then empty' '$W/log' &&
+	grep -aq '^watch: written: write extend; chmod: attrib; linked: link; renamed: rename; removed: delete link' '$W/log' &&
+	grep -aq '^mmap-private: /tmp/big: the private mapping turned, the file as it was' '$W/log'"
 check "no panic" bash -c "! grep -aq 'panic(' '$W/log'"
 
 "$HERE/../tools/qemu-kernel.sh" --cpus 1 --ramdisk "$W/root.img" --boot-args 'rd=md0' \
