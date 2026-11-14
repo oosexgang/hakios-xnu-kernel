@@ -158,4 +158,4 @@ tests are built with from these and the repository's own boards.
   result); the rest are scenarios to write. A change that leaves a scenario waiting forever is caught when
   its time runs out, two minutes by default: `MUTATE_SECONDS=20 workbench/mutants.py ...` makes a run over a
   driver whose scenarios wait take minutes and not hours.
-- Add it to `workbench/run.sh`.
+- Add it to `workbench/run.sh` (`make lint` says so of a test that no script of `workbench/` runs).
