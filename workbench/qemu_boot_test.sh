@@ -203,6 +203,7 @@ typed=(
 	'fsize /tmp/notes/limited 1000'
 	'opens /tmp/notes/opened'
 	'watch /tmp/notes/watched'
+	'dir-walk /tmp/notes/many 300'
 	'stat /tmp/notes/limited'
 	'ln -s /tmp/notes/loop-b /tmp/notes/loop-a'
 	'ln -s /tmp/notes/loop-a /tmp/notes/loop-b'
@@ -499,6 +500,8 @@ check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writabl
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
+check "a directory of 300 files read 512 bytes at a time gives each once; emptied as it is read, none is passed over" \
+	grep -aq '^dir-walk: 300 made, 300 read in [0-9]* reads; removed as read: 300, the directory then empty' "$shell"
 check "a file in ramfs watched through kqueue (EVFILT_VNODE): written, its mode changed, linked, renamed and removed, each said" \
 	grep -aq '^watch: written: write extend; chmod: attrib; linked: link; renamed: rename; removed: delete link$' "$shell"
 check "open as BSD has it: O_EXCL of a file there (EEXIST), O_NOFOLLOW of a link (ELOOP), O_DIRECTORY of a file (ENOTDIR), a directory to write (EISDIR)" \
