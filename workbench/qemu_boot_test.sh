@@ -204,6 +204,13 @@ typed=(
 	'opens /tmp/notes/opened'
 	'watch /tmp/notes/watched'
 	'dir-walk /tmp/notes/many 300'
+	'mkdir /tmp/notes/from /tmp/notes/to /tmp/notes/from/moving'
+	'cd /tmp/notes/from/moving'
+	'mv /tmp/notes/from/moving /tmp/notes/to/moved'
+	'pwd'
+	'stat .. /tmp/notes/from /tmp/notes/to'
+	'cd /'
+	'rm /tmp/notes/to/moved /tmp/notes/to /tmp/notes/from'
 	'stat /tmp/notes/limited'
 	'ln -s /tmp/notes/loop-b /tmp/notes/loop-a'
 	'ln -s /tmp/notes/loop-a /tmp/notes/loop-b'
@@ -501,6 +508,12 @@ check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writabl
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
+check "a directory moved to another takes its .. and its link along; the shell's own directory moved, its path follows it" \
+	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes/to/moved' &&
+		grep -aqE '^/tmp/notes/from: drwxr-xr-x 2 links, inode ([0-9]+)' '$shell' &&
+		grep -aqE '^/tmp/notes/to: drwxr-xr-x 3 links' '$shell' &&
+		[ \"\$(grep -a '^\\.\\.: drwx' '$shell' | awk '{ print \$6 }')\" = \"\$(grep -a '^/tmp/notes/to: drwx' '$shell' | awk '{ print \$6 }')\" ] &&
+		! grep -aq '^rm: /tmp/notes/to\|^rm: /tmp/notes/from' '$shell'"
 check "a directory of 300 files read 512 bytes at a time gives each once; emptied as it is read, none is passed over" \
 	grep -aq '^dir-walk: 300 made, 300 read in [0-9]* reads; removed as read: 300, the directory then empty' "$shell"
 check "a file in ramfs watched through kqueue (EVFILT_VNODE): written, its mode changed, linked, renamed and removed, each said" \
