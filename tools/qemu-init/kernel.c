@@ -1,4 +1,4 @@
-/* tools/qemu-init: the kernel's values, messages and time: sysctl, vm, uptime, dmesg, date */
+/* tools/qemu-init: the kernel's values, messages and time: sysctl, vm, uptime, dmesg, date, random */
 #include "init.h"
 
 /*
@@ -348,4 +348,68 @@ command_date(int argc, char **argv)
 		say_number((uint64_t)parts[i]);
 		say(after[i]);
 	}
+}
+
+#define SYS_getentropy          500
+
+/* [KB]: the kernel's random bytes: two of getentropy's differ, and it takes no more than 256 at once (the system
+ * call says EINVAL; libc's getentropy() says EIO), and KB of /dev/random has every byte value in it,
+ * each about as often as the others (none under half or over twice its share) */
+void
+command_random(int argc, char **argv)
+{
+	static uint8_t bytes[65536];
+	uint8_t a[32], b[32];
+	static uint32_t counts[256];
+	unsigned kb = argc > 1 ? parse_number(argv[1]) : 64;
+	uint32_t fewest = UINT32_MAX, most = 0, share;
+	long fd, got = 0, n;
+	size_t at;
+	char line[200];
+
+	/* (fewer than 16 KB, too few of each value for so narrow a judgement) */
+	if (argc > 2 || kb < 16 || kb > sizeof(bytes) / 1024) {
+		say("random [KB] (16 to 64)\n");
+		return;
+	}
+	at = append(line, 0, sizeof(line), "random: getentropy ");
+	if ((n = syscall6(SYS_getentropy, (long)a, sizeof(a), 0, 0, 0, 0)) != 0 ||
+	    (n = syscall6(SYS_getentropy, (long)b, sizeof(b), 0, 0, 0, 0)) != 0) {
+		say("random: getentropy: ");
+		say_error(n);
+		say("\n");
+		return;
+	}
+	at = append(line, at, sizeof(line), bytes_same(a, b, sizeof(a)) ? "gave the same twice" : "gave two that differ");
+	at = append(line, at, sizeof(line), syscall6(SYS_getentropy, (long)bytes, 257, 0, 0, 0, 0) == -22 ? " (and EINVAL past 256)" :
+	    " (and NOT EINVAL past 256)");
+	if ((fd = syscall6(SYS_open, (long)"/dev/random", 0, 0, 0, 0, 0)) < 0) {
+		say_failed("random", "/dev/random", fd);
+		return;
+	}
+	while ((size_t)got < kb * 1024 && (n = syscall6(SYS_read, fd, (long)(bytes + got), (long)(kb * 1024 - (size_t)got), 0, 0, 0)) > 0) {
+		got += n;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	for (int v = 0; v < 256; v++) {
+		counts[v] = 0;          /* (a loop, not an initializer: there is no bzero here to call) */
+	}
+	for (long i = 0; i < got; i++) {
+		counts[bytes[i]]++;
+	}
+	for (int v = 0; v < 256; v++) {
+		fewest = counts[v] < fewest ? counts[v] : fewest;
+		most = counts[v] > most ? counts[v] : most;
+	}
+	share = (uint32_t)(got / 256);
+	at = append(line, at, sizeof(line), "; /dev/random: ");
+	at = append_number(line, at, sizeof(line), (uint64_t)got);
+	at = append(line, at, sizeof(line), " bytes, each value ");
+	at = append_number(line, at, sizeof(line), fewest);
+	at = append(line, at, sizeof(line), " to ");
+	at = append_number(line, at, sizeof(line), most);
+	at = append(line, at, sizeof(line), " times of ");
+	at = append_number(line, at, sizeof(line), share);
+	at = append(line, at, sizeof(line), fewest * 2 >= share && most <= share * 2 ? ": even\n" : ": NOT even\n");
+	say(line);
 }
