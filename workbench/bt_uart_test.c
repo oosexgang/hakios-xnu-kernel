@@ -417,7 +417,10 @@ main(int argc, char **argv)
 	} else if (!strcmp(scenario, "invalid_mode")) {
 		boot_args = "bt=2";
 		hakios_bt_uart_init();
-		CHECK(!touches && !mappings, "unsupported mode does nothing");
+		for (unsigned i = 0; i < 300 && !logged("bt-uart: done"); i++) {
+			usleep(1000);           /* (time for a thread started after all to have done something) */
+		}
+		CHECK(!touches && !mappings && !log_text[0], "unsupported mode does nothing: %s", log_text);
 	} else {
 		wrong_protocol = !strcmp(scenario, "wrong_protocol");
 		silent = !strcmp(scenario, "silent");
