@@ -347,6 +347,86 @@ items_lie_inside(void)
 	CHECK(canary_whole(), "nothing behind the area was written");
 }
 
+/* ---- exactly at each limit ------------------------------------------------------------------------------- */
+
+/* nothing read at the area's very end is a read; a byte past it is not */
+static void
+peek_at_the_end(void)
+{
+	uint8_t byte = 0;
+
+	empty();
+	CHECK(hakios_smem_peek(&area, SIZE, &byte, 0), "nothing, at the end");
+	CHECK(hakios_smem_peek(&area, SIZE - 1, &byte, 1) && !hakios_smem_peek(&area, SIZE, &byte, 1), "the last byte, and none after");
+}
+
+/* a table of as many partitions as there may be, ours the last; one entry after the count is not looked at; an
+ * entry of ours at offset 0 is skipped, not taken for the end; a partition that ends where the table begins */
+static void
+table_limits(void)
+{
+	uint32_t cacheline = 0, size = 0;
+	struct smem_table_entry stray = { .offset = 0x2000, .size = 0x1000, .host0 = US, .host1 = RADIO, .cacheline = 64 };
+	struct smem_table_entry zero = { .offset = 0, .size = 0x1000, .host0 = US, .host1 = DSP };
+
+	empty();
+	for (unsigned i = 0; i < SMEM_MOST_PARTITIONS - 1; i++) {
+		partition(0x100 + 0x10 * i, 0x10, 30, 31, 64);  /* (others', small) */
+	}
+	partition(TABLE - 0x1000, 0x1000, US, DSP, 64);         /* the 64th, ending where the table begins */
+	CHECK(hakios_smem_partition(&area, US, DSP, &cacheline, &size) == TABLE - 0x1000 && size == 0x1000,
+	    "the 64th found, ending at the table: %#x", size);
+	partition(0x2000, 0x1000, US, RADIO, 64);               /* a 65th: the table says too many */
+	CHECK(hakios_smem_partition(&area, US, DSP, &cacheline, &size) == 0, "65: none");
+	empty();
+	partition(0x2000, 0x1000, US, DSP, 64);
+	memcpy(bytes + TABLE + sizeof(struct smem_table) + sizeof(stray), &stray, sizeof(stray));       /* (after the count) */
+	CHECK(hakios_smem_partition(&area, US, RADIO, &cacheline, &size) == 0, "an entry after the count is not looked at");
+	empty();
+	memcpy(bytes + TABLE + sizeof(struct smem_table), &zero, sizeof(zero));
+	{
+		struct smem_table table;
+
+		memcpy(&table, bytes + TABLE, sizeof(table));
+		table.count = 1;
+		memcpy(bytes + TABLE, &table, sizeof(table));
+		partitions = 1;
+	}
+	partition(0x3000, 0x1000, US, DSP, 64);
+	CHECK(hakios_smem_partition(&area, US, DSP, &cacheline, &size) == 0x3000, "an entry at offset 0 skipped");
+}
+
+/* a partition whose items fill it to the byte, from the bottom and from the top, with entries 16 bytes apart (a
+ * cache line of 16) */
+static void
+items_to_the_byte(void)
+{
+	struct smem_item found[8];
+	struct smem_partition header;
+	unsigned n;
+
+	empty();
+	partition(0x1000, 0x400, US, DSP, 16);
+	from_the_bottom(0x1000, 10, "bottom", 7, 1);
+	from_the_top(0x1000, 20, "top!", 4, 16);
+	memcpy(&header, bytes + 0x1000, sizeof(header));
+	n = hakios_smem_items(&area, 0x1000, 16, found, 8);
+	CHECK(n == 2 && item_of(found, n, 10) && item_of(found, n, 20), "two items: %u", n);
+	CHECK(item_of(found, n, 20) && item_of(found, n, 20)->size == 4 && item_of(found, n, 20)->offset == 0x1000 + 0x400 - 16 - 16,
+	    "the top one where its entry, a line below the top, says");
+	/* the bottom's items filling it exactly */
+	header.free_uncached = header.free_cached;
+	memcpy(bytes + 0x1000, &header, sizeof(header));
+	n = hakios_smem_items(&area, 0x1000, 0, found, 8);
+	CHECK(n == 1 && found[0].item == 10, "the bottom's, its room to the byte, and with no cache line the top's not looked for: %u", n);
+	/* free_uncached at the partition's very end */
+	header.free_uncached = header.size;
+	header.free_cached = header.size;
+	memcpy(bytes + 0x1000, &header, sizeof(header));
+	n = hakios_smem_items(&area, 0x1000, 16, found, 8);
+	CHECK(n >= 1 && found[0].item == 10, "a partition used to its end is still read: %u", n);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -354,6 +434,7 @@ main(int argc, char **argv)
 		{ "partitions_found", partitions_found }, { "items_found", items_found }, { "an_item_of_two", an_item_of_two },
 		{ "smp2p_words", smp2p_words }, { "more_than_room", more_than_room },
 		{ "odd_cacheline", odd_cacheline }, { "not_an_area", not_an_area }, { "lies_about_itself", lies_about_itself }, { "items_lie_inside", items_lie_inside },
+		{ "peek_at_the_end", peek_at_the_end }, { "table_limits", table_limits }, { "items_to_the_byte", items_to_the_byte },
 	};
 
 	if (argc < 2) {
