@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -746,5 +746,50 @@ command_touch(int argc, char **argv)
 	at = append(line, at, sizeof(line), ", changed ");
 	at = append_number(line, at, sizeof(line), (uint64_t)st.times[4]);
 	at = append(line, at, sizeof(line), "\n");
+	say(line);
+}
+
+#define SYS_readv               120
+#define SYS_writev              121
+
+/* FILE: a file made anew from three pieces in one writev, read back in one readv into pieces of other sizes */
+void
+command_vectors(int argc, char **argv)
+{
+	static const char whole[] = "one piece, then another, then the last";
+	struct { const void *base; uint64_t len; } out[3] = {
+		{ whole, 10 }, { whole + 10, 14 }, { whole + 24, sizeof(whole) - 1 - 24 },
+	};
+	char a[5], b[20], c[40];
+	struct { void *base; uint64_t len; } in[3] = { { a, sizeof(a) }, { b, sizeof(b) }, { c, sizeof(c) } };
+	char back[sizeof(a) + sizeof(b) + sizeof(c)], line[200];
+	long fd, wrote, read;
+	size_t at;
+
+	if (argc != 2) {
+		say("vectors FILE\n");
+		return;
+	}
+	syscall6(SYS_unlink, (long)argv[1], 0, 0, 0, 0, 0);
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_RDWR | O_CREAT, 0644, 0, 0, 0)) < 0) {
+		say_failed("vectors", argv[1], fd);
+		return;
+	}
+	wrote = syscall6(SYS_writev, fd, (long)out, 3, 0, 0, 0);
+	syscall6(SYS_lseek, fd, 0, 0, 0, 0, 0);
+	read = syscall6(SYS_readv, fd, (long)in, 3, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	copy_bytes(back, a, sizeof(a));
+	copy_bytes(back + sizeof(a), b, sizeof(b));
+	copy_bytes(back + sizeof(a) + sizeof(b), c, sizeof(c));
+	at = append(line, 0, sizeof(line), "vectors: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": ");
+	at = append_number(line, at, sizeof(line), wrote < 0 ? 0 : (uint64_t)wrote);
+	at = append(line, at, sizeof(line), " bytes written from 3 pieces, ");
+	at = append_number(line, at, sizeof(line), read < 0 ? 0 : (uint64_t)read);
+	at = append(line, at, sizeof(line), " read into 3 others");
+	at = append(line, at, sizeof(line), read == (long)sizeof(whole) - 1 && bytes_same(back, whole, sizeof(whole) - 1) ?
+	    ", in order\n" : ", NOT as written\n");
 	say(line);
 }
