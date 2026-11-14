@@ -294,6 +294,63 @@ pgpio_given_up(void)
 	CHECK(logged("the arbiter's channel is no longer the PM8008i's reset GPIO") || broken, "said");
 }
 
+/* how many times `text' is in the log */
+static unsigned
+said_times(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = log_text; (at = strstr(at, text)) != NULL; at++) {
+		n++;
+	}
+	return n;
+}
+
+/*
+ * The PM8008i's registers a write may reach (pm8008_put()): its chip enable, and the set point, mode and enable
+ * of the LDOs the sensor is on -- the front camera's 2, 3 and 5 on this board. Anything else is refused before
+ * the bus is touched, said, and nothing more written in the run.
+ */
+static void
+pm8008_whitelist(void)
+{
+	static const struct { uint8_t address; uint16_t reg; const char *what; } refused[] = {
+		{ PM8008_CHIP, MISC_CHIP_ENABLE + 1, "the chip's register next to its enable" },
+		{ PM8008_REGULATORS, MISC_CHIP_ENABLE, "the enable's number at the regulators' address" },
+		{ 0x0a, MISC_CHIP_ENABLE, "another address" },
+		{ PM8008_REGULATORS, LDO_BASE(1) + LDO_ENABLE, "an LDO that is not the sensor's (1)" },
+		{ PM8008_REGULATORS, LDO_BASE(7) + LDO_ENABLE, "nor 7" },
+		{ PM8008_REGULATORS, LDO_BASE(8) + LDO_ENABLE, "past the seventh" },
+		{ PM8008_REGULATORS, LDO_BASE(3) + 0x44, "the sensor's LDO, another register of it" },
+		{ PM8008_REGULATORS, LDO_BASE(3) + LDO_ENABLE + 1, "nor the one after its enable" },
+	};
+
+	board = "phone-video";
+	CHECK(sensors_from_board() && sensor_count == 4, "the board's sensors");
+	hw = &sensors[2];
+	for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+		unsigned before = accesses, said = said_times("not to be written");
+
+		broken = false;
+		CHECK(!pm8008_put(refused[i].address, refused[i].reg, 0, false) && accesses == before &&
+		    said_times("not to be written") == said + 1 && broken, "%s: refused, said, the bus untouched", refused[i].what);
+	}
+	static const uint16_t allowed[] = { LDO_BASE(2) + LDO_VSET_LB, LDO_BASE(2) + LDO_VSET_UB, LDO_BASE(3) + LDO_MODE_CTL1,
+		LDO_BASE(5) + LDO_ENABLE };
+	for (unsigned i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+		unsigned said = said_times("not to be written");
+
+		broken = false;
+		(void)pm8008_put(PM8008_REGULATORS, allowed[i], 0, false);
+		CHECK(said_times("not to be written") == said, "register %#x of the sensor's LDOs: not refused", allowed[i]);
+	}
+	broken = false;
+	(void)pm8008_put(PM8008_CHIP, MISC_CHIP_ENABLE, 0, false);
+	CHECK(said_times("not to be written") == sizeof(refused) / sizeof(refused[0]), "the chip's enable: not refused");
+	broken = true;
+	CHECK(!pm8008_put(PM8008_CHIP, MISC_CHIP_ENABLE, 0, false), "after a fault: not even the enable");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -301,7 +358,7 @@ main(int argc, char **argv)
 		{ "as_before", as_before }, { "pgpio_through_our_channel", pgpio_through_our_channel },
 		{ "pgpio_only_anothers_channel", pgpio_only_anothers_channel }, { "pgpio_five_registers", pgpio_five_registers },
 		{ "pgpio_dropped", pgpio_dropped }, { "pgpio_given_up", pgpio_given_up }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
-		{ "clock_plan", clock_plan },
+		{ "clock_plan", clock_plan }, { "pm8008_whitelist", pm8008_whitelist },
 	};
 
 	if (argc < 2) {
