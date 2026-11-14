@@ -116,6 +116,8 @@ written_samples(void)
 	CHECK(take(got, 4) == 2 && got[0].x == 5 && got[1].x == 6, "and read");
 	CHECK(inject(0, 0, 0, 0) == EINVAL && inject(HAKIOS_BUTTON_UP + 1, 0, 0, 0) == EINVAL, "a type there is not: refused");
 	CHECK(inject(HAKIOS_BUTTON_DOWN, HAKIOS_BUTTON_LOCK, 0, 0) == 0 && take(got, 4) == 1, "a key, written");
+	CHECK(inject(HAKIOS_BUTTON_UP, HAKIOS_BUTTON_LOCK, 0, 0) == 0 && take(got, 4) == 1 && got[0].type == HAKIOS_BUTTON_UP,
+	    "and let go: the last of the types, written");
 }
 
 /* five of a driver's fingers held for a second and a half end the run: the GPU first, then back to the loader */
