@@ -157,6 +157,7 @@ typed=(
 	'truncate /etc/motd 3'
 	'touch /tmp/notes/old 1000000000'
 	'touch /tmp/notes/new'
+	'sysctl kern.boottime'
 	'touch /etc/motd 5'
 	'fifo /tmp/notes/fifo'
 	'stat /tmp/notes/fifo'
@@ -353,6 +354,10 @@ check "a file cut short keeps its start, and grown again reads as zeros past it,
 		grep -aq '^truncate: /tmp/notes/cut: 70000 bytes, now 4000000000; what it grew by reads as zeros (its first and last 64 KB)' '$shell' &&
 		grep -aqE '^/tmp/notes/cut: -rw-r--r-- 1 link, inode [0-9]+, 4000000000 bytes' '$shell' &&
 		grep -aq '^truncate: /etc/motd: error 30 (EROFS)' '$shell'"
+check "the kernel says when it started (kern.boottime): under a quarter of an hour before a file was touched" bash -c "
+	booted=\$(grep -aoE '^kern.boottime: [0-9]+ s [0-9]+ us since 1970' '$shell' | awk '{ print \$2 }' | head -1)
+	touched=\$(grep -a '^touch: /tmp/notes/new: ' '$shell' | awk '{ print \$6 + 0 }' | head -1)
+	[ -n \"\$booted\" ] && [ -n \"\$touched\" ] && [ \"\$booted\" -le \"\$touched\" ] && [ \$((touched - booted)) -lt 900 ]"
 check "a file's times set to a second given, and to now (utimes); not on the read-only root" \
 	bash -c "grep -aq '^touch: /tmp/notes/old: accessed 1000000000, modified 1000000000, changed ' '$shell' &&
 		grep -a '^touch: /tmp/notes/new: ' '$shell' | awk '{ exit !(\$4 == \$6 && \$6 > 1700000000) }' &&
