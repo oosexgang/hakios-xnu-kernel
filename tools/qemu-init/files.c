@@ -1,5 +1,5 @@
 /* tools/qemu-init: files and file systems: ls, cat, mount, mkdir, write, rm, stat, ln, mv, chmod, chown, umask,
- * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags */
+ * xattr, files, hash, fill, descriptors, df, truncate, touch, vectors, chflags, access */
 #include "init.h"
 
 #define SYS_lstat64             340
@@ -856,5 +856,46 @@ command_chflags(int argc, char **argv)
 		if (error != 0) {
 			say_failed("chflags", argv[i], error);
 		}
+	}
+}
+
+#define SYS_access              33
+
+/* PATH...: what this process may do with each, as access() says: read, write, run (or search, for a directory) */
+void
+command_access(int argc, char **argv)
+{
+	static const struct { int mode; const char *what; } asks[] = { { 4, "read" }, { 2, "write" }, { 1, "run" } };
+
+	if (argc < 2) {
+		say("access PATH...\n");
+		return;
+	}
+	for (int i = 1; i < argc; i++) {
+		char line[200];
+		size_t at = append(line, 0, sizeof(line), "access: ");
+		long exists = syscall6(SYS_access, (long)argv[i], 0 /* F_OK */, 0, 0, 0, 0);
+
+		at = append(line, at, sizeof(line), argv[i]);
+		if (exists != 0) {
+			say(line);
+			say(": ");
+			say_error(exists);
+			say("\n");
+			continue;
+		}
+		for (unsigned a = 0; a < 3; a++) {
+			long error = syscall6(SYS_access, (long)argv[i], asks[a].mode, 0, 0, 0, 0);
+
+			at = append(line, at, sizeof(line), a == 0 ? ": " : ", ");
+			at = append(line, at, sizeof(line), asks[a].what);
+			at = append(line, at, sizeof(line), error == 0 ? " yes" : error == -13 ? " no" : error == -30 ? " no (EROFS)" :
+			    error == -1 ? " no (EPERM)" : " no (error ");
+			if (error != 0 && error != -13 && error != -30 && error != -1) {
+				at = append(line, append_number(line, at, sizeof(line), (uint64_t)-error), sizeof(line), ")");
+			}
+		}
+		append(line, at, sizeof(line), "\n");
+		say(line);
 	}
 }
