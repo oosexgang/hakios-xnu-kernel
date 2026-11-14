@@ -76,9 +76,11 @@ in_and_out(void)
 	uint32_t moved;
 
 	fresh();
+	QUEUE[15] = QUEUE[16 + 24] = 0x5a;      /* (what is there before it and after it is not the message's) */
 	moved = glink_queue_put(QUEUE, SIZE, 16, "header..", 8, "and more", 9);
 	CHECK(moved == 24 && memcmp(QUEUE + 16, "header..and more", 17) == 0, "two pieces, one after the other: %u bytes", moved);
-	CHECK(QUEUE[16 + 17] == 0 && QUEUE[16 + 23] == 0 && QUEUE[16 + 24] == 0 && QUEUE[15] == 0, "filled up to eight with zeros, and no further");
+	CHECK(QUEUE[16 + 17] == 0 && QUEUE[16 + 23] == 0 && QUEUE[16 + 24] == 0x5a && QUEUE[15] == 0x5a,
+	    "filled up to eight with zeros, and not a byte further");
 	glink_queue_peek(QUEUE, SIZE, 16, 0, out, 24);
 	CHECK(memcmp(out, "header..and more", 17) == 0, "read back from the tail");
 	glink_queue_peek(QUEUE, SIZE, 16, 8, out, 9);
