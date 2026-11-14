@@ -1230,6 +1230,10 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 		ramfs_resize(node, size);
 		resized = true;
 		VATTR_SET_SUPPORTED(vap, va_data_size);
+		/* (cut or grown by anybody but root: as a write, no longer run as its owner or its group) */
+		if (!VATTR_IS_ACTIVE(vap, va_mode) && !kauth_cred_issuser(vfs_context_ucred(ap->a_context))) {
+			node->rn_mode &= ~(S_ISUID | S_ISGID);
+		}
 	}
 	if (VATTR_IS_ACTIVE(vap, va_mode)) {
 		node->rn_mode = vap->va_mode & ALLPERMS;
@@ -1386,7 +1390,7 @@ ramfs_write(struct vnop_write_args *ap)
 		ramfs_touch(node, true);
 		/*
 		 * Written by anybody but root: no longer run as its owner or its group. What was changed may not be what
-		 * was made set-user-ID (HFS, APFS and UFS do the same on a write).
+		 * was made set-user-ID (HFS, APFS and UFS do the same on a write; a truncate does it in ramfs_setattr).
 		 */
 		if ((node->rn_mode & (S_ISUID | S_ISGID)) && !kauth_cred_issuser(vfs_context_ucred(ap->a_context))) {
 			node->rn_mode &= ~(S_ISUID | S_ISGID);
