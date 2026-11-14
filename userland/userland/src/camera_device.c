@@ -910,6 +910,7 @@ struct render_job {
 	CVPixelBufferRef pb;
 	uint32_t format, width, height, pieces;
 	bool still;                     /* the photograph: every pixel of the sensor (isp_render_still_nv12) */
+	volatile uint32_t done;         /* pieces finished (see the wait after dispatch_apply_f) */
 };
 
 static void
@@ -932,6 +933,7 @@ render_piece(void *context, size_t i)
 		    CVPixelBufferGetBaseAddressOfPlane(j->pb, 1), CVPixelBufferGetBytesPerRowOfPlane(j->pb, 1), j->width, j->height, first, end,
 		    j->format == PF_420V);
 	}
+	__atomic_fetch_add(&j->done, 1, __ATOMIC_RELEASE);
 }
 
 static CVPixelBufferRef
@@ -1079,6 +1081,24 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 	uint64_t began = mach_absolute_time();
 
 	dispatch_apply_f(job.pieces, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), &job, render_piece);
+	/*
+	 * Under iOS 27 here the preview showed the picture in bands, the rest of each frame black, at 6.5 frames a second;
+	 * with one piece the whole picture, at 0.9. The pieces now count themselves, each with a release as it ends and
+	 * this thread with an acquire, and wait here if any is not done: with that the whole picture shows, at 8 a second
+	 * (logs/085827-run.log in hakios-sm7325) -- and the wait was never needed, dispatch_apply_f came back with every
+	 * piece done. What the bands were is then the order of the pieces' writes as the frame's next readers see them,
+	 * the window server and the kernel's display reading the same pages; the release and acquire put them in order.
+	 */
+	for (unsigned waited = 0; __atomic_load_n(&job.done, __ATOMIC_ACQUIRE) < job.pieces && waited < 1000; waited++) {
+		static int told;
+
+		if (waited == 0 && !told) {
+			told = 1;
+			say("%s: dispatch_apply came back with %u of %u pieces done: the rest waited for", out->name,
+			    __atomic_load_n(&job.done, __ATOMIC_ACQUIRE), job.pieces);
+		}
+		usleep(200);
+	}
 	if (job.still) {
 		static mach_timebase_info_data_t tb;
 
