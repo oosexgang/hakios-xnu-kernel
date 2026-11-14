@@ -3,7 +3,8 @@
 # kernel's own start on two processors, the emulator's board found, its virtio devices taken, the root
 # mounted from the payload's RAM disk (tools/qemu-root.sh: nothing of Apple's), and /sbin/launchd run.
 # What is typed on its shell then tries the rest of the kernel:
-#   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way
+#   - the network: pings to QEMU's gateway; pages served to this computer and asked of it, 4 MB each way;
+#     a million bytes over the loopback between two of its processes
 #     (TCP both ways); a datagram answered (workbench/qemu_host.py is this computer's side)
 #   - the devices: a second disk (virtio block, APFS), read whole and through its file system; a tone
 #     (virtio sound, which QEMU writes to a WAV file); a button and a touch from QEMU's keyboard and tablet
@@ -58,6 +59,9 @@ mkdir -p "$W/www"
 echo "a page from the computer QEMU runs on" > "$W/www/page.txt"
 head -c 4194304 /dev/urandom > "$W/www/big.bin"
 big_hash=$(fnv1a "$W/www/big.bin")
+# what the shell's serve makes up for /bytes/N (byte i is i * 7 mod 251), a million of them
+python3 -c 'import sys; open(sys.argv[1], "wb").write(bytes(i * 7 % 251 for i in range(1000000)))' "$W/made.bin"
+made_hash=$(fnv1a "$W/made.bin")
 # what is typed on its console, a line at a time (--type takes them joined by a written \n)
 typed=(
 	'clear'
@@ -70,6 +74,10 @@ typed=(
 	'get 10.0.2.2 18081 /page.txt'
 	'get 10.0.2.2 18081 /big.bin'
 	'udp 10.0.2.2 18082 a datagram'
+	'spawn /sbin/launchd serve 1'
+	'sleep 1'
+	'get 127.0.0.1 80 /bytes/1000000'
+	'wait'
 	'hash /dev/rvblk0'
 	'mount apfs /dev/rvblk0 /mnt'
 	'cat /mnt/hello.txt'
@@ -161,6 +169,8 @@ check "it asks this computer for a page over TCP, as a client" bash -c "tr -d '\
 	tr -d '\\r' < '$log' | grep -qx 'a page from the computer QEMU runs on'"
 check "... and 4 MB of it arrive whole (the same FNV-1a hash as here)" \
 	grep -aq "^get: HTTP/1.0 200 OK, 4194304 bytes of body in [0-9]* ms, fnv1a $big_hash" "$log"
+check "TCP over the loopback between two of its own processes: a million bytes from a server in the background, every one checked" \
+	grep -aq "^get: HTTP/1.0 200 OK, 1000000 bytes of body in [0-9]* ms, fnv1a $made_hash" "$log"
 check "a datagram goes to this computer and its answer comes back" grep -aq "^udp: 18 bytes back from 10.0.2.2: echoed: a datagram" "$log"
 check "a second disk on the virtio block device is mounted, APFS, and read" \
 	grep -aq "^a second disk, on QEMU's virtio block device" "$log"
