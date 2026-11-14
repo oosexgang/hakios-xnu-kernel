@@ -190,13 +190,13 @@ check "a file has two names (link), one renamed, its mode changed, and a symboli
 		/^\/tmp\/notes\/b: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { b = \$6 }
 		/^\/tmp\/notes\/d: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { d = \$6 }
 		/^\/tmp\/notes\/s: l[-rwx]{9} 1 link, inode [0-9]+, 12 bytes -> \/tmp\/notes\/b\$/ { s = 1 }
-		/^stat: \/tmp\/notes\/c: error 2\$/ { c = 1 }
+		/^stat: \/tmp\/notes\/c: error 2 \(ENOENT\)\$/ { c = 1 }
 		/^# cat \/tmp\/notes\/s\$/ { cat = NR }
 		cat && NR == cat + 1 && /^six b\$/ { read = 1 }
 		END { exit !(b != \"\" && b == d && s && c && read) }'"
 check "extended attributes are set, replaced, listed and taken away; one taken away twice is not there (ENOATTR)" \
 	bash -c "tr -d '\\r' < '$log' | sed -n '/^# xattr \/tmp\/notes\/b\$/,/^# /p' | grep -v '^#' | tr '\\n' '|' |
-		grep -qx 'com.example.colour = green|' && grep -aq '^xattr: com.example.size: error 93' '$log'"
+		grep -qx 'com.example.colour = green|' && grep -aq '^xattr: com.example.size: error 93 (ENOATTR)' '$log'"
 # (128 MB are 8192 pages of 16 KB, each a fault the kernel fills with zeros, give or take a page the program
 # touched before: Mach's counts see them)
 check "Mach's host port counts the virtual memory's pages and faults (host_statistics64): 128 MB, some 8192 zero-filled faults" \
@@ -210,7 +210,7 @@ check "the kernel keeps a process's time (getrusage): asleep it uses none, and i
 		grep -aE '^time: [0-9]+ ms; of the processors. time [0-9]+ ms in user space, [0-9]+ ms' '$log' | head -1 |
 		awk '{ exit !(\$13 > \$8) }'"
 check "the kernel holds a process to its limit of descriptors (setrlimit): the 20th is refused with EMFILE" \
-	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24' "$log"
+	grep -aqE '^files: [0-9]+ opened under a limit of 20 descriptors, the last 19; then error 24 \(EMFILE\)' "$log"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "tr -d '\\r' < '$log' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		tr -d '\\r' < '$log' | grep -A1 -x '# cat b' | grep -qx 'six b'"
