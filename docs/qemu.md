@@ -147,7 +147,9 @@ on its shell and checks what comes back:
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a symbolic
   link to it is read through; a file moves from one directory to another, and ramfs refuses what BSD
-  refuses (a directory that is there, one not empty, a hard link to one); extended attributes are set,
+  refuses (a directory that is there, one not empty, a hard link to one); paths fail as BSD's do
+  (symbolic links that lead to each other, a file taken for a directory, a mount point removed); a file's
+  flags keep it from being changed, or let it only be added to; extended attributes are set,
   replaced, listed and taken away; relative paths start from the shell's own directory; a file made under
   a mask is made without what it masks, and is given to another owner; descriptors do what BSD's do; a
   process gets no more descriptors than its limit; a file cut short and grown again reads as zeros past
