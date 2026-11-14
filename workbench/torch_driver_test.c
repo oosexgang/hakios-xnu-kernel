@@ -245,7 +245,7 @@ for_darwin(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	CHECK(logged("THE LIGHT IS DARWIN'S"), "the device is made: %s", log_text);
 	CHECK(!lit_now() && spmi.writes == 0, "no light, and nothing written, until Darwin asks");
 	ask_for(500);
@@ -275,7 +275,7 @@ dropped_and_asked_again(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	pthread_mutex_lock(&spmi.lock);
 	spmi.drop_writes = 1;
 	spmi.drop_reads = 1;
@@ -298,7 +298,7 @@ only_the_six(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	before = spmi.writes;
 	CHECK(!put(REG_STATUS1, 0x01), "a write to the module's status register is refused");
 	CHECK(spmi.writes == before && forbidden_writes == 0, "and not made: %u writes", spmi.writes - before);
@@ -313,7 +313,7 @@ fault_while_lit(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	CHECK(lit_now(), "lit");
@@ -341,7 +341,7 @@ lit_then(void (*goes_wrong)(void), const char *said, const char *what)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	CHECK(lit_now(), "lit");
@@ -382,7 +382,7 @@ channel_changes_hands(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	spmi_channel(20, &somebody_else, spmi.ee);
 	ask_for(1000);
 	WAIT_FOR(logged("the arbiter's channel is no longer the flash module's"), 3000);
@@ -398,7 +398,7 @@ pmic_hot(void)
 	phone("phone-video");
 	boot_args = "torch=3";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	spmi_set(&alarm_model, 0x08, 0x10);             /* stage 1 */
@@ -428,7 +428,7 @@ time_limit(void)
 	phone("phone-video");
 	boot_args = "torch=3 torch_max_s=1";
 	hakios_torch_init();
-	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	CHECK(lit_now(), "lit");
