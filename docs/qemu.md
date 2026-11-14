@@ -95,6 +95,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `threads [COUNT]` | Threads of its own (bsdthread_create) sharing some counting, timed against one thread doing it all: on two processors two take about half the time. |
 | `locks [COUNT]` | Threads adding to one count under one lock, as `os_unfair_lock` makes one: a word, and the kernel's `ulock_wait` and `ulock_wake` for those that must wait. None of the count is lost. |
 | `mach [COUNT]` | Messages sent to a Mach port of its own and received back (`mach_msg2`), and the time each took. |
+| `poll` | poll and select on a pipe: empty, each waits out its 100 ms and finds nothing; with a byte in it, each finds it readable at once. |
 | `kevent [COUNT]` | A timer of 50 ms through kqueue, COUNT times; then a pipe seen readable. |
 | **IOKit** (`iokit.c`) | |
 | `ioreg [DEPTH]` | IOKit's registry, the IOService plane from its root: asked in MIG messages (host_get_io_main, io_registry_get_root_entry, the children's iterators), as IOKit.framework asks it. |
@@ -126,7 +127,7 @@ on its shell and checks what comes back:
   carries what a child writes into it, and so does memory shared by name; a descriptor sent over a socket
   pair reads the file it was, and a socket in ramfs is reached by its name; two threads run on the two processors at once, and four take turns under
   one lock without losing a count; Mach messages go through a port and come back unchanged; kqueue's
-  timer keeps time and it sees a pipe become readable.
+  timer keeps time and it sees a pipe become readable, and so do poll and select.
 - **Files and memory.** The root mounts from the RAM disk; a file is written in ramfs, read back and
   removed; a second name for a file (a hard link) is the same inode and survives a rename, and a
   symbolic link to it is read through; a file moves from one directory to another, and ramfs refuses what
