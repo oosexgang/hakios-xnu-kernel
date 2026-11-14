@@ -249,6 +249,7 @@ static const struct {
 	{ "threads", "[COUNT] threads sharing some work, timed against one", command_threads },
 	{ "locks", "[COUNT] threads adding under one lock (ulock_wait, ulock_wake)", command_locks },
 	{ "mach", "[COUNT] messages to itself through a Mach port, timed", command_mach },
+	{ "poll", "poll and select on a pipe, empty and with a byte in it", command_poll },
 	{ "kevent", "[COUNT] a timer and a pipe, waited for through kqueue", command_kevent },
 	{ NULL, "IOKit", NULL },
 	{ "ioreg", "[DEPTH] IOKit's registry, asked in MIG messages", command_ioreg },

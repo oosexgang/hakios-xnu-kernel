@@ -1,5 +1,5 @@
 /* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
- * memory shared by name, Mach messages: pipe, unix, unix-name, shm, mach */
+ * memory shared by name, Mach messages, waiting on descriptors: pipe, unix, unix-name, shm, mach, poll */
 #include "init.h"
 
 #define SYS_wait4               7
@@ -344,4 +344,70 @@ command_shm(int argc, char **argv)
 	    syscall6(SYS_shm_open, (long)name, O_RDWR, 0, 0, 0, 0) >= 0) {
 		say("shm: the name was not taken away\n");
 	}
+}
+
+#define SYS_select              93
+#define SYS_poll                230
+#define POLLIN                  0x0001
+
+/*
+ * poll and select on a pipe: empty, each waits out its timeout (100 ms) and says none ready; with bytes in it,
+ * each says it is ready at once
+ */
+void
+command_poll(int argc, char **argv)
+{
+	struct { int32_t fd; int16_t events, revents; } watched;
+	struct { int64_t seconds; int32_t microseconds, pad; } tenth = { 0, 100000, 0 };
+	uint32_t set[32];
+	int ends[2];
+	long empty_poll, empty_select, full_poll, full_select;
+	int64_t poll_waited, select_waited;
+	char line[240];
+	size_t at;
+
+	(void)argc;
+	(void)argv;
+	if (syscall_pipe(ends) != 0) {
+		say("poll: no pipe\n");
+		return;
+	}
+	watched.fd = ends[0];
+	watched.events = POLLIN;
+	watched.revents = 0;
+	poll_waited = now_us();
+	empty_poll = syscall6(SYS_poll, (long)&watched, 1, 100, 0, 0, 0);
+	poll_waited = now_us() - poll_waited;
+	for (int i = 0; i < 32; i++) {
+		set[i] = 0;
+	}
+	set[ends[0] / 32] |= 1u << (ends[0] % 32);
+	select_waited = now_us();
+	empty_select = syscall6(SYS_select, ends[0] + 1, (long)set, 0, 0, (long)&tenth, 0);
+	select_waited = now_us() - select_waited;
+	syscall6(SYS_write, ends[1], (long)"x", 1, 0, 0, 0);
+	watched.revents = 0;
+	full_poll = syscall6(SYS_poll, (long)&watched, 1, 100, 0, 0, 0);
+	for (int i = 0; i < 32; i++) {
+		set[i] = 0;
+	}
+	set[ends[0] / 32] |= 1u << (ends[0] % 32);
+	full_select = syscall6(SYS_select, ends[0] + 1, (long)set, 0, 0, (long)&tenth, 0);
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "poll: an empty pipe: poll ");
+	at = append_number(line, at, sizeof(line), (uint64_t)empty_poll);
+	at = append(line, at, sizeof(line), " ready after ");
+	at = append_number(line, at, sizeof(line), (uint64_t)poll_waited / 1000);
+	at = append(line, at, sizeof(line), " ms, select ");
+	at = append_number(line, at, sizeof(line), (uint64_t)empty_select);
+	at = append(line, at, sizeof(line), " after ");
+	at = append_number(line, at, sizeof(line), (uint64_t)select_waited / 1000);
+	at = append(line, at, sizeof(line), " ms; with a byte in it: poll ");
+	at = append_number(line, at, sizeof(line), (uint64_t)full_poll);
+	at = append(line, at, sizeof(line), (watched.revents & POLLIN) ? " (readable)" : " (NOT readable)");
+	at = append(line, at, sizeof(line), ", select ");
+	at = append_number(line, at, sizeof(line), (uint64_t)full_select);
+	at = append(line, at, sizeof(line), "\n");
+	syscall6(SYS_write, console, (long)line, (long)at, 0, 0, 0);
 }
