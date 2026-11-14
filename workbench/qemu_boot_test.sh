@@ -155,6 +155,14 @@ typed=(
 	'touch /tmp/notes/old 1000000000'
 	'touch /tmp/notes/new'
 	'touch /etc/motd 5'
+	'fifo /tmp/notes/fifo'
+	'stat /tmp/notes/fifo'
+	'flock /tmp/notes/private'
+	'write /tmp/notes/script #!/sbin/launchd echo'
+	'chmod 755 /tmp/notes/script'
+	'run /tmp/notes/script with words'
+	'chmod 644 /tmp/notes/script'
+	'run /tmp/notes/script'
 	'descriptors /tmp/notes/offsets'
 	'fill /tmp/notes/big 3000000'
 	'df'
@@ -200,7 +208,9 @@ log=$W/serial.log
 # into a command's answer, a check of the line after the command, or of the lines up to the next prompt, would
 # see it), and without the carriage returns
 shell=$W/shell.log
-tr -d '\r' < "$log" | grep -av '^memory: free \|^net: so far ' | sed 's/^# memory: free .*/# /; s/^# net: so far .*/# /' > "$shell"
+# (taken out wherever they came, in the middle of a line typed too: what is left of it is joined up again)
+python3 -c 'import re, sys; text = open(sys.argv[1], "rb").read().replace(b"\r", b"")
+open(sys.argv[2], "wb").write(re.sub(rb"memory: free [^\n]*\(anybody\)\n|net: so far [^\n]*\n", b"", text))' "$log" "$shell"
 check "the loader takes the kernel and jumps to it" grep -aq "jumping to" "$log"
 check "the kernel starts and says its version" grep -aq "^Darwin Kernel Version" "$log"
 check "it finds the emulator's board" grep -aq "^board: qemu-virt" "$log"
@@ -326,6 +336,15 @@ check "a file's times set to a second given, and to now (utimes); not on the rea
 	bash -c "grep -aq '^touch: /tmp/notes/old: accessed 1000000000, modified 1000000000, changed ' '$shell' &&
 		grep -a '^touch: /tmp/notes/new: ' '$shell' | awk '{ exit !(\$4 == \$6 && \$6 > 1700000000) }' &&
 		grep -aq '^touch: /etc/motd: error 30 (EROFS)' '$shell'"
+check "a named pipe in ramfs (mkfifo): what a child writes into it is read out of it" \
+	bash -c "grep -aq '^fifo: /tmp/notes/fifo: read \"written by a child\"' '$shell' &&
+		grep -aqE '^/tmp/notes/fifo: prw------- 1 link, inode [0-9]+, 0 bytes' '$shell'"
+check "a file locked (flock): another process's try refused, without waiting (EAGAIN), and taken once it is let go" \
+	grep -aq "^flock: /tmp/notes/private: held, another's try refused (error 35); let go, another's try taken" "$shell"
+check "a script run through the program its #! line names, given the script's path and words; not run once it may not be" \
+	bash -c "cat '$shell' | grep -A2 -x '# run /tmp/notes/script with words' | tail -2 | tr '\n' '|' |
+			grep -qE '^/tmp/notes/script with words\|run: pid [0-9]+ exited with 0\|\$' &&
+		grep -aq '^run: /tmp/notes/script does not start: error 13 (EACCES)' '$shell'"
 check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
 	grep -aq '^descriptors: .*: as BSD has them' "$log"
 check "the mounted file systems listed (getfsstat): the root and the second disk APFS, read only, devfs, and ramfs with three megabytes of it used" \
