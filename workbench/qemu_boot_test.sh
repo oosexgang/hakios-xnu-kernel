@@ -158,6 +158,7 @@ typed=(
 	'fifo /tmp/notes/fifo'
 	'stat /tmp/notes/fifo'
 	'flock /tmp/notes/private'
+	'byte-locks /tmp/notes/private'
 	'write /tmp/notes/script #!/sbin/launchd echo'
 	'chmod 755 /tmp/notes/script'
 	'run /tmp/notes/script with words'
@@ -341,6 +342,8 @@ check "a named pipe in ramfs (mkfifo): what a child writes into it is read out o
 		grep -aqE '^/tmp/notes/fifo: prw------- 1 link, inode [0-9]+, 0 bytes' '$shell'"
 check "a file locked (flock): another process's try refused, without waiting (EAGAIN), and taken once it is let go" \
 	grep -aq "^flock: /tmp/notes/private: held, another's try refused (error 35); let go, another's try taken" "$shell"
+check "bytes of a file locked (fcntl F_SETLK): another process kept off them, read or write, and not off the bytes after; F_GETLK names the holder" \
+	grep -aq "^byte-locks: /tmp/notes/private: 0 to 9 held; another's on 5 to 14 refused, on 10 to 19 taken, F_GETLK names the holder, a read lock refused; let go, taken" "$shell"
 check "a script run through the program its #! line names, given the script's path and words; not run once it may not be" \
 	bash -c "cat '$shell' | grep -A2 -x '# run /tmp/notes/script with words' | tail -2 | tr '\n' '|' |
 			grep -qE '^/tmp/notes/script with words\|run: pid [0-9]+ exited with 0\|\$' &&
