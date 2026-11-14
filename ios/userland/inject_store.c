@@ -1940,10 +1940,42 @@ new_add_storefront_header(id self, SEL cmd, void *request, void *account, void *
 
 /* where a bag is handed over for a request that has one: the GUID step, which names the lack of one */
 static void (*old_add_guid)(id, SEL, void *, void *, BOOL);
+static void (*old_add_guid_promise)(id, SEL, void *, void *, BOOL);
+
+/*
+ * Neither of the two GUID decorations is where "Skipping GUID parameter addition as bag was not provided"
+ * comes from: both are taken and never entered, so the line is said somewhere else (Swift, most likely).
+ * They are kept, and say so, rather than being tried again.
+ */
+static void
+new_add_guid_promise(id self, SEL cmd, void *request, void *promise, BOOL preserve)
+{
+	id url = request != NULL ? ((id (*)(id, SEL))objc_msgSend)((id)request, sel_registerName("URL")) : NULL;
+	char text[300] = "(no URL)";
+
+	if (url != NULL) {
+		text_of(url, text, sizeof(text));
+	}
+	say("hakios: store: a request is being built: %.200s (bag promise %s)\n", text,
+	    promise != NULL ? "given" : "NOT given");
+	old_add_guid_promise(self, cmd, request, promise, preserve);
+}
 
 static void
 new_add_guid(id self, SEL cmd, void *request, void *bag, BOOL preserve)
 {
+	/*
+	 * Which request is being built, and whether it has a bag. AMS repeats "Skipping GUID parameter
+	 * addition as bag was not provided" without saying for what, and the request it is talking about
+	 * is the one the App Store is trying to make -- so it is named here.
+	 */
+	id url = request != NULL ? ((id (*)(id, SEL))objc_msgSend)((id)request, sel_registerName("URL")) : NULL;
+	char text[300] = "(no URL)";
+
+	if (url != NULL) {
+		text_of(url, text, sizeof(text));
+	}
+	say("hakios: store: a request is being built: %.200s (bag %s)\n", text, bag != NULL ? "given" : "NOT given");
 	keep_bag((id)bag, "the GUID step");
 	old_add_guid(self, cmd, request, bag, preserve);
 }
@@ -2572,6 +2604,8 @@ static struct replacement replacements[] = {
 	  true, (IMP)new_add_absinthe, (IMP *)&old_add_absinthe, false },
 	{ "AMSURLRequestDecoration", "addGUIDParameterToRequest:bag:preservingQueryEncoding:", true,
 	  (IMP)new_add_guid, (IMP *)&old_add_guid, false },
+	{ "AMSURLRequestDecoration", "_addGUIDParameterToRequest:fromPromise:shouldPreserveEncoding:", true,
+	  (IMP)new_add_guid_promise, (IMP *)&old_add_guid_promise, false },
 	{ "SSURLConnectionRequest", "shouldMescalSign", false, (IMP)new_should_mescal,
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
