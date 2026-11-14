@@ -42,6 +42,10 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios-camapp.dylib -lobjc -o "$O
 # the App Store's SAP (Mescal) signature, made by the host's sapd, and the storefront it answers with
 # (ios/userland/inject_mescal.m and inject_store.c; root26-ios.sh STOREFRONT=1 injects them into the store daemons)
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-mescal.dylib -framework Foundation -lobjc -fobjc-arc -o "$O/libhakios-mescal.dylib" "$RN/userland/inject_mescal.m"
+# ... and the one keychain class Apple ID sign-in cannot store on a phone with no passcode
+# (ios/userland/inject_kc.c, 16.5's: it needs the prefix's MSHookFunction; root26-ios.sh SIGNIN=1)
+$DYN -O2 -fblocks -dynamiclib -install_name /redwood/lib/libhakios-kc.dylib -framework CoreFoundation \
+	-framework Security -lobjc -o "$O/libhakios-kc.dylib" "$RN/userland/inject_kc.c"
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")

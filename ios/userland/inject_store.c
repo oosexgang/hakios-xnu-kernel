@@ -395,7 +395,7 @@ remember_task(id task)
  * file's output is kept.
  */
 static void
-dump_token_headers(id task)
+dump_token_headers(id task, const char *which)
 {
 	id request = ((id (*)(id, SEL))objc_msgSend)(task, sel_registerName("currentRequest"));
 	id headers, keys;
@@ -407,7 +407,12 @@ dump_token_headers(id task)
 	headers = request != NULL ? ((id (*)(id, SEL))objc_msgSend)(request, sel_registerName("allHTTPHeaderFields")) : NULL;
 	keys = headers != NULL ? ((id (*)(id, SEL))objc_msgSend)(headers, sel_registerName("allKeys")) : NULL;
 	n = keys != NULL ? ((long (*)(id, SEL))objc_msgSend)(keys, sel_registerName("count")) : 0;
-	say("hakios: store: apiToken request carries %ld header(s):\n", n);
+	/*
+	 * Named by its own URL. This dump is asked for the token request AND for the bag's, and saying
+	 * "apiToken" for both made the bag's headers read as the token's: the token request looked as
+	 * though it went out bare, when on iOS 27 it is never made at all.
+	 */
+	say("hakios: store: %.90s carries %ld header(s):\n", which, n);
 	for (long i = 0; i < n; i++) {
 		id key = ((id (*)(id, SEL, long))objc_msgSend)(keys, sel_registerName("objectAtIndex:"), i);
 		id val = ((id (*)(id, SEL, id))objc_msgSend)(headers, sel_registerName("objectForKey:"), key);
@@ -442,7 +447,8 @@ dump_tasks(void)
 		    error != NULL ? ", error " : "", error != NULL ? text_of(error, two, sizeof(two)) : "",
 		    url != NULL ? text_of(url, three, sizeof(three)) : "(no url)");
 		if (url != NULL && (strstr(three, "apiToken") != NULL || strstr(three, "bag.itunes") != NULL)) {
-			dump_token_headers(task);
+			dump_token_headers(task, strstr(three, "apiToken") != NULL ? "the apiToken request" :
+			    "the bag request");
 		}
 	}
 }
@@ -1718,6 +1724,28 @@ static id (*old_active_account)(id, SEL);
 static id (*old_active_account_type)(id, SEL, void *);
 
 /*
+ * Where the Mescal signature is made on iOS 26/27, and why ours was never asked for. The absinthe step
+ * does not sign anything itself: it asks +[AMSDefaults enableRemoteSecuritySigning] and then either
+ * -[AMSSigningSecurityService headersForRequest:buyParams:bag:] (another process's service) or
+ * +[AMSAbsinthe headersForRequest:buyParams:bag:] (in this process, which is what reaches
+ * -[AMSMescalSession signData:bag:error:] -- the method iOS 16.5 used and the one our sapd hook
+ * replaces). With remote signing on, the signature is asked of a service this port does not run, so
+ * nothing is signed, nothing asks sapd, and the storefront token goes out bare. Answered NO, so the
+ * signing stays in this process and reaches sapd.
+ */
+static BOOL
+no_remote_signing(__unused id self, __unused SEL cmd)
+{
+	static int told;
+
+	if (!told) {
+		told = 1;
+		say("hakios: store: remote security signing answered NO: the signature is made here, by sapd\n");
+	}
+	return NO;
+}
+
+/*
  * Which service the daemon is talking to. appstored hangs in a synchronous Mach message inside
  * AppleMediaServices' Swift code (thread 3: mach_msg_overwrite), and the message says nothing about
  * whom it is for. Every Mach-service connection names itself here, so the last one made before the
@@ -2436,6 +2464,8 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
 	  (IMP)new_add_storefront_header, (IMP *)&old_add_storefront_header, false },
+	{ "AMSDefaults", "enableRemoteSecuritySigning", true, (IMP)no_remote_signing, NULL, false },
+	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
 	  (IMP *)&old_xpc_init, false },
 	{ "ACAccountStore", "ams_activeiTunesAccount", false, (IMP)new_active_account,

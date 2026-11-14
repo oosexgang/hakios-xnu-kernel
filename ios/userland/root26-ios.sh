@@ -297,6 +297,11 @@ if [ -n "${STOREFRONT:-}" ]; then
 	echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
 	echo "/redwood/lib/libhakios-mescal.dylib appstored itunesstored AppStore" >> $T/etc/inject.conf
 fi
+# SIGNIN=1: and the keychain class that Apple ID sign-in cannot store here (ios/userland/inject_kc.c). Apart
+# from a sign-in it changes nothing, so it is its own knob.
+if [ -n "${SIGNIN:-}" ]; then
+	echo "/redwood/lib/libhakios-kc.dylib akd accountsd" >> $T/etc/inject.conf
+fi
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys
