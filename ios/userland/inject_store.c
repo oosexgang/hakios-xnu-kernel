@@ -2315,6 +2315,41 @@ substrate_hook(void)
 	return substrate != NULL ? (MSHookFunction_t)dlsym(substrate, "MSHookFunction") : NULL;
 }
 
+/*
+ * The exception nobody caught, named before the process dies. amsaccountsd aborts with signal 6 once it
+ * is given an account to work with, and an abort out of a daemon says nothing at all by itself -- the
+ * kernel's backtrace stops at abort(). (The applications have this already, in ios/userland/uncaught.c;
+ * a daemon has no library of ours but this one.)
+ */
+static void (*previous_uncaught)(id);
+
+static void
+uncaught_here(id exception)
+{
+	const char *name = NULL, *reason = NULL;
+	char one[80] = "?", two[300] = "?";
+	id n = ((id (*)(id, SEL))objc_msgSend)(exception, sel_registerName("name"));
+	id r = ((id (*)(id, SEL))objc_msgSend)(exception, sel_registerName("reason"));
+
+	name = n != NULL ? text_of(n, one, sizeof(one)) : "?";
+	reason = r != NULL ? text_of(r, two, sizeof(two)) : "?";
+	say("hakios: store: UNCAUGHT %s: %.280s\n", name, reason);
+	if (previous_uncaught != NULL) {
+		previous_uncaught(exception);
+	}
+}
+
+static void
+name_uncaught_exceptions(void)
+{
+	void (*set_handler)(void (*)(id)) = (void (*)(void (*)(id)))dlsym(RTLD_DEFAULT,
+	    "objc_setUncaughtExceptionHandler");
+
+	if (set_handler != NULL) {
+		set_handler(uncaught_here);
+	}
+}
+
 static void
 hook_fairplay(void)
 {
@@ -2540,12 +2575,47 @@ fabricated_account(id store)
 		    n, type != NULL ? "there" : "MISSING", all != NULL ? text_of(all, text, sizeof(text)) : "(nil)");
 	}
 	if (type == NULL) {
-		say("hakios: store: no iTunes account type in this process: no account made\n");
-		return NULL;
+		/*
+		 * ... and if the database has not even got the TYPE -- which is how a phone that was never
+		 * set up starts, ZACCOUNTTYPE empty -- one is made here too. ACAccountType is a Core Data
+		 * object, so its identifier is set through the key rather than a setter that may not be
+		 * declared. Nothing is saved: this exists for the length of the process, which is all AMS
+		 * needs to have an account to ask about.
+		 */
+		Class type_class = objc_getClass("ACAccountType");
+
+		type = type_class != Nil ? ((id (*)(id, SEL))objc_msgSend)((id)type_class,
+		    sel_registerName("alloc")) : NULL;
+		type = type != NULL ? ((id (*)(id, SEL))objc_msgSend)(type, sel_registerName("init")) : NULL;
+		if (type != NULL) {
+			((void (*)(id, SEL, id, id))objc_msgSend)(type, sel_registerName("setValue:forKey:"),
+			    (id)CFSTR("com.apple.account.iTunes"), (id)CFSTR("identifier"));
+			((void (*)(id, SEL, id, id))objc_msgSend)(type, sel_registerName("setValue:forKey:"),
+			    (id)CFSTR("iTunes Store"), (id)CFSTR("accountTypeDescription"));
+		}
+		say("hakios: store: the database has no iTunes account type; one was %s here\n",
+		    type != NULL ? "made" : "NOT made");
+		if (type == NULL) {
+			return NULL;
+		}
 	}
 	made = ((id (*)(id, SEL))objc_msgSend)((id)account_class, sel_registerName("alloc"));
 	made = made != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(made, sel_registerName("initWithAccountType:"),
 	    type) : NULL;
+	/*
+	 * ... and offered to accountsd, which is the supported way to make one exist: a row written into
+	 * Accounts3.sqlite by hand is not seen (the TYPE written that way is, both here and in appstored,
+	 * so the file is read -- the account row is refused). -[ACAccountStore ams_saveAccount:] is AMS's
+	 * own synchronous save; if the daemon takes it, the account is in the database from then on and
+	 * nothing of ours is needed to find it.
+	 */
+	if (knob("HAKIOS_SAVE_ACCOUNT") != NULL) {
+		id saved = ((id (*)(id, SEL, id))objc_msgSend)(store, sel_registerName("ams_saveAccount:"), made);
+		char text[160] = "?";
+
+		say("hakios: store: offered the account to accountsd: %s\n",
+		    saved != NULL ? text_of(saved, text, sizeof(text)) : "nothing back");
+	}
 	say("hakios: store: INJECTED a local iTunes account (%p), which this phone has none of\n", (void *)made);
 	{
 		/*
@@ -2573,6 +2643,62 @@ fabricated_account(id store)
  * not answer -ams_isLocalAccount, which on a real phone is a property of the record in the database.
  * Only ours is answered; every other account is left to AMS.
  */
+/*
+ * THE DOOR ITSELF. -[ACAccountStore ams_localiTunesAccount] is what every one of AMS's account paths
+ * calls, and on this phone it answers nil: the accounts database has no account and no account type,
+ * because iOS fills that table when a device is set up and this one never has been. Two hooks of ours
+ * answered their own callers with a made account; this answers the door, so that everything behind it --
+ * the cookies, the storefront save, AppStoreKit's launch -- gets the same account without being named one
+ * at a time. The real one is preferred whenever there is one.
+ */
+static id (*old_local_itunes_account)(id, SEL);
+
+static id
+new_local_itunes_account(id self, SEL cmd)
+{
+	id account = old_local_itunes_account != NULL ? old_local_itunes_account(self, cmd) : NULL;
+	const char *fake;
+
+	if (account != NULL) {
+		return account;
+	}
+	fake = knob("HAKIOS_FAKE_ACCOUNT");
+	account = fake != NULL && *fake != '0' ? fabricated_account(self) : NULL;
+	/*
+	 * ... as a finished promise where the caller wants one (HAKIOS_LOCAL_ACCOUNT_IS_PROMISE=1). In
+	 * amsaccountsd the answer is sent -continueWithBlock:, which an ACAccount does not know: the daemon
+	 * died of that selector the first time it was given an account (UNCAUGHT NSInvalidArgumentException,
+	 * run 020257). It is the same shape as its sibling, _ams_localiTunesAccountForAccountMediaType:,
+	 * which answers a promise on iOS 26/27 where 16.5 answered the account.
+	 */
+	if (account != NULL) {
+		/*
+		 * In amsaccountsd only. The two processes want different things of the same selector: the
+		 * daemon sends the answer -continueWithBlock: (and died of it with an account), and the App
+		 * Store sends it -ams_storefrontForMediaType: (and died of it with a promise). Measured both
+		 * ways round, one run each.
+		 */
+		const char *as_promise = knob("HAKIOS_LOCAL_ACCOUNT_IS_PROMISE");
+		bool daemon = who != NULL && strcmp(who, "amsaccountsd") == 0;
+		Class promise_class = daemon && (as_promise == NULL || *as_promise != '0')
+		    ? objc_getClass("AMSPromise") : Nil;
+
+		if (promise_class != Nil) {
+			id promise = ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
+			    sel_registerName("promiseWithResult:"), account);
+			static bool said;
+
+			if (!said) {
+				said = true;
+				say("hakios: store: ams_localiTunesAccount answers a finished promise, not the "
+				    "account itself\n");
+			}
+			return promise;
+		}
+	}
+	return account;
+}
+
 static BOOL (*old_is_local_account)(id, SEL);
 
 static BOOL
@@ -2593,7 +2719,10 @@ new_is_local_account(id self, SEL cmd)
 static id
 local_account_of(id store, const char *who)
 {
-	id account = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
+	/* the original, not our own answer: this wants the account, whatever the door now hands out */
+	id account = old_local_itunes_account != NULL ? old_local_itunes_account(store,
+	    sel_registerName("ams_localiTunesAccount"))
+	    : ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
 	static int told;
 
 	{
@@ -3373,6 +3502,8 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_ams_storefront_media, false },
 	{ "ACAccount", "ams_isLocalAccount", false, (IMP)new_is_local_account,
 	  (IMP *)&old_is_local_account, false },
+	{ "ACAccountStore", "ams_localiTunesAccount", false, (IMP)new_local_itunes_account,
+	  (IMP *)&old_local_itunes_account, false },
 	{ "ACAccount", "ams_copyStorefrontFromAccount:", false, (IMP)new_copy_storefront, (IMP *)&old_copy_storefront, false },
 	/* and the ones particular callers knock at instead */
 	{ "AMSBagNetworkDataSource", "cachedStorefront", false, (IMP)new_cached_storefront, (IMP *)&old_cached_storefront, false },
@@ -3584,12 +3715,20 @@ hakios_store_init(void)
 	 * fetches over the network with a bag of its own -- so it needs the same storefront answered, and its
 	 * requests and errors are worth the same table as the store's.
 	 */
+	/*
+	 * amsaccountsd as well. "Local account not found" reaches the App Store as an error decoded from an
+	 * XPC reply -- it is not made in the app at all, it is what the daemon on the other side answers --
+	 * and the daemon the app asks is com.apple.xpc.amsaccountsd. An account made inside the app is
+	 * therefore invisible to the question that matters; the answer has to be given where the question
+	 * is asked.
+	 */
 	if (name == NULL || (strcmp(name, "appstored") != 0 && strcmp(name, "AppStore") != 0
-	    && strcmp(name, "jetpackassetd") != 0)) {
+	    && strcmp(name, "jetpackassetd") != 0 && strcmp(name, "amsaccountsd") != 0)) {
 		return;
 	}
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
 	watch_for_faults();
+	name_uncaught_exceptions();
 	hook_fairplay();                /* first of all: the one call that never comes back */
 	{
 		/*
