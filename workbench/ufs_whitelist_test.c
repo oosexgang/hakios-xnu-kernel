@@ -4,7 +4,7 @@
  * the whitelist is what makes it so, and a mistake in it would let a write reach the phone's flash. So
  * besides the driver's own cases (which it tries on the phone before its first command), every SCSI
  * operation is tried here with every flag and data direction: nothing that writes, or that is not on the
- * short list of reads, ever passes.
+ * short list of reads, ever passes. And what a command's answer must be for the driver to take it.
  *
  *   ufs_whitelist_test SCENARIO
  */
@@ -260,6 +260,44 @@ a_write_not_placed(void)
 	CHECK(slot_ucd[0] == 0xeeeeeeeeu && slot_utrd[0] == 0xeeeeeeeeu, "and the slot untouched");
 }
 
+/*
+ * What a command's answer must be to be taken (hc_complete(), the controller done with the slot: its doorbell
+ * bit clear in a register file of the test's own): the controller's OCS success, a response UPIU with the slot's
+ * tag, no failed response and a good status -- or, for TEST UNIT READY alone, CHECK CONDITION (a unit's
+ * attention after a reset), which is no error
+ */
+static void
+answers(void)
+{
+	static uint32_t registers[0x100], descriptor[8], command_descriptor[1024];
+	struct hc_slot s = { .number = 5, .utrd = descriptor, .ucd = command_descriptor };
+	uint8_t *r = (uint8_t *)command_descriptor + UCD_RESPONSE;
+	static const struct { unsigned at; uint8_t value; const char *what; } wrong[] = {
+		{ 0, 0x01, "no response UPIU" }, { 3, 4, "another slot's tag" }, { 6, 1, "a failed response" },
+		{ 7, 0x08, "status BUSY" },
+	};
+
+	hc = (vm_offset_t)registers;
+	r[0] = UPIU_RESPONSE;
+	r[3] = 5;
+	descriptor[2] = OCS_SUCCESS;
+	CHECK(hc_complete(&s, "a read", false) == 0, "a good answer taken");
+	CHECK(hc_complete(&s, "a test", true) == 0, "for TEST UNIT READY too");
+	descriptor[2] = 0x0f;
+	CHECK(hc_complete(&s, "a read", false) == EIO, "the controller says it failed: not taken");
+	descriptor[2] = OCS_SUCCESS;
+	for (unsigned i = 0; i < sizeof(wrong) / sizeof(wrong[0]); i++) {
+		uint8_t was = r[wrong[i].at];
+
+		r[wrong[i].at] = wrong[i].value;
+		CHECK(hc_complete(&s, "a read", false) == EIO && hc_complete(&s, "a test", true) == EIO, "%s: not taken", wrong[i].what);
+		r[wrong[i].at] = was;
+	}
+	r[7] = 0x02;
+	CHECK(hc_complete(&s, "a read", false) == EIO, "CHECK CONDITION to a read: not taken");
+	CHECK(hc_complete(&s, "a test", true) == 0, "to TEST UNIT READY: taken");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -267,6 +305,7 @@ main(int argc, char **argv)
 		{ "own_cases", own_cases }, { "every_operation", every_operation }, { "everything_else", everything_else },
 		{ "read_lengths", read_lengths }, { "units_past_the_eighth", units_past_the_eighth }, { "permitted_or_said", permitted_or_said },
 		{ "a_read_placed", a_read_placed }, { "entries_exactly", entries_exactly }, { "a_write_not_placed", a_write_not_placed },
+		{ "answers", answers },
 	};
 
 	if (argc < 2) {
