@@ -334,6 +334,29 @@ setup_put_back(void)
 }
 
 /* a controller without the command FIFO (before 2.2), and one the firmware did not leave running: not touched */
+/* the first version that has the command FIFO, 2.2, is used; 2.1 is not */
+static void
+controller_2_2(void)
+{
+	phone("phone-cmd", false);
+	m.version = 0x20020000;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	WAIT_FOR(m.sent_n >= 1, 1000);
+	CHECK(m.sent_n >= 1 && !logged("not a DSI controller of 2.2"), "2.2: the level sent: %s", log_text);
+}
+
+static void
+controller_2_1(void)
+{
+	phone("phone-cmd", false);
+	m.version = 0x20010000;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	usleep(200000);
+	CHECK(logged("not a DSI controller of 2.2 or later") && m.sent_n == 0, "2.1: not touched: %s", log_text);
+}
+
 static void
 controller_not_usable(void)
 {
@@ -641,6 +664,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "command_panel", command_panel }, { "setup_put_back", setup_put_back }, { "controller_not_usable", controller_not_usable },
+		{ "controller_2_2", controller_2_2 }, { "controller_2_1", controller_2_1 },
 		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
