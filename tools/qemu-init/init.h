@@ -171,6 +171,7 @@ void command_truncate(int argc, char **argv);
 void command_vectors(int argc, char **argv);
 void command_touch(int argc, char **argv);
 void command_poll(int argc, char **argv);
+void command_pipe_size(int argc, char **argv);
 void command_fifo(int argc, char **argv);
 void command_flock(int argc, char **argv);
 void command_byte_locks(int argc, char **argv);

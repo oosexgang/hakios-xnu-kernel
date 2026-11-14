@@ -1,6 +1,6 @@
 /* tools/qemu-init: between processes -- a pipe, a socket pair and a descriptor through it, a socket by name,
  * memory shared by name, Mach messages, waiting on descriptors, a named pipe, a lock on a file: pipe, unix,
- * unix-name, shm, mach, poll, fifo, flock, byte-locks */
+ * unix-name, shm, mach, poll, fifo, flock, byte-locks, pipe-size */
 #include "init.h"
 
 #define SYS_wait4               7
@@ -615,5 +615,51 @@ command_byte_locks(int argc, char **argv)
 	at = append(line, at, sizeof(line), seen & 2 ? ", 10-19 taken" : ", 10-19 NOT taken");
 	at = append(line, at, sizeof(line), seen & 4 ? ", F_GETLK names the holder" : ", F_GETLK does NOT name the holder");
 	at = append(line, at, sizeof(line), seen & 16 ? "; let go, taken\n" : "; let go, NOT taken\n");
+	say(line);
+}
+
+#define POLLOUT                 0x0004
+#define F_SETFL                 4
+#define O_NONBLOCK              4
+
+/*
+ * A pipe filled, a byte at a time without waiting, until the kernel says EAGAIN: how much it holds; full, poll
+ * does not find it writable, and with some of it read out (PIPE_BUF, 512 bytes, the least a write is promised),
+ * it does again
+ */
+void
+command_pipe_size(int argc, char **argv)
+{
+	struct { int32_t fd; int16_t events, revents; } watched;
+	static char out[1024];
+	char line[200];
+	int ends[2];
+	long held = 0, n, last = 0, full, after;
+	size_t at;
+
+	(void)argc;
+	(void)argv;
+	if (syscall_pipe(ends) != 0 || syscall6(SYS_fcntl, ends[1], F_SETFL, O_NONBLOCK, 0, 0, 0) != 0) {
+		say("pipe-size: no pipe\n");
+		return;
+	}
+	while ((n = syscall6(SYS_write, ends[1], (long)"x", 1, 0, 0, 0)) == 1 && held < 1048576) {
+		held++;
+	}
+	last = n;
+	watched.fd = ends[1];
+	watched.events = POLLOUT;
+	watched.revents = 0;
+	full = syscall6(SYS_poll, (long)&watched, 1, 0, 0, 0, 0);
+	syscall6(SYS_read, ends[0], (long)out, 512, 0, 0, 0);
+	watched.revents = 0;
+	after = syscall6(SYS_poll, (long)&watched, 1, 0, 0, 0, 0) == 1 && (watched.revents & POLLOUT);
+	syscall6(SYS_close, ends[0], 0, 0, 0, 0, 0);
+	syscall6(SYS_close, ends[1], 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "pipe-size: ");
+	at = append_number(line, at, sizeof(line), (uint64_t)held);
+	at = append(line, at, sizeof(line), last == -35 ? " bytes, then EAGAIN; full, " : " bytes, then NOT EAGAIN; full, ");
+	at = append(line, at, sizeof(line), full == 0 ? "not writable" : "WRITABLE");
+	at = append(line, at, sizeof(line), after ? "; 512 read out, writable again\n" : "; 512 read out, NOT writable again\n");
 	say(line);
 }
