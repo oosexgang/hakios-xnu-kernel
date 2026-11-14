@@ -144,3 +144,29 @@ copy_bytes(void *to, const void *from, size_t n)
 		t[i] = f[i];
 	}
 }
+
+/* "error N (ENAME)": a system call's -errno, by its number and, if it is a common one, its name (sys/errno.h) */
+void
+say_error(long error)
+{
+	static const struct { int number; const char *name; } names[] = {
+		{ 1, "EPERM" }, { 2, "ENOENT" }, { 3, "ESRCH" }, { 4, "EINTR" }, { 5, "EIO" }, { 9, "EBADF" }, { 10, "ECHILD" },
+		{ 12, "ENOMEM" }, { 13, "EACCES" }, { 14, "EFAULT" }, { 16, "EBUSY" }, { 17, "EEXIST" }, { 18, "EXDEV" },
+		{ 20, "ENOTDIR" }, { 21, "EISDIR" }, { 22, "EINVAL" }, { 24, "EMFILE" }, { 28, "ENOSPC" }, { 30, "EROFS" },
+		{ 31, "EMLINK" }, { 35, "EAGAIN" }, { 36, "EINPROGRESS" }, { 45, "ENOTSUP" }, { 48, "EADDRINUSE" },
+		{ 49, "EADDRNOTAVAIL" }, { 50, "ENETDOWN" }, { 51, "ENETUNREACH" }, { 54, "ECONNRESET" }, { 60, "ETIMEDOUT" },
+		{ 61, "ECONNREFUSED" }, { 62, "ELOOP" }, { 63, "ENAMETOOLONG" }, { 65, "EHOSTUNREACH" }, { 66, "ENOTEMPTY" },
+		{ 78, "ENOSYS" }, { 93, "ENOATTR" },
+	};
+	uint64_t number = (uint64_t)(error < 0 ? -error : error);
+
+	say("error ");
+	say_number(number);
+	for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+		if ((uint64_t)names[i].number == number) {
+			say(" (");
+			say(names[i].name);
+			say(")");
+		}
+	}
+}
