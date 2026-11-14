@@ -1186,7 +1186,42 @@ dump_threads(void)
 		say("hakios: store: task_threads() refused\n");
 		return;
 	}
-	say("hakios: store: %u threads\n", count);
+	/*
+	 * ... and where this program itself was loaded, because a thread of appstored sits in
+	 * __os_unfair_lock_lock_slow in every report of a run and the frames below it are in appstored's own
+	 * binary, not in the shared cache: without its load address those frames cannot be named.
+	 */
+	/*
+	 * ... and where every one of our libraries was loaded. A thread of appstored sits in
+	 * __os_unfair_lock_lock_slow under a Swift job in every report of a run, and the frames under it are
+	 * neither in the shared cache nor in appstored itself; whether they are in a library of ours decides
+	 * whether that deadlock is the daemon's or our own.
+	 */
+	say("hakios: store: %u threads (this program at %p)\n", count, _dyld_get_image_header(0));
+	{
+		static bool said;
+
+		if (!said) {
+			said = true;
+			for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+				const char *name = _dyld_get_image_name(i);
+
+				const struct mach_header *header = _dyld_get_image_header(i);
+				const char *last = name != NULL ? strrchr(name, '/') : NULL;
+
+				/*
+				 * Every image, once: the frames under the blocked thread are in none of the
+				 * three obvious ones (the daemon, our two), so the only way to name them is to
+				 * have the whole map. The shared cache is left out -- a2s names those.
+				 */
+				if (name != NULL && strstr(name, "/usr/lib/") != name
+				    && strstr(name, "dyld_shared_cache") == NULL) {
+					say("hakios: store: image %p %s\n", header,
+					    last != NULL ? last + 1 : name);
+				}
+			}
+		}
+	}
 	for (unsigned i = 0; i < count; i++) {
 		arm_thread_state64_t state;
 		mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
@@ -1890,6 +1925,38 @@ static void *(*old_session_create)(const char *, void *, unsigned long long, voi
 static bool (*old_session_activate)(void *, void **);
 static void *(*old_session_send_sync)(void *, void *, void **);
 
+/*
+ * WHICH session a message goes to. The App Store makes one session to jetpackassetd by name and then
+ * activates a second one that was never created by name here, and "initialize" -- the message JetEngine
+ * sends its daemon and after which everything stops -- is sent one way on one of them. Without the pair
+ * (session, name) the two are indistinguishable, and "the daemon was told" and "the message went to the
+ * defaults service" read the same in the log. So every session made by name is remembered by its pointer.
+ */
+#define SESSIONS 32
+static struct { void *session; char name[72]; } session_of[SESSIONS];
+static unsigned sessions_known;
+
+static const char *
+name_of_session(void *session)
+{
+	for (unsigned i = 0; i < sessions_known; i++) {
+		if (session_of[i].session == session) {
+			return session_of[i].name;
+		}
+	}
+	return "(a session made elsewhere)";
+}
+
+static void
+remember_session(void *session, const char *name)
+{
+	if (session != NULL && name != NULL && sessions_known < SESSIONS) {
+		session_of[sessions_known].session = session;
+		snprintf(session_of[sessions_known].name, sizeof(session_of[0].name), "%s", name);
+		sessions_known++;
+	}
+}
+
 static void
 say_rich(const char *what, const char *name, void *error)
 {
@@ -1905,6 +1972,7 @@ new_session_create(const char *name, void *queue, unsigned long long flags, void
 {
 	void *session = old_session_create(name, queue, flags, error);
 
+	remember_session(session, name);
 	say_rich(session != NULL ? "made for" : "NOT made for", name, error != NULL ? *error : NULL);
 	return session;
 }
@@ -1914,7 +1982,7 @@ new_session_activate(void *session, void **error)
 {
 	bool ok = old_session_activate(session, error);
 
-	say_rich(ok ? "activated" : "NOT activated", NULL, error != NULL ? *error : NULL);
+	say_rich(ok ? "activated" : "NOT activated", name_of_session(session), error != NULL ? *error : NULL);
 	return ok;
 }
 
@@ -1938,10 +2006,11 @@ new_session_send_sync(void *session, void *message, void **error)
 {
 	void *reply;
 
+	say("hakios: store: a sync message to %s\n", name_of_session(session));
 	say_xpc("asks:", message);
 	reply = old_session_send_sync(session, message, error);
-	say_rich(reply != NULL ? "answered a sync message" : "gave NO answer to a sync message", NULL,
-	    error != NULL ? *error : NULL);
+	say_rich(reply != NULL ? "answered a sync message" : "gave NO answer to a sync message",
+	    name_of_session(session), error != NULL ? *error : NULL);
 	say_xpc("answer:", reply);
 	return reply;
 }
@@ -1954,9 +2023,10 @@ new_session_send(void *session, void *message)
 {
 	void *error;
 
+	say("hakios: store: a one-way message to %s\n", name_of_session(session));
 	say_xpc("sends one way:", message);
 	error = old_session_send(session, message);
-	say_rich(error == NULL ? "sent one way" : "FAILED to send one way", NULL, error);
+	say_rich(error == NULL ? "sent one way" : "FAILED to send one way", name_of_session(session), error);
 	return error;
 }
 
@@ -2049,8 +2119,44 @@ new_session_send_async(void *session, void *message, void *handler)
 	 * it leaves in x0 for one and asking it to describe itself killed the App Store at the first
 	 * message (run 201010, a fault in xpc_rich_error_copy_description).
 	 */
+	say("hakios: store: a message with a reply handler to %s\n", name_of_session(session));
 	say_xpc("asks with a reply handler:", message);
 	old_session_send_async(session, message, handler);
+}
+
+/* the other creator by name: an XPC service rather than a Mach service */
+static void *(*old_session_create_service)(const char *, void *, unsigned long long, void **);
+
+static void *
+new_session_create_service(const char *name, void *queue, unsigned long long flags, void **error)
+{
+	void *session = old_session_create_service(name, queue, flags, error);
+
+	remember_session(session, name);
+	say_rich(session != NULL ? "made for the XPC service" : "NOT made for the XPC service", name,
+	    error != NULL ? *error : NULL);
+	return session;
+}
+
+/*
+ * ... and the one Swift's XPCSession really uses, which wraps a connection that was made first:
+ * _xpc_session_create_from_connection_4SWIFT. The App Store makes its first session to jetpackassetd by
+ * name (that is the "prewarm"), and the session that carries "initialize" comes from here -- without this
+ * the message that matters is sent to "a session made elsewhere" and there is no telling whether the Jet
+ * daemon was told anything at all. The connection knows its own service name (xpc_connection_get_name).
+ */
+static void *(*old_session_from_connection)(void *, void *, void *, void *);
+static const char *(*connection_name)(void *);
+
+static void *
+new_session_from_connection(void *connection, void *a, void *b, void *c)
+{
+	void *session = old_session_from_connection(connection, a, b, c);
+	const char *name = connection != NULL && connection_name != NULL ? connection_name(connection) : NULL;
+
+	remember_session(session, name != NULL ? name : "(a connection with no name)");
+	say("hakios: store: xpc session made from a connection to %s\n", name != NULL ? name : "(no name)");
+	return session;
 }
 
 static void
@@ -2075,7 +2181,19 @@ hook_xpc_sessions(void)
 	rich_desc = (rich_desc_fn)dlsym(RTLD_DEFAULT, "xpc_rich_error_copy_description");
 	xpc_desc = (rich_desc_fn)dlsym(RTLD_DEFAULT, "xpc_copy_description");
 	{
+		void *from_connection = dlsym(RTLD_DEFAULT, "_xpc_session_create_from_connection_4SWIFT");
+		void *xpc_service = dlsym(RTLD_DEFAULT, "xpc_session_create_xpc_service");
+
+		connection_name = (const char *(*)(void *))dlsym(RTLD_DEFAULT, "xpc_connection_get_name");
+		if (hook != NULL && from_connection != NULL) {
+			hook(from_connection, (void *)new_session_from_connection,
+			    (void **)&old_session_from_connection);
+		}
 		void *one_way = dlsym(RTLD_DEFAULT, "xpc_session_send_message");
+
+		if (hook != NULL && xpc_service != NULL) {
+			hook(xpc_service, (void *)new_session_create_service, (void **)&old_session_create_service);
+		}
 		void *with_reply = dlsym(RTLD_DEFAULT, "xpc_session_send_message_with_reply_async");
 
 		if (hook != NULL && one_way != NULL) {
@@ -2319,6 +2437,32 @@ new_add_guid_header_matching(id self, SEL cmd, void *request, void *url_matched,
 {
 	say_request("a request wants a GUID header:", request, url_matched, bag);
 	old_add_guid_header_matching(self, cmd, request, url_matched, bag);
+}
+
+/*
+ * EVERY BAG THIS PROCESS ASKS FOR, by profile. The App Store fetches exactly one bag in a run -- product
+ * AppStore, profile adprivacyd -- and that one is AdPlatforms'. Its own never goes out, and a JetEngine
+ * JetpackLoader is built with a bag, so a store with no bag asks for no JetPack and no page. Everything
+ * goes through +[AMSBag _bagForProfile:profileVersion:processInfo:accountProvider:loadURLOverlay:], so
+ * the profiles are named here: a profile asked for and never fetched is a different fault from a profile
+ * nobody ever asks for.
+ */
+static id (*old_bag_for_profile)(id, SEL, void *, long, void *, void *, void *);
+
+static id
+new_bag_for_profile(id self, SEL cmd, void *profile, long version, void *process, void *provider,
+    void *overlay)
+{
+	char text[80] = "(none)";
+	id bag;
+
+	if (profile != NULL) {
+		text_of((id)profile, text, sizeof(text));
+	}
+	bag = old_bag_for_profile(self, cmd, profile, version, process, provider, overlay);
+	say("hakios: store: a bag is asked for: profile %.60s version %ld -> %s\n", text, version,
+	    bag != NULL ? "a bag" : "nothing");
+	return bag;
 }
 
 static void
@@ -2953,6 +3097,8 @@ static struct replacement replacements[] = {
 	  (IMP)new_add_guid_matching, (IMP *)&old_add_guid_matching, false },
 	{ "AMSURLRequestDecoration", "addGUIDHeaderToRequest:matchingURL:bag:", true,
 	  (IMP)new_add_guid_header_matching, (IMP *)&old_add_guid_header_matching, false },
+	{ "AMSBag", "_bagForProfile:profileVersion:processInfo:accountProvider:loadURLOverlay:", true,
+	  (IMP)new_bag_for_profile, (IMP *)&old_bag_for_profile, false },
 	{ "SSURLConnectionRequest", "shouldMescalSign", false, (IMP)new_should_mescal,
 	  (IMP *)&old_should_mescal, false },
 	{ "AMSURLRequestDecoration", "addStoreFrontHeaderToRequest:forAccount:mediaType:bag:", true,
