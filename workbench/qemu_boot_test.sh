@@ -164,6 +164,17 @@ typed=(
 	'flock /tmp/notes/private'
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
+	'ln -s /tmp/notes/loop-b /tmp/notes/loop-a'
+	'ln -s /tmp/notes/loop-a /tmp/notes/loop-b'
+	'cat /tmp/notes/loop-a'
+	'cat /tmp/notes/vectors/inside'
+	'ln -s /tmp/notes/vectors /tmp/notes/to-vectors'
+	'rm /tmp/notes/to-vectors'
+	'stat /tmp/notes/vectors'
+	'ln -s nowhere /tmp/notes/dangling'
+	'cat /tmp/notes/dangling'
+	'rm /tmp/notes/loop-a /tmp/notes/loop-b /tmp/notes/dangling'
+	'rm /tmp'
 	'write /tmp/notes/fixed fixed'
 	'chflags 2 /tmp/notes/fixed'
 	'write /tmp/notes/fixed changed'
@@ -398,6 +409,11 @@ check "a file's flags (chflags): one not to be changed is not written, removed o
 		cat '$shell' | grep -A2 -x '# cat /tmp/notes/log' | tail -2 | tr '\n' '|' | grep -qx 'first|second|' &&
 		grep -aqE '^/tmp/notes/log: -rw-r--r-- 1 link, inode [0-9]+, 13 bytes, owner 0:0, flags 0x4' '$shell' &&
 		grep -aq '^stat: /tmp/notes/fixed: error 2 (ENOENT)' '$shell'"
+check "paths as BSD has them: symbolic links that lead to each other (ELOOP), a file taken for a directory (ENOTDIR), a link to nothing (ENOENT), a link removed and not what it leads to, a mount point not removed (EBUSY)" \
+	bash -c "grep -aq '^cat: /tmp/notes/loop-a: error 62 (ELOOP)' '$shell' && grep -aq '^cat: /tmp/notes/vectors/inside: error 20 (ENOTDIR)' '$shell' &&
+		grep -aqE '^/tmp/notes/vectors: -rw-r--r-- 1 link, inode [0-9]+, 38 bytes' '$shell' &&
+		grep -aq '^cat: /tmp/notes/dangling: error 2 (ENOENT)' '$shell' && grep -aq '^rm: /tmp: error 16 (EBUSY)' '$shell' &&
+		! grep -aq '^rm: /tmp/notes/loop\|^rm: /tmp/notes/dangling\|^rm: /tmp/notes/to-vectors' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
