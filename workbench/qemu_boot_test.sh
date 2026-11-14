@@ -164,6 +164,21 @@ typed=(
 	'flock /tmp/notes/private'
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
+	'write /tmp/notes/fixed fixed'
+	'chflags 2 /tmp/notes/fixed'
+	'write /tmp/notes/fixed changed'
+	'rm /tmp/notes/fixed'
+	'mv /tmp/notes/fixed /tmp/notes/moved'
+	'cat /tmp/notes/fixed'
+	'write /tmp/notes/log first'
+	'chflags 4 /tmp/notes/log'
+	'write /tmp/notes/log over'
+	'write -a /tmp/notes/log second'
+	'cat /tmp/notes/log'
+	'stat /tmp/notes/log'
+	'chflags 0 /tmp/notes/fixed /tmp/notes/log'
+	'rm /tmp/notes/fixed /tmp/notes/log'
+	'stat /tmp/notes/fixed'
 	'cloexec /etc/motd'
 	'random'
 	'write /tmp/notes/script #!/sbin/launchd echo'
@@ -375,6 +390,14 @@ check "a file renamed onto another's name takes its place, and a directory canno
 check "descriptors marked close-on-exec (O_CLOEXEC, F_DUPFD_CLOEXEC) close as a program starts, and only they (dup2 leaves the mark behind)" \
 	bash -c "grep -aq '^cloexec: O_CLOEXEC and F_DUPFD_CLOEXEC mark a descriptor FD_CLOEXEC, dup and dup2 do not' '$shell' &&
 		grep -aq '^fds: 10 open, 11 closed, 12 open' '$shell'"
+check "a file's flags (chflags): one not to be changed is not written, removed or renamed, one only to be added to is only added to; cleared, they go" \
+	bash -c "grep -aq '^write: /tmp/notes/fixed: error 1 (EPERM)' '$shell' && grep -aq '^rm: /tmp/notes/fixed: error 1 (EPERM)' '$shell' &&
+		grep -aq '^mv: /tmp/notes/fixed: error 1 (EPERM)' '$shell' &&
+		cat '$shell' | grep -A1 -x '# cat /tmp/notes/fixed' | tail -1 | grep -qx 'fixed' &&
+		grep -aq '^write: /tmp/notes/log: error 1 (EPERM)' '$shell' &&
+		cat '$shell' | grep -A2 -x '# cat /tmp/notes/log' | tail -2 | tr '\n' '|' | grep -qx 'first|second|' &&
+		grep -aqE '^/tmp/notes/log: -rw-r--r-- 1 link, inode [0-9]+, 13 bytes, owner 0:0, flags 0x4' '$shell' &&
+		grep -aq '^stat: /tmp/notes/fixed: error 2 (ENOENT)' '$shell'"
 check "three pieces written in one writev read back in one readv, into pieces of other sizes, in order" \
 	grep -aq '^vectors: /tmp/notes/vectors: 38 bytes written from 3 pieces, 38 read into 3 others, in order' "$shell"
 check "the kernel's random bytes: getentropy's differ and stop at 256, and 64 KB of /dev/random has each byte value about as often as the others" \
