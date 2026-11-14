@@ -241,6 +241,9 @@ typed=(
 	'rm /tmp'
 	'mkdir /tmp/notes/other'
 	'mount ramfs ramfs /tmp/notes/other'
+	'cd /tmp/notes/other/..'
+	'pwd'
+	'cd /'
 	'mv /tmp/notes/vectors /tmp/notes/other/vectors'
 	'ln /tmp/notes/vectors /tmp/notes/other/vectors'
 	'fill /tmp/notes/other/full 900000000'
@@ -541,6 +544,8 @@ check "ramfs filled: a write past its room refused (ENOSPC), the file kept to wh
 		grep -aqE '^fill: /tmp/notes/other/full, [0-9]{9} bytes' '$shell' &&
 		grep -aq '^write: /tmp/notes/other/one-more: error 28 (ENOSPC)' '$shell' &&
 		grep -aq '^write: 2 bytes to /tmp/notes/other/one-more' '$shell'"
+check "the .. of a file system mounted on a directory leads to that directory's own parent" \
+	bash -c "cat '$shell' | grep -A1 -x '# cd /tmp/notes/other/..' | grep -qx '# pwd' && cat '$shell' | grep -A2 -x '# cd /tmp/notes/other/..' | tail -1 | grep -qx '/tmp/notes'"
 check "a file is not moved, or linked, from one file system to another (EXDEV)" \
 	bash -c "grep -aq '^mv: /tmp/notes/vectors: error 18 (EXDEV)' '$shell' && grep -aq '^ln: /tmp/notes/other/vectors: error 18 (EXDEV)' '$shell'"
 check "rename as POSIX has it: two names of one file left both; a directory onto a file (ENOTDIR), a file onto a directory (EISDIR), onto one not empty (ENOTEMPTY)" \
