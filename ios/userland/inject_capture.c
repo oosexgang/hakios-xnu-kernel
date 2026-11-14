@@ -28,7 +28,9 @@
  * +[BWFigCaptureDeviceVendor sharedCaptureDeviceVendorWithDefaultDeviceCreateFunction:] is given it when it
  * is given none. What the capture graph asks of hardware this phone has none of is refused or passed by,
  * as on 16.5 (see each below): video stabilization, the microphone of a capture session, the photograph's
- * SIS bracket and noise reduction; and the software HEVC encoder is registered for HEIC photographs.
+ * SIS bracket and noise reduction -- and on iOS 27 its unified bracketing (NRF), its HDR and its packed 10-bit
+ * buffers, which leave the photograph the pipeline 16.5 had; and the software HEVC encoder is registered for HEIC
+ * photographs.
  *
  * (iOS 16.5 did all this in mediaserverd, by the addresses of the code it replaced:
  * userland/src/inject_media.c.)
@@ -356,6 +358,68 @@ quality_prioritization(id self, SEL selector)
 	return asked > 1 ? 1 : asked;
 }
 
+/*
+ * A photograph's noise reduction and fusion scheme, 2 at the most: N104's plist says 4 (unified bracketing), and
+ * the graph had FigCaptureStillImageUnifiedBracketingSinkPipeline make its BWUBNode, whose processor coordinator
+ * is NRF's: NRF's DenoiseFusePipeline needs kernels with imageblock inputs (adjustEvmPyramidColor), which a GPU
+ * without tile shaders has no way to run, so the coordinator failed when the graph went live, and every
+ * photograph with it (-16808, "Processor coordinator setup previously failed"; logs/235342-run.log in
+ * hakios-sm7325). Scheme 2 is what iOS 16.5 had for this phone (D22's plist): FigCaptureStillImageSinkPipeline,
+ * whose noise reduction is BWGNRNode -- passed by below, as it was there.
+ */
+static int_getter original_scheme;
+
+static int
+fusion_scheme(id self, SEL selector)
+{
+	int asked = original_scheme(self, selector);
+	static bool said;
+
+	if (asked > 2 && !said) {
+		said = true;
+		say("hakios: cameracaptured: a photograph's noise reduction and fusion scheme %d taken as 2 (GNR, as on 16.5)\n",
+		    asked);
+	}
+	return asked > 2 ? 2 : asked;
+}
+
+/*
+ * N104's formats give their photographs as packed 10-bit buffers ('pf20', "UsesPacked10BitFirmwareStillImage
+ * OutputPixelFormat"), which the camera's ISP here does not write (camera_device.c: 420f, 420v, BGRA): the
+ * photograph's buffer stayed empty ("StillImage: 4224x2376 pf20 buffers are not for this ISP"). 8-bit stills.
+ */
+static BOOL
+no_packed_stills(__unused id self, __unused SEL selector)
+{
+	static bool said;
+
+	if (!said) {
+		said = true;
+		say("hakios: cameracaptured: a photograph's buffers are 8-bit, not packed 10-bit\n");
+	}
+	return NO;
+}
+
+/*
+ * No HDR photographs: with scheme 2 the still image pipeline put a BWHDRNode before the noise reduction wherever
+ * the format says HDR (N104's do), and the node's sample buffer processor is the iPhone's, which is not here:
+ * -[BWHDRNode _setupSampleBufferProcessor] read through NULL when the graph went live, and cameracaptured died of
+ * it at every start of the camera (SIGSEGV, far 8; logs/092322-run.log in hakios-sm7325). A bracket of exposures
+ * has nothing to fuse it here anyway. (The pipeline's configuration takes it with a direct setter, -setHdrSupported:,
+ * which the runtime does not see: the format's answer is where it comes from.)
+ */
+static BOOL
+no_hdr(__unused id self, __unused SEL selector)
+{
+	static bool said;
+
+	if (!said) {
+		said = true;
+		say("hakios: cameracaptured: no HDR photographs (no HDR processor here)\n");
+	}
+	return NO;
+}
+
 /* A photograph's noise reduction (BWGNRNode) is the iPhone's and never hands the picture back: passed by */
 static void
 gnr_render(id self, __unused SEL selector, void *sample_buffer, __unused id input)
@@ -452,6 +516,12 @@ camera_init(void)
 	if (replace("FigCaptureStillImageSettings", "qualityPrioritization", "i@:", (IMP)quality_prioritization, &was)) {
 		original_quality = (int_getter)was;
 	}
+	if (replace("FigCaptureSourceAttributes", "stillImageNoiseReductionAndFusionScheme", "i@:", (IMP)fusion_scheme, &was)) {
+		original_scheme = (int_getter)was;
+	}
+	replace("FigCaptureSourceVideoFormat", "usesPacked10BitFirmwareStillImageOutputPixelFormat", "B@:",
+	    (IMP)no_packed_stills, NULL);
+	replace("FigCaptureSourceVideoFormat", "isHDRSupported", "B@:", (IMP)no_hdr, NULL);
 	replace("BWGNRNode", "renderSampleBuffer:forInput:", "v@:^{}@", (IMP)gnr_render, NULL);
 	/*
 	 * The preview stitcher joins the wide camera's preview with the ultra wide's (the frame's outside); there is
