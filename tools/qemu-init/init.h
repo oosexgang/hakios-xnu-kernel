@@ -186,6 +186,7 @@ void command_byte_locks(int argc, char **argv);
 void command_descriptors(int argc, char **argv);
 void command_mmap_write(int argc, char **argv);
 void command_mmap_private(int argc, char **argv);
+void command_mmap_coherent(int argc, char **argv);
 void command_shm(int argc, char **argv);
 void command_vm(int argc, char **argv);
 void command_random(int argc, char **argv);

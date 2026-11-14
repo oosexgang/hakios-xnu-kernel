@@ -1,6 +1,6 @@
 /* tools/qemu-init: memory -- a file's pages mapped and checked against its reads, written through a shared
- * mapping, written through a private one (the file left as it was), and memory of its own: mmap, mmap-write,
- * mmap-private, memory */
+ * mapping, written through a private one (the file left as it was), written and seen through a mapping, and
+ * memory of its own: mmap, mmap-write, mmap-private, mmap-coherent, memory */
 #include "init.h"
 
 #define O_RDONLY                0
@@ -230,4 +230,55 @@ command_mmap_private(int argc, char **argv)
 	say(argv[1]);
 	say(turned && mine != file_before ? ": the private mapping turned" : ": the private mapping NOT turned");
 	say(shared_after == file_before && read_after == file_before ? ", the file as it was\n" : ", the file CHANGED\n");
+}
+
+#define SYS_pwrite              154
+
+/*
+ * FILE: the file mapped shared and read through the mapping (its pages brought in), then written with write()
+ * in a page and across two: the mapping has what was written, at once, without
+ * being mapped again (the file system brings the cached pages up to date in place)
+ */
+void
+command_mmap_coherent(int argc, char **argv)
+{
+	static const char middle[] = "written after the mapping", edge[] = "across a page's edge";
+	struct stat64_head st;
+	uint64_t sum = 0;
+	long fd, mapped;
+	int64_t edge_at;
+	int seen_middle, seen_edge;
+
+	if (argc != 2) {
+		say("mmap-coherent FILE (of 32 KB or more)\n");
+		return;
+	}
+	fd = syscall6(SYS_open, (long)argv[1], 2 /* O_RDWR */, 0, 0, 0, 0);
+	if (fd < 0 || syscall6(SYS_fstat64, fd, (long)&st, 0, 0, 0, 0) != 0 || st.size < 32768) {
+		say_failed("mmap-coherent", argv[1], fd < 0 ? fd : -22);
+		if (fd >= 0) {
+			syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		}
+		return;
+	}
+	if ((mapped = syscall6(SYS_mmap, 0, st.size, PROT_READ, MAP_SHARED, fd, 0)) < 0) {
+		say_failed("mmap-coherent", argv[1], mapped);
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+		return;
+	}
+	for (int64_t i = 0; i < st.size; i += 4096) {
+		sum += ((volatile uint8_t *)mapped)[i];             /* (every page brought in, and cached) */
+	}
+	edge_at = 16384 - 5;
+	syscall6(SYS_pwrite, fd, (long)middle, sizeof(middle) - 1, 1000, 0, 0);
+	syscall6(SYS_pwrite, fd, (long)edge, sizeof(edge) - 1, edge_at, 0, 0);
+	seen_middle = bytes_same((const void *)(mapped + 1000), middle, sizeof(middle) - 1);
+	seen_edge = bytes_same((const void *)(mapped + edge_at), edge, sizeof(edge) - 1);
+	syscall6(SYS_munmap, mapped, st.size, 0, 0, 0, 0);
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	(void)sum;
+	say("mmap-coherent: ");
+	say(argv[1]);
+	say(seen_middle ? ": a write in a page seen through the mapping at once" : ": a write in a page NOT seen through the mapping");
+	say(seen_edge ? ", and one across two pages\n" : ", one across two pages NOT\n");
 }

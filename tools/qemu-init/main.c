@@ -349,6 +349,7 @@ static const struct {
 	{ "mmap", "FILE the file's pages, checked against its reads", command_mmap },
 	{ "mmap-write", "FILE the file written through a shared mapping, and read back", command_mmap_write },
 	{ "mmap-private", "FILE the file mapped private and written through: the mapping changed, the file not", command_mmap_private },
+	{ "mmap-coherent", "FILE written while it is mapped: the mapping has the bytes at once", command_mmap_coherent },
 	{ "memory", "MB that much memory of its own, written and read back", command_memory },
 	{ NULL, "the network", NULL },
 	{ "ifconfig", "[NAME ADDRESS [MASK]] the interfaces, or an address for one", command_ifconfig },
