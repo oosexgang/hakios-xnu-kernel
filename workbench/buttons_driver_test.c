@@ -222,6 +222,43 @@ with_the_touch_screen(void)
 	CHECK(logged("step 5: watching"), "the keys come with the touch screen");
 }
 
+/* touchscreen=0 and no buttons=: no keys either */
+static void
+not_with_the_touch_screen_off(void)
+{
+	phone("phone-cmd");
+	boot_args = "touchscreen=0";
+	hakios_buttons_init();
+	usleep(200 * 1000);
+	CHECK(spmi.transfers == 0 && log_text[0] == 0, "not a read, not a word: %s", log_text);
+}
+
+/* power and volume down held when it first looks (the power-on block's status says both): neither believed */
+static void
+two_held_at_start(void)
+{
+	phone("phone-cmd");
+	set_pon(PON_KPDPWR | PON_RESIN);
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching"), 3000);
+	CHECK(logged("a key reads as held before anything was watched: power volume-down"), "said: %s", log_text);
+	usleep(200 * 1000);
+	CHECK(posts() == 0, "neither taken for a press (%u records)", posts());
+}
+
+/* power alone held: said as well */
+static void
+power_held_at_start(void)
+{
+	phone("phone-cmd");
+	set_pon(PON_KPDPWR);
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching"), 3000);
+	CHECK(logged("a key reads as held before anything was watched: power."), "said: %s", log_text);
+}
+
 static void
 off_when_told(void)
 {
@@ -469,6 +506,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "three_keys", three_keys }, { "only_another_systems_channel", only_another_systems_channel }, { "another_wiring", another_wiring }, { "with_the_touch_screen", with_the_touch_screen }, { "off_when_told", off_when_told },
+		{ "not_with_the_touch_screen_off", not_with_the_touch_screen_off }, { "two_held_at_start", two_held_at_start },
+		{ "power_held_at_start", power_held_at_start },
 		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
