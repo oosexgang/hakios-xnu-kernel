@@ -64,6 +64,7 @@ The commands, by what of the kernel they try (one file of `tools/qemu-init/` eac
 | `ls [PATH]`, `cat FILE` | Directories (this one, without a PATH) and files: getdirentries64, lstat64, read. |
 | `hash FILE...` | Each file or device read to its end, timed, and its FNV-1a hash, for this machine to compare. |
 | `mount apfs DEVICE DIR`, `mount ramfs ramfs DIR` | A disk's APFS volume, read only; or the kernel's file system in memory, to be written. |
+| `df` | The file systems mounted (getfsstat, each asked now): where, of what kind, from what, their size and room, and which are read only. |
 | `mkdir DIR...`, `write FILE WORDS...`, `rm PATH...` | Directories and files made and removed (where a file system takes writing: ramfs). |
 | `xattr FILE [NAME VALUE]`, `xattr -d FILE NAME` | A file's extended attributes listed with their values, one set, one taken away (ramfs keeps them). |
 | `stat PATH...`, `ln [-s] TARGET NAME`, `mv OLD NEW`, `chmod MODE PATH...` | What lstat says of a file (its kind and mode, links, inode, size, and where a symbolic link points); another name for it, a symbolic link to it, a new name, other permissions. |
