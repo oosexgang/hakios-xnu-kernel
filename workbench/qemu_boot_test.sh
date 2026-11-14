@@ -144,6 +144,9 @@ typed=(
 	'as 501:20 chown 0:0 /tmp/notes/private'
 	'as 501:20 as 0:0 echo root again'
 	'as 501:20 sysctl kern.maxfiles=100'
+	'nice -5 nice 10 echo niced'
+	'as 501:20 nice 10 nice 15 echo later'
+	'as 501:20 nice 10 nice 5 echo sooner'
 	'fill /tmp/notes/cut 10000'
 	'truncate /tmp/notes/cut 100'
 	'hash /tmp/notes/cut'
@@ -309,6 +312,11 @@ check "a user who is not root reads a file of their own, not another's, and cann
 		grep -aq '^cat: /tmp/notes/private: error 13 (EACCES)' '$shell' && grep -aq '^write: /tmp/notes/theirs: error 13 (EACCES)' '$shell' &&
 		grep -aq '^chown: /tmp/notes/private: error 1 (EPERM)' '$shell' && grep -aq '^as: 0:0 cannot be had: error 1 (EPERM)' '$shell' &&
 		grep -aq '^kern.maxfiles: (not taken: error 1 (EPERM))' '$shell' && ! grep -aqx 'root again' '$shell'"
+check "a process's priority set and read back (setpriority, getpriority); a user who is not root may put theirs later, not sooner (EACCES)" \
+	bash -c "cat '$shell' | grep -A3 -x '# nice -5 nice 10 echo niced' | tr '\n' '|' |
+			grep -qx '# nice -5 nice 10 echo niced|nice: priority -5|nice: priority 10|niced|' &&
+		cat '$shell' | grep -A4 -x '# as 501:20 nice 10 nice 15 echo later' | tail -2 | tr '\n' '|' | grep -qx 'nice: priority 15|later|' &&
+		cat '$shell' | grep -A3 -x '# as 501:20 nice 10 nice 5 echo sooner' | tail -1 | grep -qx 'nice: 5 not had: error 13 (EACCES)'"
 check "a file cut short keeps its start, and grown again reads as zeros past it, not as what it held (truncate)" \
 	bash -c "grep -aq '^truncate: /tmp/notes/cut: 10000 bytes, now 100\$' '$shell' &&
 		grep -aq '^/tmp/notes/cut: 100 bytes in [0-9]* ms, fnv1a $cut_hash' '$shell' &&
