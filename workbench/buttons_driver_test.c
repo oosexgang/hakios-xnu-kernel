@@ -418,8 +418,28 @@ first_steps_only(void)
 	hakios_buttons_init();
 	WAIT_FOR(logged("stopping here (buttons_steps=2)"), 3000);
 	CHECK(logged("stopping here (buttons_steps=2)"), "stops where told");
+	CHECK(logged("buttons: step 2:") && !logged("buttons: step 3:"), "after step 2, not before it or after 3: %s", log_text);
 	CHECK(spmi.transfers == 0, "no transfer on the bus yet (%u)", spmi.transfers);
 }
+
+/* buttons_steps=3 and 4: step 3 made, not 4; step 4 made, not 5 */
+static void
+stops_after(unsigned n)
+{
+	char args[64], made[32], not_made[32];
+
+	phone("phone-cmd");
+	snprintf(args, sizeof(args), "buttons=1 buttons_steps=%u", n);
+	snprintf(made, sizeof(made), "buttons: step %u:", n);
+	snprintf(not_made, sizeof(not_made), "buttons: step %u:", n + 1);
+	boot_args = args;
+	hakios_buttons_init();
+	WAIT_FOR(logged("stopping here"), 3000);
+	CHECK(logged(made) && !logged(not_made), "after step %u: %s", n, log_text);
+}
+
+static void three_steps(void) { stops_after(3); }
+static void four_steps(void) { stops_after(4); }
 
 /* the emulator's board lists no keys: the driver says which line is missing and touches nothing */
 static void
@@ -452,7 +472,8 @@ main(int argc, char **argv)
 		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
-		{ "first_steps_only", first_steps_only }, { "board_without_keys", board_without_keys },
+		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
+		{ "board_without_keys", board_without_keys },
 		{ "unknown_board", unknown_board },
 	};
 
