@@ -480,6 +480,24 @@ camera_init(void)
 typedef void (*crop_mode_fn)(id, SEL, int);
 static crop_mode_fn original_set_crop_mode;
 
+/*
+ * The stitcher, passed by (below), also turned the camera's landscape buffer (4032x3024) into the preview's
+ * portrait (828x1792), by the rotation the graph gives it (setRotationDegrees:). Passed by, the Preview Scaler
+ * scaled the landscape buffer into the portrait one and wrote only bands of it: the rest of each frame stayed the
+ * YCbCr black of an unwritten buffer (logs/054046-run.log, fb_yuv's profile). The rotation is handed to the
+ * Preview Scaler instead.
+ */
+typedef void (*rotation_fn)(id, SEL, int);
+static rotation_fn original_stitcher_rotation;
+static int stitcher_rotation = -1;
+
+static void
+stitcher_set_rotation(id self, SEL sel, int degrees)
+{
+	stitcher_rotation = degrees;
+	original_stitcher_rotation(self, sel, degrees);
+}
+
 static void
 set_crop_mode(id self, SEL sel, int mode)
 {
@@ -490,12 +508,28 @@ set_crop_mode(id self, SEL sel, int mode)
 		say("hakios: cameracaptured: a pixel transfer's crop mode 1 (the buffer's FinalCropRect) taken as 0\n");
 	}
 	original_set_crop_mode(self, sel, mode == 1 ? 0 : mode);
+	if (mode == 1) {
+		SEL rotate = sel_registerName("setRotationDegrees:");
+		int degrees = stitcher_rotation >= 0 ? stitcher_rotation : 90;
+
+		if (class_respondsToSelector(object_getClass(self), rotate)) {
+			((void (*)(id, SEL, int))objc_msgSend)(self, rotate, degrees);
+			say("hakios: cameracaptured: the Preview Scaler turns the camera's buffer by %d degrees (the stitcher's, which is "
+			    "passed by%s)\n", degrees, stitcher_rotation >= 0 ? "" : "; none given yet: 90");
+		} else {
+			say("hakios: cameracaptured: the Preview Scaler has no setRotationDegrees: the preview stays unturned\n");
+		}
+	}
 }
 
 static void
 preview_path(void)
 {
-	IMP crop;
+	IMP crop, rotation;
+
+	if (replace("BWPreviewStitcherNode", "setRotationDegrees:", "v@:i", (IMP)stitcher_set_rotation, &rotation)) {
+		original_stitcher_rotation = (rotation_fn)rotation;
+	}
 
 	if (replace("BWPixelTransferNode", "setCropMode:", "v@:i", (IMP)set_crop_mode, &crop)) {
 		original_set_crop_mode = (crop_mode_fn)crop;

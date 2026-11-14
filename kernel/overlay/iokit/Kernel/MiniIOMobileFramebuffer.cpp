@@ -1319,6 +1319,19 @@ IOMobileFramebuffer::drawYUV(MiniIOSurface * s, const int32_t * src, const int32
 		dw = (int32_t) fWidth;
 		dh = (int32_t) fHeight;
 	}
+	{
+		static unsigned told;
+
+		if (told < 3) {
+			told++;
+			IOLog("MiniIOMobileFramebuffer: fb_yuv: surface %u '%c%c%c%c' %ux%u row %u, planes: %ux%u row %u at %u, %ux%u row %u at "
+			    "%u (%u bytes an element); from %d,%d %dx%d to %d,%d %dx%d\n", s->sid, (int) (s->info.pixelFormat >> 24 & 0xff),
+			    (int) (s->info.pixelFormat >> 16 & 0xff), (int) (s->info.pixelFormat >> 8 & 0xff), (int) (s->info.pixelFormat & 0xff),
+			    s->info.width, s->info.height, s->info.bytesPerRow, luma->width, luma->height, luma->bytesPerRow, luma->offset,
+			    chroma->width, chroma->height, chroma->bytesPerRow, chroma->offset, chroma->bytesPerElement, sx, sy, sw, sh, dx, dy,
+			    dw, dh);
+		}
+	}
 	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > luma->width || (uint32_t) (sy + sh) > luma->height) {
 		return false;
 	}
