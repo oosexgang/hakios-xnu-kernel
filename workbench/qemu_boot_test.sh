@@ -283,6 +283,7 @@ typed=(
 	'df'
 	'hash /tmp/notes/big'
 	'mmap-write /tmp/notes/big'
+	'mmap-private /tmp/notes/big'
 	'hash /tmp/notes/big'
 	'cd /tmp/notes'
 	'pwd'
@@ -571,6 +572,8 @@ check "three megabytes written into ramfs read back as written, and written thro
 	bash -c "grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $filled_hash' '$log' &&
 		grep -aq '^mmap-write: /tmp/notes/big, 3000000 bytes turned through the mapping, and read so' '$log' &&
 		grep -aq '^/tmp/notes/big: 3000000 bytes in [0-9]* ms, fnv1a $turned_hash' '$log'"
+check "three megabytes mapped private and written through: the mapping has its own copies, the file is as it was" \
+	grep -aq '^mmap-private: /tmp/notes/big: the private mapping turned, the file as it was' "$shell"
 check "a process has a directory of its own, which relative paths start from (chdir, F_GETPATH)" \
 	bash -c "cat '$shell' | grep -A1 -x '# pwd' | grep -qx '/tmp/notes' &&
 		cat '$shell' | grep -A1 -x '# cat b' | grep -qx 'six b'"
