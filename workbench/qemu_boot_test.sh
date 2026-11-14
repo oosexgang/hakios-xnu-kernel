@@ -131,6 +131,11 @@ typed=(
 	'cat /tmp/notes/y/g'
 	'rm /tmp/notes/y/g /tmp/notes/y /tmp/notes/x'
 	'stat /tmp/notes/x'
+	'umask 077'
+	'write /tmp/notes/private x'
+	'umask 022'
+	'chown 501:20 /tmp/notes/private'
+	'stat /tmp/notes/private'
 	'descriptors /tmp/notes/offsets'
 	'fill /tmp/notes/big 3000000'
 	'df'
@@ -249,9 +254,9 @@ check "a file is written in the kernel's file system in memory (ramfs), read bac
 # (b and d one file, by its inode; c renamed to d, so gone; s a symbolic link to b, read through)
 check "a file has two names (link), one renamed, its mode changed, and a symbolic link to it is read through" \
 	bash -c "cat '$shell' | awk '
-		/^\/tmp\/notes\/b: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { b = \$6 }
-		/^\/tmp\/notes\/d: -rw------- 2 links, inode [0-9]+, 6 bytes\$/ { d = \$6 }
-		/^\/tmp\/notes\/s: l[-rwx]{9} 1 link, inode [0-9]+, 12 bytes -> \/tmp\/notes\/b\$/ { s = 1 }
+		/^\/tmp\/notes\/b: -rw------- 2 links, inode [0-9]+, 6 bytes, owner 0:0\$/ { b = \$6 }
+		/^\/tmp\/notes\/d: -rw------- 2 links, inode [0-9]+, 6 bytes, owner 0:0\$/ { d = \$6 }
+		/^\/tmp\/notes\/s: l[-rwx]{9} 1 link, inode [0-9]+, 12 bytes, owner 0:0 -> \/tmp\/notes\/b\$/ { s = 1 }
 		/^stat: \/tmp\/notes\/c: error 2 \(ENOENT\)\$/ { c = 1 }
 		/^# cat \/tmp\/notes\/s\$/ { cat = NR }
 		cat && NR == cat + 1 && /^six b\$/ { read = 1 }
@@ -281,6 +286,8 @@ check "ramfs says what BSD says: a directory that is there (EEXIST), one not emp
 check "a file moved from one directory to another reads as it was, and the directories once emptied are taken away" \
 	bash -c "cat '$shell' | grep -A1 -x '# cat /tmp/notes/y/g' | grep -qx 'moved across' &&
 		grep -aq '^stat: /tmp/notes/x: error 2 (ENOENT)' '$log'"
+check "a file made under a mask of 077 is its owner's alone, and is given to another (umask, chown)" \
+	grep -aqE '^/tmp/notes/private: -rw------- 1 link, inode [0-9]+, 2 bytes, owner 501:20' "$shell"
 check "descriptors as BSD has them: lseek, pread, pwrite, a dup's offset, dup2, O_APPEND, a non-blocking pipe's EAGAIN" \
 	grep -aq '^descriptors: .*: as BSD has them' "$log"
 check "the mounted file systems listed (getfsstat): the root and the second disk APFS, read only, devfs, and ramfs with three megabytes of it used" \
