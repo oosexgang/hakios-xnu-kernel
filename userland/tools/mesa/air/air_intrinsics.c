@@ -1667,6 +1667,9 @@ tex_handle(struct air_ctx *c, const struct air_inst *in, unsigned operand,
 static bool
 tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
 {
+   /* past the call's own operands is a signature this file has wrong, and not a crash */
+   if (operand >= in->num_operands)
+      return air_error(c, "intrinsic: argument %u of %u", operand - 1, in->num_operands - 1);
    if (!air_const_uint(in->operands[operand], out))
       return air_error(c, "intrinsic: argument %u is not a constant", operand - 1);
    return true;
@@ -2046,7 +2049,10 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
     * and every call in the corpus passes 1. What else it can be is not known
     * from the data, so anything else is refused rather than assumed.
     */
-   if (t.depth) {
+   /* (the queries of a depth texture take none: air.get_num_mip_levels_depth_2d(ptr as(1)) and
+    * air.get_width_depth_2d(ptr as(1), i32) -- VFX's quad_display_depth2D, which read the selector
+    * past the end of its one operand and crashed) */
+   if (t.depth && strcmp(t.op, "get")) {
       uint64_t plane;
       if (!tex_flag(c, in, arg, &plane))
          return false;
