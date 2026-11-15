@@ -2399,6 +2399,66 @@ new_update_default_content(id self, SEL cmd, void *argument)
  * comes out is the row a restored iPhone is handed, with whatever access keys and owning bundle it sets,
  * rather than the five columns a person would think to fill in by hand.
  */
+/*
+ * The daemon's own connection, remembered as it hands it out. Nothing is changed: the accessor is called
+ * and its answer returned untouched, which is the one thing this library does in accountsd beyond looking.
+ */
+static id remembered_connection;
+static id (*old_database_connection)(id, SEL);
+
+static id
+new_database_connection(id self, SEL cmd)
+{
+	id connection = old_database_connection != NULL ? old_database_connection(self, cmd) : NULL;
+
+	if (connection != NULL && remembered_connection == NULL) {
+		remembered_connection = connection;
+		say("hakios: store: accountsd's own database connection is %p\n", (void *)connection);
+	}
+	return connection;
+}
+
+/*
+ * ... and the store that owns it. -[ACDAccountStore databaseConnection] is never called by the daemon
+ * itself (the hook on it sat through four restarts and a client's question without firing), so the
+ * connection is reached the other way round: remember a store object as it serves a request, and ask
+ * THAT for its connection, which is what the accessor is for. -_allAccounts_sync is the method a client
+ * asking "what accounts are there" lands in, which is exactly the question the App Store asks at launch.
+ */
+static id remembered_store;
+static id (*old_all_accounts_sync)(id, SEL);
+
+static id
+new_all_accounts_sync(id self, SEL cmd)
+{
+	if (remembered_store == NULL) {
+		remembered_store = self;
+		say("hakios: store: accountsd's own account store is %p\n", (void *)self);
+	}
+	return old_all_accounts_sync != NULL ? old_all_accounts_sync(self, cmd) : NULL;
+}
+
+static void
+remember_database_connection(void)
+{
+	Class store_class = objc_getClass("ACDAccountStore");
+	Method m = store_class != Nil ? class_getInstanceMethod(store_class,
+	    sel_registerName("databaseConnection")) : NULL;
+	Method all = store_class != Nil ? class_getInstanceMethod(store_class,
+	    sel_registerName("_allAccounts_sync")) : NULL;
+
+	if (m != NULL) {
+		old_database_connection = (id (*)(id, SEL))method_getImplementation(m);
+		method_setImplementation(m, (IMP)new_database_connection);
+	}
+	if (all != NULL) {
+		old_all_accounts_sync = (id (*)(id, SEL))method_getImplementation(all);
+		method_setImplementation(all, (IMP)new_all_accounts_sync);
+	}
+	say("hakios: store: watching for accountsd's database connection (accessor %s, store %s)\n",
+	    m != NULL ? "hooked" : "MISSING", all != NULL ? "hooked" : "MISSING");
+}
+
 static void
 make_account_types(void)
 {
@@ -2428,15 +2488,25 @@ make_account_types(void)
 	 * (-[ACDDatabaseInitializer initWithDatabaseConnection:]) and its own -_addiTunesStoreAccountType
 	 * writes the row. That is the next piece of work, and it is a hook and three messages.
 	 */
-	say("hakios: store: asking accountsd's own class for a database connection\n");
-	connection = ((id (*)(id, SEL))objc_msgSend)((id)conn_class, sel_registerName("alloc"));
-	connection = connection != NULL ? ((id (*)(id, SEL))objc_msgSend)(connection, sel_registerName("init"))
-	    : NULL;
+	/*
+	 * The daemon's own, not one of ours: -[ACDDatabaseConnection init] never comes back here (it waits
+	 * on a store accountsd already holds open), so the accessor is hooked instead and this waits for
+	 * the daemon to hand one out in its own time.
+	 */
+	for (int i = 0; i < 60 && remembered_connection == NULL && remembered_store == NULL; i++) {
+		sleep(1);
+	}
+	connection = remembered_connection;
+	if (connection == NULL && remembered_store != NULL) {
+		connection = ((id (*)(id, SEL))objc_msgSend)(remembered_store,
+		    sel_registerName("databaseConnection"));
+		say("hakios: store: asked accountsd's own store for its connection: %p\n", (void *)connection);
+	}
 	if (connection == NULL) {
-		say("hakios: store: no database connection: no account types made\n");
+		say("hakios: store: accountsd never handed out a database connection: no account types made\n");
 		return;
 	}
-	say("hakios: store: the connection is made; now the initializer\n");
+	say("hakios: store: using accountsd's own connection (%p); now the initializer\n", (void *)connection);
 	initializer = ((id (*)(id, SEL))objc_msgSend)((id)init_class, sel_registerName("alloc"));
 	initializer = initializer != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(initializer,
 	    sel_registerName("initWithDatabaseConnection:"), connection) : NULL;
@@ -3892,6 +3962,11 @@ hakios_store_init(void)
 		who = name;
 		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
 		watch_account_types();
+		if (knob("HAKIOS_MAKE_TYPES") != NULL) {
+			/* the accessor has to be hooked before the daemon first hands a connection out, which is
+			 * long before the thread below wakes up to want one */
+			remember_database_connection();
+		}
 		hook_mach_services();
 		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
 			pthread_detach(watcher);
