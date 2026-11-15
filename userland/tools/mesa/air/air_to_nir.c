@@ -1035,6 +1035,7 @@ enum air_sysval {
    AIR_SV_THREADS_PER_GRID, AIR_SV_SIMD_LANE, AIR_SV_SIMD_INDEX, AIR_SV_SIMD_WIDTH, AIR_SV_QUAD_LANE, AIR_SV_QUAD_INDEX,
    AIR_SV_PRIMITIVE_ID,
    AIR_SV_SIMDS_PER_TG,
+   AIR_SV_AMPLIFICATION_ID, AIR_SV_AMPLIFICATION_COUNT, AIR_SV_VIEWPORT_INDEX,
 };
 
 static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
@@ -1060,6 +1061,9 @@ static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
    { "air.thread_index_in_quadgroup", AIR_SV_QUAD_LANE },
    { "air.quadgroup_index_in_threadgroup", AIR_SV_QUAD_INDEX },
    { "air.primitive_id", AIR_SV_PRIMITIVE_ID },
+   { "air.amplification_id", AIR_SV_AMPLIFICATION_ID },
+   { "air.amplification_count", AIR_SV_AMPLIFICATION_COUNT },
+   { "air.viewport_array_index", AIR_SV_VIEWPORT_INDEX },
 };
 
 static nir_def *
@@ -1114,6 +1118,16 @@ load_sysval(struct air_ctx *c, enum air_sysval sv)
     * to a constant whenever the workgroup size is one (ir3_nir.c).
     */
    case AIR_SV_SIMDS_PER_TG: return nir_load_num_subgroups(&c->b);
+   /* Which of the amplified views this vertex is, and which viewport a fragment was
+    * rasterised for: the device answers 1 to -supportsVertexAmplificationCount: and draws
+    * through one viewport (metal_driver.m -setViewports:count: takes the first), so both are
+    * 0 -- RealityKit's shaders take them behind constants that turn stereo and layered
+    * rendering on, and read them all the same when those are off. */
+   case AIR_SV_AMPLIFICATION_ID:
+   case AIR_SV_VIEWPORT_INDEX:
+      return nir_imm_int(&c->b, 0);
+   case AIR_SV_AMPLIFICATION_COUNT:
+      return nir_imm_int(&c->b, 1);
    }
    return NULL;
 }
