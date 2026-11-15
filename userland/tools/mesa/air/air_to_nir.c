@@ -1719,6 +1719,14 @@ descriptor_kind_key(const struct air_md *desc)
  * this feature records descriptors against (buffer, offset) and has no bytes
  * to record for a member that is not one.
  */
+/* an array of bytes: what a compiler pads a struct with */
+static bool
+is_padding(const struct air_type *t)
+{
+   return t->kind == AIR_TYPE_ARRAY && t->elem && t->elem->kind == AIR_TYPE_INT &&
+          t->elem->bits == 8;
+}
+
 static bool
 argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_type *st,
                struct air_argbuf *ab, uint64_t base, unsigned id_base)
@@ -1744,6 +1752,13 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
                           n, ab->name ? ab->name : "unnamed",
                           key ? key : "something this translator cannot read");
       }
+
+      /* Padding the compiler put into a packed struct (`[4 x i8]` before a sampler that
+       * has to be eight-aligned) is a member of the type and not of the set: passed over
+       * up to the member the metadata describes, by its offset. */
+      while (n < st->num_members && is_padding(st->members[n]) &&
+             air_struct_member_offset(c->m, st, n) < off)
+         n++;
 
       const char *key = md_str(sti, i + 5);
       const struct air_md *desc = NULL;
@@ -1918,9 +1933,7 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
 
    /* padding the compiler put at the end of the struct (`[8 x i8]`) is no member */
    unsigned typed = st->num_members;
-   while (typed > n && st->members[typed - 1]->kind == AIR_TYPE_ARRAY &&
-          st->members[typed - 1]->elem->kind == AIR_TYPE_INT &&
-          st->members[typed - 1]->elem->bits == 8)
+   while (typed > n && is_padding(st->members[typed - 1]))
       typed--;
    if (n != typed)
       return air_error(c, "interface: the argument buffer %s declares %u members and its "
