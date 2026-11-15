@@ -7,12 +7,17 @@
  *   FAIL NAME  why
  *
  *   ir3sweep [-l NAME=FILE.bc[=ENTRY]]... CHIP_ID FILE.bc[=ENTRY] ...
+ *   ir3sweep [-l ...]... CHIP_ID -p VERTEX.bc[=ENTRY] FRAGMENT.bc[=ENTRY]
  *                                            (CHIP_ID: 0x06060010 is the Adreno 642L, 0x44050001 the 830)
  *
  * The modules are bare bitcode, one function each (tools/metallib.py dump takes a .metallib apart); ENTRY is
  * the function to compile when the file name is not it. -l links a function into every module as a pipeline's
  * MTLLinkedFunctions would, under the NAME its calls use (NAME.MTL_VISIBLE_FN_REF): RenderBox's custom
- * effects call custom_fn, which is one of its own *_v1 functions or a SwiftUI shader. tools/air/ir3sweep.sh builds this against the host
+ * effects call custom_fn, which is one of its own *_v1 functions or a SwiftUI shader. -p compiles a render
+ * pipeline's two stages together, their varyings linked by name and packed as the driver links them
+ * (rwa_ir3_pair_cost), and prints both and how many of the fragment stage's input slots are fed:
+ *
+ *   ok   VERTEX+FRAGMENT  vertex: ir3_instructions full_regs  fragment: ir3_instructions full_regs  fed/slots tools/air/ir3sweep.sh builds this against the host
  * build of the library (tools/air/mk-host.sh) and runs it over a library's render and compute functions.
  */
 #include <stdio.h>
@@ -72,11 +77,49 @@ main(int argc, char **argv)
 		first += 2;
 	}
 	if (argc - first < 2) {
-		fprintf(stderr, "usage: ir3sweep [-l NAME=FILE.bc[=ENTRY]]... CHIP_ID FILE.bc[=ENTRY] ...\n");
+		fprintf(stderr, "usage: ir3sweep [-l NAME=FILE.bc[=ENTRY]]... CHIP_ID FILE.bc[=ENTRY] ...\n"
+				"       ir3sweep [-l ...]... CHIP_ID -p VERTEX.bc[=ENTRY] FRAGMENT.bc[=ENTRY]\n");
 		return 2;
 	}
 	unsigned chip = (unsigned)strtoul(argv[first], NULL, 0);
 	int failed = 0;
+
+	if (argc - first == 4 && !strcmp(argv[first + 1], "-p")) {
+		char *path[2], *entry[2];
+		void *bitcode[2];
+		size_t size[2] = { 0, 0 };
+		for (int k = 0; k < 2; k++) {
+			path[k] = strdup(argv[first + 2 + k]);
+			entry[k] = strchr(path[k], '=');
+			if (entry[k] != NULL) {
+				*entry[k]++ = 0;
+			}
+			if ((bitcode[k] = slurp(path[k], &size[k])) == NULL) {
+				printf("FAIL\t%s\tcannot be read\n", path[k]);
+				return 1;
+			}
+			if (num_links) {
+				rwa_linked_register(bitcode[k], size[k], links, num_links);
+			}
+		}
+		struct rwa_ir3_cost v, f;
+		unsigned fed = 0, inputs = 0;
+		char why[512] = "";
+		const char *vn = entry[0] ? entry[0] : path[0], *fn = entry[1] ? entry[1] : path[1];
+		if (rwa_ir3_pair_cost(bitcode[0], size[0], entry[0], bitcode[1], size[1], entry[1], chip, &v, &f,
+				      &fed, &inputs, why, sizeof(why)) != 0) {
+			for (char *p = why; *p; p++) {
+				if (*p == '\n' || *p == '\t') {
+					*p = ' ';
+				}
+			}
+			printf("FAIL\t%s+%s\t%s\n", vn, fn, why);
+			return 1;
+		}
+		printf("ok\t%s+%s\tvertex: %u %u\tfragment: %u %u\tfed %u/%u\n", vn, fn, v.instructions,
+		       v.max_full_reg, f.instructions, f.max_full_reg, fed, inputs);
+		return 0;
+	}
 
 	for (int i = first + 1; i < argc; i++) {
 		char path[4096], *entry;
