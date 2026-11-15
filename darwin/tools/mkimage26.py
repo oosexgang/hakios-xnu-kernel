@@ -3,9 +3,9 @@
 phone's ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (darwin26/dyld-strip).
 
-usage: [DARWIN_FW=DIR] [WALLPAPER=COLOUR] mkimage26.py [--min | --prune] OUT.apfs
+usage: [DARWIN_FW=DIR] [WALLPAPER=COLOUR] [METAL=1] mkimage26.py [--min | --prune] OUT.apfs
        (DARWIN_FW: the extracted IPSW, default darwin26; WALLPAPER: the Stripe colour of the first
-       wallpaper, default yellow)
+       wallpaper, default yellow; METAL=1: what the Metal driver needs, METAL_FILES and the bundle's link)
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
@@ -85,6 +85,12 @@ EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
 KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',
               'System/Library/Frameworks/QuartzCore.framework/default.metallib')
 LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
+# METAL=1: what the Metal driver (userland/src/metal_driver.m) needs that the rules above leave out. SpringBoard
+# makes an MPSImageGaussianBlur (Siri's orb) as soon as Metal has a device, and MetalPerformanceShaders asserts
+# without its kernels' libraries ("metallib not found: default.metallib for identifier
+# com.apple.MetalPerformanceShaders.MPSImage", Darwin 27 under QEMU). 53 MB before compression.
+MPS = 'System/Library/Frameworks/MetalPerformanceShaders.framework/Frameworks/'
+METAL_FILES = tuple(MPS + f'{name}.framework/default.metallib' for name in ('MPSCore', 'MPSImage', 'MPSFunctions'))
 
 
 def pruned(rel):
@@ -169,6 +175,8 @@ def selection(minimal):
     # A launchd job is not usable without its executable. Framework-hosted daemons and large
     # /usr programs otherwise fall through the 16.5 resource-size limits and leave clients waiting.
     kept_files = set(KEPT_FILES)
+    if os.environ.get('METAL'):
+        kept_files.update(METAL_FILES)
     jobs = os.environ.get('LAUNCHDAEMONS')
     if jobs:
         for name in sorted(os.listdir(jobs)):
@@ -336,6 +344,14 @@ def main():
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.symlink(target, dst)
     # the audio server's output device (root26-darwin.sh): the HAL loads plug-ins from this directory only
+    # METAL=1: the driver's bundle where Metal's discovery opens it (/System/Library/Extensions/ + the name the
+    # kernel's IOAcceleratorES carries, metal_props), in the small image
+    if os.environ.get('METAL'):
+        ext = os.path.join(WORK, 'System/Library/Extensions/HakiosMetal.bundle')
+        os.makedirs(os.path.dirname(ext), exist_ok=True)
+        if os.path.lexists(ext):
+            os.remove(ext)
+        os.symlink(f'/{IMAGE_ROOT}/lib/HakiosMetal.bundle', ext)
     hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver')
     if not os.path.lexists(hal):
         os.makedirs(os.path.dirname(hal), exist_ok=True)
