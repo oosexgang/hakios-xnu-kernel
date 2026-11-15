@@ -1669,6 +1669,60 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
       air_set(c, &in->base, air_val_ssa(c, r));
       return true;
    }
+   /* The saturating ones, LLVM's spelling of add_sat / sub_sat (MetalFX, MTLBVHBuilder,
+    * MPSNeuralNetwork): NIR has all four. */
+   if (!strncmp(name, "llvm.uadd.sat.", 14) || !strncmp(name, "llvm.usub.sat.", 14) ||
+       !strncmp(name, "llvm.sadd.sat.", 14) || !strncmp(name, "llvm.ssub.sat.", 14)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]), *b = air_get_ssa(c, in->operands[2]);
+      if (!a || !b)
+         return false;
+      bool add = name[6] == 'a', sgn = name[5] == 's';
+      nir_def *r = add ? (sgn ? nir_iadd_sat(&c->b, a, b) : nir_uadd_sat(&c->b, a, b))
+                       : (sgn ? nir_isub_sat(&c->b, a, b) : nir_usub_sat(&c->b, a, b));
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
+   /* Bit counts, as air.popcount / clz / ctz are done (at the argument's width; NIR answers
+    * 32 bits). LLVM's ctlz and cttz take a second operand saying zero is undefined, which
+    * only licenses an answer, so the defined one -- the width -- is given whatever it says. */
+   if (!strncmp(name, "llvm.ctpop.", 11) || !strncmp(name, "llvm.ctlz.", 10) ||
+       !strncmp(name, "llvm.cttz.", 10)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]);
+      if (!a)
+         return false;
+      unsigned w = a->bit_size;
+      nir_def *r;
+      if (name[7] == 'p') {
+         r = nir_bit_count(&c->b, a);
+      } else if (name[7] == 'l') {
+         nir_def *msb = nir_ufind_msb(&c->b, w < 32 ? nir_u2u32(&c->b, a) : a);
+         r = nir_isub(&c->b, nir_imm_int(&c->b, (int)w - 1), msb);
+      } else {
+         r = nir_bcsel(&c->b, nir_ieq_imm(&c->b, a, 0), nir_imm_int(&c->b, (int)w),
+                       nir_find_lsb(&c->b, a));
+      }
+      air_set(c, &in->base, air_val_ssa(c, nir_u2uN(&c->b, r, w)));
+      return true;
+   }
+   /* Funnel shifts: fshl(a, b, s) is the high half of (a:b) << (s mod w), fshr the low half of
+    * (a:b) >> (s mod w); with a and b the same value they are rotates, which is what Morpheus's
+    * and MLX's rbits use them for. In two shifts and an or, the zero shift taken apart because
+    * a shift by the full width is not a shift in NIR. */
+   if (!strncmp(name, "llvm.fshl.", 10) || !strncmp(name, "llvm.fshr.", 10)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]), *b = air_get_ssa(c, in->operands[2]);
+      nir_def *sh = air_get_ssa(c, in->operands[3]);
+      if (!a || !b || !sh)
+         return false;
+      unsigned w = a->bit_size;
+      nir_def *k = nir_umod_imm(&c->b, nir_u2u32(&c->b, sh), w);
+      nir_def *kk = nir_isub(&c->b, nir_imm_int(&c->b, (int)w), k);
+      bool left = name[8] == 'l';
+      nir_def *r = left ? nir_ior(&c->b, nir_ishl(&c->b, a, k), nir_ushr(&c->b, b, kk))
+                        : nir_ior(&c->b, nir_ushr(&c->b, b, k), nir_ishl(&c->b, a, kk));
+      r = nir_bcsel(&c->b, nir_ieq_imm(&c->b, k, 0), left ? a : b, r);
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
    if (!strcmp(name, "llvm.trap"))
       return air_error(c, "intrinsic: llvm.trap");
    return air_error(c, "intrinsic: %s", name);
