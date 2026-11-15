@@ -252,6 +252,25 @@ with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'LastSystemVersion': last, 'DMLastMigrationResults': {'success': True, 'buildVersion': last}}, f,
                   fmt=plistlib.FMT_BINARY)
 PY
+# APPSTORED_NO_MIGRATION=1: appstored says "[Migrate] [Daemon] Migrations needed" at every launch and
+# then "Attempting to load bag"; two of its own Swift jobs then deadlock on one of its own unfair locks
+# (measured: two threads in __os_unfair_lock_lock_slow whose frames land inside appstored itself), and
+# the App Store's requests to it are cancelled one after another. Its own binary holds the other
+# branch -- "[Daemon] No migration required for build: %{public}@" -- and what it compares against is
+# LastOSBuildVersion in its preferences. Writing this build there is what takes that branch.
+if [ -n "${APPSTORED_NO_MIGRATION:-}" ]; then
+	python3 - "$T/var/mobile/Library/Preferences/com.apple.appstored.plist" \
+	    "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'APPSTORED_PY'
+import plistlib, sys
+build = plistlib.load(open(sys.argv[2], 'rb'))['ProductBuildVersion']
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump({'LastOSBuildVersion': build}, f, fmt=plistlib.FMT_BINARY)
+print('root26-ios.sh: appstored is told it has already migrated for build ' + build)
+APPSTORED_PY
+	# the walk that fills var.skel happens earlier in this script, so this one is listed by hand
+	printf 'f\t644\t501\t501\t/private/var/mobile/Library/Preferences/com.apple.appstored.plist\t/var/mobile/Library/Preferences/com.apple.appstored.plist\n' >> $T/etc/var.skel
+fi
+
 # The persona manifest. usermanagerd reads /private/var/keybags/persona.kb as it starts and aborts without
 # it ("Daemon failed to load persona manifest."), and every daemon that asks it for the user's personas
 # waits (runningboardd, so backboardd and SpringBoard). On an iPhone the file is left by the restore; this

@@ -3400,11 +3400,17 @@ local_account_of(id store, const char *who)
 		put_storefront_on(store, account);
 	}
 
-	if (!told) {
-		told = 1;
+	/*
+	 * ... and not only the first time. appstored's own log says "[ActiveAccountObserver] Initialized
+	 * with account: (null)" and then asks "[Bag] Fetching current account" for ever, while this door
+	 * answered it an account on the first call -- so either it asks again and gets something else, or
+	 * it never comes back here at all. One line cannot tell those apart; five can.
+	 */
+	if (told < 5) {
+		told++;
 		char text[260];
 
-		say("hakios: store(%s): %s answered at once, %s\n", who_i_am(), who,
+		say("hakios: store(%s): %s answered at once (call %d), %s\n", who_i_am(), who, told,
 		    account != NULL ? text_of(account, text, sizeof(text)) : "nothing");
 	}
 	return account;
@@ -3422,6 +3428,267 @@ new_active_account_type(id self, SEL cmd, void *media_type)
 {
 	(void)cmd, (void)media_type;
 	return local_account_of(self, "ams_activeiTunesAccountForMediaType:");
+}
+
+/*
+ * THE ANSWER THAT NEVER COMES. appstored's own log says what it is doing while the store shows
+ * "Loading...": "[Bag] Fetching current account" over and over, "[Migrate] Attempting to load bag",
+ * "[Migrate] [Daemon] Migrations needed", and -- the one that matters -- "[General]
+ * [ActiveAccountObserver] Initialized with account: (null)". Meanwhile every one of the store's 127
+ * requests to com.apple.appstored.xpc.request is cancelled, because the daemon on the other side is
+ * still waiting for that account. This library's answers are on ACAccountStore's SYNCHRONOUS doors
+ * (ams_activeiTunesAccount and its kin, which are entered and do answer); a daemon asks through the
+ * asynchronous ones, and those end in accountsd, whose reply the comment at the bottom of this file
+ * already records as never coming ("appstored's account query to it times out after two seconds and
+ * the connection it makes next never returns").
+ *
+ * So these four are the asynchronous doors. Unasked, they only count themselves and pass through --
+ * which already says WHICH one a daemon uses. With HAKIOS_ANSWER_ACCOUNT_QUERIES=1 the completion is
+ * called here, with the local account, and accountsd is not waited for at all.
+ */
+static void (*old_accounts_ids_props)(id, SEL, void *, void *, void *);
+static void (*old_cached_accounts_ids)(id, SEL, void *, void *);
+static void (*old_accounts_type_options)(id, SEL, void *, void *, void *);
+static void (*old_visible_accounts_ids)(id, SEL, void *, void *);
+
+/* a block is called the way the runtime calls it: through the invoke in its own layout */
+static void
+hand_the_accounts_to(void *completion, id store, const char *who)
+{
+	struct block_layout *b = completion;
+	id account = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
+	id accounts = NULL;
+	static int told;
+
+	if (account != NULL) {
+		accounts = ((id (*)(Class, SEL, id))objc_msgSend)(objc_getClass("NSArray"),
+		    sel_registerName("arrayWithObject:"), account);
+	} else {
+		accounts = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSArray"),
+		    sel_registerName("array"));
+	}
+	if (told < 4) {
+		told++;
+		say("hakios: store(%s): %s answered here, with %s, instead of waiting for accountsd\n",
+		    who_i_am(), who, account != NULL ? "the local account" : "an empty list");
+	}
+	if (b != NULL && b->invoke != NULL) {
+		b->invoke(b, accounts, NULL);
+	}
+}
+
+static bool
+answer_account_queries(void)
+{
+	const char *on = knob("HAKIOS_ANSWER_ACCOUNT_QUERIES");
+
+	return on != NULL && *on != '0';
+}
+
+static void
+new_accounts_ids_props(id self, SEL cmd, void *ids, void *props, void *completion)
+{
+	if (answer_account_queries()) {
+		hand_the_accounts_to(completion, self, "accountsWithAccountTypeIdentifiers:preloadedProperties:");
+		return;
+	}
+	if (old_accounts_ids_props != NULL) {
+		old_accounts_ids_props(self, cmd, ids, props, completion);
+	}
+}
+
+static void
+new_cached_accounts_ids(id self, SEL cmd, void *ids, void *completion)
+{
+	if (answer_account_queries()) {
+		hand_the_accounts_to(completion, self, "_cachedAccountsWithAccountTypeIdentifiers:");
+		return;
+	}
+	if (old_cached_accounts_ids != NULL) {
+		old_cached_accounts_ids(self, cmd, ids, completion);
+	}
+}
+
+static void
+new_accounts_type_options(id self, SEL cmd, void *type, void *options, void *completion)
+{
+	if (answer_account_queries()) {
+		hand_the_accounts_to(completion, self, "accountsWithAccountType:options:");
+		return;
+	}
+	if (old_accounts_type_options != NULL) {
+		old_accounts_type_options(self, cmd, type, options, completion);
+	}
+}
+
+static void
+new_visible_accounts_ids(id self, SEL cmd, void *ids, void *completion)
+{
+	if (answer_account_queries()) {
+		hand_the_accounts_to(completion, self, "visibleTopLevelAccountsWithAccountTypeIdentifiers:");
+		return;
+	}
+	if (old_visible_accounts_ids != NULL) {
+		old_visible_accounts_ids(self, cmd, ids, completion);
+	}
+}
+
+/* the synchronous lists, so that a daemon asking through them is not invisible */
+static id (*old_accounts_with_type)(id, SEL, void *);
+static id (*old_accounts_with_type_id)(id, SEL, void *);
+
+/*
+ * A list's description begins with a newline, so printing it says nothing: the count is the measurement.
+ * And with HAKIOS_LIST_ACCOUNT=1 an empty list is replaced by the one account this phone does have --
+ * appstored asks ams_activeiTunesAccount exactly once (it answers, with the account) and then asks this
+ * door, whose answer is what its ActiveAccountObserver keeps as "(null)".
+ */
+static id
+one_account_list(id store)
+{
+	id account = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("ams_localiTunesAccount"));
+
+	if (account == NULL) {
+		return NULL;
+	}
+	return ((id (*)(Class, SEL, id))objc_msgSend)(objc_getClass("NSArray"),
+	    sel_registerName("arrayWithObject:"), account);
+}
+
+static long
+how_many(id list)
+{
+	return list != NULL ? ((long (*)(id, SEL))objc_msgSend)(list, sel_registerName("count")) : -1;
+}
+
+static id
+new_accounts_with_type(id self, SEL cmd, void *type)
+{
+	id answer = old_accounts_with_type != NULL ? old_accounts_with_type(self, cmd, type) : NULL;
+	const char *fill = knob("HAKIOS_LIST_ACCOUNT");
+	long n = how_many(answer);
+	static int told;
+
+	if (fill != NULL && *fill != '0' && n <= 0) {
+		id ours = one_account_list(self);
+
+		if (ours != NULL) {
+			if (told < 3) {
+				told++;
+				say("hakios: store(%s): accountsWithAccountType: answered %ld; the local account "
+				    "is handed back instead\n", who_i_am(), n);
+			}
+			return ours;
+		}
+	}
+	if (told < 3) {
+		told++;
+		say("hakios: store(%s): accountsWithAccountType: answered %ld account(s)\n", who_i_am(), n);
+	}
+	return answer;
+}
+
+static id
+new_accounts_with_type_id(id self, SEL cmd, void *identifier)
+{
+	id answer = old_accounts_with_type_id != NULL ? old_accounts_with_type_id(self, cmd, identifier)
+	    : NULL;
+	static int told;
+
+	const char *fill = knob("HAKIOS_LIST_ACCOUNT");
+	long n = how_many(answer);
+
+	if (fill != NULL && *fill != '0' && n <= 0) {
+		id ours = one_account_list(self);
+
+		if (ours != NULL) {
+			if (told < 3) {
+				told++;
+				say("hakios: store(%s): accountsWithAccountTypeIdentifier: answered %ld; the "
+				    "local account is handed back instead\n", who_i_am(), n);
+			}
+			return ours;
+		}
+	}
+	if (told < 3) {
+		told++;
+		say("hakios: store(%s): accountsWithAccountTypeIdentifier: answered %ld account(s)\n",
+		    who_i_am(), n);
+	}
+	return answer;
+}
+
+/*
+ * THE CALL THAT NEVER RETURNS. The App Store's bag fetch is entered once and never comes back
+ * (-[AMSBagNetworkTask _performFetchWithAttemptedCount:account:storefront:] : entered 1, returned 0),
+ * and the thread report says where it stands: mach_msg, under -[NSXPCConnection _sendInvocation:...],
+ * under ___55-[AMSDaemonConnection cookieServiceProxySyncWithError:]_block_invoke. It is a SYNCHRONOUS
+ * request to the AMS service broker for a cookie-service proxy, and the broker never answers it. Nothing
+ * after it is ever reached -- _queryItemsForClientInfo:, the anisette headers, the cookies themselves are
+ * all "NEVER ENTERED" -- so this one call is what the whole catalog waits on.
+ *
+ * With HAKIOS_NO_COOKIE_SERVICE=1 it is answered here, at once, with nothing: a proxy that could not be
+ * had is a case the caller must already handle, and this library answers the cookie question itself
+ * anyway (ams_addCookiesForAccount:... answers empty).
+ */
+static id (*old_cookie_proxy_sync)(id, SEL, void *);
+static id (*old_account_proxy_sync)(id, SEL, void *);
+static id (*old_security_proxy_sync)(id, SEL, void *);
+static id (*old_itfe_proxy_sync)(id, SEL, void *);
+static id (*old_abc_proxy_sync)(id, SEL, void *);
+
+/*
+ * The broker has five of these, and any of them can stop a process the same way. appstored's own
+ * deadlock is of that shape: its cache accessor takes a global os_unfair_lock and HOLDS IT through the
+ * slow path (measured in its own code: lock at +0xbce8, unlock only on the cache hit at +0xbd30, while
+ * the miss goes on to build the AMS client for "com.apple.appstored"), so one job that never comes back
+ * from AMS leaves every other job of the daemon waiting on that lock for ever.
+ */
+static id
+no_broker_service(id self, SEL cmd, void *error, const char *which, id (*original)(id, SEL, void *))
+{
+	const char *off = knob("HAKIOS_NO_COOKIE_SERVICE");
+	static int told;
+
+	if (off != NULL && *off != '0') {
+		if (told < 6) {
+			told++;
+			say("hakios: store(%s): the %s service proxy is answered here, with nothing, "
+			    "instead of waiting on the broker\n", who_i_am(), which);
+		}
+		return NULL;
+	}
+	return original != NULL ? original(self, cmd, error) : NULL;
+}
+
+static id
+new_cookie_proxy_sync(id self, SEL cmd, void *error)
+{
+	return no_broker_service(self, cmd, error, "cookie", old_cookie_proxy_sync);
+}
+
+static id
+new_account_proxy_sync(id self, SEL cmd, void *error)
+{
+	return no_broker_service(self, cmd, error, "account management", old_account_proxy_sync);
+}
+
+static id
+new_security_proxy_sync(id self, SEL cmd, void *error)
+{
+	return no_broker_service(self, cmd, error, "security", old_security_proxy_sync);
+}
+
+static id
+new_itfe_proxy_sync(id self, SEL cmd, void *error)
+{
+	return no_broker_service(self, cmd, error, "itfe", old_itfe_proxy_sync);
+}
+
+static id
+new_abc_proxy_sync(id self, SEL cmd, void *error)
+{
+	return no_broker_service(self, cmd, error, "auto bug capture", old_abc_proxy_sync);
 }
 
 static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
@@ -4265,6 +4532,29 @@ static struct replacement replacements[] = {
 	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
 	  (IMP *)&old_xpc_init, false },
+	{ "AMSDaemonConnection", "cookieServiceProxySyncWithError:", false, (IMP)new_cookie_proxy_sync,
+	  (IMP *)&old_cookie_proxy_sync, false },
+	{ "AMSDaemonConnection", "accountManagementServiceProxySyncWithError:", false,
+	  (IMP)new_account_proxy_sync, (IMP *)&old_account_proxy_sync, false },
+	{ "AMSDaemonConnection", "securityServiceProxySyncWithError:", false, (IMP)new_security_proxy_sync,
+	  (IMP *)&old_security_proxy_sync, false },
+	{ "AMSDaemonConnection", "itfeServiceProxySyncWithError:", false, (IMP)new_itfe_proxy_sync,
+	  (IMP *)&old_itfe_proxy_sync, false },
+	{ "AMSDaemonConnection", "autoBugCaptureServiceProxySyncWithError:", false, (IMP)new_abc_proxy_sync,
+	  (IMP *)&old_abc_proxy_sync, false },
+	{ "ACAccountStore", "accountsWithAccountType:", false, (IMP)new_accounts_with_type,
+	  (IMP *)&old_accounts_with_type, false },
+	{ "ACAccountStore", "accountsWithAccountTypeIdentifier:", false, (IMP)new_accounts_with_type_id,
+	  (IMP *)&old_accounts_with_type_id, false },
+	/* the asynchronous doors a daemon uses, which end in accountsd and do not come back */
+	{ "ACAccountStore", "accountsWithAccountTypeIdentifiers:preloadedProperties:completion:", false,
+	  (IMP)new_accounts_ids_props, (IMP *)&old_accounts_ids_props, false },
+	{ "ACAccountStore", "_cachedAccountsWithAccountTypeIdentifiers:completion:", false,
+	  (IMP)new_cached_accounts_ids, (IMP *)&old_cached_accounts_ids, false },
+	{ "ACAccountStore", "accountsWithAccountType:options:completion:", false,
+	  (IMP)new_accounts_type_options, (IMP *)&old_accounts_type_options, false },
+	{ "ACAccountStore", "visibleTopLevelAccountsWithAccountTypeIdentifiers:completion:", false,
+	  (IMP)new_visible_accounts_ids, (IMP *)&old_visible_accounts_ids, false },
 	{ "ACAccountStore", "ams_activeiTunesAccount", false, (IMP)new_active_account,
 	  (IMP *)&old_active_account, false },
 	{ "ACAccountStore", "ams_activeiTunesAccountForMediaType:", false, (IMP)new_active_account_type,

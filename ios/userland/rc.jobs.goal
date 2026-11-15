@@ -1,0 +1,25 @@
+# iOS 27 (RC_JOBS=ios/userland/rc.jobs.goal root26-ios.sh, with STOREFRONT=1 and wifi=1): both halves of
+# what was asked, driven by the phone itself so that a dropped Wi-Fi link cannot turn a measurement into
+# a photograph of a lock screen.
+#
+# First the lock screen is held down -- the gesture that used to respring the phone. SpringBoard's pid is
+# printed before and after: if it is the same number, nothing restarted, and that is the evidence, not
+# the absence of a complaint in the log.
+#
+# Then the phone unlocks itself and opens the App Store, and the run is left long enough for the store's
+# scheduled work (its JetPack fetch is a background task with TrySchedulingBefore 240 s).
+/redwood/bin/net_test wifi
+/redwood/bin/dropbear -F -E -s -p 22 -r /redwood/etc/ssh/dropbear_ed25519_host_key -D /redwood/etc/ssh &
+/redwood/bin/net_test announce en0 5 &
+/redwood/bin/rwtouch wait 95 tap 0.5 0.2
+/bin/ps -A
+/redwood/bin/rwtouch wait 3 hold 0.5 0.45 2500
+/redwood/bin/rwtouch wait 8 tap 0.5 0.2
+/bin/ps -A
+/redwood/bin/rwtouch wait 3 swipe 0.5 0.985 0.5 0.3 200
+/redwood/bin/rwtouch wait 5 tap 0.32 0.582
+/redwood/bin/rwtouch wait 3 tap 0.32 0.582
+/bin/ps -A
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/redwood/bin/rwtouch wait 30 tap 0.32 0.582
+/bin/ps -A
