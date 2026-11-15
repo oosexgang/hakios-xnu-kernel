@@ -83,7 +83,9 @@ static void note(const char *format, ...) __printflike(1, 2);
 static void
 note(const char *format, ...)
 {
-	char *slot = notes[noted++ % NOTES];
+	/* (a slot of its own for each caller: the light's thread and the caller of a write note at
+	 * the same moment, and with a plain ++ both took one slot and one of the two lines was lost) */
+	char *slot = notes[__atomic_fetch_add(&noted, 1, __ATOMIC_RELAXED) % NOTES];
 	uint64_t ns;
 	va_list list;
 	int n;
