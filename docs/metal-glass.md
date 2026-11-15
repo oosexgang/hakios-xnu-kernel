@@ -188,6 +188,18 @@ A stage that would still overflow TGSI is refused by name, a pipeline the emulat
 render server that dies. After the fixes: QuartzCore 236 of 249 made on softpipe (the 13 others are tile
 kernels, refused), VFX 559 of 601, MercuryPoster 51 of 52, RenderBox 74 of 82, and none dies.
 
+### The wallpaper's process, ended by a watchdog
+
+With the render server no longer dying, the console showed why no wallpaper had ever come: PosterBoard runs
+the collections poster (Stripe Yellow, the image builder's default) in an extension process and gives its
+scene a few seconds to be made -- "Provision violated for watchdog scene-create" -- and with Metal on the
+emulated processor it never made it in time: 84 terminations in one boot, each followed by another process
+that met the same end. `darwin/userland/inject_poster.c` now, under `rwa_software=1` only, makes FrontBoard's
+watchdog providers answer no policy (`-watchdogPolicyForProcess:eventContext:`) and a watchdog delegate's
+termination request a line in the log instead (`-watchdog:requestsTerminationOf:forReason:`). FrontBoard is
+not loaded when PosterBoard's libraries are, so it is looked for again 3 and 30 seconds in. On the phone,
+without that boot-arg, nothing changes: there the GPU draws the first frame in time.
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
