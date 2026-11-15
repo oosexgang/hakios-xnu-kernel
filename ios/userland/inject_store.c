@@ -2861,8 +2861,13 @@ fabricated_account(id store)
 	if (made != NULL || account_class == Nil) {
 		return made;
 	}
+	/*
+	 * com.apple.account.iTunesStore, which is what accountsd calls it (-_addiTunesStoreAccountType makes
+	 * that one and a .sandbox beside it). This file asked for "com.apple.account.iTunes" for weeks, and
+	 * every "the iTunes type is MISSING" it printed was that wrong name coming back, not the phone.
+	 */
 	type = ((id (*)(id, SEL, id))objc_msgSend)(store, sel_registerName("accountTypeWithAccountTypeIdentifier:"),
-	    (id)CFSTR("com.apple.account.iTunes"));
+	    (id)CFSTR("com.apple.account.iTunesStore"));
 	{
 		/* What the database actually gives this process, which is how to tell a row accountsd cannot
 		 * read from a row it reads and does not like. */
@@ -2888,7 +2893,7 @@ fabricated_account(id store)
 		type = type != NULL ? ((id (*)(id, SEL))objc_msgSend)(type, sel_registerName("init")) : NULL;
 		if (type != NULL) {
 			((void (*)(id, SEL, id, id))objc_msgSend)(type, sel_registerName("setValue:forKey:"),
-			    (id)CFSTR("com.apple.account.iTunes"), (id)CFSTR("identifier"));
+			    (id)CFSTR("com.apple.account.iTunesStore"), (id)CFSTR("identifier"));
 			((void (*)(id, SEL, id, id))objc_msgSend)(type, sel_registerName("setValue:forKey:"),
 			    (id)CFSTR("iTunes Store"), (id)CFSTR("accountTypeDescription"));
 		}
@@ -3010,6 +3015,39 @@ teach_account_to_be_a_promise(void)
  * the cookies, the storefront save, AppStoreKit's launch -- gets the same account without being named one
  * at a time. The real one is preferred whenever there is one.
  */
+/*
+ * WHICH TYPE THE APPLICATION ASKS FOR. The daemon now holds one account, of AMS's own type
+ * com.apple.account.iTunesStore, and the App Store's own store still answers nothing -- with
+ * com.apple.accounts Code=7, "not found", where it used to be Code=9, "not authorized". A name that does
+ * not match would read exactly like that, and this library has itself been asking for
+ * com.apple.account.iTunes all along, which is a different string. So every identifier anybody asks this
+ * class for is said once.
+ */
+static id (*old_type_with_identifier)(id, SEL, id);
+
+static id
+new_type_with_identifier(id self, SEL cmd, id identifier)
+{
+	id type = old_type_with_identifier != NULL ? old_type_with_identifier(self, cmd, identifier) : NULL;
+	char text[90] = "(nil)";
+	static char said[8][90];
+	static unsigned count;
+
+	text_of(identifier, text, sizeof(text));
+	for (unsigned i = 0; i < count; i++) {
+		if (strncmp(said[i], text, sizeof(said[0]) - 1) == 0) {
+			return type;
+		}
+	}
+	if (count < 8) {
+		snprintf(said[count], sizeof(said[0]), "%s", text);
+		count++;
+	}
+	say("hakios: store: the account type \"%.70s\" was asked for: %s\n", text,
+	    type != NULL ? "there" : "NOT THERE");
+	return type;
+}
+
 static id (*old_local_itunes_account)(id, SEL);
 
 static id
@@ -3132,7 +3170,7 @@ local_account_of(id store, const char *who)
 			id all = ((id (*)(id, SEL))objc_msgSend)(store, sel_registerName("accounts"));
 			id type = ((id (*)(id, SEL, id))objc_msgSend)(store,
 			    sel_registerName("accountTypeWithAccountTypeIdentifier:"),
-			    (id)CFSTR("com.apple.account.iTunes"));
+			    (id)CFSTR("com.apple.account.iTunesStore"));
 			long n = all != NULL ? ((long (*)(id, SEL))objc_msgSend)(all, sel_registerName("count")) : -1;
 			char text[200] = "?";
 
@@ -3909,6 +3947,8 @@ static struct replacement replacements[] = {
 	  (IMP *)&old_is_local_account, false },
 	{ "ACAccountStore", "ams_localiTunesAccount", false, (IMP)new_local_itunes_account,
 	  (IMP *)&old_local_itunes_account, false },
+	{ "ACAccountStore", "accountTypeWithAccountTypeIdentifier:", false, (IMP)new_type_with_identifier,
+	  (IMP *)&old_type_with_identifier, false },
 	{ "ACAccount", "ams_copyStorefrontFromAccount:", false, (IMP)new_copy_storefront, (IMP *)&old_copy_storefront, false },
 	/* and the ones particular callers knock at instead */
 	{ "AMSBagNetworkDataSource", "cachedStorefront", false, (IMP)new_cached_storefront, (IMP *)&old_cached_storefront, false },
