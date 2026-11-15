@@ -2833,8 +2833,13 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
          var->data.interpolation = INTERP_MODE_SMOOTH;
       var->data.centroid = md_key(node, "air.centroid") >= 0;
       var->data.sample = md_key(node, "air.sample") >= 0;
-      if (c->nir->info.stage == MESA_SHADER_FRAGMENT)
-         add_varying(c, name, slot, air_nir_components(t), node);
+      /* by the name that links it to the vertex output (the string after air.fragment_input,
+       * which is what air.vertex_output carries), not by the argument's own name */
+      if (c->nir->info.stage == MESA_SHADER_FRAGMENT) {
+         int fi = md_key(node, "air.fragment_input");
+         const char *link = fi >= 0 ? md_str(node, fi + 1) : NULL;
+         add_varying(c, link ? link : name, slot, air_nir_components(t), node);
+      }
       nir_def *in_v = nir_load_var(&c->b, var);
       unsigned want = air_nir_bit_size(c, t);
       if (want == 1)

@@ -6458,6 +6458,159 @@ release_stage_cso(struct rwa_device *device, mesa_shader_stage stage, void *cso)
  * might write and only its stores say what it does -- air_run makes the same walk for
  * the colour side and refuses to read back an attachment nothing stored to.
  */
+/*
+ * THE VARYINGS, LINKED BY NAME AND PACKED -- what Metal does when it builds a render pipeline, and
+ * what this library did not: the translator gives each vertex output and each fragment input a
+ * whole slot (VARYING_SLOT_VAR0 + n) in the order the module lists them, so the two stages met
+ * only where the fragment function took every output of the vertex function, in its order, and
+ * a scalar took a slot of four. MercuryPoster's torus shaders (the lock screen's tori wallpapers)
+ * pass 40 -- four float3 and 36 floats -- past ir3's 32 (so->outputs_count): "compile failed".
+ *
+ * Here each fragment input finds the vertex output of its name (air_varying.name: the string
+ * after air.fragment_input and air.vertex_output), and both get the same new place: a slot and a
+ * first component, filled four components at a time in the fragment function's order, a slot
+ * holding only inputs interpolated alike (ir3 sets flat and the barycentric per input slot) and
+ * of one base type. A vertex output no fragment input reads is no output at all any more; a
+ * fragment input no vertex output writes keeps a slot of its own that nothing writes, which
+ * reads undefined, as it did. The driver locations are renumbered per slot, since nir_lower_io
+ * makes them the base ir3 indexes its inputs and outputs by.
+ */
+struct link_place {
+   unsigned slot, component;
+};
+
+static unsigned
+link_class(const nir_variable *v)
+{
+   const struct glsl_type *t = glsl_without_array(v->type);
+   return v->data.interpolation | v->data.centroid << 4 | v->data.sample << 5 |
+          (glsl_base_type_is_integer(glsl_get_base_type(t)) ? 1u << 6 : 0);
+}
+
+static const char *
+link_name(const struct air_shader_info *info, unsigned location)
+{
+   for (unsigned i = 0; i < info->num_varyings; i++)
+      if (info->varyings[i].slot == location)
+         return info->varyings[i].name;
+   return NULL;
+}
+
+/* one driver location per distinct slot, in the order the variables come */
+static unsigned
+link_renumber(nir_shader *nir, nir_variable_mode mode)
+{
+   unsigned locations[VARYING_SLOT_MAX], n = 0;
+   nir_foreach_variable_with_modes(v, nir, mode) {
+      unsigned k = 0;
+      while (k < n && locations[k] != (unsigned)v->data.location)
+         k++;
+      if (k == n && n < VARYING_SLOT_MAX)
+         locations[n++] = v->data.location;
+      v->data.driver_location = k;
+   }
+   return n;
+}
+
+static bool
+link_varyings(nir_shader *vs, const struct air_shader_info *vinfo, nir_shader *fs,
+              const struct air_shader_info *finfo, char *why, size_t why_size)
+{
+   unsigned nf = 0;
+   nir_foreach_variable_with_modes(v, fs, nir_var_shader_in)
+      nf += v->data.location >= VARYING_SLOT_VAR0;
+   if (nf == 0 && vinfo->num_varyings == 0)
+      return true;
+
+   nir_variable **fin = calloc(MAX2(nf, 1), sizeof(*fin));
+   nir_variable **vout = calloc(MAX2(nf, 1), sizeof(*vout));
+   struct link_place *place = calloc(MAX2(nf, 1), sizeof(*place));
+   if (!fin || !vout || !place) {
+      free(fin), free(vout), free(place);
+      say(why, why_size, "out of memory linking the varyings");
+      return false;
+   }
+   unsigned k = 0;
+   nir_foreach_variable_with_modes(v, fs, nir_var_shader_in) {
+      if (v->data.location < VARYING_SLOT_VAR0)
+         continue;
+      fin[k] = v;
+      const char *name = link_name(finfo, v->data.location);
+      unsigned nth = 0;
+      nir_foreach_variable_with_modes(o, vs, nir_var_shader_out) {
+         if (o->data.location < VARYING_SLOT_VAR0)
+            continue;
+         const char *oname = link_name(vinfo, o->data.location);
+         /* by name; and where either side has none, by place, as this library linked before */
+         if (name && oname ? !strcmp(name, oname) : nth == k) {
+            vout[k] = o;
+            break;
+         }
+         nth++;
+      }
+      k++;
+   }
+
+   /* the places: next fit per class, in the fragment function's order */
+   unsigned open_slot[128], open_used[128], next = 0;
+   for (unsigned i = 0; i < 128; i++)
+      open_used[i] = 4;
+   for (unsigned i = 0; i < nf; i++) {
+      unsigned comps = glsl_get_vector_elements(glsl_without_array(fin[i]->type));
+      if (vout[i])
+         comps = MAX2(comps, glsl_get_vector_elements(glsl_without_array(vout[i]->type)));
+      if (glsl_type_is_array(fin[i]->type) || comps == 0 || comps > 4)
+         comps = 4;   /* (the translator makes none of these: a whole slot, as before) */
+      unsigned cls = link_class(fin[i]) & 127;
+      if (open_used[cls] + comps > 4) {
+         open_slot[cls] = next++;
+         open_used[cls] = 0;
+      }
+      place[i] = (struct link_place){ open_slot[cls], open_used[cls] };
+      open_used[cls] += comps;
+   }
+   if (next > 32) {
+      say(why, why_size, "the fragment function reads %u varyings, which take %u slots of four "
+                         "packed, and the GPU has 32", nf, next);
+      free(fin), free(vout), free(place);
+      return false;
+   }
+
+   /* the vertex outputs nothing reads stop being outputs */
+   bool dropped = false;
+   nir_foreach_variable_with_modes(o, vs, nir_var_shader_out) {
+      if (o->data.location < VARYING_SLOT_VAR0)
+         continue;
+      bool read = false;
+      for (unsigned i = 0; i < nf && !read; i++)
+         read = vout[i] == o;
+      if (!read) {
+         o->data.mode = nir_var_shader_temp;
+         dropped = true;
+      }
+   }
+   for (unsigned i = 0; i < nf; i++) {
+      fin[i]->data.location = VARYING_SLOT_VAR0 + place[i].slot;
+      fin[i]->data.location_frac = place[i].component;
+      if (vout[i]) {
+         vout[i]->data.location = VARYING_SLOT_VAR0 + place[i].slot;
+         vout[i]->data.location_frac = place[i].component;
+      }
+   }
+   free(fin), free(vout), free(place);
+
+   if (dropped) {
+      nir_fixup_deref_modes(vs);
+      NIR_PASS(_, vs, nir_lower_global_vars_to_local);
+      NIR_PASS(_, vs, nir_lower_vars_to_ssa);
+      NIR_PASS(_, vs, nir_opt_dce);
+      NIR_PASS(_, vs, nir_remove_dead_variables, nir_var_function_temp | nir_var_shader_temp, NULL);
+   }
+   fs->num_inputs = link_renumber(fs, nir_var_shader_in);
+   vs->num_outputs = link_renumber(vs, nir_var_shader_out);
+   return true;
+}
+
 static bool
 fragment_writes_depth(nir_shader *fs)
 {
@@ -7449,6 +7602,10 @@ rwa_render_create(struct rwa_device *device,
       out.generated_vertex_stage = 1;
    }
 
+   if (!render->generated_vertex &&
+       !link_varyings(vs, &render->vinfo, fs, &render->finfo, why, why_size))
+      goto fail;
+
    /* Compile both stages now. A failure here is a creation failure and says so; the
     * stages are linked later, at the draw.
     */
@@ -8334,13 +8491,12 @@ cost_screen_name(struct pipe_screen *screen)
    return "FD830 (ir3, no GPU)";
 }
 
-int
-rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_id,
-             struct rwa_ir3_cost *cost, char *why, size_t why_size)
+/* ir3's compiler for a chip, made once and kept (rwa_ir3_cost and rwa_ir3_pair_cost) */
+static struct ir3_compiler *
+cost_compiler(unsigned chip_id, char *why, size_t why_size)
 {
    static struct ir3_compiler *compiler;
    static unsigned compiler_chip;
-   memset(cost, 0, sizeof(*cost));
 
    if (!compiler || compiler_chip != chip_id) {
       static struct fd_dev_id id;
@@ -8348,7 +8504,7 @@ rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_
       const struct fd_dev_info *info = fd_dev_info_raw(&id);
       if (!info) {
          say(why, why_size, "no GPU of chip id %#x is known to freedreno", chip_id);
-         return -1;
+         return NULL;
       }
       /* freedreno's own (ir3_screen_init), with eight render targets */
       struct ir3_compiler_options options = {
@@ -8361,53 +8517,62 @@ rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_
       compiler_chip = chip_id;
       if (!compiler) {
          say(why, why_size, "ir3 would not make a compiler for chip id %#x", chip_id);
-         return -1;
+         return NULL;
       }
    }
+   return compiler;
+}
 
-   /* (the GLSL type cache a translation needs, which rwa_device_open holds for the devices) */
-   glsl_type_singleton_init_or_ref();
-   unsigned long long before = cost_in_use();
-   void *mem = ralloc_context(NULL);
+/* one module translated as rwa_render_create translates it, timed into cost */
+static nir_shader *
+cost_translate(void *mem, struct ir3_compiler *compiler, const void *bitcode, size_t size,
+               const char *entry, struct air_shader_info *info, struct rwa_ir3_cost *cost,
+               char *why, size_t why_size)
+{
    struct air_constant_value *values;
    unsigned num_values = module_constants(mem, bitcode, size, &values);
    struct air_linked_function *linked;
    unsigned num_linked = module_linked(mem, bitcode, &linked);
    const struct air_to_nir_options opts = { .constants = values, .num_constants = num_values,
                                             .linked = linked, .num_linked = num_linked };
-   struct air_shader_info info;
    const char *error = NULL;
+   unsigned long long before = cost_in_use();
 
    double t0 = cost_now_ms();
-   nir_shader *nir = air_to_nir(mem, bitcode, size, entry, &opts, ir3_get_compiler_options(compiler), &info,
+   nir_shader *nir = air_to_nir(mem, bitcode, size, entry, &opts, ir3_get_compiler_options(compiler), info,
                                 &error);
    double t1 = cost_now_ms();
    if (!nir) {
       say(why, why_size, "%s", error ? error : "the module could not be translated");
-      ralloc_free(mem);
-      glsl_type_singleton_decref();
-      return -1;
+      return NULL;
    }
    cost->translate_ms = t1 - t0;
    cost->nir_instructions = cost_count_instrs(nir);
    cost->retained = cost_in_use() - before;
+   return nir;
+}
 
-   /* rwa_render_create's own finalisation for freedreno, then ir3_shader_state_create's */
+/* rwa_render_create's own finalisation for freedreno, then ir3_shader_state_create's: the variant
+ * (the caller destroys *shader), or NULL */
+static struct ir3_shader_variant *
+cost_compile(struct ir3_compiler *compiler, nir_shader *nir, struct ir3_shader **shader,
+             struct rwa_ir3_cost *cost)
+{
    struct pipe_screen screen = { .caps = { .fs_position_is_sysval = true }, .get_name = cost_screen_name };
+   double t1 = cost_now_ms();
    nir_shader *clone = nir_shader_clone(NULL, nir);
    finalize_for_gallium(clone, &screen);
    ir3_nir_lower_io_to_bindless(clone);
    double t2 = cost_now_ms();
    cost->finalize_ms = t2 - t1;
 
-   struct ir3_shader *shader = ir3_shader_from_nir(compiler, clone, &(struct ir3_shader_options){
-                                                      .api_wavesize = IR3_SINGLE_OR_DOUBLE,
-                                                      .real_wavesize = IR3_SINGLE_OR_DOUBLE,
-                                                   });
+   *shader = ir3_shader_from_nir(compiler, clone, &(struct ir3_shader_options){
+                                    .api_wavesize = IR3_SINGLE_OR_DOUBLE,
+                                    .real_wavesize = IR3_SINGLE_OR_DOUBLE,
+                                 });
    struct ir3_shader_key key = { .tessellation = IR3_TESS_NONE, .msaa = true };
-   struct ir3_shader_variant *v = shader ? ir3_shader_create_variant(shader, &key, false) : NULL;
-   double t3 = cost_now_ms();
-   cost->compile_ms = t3 - t2;
+   struct ir3_shader_variant *v = *shader ? ir3_shader_create_variant(*shader, &key, false) : NULL;
+   cost->compile_ms = cost_now_ms() - t2;
 
    struct rusage ru;
    getrusage(RUSAGE_SELF, &ru);
@@ -8419,6 +8584,31 @@ rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_
       cost->max_half_reg = v->info.max_half_reg + 1;
       cost->constlen = v->constlen;
    }
+   return v;
+}
+
+int
+rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_id,
+             struct rwa_ir3_cost *cost, char *why, size_t why_size)
+{
+   memset(cost, 0, sizeof(*cost));
+   struct ir3_compiler *compiler = cost_compiler(chip_id, why, why_size);
+   if (!compiler)
+      return -1;
+
+   /* (the GLSL type cache a translation needs, which rwa_device_open holds for the devices) */
+   glsl_type_singleton_init_or_ref();
+   unsigned long long before = cost_in_use();
+   void *mem = ralloc_context(NULL);
+   struct air_shader_info info;
+   nir_shader *nir = cost_translate(mem, compiler, bitcode, size, entry, &info, cost, why, why_size);
+   if (!nir) {
+      ralloc_free(mem);
+      glsl_type_singleton_decref();
+      return -1;
+   }
+   struct ir3_shader *shader = NULL;
+   struct ir3_shader_variant *v = cost_compile(compiler, nir, &shader, cost);
    ralloc_free(mem);
    cost->driver_kept = cost_in_use() - before;
    if (shader)
@@ -8429,4 +8619,59 @@ rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_
       return -1;
    }
    return 0;
+}
+
+int
+rwa_ir3_pair_cost(const void *vertex_bitcode, size_t vertex_size, const char *vertex_entry,
+                  const void *fragment_bitcode, size_t fragment_size, const char *fragment_entry,
+                  unsigned chip_id, struct rwa_ir3_cost *vcost, struct rwa_ir3_cost *fcost,
+                  unsigned *linked, unsigned *inputs, char *why, size_t why_size)
+{
+   memset(vcost, 0, sizeof(*vcost));
+   memset(fcost, 0, sizeof(*fcost));
+   *linked = *inputs = 0;
+   struct ir3_compiler *compiler = cost_compiler(chip_id, why, why_size);
+   if (!compiler)
+      return -1;
+
+   glsl_type_singleton_init_or_ref();
+   void *mem = ralloc_context(NULL);
+   struct air_shader_info vinfo, finfo;
+   struct ir3_shader *vshader = NULL, *fshader = NULL;
+   int ret = -1;
+   nir_shader *fs = cost_translate(mem, compiler, fragment_bitcode, fragment_size, fragment_entry,
+                                   &finfo, fcost, why, why_size);
+   nir_shader *vs = fs ? cost_translate(mem, compiler, vertex_bitcode, vertex_size, vertex_entry,
+                                        &vinfo, vcost, why, why_size) : NULL;
+   if (!vs)
+      goto out;
+   if (vinfo.stage != MESA_SHADER_VERTEX || finfo.stage != MESA_SHADER_FRAGMENT) {
+      say(why, why_size, "a pair is a vertex function and a fragment function");
+      goto out;
+   }
+   if (!link_varyings(vs, &vinfo, fs, &finfo, why, why_size))
+      goto out;
+   struct ir3_shader_variant *v = cost_compile(compiler, vs, &vshader, vcost);
+   struct ir3_shader_variant *f = v ? cost_compile(compiler, fs, &fshader, fcost) : NULL;
+   if (!v || !f) {
+      say(why, why_size, "ir3 did not compile the %s stage", v ? "fragment" : "vertex");
+      goto out;
+   }
+   /* the fragment inputs the vertex stage writes, as ir3_link_shaders finds them: by slot (and
+    * not the system values ir3 lists with them, such as the barycentrics) */
+   for (unsigned j = 0; j < f->inputs_count; j++) {
+      if (f->inputs[j].sysval || f->inputs[j].slot < VARYING_SLOT_VAR0)
+         continue;
+      (*inputs)++;
+      *linked += ir3_find_output(v, f->inputs[j].slot) >= 0;
+   }
+   ret = 0;
+out:
+   ralloc_free(mem);
+   if (vshader)
+      ir3_shader_destroy(vshader);
+   if (fshader)
+      ir3_shader_destroy(fshader);
+   glsl_type_singleton_decref();
+   return ret;
 }

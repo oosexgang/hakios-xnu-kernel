@@ -1432,6 +1432,13 @@ struct rwa_ir3_cost {
 };
 int rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_id,
 		 struct rwa_ir3_cost *cost, char *why, size_t why_size);
+/* The same for a render pipeline's two stages, translated and linked as rwa_render_create links
+ * them (by name, packed); *linked is how many of the fragment stage's *inputs varying slots the
+ * vertex stage's outputs feed. */
+int rwa_ir3_pair_cost(const void *vertex_bitcode, size_t vertex_size, const char *vertex_entry,
+		      const void *fragment_bitcode, size_t fragment_size, const char *fragment_entry,
+		      unsigned chip_id, struct rwa_ir3_cost *vcost, struct rwa_ir3_cost *fcost,
+		      unsigned *linked, unsigned *inputs, char *why, size_t why_size);
 
 #ifdef __cplusplus
 }
