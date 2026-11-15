@@ -3,7 +3,9 @@
 phone's ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (darwin26/dyld-strip).
 
-usage: [DARWIN_FW=DIR] mkimage26.py [--min | --prune] OUT.apfs      (DARWIN_FW: the extracted IPSW, default darwin26)
+usage: [DARWIN_FW=DIR] [WALLPAPER=COLOUR] mkimage26.py [--min | --prune] OUT.apfs
+       (DARWIN_FW: the extracted IPSW, default darwin26; WALLPAPER: the Stripe colour of the first
+       wallpaper, default yellow)
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
@@ -236,24 +238,42 @@ def place(item):
     return 0
 
 
+# The Stripe collection: the colours there are, each drawn by CoreAnimation layers for any screen class
+STRIPE_COLLECTION = '2939274C-F444-4AA8-806E-6E3FAFBA79B1'
+STRIPE = {'green': 7365, 'yellow': 7370, 'orange': 7375, 'red': 7380, 'purple': 7385, 'blue': 7390, 'black': 7395}
+
+
+def wallpaper_identifier(name):
+    """the Stripe wallpaper named NAME (a colour of STRIPE, or its number)"""
+    name = name.strip().lower()
+    if name in STRIPE:
+        return STRIPE[name]
+    if name.isdigit() and int(name) in STRIPE.values():
+        return int(name)
+    raise SystemExit(f"WALLPAPER={name}: one of {', '.join(STRIPE)}")
+
+
 def default_wallpaper():
     """
     The wallpaper Darwin gives a new device, one it can draw here. DefaultWallpapers~iphone.plist names
     7565 (collection "Darwin 17"), whose files are for the iPhone 11's screen class (414w-896h@2x) only,
     and pictures in HEIC; the display here is 375w-812h@3x, WallpaperKit finds "no compatible
     wallpaper" and PosterBoard falls back to a Mercury poster, which draws with Metal: a black screen.
-    Stripe Blue (7390) is drawn by CoreAnimation layers for any screen class. (The file in WORK is a
-    hard link to the extracted rootfs: replaced, not written through.)
+    The Stripe wallpapers are drawn by CoreAnimation layers for any screen class: Stripe Yellow (7370),
+    or the colour WALLPAPER= names (green, yellow, orange, red, purple, blue, black). (The file in WORK
+    is a hard link to the extracted rootfs: replaced, not written through.)
     """
     import plistlib
 
+    identifier = wallpaper_identifier(os.environ.get('WALLPAPER', 'yellow'))
     path = os.path.join(WORK, 'Library/Wallpaper/DefaultWallpapers~iphone.plist')
     with open(path, 'rb') as f:
         defaults = plistlib.load(f)
-    defaults['default'] = {'wallpaperIdentifier': 7390, 'collectionIdentifier': '2939274C-F444-4AA8-806E-6E3FAFBA79B1'}
+    defaults['default'] = {'wallpaperIdentifier': identifier, 'collectionIdentifier': STRIPE_COLLECTION}
     os.remove(path)
     with open(path, 'wb') as f:
         plistlib.dump(defaults, f)
+    print(f'mkimage26: the default wallpaper is Stripe {identifier}')
 
 
 def write_job_cache(jobs):
@@ -285,6 +305,7 @@ def main():
     out = [a for a in sys.argv[1:] if not a.startswith('--')]
     if len(out) != 1:
         sys.exit(__doc__)
+    wallpaper_identifier(os.environ.get('WALLPAPER', 'yellow'))     # (a wrong name stops the build here, not after it)
     if os.path.exists(WORK):
         shutil.rmtree(WORK)
     os.makedirs(WORK)
