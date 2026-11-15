@@ -2356,10 +2356,21 @@ name_uncaught_exceptions(void)
  * accountsd knows how to make every account type this phone is missing -- ACDDatabaseInitializer has an
  * -_addiTunesStoreAccountType, and ninety more beside it -- and it never runs them here: ZACCOUNTTYPE is
  * empty on every boot, which is why no client is ever authorized for a type and why there is no account.
- * The steps are driven by -[ACDDatabaseInitializer updateDefaultContentIfNecessary:], whose argument says
- * how much of the default content is already there. What that argument IS on this phone is the question;
- * it is only watched here, never changed, because making the daemon rebuild its database on a guess is
- * not a thing to do before knowing what it is told now.
+ * The steps are driven by -[ACDDatabaseInitializer updateDefaultContentIfNecessary:], and the hook below
+ * is never entered -- four starts of the daemon in a boot, installed in each. That is not the daemon being
+ * quiet on this port: NOTHING CALLS IT AT ALL. Every B and BL in AccountsDaemon's __text was scanned for
+ * the selector stub _objc_msgSend$updateDefaultContentIfNecessary: (0x2546f4560 in the extracted image)
+ * and there is not one branch to it. The method is there, the ninety types it would make are there, and
+ * no code in that framework asks.
+ *
+ * So the account types are not made by a daemon we fail to run -- they are a RESTORE ARTEFACT. A real
+ * iPhone gets /var/mobile/Library/Accounts/Accounts3.sqlite with the types already in it, and this port
+ * builds /var afresh at every boot, so it never has them. Which makes the way out plain enough: call that
+ * initializer ourselves from inside accountsd (-[ACDServer createDatabaseConnection] makes the connection
+ * it wants, -[ACDDatabaseInitializer initWithDatabaseConnection:] takes it, and -_addiTunesStoreAccountType
+ * is one of its own methods), let it write the database, and from then on every answer downstream is
+ * Apple's own data rather than ours. That is the next piece of work, and it is the first one in weeks that
+ * does not end in a guess.
  */
 static void (*old_update_default_content)(id, SEL, void *);
 
