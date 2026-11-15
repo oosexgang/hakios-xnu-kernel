@@ -237,11 +237,19 @@ for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServi
 done
 # The last migration: the first generation's var/ says 20F66 (16.5), so iOS 26 took itself for just updated
 # and ran DataMigrator, a progress bar on the screen in place of the lock screen. It is this build's own.
-python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
+#
+# MIGRATION_FROM=BUILD writes that build instead, which makes the system think it has just been updated
+# FROM it and run the migration once. That is not a cosmetic difference: the account types this phone has
+# none of -- ZACCOUNTTYPE is empty on every boot, so no client is ever authorized for the iTunes type, so
+# AMS has no account, so the App Store never leaves its first launch phase -- are made by accountsd's own
+# ACDDatabaseInitializer, and nothing ever asks it for them here (measured: its
+# updateDefaultContentIfNecessary: is never entered). A migration is what asks.
+python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" "${MIGRATION_FROM:-}" <<'PY'
 import plistlib, sys
 build = plistlib.load(open(sys.argv[2], 'rb'))['ProductBuildVersion']
+last = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else build
 with open(sys.argv[1], 'wb') as f:
-    plistlib.dump({'LastSystemVersion': build, 'DMLastMigrationResults': {'success': True, 'buildVersion': build}}, f,
+    plistlib.dump({'LastSystemVersion': last, 'DMLastMigrationResults': {'success': True, 'buildVersion': last}}, f,
                   fmt=plistlib.FMT_BINARY)
 PY
 # The persona manifest. usermanagerd reads /private/var/keybags/persona.kb as it starts and aborts without
