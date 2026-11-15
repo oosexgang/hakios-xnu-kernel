@@ -98,6 +98,7 @@ struct stage_cache_entry {
    void *cso;
    unsigned refs;
    mesa_shader_stage stage;
+   uint8_t sw_pair[RWA_MAX_TEXTURES];   /* a software screen's sampler pairing, part of the answer */
 };
 
 struct rwa_device {
@@ -6490,22 +6491,30 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
       software_pair_samplers(clone, sw_pair);
    if (device->software)
       software_widen_outputs(clone);
-   finalize_for_gallium(clone, device->screen);
 
    /* One compile for one stage, however many pipelines it is in. CoreAnimation makes a
     * pipeline for every blend and format its layers need, each from the same function: with
     * boot-arg metal_fc=1 backboardd asked for its generic uber shader (189,000 lines of NIR)
     * nine times before its first frame, ir3 compiled all nine at once, and jetsam killed it
-    * for the compressor's space (run glass1, 28 October). The key is the NIR as the driver
-    * gets it, so whatever made two stages differ makes their keys differ. (Not on a software
-    * screen: those stages carry the pipeline's own sampler pairing.)
+    * for the compressor's space (run glass1, 28 October). The key is the NIR as this library
+    * hands it over, so whatever made two stages differ makes their keys differ.
+    *
+    * On a software screen too, with the sampler pairing the stage was renumbered by in the key
+    * and handed back on a hit: it was left out there, and under QEMU CoreAnimation and RenderBox
+    * asked softpipe for 339 pipelines of 42 functions in one boot -- RenderBox's
+    * primitive_image_fragment 72 times -- each compiled again, 33 s apiece for the uber shader,
+    * 3 hours of the render server's time of which half was the same stage again.
     */
    blake3_hash key;
-   bool cached = !device->software;
+   bool cached = true;
+   uint8_t pair[RWA_MAX_TEXTURES] = { 0 };
+   if (device->software && sw_pair)
+      memcpy(pair, sw_pair, sizeof(pair));
    if (cached) {
       struct blob b;
       blob_init(&b);
       nir_serialize(&b, clone, true);
+      blob_write_bytes(&b, pair, sizeof(pair));
       _mesa_blake3_compute(b.data, b.size, key);
       blob_finish(&b);
       simple_mtx_lock(&stage_cache_lock);
@@ -6514,6 +6523,8 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
          if (e->stage == nir->info.stage && memcmp(e->key, key, sizeof(blake3_hash)) == 0) {
             e->refs++;
             void *cso = e->cso;
+            if (device->software && sw_pair)
+               memcpy(sw_pair, e->sw_pair, sizeof(e->sw_pair));
             simple_mtx_unlock(&stage_cache_lock);
             ralloc_free(clone);
             return cso;
@@ -6522,6 +6533,9 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
       simple_mtx_unlock(&stage_cache_lock);
    }
 
+   /* (after the lookup: the stage as this library hands it over is the key, and finalising it --
+    * a function of that and of the screen alone -- is part of what a hit saves) */
+   finalize_for_gallium(clone, device->screen);
    struct pipe_shader_state templ = { .type = PIPE_SHADER_IR_NIR, .ir.nir = clone };
    struct pipe_context *pipe = device->pipe;
    void *cso = nir->info.stage == MESA_SHADER_VERTEX
@@ -6545,6 +6559,7 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
          e->cso = cso;
          e->refs = 1;
          e->stage = nir->info.stage;
+         memcpy(e->sw_pair, pair, sizeof(pair));
       }
       simple_mtx_unlock(&stage_cache_lock);
    }
