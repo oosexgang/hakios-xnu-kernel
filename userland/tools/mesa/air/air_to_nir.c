@@ -305,6 +305,21 @@ ret_member_is_number(const struct air_type *m)
  * member that is a struct. One out-parameter each. Nested structs were skipped like padding
  * until MercuryPoster's wallpaper (Space.metallib, Flocon::getInputs) returned one inside
  * FloconInputs and read it back with extractvalue: "a struct where a number belongs". */
+/* An array a returned struct holds numbers in -- metal::float3x3 is { [3 x <3 x float>] }, which
+ * Photogrammetry's kernels return from their helpers -- as opposed to the [N x i8] padding the
+ * compiler leaves between members, which nothing reads. Taken a member per element. */
+static bool
+ret_array_of_numbers(const struct air_type *t)
+{
+   if (t->kind != AIR_TYPE_ARRAY || !t->elem || t->count == 0 || t->count > 64)
+      return false;
+   const struct air_type *e = t->elem;
+   if (e->kind == AIR_TYPE_INT && e->bits == 8)
+      return false;
+   return e->kind == AIR_TYPE_STRUCT || e->kind == AIR_TYPE_ARRAY ||
+          (e->kind == AIR_TYPE_VECTOR || e->kind == AIR_TYPE_INT || air_type_is_float(e));
+}
+
 static unsigned
 ret_leaves(const struct air_type *t, const struct air_type **out, unsigned n)
 {
@@ -316,6 +331,9 @@ ret_leaves(const struct air_type *t, const struct air_type **out, unsigned n)
    if (t->kind == AIR_TYPE_STRUCT)
       for (unsigned i = 0; i < t->num_members; i++)
          n = ret_leaves(t->members[i], out, n);
+   if (ret_array_of_numbers(t))
+      for (unsigned i = 0; i < t->count; i++)
+         n = ret_leaves(t->elem, out, n);
    return n;
 }
 
@@ -336,13 +354,15 @@ store_ret_leaves(struct air_ctx *c, const struct air_type *t, const struct air_v
       nir_store_deref(&c->b, d, v->def, nir_component_mask(v->def->num_components));
       return true;
    }
-   if (t->kind != AIR_TYPE_STRUCT)
+   bool array = ret_array_of_numbers(t);
+   if (t->kind != AIR_TYPE_STRUCT && !array)
       return true;
-   if (v && (v->kind != AIR_VAL_AGG || v->num_elems != t->num_members))
+   unsigned members = array ? (unsigned)t->count : t->num_members;
+   if (v && (v->kind != AIR_VAL_AGG || v->num_elems != members))
       return air_error(c, "instruction: a returned struct that was never built, "
                           "from a function called in the module");
-   for (unsigned i = 0; i < t->num_members; i++)
-      if (!store_ret_leaves(c, t->members[i], v ? v->elems[i] : NULL, at))
+   for (unsigned i = 0; i < members; i++)
+      if (!store_ret_leaves(c, array ? t->elem : t->members[i], v ? v->elems[i] : NULL, at))
          return false;
    return true;
 }
@@ -354,11 +374,13 @@ load_ret_leaves(struct air_ctx *c, const struct air_type *t, nir_variable **fiel
 {
    if (ret_member_is_number(t))
       return air_val_ssa(c, nir_load_var(&c->b, fields[(*at)++]));
-   if (t->kind != AIR_TYPE_STRUCT)
+   bool array = ret_array_of_numbers(t);
+   if (t->kind != AIR_TYPE_STRUCT && !array)
       return NULL;
-   struct air_val *agg = air_val_agg(c, t->num_members);
-   for (unsigned i = 0; i < t->num_members; i++)
-      agg->elems[i] = load_ret_leaves(c, t->members[i], fields, at);
+   unsigned members = array ? (unsigned)t->count : t->num_members;
+   struct air_val *agg = air_val_agg(c, members);
+   for (unsigned i = 0; i < members; i++)
+      agg->elems[i] = load_ret_leaves(c, array ? t->elem : t->members[i], fields, at);
    return agg;
 }
 
