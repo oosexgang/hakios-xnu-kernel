@@ -2486,10 +2486,31 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
    uint64_t off = 0;
    if (ptr.offset) {
       if (!nir_src_is_const(nir_src_for_ssa(ptr.offset))) {
-         air_error(c, "instruction: a load through the argument buffer %s at an offset "
-                      "that is not constant, which is a descriptor chosen at run time",
-                   abname);
-         return NULL;
+         /* A descriptor chosen at run time (ImageIO's gain maps take their tone-mapping LUT
+          * out of one of the set's structs by an index): the choice among the members a
+          * pointer of this kind could be, by the offset each sits at -- the last where none
+          * is, which a read in bounds never needs. A texture of another shape among them is
+          * refused where it is sampled, as any choice between two textures of two shapes. */
+         struct air_val *chosen = NULL;
+         unsigned n = 0;
+         nir_def *at = nir_u2u32(&c->b, ptr.offset);
+         for (unsigned i = ab->num_members; i-- > 0;) {
+            const struct air_argbuf_member *m = &ab->members[i];
+            if (m->value || m->addrspace != type->addrspace || n == 32)
+               continue;
+            struct air_ptr mp = ptr;
+            mp.offset = nir_imm_int(&c->b, (int)m->offset);
+            struct air_val *v = argbuf_load(c, mp, type, align);
+            if (!v)
+               return NULL;
+            chosen = chosen ? air_val_ptr_select(c, nir_ieq_imm(&c->b, at, m->offset), v, chosen) : v;
+            n++;
+         }
+         if (!chosen)
+            air_error(c, "instruction: a load through the argument buffer %s at an offset "
+                         "that is not constant, and no member there a pointer of its kind",
+                      abname);
+         return chosen;
       }
       off = nir_src_as_uint(nir_src_for_ssa(ptr.offset));
    }
