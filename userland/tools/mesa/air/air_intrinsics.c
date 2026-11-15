@@ -215,6 +215,30 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       return true;
    }
 
+   /* air.{fast_,}sincos.<type>(x, ptr cosval): Metal's sincos(x, thread T &cosval) returns the
+    * sine and stores the cosine through its second argument -- a pointer, so not one of the
+    * numbers the families below read (MercuryPoster's fluidity::sdfVertexShader, Darwin 27) */
+   if (!strcmp(op, "fast_sincos") || !strcmp(op, "sincos")) {
+      *handled = true;
+      if (argc != 2)
+         return air_error(c, "intrinsic: air.%s with %u arguments, not 2", op, argc);
+      nir_def *x = air_get_ssa(c, in->operands[1]);
+      struct air_val *p = air_get(c, in->operands[2]);
+      if (!x || !p)
+         return false;
+      if (p->kind != AIR_VAL_PTR)
+         return air_error(c, "intrinsic: air.%s whose second argument is not a pointer it "
+                             "can store through", op);
+      uint32_t was_exact = c->b.fp_math_ctrl;
+      c->b.fp_math_ctrl = 0;
+      nir_def *s = nir_fsin(&c->b, x), *co = nir_fcos(&c->b, x);
+      c->b.fp_math_ctrl = was_exact;
+      if (!air_store_ptr(c, p->ptr, co, 0))
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, s));
+      return true;
+   }
+
    nir_def *a[4] = { 0 };
    for (unsigned i = 0; i < argc && i < 4; i++)
       if (!(a[i] = air_get_ssa(c, in->operands[1 + i])))
