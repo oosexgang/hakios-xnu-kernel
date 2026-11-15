@@ -412,11 +412,15 @@ void rwa_sampler_destroy(struct rwa_sampler *sampler);
  * and a set with more members than this is refused by name rather than recorded in part.
  */
 #define RWA_MAX_ARGBUF_MEMBERS 64
+/* the highest [[id(n)]] recorded: a struct inside a set numbers its members from its own
+ * id, and VFX's are in the hundreds */
+#define RWA_MAX_ARGBUF_ID 4096
 
 enum rwa_argbuf_kind {
 	RWA_ARGBUF_BUFFER = 0,     /* `constant` or `device`: which it is, the shader decides */
 	RWA_ARGBUF_TEXTURE = 1,
 	RWA_ARGBUF_SAMPLER = 2,
+	RWA_ARGBUF_VALUE = 3,      /* bytes in the set itself: -constantDataAtIndex: */
 };
 
 /*
@@ -436,6 +440,9 @@ struct rwa_argbuf_member {
 	unsigned index;
 	unsigned write;            /* 1 when the shader writes this member */
 	char name[48];             /* air.arg_name, as Apple's compiler wrote it; "" if none */
+	/* RWA_ARGBUF_VALUE: where its bytes are in an encoding, and how many. 0 for a
+	 * descriptor, which is recorded and not written. */
+	unsigned offset, size;
 };
 
 /*
@@ -446,10 +453,10 @@ struct rwa_argbuf_member {
  * what it needs: the application calls -newBufferWithLength:encodedLength and then
  * encodes at multiples of it, so a number of ours that was too small would have the
  * application overlapping its own encodings, and one too large would waste memory in a
- * way that is invisible until something runs out. They are 8 bytes per member the set
- * DECLARES -- used or not, which is why the member list below is never compacted -- and
- * 8 bytes, which is what `air.arg_type_size` and `air.arg_type_align_size` say in the
- * metadata of every one of Resident Evil 4's 7 857 sets (docs/air.md 8.2.1).
+ * way that is invisible until something runs out. The length is the set's own
+ * `air.buffer_size` -- 8 bytes per member the set DECLARES in every one of Resident Evil
+ * 4's 7 857 sets (docs/air.md 8.2.1), and longer in Darwin 27's, whose sets carry values
+ * at their own sizes -- and the alignment is 8.
  */
 struct rwa_argbuf_layout {
 	unsigned metal_index;      /* the [[buffer(n)]] the SET is bound at */

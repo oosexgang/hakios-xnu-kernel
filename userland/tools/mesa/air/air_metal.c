@@ -3085,22 +3085,22 @@ argbuf_begin_member(struct rwa_buffer *dest, size_t dest_offset, unsigned id,
                          "-setArgumentBuffer:offset: has to name one first", what);
       return NULL;
    }
-   if (id >= RWA_MAX_ARGBUF_MEMBERS) {
-      say(why, why_size, "%s was encoded at id %u and this library records %u members of "
-                         "a set", what, id, RWA_MAX_ARGBUF_MEMBERS);
+   if (id >= RWA_MAX_ARGBUF_ID) {
+      say(why, why_size, "%s was encoded at id %u and this library records ids below %u",
+          what, id, RWA_MAX_ARGBUF_ID);
       return NULL;
    }
-   /* The handle Metal would write is eight bytes at dest_offset + 8 * id, and an
-    * encoding that does not fit the buffer is an application that allocated it from
-    * something other than -encodedLength. Nothing of ours would read those bytes, which
-    * is exactly why it has to be said here: this library would otherwise be the only
-    * thing in the system that did not notice.
+   /* An encoding that does not start inside the buffer is an application that allocated
+    * it from something other than -encodedLength. Where in the encoding the id's handle
+    * would be is the set's layout, which a driver holding the encoder knows and this call
+    * does not (a set with values in it is not eight bytes an id), so the driver checks the
+    * member's own place and this the start of the encoding. Nothing of ours would read
+    * those bytes, which is exactly why it has to be said: this library would otherwise be
+    * the only thing in the system that did not notice.
     */
-   size_t need = dest_offset + (size_t)8 * id + 8;
-   if (need > dest->size) {
+   if (dest_offset + 8 > dest->size) {
       say(why, why_size, "%s was encoded at id %u of an argument buffer at offset %zu, "
-                         "which Metal would write %zu bytes into, and that buffer holds "
-                         "%zu", what, id, dest_offset, need, dest->size);
+                         "and that buffer holds %zu", what, id, dest_offset, dest->size);
       return NULL;
    }
    return argbuf_encoding_for(dest, dest_offset, id, why, why_size);
@@ -5591,19 +5591,17 @@ rwa_module_textures(struct rwa_device *device, const void *bitcode, size_t size,
  * -[MTLFunction newArgumentEncoderWithBufferIndex:] holds a function's bitcode and
  * nothing else -- no pipeline, and no descriptor the layout could be read off.
  *
- * `encoded_length` is 8 bytes per member the set DECLARES, used by this shader or not,
- * and that is Apple's number rather than a convenience of ours: `air.arg_type_size` on
- * the set's own node says 8 x members in every one of Resident Evil 4's 7 857 sets, and
- * `air.arg_type_align_size` says 8 in all of them (docs/air.md 8.2.1). The frontend
- * keeps every member in the resource list for exactly this reason -- a numbering that
- * skipped the unread ones would differ between two shaders sharing one set, and an
- * application that allocated from the shorter number would overlap its own encodings.
+ * `encoded_length` and `alignment` are the set's own `air.buffer_size` and
+ * `air.arg_type_align_size`, Apple's numbers rather than a computation of ours: 8 x the
+ * members the set declares and 8 in every one of Resident Evil 4's 7 857 sets
+ * (docs/air.md 8.2.1, tools/air/argbuflen.py), and the struct's own length and alignment
+ * in Darwin 27's, whose sets carry values at their own sizes and whose ids can be sparse
+ * (a struct inside a set numbers its members from its own id). The frontend keeps every
+ * member in the resource list -- a numbering that skipped the unread ones would differ
+ * between two shaders sharing one set.
  *
- * The density of the ids is CHECKED and not assumed, because it is what makes 8 x members
- * the same number as Apple's: Metal's encodedLength is over the highest `[[id(n)]]`, so a
- * set whose ids have a gap in them (an MSL struct with `[[id(0)]]` and `[[id(5)]]`) is
- * longer than its member count says. SPIRV-Cross numbers densely and every set in reach
- * is dense, so this refuses rather than guesses which of the two readings was meant.
+ * A VALUE member (RWA_ARGBUF_VALUE) is listed with its offset and size, which is what
+ * -constantDataAtIndex: answers with; a descriptor is recorded, not written, and has none.
  */
 int
 rwa_module_argbufs(struct rwa_device *device, const void *bitcode, size_t size,
@@ -5691,11 +5689,11 @@ rwa_module_argbufs(struct rwa_device *device, const void *bitcode, size_t size,
          ralloc_free(mem_ctx);
          return -1;
       }
-      if (r->argbuf_id >= RWA_MAX_ARGBUF_MEMBERS) {
+      if (r->argbuf_id >= RWA_MAX_ARGBUF_ID) {
          say(why, why_size, "member `%s` of the argument buffer %s declares at Metal "
-                            "buffer index %u is id %u, and this library records %u "
-                            "members of a set", r->name ? r->name : "?", name,
-             r->argbuf_set, r->argbuf_id, RWA_MAX_ARGBUF_MEMBERS);
+                            "buffer index %u is id %u, and this library records ids "
+                            "below %u", r->name ? r->name : "?", name,
+             r->argbuf_set, r->argbuf_id, RWA_MAX_ARGBUF_ID);
          ralloc_free(mem_ctx);
          return -1;
       }
@@ -5713,36 +5711,67 @@ rwa_module_argbufs(struct rwa_device *device, const void *bitcode, size_t size,
       snprintf(m->name, sizeof(m->name), "%s", r->name ? r->name : "");
    }
 
+   /* The values, into the sets they are in: bytes at an offset, which -constantDataAtIndex:
+    * hands the application by id. */
+   for (unsigned i = 0; i < info.num_argbuf_values; i++) {
+      const struct air_argbuf_value *v = &info.argbuf_values[i];
+      struct rwa_argbuf_layout *l = NULL;
+      for (unsigned k = 0; k < n; k++)
+         if (out[k].metal_index == v->set)
+            l = &out[k];
+      if (!l) {
+         if (n >= max) {
+            say(why, why_size, "%s declares an argument buffer at Metal buffer index %u "
+                               "and there is room for %u layout%s", name, v->set, max,
+                max == 1 ? "" : "s");
+            ralloc_free(mem_ctx);
+            return -1;
+         }
+         l = &out[n++];
+         memset(l, 0, sizeof(*l));
+         l->metal_index = v->set;
+         l->alignment = 8;
+      }
+      if (l->member_count >= RWA_MAX_ARGBUF_MEMBERS || v->id >= RWA_MAX_ARGBUF_ID) {
+         say(why, why_size, "the argument buffer %s declares at Metal buffer index %u has "
+                            "more than the %u members this library records, or an id past "
+                            "%u", name, v->set, RWA_MAX_ARGBUF_MEMBERS, RWA_MAX_ARGBUF_ID);
+         ralloc_free(mem_ctx);
+         return -1;
+      }
+      struct rwa_argbuf_member *m = &l->members[l->member_count++];
+      m->id = v->id;
+      m->kind = RWA_ARGBUF_VALUE;
+      m->index = ~0u;
+      m->offset = v->offset;
+      m->size = v->size;
+      snprintf(m->name, sizeof(m->name), "%s", v->name ? v->name : "");
+   }
+
    for (unsigned k = 0; k < n; k++) {
       struct rwa_argbuf_layout *l = &out[k];
 
-      /* The ids have to be 0..member_count-1 with nothing missing and nothing twice,
-       * because that is what makes `8 x members` the length Metal would have answered.
-       * A set that is not dense is refused by name: the alternative is an application
-       * allocating its buffer too short and encoding one member over another.
-       */
-      uint64_t seen = 0;
-      for (unsigned i = 0; i < l->member_count; i++) {
-         if (l->members[i].id >= l->member_count) {
-            say(why, why_size, "the argument buffer %s declares at Metal buffer index %u "
-                               "has %u members and one of them (`%s`) is id %u: Metal's "
-                               "encodedLength is over the highest id, so this library "
-                               "will not answer a length for a set whose ids have a gap "
-                               "in them", name, l->metal_index, l->member_count,
-                l->members[i].name, l->members[i].id);
-            ralloc_free(mem_ctx);
-            return -1;
-         }
-         if (seen & (1ull << l->members[i].id)) {
-            say(why, why_size, "two members of the argument buffer %s declares at Metal "
-                               "buffer index %u are both id %u", name, l->metal_index,
-                l->members[i].id);
-            ralloc_free(mem_ctx);
-            return -1;
-         }
-         seen |= 1ull << l->members[i].id;
-      }
+      /* No id twice: the records are keyed by it. */
+      for (unsigned i = 0; i < l->member_count; i++)
+         for (unsigned j = 0; j < i; j++)
+            if (l->members[i].id == l->members[j].id) {
+               say(why, why_size, "two members of the argument buffer %s declares at Metal "
+                                  "buffer index %u are both id %u", name, l->metal_index,
+                   l->members[i].id);
+               ralloc_free(mem_ctx);
+               return -1;
+            }
+      /* The length is Apple's own, air.buffer_size: eight bytes a member in a set of
+       * descriptors, and the struct's own length in a set with values in it. */
       l->encoded_length = 8 * l->member_count;
+      for (unsigned i = 0; i < info.num_argbuf_sets; i++) {
+         if (info.argbuf_sets[i].set != l->metal_index)
+            continue;
+         if (info.argbuf_sets[i].size)
+            l->encoded_length = info.argbuf_sets[i].size;
+         if (info.argbuf_sets[i].align)
+            l->alignment = info.argbuf_sets[i].align;
+      }
    }
 
    if (count)
@@ -6503,6 +6532,13 @@ info_copy(void *mem, struct air_shader_info *d, const struct air_shader_info *s)
       d->vertex_attributes[i].function_constant =
          info_strdup(mem, s->vertex_attributes[i].function_constant);
    }
+   d->argbuf_sets = s->num_argbuf_sets
+      ? ralloc_memdup(mem, s->argbuf_sets, s->num_argbuf_sets * sizeof(*s->argbuf_sets)) : NULL;
+   d->argbuf_values = s->num_argbuf_values
+      ? ralloc_memdup(mem, s->argbuf_values, s->num_argbuf_values * sizeof(*s->argbuf_values))
+      : NULL;
+   for (unsigned i = 0; i < s->num_argbuf_values; i++)
+      d->argbuf_values[i].name = info_strdup(mem, s->argbuf_values[i].name);
    d->notes = s->num_notes ? ralloc_array(mem, const char *, s->num_notes) : NULL;
    for (unsigned i = 0; i < s->num_notes; i++)
       d->notes[i] = info_strdup(mem, s->notes[i]);
