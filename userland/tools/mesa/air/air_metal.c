@@ -7350,6 +7350,37 @@ link_varyings(nir_shader *vs, const struct air_shader_info *vinfo, nir_shader *f
    return true;
 }
 
+/* A stage measured alone (rwa_ir3_cost), its varyings packed as link_varyings packs a pair's:
+ * next fit per class, in the order they come. Without it a vertex function's 41 scalar outputs
+ * took 41 slots and ir3 asserted at the 33rd (MercuryPoster's tori), where a pipeline -- which
+ * links -- packs them into 13. */
+static void
+pack_lone_varyings(nir_shader *nir, nir_variable_mode mode)
+{
+   unsigned open_slot[128], open_used[128], next = 0;
+   for (unsigned i = 0; i < 128; i++)
+      open_used[i] = 4;
+   nir_foreach_variable_with_modes(v, nir, mode) {
+      if (v->data.location < VARYING_SLOT_VAR0)
+         continue;
+      unsigned comps = glsl_get_vector_elements(glsl_without_array(v->type));
+      if (glsl_type_is_array(v->type) || comps == 0 || comps > 4)
+         comps = 4;
+      unsigned cls = link_class(v) & 127;
+      if (open_used[cls] + comps > 4) {
+         open_slot[cls] = next++;
+         open_used[cls] = 0;
+      }
+      v->data.location = VARYING_SLOT_VAR0 + open_slot[cls];
+      v->data.location_frac = open_used[cls];
+      open_used[cls] += comps;
+   }
+   if (mode == nir_var_shader_in)
+      nir->num_inputs = link_renumber(nir, mode);
+   else
+      nir->num_outputs = link_renumber(nir, mode);
+}
+
 static bool
 fragment_writes_depth(nir_shader *fs)
 {
@@ -9470,6 +9501,10 @@ rwa_ir3_cost(const void *bitcode, size_t size, const char *entry, unsigned chip_
       glsl_type_singleton_decref();
       return -1;
    }
+   if (nir->info.stage == MESA_SHADER_VERTEX)
+      pack_lone_varyings(nir, nir_var_shader_out);
+   else if (nir->info.stage == MESA_SHADER_FRAGMENT)
+      pack_lone_varyings(nir, nir_var_shader_in);
    struct ir3_shader *shader = NULL;
    struct ir3_shader_variant *v = cost_compile(compiler, nir, &shader, cost);
    ralloc_free(mem);
