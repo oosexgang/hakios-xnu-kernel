@@ -150,7 +150,12 @@ ir3 for the Adreno 642L (chip 0x06060010) -- over a `.metallib` on Linux, with n
 | Library | Compiled by ir3 | Refused, and why |
 | --- | --- | --- |
 | QuartzCore `default.metallib` | **203 of 249** | the 46 tile-memory kernels (`air.imageblock`) |
-| RenderBox `default.metallib` | **48 of 109** | 30 call a function the pipeline links at run time (`custom_blend`, `custom_fn`), which a sweep has none of; 27 are `air.visible` library functions; 4 more of the linked kind |
+| RenderBox `default.metallib` | **74 of 109**; **82** with `LINK=custom_fn=glassBackground_v1` (or any of its five `*_v1` effects) | the 27 `air.visible` functions -- the effects themselves, which are linked and not compiled alone; without an effect linked, the 8 custom-effect shaders |
+
+RenderBox's had been 48: its fragment shaders call `custom_blend` and `custom_fn` behind bits of their
+function constants and a pipeline links them only when the bit is set, but the translation stopped at the
+call whatever the constants said; `custom_fn` also reaches `sample_custom` as a function pointer, and two of
+the effects have static initializers of their own. All three are taken now (`air_to_nir.c`, `link_visible`).
 
 No compiler crash in either. QuartzCore's 203 take 1.8 s of host time together; the costliest is Liquid
 Glass's own `glass_background_sdf_all_lpf` (110 ms, 2,740 ir3 instructions), and the most registers any of them
