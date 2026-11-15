@@ -229,6 +229,13 @@ struct air_shader_info {
    enum air_tess_domain tess_domain;
    unsigned tess_control_points;
 
+   /* A compute kernel's explicit imageblock: the bytes of one pixel's data. The block is a
+    * pixel per thread of the threadgroup's x by y, in threadgroup memory after the kernel's own
+    * (from its 16-aligned end), so a runtime knows its size only with the group's: the
+    * threadgroup buffers after it are placed past width * height * this (the bases of
+    * AIR_THREADGROUP_BASE_INPUT, word 0 included), and variable_shared_mem covers it. 0: none. */
+   unsigned imageblock_pixel_bytes;
+
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */
 

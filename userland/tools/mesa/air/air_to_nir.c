@@ -3249,6 +3249,26 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       return true;
    }
 
+   /* A compute kernel's explicit imageblock (QuartzCore's compute_simd_blur_*, the camera's
+    * CMImaging kernels): `%"struct.metal::_imageblock_base" { ptr addrspace(4) }`, which the body
+    * never reads -- it reaches the block through air.imageblock_data -- so the parameter is a
+    * tree of nulls and what matters is the size of a pixel's data. An implicit one (a tile
+    * function's, the render pass's attachments) has no threadgroup memory to stand for it. */
+   if (md_key(node, "air.imageblock") >= 0) {
+      const char *layout = md_str(node, md_key(node, "air.imageblock") + 1);
+      uint64_t bytes = 0;
+      if (c->nir->info.stage != MESA_SHADER_COMPUTE || !layout || strcmp(layout, "explicit") ||
+          !md_key_int(node, "air.imageblock_data_size", &bytes) || !bytes)
+         return air_error(c, "interface: input air.imageblock (%s, in a %s)",
+                          layout ? layout : "no layout",
+                          c->nir->info.stage == MESA_SHADER_COMPUTE ? "kernel" : "render stage");
+      c->info->imageblock_pixel_bytes = (unsigned)bytes;
+      struct air_constant z = { .base = { .kind = AIR_VALUE_CONSTANT, .type = t },
+                                .ckind = AIR_CONST_NULL };
+      c->params[param] = air_constant_val(c, &z);
+      return c->params[param] != NULL;
+   }
+
    /* system values */
    for (unsigned i = 0; i < ARRAY_SIZE(sysvals); i++) {
       if (md_key(node, sysvals[i].key) < 0)
@@ -7253,6 +7273,11 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
     * dispatch gives: the base is read from kernel input word k, which the runtime folds into
     * the code once the lengths are known (each length rounded up to 16 bytes, as Metal
     * requires of them). Gallium's variable_shared_mem is then the sum of all of them. */
+   /* the explicit imageblock, at the 16-aligned end of the kernel's own threadgroup memory */
+   if (!c.error[0] && c.info->imageblock_pixel_bytes) {
+      c.shared_size = ALIGN_POT(c.shared_size, 16);
+      c.imageblock_base = c.shared_size;
+   }
    for (unsigned i = 0; i < c.num_params && !c.error[0]; i++) {
       struct air_val *v = c.params[i];
       if (v && v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_SHARED && !v->ptr.offset) {
@@ -7263,7 +7288,8 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
                k = c.info->resources[r].index;
          c.shared_size = ALIGN_POT(c.shared_size, 16);
          nir_def *base = c.shared_size ? nir_imm_int(&c.b, c.shared_size) : NULL;
-         if (k) {
+         /* (past an imageblock too, whose size the group's decides: word 0 then as well) */
+         if (k || c.info->imageblock_pixel_bytes) {
             nir_def *after = nir_load_kernel_input(&c.b, 1, 32, nir_imm_int(&c.b, 4 * k),
                                                    .base = AIR_THREADGROUP_BASE_INPUT,
                                                    .range = 4 * 32);

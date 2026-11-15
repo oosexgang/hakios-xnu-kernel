@@ -188,6 +188,7 @@ struct air_ctx {
    /* specialised callees by what they were specialised on (spec_key): one translation per
     * distinct resolution of the arguments rather than one per call site */
    struct hash_table *spec_fns;
+   unsigned imageblock_base;   /* where the explicit imageblock starts in threadgroup memory */
 
    /* The values a callee being translated takes from its caller beyond its arguments
     * (import_def): defs of the caller's impl -- an offset, a texture index, a number inside a

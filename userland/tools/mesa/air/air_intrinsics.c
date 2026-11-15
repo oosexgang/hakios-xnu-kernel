@@ -2345,6 +2345,136 @@ tex_coord_and_layer(struct air_ctx *c, const struct air_inst *in,
    return coord;
 }
 
+/* -- an explicit imageblock in a kernel ------------------------------------
+ *
+ * Threadgroup memory laid out a pixel per thread of the group's x by y, each pixel
+ * imageblock_pixel_bytes of the layout the shader declares, from c->imageblock_base (nir_air.h).
+ * The group's width is the workgroup size the runtime compiles the kernel for, so it folds.
+ */
+static nir_def *
+imageblock_pixel_offset(struct air_ctx *c, nir_def *x, nir_def *y)
+{
+   nir_def *w = nir_channel(&c->b, nir_load_workgroup_size(&c->b), 0);
+   nir_def *pix = nir_iadd(&c->b, nir_imul(&c->b, y, w), x);
+   return nir_iadd_imm(&c->b, nir_imul_imm(&c->b, pix, c->info->imageblock_pixel_bytes),
+                       c->imageblock_base);
+}
+
+/* air.imageblock_data(<2 x i16> coord, i32, i16) -> ptr addrspace(4): the pixel's data, for
+ * the shader to load and store through as it likes. The two numbers after the coordinate are 0
+ * in every call seen (the sample and the layer, by their widths) and refused otherwise. */
+static bool
+imageblock_data(struct air_ctx *c, const struct air_inst *in)
+{
+   if (!c->info->imageblock_pixel_bytes)
+      return air_error(c, "intrinsic: air.imageblock_data in a function with no explicit "
+                          "imageblock");
+   nir_def *coord = in->num_operands > 1 ? air_get_ssa(c, in->operands[1]) : NULL;
+   if (!coord || coord->num_components != 2)
+      return coord ? air_error(c, "intrinsic: air.imageblock_data with a %u-component "
+                                  "coordinate", coord->num_components) : false;
+   for (unsigned i = 2; i < in->num_operands; i++) {
+      uint64_t v;
+      if (!air_const_uint(in->operands[i], &v) || v)
+         return air_error(c, "intrinsic: air.imageblock_data with operand %u not zero", i);
+   }
+   coord = nir_u2u32(&c->b, coord);
+   struct air_ptr p = { .class = AIR_PTR_SHARED,
+                        .offset = imageblock_pixel_offset(c, nir_channel(&c->b, coord, 0),
+                                                          nir_channel(&c->b, coord, 1)),
+                        .pointee = in->base.type ? in->base.type->elem : NULL };
+   air_set(c, &in->base, air_val_ptr(c, p));
+   return true;
+}
+
+/* air.write_imageblock_slice_to_texture_2d.<coord>.<value>(tex, slice, i1, origin, size, dst,
+ * lod, i1, i32): the size.x by size.y pixels of one member of the block (the slice: a pixel's
+ * data pointer, imageblock_data at (0, 0) plus the member's offset) from origin on, written to
+ * the texture at dst on. Metal runs it once for the group -- the shaders call it from one thread
+ * after a barrier -- so here it is that thread's loop over the pixels. */
+static bool
+imageblock_slice_write(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
+{
+   if (!c->info->imageblock_pixel_bytes || in->num_operands < 8)
+      return air_error(c, "intrinsic: air.%s with no explicit imageblock to write",
+                       n->part[0]);
+   const char *vt = n->part[n->num - 1];
+   const struct air_type *et = NULL;
+   static const struct air_type half = { .kind = AIR_TYPE_HALF };
+   static const struct air_type flt = { .kind = AIR_TYPE_FLOAT };
+   static const struct air_type h4 = { .kind = AIR_TYPE_VECTOR, .count = 4, .elem = &half };
+   static const struct air_type f4 = { .kind = AIR_TYPE_VECTOR, .count = 4, .elem = &flt };
+   if (!strcmp(vt, "v4f16"))
+      et = &h4;
+   else if (!strcmp(vt, "v4f32"))
+      et = &f4;
+   else
+      return air_error(c, "intrinsic: air.%s of %s pixels", n->part[0], vt);
+
+   struct air_ptr tex;
+   if (!tex_handle(c, in, 1, AIR_PTR_TEXTURE, &tex))
+      return false;
+   if (tex.binding == AIR_NULL_BINDING)
+      return true;
+   if (!tex.is_image)
+      return air_error(c, "intrinsic: air.%s to a texture the interface says is not written",
+                       n->part[0]);
+   struct air_val *slice = air_get(c, in->operands[2]);
+   if (!slice || slice->kind != AIR_VAL_PTR || slice->ptr.class != AIR_PTR_SHARED)
+      return air_error(c, "intrinsic: air.%s of a slice that is not the imageblock's",
+                       n->part[0]);
+   nir_def *origin = air_get_ssa(c, in->operands[4]), *size = air_get_ssa(c, in->operands[5]);
+   nir_def *dst = air_get_ssa(c, in->operands[6]);
+   if (!origin || !size || !dst)
+      return false;
+   struct air_level_place lp;
+   if (!level_place(c, in->operands[7], &lp))
+      return air_error(c, "intrinsic: air.%s to a mip level the shader computes", n->part[0]);
+   struct air_resource *r = image_resource(c, tex.binding);
+   if (!r || !image_at_level(c, r, &lp, n->part[0]))
+      return r ? false : air_error(c, "intrinsic: air.%s to image %u, which has no resource",
+                                   n->part[0], tex.binding);
+   origin = nir_u2u32(&c->b, origin);
+   size = nir_u2u32(&c->b, size);
+   dst = nir_u2u32(&c->b, dst);
+
+   /* the member's own offset in a pixel: the slice's offset less pixel (0, 0)'s */
+   nir_def *member = nir_isub(&c->b, slice->ptr.offset ? nir_u2u32(&c->b, slice->ptr.offset)
+                                                       : nir_imm_int(&c->b, 0),
+                              nir_imm_int(&c->b, (int)c->imageblock_base));
+   nir_builder at = nir_builder_at(nir_before_impl(c->b.impl));
+   nir_def *ry = nir_decl_reg(&at, 1, 32, 0), *rx = nir_decl_reg(&at, 1, 32, 0);
+   nir_store_reg(&c->b, nir_imm_int(&c->b, 0), ry);
+   struct air_loop ly, lx;
+   air_loop_head(c, &ly);
+   air_loop_test(c, &ly, nir_ult(&c->b, nir_load_reg(&c->b, ry), nir_channel(&c->b, size, 1)));
+   nir_store_reg(&c->b, nir_imm_int(&c->b, 0), rx);
+   air_loop_head(c, &lx);
+   air_loop_test(c, &lx, nir_ult(&c->b, nir_load_reg(&c->b, rx), nir_channel(&c->b, size, 0)));
+   nir_def *y = nir_load_reg(&c->b, ry), *x = nir_load_reg(&c->b, rx);
+   nir_def *off = nir_iadd(&c->b, imageblock_pixel_offset(c,
+                                     nir_iadd(&c->b, nir_channel(&c->b, origin, 0), x),
+                                     nir_iadd(&c->b, nir_channel(&c->b, origin, 1), y)),
+                           member);
+   struct air_ptr src = { .class = AIR_PTR_SHARED, .offset = off, .pointee = et };
+   nir_def *v = air_load_ptr(c, src, et, 8);
+   if (!v)
+      return false;
+   nir_def *to = nir_vec2(&c->b, nir_iadd(&c->b, nir_channel(&c->b, dst, 0), x),
+                          nir_iadd(&c->b, nir_channel(&c->b, dst, 1), y));
+   nir_image_store(&c->b, tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)
+                                    : nir_imm_int(&c->b, tex.binding),
+                   nir_pad_vector(&c->b, to, 4), nir_imm_int(&c->b, 0),
+                   nir_pad_vector(&c->b, v, 4), nir_imm_int(&c->b, 0),
+                   .image_dim = GLSL_SAMPLER_DIM_2D, .image_array = false,
+                   .src_type = v->bit_size == 16 ? nir_type_float16 : nir_type_float32);
+   nir_store_reg(&c->b, nir_iadd_imm(&c->b, x, 1), rx);
+   air_loop_end(c, &lx);
+   nir_store_reg(&c->b, nir_iadd_imm(&c->b, nir_load_reg(&c->b, ry), 1), ry);
+   air_loop_end(c, &ly);
+   return true;
+}
+
 static bool
 texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
 {
@@ -2952,6 +3082,11 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
                                                              .binding = AIR_NULL_BINDING }));
       return true;
    }
+
+   if (!strcmp(n.part[0], "imageblock_data"))
+      return imageblock_data(c, in);
+   if (!strncmp(n.part[0], "write_imageblock_slice_to_texture_", 34))
+      return imageblock_slice_write(c, in, &n);
 
    bool handled = false;
    /* before math_op, which resolves every argument as a number: these take a
