@@ -631,13 +631,30 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
          r = nir_f2fN(&c->b, r, a[0]->bit_size);
    } else if (!strcmp(op, "get_simd_width") || !strcmp(op, "get_thread_execution_width") ||
               !strcmp(op, "get_simdgroup_size")) {
-      r = nir_load_subgroup_size(&c->b);
+      r = nir_u2uN(&c->b, nir_load_subgroup_size(&c->b), air_nir_bit_size(c, in->base.type));
+   } else if (!strcmp(op, "get_local_size") || !strcmp(op, "get_global_size") ||
+              !strcmp(op, "get_local_id") || !strcmp(op, "get_global_id") ||
+              !strcmp(op, "get_group_id") || !strcmp(op, "get_num_groups")) {
+      /* OpenCL's names for the grid, one dimension at a time (the camera pipeline's
+       * CMImaging kernels ask get_local_size(0) and (1)): the sysval's component,
+       * at the width the call returns */
+      nir_def *v = !strcmp(op, "get_local_size") ? nir_load_workgroup_size(&c->b)
+                 : !strcmp(op, "get_global_size")
+                    ? nir_imul(&c->b, nir_load_num_workgroups(&c->b), nir_load_workgroup_size(&c->b))
+                 : !strcmp(op, "get_local_id") ? nir_load_local_invocation_id(&c->b)
+                 : !strcmp(op, "get_global_id") ? nir_load_global_invocation_id(&c->b, 32)
+                 : !strcmp(op, "get_group_id") ? nir_load_workgroup_id(&c->b)
+                                               : nir_load_num_workgroups(&c->b);
+      r = nir_vector_extract(&c->b, v, nir_u2u32(&c->b, a[0]));
+      r = nir_u2uN(&c->b, r, air_nir_bit_size(c, in->base.type));
    } else if (!strcmp(op, "get_thread_index_in_simdgroup")) {
       /* the lane, asked for by a call rather than taken as [[thread_index_in_simdgroup]]
        * (RealityCoreRenderer's copyMemory kernels, Darwin 27): the same value as the input */
-      r = nir_load_subgroup_invocation(&c->b);
+      r = nir_u2uN(&c->b, nir_load_subgroup_invocation(&c->b), air_nir_bit_size(c, in->base.type));
    } else if (!strcmp(op, "get_simdgroup_index_in_threadgroup")) {
-      r = nir_load_subgroup_id(&c->b);
+      /* (all three at the width the call returns: `.i16` ones are, and a 32-bit answer
+       * met a 16-bit operand in the next urem -- CMImaging's texture-style filters) */
+      r = nir_u2uN(&c->b, nir_load_subgroup_id(&c->b), air_nir_bit_size(c, in->base.type));
    } else if (!strcmp(op, "all")) {
       r = nir_ball(&c->b, a[0]);
    } else if (!strcmp(op, "any")) {
