@@ -1,6 +1,8 @@
 /*
  * mipwritecheck: tools/air/mip_write.ll dispatched through libhakios-air (tools/air/mipwritecheck.sh): one
- * texture written at levels 0 and 1 by one kernel; both levels must hold what was written to them.
+ * texture written at levels 0 and 1 by one kernel; both levels must hold what was written to them. With
+ * `buffer`, tools/air/mip_buffer.ll: the same two levels, read out of a constant buffer that holds 1 (the
+ * kernel writes at it and at it minus one).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,13 +17,19 @@ int main(int argc, char **argv) {
 	char why[512] = "";
 	struct rwa_device *d = rwa_device_open(why, sizeof(why));
 	struct rwa_compute_info info;
-	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, "mw", &info, why, sizeof(why)) : NULL;
+	int from_buffer = argc > 2 && !strcmp(argv[2], "buffer");
+	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, from_buffer ? "mb" : "mw", &info, why, sizeof(why)) : NULL;
 	if (!c) { printf("compute: %s\n", why); return 1; }
 	struct rwa_texture_shape ts = { RGBA32F, TEX2D, 4, 4, 1, 1, 2, 1, READ | WRITE };
 	struct rwa_texture *t = rwa_texture_create(d, &ts, why, sizeof(why));
 	if (!t) { printf("texture: %s\n", why); return 1; }
 	struct rwa_texture *texs[1] = { t };
-	struct rwa_bindings bind = { .textures = texs, .texture_count = 1 };
+	struct rwa_buffer *level = rwa_buffer_create(d, 16, why, sizeof(why));
+	if (!level) { printf("buffer: %s\n", why); return 1; }
+	*(unsigned short *)rwa_buffer_map(level) = 1;
+	struct rwa_buffer *bufs[1] = { level };
+	struct rwa_bindings bind = { .textures = texs, .texture_count = 1,
+				     .buffers = from_buffer ? bufs : NULL, .buffer_count = from_buffer ? 1 : 0 };
 	unsigned groups[3] = { 1, 1, 1 }, gs[3] = { 4, 4, 1 };
 	if (rwa_dispatch(c, &bind, groups, gs, why, sizeof(why))) { printf("dispatch: %s\n", why); return 1; }
 	static float l0[4][4][4], l1[2][2][4];
@@ -40,6 +48,7 @@ int main(int argc, char **argv) {
 					printf("level 1 (%d, %d): %g %g %g %g\n", x, y, l1[y][x][0], l1[y][x][1], l1[y][x][2], l1[y][x][3]);
 			}
 		}
-	printf("one texture written at levels 0 and 1: %s\n", bad ? "WRONG" : "ok");
+	printf("one texture written at levels 0 and 1%s: %s\n", from_buffer ? ", read out of a buffer" : "",
+	       bad ? "WRONG" : "ok");
 	return bad != 0;
 }
