@@ -101,6 +101,8 @@
  * makes several at launch can miss its check-in (glass19: MercuryPoster's extension,
  * XPC_EXIT_REASON_EXTENSION_CHECK_IN_TIMEOUT, its wallpaper never shown). */
 static void rw_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void rw_say_surface_colour(IOSurfaceRef surface, const uint8_t *base, size_t row, size_t width,
+				  size_t height);
 
 static void
 rw_say_slow(const char *what, const char *name, uint64_t t0)
@@ -3777,6 +3779,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 	if (base != NULL && row != 0 && width != 0 && height != 0) {
 		[self getBytes:base bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0];
+		rw_say_surface_colour(_copiedFrom, base, row, width, height);
 	}
 	if (locked) {
 		IOSurfaceUnlock(_copiedFrom, 0, NULL);
@@ -3786,6 +3789,40 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 	}
 	_copiedSeed = IOSurfaceGetSeed(_copiedFrom);
 	_copiedAt = mach_absolute_time();
+}
+
+/*
+ * What the first few screen-sized surfaces were drawn as, written back: the mean of each byte of
+ * a 4-byte pixel over a grid of them, and how many are not black. A display that shows black
+ * after a frame is either a window server that drew black or a driver that wrote nothing, and
+ * this line tells the two apart without a screenshot of every layer.
+ */
+static void
+rw_say_surface_colour(IOSurfaceRef surface, const uint8_t *base, size_t row, size_t width, size_t height)
+{
+	static unsigned said;
+	uint64_t sum[4] = { 0, 0, 0, 0 }, n = 0, lit = 0;
+
+	if (said >= 6 || width < 256 || height < 256 || IOSurfaceGetBytesPerElement(surface) != 4) {
+		return;
+	}
+	said++;
+	for (size_t y = 0; y < height; y += height / 32) {
+		for (size_t x = 0; x < width; x += width / 32) {
+			const uint8_t *p = base + y * row + x * 4;
+
+			for (unsigned k = 0; k < 4; k++) {
+				sum[k] += p[k];
+			}
+			lit += (p[0] | p[1] | p[2]) != 0;
+			n++;
+		}
+	}
+	rw_print("surface %u (%zux%zu) written back: bytes on average %llu %llu %llu %llu, %llu of %llu "
+	         "sampled pixels not black\n", IOSurfaceGetID(surface), width, height,
+	         (unsigned long long)(sum[0] / n), (unsigned long long)(sum[1] / n),
+	         (unsigned long long)(sum[2] / n), (unsigned long long)(sum[3] / n),
+	         (unsigned long long)lit, (unsigned long long)n);
 }
 
 /* the FNV-1a of a run of bytes, every fifth word: what tells a changed buffer from one that has not */
