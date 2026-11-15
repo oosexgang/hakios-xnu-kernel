@@ -796,6 +796,36 @@ widen_16bit(nir_shader *nir)
  * access becomes an access to word offset/4 of one. The frontend's accesses are 32-bit words
  * (widen_16bit has run); anything else is left alone, and nir_to_tgsi says so as before.
  */
+/* The shader's constant data read as the constant buffer at AIR_CONSTANT_DATA_UBO, for a screen
+ * whose shaders cannot load it themselves (softpipe: nir_to_tgsi has no load_constant, "Unknown
+ * intrinsic" and then an assertion); bind_stage binds the data there. */
+static bool
+constant_data_to_ubo_instr(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_load_constant)
+      return false;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def *off = nir_iadd_imm(b, intr->src[0].ssa, nir_intrinsic_base(intr));
+   nir_def *v = nir_load_ubo(b, intr->def.num_components, intr->def.bit_size,
+                             nir_imm_int(b, AIR_CONSTANT_DATA_UBO), off,
+                             .align_mul = nir_intrinsic_align_mul(intr),
+                             .align_offset = nir_intrinsic_align_offset(intr),
+                             .range_base = 0, .range = ~0u);
+   nir_def_replace(&intr->def, v);
+   return true;
+}
+
+static bool
+constant_data_to_ubo(nir_shader *nir)
+{
+   if (!nir->constant_data_size)
+      return false;
+   bool progress = nir_shader_intrinsics_pass(nir, constant_data_to_ubo_instr,
+                                              nir_metadata_control_flow, NULL);
+   nir->info.num_ubos = MAX2(nir->info.num_ubos, AIR_CONSTANT_DATA_UBO + 1);
+   return progress;
+}
+
 static bool
 scratch_to_temp_array(nir_shader *nir)
 {
@@ -1023,6 +1053,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
+      NIR_PASS(_, nir, constant_data_to_ubo);
       NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
                &(nir_lower_mem_access_bit_sizes_options){
                   .callback = sw_mem_access_size_align, .modes = nir_var_mem_ssbo,
@@ -4805,6 +4836,15 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
    void *samplers[RWA_MAX_TEXTURES] = { 0 };
    unsigned num_views = 0, num_images = 0, num_samplers = 0;
 
+   /* the module's constant tables, where softpipe reads them (constant_data_to_ubo); ir3 takes
+    * load_constant itself and uploads them with the shader */
+   if (device->software && info->constant_data_size) {
+      struct pipe_constant_buffer cdata = {
+         .user_buffer = info->constant_data, .buffer_size = info->constant_data_size,
+      };
+      pipe->set_constant_buffer(pipe, stage, AIR_CONSTANT_DATA_UBO, &cdata);
+   }
+
    for (unsigned i = 0; i < info->num_resources; i++) {
       const struct air_resource *r = &info->resources[i];
       struct rwa_buffer *b = NULL;
@@ -6912,6 +6952,8 @@ info_copy(void *mem, struct air_shader_info *d, const struct air_shader_info *s)
       : NULL;
    for (unsigned i = 0; i < s->num_argbuf_values; i++)
       d->argbuf_values[i].name = info_strdup(mem, s->argbuf_values[i].name);
+   d->constant_data = s->constant_data_size ? ralloc_memdup(mem, s->constant_data,
+                                                            s->constant_data_size) : NULL;
    d->notes = s->num_notes ? ralloc_array(mem, const char *, s->num_notes) : NULL;
    for (unsigned i = 0; i < s->num_notes; i++)
       d->notes[i] = info_strdup(mem, s->notes[i]);
@@ -7153,6 +7195,28 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
    /* (after the lookup: the stage as this library hands it over is the key, and finalising it --
     * a function of that and of the screen alone -- is part of what a hit saves) */
    finalize_for_gallium(clone, device->screen);
+   /* softpipe runs TGSI, whose register numbers are 16 bits: nir_to_tgsi gives every value
+    * a temporary before it allocates them, and every element of a local array one of its
+    * own, and past 32767 the number wraps and its liveness pass writes far outside its array
+    * (MercuryPoster's Flocon snowflakes, whose 197 KB colour ramps were a local array of
+    * 49,248 words until they became constant data: the process died). Refused by name
+    * instead, a stage too large for the emulator's path. */
+   if (device->software) {
+      unsigned values = 0;
+      nir_foreach_function_impl(impl, clone) {
+         nir_index_ssa_defs(impl);
+         values += impl->ssa_alloc;
+         nir_foreach_function_temp_variable(var, impl)
+            values += glsl_type_is_array(var->type) ? glsl_get_aoa_size(var->type) : 0;
+      }
+      if (values > 30000) {
+         say(why, why_size, "the %s stage needs %u registers, and softpipe's TGSI numbers "
+                            "its registers in 16 bits: too large for the software path",
+             nir->info.stage == MESA_SHADER_VERTEX ? "vertex" : "fragment", values);
+         ralloc_free(clone);
+         return NULL;
+      }
+   }
    struct pipe_shader_state templ = { .type = PIPE_SHADER_IR_NIR, .ir.nir = clone };
    struct pipe_context *pipe = device->pipe;
    void *cso = nir->info.stage == MESA_SHADER_VERTEX
