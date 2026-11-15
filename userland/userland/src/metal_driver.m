@@ -3400,6 +3400,20 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
 	return count <= 1;
 }
 
+/* No rasterization rate maps: every pass is rasterised at one rate, and the compiler library takes a
+ * shader's map_screen_to_physical_coordinates as the coordinate it was given (air_intrinsics.c). */
+- (BOOL)supportsRasterizationRateMapWithLayerCount:(NSUInteger)count
+{
+	(void)count;
+	return NO;
+}
+
+- (id)newRasterizationRateMapWithDescriptor:(id)descriptor
+{
+	(void)descriptor;
+	return nil;
+}
+
 @end
 
 @implementation HakiosMetalBuffer
