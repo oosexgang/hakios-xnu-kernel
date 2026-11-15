@@ -3577,6 +3577,38 @@ new_accountForMediaType(id self, SEL cmd, void *media_type, BOOL update_storefro
 
 	(void)cmd, (void)media_type, (void)update_storefront;
 	entered[COUNT_afterUpdating]++;
+	/*
+	 * AMS FIRST, NOW THAT THERE IS AN ACCOUNT TO FIND (HAKIOS_ACCOUNT_PASSTHROUGH=0 puts it back).
+	 *
+	 * This answer was written for a phone with no account at all, where the original waited for one that
+	 * was never coming. With the account types made, that is no longer the shape: with every hook of ours
+	 * off, AMS finds its own local account and complains only that it has no storefront -- so the
+	 * original now returns something, and ours returning nil in front of it is what the App Store has
+	 * been seeing. So the original is asked first and its answer passed straight through; ours is only
+	 * for when it has none.
+	 */
+	{
+		const char *through = knob("HAKIOS_ACCOUNT_PASSTHROUGH");
+
+		if ((through == NULL || *through != '0') && old_accountForMediaType != NULL) {
+			id theirs = old_accountForMediaType(self, cmd, media_type, update_storefront);
+			static bool said;
+
+			if (theirs != NULL) {
+				if (!said) {
+					said = true;
+					say("hakios: store: _ams_localiTunesAccountForAccountMediaType: answered by "
+					    "AMS itself, not by us\n");
+				}
+				returned[COUNT_afterUpdating]++;
+				return theirs;
+			}
+			if (!said) {
+				said = true;
+				say("hakios: store: AMS itself answered nothing for the account; ours stands in\n");
+			}
+		}
+	}
 	account = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
 	if (account == NULL) {
 		const char *fake = knob("HAKIOS_FAKE_ACCOUNT");
