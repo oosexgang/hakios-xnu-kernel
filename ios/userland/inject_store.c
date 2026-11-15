@@ -2350,6 +2350,46 @@ name_uncaught_exceptions(void)
 	}
 }
 
+/*
+ * THE ACCOUNT TYPES, BUILT BY ACCOUNTSD'S OWN CODE (HAKIOS_ACCOUNT_TYPES=1, accountsd only).
+ *
+ * accountsd knows how to make every account type this phone is missing -- ACDDatabaseInitializer has an
+ * -_addiTunesStoreAccountType, and ninety more beside it -- and it never runs them here: ZACCOUNTTYPE is
+ * empty on every boot, which is why no client is ever authorized for a type and why there is no account.
+ * The steps are driven by -[ACDDatabaseInitializer updateDefaultContentIfNecessary:], whose argument says
+ * how much of the default content is already there. What that argument IS on this phone is the question;
+ * it is only watched here, never changed, because making the daemon rebuild its database on a guess is
+ * not a thing to do before knowing what it is told now.
+ */
+static void (*old_update_default_content)(id, SEL, void *);
+
+static void
+new_update_default_content(id self, SEL cmd, void *argument)
+{
+	char text[120] = "?";
+
+	say("hakios: store: updateDefaultContentIfNecessary: %p (%.80s)\n", argument,
+	    argument != NULL ? text_of((id)argument, text, sizeof(text)) : "nil");
+	old_update_default_content(self, cmd, argument);
+	say("hakios: store: updateDefaultContentIfNecessary: came back\n");
+}
+
+static void
+watch_account_types(void)
+{
+	const char *wanted = knob("HAKIOS_ACCOUNT_TYPES");
+	Class initializer = objc_getClass("ACDDatabaseInitializer");
+	Method m = initializer != Nil ? class_getInstanceMethod(initializer,
+	    sel_registerName("updateDefaultContentIfNecessary:")) : NULL;
+
+	if (wanted == NULL || *wanted == '0' || m == NULL) {
+		return;
+	}
+	old_update_default_content = (void (*)(id, SEL, void *))method_getImplementation(m);
+	method_setImplementation(m, (IMP)new_update_default_content);
+	say("hakios: store: watching what accountsd is told about its default content\n");
+}
+
 static void
 hook_fairplay(void)
 {
@@ -3771,6 +3811,7 @@ hakios_store_init(void)
 		slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
 		who = name;
 		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
+		watch_account_types();
 		hook_mach_services();
 		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
 			pthread_detach(watcher);
