@@ -3117,18 +3117,43 @@ static struct { void *p; char frames[130]; } tracked_promises[16];
 static int tracked_promise_n;
 static bool bootstrap_running;
 
+static void
+record_promise(void *p, uintptr_t fp)
+{
+	if (bootstrap_running && tracked_promise_n < 16 && p != NULL) {
+		frames_from(fp, tracked_promises[tracked_promise_n].frames,
+		    sizeof(tracked_promises[tracked_promise_n].frames));
+		tracked_promises[tracked_promise_n].p = p;
+		tracked_promise_n++;
+	}
+}
+
 static void *
 new_promise_init(void *a0, void *a1)
 {
 	void *p = old_promise_init != NULL ? old_promise_init(a0, a1) : NULL;
 
-	if (bootstrap_running && tracked_promise_n < 16 && p != NULL) {
-		frames_from((uintptr_t)__builtin_frame_address(0),
-		    tracked_promises[tracked_promise_n].frames,
-		    sizeof(tracked_promises[tracked_promise_n].frames));
-		tracked_promises[tracked_promise_n].p = p;
-		tracked_promise_n++;
-	}
+	record_promise(p, (uintptr_t)__builtin_frame_address(0));
+	return p;
+}
+
+static void *(*old_promise_task)(void *, void *, void *);
+static void *
+new_promise_task(void *a0, void *a1, void *a2)
+{
+	void *p = old_promise_task != NULL ? old_promise_task(a0, a1, a2) : NULL;
+
+	record_promise(p, (uintptr_t)__builtin_frame_address(0));
+	return p;
+}
+
+static void *(*old_promise_value)(void *, void *);
+static void *
+new_promise_value(void *a0, void *a1)
+{
+	void *p = old_promise_value != NULL ? old_promise_value(a0, a1) : NULL;
+
+	record_promise(p, (uintptr_t)__builtin_frame_address(0));
 	return p;
 }
 
@@ -3228,6 +3253,8 @@ hook_bootstrap(void)
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
 	if (knob("HAKIOS_TRACK_PROMISES") != NULL && *knob("HAKIOS_TRACK_PROMISES") != '0') {
 		hook((void *)(0x1a6e999a8UL + slide), (void *)new_promise_init, (void **)&old_promise_init);
+		hook((void *)(0x1a6ecb5f4UL + slide), (void *)new_promise_task, (void **)&old_promise_task);
+		hook((void *)(0x1a6e9a254UL + slide), (void *)new_promise_value, (void **)&old_promise_value);
 		bootstrap_running = true;        /* start() can run before this hook installs; record from now */
 		say("hakios: store: JetEngine.Promise init is tracked\n");
 	}
