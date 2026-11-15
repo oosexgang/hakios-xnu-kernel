@@ -1399,6 +1399,11 @@ rw_bisect_within(void)
 	unsigned count, textureCount, samplerCount;
 	unsigned groups[3], size[3];
 	unsigned threads[3];            /* -dispatchThreads:'s count when the groups do not divide it, or 0 */
+	/* An indirect draw or dispatch: where its arguments are, read when the work runs and not
+	 * when it is recorded -- a kernel earlier in the same command buffer may be what writes
+	 * them, and the work runs in order, each dispatch waited for (rwa_dispatch). */
+	id indirectBuffer;
+	size_t indirectOffset;
 	unsigned threadgroupBytes[32];  /* -setThreadgroupMemoryLength:atIndex:, by index */
 	/* a blit (HakiosMetalBlitEncoder): which kind, from what to what, where */
 	unsigned blit;
@@ -4323,6 +4328,7 @@ rw_bytes_hash(const uint8_t *bytes, size_t length)
  */
 #define RW_EACH_ID(f) do { \
 	f(pipeline); f(render); f(depth); f(depthStencilState); f(indexBuffer); f(blitFrom); f(blitTo); \
+	f(indirectBuffer); \
 	for (unsigned k_ = 0; k_ < 8; k_++) { f(color[k_]); } \
 	for (unsigned k_ = 0; k_ < RW_MAX_BUFFERS; k_++) { f(vertexBuffers[k_]); f(buffers[k_]); f(textures[k_]); f(samplers[k_]); } \
 } while (0)
@@ -4980,6 +4986,9 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 			(void)[self runDraw:work why:why size:sizeof(why)];   /* (a draw that fails is said and skipped) */
 			continue;
 		}
+		if (work->indirectBuffer != nil && !rw_resolve_indirect_dispatch(work)) {
+			continue;
+		}
 		struct rwa_buffer *buffers[RW_MAX_BUFFERS] = { NULL };
 		struct rwa_texture *textures[RW_MAX_BUFFERS] = { NULL };
 		struct rwa_sampler *samplers[RW_MAX_BUFFERS] = { NULL };
@@ -5087,6 +5096,71 @@ done:
  * the log) are skipped -- with a screen recording (rec_secs) the phase in which something black goes away names the
  * group, and the log names its pipelines. Then everything is drawn again.
  */
+/*
+ * The arguments of an indirect draw or dispatch, out of the buffer the application named, at the
+ * moment the work runs: Metal's MTLDrawPrimitivesIndirectArguments (vertexCount, instanceCount,
+ * vertexStart, baseInstance), MTLDrawIndexedPrimitivesIndirectArguments (indexCount,
+ * instanceCount, indexStart, baseVertex, baseInstance) and MTLDispatchThreadgroupsIndirectArguments
+ * (threadgroupsPerGrid), all 32-bit words. The buffer is shared memory, so the processor reads
+ * what the GPU wrote once the work before has been waited for -- which it has, the command buffer's
+ * work running in order. NO, said, for arguments that do not fit the buffer.
+ */
+static const uint32_t *
+rw_indirect_words(HakiosMetalWork *work, unsigned words)
+{
+	const uint8_t *bytes = [work->indirectBuffer contents];
+	NSUInteger length = [work->indirectBuffer length];
+
+	if (bytes == NULL || work->indirectOffset % 4 != 0 ||
+	    work->indirectOffset + 4 * (size_t)words > length) {
+		rw_print("the arguments of an indirect %s are %u words at byte %zu of a buffer of %lu "
+		         "bytes%s, and are not read\n", work->render != nil ? "draw" : "dispatch", words,
+		         work->indirectOffset, (unsigned long)length,
+		         bytes == NULL ? " the processor cannot read" : "");
+		return NULL;
+	}
+	return (const uint32_t *)(bytes + work->indirectOffset);
+}
+
+static BOOL
+rw_resolve_indirect_draw(HakiosMetalWork *work)
+{
+	const uint32_t *w = rw_indirect_words(work, work->indexBuffer != nil ? 5 : 4);
+
+	if (w == NULL) {
+		return NO;
+	}
+	if (work->indexBuffer == nil) {
+		work->vertexCount = w[0];
+		work->instanceCount = w[1];
+		work->vertexStart = w[2];
+		work->baseInstance = w[3];
+	} else {
+		work->vertexCount = w[0];
+		work->instanceCount = w[1];
+		/* the first index is an offset into the index buffer, in indices */
+		work->indexBufferOffset += (size_t)w[2] * (work->indexType == 1 ? 4 : 2);
+		work->baseVertex = (int32_t)w[3];
+		work->baseInstance = w[4];
+	}
+	return work->vertexCount != 0 && work->instanceCount != 0;
+}
+
+static BOOL
+rw_resolve_indirect_dispatch(HakiosMetalWork *work)
+{
+	const uint32_t *w = rw_indirect_words(work, 3);
+
+	if (w == NULL) {
+		return NO;
+	}
+	work->groups[0] = w[0];
+	work->groups[1] = w[1];
+	work->groups[2] = w[2];
+	/* an empty grid is a dispatch of nothing, which Metal runs as nothing */
+	return w[0] != 0 && w[1] != 0 && w[2] != 0;
+}
+
 static uint64_t
 rw_bisect_start(void)
 {
@@ -5137,6 +5211,9 @@ rw_bisect_skipped_group(void)
 
 - (BOOL)runDraw:(HakiosMetalWork *)work why:(char *)why size:(size_t)size
 {
+	if (work->indirectBuffer != nil && !rw_resolve_indirect_draw(work)) {
+		return YES;
+	}
 	struct rwa_texture *color[8] = { NULL };
 	struct rwa_buffer *vertex_buffers[RW_MAX_BUFFERS] = { NULL };
 	struct rwa_vertex_stream vertex_streams[RW_MAX_BUFFERS] = { { NULL, 0 } };
@@ -5532,6 +5609,8 @@ rw_bisect_skipped_group(void)
 	float _clearColor[8][4];
 	unsigned _clearMask;
 	BOOL _drew;                     /* a draw has been recorded in this pass */
+	id _indirect;                   /* the next draw's arguments are here (an indirect draw) */
+	NSUInteger _indirectOffset;
 	id _depth;
 	id _depthStencilState;
 	float _clearDepth;
@@ -5889,6 +5968,8 @@ rw_bisect_skipped_group(void)
 	work->baseVertex = (int)baseVertex;
 	work->instanceCount = (unsigned)instances;
 	work->baseInstance = (unsigned)baseInstance;
+	work->indirectBuffer = _indirect;
+	work->indirectOffset = (size_t)_indirectOffset;
 	work->vertexBufferCount = _vertexBufferCount;
 	for (unsigned i = 0; i < _vertexBufferCount; i++) {
 		work->vertexBuffers[i] = _vertexBuffers[i];
@@ -6134,9 +6215,18 @@ rw_bisect_skipped_group(void)
 	indirectBuffer:(id)indirectBuffer
   indirectBufferOffset:(NSUInteger)offset
 {
-	rw_print("an indirect draw is not implemented (the argument list would "
-	         "be read on the processor at encode time, and the GPU may not have written it "
-	         "yet), so this draw is refused rather than drawn from the wrong count\n");
+	if (![indirectBuffer isKindOfClass:[HakiosMetalBuffer class]]) {
+		rw_print("an indirect draw's arguments are in a %s and not one of our buffers, "
+		         "and this draw is dropped\n",
+		         indirectBuffer ? class_getName(object_getClass(indirectBuffer)) : "nil");
+		return;
+	}
+	/* recorded with the counts to come: they are read when the draw runs (runDraw) */
+	_indirect = indirectBuffer;
+	_indirectOffset = offset;
+	[self recordDraw:primitive vertexStart:0 count:1 indexBuffer:nil indexType:0 indexOffset:0
+	      baseVertex:0 instanceCount:1 baseInstance:0];
+	_indirect = nil;
 }
 - (void)drawIndexedPrimitives:(NSUInteger)primitive
 		    indexType:(NSUInteger)type
@@ -6145,8 +6235,17 @@ rw_bisect_skipped_group(void)
 	       indirectBuffer:(id)indirectBuffer
 	 indirectBufferOffset:(NSUInteger)indirectOffset
 {
-	[self drawPrimitives:primitive indirectBuffer:indirectBuffer
-	       indirectBufferOffset:indirectOffset];
+	if (![indirectBuffer isKindOfClass:[HakiosMetalBuffer class]]) {
+		rw_print("an indirect draw's arguments are in a %s and not one of our buffers, "
+		         "and this draw is dropped\n",
+		         indirectBuffer ? class_getName(object_getClass(indirectBuffer)) : "nil");
+		return;
+	}
+	_indirect = indirectBuffer;
+	_indirectOffset = indirectOffset;
+	[self recordDraw:primitive vertexStart:0 count:1 indexBuffer:buffer indexType:type
+	     indexOffset:offset baseVertex:0 instanceCount:1 baseInstance:0];
+	_indirect = nil;
 }
 
 /* Raster state the contract does not carry yet. Collected here with one line each so that
@@ -7227,6 +7326,8 @@ rw_blit_unknown(id self, SEL sel, ...)
 	unsigned _highest, _highestTexture, _highestSampler;
 	unsigned _threadgroupBytes[32];
 	BOOL _complained;
+	id _indirect;                   /* the next dispatch's grid is here (an indirect dispatch) */
+	NSUInteger _indirectOffset;
 }
 
 - (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
@@ -7376,6 +7477,8 @@ rw_blit_unknown(id self, SEL sel, ...)
 	work->threads[0] = (unsigned)threads.width;
 	work->threads[1] = (unsigned)threads.height;
 	work->threads[2] = (unsigned)threads.depth;
+	work->indirectBuffer = _indirect;
+	work->indirectOffset = (size_t)_indirectOffset;
 	[_commandBuffer recordWork:work];
 	[work release];
 }
@@ -7495,17 +7598,23 @@ rw_blit_unknown(id self, SEL sel, ...)
  * driver returns when a pipeline was not built with it, so the caller has this path. */
 - (id)newKernelDebugInfo { return nil; }
 
-/* Declined, and each says its name once. An indirect dispatch reads its grid out of GPU
- * memory, which means the size is not known when the command is recorded -- this driver
- * records sizes, so there is nothing to record. A dispatch that vanishes without a word is
- * the worst outcome available, hence the line. */
+/* An indirect dispatch: its grid is read out of the buffer when the dispatch runs, the work
+ * before it having been waited for (rw_resolve_indirect_dispatch). Declined below, each saying its
+ * name once: the indirect command buffers, which are commands and not a grid. */
 - (void)dispatchThreadgroupsWithIndirectBuffer:(id)buffer
 			  indirectBufferOffset:(NSUInteger)offset
 			 threadsPerThreadgroup:(MTLSize)size
 {
-	(void)buffer; (void)offset; (void)size;
-	RW_ONCE("an indirect dispatch is not implemented (the grid lives in GPU "
-		"memory and this driver records the grid); this dispatch is dropped\n");
+	if (![buffer isKindOfClass:[HakiosMetalBuffer class]]) {
+		rw_print("an indirect dispatch's grid is in a %s and not one of our buffers, and "
+		         "this dispatch is dropped\n",
+		         buffer ? class_getName(object_getClass(buffer)) : "nil");
+		return;
+	}
+	_indirect = buffer;
+	_indirectOffset = offset;
+	[self hakiosDispatch:(MTLSize){ 1, 1, 1 } size:size threads:(MTLSize){ 0, 0, 0 }];
+	_indirect = nil;
 }
 - (void)executeCommandsInBuffer:(id)buffer withRange:(NSRange)range
 {
