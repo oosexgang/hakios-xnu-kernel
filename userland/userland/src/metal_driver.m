@@ -711,6 +711,8 @@ static struct {
 					    const struct rwa_render_shape *,
 					    struct rwa_render_info *, char *, size_t);
 	void (*render_destroy)(struct rwa_render *);
+	void (*set_pipe_lock)(void (*)(void), void (*)(void));
+	void (*render_times)(const struct rwa_render *, double *);
 	int (*render_draw)(struct rwa_render *, const struct rwa_draw *, char *, size_t);
 	struct rwa_depth_stencil *(*depth_stencil_create)(struct rwa_device *,
 							  const struct rwa_depth_stencil_state *,
@@ -792,6 +794,13 @@ mesa_available(void)
 	*(void **)&mesa.draw_wait = dlsym(mesa.handle, "rwa_draw_wait");
 	*(void **)&mesa.constants_register = dlsym(mesa.handle, "rwa_constants_register");
 	*(void **)&mesa.linked_register = dlsym(mesa.handle, "rwa_linked_register");
+	/* the lock on the library's Gallium context, handed to it: with it a render pipeline is
+	 * made outside the lock and the translation does not hold up the draws (air_metal.h) */
+	*(void **)&mesa.set_pipe_lock = dlsym(mesa.handle, "rwa_set_pipe_lock");
+	*(void **)&mesa.render_times = dlsym(mesa.handle, "rwa_render_times");
+	if (mesa.set_pipe_lock != NULL) {
+		mesa.set_pipe_lock(rw_pipe_enter, rw_pipe_leave);
+	}
 	/* draws are waited for once a command buffer (-commit), not one by one */
 	if (mesa.draw_wait != NULL && mesa.finish != NULL) {
 		MESA_VOID(draw_wait, false);
@@ -2048,13 +2057,37 @@ static NSData *rw_function_air(id function);
 	char why[512] = { 0 };
 	struct rwa_render_info info = { 0 };
 	uint64_t t0 = mach_absolute_time();
-	struct rwa_render *render = MESA(render_create, _mesa,
-	    vertex_air != nil ? [vertex_air bytes] : NULL,
-	    vertex_air != nil ? [vertex_air length] : 0,
-	    vertex != nil ? [[vertex name] UTF8String] : NULL,
-	    [fragment_air bytes], [fragment_air length], fragment_entry,
-	    &shape, &info, why, sizeof(why));
+	struct rwa_render *render;
+	if (mesa.set_pipe_lock != NULL) {
+		/* the library takes the lock itself, around the part that uses the context */
+		render = mesa.render_create(_mesa,
+		    vertex_air != nil ? [vertex_air bytes] : NULL,
+		    vertex_air != nil ? [vertex_air length] : 0,
+		    vertex != nil ? [[vertex name] UTF8String] : NULL,
+		    [fragment_air bytes], [fragment_air length], fragment_entry,
+		    &shape, &info, why, sizeof(why));
+	} else {
+		render = MESA(render_create, _mesa,
+		    vertex_air != nil ? [vertex_air bytes] : NULL,
+		    vertex_air != nil ? [vertex_air length] : 0,
+		    vertex != nil ? [[vertex name] UTF8String] : NULL,
+		    [fragment_air bytes], [fragment_air length], fragment_entry,
+		    &shape, &info, why, sizeof(why));
+	}
 	rw_say_slow("render pipeline", [[fragment name] UTF8String], t0);
+	/* and for one that took long, which part (under QEMU the question was whether it was the
+	 * translation, the compiling, or waiting for the lock: what is not in the parts is the wait) */
+	if (render != NULL && mesa.render_times != NULL) {
+		mach_timebase_info_data_t tb;
+		mach_timebase_info(&tb);
+		uint64_t ms = (mach_absolute_time() - t0) * tb.numer / tb.denom / 1000000ull;
+		if (ms >= 1000) {
+			double part[5];
+			mesa.render_times(render, part);
+			rw_print("  ... of which: fragment %.0f ms, vertex %.0f, link %.0f, compiled %.0f + %.0f, "
+			         "and the rest waiting\n", part[0], part[1], part[2], part[3], part[4]);
+		}
+	}
 
 	if (render == NULL) {
 		/* PRINTED as well as returned, and RW_AGAIN because the same specification
