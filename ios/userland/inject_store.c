@@ -3107,40 +3107,50 @@ new_prereqs(void)
 /*
  * TRACK JETENGINE PROMISES. The bootstrap stalls on an unresolved JetEngine.Promise before the bag; it is
  * not on a thread (async) and not an AMS promise. This hooks JetEngine.Promise's plain init
- * (_$s9JetEngine7PromiseCACyxGycfC @0x1a6e999a8) and records the backtrace of the FIRST promises created
+ * (_$s9JetEngine7PromiseCACyxGycfC @0x1a6e999a8) and records the CALLER of the FIRST promises created
  * once the bootstrap is running (new_askboot_start sets the flag). The prerequisite that creates the stuck
- * promise appears in those backtraces -- the earliest ones, created right after start(). Report prints
- * them. HAKIOS_TRACK_PROMISES=1, AppStore only; C-only (no self-register asm).
+ * promise appears among those creation sites -- the earliest ones, created right after start(). Report
+ * prints them (symbolize with scratchpad/names.sh). HAKIOS_TRACK_PROMISES=1, AppStore only.
  */
-static struct { void *p; char frames[130]; } tracked_promises[16];
+static struct { void *p; void *caller; } tracked_promises[24];
 static int tracked_promise_n;
 static bool bootstrap_running;
+static volatile int in_recorder;        /* re-entrancy guard: Promise.init() nests */
 
 /*
  * A C passthrough cannot call a Swift constructor through: it does not know the real signature, so it
  * clobbers the generic-metadata / swiftself / swifterror registers and crashes the process (measured:
- * signal 9, the store never bootstraps). The right way is an asm trampoline that leaves EVERY register as
- * the caller set it, calls the original, and only then -- with the return (x0 = the new promise) saved --
- * calls a C recorder. These globals and C entry are what the trampolines below use.
+ * signal 9, the store never bootstraps). The trampoline below leaves EVERY register as the caller set it,
+ * calls the original, and only then -- with the return (x0 = the new promise) saved -- calls a C recorder.
+ *
+ * AND IT RECORDS ONLY THE CALLER'S RETURN ADDRESS (x30 at entry), never a stack walk: these promises are
+ * created on async continuations whose "stack" is a chain of heap frames, so frames_from() walking fp
+ * faulted (that, not the ABI of the call, is what killed the store on the three-hook version). One
+ * address names the creation site -- the prerequisite -- which is all that is needed. Only the plain
+ * init() is hooked (0x1a6e999a8): an awaited, externally-resolved prerequisite is a bare Promise, made
+ * with init() and fulfilled later; init(task:)/init(value:) are hot async paths and are left alone.
  */
-void *old_promise_init_g, *old_promise_task_g, *old_promise_value_g;
+void *old_promise_init_g;
 
-void hakios_record_promise(void *promise, uintptr_t caller_fp);        /* called from the trampolines */
+void hakios_record_promise(void *promise, void *caller);        /* called from the trampoline */
 
 void
-hakios_record_promise(void *promise, uintptr_t caller_fp)
+hakios_record_promise(void *promise, void *caller)
 {
-	if (bootstrap_running && tracked_promise_n < 16 && promise != NULL) {
-		frames_from(caller_fp, tracked_promises[tracked_promise_n].frames,
-		    sizeof(tracked_promises[tracked_promise_n].frames));
+	if (!bootstrap_running || in_recorder) {
+		return;
+	}
+	in_recorder = 1;
+	if (tracked_promise_n < 24 && promise != NULL) {
 		tracked_promises[tracked_promise_n].p = promise;
+		tracked_promises[tracked_promise_n].caller = caller;
 		tracked_promise_n++;
 	}
+	in_recorder = 0;
 }
 
-/* three trampolines (one per old pointer), all of this shape:
- *   save fp/lr; call the original with the caller's registers intact; save its x0 return;
- *   call hakios_record_promise(x0, our_fp); restore x0; return.               */
+/* one trampoline: save fp/lr (lr = the caller's creation site); call the original with every caller
+ * register intact; save its x0 return; call hakios_record_promise(x0, saved_lr); restore x0; return. */
 __asm__(
 "	.text\n"
 "	.p2align 2\n"
@@ -3148,47 +3158,17 @@ __asm__(
 "	pacibsp\n"
 "	stp x29, x30, [sp, #-16]!\n"
 "	mov x29, sp\n"
-"	adrp x16, _old_promise_init_g@PAGE\n"
-"	ldr  x16, [x16, _old_promise_init_g@PAGEOFF]\n"
-"	blr  x16\n"
+"	adrp x17, _old_promise_init_g@PAGE\n"
+"	ldr  x17, [x17, _old_promise_init_g@PAGEOFF]\n"
+"	blr  x17\n"
 "	stp x0, x1, [sp, #-16]!\n"
-"	mov x1, x29\n"
-"	bl  _hakios_record_promise\n"
-"	ldp x0, x1, [sp], #16\n"
-"	ldp x29, x30, [sp], #16\n"
-"	retab\n"
-"	.p2align 2\n"
-"_hakios_tramp_task:\n"
-"	pacibsp\n"
-"	stp x29, x30, [sp, #-16]!\n"
-"	mov x29, sp\n"
-"	adrp x16, _old_promise_task_g@PAGE\n"
-"	ldr  x16, [x16, _old_promise_task_g@PAGEOFF]\n"
-"	blr  x16\n"
-"	stp x0, x1, [sp, #-16]!\n"
-"	mov x1, x29\n"
-"	bl  _hakios_record_promise\n"
-"	ldp x0, x1, [sp], #16\n"
-"	ldp x29, x30, [sp], #16\n"
-"	retab\n"
-"	.p2align 2\n"
-"_hakios_tramp_value:\n"
-"	pacibsp\n"
-"	stp x29, x30, [sp, #-16]!\n"
-"	mov x29, sp\n"
-"	adrp x16, _old_promise_value_g@PAGE\n"
-"	ldr  x16, [x16, _old_promise_value_g@PAGEOFF]\n"
-"	blr  x16\n"
-"	stp x0, x1, [sp, #-16]!\n"
-"	mov x1, x29\n"
+"	ldr  x1, [x29, #8]\n"           /* the saved lr = where init() was called from */
 "	bl  _hakios_record_promise\n"
 "	ldp x0, x1, [sp], #16\n"
 "	ldp x29, x30, [sp], #16\n"
 "	retab\n"
 );
 extern void hakios_tramp_init(void);
-extern void hakios_tramp_task(void);
-extern void hakios_tramp_value(void);
 
 static void
 dump_tracked_promises(void)
@@ -3198,8 +3178,8 @@ dump_tracked_promises(void)
 	}
 	say("hakios: store: %d JetEngine promises created early in the bootstrap:\n", tracked_promise_n);
 	for (int i = 0; i < tracked_promise_n; i++) {
-		say("hakios: store: promise #%d %p made from%s\n", i, tracked_promises[i].p,
-		    tracked_promises[i].frames);
+		say("hakios: store: promise #%d %p made from %#lx (unslid)\n", i, tracked_promises[i].p,
+		    (uintptr_t)tracked_promises[i].caller - slide);
 	}
 }
 
@@ -3268,10 +3248,12 @@ hook_bootstrap(void)
 {
 	static bool done;
 	const char *on = knob("HAKIOS_TRACE_BOOTSTRAP");
+	const char *track = knob("HAKIOS_TRACK_PROMISES");
+	bool want = (on != NULL && *on != '0') || (track != NULL && *track != '0');
 	MSHookFunction_t hook = substrate_hook();
 	const char *me = who_i_am();
 
-	if (done || on == NULL || *on == '0' || hook == NULL || slide == 0) {
+	if (done || !want || hook == NULL || slide == 0) {
 		return;
 	}
 	if (me == NULL || strcmp(me, "AppStore") != 0) {
@@ -3282,22 +3264,28 @@ hook_bootstrap(void)
 		return;
 	}
 	done = true;
+	/* start() and didComplete are ordinary methods -- safe to hook by address; start() is what sets
+	 * bootstrap_running, so the promise tracker records only promises made after the bootstrap begins. */
 	hook((void *)(0x20b5d6b80UL + slide), (void *)new_did_complete, (void **)&old_did_complete);
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
-	if (knob("HAKIOS_TRACK_PROMISES") != NULL && *knob("HAKIOS_TRACK_PROMISES") != '0') {
+	if (track != NULL && *track != '0') {
 		hook((void *)(0x1a6e999a8UL + slide), (void *)hakios_tramp_init, &old_promise_init_g);
-		hook((void *)(0x1a6ecb5f4UL + slide), (void *)hakios_tramp_task, &old_promise_task_g);
-		hook((void *)(0x1a6e9a254UL + slide), (void *)hakios_tramp_value, &old_promise_value_g);
-		bootstrap_running = true;        /* start() can run before this hook installs; record from now */
-		say("hakios: store: JetEngine.Promise init is tracked\n");
+		say("hakios: store: JetEngine.Promise init is tracked (recording starts at start())\n");
 	}
 	if (knob("HAKIOS_EMPTY_PREREQS") != NULL && *knob("HAKIOS_EMPTY_PREREQS") != '0') {
 		hook((void *)(0x20b9555c0UL + slide), (void *)new_prereqs, (void **)&old_prereqs);
 		say("hakios: store: ASKBootstrapV2.prerequisites will return empty\n");
 	}
-	hook((void *)(0x20b45c018UL + slide), (void *)new_prereq_a, (void **)&old_prereq_a);
-	hook((void *)(0x20b45de50UL + slide), (void *)new_prereq_b, (void **)&old_prereq_b);
-	hook((void *)(0x20b960ce4UL + slide), (void *)new_prereq_c, (void **)&old_prereq_c);
+	/*
+	 * These three are by-address hooks on partial-apply THUNKS (func_20b45c018 etc.), and they SIGBUS the
+	 * app: the thunk does a Swift value-witness copy (swift_cvw_initWithCopyImpl -> memmove) off a context
+	 * register the C hook clobbers. Confirmed dead (run 205505). Off by default, behind their own knob.
+	 */
+	if (knob("HAKIOS_TRACE_THUNKS") != NULL && *knob("HAKIOS_TRACE_THUNKS") != '0') {
+		hook((void *)(0x20b45c018UL + slide), (void *)new_prereq_a, (void **)&old_prereq_a);
+		hook((void *)(0x20b45de50UL + slide), (void *)new_prereq_b, (void **)&old_prereq_b);
+		hook((void *)(0x20b960ce4UL + slide), (void *)new_prereq_c, (void **)&old_prereq_c);
+	}
 	say("hakios: store(%s): bootstrap is traced (didComplete @%p, start @%p)\n", me,
 	    (void *)(0x20b5d6b80UL + slide), (void *)(0x20b45c080UL + slide));
 }
@@ -5510,6 +5498,26 @@ hakios_store_init(void)
 			 * long before the thread below wakes up to want one */
 			remember_database_connection();
 		}
+		hook_mach_services();
+		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
+			pthread_detach(watcher);
+		}
+		return;
+	}
+	/*
+	 * akd (AuthKit), to WATCH ONLY. The App Store bootstrap blocks in a synchronous AMS->AuthKit
+	 * authorization (thread 2 in mach_msg forever, com.apple.ak.auth.xpc, with AppSSO -1000 beside it).
+	 * Carry the library here to see whether akd is itself blocked -- and on what -- or idle while the
+	 * app waits: it names the services akd talks to (HAKIOS_NAME_SERVICES) and dumps akd's threads every
+	 * minute. Nothing of ours is replaced in akd; this is a probe, not an answer.
+	 */
+	if (name != NULL && strcmp(name, "akd") == 0) {
+		pthread_t watcher;
+
+		watch_only = true;
+		slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
+		who = name;
+		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
 		hook_mach_services();
 		if (pthread_create(&watcher, NULL, late_report, NULL) == 0) {
 			pthread_detach(watcher);
