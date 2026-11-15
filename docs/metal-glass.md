@@ -217,22 +217,78 @@ fixed for it on the way (each a commit of its own):
   (MercuryPoster's shippou); the queries of a depth texture, which crashed the translation; return jumps left
   in an entry point, which crashed ir3; and the SIMD operations and builtins MetalFX and the video libraries use.
 
+### All 300 libraries, MPS, Espresso and MLX among them
+
+The sweep again, over every `.metallib` of the image this time -- 300 files, the large MPS, MLX (GESS,
+CorePhotogrammetry) and Espresso libraries included -- a process per function, as the library stood after the
+argument-buffer and dispatch work below and before tessellation:
+
+| | Functions |
+| --- | --- |
+| compiled by ir3 for the Adreno 642L | **22,972** (22,572 at the first sweep of the 300) |
+| not entry points | 13,313 |
+| refused | 4,518 (4,659) |
+| crashed the compiler | 16 (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction; `NRFV1`'s BlinkDetection; one MPS matrix kernel, since fixed |
+
+What the refusals are, the MLX libraries set apart (they are machine learning, not drawing, and most of what
+is left in them is `<64 x float>` vectors and pointers kept in memory): tessellation (AvatarKit's 432 Memoji
+shaders, which the next commits draw), ray tracing (GPUToolsReplay, 505), tile memory (224), visible function
+tables (91), MPSNDArray's pointers stored in memory (~170), and a long tail. What was fixed for it, each a
+commit of its own:
+
+- **Argument buffers with values in them** (VFX, the dynamic wallpapers): an `air.indirect_constant`, an inline
+  struct (its members flattened into the set, numbered from its own `[[id(n)]]`) or an atomic is bytes the
+  application writes through `-constantDataAtIndex:`; the set is now also a buffer at its own index, read,
+  written and atomically updated where the values lie (`userland/tools/air/argbufvalcheck.sh`). The encoder answers
+  the set's own `air.buffer_size` and alignment, finds members by id, and hands back a value's real place. Sets
+  nothing reads are not declared at all, the struct type is the parameter's pointee (`global_constants.634`),
+  and padding inside a packed struct is passed over. VFX: 453 -> 571 of 651.
+- **Threadgroup buffers past index 0** (VFX's merge sorts, CoreRE): buffer n starts where 0..n-1 end, and only
+  the dispatch knows where, so the base is folded in per dispatch from the lengths
+  (`rwa_threadgroup_memory_at`, `userland/tools/air/tgcheck.sh`).
+- **Dispatches whose last groups are partial**: `-dispatchThreads:` with a count its groups do not divide was
+  refused, and every image-sized dispatch of Apple's frameworks is one. The library runs a variant of the
+  kernel behind `thread_position_in_grid < threads`, the count handed over in a constant buffer, and
+  `[[threads_per_grid]]` is the count (`userland/tools/air/gridcheck.sh`; `RWA_COST_PARTIAL=1` has the sweep compile
+  that variant, and QuartzCore's 203 kernels compile either way).
+- **RealityKit's stereo and layered inputs** (`amplification_id`, `amplification_count`, a fragment's
+  `viewport_array_index`): the device amplifies nothing and draws one viewport. CoreRE 299 -> 356.
+- **A struct input its function constant leaves out** is a tree of zeros: Maps (VectorKit 305 -> 313) and the
+  camera pipeline (CMImaging 104 -> 153).
+- Quad reductions, `asinh`/`acosh`/`atanh` (checked by `userland/tools/air/intrincheck.py`), OpenCL's grid queries,
+  `atomic.fence`, and SIMD queries, `ctz` and `popcount` at the width the call returns -- four of which were
+  asserts in the NIR builder, not refusals.
+- Two crashes turned into refusals by name: a value a caller stored in a local and a callee read back (eight
+  of RealityKit's shaders), and a vector length NIR has no register for.
+
+### Tessellation without a tessellator
+
+A post-tessellation vertex function (`air.patch` on the entry point) is drawn as a grid: every patch an
+instance of N x N cells, two triangles each for a quad patch and N^2 triangles for a triangle one,
+`[[patch_id]]` the instance counted from the draw's first patch, and `[[position_in_patch]]` the grid point
+the vertex index names. `-drawPatches:` is then an ordinary instanced draw of `rwa_render_patch_vertices`
+vertices. N is 8 (`RWA_TESS_LEVEL`, 1 to 64), the same for every patch: the factors a tessellation kernel
+wrote are not read, so a patch the application wanted finer is as fine as the others and one it wanted
+coarser costs as much. `userland/tools/air/tesscheck.sh` draws two quad patches and a triangle one on softpipe and
+checks every pixel's coordinates. AvatarKit's Memoji shaders read their control points out of buffers
+(OpenSubdiv) and compile; a patch index buffer, several instances of the patches and control points through
+`[[stage_in]]` are refused by name.
+
 ## What stays open
 
 - **Tile memory** (`air.imageblock`, 134 functions, QuartzCore's 46 among them): Apple's GPU keeps a tile in fast
   memory between draws, and the Adreno has nothing a shader can address that way. CoreAnimation has paths
   without these kernels; whether every layer it draws does is for the phone to show.
-- **Argument buffers of the Tier 2 kind** (VFX, the dynamic wallpapers, ~70 functions): values stored in the
-  buffer itself (`air.indirect_constant`) and resources written into it by `gpuResourceID`/`gpuAddress`. The
-  driver answers that it has no argument buffers and no bindless handles; doing it means bindless descriptors
-  in the library.
-- **Visible function tables** (90) and `[[stage_in]]` in compute kernels (VFX).
+- **Argument buffers written without an encoder**: resources put into a set by `gpuResourceID`/`gpuAddress`.
+  The values in a set are read now; a descriptor still has to come through an `MTLArgumentEncoder`, and the
+  driver answers that it has no bindless handles. Sets inside sets (VFX's instances, 11) are refused.
+- **Visible function tables** (CoreImage's ubershader, 90).
+- **Tessellation factors**: patches are drawn at one level (above), with no per-patch factors and no
+  crack-free edges between patches of different levels.
 - **More than 16 textures in a stage**: freedreno binds 16 without bindless, and so does this library.
-- **Tessellation** (13 functions: BiometricKitUI's MTLSpline, LocalAuthentication's UI, RoomPlan, ARKitUI): a
-  post-tessellation vertex function takes its control points through `MTL_CONTROL_POINT_FN(i, patch)` and its
-  place in the patch as `[[position_in_patch]]`. The way in without the GPU's own tessellator is a vertex shader
-  over a grid per patch -- the point's index giving the patch and the place, the control points fetched as the
-  vertex descriptor lays them out, the factors read once the kernel that writes them has run.
+- **Control points through `[[stage_in]]`** (BiometricKitUI's MTLSpline, LocalAuthentication's UI, RoomPlan,
+  ARKitUI): the grid draws the patch, but the vertex descriptor's control points would have to be fetched per
+  patch rather than per vertex.
 - **Under QEMU** the driver runs on softpipe and the first frames wait on 30-second compiles; that is the
   emulator, not the phone, which compiles the same shaders in milliseconds (the costs above).
 
