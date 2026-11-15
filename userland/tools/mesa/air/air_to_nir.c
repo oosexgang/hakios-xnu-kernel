@@ -1969,7 +1969,10 @@ translate_argument_buffer(struct air_ctx *c, const struct air_md *node, unsigned
    if (md_int(node, li + 2, &span) && span != 1)
       return air_error(c, "interface: an argument buffer (%s) spanning %u buffer indices",
                        name ? name : "unnamed", (unsigned)span);
-   md_key_int(node, "air.buffer_size", &size);
+   /* the set's length; a pointer to an array of sets (`device curve_data_t *`) has no
+    * air.buffer_size, and then one element's, air.arg_type_size, is the set's */
+   if (!md_key_int(node, "air.buffer_size", &size))
+      md_key_int(node, "air.arg_type_size", &size);
 
    /* An argument buffer the compiler marks air.arg_unused is read nowhere in the function,
     * and is declared nowhere either: no set for the runtime to resolve, no member taking a
