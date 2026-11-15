@@ -3590,11 +3590,21 @@ new_accountForMediaType(id self, SEL cmd, void *media_type, BOOL update_storefro
 	{
 		const char *through = knob("HAKIOS_ACCOUNT_PASSTHROUGH");
 
-		if ((through == NULL || *through != '0') && old_accountForMediaType != NULL) {
+		/* off unless asked for: with it on, amsaccountsd took two uncaught exceptions in the first run
+		 * (-[ACAccount continueWithBlock:], the two-shapes problem again, now on THEIR account), and a
+		 * daemon that dies is not a default */
+		if (through != NULL && *through != '0' && old_accountForMediaType != NULL) {
 			id theirs = old_accountForMediaType(self, cmd, media_type, update_storefront);
 			static bool said;
 
 			if (theirs != NULL) {
+				/*
+				 * ... and the account AMS hands back is sent -continueWithBlock: by one of its
+				 * callers, exactly as ours was: amsaccountsd died of that selector twice in the
+				 * first run of this passthrough. So the same lesson applies to their account as
+				 * to ours, and it is taught here rather than only where ours is made.
+				 */
+				teach_account_to_be_a_promise();
 				if (!said) {
 					said = true;
 					say("hakios: store: _ams_localiTunesAccountForAccountMediaType: answered by "
