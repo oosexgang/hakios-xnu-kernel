@@ -589,6 +589,31 @@ widen_16bit(nir_shader *nir)
                   if (sw)
                      r = x;
                   break;
+               /* a half of a word (what nir_lower_pack makes of a narrow load out of a wider
+                * one): its bits, or the half they are where what reads it reads a float --
+                * QuartzCore's p3_clamp and edr fragments, which left them 16-bit and NIR's
+                * validation stopped backboardd under QEMU */
+               case nir_op_unpack_32_2x16_split_x:
+               case nir_op_unpack_32_2x16_split_y: {
+                  nir_def *bits = alu->op == nir_op_unpack_32_2x16_split_x
+                                     ? nir_iand_imm(&b, x, 0xffff) : nir_ushr_imm(&b, x, 16);
+                  r = w16_read_as_int(&alu->def, 0)
+                         ? bits : nir_channel(&b, nir_unpack_half_2x16(&b, bits), 0);
+                  break;
+               }
+               /* and two halves into a word: each the bits it is, a float as its half */
+               case nir_op_pack_32_2x16_split: {
+                  nir_def *h[2];
+                  for (unsigned i = 0; i < 2; i++) {
+                     nir_def *s = nir_ssa_for_alu_src(&b, alu, i);
+                     bool int_src = !WIDTH(alu->src[i].src.ssa) ||
+                                    BITSET_TEST(is_int, alu->src[i].src.ssa->index);
+                     h[i] = int_src ? nir_iand_imm(&b, nir_u2u32(&b, s), 0xffff)
+                                    : nir_pack_half_2x16(&b, nir_vec2(&b, s, nir_imm_float(&b, 0)));
+                  }
+                  r = nir_ior(&b, h[0], nir_ishl_imm(&b, h[1], 16));
+                  break;
+               }
                case nir_op_i2i32:
                   if (sw)
                      r = w16_sext(&b, x, sw);
