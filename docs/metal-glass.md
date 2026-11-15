@@ -125,6 +125,23 @@ What it took on softpipe, each an abort of backboardd before it (`libhakios-air`
 `air_metal.c`): 8- and 16-bit values widened to 32 bits, ffma split, demote as terminate, the packed
 normalised conversions as arithmetic. The freedreno screen is not touched by any of it.
 
+Then the rest of the system, in the order it stopped:
+
+1. **Every process, not only backboardd, opens Metal.** `rwa_software=1` in the boot-args gives every
+   process softpipe (iconservicesagent had asked for a GPU client and failed).
+2. **SpringBoard: "Failed to get MPSDevice".** Siri's orb makes an MPSImageGaussianBlur, and MPS asks for
+   Apple8 down to Apple2; `metal_profile=1` claims Apple2 (profile 0 claims Apple1 alone). Apple4 and its tile
+   shading are still not claimed, so CoreAnimation keeps its render-pipeline blurs.
+3. **MPS: "metallib not found: default.metallib for identifier ...MPSImage".** `mkimage26.py` with `METAL=1`
+   keeps MetalPerformanceShaders' kernel libraries (MPSCore, MPSImage, MPSFunctions).
+4. **RenderBox** (SwiftUI's renderer, in SpringBoard and iconservicesagent): its own shaders, kept by `METAL=1`
+   too. After that SpringBoard and iconservicesagent run on the Metal device without aborting.
+5. **"CoreAnimation: Unable to query displays from server"** in PosterBoard and chronod, and their abort: the
+   render server in backboardd is busy compiling CoreAnimation's specialised pipelines -- `A3Xghfc` takes
+   some 32 s each on softpipe under TCG -- and the clients' display query gives up. This is the emulator's
+   speed, not a missing piece: on the phone ir3 compiles on the real cores. Under QEMU the way on is a
+   pipeline cache that survives a boot, or fewer variants asked for at once.
+
 ## Why it was not done in this pass
 
 Each of steps 2–6 needs at least one thing this environment does not have:
