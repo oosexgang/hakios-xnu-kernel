@@ -359,5 +359,11 @@ struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes
 bool air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *name);
 /* a call of a function defined in this module, folded in by nir_inline_functions */
 bool air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *name);
+/* a pointer chosen at run time: a when cond, else b */
+struct air_val *air_val_ptr_select(struct air_ctx *c, nir_def *cond, struct air_val *a,
+                                   struct air_val *b);
+/* and of a linked function taken out of a visible function table (its placeholder: fn_type NULL) */
+bool air_call_table_function(struct air_ctx *c, const struct air_inst *in,
+                             const struct air_function *placeholder);
 
 #endif /* AIR_PRIVATE_H */
