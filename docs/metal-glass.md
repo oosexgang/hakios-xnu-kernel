@@ -359,7 +359,11 @@ milliseconds).
 - **Argument buffers written without an encoder**: resources put into a set by `gpuResourceID`/`gpuAddress`.
   The values in a set are read now; a descriptor still has to come through an `MTLArgumentEncoder`, and the
   driver answers that it has no bindless handles. Sets inside sets (VFX's instances, 11) are refused.
-- **Visible function tables** (CoreImage's ubershader, 90).
+- **Visible function tables** (CoreImage's ubershader, 90): a table is now a buffer of handles -- a linked
+  function's place in its pipeline's list, plus one -- that the driver makes (`newVisibleFunctionTableWithDescriptor:`,
+  `functionHandleWithFunction:`) and binds as a buffer, and a call out of it is the choice among the linked
+  functions (`userland/tools/air/vftcheck.sh`). What CoreImage links into the ubershader is decided at run time,
+  so the sweep cannot compile those 90 by itself; on the phone they are for CoreImage's first frame to show.
 - **Tessellation factors**: patches are drawn at one level (above), with no per-patch factors and no
   crack-free edges between patches of different levels.
 - **More than 16 textures in a stage**: freedreno binds 16 without bindless, and so does this library.
