@@ -234,7 +234,13 @@ def place(item):
             raise RuntimeError(f'pacstrip {rel}: {r.stderr.strip()}')
         shutil.copymode(src, dst)
         return 1
-    shutil.copy2(src, dst)
+    # A hard link where it can be one, as the cache's files are (main()): the tree is a few GB of files the
+    # image builder only reads, and the edits below (trim_emoji, default_wallpaper) replace a file rather
+    # than write through it. A copy where the rootfs is on another file system.
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
     return 0
 
 
