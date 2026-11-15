@@ -295,6 +295,13 @@ Four things a Metal encoder sets were accepted and dropped, and each changes pic
   a local -- now takes them as parameters of its own (`userland/tools/air/importcheck.sh`); before, they were
   quietly undefined or crashed the compiler.
 
+Two of these were found by booting, not by a sweep: Darwin 27 under QEMU with this library (softpipe in place of
+the Adreno) had iconservicesagent refused RGB10A2Unorm 25 times a boot -- the home screen's icons -- and
+backboardd refused a texture whose usage carried Apple's private 0x10000 twice. The boot after the fixes has no
+refusal from the driver in any process; it built 39 of CoreAnimation's pipelines in an hour and had presented
+no frame yet, which under TCG is the emulator's speed and not a failure (the phone compiles the same shaders in
+milliseconds).
+
 ## What stays open
 
 - **Tile memory** (`air.imageblock`, 134 functions, QuartzCore's 46 among them): Apple's GPU keeps a tile in fast
