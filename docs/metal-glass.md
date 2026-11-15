@@ -319,6 +319,16 @@ commit of its own:
   places by the second word (`air_ptr_numeric`; again once more where a place is met after a load chose
   without it). `userland/tools/air/ptr_table.ll` and `ptr_loop.ll` check both on softpipe. MPSNeuralNetwork
   836 -> 854 of 868.
+- **The long tail, 15 November night**, each with a case of its own on softpipe or against LLVM:
+  an atomic through a pointer chosen at run time, behind an if as a store through one already was (Vista's
+  splat culling; `userland/tools/air/ptr_atomic.ll`); a pointer through an integer and back,
+  `inttoptr (ptrtoint %p + bytes)`, the integer kept as the pointer and the sum as the pointer moved
+  (MPSImage's DilateFilter4 and ErodeFilter4, 1832 -> 1834 of 1837; `ptr_int.ll`); Metal 3.2's atomic
+  wait, a loop reading the place until it changes, its notify, the device-coherent loads and stores and
+  Apple's yield hint (MPSCore's single-pass scans, 49 -> 54; `wait_notify.ll`); and integers of two to
+  thirty-one bits that NIR has no width for, kept zero-extended in 32 bits -- masked after arithmetic,
+  their sign extended where it is read as signed (Vista's two-bit enum switch, 62 -> 73 with the atomic;
+  `userland/tools/air/loweringcheck.py` against LLVM, 25 of 25). ImageIO, swept again, compiles all 27.
 
 ### Tessellation without a tessellator
 
