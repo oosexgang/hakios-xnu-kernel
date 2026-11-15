@@ -274,6 +274,27 @@ checks every pixel's coordinates. AvatarKit's Memoji shaders read their control 
 (OpenSubdiv) and compile; a patch index buffer, several instances of the patches and control points through
 `[[stage_in]]` are refused by name.
 
+### What the driver threw away
+
+Four things a Metal encoder sets were accepted and dropped, and each changes pictures rather than failing:
+
+- **Raster state**: `-setCullMode:`, `-setFrontFacingWinding:`, `-setTriangleFillMode:`, `-setDepthClipMode:` and
+  `-setDepthBias:slopeScale:clamp:` -- every draw was two-sided, filled, clipped and unbiased. They ride in
+  `rwa_draw` now, and the library keeps a raster state per distinct ask with the pipeline.
+  `userland/tools/air/rastcheck.sh` draws a clockwise and a counter-clockwise triangle under every cull mode and
+  winding, as lines, and clipped and clamped outside the depth range; its first run had every culled case the
+  wrong way round, which is how Metal's winding turned out to be Gallium's own sense despite the viewport's
+  flip of y.
+- **Indirect draws and dispatches** were refused on the reading that their arguments are read when encoded.
+  They are read when the work runs, in order, every dispatch waited for -- so what a kernel earlier in the
+  command buffer wrote is there.
+- **Packed 32-bit formats** (RGB10A2, RG11B10, RGB9E5, BGR10A2), which the home screen's icon service asks for,
+  by DXGI's order (first channel at the low end) behind `RWA_PACKED32=0`, as the 16-bit four are behind
+  `RWA_PACKED16=0`; `air_metal_test --pixel-formats` probes the two unorm ones field by field.
+- **A callee reading its caller's values** -- a struct of pointers at computed offsets, a pointer read back from
+  a local -- now takes them as parameters of its own (`userland/tools/air/importcheck.sh`); before, they were
+  quietly undefined or crashed the compiler.
+
 ## What stays open
 
 - **Tile memory** (`air.imageblock`, 134 functions, QuartzCore's 46 among them): Apple's GPU keeps a tile in fast
