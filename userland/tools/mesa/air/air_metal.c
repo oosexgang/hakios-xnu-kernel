@@ -940,6 +940,25 @@ fold_tess_level_instr(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
+/* softpipe's buffers are dwords: nir_to_tgsi stores a byte or a half of a buffer as a whole
+ * word, which zeroed the three bytes after the last of a memcpy's tail (tools/air/memcpycheck.sh;
+ * a 30-byte struct of the camera's noise reduction is copied that way). So a narrow buffer access
+ * is made of dwords before widen_16bit sees it -- a load with a shift, a store as the pair of
+ * atomics NIR keeps for this -- which is what ir3 does for the phone (ir3_mem_access_size_align). */
+static nir_mem_access_size_align
+sw_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes, uint8_t bit_size,
+                         uint32_t align_mul, uint32_t align_offset, bool offset_is_const,
+                         enum gl_access_qualifier access, const void *cb_data)
+{
+   uint32_t align = nir_combined_align(align_mul, align_offset);
+   if (bit_size >= 32 && align >= 4 && !(bytes & 3))
+      return (nir_mem_access_size_align){ .num_components = MIN2(bytes / 4, 4),
+                                          .bit_size = 32, .align = 4,
+                                          .shift = nir_mem_access_shift_method_scalar };
+   return (nir_mem_access_size_align){ .num_components = 1, .bit_size = 32, .align = 4,
+                                       .shift = nir_mem_access_shift_method_scalar };
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
@@ -949,6 +968,15 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
+      NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
+               &(nir_lower_mem_access_bit_sizes_options){
+                  .callback = sw_mem_access_size_align, .modes = nir_var_mem_ssbo,
+                  .may_lower_unaligned_stores_to_atomics = true });
+      /* (its byte of a dword comes out as unpack_32_4x8, which widen_16bit does not take
+       * apart: to shifts and masks first) */
+      NIR_PASS(_, nir, nir_lower_pack);
+      NIR_PASS(_, nir, nir_opt_copy_prop);
+      NIR_PASS(_, nir, nir_opt_dce);
       NIR_PASS(_, nir, widen_16bit);
       /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
        * ("Unknown NIR opcode: ffma", QuartzCore's simple_rim_lpf): split, as for llvmpipe below */
