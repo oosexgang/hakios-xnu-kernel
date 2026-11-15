@@ -1003,6 +1003,61 @@ module_constants(void *mem_ctx, const void *bitcode, size_t size,
 }
 
 
+/* -- a compute pipeline's stage-in: rwa_stage_in_register --------------------------------- */
+
+/* MTLComputePipelineDescriptor.stageInputDescriptor, registered by the driver against the kernel's
+ * bytes as constants and linked functions are, for the translation to read the kernel's [[stage_in]]
+ * attributes out of (air_to_nir_options.stage_in). */
+struct registered_stage_in {
+   const uint8_t *bitcode;
+   size_t size;
+   struct air_stage_in stage_in;
+};
+static struct registered_stage_in *registered_stage_ins;
+static unsigned num_registered_stage_ins;
+
+void
+rwa_stage_in_register(const void *bitcode, size_t size, const struct rwa_stage_in *stage_in)
+{
+   if (!bitcode || !size || !stage_in)
+      return;
+   simple_mtx_lock(&registered_lock);
+   struct registered_stage_in *r = NULL;
+   for (unsigned i = 0; i < num_registered_stage_ins && !r; i++)
+      if (registered_stage_ins[i].bitcode == bitcode)
+         r = &registered_stage_ins[i];
+   if (!r) {
+      struct registered_stage_in *grown = realloc(registered_stage_ins,
+                                                  (num_registered_stage_ins + 1) * sizeof(*grown));
+      if (!grown) {
+         simple_mtx_unlock(&registered_lock);
+         return;
+      }
+      registered_stage_ins = grown;
+      r = &registered_stage_ins[num_registered_stage_ins++];
+   }
+   r->bitcode = bitcode;
+   r->size = size;
+   STATIC_ASSERT(sizeof(r->stage_in) == sizeof(*stage_in));
+   memcpy(&r->stage_in, stage_in, sizeof(r->stage_in));
+   simple_mtx_unlock(&registered_lock);
+}
+
+/* the stage-in registered for these bytes, copied under mem_ctx, or NULL */
+static const struct air_stage_in *
+module_stage_in(void *mem_ctx, const void *bitcode)
+{
+   const struct air_stage_in *found = NULL;
+   simple_mtx_lock(&registered_lock);
+   for (unsigned i = 0; i < num_registered_stage_ins && !found; i++) {
+      const struct registered_stage_in *r = &registered_stage_ins[i];
+      if ((const uint8_t *)bitcode >= r->bitcode && (const uint8_t *)bitcode < r->bitcode + r->size)
+         found = ralloc_memdup(mem_ctx, &r->stage_in, sizeof(r->stage_in));
+   }
+   simple_mtx_unlock(&registered_lock);
+   return found;
+}
+
 /* -- linked functions: rwa_linked_register ----------------------------------------------- */
 
 /* What a pipeline links into a stage (MTLLinkedFunctions), registered by the driver against
@@ -3581,6 +3636,7 @@ rwa_compute_create(struct rwa_device *device, const void *bitcode, size_t size,
    const struct air_to_nir_options options = {
       .constants = constants,
       .num_constants = num_constants,
+      .stage_in = module_stage_in(compute->mem_ctx, bitcode),
    };
    const char *error;
    compute->nir = air_to_nir(compute->mem_ctx, bitcode, size, entry, &options,

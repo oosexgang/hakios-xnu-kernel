@@ -103,6 +103,16 @@ struct rwa_linked_function {
 };
 void rwa_linked_register(const void *bitcode, size_t size, const struct rwa_linked_function *fns,
 			 unsigned count);
+/* A compute pipeline's stageInputDescriptor, for the kernel whose module is `bitcode`: what its
+ * [[stage_in]] attributes are read out of, in Metal's own numbers -- formats MTLAttributeFormat, step
+ * functions MTLStepFunction, the index type MTLIndexType. A format of 0 is an attribute the descriptor
+ * does not describe. Laid out as the translator's struct air_stage_in (nir_air.h). */
+struct rwa_stage_in {
+	struct { unsigned format, offset, buffer_index; } attribute[31];
+	struct { unsigned stride, step_function, step_rate; } layout[31];
+	unsigned index_buffer_index, index_type;
+};
+void rwa_stage_in_register(const void *bitcode, size_t size, const struct rwa_stage_in *stage_in);
 
 /* Memory a shader can read and write, and the processor can too. The mapping is write
  * combined, as the kernel makes it, so a driver has nothing to flush.
