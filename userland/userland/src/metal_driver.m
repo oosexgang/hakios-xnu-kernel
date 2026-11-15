@@ -241,6 +241,7 @@ enum rwa_argbuf_kind {
 	RWA_ARGBUF_BUFFER = 0,
 	RWA_ARGBUF_TEXTURE = 1,
 	RWA_ARGBUF_SAMPLER = 2,
+	RWA_ARGBUF_VALUE = 3,    /* bytes in the set itself: -constantDataAtIndex: */
 };
 struct rwa_argbuf_member {
 	unsigned id;             /* Metal's [[id(n)]], which the application names */
@@ -248,10 +249,11 @@ struct rwa_argbuf_member {
 	unsigned index;          /* the flat index the frontend allocated */
 	unsigned write;
 	char name[48];
+	unsigned offset, size;   /* RWA_ARGBUF_VALUE: its bytes in an encoding */
 };
 struct rwa_argbuf_layout {
 	unsigned metal_index;    /* the [[buffer(n)]] the set is bound at */
-	unsigned encoded_length; /* 8 bytes per member the set declares: Apple's own number */
+	unsigned encoded_length; /* the set's air.buffer_size: Apple's own number */
 	unsigned alignment;
 	unsigned member_count;
 	struct rwa_argbuf_member members[RWA_MAX_ARGBUF_MEMBERS];
@@ -7686,9 +7688,23 @@ rw_blit_unknown(id self, SEL sel, ...)
 	[self setArgumentBuffer:buffer offset:offset + element * _layout.encoded_length];
 }
 
-/* Whether this encoder is in a state to record, said once per site: an id past the set's
- * own members is the mistake worth naming, because Metal would write a handle into the
- * buffer and the shader would read a descriptor that is not there. */
+/* The member an id names: a set's ids are not 0..n-1 once it has a struct in it (Metal
+ * numbers a struct's members from the struct's own id), so it is looked up. NULL for an id
+ * the set does not declare. */
+- (const struct rwa_argbuf_member *)hakiosMemberWithId:(NSUInteger)index
+{
+	for (unsigned i = 0; i < _layout.member_count; i++) {
+		if (_layout.members[i].id == index) {
+			return &_layout.members[i];
+		}
+	}
+	return NULL;
+}
+
+/* Whether this encoder is in a state to record, said once per site: an id the set does
+ * not declare is the mistake worth naming, because Metal would write a handle into the
+ * buffer and the shader would read a descriptor that is not there. A descriptor set at a
+ * VALUE's id is the other one: the shader reads those bytes as a number. */
 - (BOOL)hakiosReady:(NSUInteger)index for:(const char *)what
 {
 	if (_destination == nil) {
@@ -7700,16 +7716,33 @@ rw_blit_unknown(id self, SEL sel, ...)
 		}
 		return NO;
 	}
-	if (index >= _layout.member_count) {
+	const struct rwa_argbuf_member *m = [self hakiosMemberWithId:index];
+
+	if (m == NULL) {
 		/* Which of the two layouts this is matters to whoever reads the line: a
 		 * shader's set is the shader's business and an application cannot change
 		 * it, while a set described with MTLArgumentDescriptors is the
 		 * application's own and the id it just used is one it did not describe. */
-		rw_print("%s was encoded at id %lu of %s that declares %u member%s\n", what,
-		         (unsigned long)index,
+		rw_print("%s was encoded at id %lu of %s that declares no such id (%u "
+		         "member%s)\n", what, (unsigned long)index,
 		         _fromModule ? "a set a shader declares" : "an encoder this "
 		                       "application described",
 		         _layout.member_count, _layout.member_count == 1 ? "" : "s");
+		return NO;
+	}
+	BOOL value = strcmp(what, "constant data") == 0;
+
+	if ((m->kind == RWA_ARGBUF_VALUE) != value) {
+		rw_print("%s was encoded at id %lu, which the set declares as %s\n", what,
+		         (unsigned long)index,
+		         m->kind == RWA_ARGBUF_VALUE ? "a value (-constantDataAtIndex:)"
+		                                     : "a descriptor");
+		return NO;
+	}
+	if (_offset + _layout.encoded_length > [_destination length]) {
+		rw_print("%s was encoded at offset %lu of an argument buffer of %lu "
+		         "bytes, and the encoding is %u\n", what, (unsigned long)_offset,
+		         (unsigned long)[_destination length], _layout.encoded_length);
 		return NO;
 	}
 	return YES;
@@ -7808,15 +7841,9 @@ rw_blit_unknown(id self, SEL sel, ...)
 /*
  * -constantDataAtIndex: is where an application writes a VALUE member -- an `int` or a
  * `float4` inside the set rather than a descriptor -- and it is answered with the real
- * bytes of the argument buffer at that member's place, which is what Metal answers.
- *
- * Nothing of this driver ever reads those bytes, and that is said here because it is the
- * kind of silence that costs a day: a shader that reads a value out of a set is refused
- * when it is TRANSLATED ("a value read out of the set instead of a descriptor",
- * docs/air.md 8.2.1), so an application writing here is writing into memory no shader of
- * ours will be compiled to read. Answering a real pointer is still the right answer --
- * the write lands in the application's own buffer and nothing is corrupted -- while
- * answering NULL would be a crash in the application's memcpy.
+ * bytes of the argument buffer at that member's place, which is what Metal answers. The
+ * place is the set's own layout (the struct's, from the module), and the shader reads the
+ * value there: a set with values in it is bound as a buffer too, at its own index.
  */
 - (void *)constantDataAtIndex:(NSUInteger)index
 {
@@ -7828,11 +7855,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 	if (bytes == NULL) {
 		return NULL;
 	}
-	RW_ONCE("-constantDataAtIndex: hands back the argument buffer's own "
-		"bytes, and nothing in this driver reads them: a shader that reads a VALUE "
-		"out of an argument buffer is refused when it is translated, because every "
-		"member this frontend binds is a descriptor\n");
-	return (char *)bytes + _offset + 8 * index;
+	return (char *)bytes + _offset + [self hakiosMemberWithId:index]->offset;
 }
 
 /*
