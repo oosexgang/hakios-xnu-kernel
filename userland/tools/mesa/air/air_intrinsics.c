@@ -431,6 +431,51 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = nir_bcsel(&c->b, regular,
                     nir_fdiv(&c->b, nir_fsub(&c->b, ex, enx), nir_fadd(&c->b, ex, enx)),
                     a[0]);
+   } else if (!strcmp(op, "fast_asinh") || !strcmp(op, "asinh") ||
+              !strcmp(op, "fast_acosh") || !strcmp(op, "acosh") ||
+              !strcmp(op, "fast_atanh") || !strcmp(op, "atanh")) {
+      /* The inverse hyperbolics, as logarithms (MLX's and MLCompute's element-wise kernels):
+       *
+       *   asinh x = sign(x) ln(|x| + sqrt(x^2 + 1))
+       *   acosh x = ln(x + sqrt(x^2 - 1))           (NaN below 1, from the root)
+       *   atanh x = ln((1 + x) / (1 - x)) / 2       (+-inf at +-1, NaN past it)
+       *
+       * with the guards sinh and tanh above have, for the same two reasons: near zero
+       * asinh and atanh ARE their argument to the last bit (x - x^3/6, x + x^3/3) while the
+       * logarithm of a number near 1 has lost those bits, so below 2^-12 (2^-5 for a half)
+       * the argument is the answer; and for a large argument x^2 overflows where the answer
+       * is ln(2|x|), which is taken past 2^20 (2^6 for a half).
+       */
+      /* A half is computed as a float and rounded once at the end: a logarithm taken in half
+       * precision of a number near 1 had lost three of the half's own ulp. */
+      unsigned bits = 32, out_bits = a[0]->bit_size;
+      bool sh = strstr(op, "asinh"), ch = strstr(op, "acosh");
+      nir_def *x = nir_f2f32(&c->b, a[0]), *ax = nir_fabs(&c->b, x);
+      nir_def *one = nir_imm_floatN_t(&c->b, 1.0, bits);
+#define LN(v) nir_fmul_imm(&c->b, nir_flog2(&c->b, (v)), 1.0 / M_LOG2E)
+      if (sh || ch) {
+         nir_def *v = sh ? ax : x;
+         /* (a multiply and an add: ir3 has no fused multiply-add to lower an ffma to) */
+         nir_def *v2 = nir_fmul(&c->b, v, v);
+         nir_def *root = nir_fsqrt(&c->b, sh ? nir_fadd(&c->b, v2, one) : nir_fsub(&c->b, v2, one));
+         nir_def *big = nir_fge_imm(&c->b, v, bits > 16 ? 0x1p20 : 0x1p6);
+         nir_def *m = nir_bcsel(&c->b, big, nir_fadd_imm(&c->b, LN(v), M_LN2),
+                                LN(nir_fadd(&c->b, v, root)));
+         if (sh) {
+            m = nir_bcsel(&c->b, nir_flt_imm(&c->b, x, 0.0), nir_fneg(&c->b, m), m);
+            r = nir_bcsel(&c->b, nir_fge_imm(&c->b, ax, bits > 16 ? 0x1p-12 : 0x1p-5), m, x);
+         } else {
+            /* below 1 the root is of a negative number only while x^2 < 1; past -1 it is
+             * real again and the logarithm a number, so the domain is said outright */
+            r = nir_bcsel(&c->b, nir_flt_imm(&c->b, x, 1.0), nir_imm_float(&c->b, NAN), m);
+         }
+      } else {
+         nir_def *q = nir_fdiv(&c->b, nir_fadd(&c->b, one, x), nir_fsub(&c->b, one, x));
+         nir_def *m = nir_fmul_imm(&c->b, LN(q), 0.5);
+         r = nir_bcsel(&c->b, nir_fge_imm(&c->b, ax, bits > 16 ? 0x1p-12 : 0x1p-5), m, x);
+      }
+#undef LN
+      r = nir_f2fN(&c->b, r, out_bits);
    } else if (!strcmp(op, "fast_exp") || !strcmp(op, "exp")) {
       /* the natural one: Apple's compiler names exp and exp2 separately */
       r = nir_fexp2(&c->b, nir_fmul_imm(&c->b, a[0], M_LOG2E));
