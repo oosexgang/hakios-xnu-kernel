@@ -122,6 +122,75 @@ val_is_pointerish(const struct air_val *v)
    return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);
 }
 
+static const struct air_type num_u32 = { .kind = AIR_TYPE_INT, .bits = 32 };
+static const struct air_type num_word_pair = { .kind = AIR_TYPE_VECTOR, .count = 2, .elem = &num_u32 };
+
+/* a data pointer's place in air_ptr_numeric.places, added if new; -1 for what is no data
+ * pointer (a texture, a sampler, a function, an argument buffer, one at an index) */
+static int
+num_place(struct air_ctx *c, const struct air_val *v)
+{
+   const struct air_ptr *p = &v->ptr;
+   if (v->fn || p->index ||
+       (p->class != AIR_PTR_UBO && p->class != AIR_PTR_SSBO && p->class != AIR_PTR_SHARED &&
+        p->class != AIR_PTR_SCRATCH && p->class != AIR_PTR_CONSTANT_DATA))
+      return -1;
+   struct air_ptr_numeric *num = c->num;
+   for (unsigned i = 0; i < num->num_places; i++) {
+      const struct air_ptr *q = &num->places[i];
+      if (q->class == p->class && q->binding == p->binding && q->is_image == p->is_image &&
+          q->var == p->var)
+         return (int)i;
+   }
+   if (num->num_places == ARRAY_SIZE(num->places))
+      return -1;
+   if (num->read)
+      num->grew = true;   /* (a load has chosen without it: air_to_nir starts again) */
+   num->places[num->num_places] = *p;
+   num->places[num->num_places].offset = NULL;
+   num->places[num->num_places].pointee = NULL;
+   return (int)num->num_places++;
+}
+
+/* a pointer as the two words air_ptr_numeric keeps: (byte offset, 1 + place), 0 the null pointer;
+ * NULL where it is not one these words can say */
+static nir_def *
+ptr_encode(struct air_ctx *c, const struct air_val *v)
+{
+   if (v && v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      nir_def *a = ptr_encode(c, v->elems[0]), *b = ptr_encode(c, v->elems[1]);
+      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
+   }
+   if (!v || v->kind != AIR_VAL_PTR)
+      return NULL;
+   if (v->ptr.class == AIR_PTR_NONE && !v->fn)
+      return nir_imm_ivec2(&c->b, 0, 0);
+   int place = num_place(c, v);
+   if (place < 0)
+      return NULL;
+   nir_def *off = v->ptr.offset ? nir_u2u32(&c->b, v->ptr.offset) : nir_imm_int(&c->b, 0);
+   return nir_vec2(&c->b, off, nir_imm_int(&c->b, place + 1));
+}
+
+/* and back: the choice among the places by the second word, at the first word's offset */
+static struct air_val *
+ptr_decode(struct air_ctx *c, nir_def *words)
+{
+   struct air_ptr_numeric *num = c->num;
+   num->read = true;
+   if (!num->num_places)
+      return air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE });
+   nir_def *off = nir_channel(&c->b, words, 0), *which = nir_channel(&c->b, words, 1);
+   struct air_val *chosen = NULL;
+   for (int i = (int)num->num_places - 1; i >= 0; i--) {
+      struct air_ptr p = num->places[i];
+      p.offset = off;
+      struct air_val *v = air_val_ptr(c, p);
+      chosen = chosen ? air_val_ptr_select(c, nir_ieq_imm(&c->b, which, i + 1), v, chosen) : v;
+   }
+   return chosen;
+}
+
 /*
  * A FUNCTION TABLE IN A LOCAL ARRAY, read at an index the shader computes. MercuryPoster's shippou
  * kernels (a lock screen wallpaper) fill `[4 x ptr]` with four material functions and call
@@ -4443,6 +4512,16 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       struct air_val *p = air_get(c, in->operands[0]);
       if (!p)
          return false;
+      if (p->kind == AIR_VAL_PTR_SELECT && in->base.type->kind == AIR_TYPE_POINTER &&
+          c->num && c->num->on) {
+         /* a pointer kept as numbers (air_ptr_numeric), read through a pointer chosen at run
+          * time: the words through the choice, and the choice they say */
+         nir_def *words = load_through_choice(c, p, &num_word_pair, MAX2(in->align, 4));
+         if (!words)
+            return false;
+         air_set(c, &in->base, ptr_decode(c, words));
+         return true;
+      }
       if (p->kind == AIR_VAL_PTR_SELECT) {
          nir_def *res = load_through_choice(c, p, in->base.type, in->align);
          if (!res)
@@ -4466,9 +4545,20 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          }
          struct air_val *had = c->ptr_slots && ptr_slot_of(&p->ptr, &slot)
                                   ? _mesa_hash_table_u64_search(c->ptr_slots, slot) : NULL;
-         if (!had)
+         if (!had && c->num && c->num->on) {
+            /* kept as numbers (air_ptr_numeric) */
+            nir_def *words = air_load_ptr(c, p->ptr, &num_word_pair, MAX2(in->align, 4));
+            if (!words)
+               return false;
+            air_set(c, &in->base, ptr_decode(c, words));
+            return true;
+         }
+         if (!had) {
+            if (c->num)
+               c->num->want = true;
             return air_error(c, "instruction: a load of a pointer from a local no pointer "
                                 "was stored into");
+         }
          if (!(had = import_val(c, had)))
             return air_error(c, "instruction: a pointer loaded in a callee from a local its "
                                 "caller stored it into, at an offset or index the caller "
@@ -4531,6 +4621,18 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       struct air_val *sv = air_get(c, in->operands[0]);
       if (!sv)
          return false;
+      if (val_is_pointerish(sv) && c->num && c->num->on &&
+          ((p->kind == AIR_VAL_PTR && p->ptr.class == AIR_PTR_SCRATCH) ||
+           p->kind == AIR_VAL_PTR_SELECT)) {
+         /* kept as numbers (air_ptr_numeric): a data pointer as its two words; what they cannot
+          * say -- a texture, a function -- goes on to the slots below */
+         nir_def *words = ptr_encode(c, sv);
+         if (words) {
+            if (p->kind == AIR_VAL_PTR_SELECT)
+               return store_through_choice(c, p, words, MAX2(in->align, 4));
+            return air_store_ptr(c, p->ptr, words, MAX2(in->align, 4));
+         }
+      }
       if (val_is_pointerish(sv)) {
          /* A pointer kept in a local -- MPS's kernels put their output texture in a
           * `TextureWriter` struct on the stack and read it back (D8F18H, the Gaussian blur
@@ -4543,12 +4645,18 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
             if (!c->ptr_slots)
                c->ptr_slots = _mesa_hash_table_u64_create(c->mem_ctx);
             struct air_val *had = _mesa_hash_table_u64_search(c->ptr_slots, slot);
-            if (had && had != sv)
+            if (had && had != sv) {
+               if (c->num)
+                  c->num->want = true;   /* (as numbers, which air_to_nir tries next) */
                return air_error(c, "instruction: two different pointers stored into one "
                                    "local, which a load would have to choose between at run time");
+            }
             _mesa_hash_table_u64_insert(c->ptr_slots, slot, sv);
             return true;
          }
+         if (c->num && ((p->kind == AIR_VAL_PTR && p->ptr.class == AIR_PTR_SCRATCH) ||
+                        p->kind == AIR_VAL_PTR_SELECT))
+            c->num->want = true;   /* (into a local at an index: as numbers, tried next) */
          return air_error(c, "instruction: a store of a pointer into memory, which this "
                              "frontend has no address to write");
       }
@@ -7336,11 +7444,40 @@ air_ms(void)
 #define AIR_T(label) do { if (air_timing) { double _n = air_ms(); \
    fprintf(stderr, "AIR_TIME %-14s %7.2f ms\n", label, _n - air_t); air_t = air_ms(); } } while (0)
 
+static nir_shader *
+air_to_nir_attempt(void *mem_ctx, const void *bitcode, size_t size, const char *entry_point,
+                   const struct air_to_nir_options *options,
+                   const nir_shader_compiler_options *nir_options,
+                   struct air_shader_info *info, const char **error,
+                   struct air_ptr_numeric *num);
+
+/* One translation, and again with pointers in private memory kept as numbers where the first said
+ * it needed that (air_ptr_numeric), and once more where that met a place too late. */
 nir_shader *
 air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_point,
            const struct air_to_nir_options *options,
            const nir_shader_compiler_options *nir_options,
            struct air_shader_info *info, const char **error)
+{
+   struct air_ptr_numeric num = { 0 };
+   nir_shader *nir = NULL;
+   for (unsigned attempt = 0; attempt < 3; attempt++) {
+      num.want = num.grew = num.read = false;
+      nir = air_to_nir_attempt(mem_ctx, bitcode, size, entry_point, options, nir_options, info,
+                               error, &num);
+      if (nir || (!(num.want && !num.on) && !(num.grew && num.on)))
+         break;
+      num.on = true;
+   }
+   return nir;
+}
+
+static nir_shader *
+air_to_nir_attempt(void *mem_ctx, const void *bitcode, size_t size, const char *entry_point,
+                   const struct air_to_nir_options *options,
+                   const nir_shader_compiler_options *nir_options,
+                   struct air_shader_info *info, const char **error,
+                   struct air_ptr_numeric *num)
 {
    void *ctx = ralloc_context(mem_ctx);
    struct air_shader_info local_info = { 0 };
@@ -7348,6 +7485,7 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
       .mem_ctx = ctx,
       .options = options,
       .info = info ? info : &local_info,
+      .num = num,
    };
    memset(c.info, 0, sizeof(*c.info));
 
