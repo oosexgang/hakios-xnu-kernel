@@ -1904,11 +1904,37 @@ TEST(the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flush
 TEST(the_fake_refuses_the_packets_a_draw_stream_may_not_carry) {
     using namespace a6xx;
     {
+        // a group of 4 words at an address for no mode: nothing would ever run it
         Twin w;
         size_t ds = w.e.find(CP_SET_DRAW_STATE);
-        w.words[ds + 1] = setDrawState0(4, 0, 1);   // a group of 4 dwords at an address: applied at the draw over the direct writes
+        w.words[ds + 1] = setDrawState0(4, 0, 1);
         w.words[ds + 2] = uint32_t(w.e.table->gpuAddress());
-        CHECK(has(w.fault(), "draw-state groups are not what this GPU model runs: registers are written directly (only CP_SET_DRAW_STATE's 3-word disable-all form is taken)"));
+        w.words[ds + 3] = uint32_t(w.e.table->gpuAddress() >> 32);
+        CHECK(has(w.fault(), "draw-state group 1: 4 words at"));
+    }
+    {
+        // ...for the sysmem pass: it runs at the draw, over the direct writes -- and the table's words are no packets
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] = setDrawState0(4, CP_SET_DRAW_STATE__0_SYSMEM, 1);
+        w.words[ds + 2] = uint32_t(w.e.table->gpuAddress());
+        w.words[ds + 3] = uint32_t(w.e.table->gpuAddress() >> 32);
+        CHECK(has(w.fault(), "not a packet, or its parity is wrong"));
+    }
+    {
+        // ...outside every buffer
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] = setDrawState0(4, CP_SET_DRAW_STATE__0_SYSMEM, 1);
+        w.words[ds + 2] = 0x1000;
+        CHECK(has(w.fault(), "draw-state group 1: 4 words at"));
+    }
+    {
+        // the disable-all form with a count
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] |= 4;
+        CHECK(has(w.fault(), "CP_SET_DRAW_STATE disabling every group with a count"));
     }
     {
         Twin w;
@@ -5481,14 +5507,18 @@ TEST(a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn) {
 }
 
 // A pass whose draws touch a corner is tiled over that corner alone: tri_flat at a 100 x 50 viewport at (300, 1000)
-// and another at (350, 1010) -- one tile, its loads and stores over the area's granules, the rest of the target left as
-// it was (here the coordinates throughout: the fake draws nothing, so a store anywhere puts back what was loaded).
+// and another at (350, 1010) -- the bins of the window's grid that area touches, their loads and stores over the area's
+// granules, the rest of the target left as it was (here the coordinates throughout: the fake draws nothing, so a store
+// anywhere puts back what was loaded).
 TEST(a_gmem_pass_is_tiled_over_its_render_area) {
     Rig r;
     auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
     fillCoords(*t);
     RenderPass a;
     a.color0 = t.get();
+    render::GmemPlan p;
+    CHECK(render::gmemPlan(a, &p, nullptr));
+    const uint32_t tiles = (449 / p.binW - 300 / p.binW + 1) * (1059 / p.binH - 1000 / p.binH + 1);
     auto cb = r.queue->commandBuffer();
     Draw d1 = wholeDraw(3), d2 = wholeDraw(3);
     d1.viewport = Viewport{300, 1000, 100, 50, 0, 1};
@@ -5500,8 +5530,10 @@ TEST(a_gmem_pass_is_tiled_over_its_render_area) {
     CHECK(cb->status() == CommandBuffer::kCompleted);
     const auto s = r.fake->stats();
     CHECK_EQ(s.faults, 0u);
-    CHECK(s.tiles == 1 && s.tileLoads == 1 && s.tileStores == 1);
-    // the area (300, 1000)-(449, 1059) in 16 x 4 granules: x 288 to 463, y 1000 to 1059
+    CHECK(tiles >= 1 && tiles < p.tiles());
+    CHECK(s.tiles == tiles && s.tileLoads == tiles && s.tileStores == tiles);
+    // the area (300, 1000)-(449, 1059) in 16 x 4 granules: x 288 to 463, y 1000 to 1059, each granule stored once
+    // whichever bin it falls in
     CHECK_EQ(s.storedPixels, uint64_t(464 - 288) * (1060 - 1000));
     CHECK_EQ(coordsWrong(*t), 0u);
 }
@@ -5528,7 +5560,8 @@ TEST(a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has) {
     const auto s = r.fake->stats();
     CHECK_EQ(s.faults, 0u);
     if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
-    CHECK(cb->counts().gmemPasses == 1 && s.tiles == 1);
+    // (the bins of the window's grid the area (300, 1000)-(399, 1049) touches)
+    CHECK(cb->counts().gmemPasses == 1 && s.tiles == (399 / whole.binW - 300 / whole.binW + 1) * (1049 / whole.binH - 1000 / whole.binH + 1));
     const auto gd = r.fake->memory(s.lastDraw.fsTexConst, 64);
     uint32_t gw[16] = {};
     if (gd.size() == 64) memcpy(gw, gd.data(), 64);
@@ -5753,8 +5786,26 @@ TEST(a_visibility_stream_overflow_turns_the_binning_off) {
     auto v = r.queue->vscBuffer(&why);
     CHECK(v != nullptr);
     if (v == nullptr) return;
-    // the word as the compare writes it: the fake's VSC leaves its size registers at 0, so the overrun is put there by hand
-    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt) = 2;
+    // the word as the compare writes it: the fake's VSC leaves its size registers at 0, so the overrun is put there by
+    // hand -- where the stream's own compares (CP_COND_WRITE5, their words 5 and 6 the address) are told to write it
+    {
+        pm4::Stream tiles;
+        render::GmemPlan plan;
+        CHECK(render::gmemPlan(a, &plan, nullptr));
+        render::encodeGmem(tiles, a, plan, v->gpuAddress(), 1, v->gpuAddress(), o, 1, 1, false, 0, nullptr, v->gpuAddress());
+        const std::vector<uint32_t>& w = tiles.words();
+        uint32_t compares = 0;
+        for (size_t i = 0; i < w.size();) {
+            const pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kCommand && h.opcode == a6xx::CP_COND_WRITE5 && h.count == 8) {
+                compares++;
+                CHECK_EQ(uint64_t(w[i + 6]) | uint64_t(w[i + 7]) << 32, v->gpuAddress() + render::vscOverflowWordAt());
+            }
+            i += 1 + h.count;
+        }
+        CHECK(compares != 0);
+    }
+    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + render::vscOverflowWordAt()) = 2;
     CHECK_EQ(pass(), 1u);   // (binned still: the word is read once this one completes)
     CHECK(!r.queue->binningOk());
     CHECK_EQ(pass(), 0u);
@@ -5801,4 +5852,87 @@ TEST(each_profiled_pass_says_why_it_was_drawn_in_sysmem) {
         CHECK(std::string(cb->passSysmemWhy(0)).find("GMEM off") != std::string::npos);
     }
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// The bins are the window's grid, from its origin, whatever part of the window a pass draws: that is where the VSC bins
+// a draw. A binned pass over a corner is drawn in the grid's bins there, each given the streams of the bin it is; laid
+// from the corner itself (the twin) a tile is given the streams of another rectangle than the one it draws.
+TEST(bins_laid_from_the_render_areas_corner_are_not_the_vscs) {
+    for (int twin = 0; twin < 2; twin++) {
+        Rig r;
+        auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        fillCoords(*t);
+        RenderPass a;
+        a.color0 = t.get();
+        render::Options o;
+        o.gmemBinning = true;
+        o.gmemTwin = twin ? 5 : 0;
+        auto cb = r.queue->commandBuffer();
+        Draw d1 = wholeDraw(3), d2 = wholeDraw(3);
+        d1.viewport = Viewport{300, 1000, 100, 50, 0, 1};
+        d2.viewport = Viewport{350, 1010, 100, 50, 0, 1};
+        CHECK(cb->draw(flatProgram(), a, d1, Bindings{}, Bindings{}, o));
+        CHECK(cb->draw(flatProgram(), a, d2, Bindings{}, Bindings{}, o));
+        cb->commit();
+        cb->waitUntilCompleted();
+        const auto s = r.fake->stats();
+        if (twin == 0) {
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            CHECK_EQ(s.faults, 0u);
+            if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+            CHECK_EQ(coordsWrong(*t), 0u);
+        } else {
+            CHECK(cb->status() == CommandBuffer::kError);
+            CHECK(s.lastFault.find("the VSC bins from the window's origin") != std::string::npos);
+        }
+    }
+}
+
+// The command processor's part, on a stream mutated by hand (the flat draw in sysmem): a group for the sysmem pass
+// runs at the draw, over what the stream wrote directly; one for the tiles alone stays pending; set again to what it
+// last ran it does not run again, unless DIRTY; a group holds register writes and loads and nothing else.
+TEST(the_fake_runs_draw_state_groups_as_the_microcode_does) {
+    using namespace a6xx;
+    auto run = [](uint32_t modes, uint32_t flags, bool twice, bool wait, FakeGpu::Stats* out) {
+        Twin w;
+        std::string why;
+        auto blob = newBuffer(*w.r.gpu, 4096, &why);
+        CHECK(blob != nullptr);
+        // the group: the screen scissor at (1, 2)-(30, 31), and under WAIT a CP_WAIT_FOR_IDLE no group holds
+        pm4::Stream g;
+        const uint32_t sc[2] = {scissorXY(1, 2), scissorXY(30, 31)};
+        g.registers(regGrasScScreenScissor(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL, 0), sc, 2);
+        if (wait) g.waitForIdle();
+        memcpy(blob->contents(), g.words().data(), 4 * g.words().size());
+        const uint32_t set[4] = {pm4::type7(CP_SET_DRAW_STATE, 3), setDrawState0(uint32_t(g.words().size()), modes | flags, 5), uint32_t(blob->gpuAddress()),
+                                 uint32_t(blob->gpuAddress() >> 32)};
+        const size_t d = w.e.find(CP_DRAW_INDX_OFFSET);
+        CHECK(d != size_t(-1));
+        std::vector<uint32_t> drawWords(w.words.begin() + d, w.words.begin() + d + 4);
+        std::vector<uint32_t> add(set, set + 4);
+        if (twice) {
+            // the draw, the group set again, the draw again
+            add.insert(add.end(), drawWords.begin(), drawWords.end());
+            add.insert(add.end(), set, set + 4);
+        }
+        w.words.insert(w.words.begin() + d, add.begin(), add.end());
+        const uint32_t before = w.r.fake->stats().faults;
+        Raw raw(w.r);
+        raw.submit(w.words);
+        *out = w.r.fake->stats();
+        return out->faults != before ? out->lastFault : std::string();
+    };
+    FakeGpu::Stats s;
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, false, false, &s).empty());
+    CHECK(s.groupsRun == 1 && s.sdsWords == 3 && s.lastDraw.screenScissor[0] == 1 && s.lastDraw.screenScissor[3] == 31);
+    // for the tiles alone: pending through a sysmem draw, which keeps the scissor the stream wrote
+    CHECK(run(CP_SET_DRAW_STATE__0_GMEM, 0, false, false, &s).empty());
+    CHECK(s.groupsRun == 0 && s.lastDraw.screenScissor[0] == 0 && s.lastDraw.screenScissor[3] == 63);
+    // set twice to the same words: run once; DIRTY: twice
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, true, false, &s).empty());
+    CHECK(s.groupsRun == 1 && s.draws == 2);
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, CP_SET_DRAW_STATE__0_DIRTY, true, false, &s).empty());
+    CHECK(s.groupsRun == 2 && s.draws == 2);
+    // a wait in a group
+    CHECK(has(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, false, true, &s), "in a draw-state group: register writes and CP_LOAD_STATE6 are what a group holds"));
 }

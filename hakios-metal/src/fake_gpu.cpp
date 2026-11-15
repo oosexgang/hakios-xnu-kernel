@@ -257,6 +257,9 @@ std::vector<uint8_t> FakeGpu::memory(uint64_t iova, uint64_t length) {
     return p ? std::vector<uint8_t>(p, p + length) : std::vector<uint8_t>{};
 }
 
+void (*FakeGpu::submitHook)(FakeGpu&, uint64_t, uint32_t, void*) = nullptr;
+void* FakeGpu::submitHookContext = nullptr;
+
 uint8_t* FakeGpu::at(uint64_t iova, uint64_t length) {
     for (auto& [handle, b] : buffers_) {
         if (iova >= b.iova && length <= b.bytes.size() && iova - b.iova <= b.bytes.size() - length) {
@@ -410,12 +413,23 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
         (xs ? xs->programLoaded : cs_.programLoaded) = true;
         (xs ? xs->programFrom : cs_.programFrom) = from;
         (xs ? xs->programUnits : cs_.programUnits) = units;
+        // A graphics stage's constants are held to the constlen of the program they were loaded for (checkStageProgram):
+        // another program's preload begins another set. Kept across the whole submission, a frame whose stages differ in
+        // constlen -- a compositor's -- faulted on the first draw of a shorter stage after a longer one's, for constants
+        // that stage never reads. (The same program preloaded again keeps them: a draw's loads follow its preload.)
+        if (xs != nullptr && xs->constsFor != from) {
+            xs->consts.clear();
+            xs->constsFor = from;
+        }
         break;
     case ST6_CONSTANTS:
         {
             ConstLoad c{dstOff, units, src == SS6_DIRECT, {}};
             const uint32_t* w = src == SS6_DIRECT ? p + 3 : reinterpret_cast<const uint32_t*>(at(from, uint64_t(units) * 16));
             if (w != nullptr) c.words.assign(w, w + units * 4);
+            for (uint32_t v = 0; xs != nullptr && v < units && 4 * v + 4 <= c.words.size(); v++) {
+                xs->store[dstOff + v].assign(c.words.begin() + 4 * v, c.words.begin() + 4 * v + 4);
+            }
             (xs ? xs->consts : cs_.consts).push_back(std::move(c));
         }
         break;
@@ -526,7 +540,9 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
         const uint32_t ccu = reg(REG_A6XX_RB_CCU_CNTL);
         const uint64_t cache = uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT)) << A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE |
                                uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT)) << 21;
-        if (pitch != uint64_t(binW) * bpp || base + uint64_t(binW) * binH * bpp > cache ||
+        // (the bin by GMEM's own GPU address, kGmemBase: where the kernel maps GMEM for the texture unit, 0x100000 on the
+        // Adreno 610 and 0 on the 7c+ -- turnip adds the device's gmem_base to the offset, tu_emit_input_attachments)
+        if (pitch != uint64_t(binW) * bpp || base < kGmemBase || base - kGmemBase + uint64_t(binW) * binH * bpp > cache ||
             fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_2D ||
             fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT) != 1) {
             fault(who + text(": a GMEM read of pitch %llu at %#llx: ", pitch, base) + text("not the %llu-pixel bin's rows, ", binW) +
@@ -1286,6 +1302,14 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             fault("a draw of the binning pass without GRAS_BIN_CONTROL and VFD_MODE_CNTL in BINNING_PASS");
             return false;
         }
+        // what the VSC writes of it, as far as this model can say: the rectangle its viewport scissor and its screen
+        // scissor leave it (nothing is rasterized: the hardware names the bins its primitives touch, these or fewer)
+        {
+            const uint32_t vp = regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0), sc = regGrasScScreenScissor(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL, 0);
+            auto x = [&](uint32_t r) { return fieldOf(reg(r), A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__MASK, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__SHIFT); };
+            auto y = [&](uint32_t r) { return fieldOf(reg(r), A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__SHIFT); };
+            binnedDraws_.push_back(Binned{std::max(x(vp), x(sc)), std::max(y(vp), y(sc)), std::min(x(vp + 1), x(sc + 1)), std::min(y(vp + 1), y(sc + 1))});
+        }
         stats_.binnedDraws++;
         return true;
     }
@@ -1911,6 +1935,178 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     return true;
 }
 
+// What RM6_BIN_RENDER_START and CP_SET_BIN_DATA5* both do to the command processor's state (the microcode's one
+// routine for the two): the tile's draws counted from nothing, its streams not yet at their end, and the LOCAL skip
+// off -- which is why a CP_SKIP_IB2_ENABLE_LOCAL written before them, as both of Mesa's drivers write theirs, does
+// nothing for the tile.
+void FakeGpu::tileReset() {
+    drawIndex_ = 0;
+    streamEnded_ = skipLocal_ = skipActive_ = leaveIb_ = false;
+}
+
+// HLSQ_INVALIDATE_CMD: what the stages named had loaded is gone -- the program, the constants, the UBO and texture
+// tables -- and a draw needs it loaded again (turnip: "CP_LOAD_STATE packets that are invalidated by the
+// PROGRAM_CONFIG draw state", tu_cmd_buffer.cc:1284-1288). The compute stage's is left as it is judged at CP_EXEC_CS.
+void FakeGpu::invalidate(uint32_t bits) {
+    using namespace a6xx;
+    if (bits & A6XX_HLSQ_INVALIDATE_CMD_VS_STATE) vs_ = StageLoads{};
+    if (bits & A6XX_HLSQ_INVALIDATE_CMD_FS_STATE) fs_ = StageLoads{};
+    if (bits & A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO) {
+        gfxIbosLoaded_ = false;
+        gfxIbosFrom_ = 0;
+        gfxIboUnits_ = 0;
+    }
+}
+
+// CP_DRAW_*'s first word: 1 when the draw runs, 0 when the tile's streams skip it, -1 on a fault. The override, a draw
+// that ignores visibility, or a pass that was not binned: it runs. In a binned pass's tile a USE_VISIBILITY draw is the
+// next of the binning pass's, and runs when it reaches the tile's bin. The first one skipped with none after it that
+// does is where the streams end: with both skips on, the indirect buffer it lies in is left there.
+int FakeGpu::drawRuns(uint32_t word0, int depth) {
+    using namespace a6xx;
+    drawOrdinal_++;
+    const bool useVisibility = fieldOf(word0, CP_DRAW_INDX_OFFSET_0_VIS_CULL__MASK, CP_DRAW_INDX_OFFSET_0_VIS_CULL__SHIFT) == USE_VISIBILITY;
+    if (visOverride_ || !useVisibility || !inTile_ || !binned_) return 1;
+    if (!tileStreams_) {
+        fault("a draw that consults the visibility streams in a tile no CP_SET_BIN_DATA5 gave its streams");
+        return -1;
+    }
+    const uint32_t n = drawIndex_++;
+    if (n >= binnedDraws_.size()) {
+        fault(text("draw %llu of a tile whose binning pass binned %llu: the streams name no such draw", n + 1, binnedDraws_.size()));
+        return -1;
+    }
+    auto reaches = [&](const Binned& b) { return b.x0 <= tileBin_[2] && b.x1 >= tileBin_[0] && b.y0 <= tileBin_[3] && b.y1 >= tileBin_[1]; };
+    if (reaches(binnedDraws_[n])) return 1;
+    stats_.drawsSkipped++;
+    bool more = false;
+    for (size_t m = n + 1; !more && m < binnedDraws_.size(); m++) more = reaches(binnedDraws_[m]);
+    if (!more && !streamEnded_) {
+        streamEnded_ = true;
+        skipActive_ = skipGlobal_ && skipLocal_;
+        if (skipActive_ && depth == 1) leaveIb_ = true;
+    }
+    return 0;
+}
+
+// CP_SET_DRAW_STATE: three words a group. The disable-all form both batch starts send (fd6_emit_restore;
+// tu_disable_draw_states) and fd6 sends after the binning pass and after each tile's draws; a group disabled; or a group
+// set to WORDS words at an address, for the modes its three bits name, DIRTY making it run even where it last ran.
+bool FakeGpu::setDrawState(const uint32_t* p, uint32_t count) {
+    using namespace a6xx;
+    if (count == 0 || count % 3 != 0) {
+        fault(text("CP_SET_DRAW_STATE of %llu words: three a group", count));
+        return false;
+    }
+    for (uint32_t i = 0; i < count; i += 3) {
+        const uint32_t w0 = p[i], words = fieldOf(w0, CP_SET_DRAW_STATE__0_COUNT__MASK, CP_SET_DRAW_STATE__0_COUNT__SHIFT);
+        const uint32_t id = fieldOf(w0, CP_SET_DRAW_STATE__0_GROUP_ID__MASK, CP_SET_DRAW_STATE__0_GROUP_ID__SHIFT);
+        const uint64_t address = p[i + 1] | uint64_t(p[i + 2]) << 32;
+        if (w0 & CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS) {
+            if (count != 3 || words != 0 || address != 0) {
+                fault("CP_SET_DRAW_STATE disabling every group with a count, an address or another group beside it: the 3-word form is what the witnesses send");
+                return false;
+            }
+            for (Group& g : groups_) g.enabled = g.pending = g.forced = false;
+            continue;
+        }
+        if (w0 & CP_SET_DRAW_STATE__0_LOAD_IMMED) {
+            fault("CP_SET_DRAW_STATE with LOAD_IMMED: the A5XX's bit, which this chip's XML does not have");
+            return false;
+        }
+        Group& g = groups_[id];
+        if (w0 & CP_SET_DRAW_STATE__0_DISABLE) {
+            g.enabled = g.pending = g.forced = false;
+            continue;
+        }
+        const uint32_t modes = w0 & (CP_SET_DRAW_STATE__0_BINNING | CP_SET_DRAW_STATE__0_GMEM | CP_SET_DRAW_STATE__0_SYSMEM);
+        if (modes == 0 || words == 0 || address % 4 != 0 || at(address, 4ull * words) == nullptr) {
+            fault(text("draw-state group %llu: %llu words at ", id, words) + text("%#llx for modes %#llx: ", address, modes) +
+                  "at least one mode, and its words inside a buffer");
+            return false;
+        }
+        g.enabled = g.pending = true;
+        g.forced = (w0 & CP_SET_DRAW_STATE__0_DIRTY) != 0;
+        g.address = address;
+        g.words = words;
+        g.modes = modes;
+    }
+    // (CP_SET_MODE 1, the binning pass's: the groups of the mode in force run now rather than at the draw)
+    return sdsImmediate_ ? runGroups() : true;
+}
+
+// The pending groups of the mode in force, from the lowest id up, each as a stream of its own a level down. One of
+// another mode stays pending. One set to the address and length it last ran with does not run again unless DIRTY said
+// so: the microcode's compare is with what the group last RAN, not with what it was last set to. (The same address
+// with another length runs the words added, or all of them when fewer: no driver here means either, so it is a fault.)
+bool FakeGpu::runGroups() {
+    // (once groups have been looked at, "at once" is what CP_SET_MODE last said, whatever the override did to it)
+    sdsImmediate_ = sdsMode_;
+    for (uint32_t id = 0; id < 32; id++) {
+        Group& g = groups_[id];
+        if (!g.enabled || !g.pending || (g.modes & cpMode_) == 0) continue;
+        g.pending = false;
+        if (!g.forced && g.address == g.ranAddress && g.words == g.ranWords) continue;
+        if (!g.forced && g.address == g.ranAddress) {
+            fault(text("draw-state group %llu set to the address it last ran from with another length: ", id) + "the microcode would run the difference");
+            return false;
+        }
+        g.forced = false;
+        g.ranAddress = g.address;
+        g.ranWords = g.words;
+        stats_.groupsRun++;
+        stats_.groupRuns[std::min(id, 7u)]++;
+        stats_.groupWords[std::min(id, 7u)] += g.words;
+        inGroup_ = true;
+        const bool ok = execute(g.address, g.words, 2);
+        inGroup_ = false;
+        if (!ok) return false;
+    }
+    return true;
+}
+
+void FakeGpu::logDraws(bool on, bool state) {
+    std::unique_lock<std::mutex> g(lock_);
+    logDraws_ = on;
+    logState_ = on && state;
+}
+
+// a draw that ran, into the log: where it ran and a digest (FNV-1a) of every register as written and of what each
+// stage has loaded
+void FakeGpu::logDraw(bool binning) {
+    if (!logDraws_) return;
+    uint64_t k = 0xcbf29ce484222325ull;
+    std::vector<uint64_t> state;
+    auto mix = [&](uint64_t v) {
+        for (int i = 0; i < 8; i++) k = (k ^ ((v >> (8 * i)) & 0xff)) * 0x100000001b3ull;
+        if (logState_) state.push_back(v);
+    };
+    // (in a binned pass's tile: without the registers its draws write only after this one)
+    std::set<uint32_t> later;
+    if (binning) definedAt_.push_back(bodyOrder_.size());
+    if (!binning && inTile_ && binned_ && drawOrdinal_ - 1 < definedAt_.size()) later.insert(bodyOrder_.begin() + long(definedAt_[drawOrdinal_ - 1]), bodyOrder_.end());
+    for (const auto& [r, v] : regs_) {
+        if (later.count(r) == 0) mix(uint64_t(r) << 32 | v);
+    }
+    mix(~0ull);   // (the registers' end)
+    for (const StageLoads* xs : {&vs_, &fs_}) {
+        mix(xs->programLoaded ? xs->programFrom : ~0ull);
+        mix(xs->programUnits);
+        for (const auto& [at_, words] : xs->store) {
+            mix(at_);
+            for (uint32_t w : words) mix(w);
+        }
+        mix(xs->sampLoaded ? xs->sampFrom : ~0ull);
+        mix(xs->sampUnits);
+        mix(xs->texLoaded ? xs->texFrom : ~0ull);
+        mix(xs->texUnits);
+        for (const UboDescriptor& u : xs->ubos) mix(u.base ^ uint64_t(u.vec4s) << 48);
+    }
+    mix(gfxIbosLoaded_ ? gfxIbosFrom_ : ~0ull);
+    mix(gfxIboUnits_);
+    stats_.drawLog.push_back(Stats::DrawLog{tileOrdinal_, drawOrdinal_ - 1, binning, k, std::move(state)});
+}
+
 // the packets from ADDRESS on, WORDS of them; false on a fault (the submission stops there)
 bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
     using namespace a6xx;
@@ -1931,10 +2127,24 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         }
         const uint32_t* p = w + i + 1;
         stats_.packets++;
+        stats_.cpWords += 1 + h.count;
+        if (inGroup_) {
+            // a draw-state group holds what both witnesses put in theirs and this driver in its own: register writes
+            // and CP_LOAD_STATE6. Whatever else the microcode would run there, nothing here was written to be run so.
+            stats_.sdsWords += 1 + h.count;
+            if (h.kind == pm4::Header::kCommand && h.opcode != pm4::kNop && h.opcode != CP_LOAD_STATE6_FRAG && h.opcode != CP_LOAD_STATE6_GEOM &&
+                h.opcode != CP_LOAD_STATE6) {
+                fault(text("opcode 0x%02llx in a draw-state group: register writes and CP_LOAD_STATE6 are what a group holds", h.opcode));
+                return false;
+            }
+        }
         if (h.kind == pm4::Header::kRegisters) {
+            stats_.cpRegisters += h.count;
             for (uint32_t j = 0; j < h.count; j++) {
                 regs_[h.reg + j] = p[j];   // kept as written; a dispatch or a draw is checked against them
                 written_.insert(h.reg + j);
+                if (h.reg + j == REG_A6XX_HLSQ_INVALIDATE_CMD) invalidate(p[j]);
+                if (binning_ && depth >= 1 && logDraws_ && bodySeen_.insert(h.reg + j).second) bodyOrder_.push_back(h.reg + j);
                 if (h.reg + j == REG_A6XX_RB_CCU_CNTL) {
                     // "isn't pipelined" (tu_cmd_buffer.cc:373-377): both witnesses write it right after a CP_WAIT_FOR_IDLE
                     ccuCntlWritten_ = true;
@@ -1944,9 +2154,11 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         } else {
             switch (h.opcode) {
             case pm4::kNop:
-            case pm4::kWaitForIdle:
             case pm4::kWaitMemWrites:
             case pm4::kWaitForMe:
+                break;
+            case pm4::kWaitForIdle:
+                stats_.cpWaits++;
                 break;
             case pm4::kMemWrite: {
                 if (h.count < 2) {
@@ -1989,6 +2201,11 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     fault(depth >= 2 ? "indirect buffers nested deeper than the GPU's two levels" : "CP_INDIRECT_BUFFER of other than 3 words");
                     return false;
                 }
+                // (the microcode's first test of the packet: nothing left visible and both skips on)
+                if (depth == 0 && skipActive_) {
+                    stats_.ibSkipped++;
+                    break;
+                }
                 if (!execute(p[0] | uint64_t(p[1]) << 32, p[2], depth + 1)) {
                     return false;
                 }
@@ -1998,6 +2215,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
             case CP_LOAD_STATE6_FRAG:
             case CP_LOAD_STATE6_GEOM:
             case CP_LOAD_STATE6:
+                stats_.cpLoads++;
                 if (!loadState(h.opcode, p, h.count)) {
                     return false;
                 }
@@ -2008,9 +2226,17 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     return false;
                 }
                 // RM6_DIRECT_RENDER begins a sysmem pass (tu_cmd_buffer.cc:2130-2131; fd6_gmem.cc:2041-2042): a draw before it has no pass
+                // the mode draw-state groups are held to: binning under RM6_BIN_VISIBILITY, sysmem under
+                // RM6_DIRECT_RENDER, GMEM under every other marker
+                cpMode_ = fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_VISIBILITY   ? CP_SET_DRAW_STATE__0_BINNING
+                          : fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_DIRECT_RENDER ? CP_SET_DRAW_STATE__0_SYSMEM
+                                                                                                                                 : CP_SET_DRAW_STATE__0_GMEM;
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_DIRECT_RENDER) {
                     passBegun_ = true;
                     inTile_ = false;
+                    binned_ = false;
+                    tileOrdinal_ = ~0u;
+                    drawOrdinal_ = 0;
                     stats_.passes++;
                 }
                 // the binning pass: within a pass begun, before its tiles
@@ -2020,6 +2246,12 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                         return false;
                     }
                     binning_ = true;
+                    binned_ = true;
+                    binnedDraws_.clear();
+                    bodyOrder_.clear();
+                    bodySeen_.clear();
+                    definedAt_.clear();
+                    drawOrdinal_ = 0;
                     stats_.binningPasses++;
                 }
                 // a GMEM tile: within a pass begun (the head's marker), ended by RM6_BIN_RENDER_END before the next
@@ -2028,19 +2260,33 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                         fault("RM6_BIN_RENDER_START outside a pass, inside a tile, or without USES_GMEM");
                         return false;
                     }
+                    // (fd6 lets every draw-state group go after the binning pass and after each tile's draws,
+                    // fd6_gmem.cc:1133-1135 and :2199-2201: a tile begins with none set, and its draws set their own)
+                    for (const Group& g : groups_) {
+                        if (g.enabled) {
+                            fault("a tile begun with a draw-state group still set from the binning pass or the tile before: CP_SET_DRAW_STATE lets them all go after each");
+                            return false;
+                        }
+                    }
                     inTile_ = true;
                     binning_ = false;
+                    tileReset();
+                    tileStreams_ = false;
+                    tileOrdinal_ = tilesInSubmission_++;
+                    drawOrdinal_ = 0;
                     stats_.tiles++;
                     // (GMEM holds whatever the last tile left; a pattern no target here holds, so a store without its load shows)
                     std::fill(gmem_.begin(), gmem_.end(), uint8_t(0xcd));
                 }
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_END_OF_DRAWS && binQueued_ != 0) binQueued_--;
+                if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_END_OF_DRAWS) skipActive_ = false;
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_RENDER_END) {
                     if (!inTile_) {
                         fault("RM6_BIN_RENDER_END outside a tile");
                         return false;
                     }
                     inTile_ = false;
+                    tileOrdinal_ = ~0u;
                 }
                 break;
             case CP_SET_BIN_DATA5_OFFSET: {
@@ -2059,6 +2305,30 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 binQueued_++;
                 stats_.binData++;
+                // The streams are a pipe's, the tile one of its bins (VSC_N): where VSC_PIPE_CONFIG put the pipe and
+                // VSC_BIN_SIZE the bins, from the window's origin. A tile drawn anywhere else is given the draws of
+                // another rectangle than the one it draws -- no fault on the phone, draws missing at its edges.
+                {
+                    const uint32_t pipe = p[2] / 4, slot = (p[0] >> 22) & 0x1f, size = (p[0] >> 16) & 0x3f;
+                    const uint32_t config = reg(REG_A6XX_VSC_PIPE_CONFIG_REG + pipe);
+                    const uint32_t px = config & 0x3ff, py = config >> 10 & 0x3ff, pw = config >> 20 & 0x3f, ph = config >> 26 & 0x3f;
+                    const uint32_t vbw = (reg(REG_A6XX_VSC_BIN_SIZE) & 0xff) << 5, vbh = (reg(REG_A6XX_VSC_BIN_SIZE) >> 8 & 0x1ff) << 4;
+                    uint32_t binW = 0, binH = 0, win[4] = {};
+                    if (!tileState(&binW, &binH, win)) return false;
+                    if (pipe >= kNumVscPipes || p[2] % 4 != 0 || pw == 0 || ph == 0 || size != pw * ph || slot >= size) {
+                        fault(text("CP_SET_BIN_DATA5_OFFSET: bin %llu of %llu in ", slot, size) + text("pipe %llu, which VSC_PIPE_CONFIG made of %llu bins", pipe, pw * ph));
+                        return false;
+                    }
+                    const uint32_t bx = (px + slot % pw) * vbw, by = (py + slot / pw) * vbh;
+                    if (vbw != binW || vbh != binH || win[0] != bx || win[1] != by) {
+                        fault(text("a tile at (%llu, %llu) ", win[0], win[1]) + text("of %llu x %llu ", binW, binH) + text("given the streams of the bin at (%llu, %llu) ", bx, by) +
+                              text("of %llu x %llu: the VSC bins from the window's origin", vbw, vbh));
+                        return false;
+                    }
+                    tileReset();
+                    tileStreams_ = true;
+                    tileBin_[0] = bx, tileBin_[1] = by, tileBin_[2] = bx + vbw - 1, tileBin_[3] = by + vbh - 1;
+                }
                 break;
             }
             case CP_COND_WRITE5: {
@@ -2082,22 +2352,29 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
             case CP_SKIP_IB2_ENABLE_GLOBAL:
             case CP_SKIP_IB2_ENABLE_LOCAL:
             case CP_SET_VISIBILITY_OVERRIDE:
-                // one word each (tu_cmd_buffer.cc:2134-2142); what they do the XML does not say, so nothing is judged of the value
+                // one word each (tu_cmd_buffer.cc:2134-2142), its low bit what counts; what each does is the microcode's
+                // (fake_gpu.hpp: the CP's state)
                 if (h.count != 1) {
                     fault(text("opcode 0x%02llx of %llu words, not 1", h.opcode, h.count));
                     return false;
                 }
+                if (h.opcode == CP_SET_MODE) sdsMode_ = sdsImmediate_ = (p[0] & 1) != 0;
+                if (h.opcode == CP_SET_VISIBILITY_OVERRIDE) {
+                    visOverride_ = (p[0] & 1) != 0;
+                    sdsImmediate_ = false;
+                }
+                if (h.opcode == CP_SKIP_IB2_ENABLE_GLOBAL || h.opcode == CP_SKIP_IB2_ENABLE_LOCAL) {
+                    (h.opcode == CP_SKIP_IB2_ENABLE_GLOBAL ? skipGlobal_ : skipLocal_) = (p[0] & 1) != 0;
+                    // (with nothing left visible the two together take effect at once: inside an indirect buffer it is left)
+                    skipActive_ = streamEnded_ && skipGlobal_ && skipLocal_;
+                    if (skipActive_ && depth == 1) leaveIb_ = true;
+                }
                 break;
-            case CP_SET_DRAW_STATE: {
-                // only the 3-word disable-all form both batch starts send (fd6_emit_restore; tu_disable_draw_states): this
-                // driver writes its registers directly, and a state group with an address would apply at the draw over them
-                if (h.count != 3 || (p[0] & CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS) == 0 ||
-                    fieldOf(p[0], CP_SET_DRAW_STATE__0_COUNT__MASK, CP_SET_DRAW_STATE__0_COUNT__SHIFT) != 0 || p[1] != 0 || p[2] != 0) {
-                    fault("draw-state groups are not what this GPU model runs: registers are written directly (only CP_SET_DRAW_STATE's 3-word disable-all form is taken)");
+            case CP_SET_DRAW_STATE:
+                if (!setDrawState(p, h.count)) {
                     return false;
                 }
                 break;
-            }
             case CP_DRAW_INDIRECT_MULTI: {
                 // one draw (DRAW_COUNT 1), its words read from memory as the packet runs (tu_CmdDrawIndirect's layout:
                 // Vulkan's draw commands, Metal's indirect arguments): the CP sets VFD_INDEX_OFFSET and
@@ -2107,6 +2384,11 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 if ((op != INDIRECT_OP_NORMAL && !indexed) || h.count != (indexed ? 9u : 6u) || p[2] != 1) {
                     fault(text("CP_DRAW_INDIRECT_MULTI of %llu words, opcode %llu, draw count %llu: one draw, NORMAL in 6 words or INDEXED in 9", h.count, op, p[2]));
                     return false;
+                }
+                {
+                    const int runs = drawRuns(p[0], depth);
+                    if (runs < 0 || (runs > 0 && !runGroups())) return false;
+                    if (runs == 0) break;
                 }
                 const uint64_t a = indexed ? (p[6] | uint64_t(p[7]) << 32) : (p[3] | uint64_t(p[4]) << 32);
                 const uint8_t* m = at(a, indexed ? 20 : 16);
@@ -2124,20 +2406,27 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     regs_[REG_A6XX_VFD_INSTANCE_START_OFFSET] = w[4];
                     uint32_t d[7] = {p[0], w[1], w[0], 0, uint32_t(base), uint32_t(base >> 32), w[2] <= p[5] ? p[5] - w[2] : 0};
                     if (!execDraw(d, 7)) return false;
+                    logDraw(binning_);
                 } else {
                     // vertexCount, instanceCount, firstVertex, firstInstance
                     regs_[REG_A6XX_VFD_INDEX_OFFSET] = w[2];
                     regs_[REG_A6XX_VFD_INSTANCE_START_OFFSET] = w[3];
                     uint32_t d[3] = {p[0], w[1], w[0]};
                     if (!execDraw(d, 3)) return false;
+                    logDraw(binning_);
                 }
                 break;
             }
-            case CP_DRAW_INDX_OFFSET:
+            case CP_DRAW_INDX_OFFSET: {
+                const int runs = h.count != 0 ? drawRuns(p[0], depth) : 1;
+                if (runs < 0 || (runs > 0 && !runGroups())) return false;
+                if (runs == 0) break;
                 if (!execDraw(p, h.count)) {
                     return false;
                 }
+                logDraw(binning_);
                 break;
+            }
             case CP_BLIT:
                 if (!execBlit(p, h.count)) {
                     return false;
@@ -2349,6 +2638,15 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         }
         lastWasWfi_ = h.kind == pm4::Header::kCommand && h.opcode == pm4::kWaitForIdle;
         i += 1 + h.count;
+        // nothing left visible with both skips on: the indirect buffer being read is left where it is (the microcode
+        // drops the rest of it and goes back a level; in the stream itself there is nothing to leave)
+        if (leaveIb_) {
+            leaveIb_ = false;
+            if (depth == 1 && i < words) {
+                stats_.ibEarlyReturns++;
+                return true;
+            }
+        }
     }
     return true;
 }
@@ -2378,6 +2676,14 @@ void FakeGpu::run(const Job& job) {
     gfxIbosFrom_ = 0;
     gfxIboUnits_ = 0;
     passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = inTile_ = binning_ = false;
+    // (the command processor's own state: what the kernel's ring leaves a submission to start from is not modelled
+    // beyond this -- no group, no skip, no streams)
+    visOverride_ = skipGlobal_ = skipLocal_ = skipActive_ = sdsMode_ = sdsImmediate_ = streamEnded_ = leaveIb_ = binned_ = tileStreams_ = inGroup_ = false;
+    cpMode_ = a6xx::CP_SET_DRAW_STATE__0_SYSMEM;
+    for (Group& g : groups_) g = Group{};
+    binnedDraws_.clear();
+    drawIndex_ = drawOrdinal_ = tilesInSubmission_ = 0;
+    tileOrdinal_ = ~0u;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();
     bool ok = execute(job.address, job.words, 0);
@@ -2539,6 +2845,13 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
         Job job{++submitted_, c.iova + cmd->submit_offset, cmd->size / 4};
         s->fence = job.fence;
+        if (submitHook != nullptr) {
+            named_.clear();
+            for (uint32_t i = 0; i < s->nr_bos; i++) {
+                if (i != cmd->submit_idx) named_.push_back(Named{buffers_.at(bos[i].handle).iova, bos[i].flags});
+            }
+            submitHook(*this, job.address, job.words, submitHookContext);
+        }
         // (a wedged GPU still takes submissions, as the kernel's ring does until it is full: they are never run)
         if (wedged_) {
             return 0;

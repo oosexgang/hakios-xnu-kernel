@@ -268,7 +268,10 @@ std::shared_ptr<Buffer> CommandQueue::vscBuffer(std::string* why) {
 void CommandQueue::checkVsc() {
     std::lock_guard<std::mutex> g(lock_);
     if (vsc_ == nullptr || vsc_->contents() == nullptr) return;
-    const uint32_t word = *reinterpret_cast<const volatile uint32_t*>(static_cast<const uint8_t*>(vsc_->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt);
+    // (where render::encodeGmem tells the command processor to put it: past the draw streams of the chip's own number
+    // of pipes -- 32 on the A635, 16 on the A610, where a fixed 32 read a primitive stream's words instead and an
+    // overrun went unseen)
+    const uint32_t word = *reinterpret_cast<const volatile uint32_t*>(static_cast<const uint8_t*>(vsc_->contents()) + render::vscOverflowWordAt());
     if (word != 0) vscOverflowed_ = true;
 }
 
