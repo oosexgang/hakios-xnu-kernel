@@ -18,6 +18,8 @@ darwin/userland/obj27/
 
 # what tools/boards.py gen writes (the tables the code is built with, for the boards that are there)
 /build/
+# the userland's own builds (userland/tools/air/mk-host.sh: Mesa for this machine)
+/userland/build/
 # device packages brought in with tools/device.py: they are kept on the devices branch, not here
 /devices/*/
 !/devices/_template/
