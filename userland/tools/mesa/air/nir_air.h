@@ -123,6 +123,16 @@ struct air_resource {
 
    /* nothing in the shader, once specialized, reads it: a runtime need not bind it */
    bool unused;
+
+   /* An image the shader writes at one mip level other than the base (Metal's
+    * texture.write(value, coord, lod)): the level itself, or -- level_from_buffer -- the
+    * level_bytes-byte unsigned word at byte level_offset of the constant buffer bound at
+    * Metal index level_buffer, which the runtime reads when it binds the image and binds
+    * the view at. The shader writes level 0 of that view. All zero: the base level. */
+   unsigned level;
+   bool level_from_buffer;
+   unsigned level_buffer, level_offset, level_bytes;
+   bool level_written;   /* (the translator's: a write has decided the level) */
 };
 
 /* the type a vertex attribute is read as: its format converts to this */

@@ -1672,6 +1672,120 @@ tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_
    return true;
 }
 
+/*
+ * WHICH MIP LEVEL a write goes to, as a place rather than a number: a constant, or a word a constant
+ * buffer holds -- through casts of it, and an element of a vector loaded from it. MercuryPoster's
+ * VariableBlurrer (the lock screen's blurred wallpapers) writes each level of its chain with
+ *
+ *   %7 = load <2 x i16>, ptr addrspace(2) %3          ; its uniforms: [[buffer(0)]]
+ *   %8 = extractelement <2 x i16> %7, i64 1
+ *   call void @air.write_texture_2d.i16.v4f16(ptr addrspace(1) %1, <2 x i16> %2, <4 x half> %30, i16 %8, i32 2)
+ *
+ * and Gallium binds an image at one level (pipe_image_view.u.tex.level), with no level in the
+ * store; so the level is taken where it is: at the bind (air_metal.c reads the word), and the
+ * store writes level 0 of a view made at it.
+ */
+struct air_level_place {
+   bool constant;
+   uint64_t value;
+   unsigned buffer, offset, bytes;
+};
+
+static bool
+level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place *out)
+{
+   uint64_t k;
+   if (air_const_uint(v, &k)) {
+      *out = (struct air_level_place){ .constant = true, .value = k };
+      return true;
+   }
+   unsigned elem = 0;
+   bool have_elem = false;
+   for (;;) {
+      if (v->kind != AIR_VALUE_INSTRUCTION)
+         return false;
+      const struct air_inst *in = (const struct air_inst *)v;
+      if (in->op == AIR_OP_CAST && (in->sub == AIR_CAST_TRUNC || in->sub == AIR_CAST_ZEXT ||
+                                    in->sub == AIR_CAST_SEXT) && !have_elem) {
+         v = in->operands[0];
+         continue;
+      }
+      if (in->op == AIR_OP_EXTRACTELT && !have_elem) {
+         if (!air_const_uint(in->operands[1], &k))
+            return false;
+         elem = (unsigned)k;
+         have_elem = true;
+         v = in->operands[0];
+         continue;
+      }
+      if (in->op != AIR_OP_LOAD)
+         return false;
+      const struct air_type *t = in->base.type;
+      const struct air_type *st = t->kind == AIR_TYPE_VECTOR ? t->elem : t;
+      if (!st || st->kind != AIR_TYPE_INT || st->bits % 8 || st->bits > 32 ||
+          (have_elem != (t->kind == AIR_TYPE_VECTOR)))
+         return false;
+      struct air_val *p = air_get(c, in->operands[0]);
+      if (!p || p->kind != AIR_VAL_PTR || p->ptr.class != AIR_PTR_UBO ||
+          (p->ptr.offset && !nir_src_is_const(nir_src_for_ssa(p->ptr.offset))))
+         return false;
+      unsigned off = p->ptr.offset ? (unsigned)nir_src_as_uint(nir_src_for_ssa(p->ptr.offset)) : 0;
+      *out = (struct air_level_place){
+         .buffer = p->ptr.binding, .offset = off + elem * st->bits / 8, .bytes = st->bits / 8,
+      };
+      return true;
+   }
+}
+
+static bool
+level_place_equal(const struct air_level_place *a, const struct air_level_place *b)
+{
+   return a->constant == b->constant &&
+          (a->constant ? a->value == b->value
+                       : a->buffer == b->buffer && a->offset == b->offset && a->bytes == b->bytes);
+}
+
+static struct air_resource *
+image_resource(struct air_ctx *c, unsigned binding)
+{
+   for (unsigned i = 0; c->info && i < c->info->num_resources; i++)
+      if (c->info->resources[i].kind == AIR_RESOURCE_IMAGE && c->info->resources[i].index == binding)
+         return &c->info->resources[i];
+   return NULL;
+}
+
+/* The image is bound at this level -- as a write or a size query has already said, or from now on.
+ * One view, one level: a shader naming two is refused. */
+static bool image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level_place *lp,
+                           const char *what);
+
+/* the level an image is written at, as its resource says (zero: the base level) */
+static struct air_level_place
+image_level(const struct air_resource *r)
+{
+   if (r && r->level_from_buffer)
+      return (struct air_level_place){ .buffer = r->level_buffer, .offset = r->level_offset,
+                                       .bytes = r->level_bytes };
+   return (struct air_level_place){ .constant = true, .value = r ? r->level : 0 };
+}
+
+static bool
+image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level_place *lp,
+               const char *what)
+{
+   struct air_level_place had = image_level(r);
+   if (r->level_written && !level_place_equal(&had, lp))
+      return air_error(c, "intrinsic: air.%s at a second mip level of image %u, which is bound "
+                          "at one", what, r->index);
+   r->level_written = true;
+   r->level = lp->constant ? (unsigned)lp->value : 0;
+   r->level_from_buffer = !lp->constant;
+   r->level_buffer = lp->buffer;
+   r->level_offset = lp->offset;
+   r->level_bytes = lp->bytes;
+   return true;
+}
+
 /* the { value, residency } struct these return */
 static void
 set_tex_result(struct air_ctx *c, const struct air_inst *in, nir_def *value)
@@ -1955,7 +2069,16 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          res = query_texture(c, &tex, &t, nir_texop_query_levels, NULL, 1);
       } else {
          nir_def *lod = nir_imm_int(&c->b, 0);
-         if (in->num_operands > arg) {
+         struct air_level_place lp;
+         struct air_resource *ir = tex.is_image ? image_resource(c, tex.binding) : NULL;
+         /* An image's size at a level other than the base is the size of a view made at that
+          * level, which is then the level the image is bound at (image_at_level): its own
+          * level 0. VariableBlurrer asks for the size of the level it writes, before it writes. */
+         bool at_view = ir && in->num_operands > arg && level_place(c, in->operands[arg], &lp) &&
+                        !(lp.constant && lp.value == 0);
+         if (at_view && !image_at_level(c, ir, &lp, n->part[0]))
+            return false;
+         if (in->num_operands > arg && !at_view) {
             nir_def *given = air_get_ssa(c, in->operands[arg]);
             if (!given)
                return false;
@@ -1984,15 +2107,20 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       nir_def *value = air_get_ssa(c, in->operands[arg++]);
       if (!value)
          return false;
-      uint64_t lod;
-      if (!tex_flag(c, in, arg, &lod))
-         return false;
-      if (lod != 0)
-         return air_error(c, "intrinsic: air.%s to mip level %u (only 0 is handled)",
-                          n->part[0], (unsigned)lod);
       if (!tex.is_image)
          return air_error(c, "intrinsic: air.%s to a texture the interface says is not "
                              "written", n->part[0]);
+      /* the level: the view's, which the resource records (level_place) */
+      struct air_level_place lp;
+      if (!level_place(c, in->operands[arg], &lp))
+         return air_error(c, "intrinsic: air.%s to a mip level the shader computes, where "
+                             "an image is bound at one level", n->part[0]);
+      struct air_resource *r = image_resource(c, tex.binding);
+      if (!r)
+         return air_error(c, "intrinsic: air.%s to image %u, which has no resource",
+                          n->part[0], tex.binding);
+      if (!image_at_level(c, r, &lp, n->part[0]))
+         return false;
       nir_image_store(&c->b, nir_imm_int(&c->b, tex.binding),
                       nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                       nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),

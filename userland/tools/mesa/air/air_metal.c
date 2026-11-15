@@ -4317,6 +4317,48 @@ struct rwa_bound {
  * shadow texture instruction reads, which is what decides, per slot, which of a
  * sampler's two state objects is bound.
  */
+/*
+ * The mip level an image is bound at (air_resource.level): the shader's constant, or the word it
+ * reads the level from in a constant buffer of this same dispatch -- read here, where the buffer is
+ * bound, through its mapping. A buffer that is not bound, or not mapped, or too short for the word,
+ * or a level the texture has not got, is refused by name: the view would be of the wrong level or
+ * of none, and the write would land in a picture nobody reads.
+ */
+static int
+image_view_level(const struct air_resource *r, const struct rwa_bindings *bindings,
+                 const struct rwa_buffer_bind *table, unsigned table_count,
+                 const struct rwa_texture *t, const char *name, unsigned *level, char *why,
+                 size_t why_size)
+{
+   *level = r->level;
+   if (r->level_from_buffer) {
+      const struct rwa_buffer *b = bindings->buffers && r->level_buffer < bindings->buffer_count
+                                      ? bindings->buffers[r->level_buffer] : NULL;
+      size_t at = r->level_offset;
+      if (table && r->level_buffer < table_count && table[r->level_buffer].buffer) {
+         b = table[r->level_buffer].buffer;
+         at += table[r->level_buffer].offset;
+      }
+      if (!b || !b->map || at + r->level_bytes > b->size || r->level_bytes > 4) {
+         say(why, why_size, "%s writes image %u at the mip level in bytes %u..%u of buffer %u, "
+                            "and %s", name, r->index, r->level_offset,
+             r->level_offset + r->level_bytes - 1, r->level_buffer,
+             !b ? "nothing is bound there" : !b->map ? "that buffer is not mapped"
+                                                     : "the buffer is shorter than that");
+         return -1;
+      }
+      uint32_t v = 0;
+      memcpy(&v, (const uint8_t *)b->map + at, r->level_bytes);
+      *level = v;
+   }
+   if (*level > t->res->last_level) {
+      say(why, why_size, "%s writes image %u at mip level %u, and the %s bound there has %u",
+          name, r->index, *level, t->format_name, t->res->last_level + 1);
+      return -1;
+   }
+   return 0;
+}
+
 static int
 bind_stage(struct rwa_device *device, mesa_shader_stage stage,
            const struct air_shader_info *info, void **own_sampler,
@@ -4543,7 +4585,11 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
          num_views = MAX2(num_views, r->index + 1);
          break;
 
-      case AIR_RESOURCE_IMAGE:
+      case AIR_RESOURCE_IMAGE: {
+         unsigned level = 0;
+         if (t && image_view_level(r, bindings, table, table_count, t, name, &level, why,
+                                   why_size) != 0)
+            return -1;
          images[r->index] = (struct pipe_image_view){
             .resource = t->res,
             .format = TEXFMT(t),
@@ -4554,13 +4600,14 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
                       (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
             .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                              (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
-            .u.tex.level = 0,
+            .u.tex.level = level,
             .u.tex.first_layer = 0,
-            .u.tex.last_layer = (t->shape.type == RWA_TYPE_3D ? t->res->depth0
+            .u.tex.last_layer = (t->shape.type == RWA_TYPE_3D ? u_minify(t->res->depth0, level)
                                                               : t->layers) - 1,
          };
          num_images = MAX2(num_images, r->index + 1);
          break;
+      }
 
       case AIR_RESOURCE_SAMPLER:
          if (r->inline_sampler) {
