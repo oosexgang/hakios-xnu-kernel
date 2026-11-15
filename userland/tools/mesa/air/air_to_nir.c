@@ -1884,6 +1884,19 @@ translate_argument_buffer(struct air_ctx *c, const struct air_md *node, unsigned
                        name ? name : "unnamed", (unsigned)span);
    md_key_int(node, "air.buffer_size", &size);
 
+   /* An argument buffer the compiler marks air.arg_unused is read nowhere in the function,
+    * and is declared nowhere either: no set for the runtime to resolve, no member taking a
+    * binding. VFX's shaders pass the whole scene's state to every one of them and most read
+    * a part of it -- 66 of its refusals were a `global_constants` set nothing reads, whose
+    * struct type an opaque-pointer module has no reason to keep. A null pointer stands for
+    * it, which reads zero, as a parameter a predicate leaves out does.
+    */
+   if (md_key(node, "air.arg_unused") >= 0) {
+      c->params[param] = air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE,
+                                                          .pointee = c->fn->args[param].type->elem });
+      return true;
+   }
+
    const struct air_md *sti = md_key_node(node, "air.struct_type_info");
    if (!sti)
       return air_error(c, "interface: an argument buffer (%s) with no "
