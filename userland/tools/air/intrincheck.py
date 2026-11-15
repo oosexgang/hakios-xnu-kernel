@@ -432,6 +432,26 @@ def _hyperbolic(f, odd):
     return g
 
 
+def _domain(f, lo, hi):
+    """A function that is NaN outside [lo, hi] rather than absent, as _inverse_trig."""
+    def g(x):
+        if math.isnan(x):
+            return x
+        if x < lo or x > hi:
+            return float("nan")
+        return f(x)
+    return g
+
+
+def _atanh(x):
+    """atanh: +-inf at +-1 (C's answer, where Python raises) and NaN past them."""
+    if math.isnan(x) or abs(x) > 1.0:
+        return float("nan")
+    if abs(x) == 1.0:
+        return math.copysign(float("inf"), x)
+    return math.atanh(x)
+
+
 def _ldexp(x, n):
     try:
         return math.ldexp(x, n)
@@ -487,6 +507,12 @@ OPS = {
     "sinh":        (1, _hyperbolic(math.sinh, True), False),
     "cosh":        (1, _hyperbolic(math.cosh, False), False),
     "tanh":        (1, math.tanh, False),
+    # and their inverses, as logarithms with the same two guards (the argument
+    # itself near zero, ln(2|x|) for a large one): Darwin 27's MLX and
+    # MLCompute call them; no module of Darwin 16.5's does
+    "asinh":       (1, math.asinh, False),
+    "acosh":       (1, _domain(math.acosh, 1.0, float("inf")), False),
+    "atanh":       (1, _atanh, False),
     "exp":         (1, math.exp, False),
     "exp2":        (1, lambda x: math.pow(2.0, x), False),
     "exp10":       (1, lambda x: math.pow(10.0, x), False),
