@@ -6820,6 +6820,15 @@ struct rwa_render {
     */
    void *vs_cso, *fs_cso;
    void *blend, *dsa, *rast, *rast_scissor, *velem;
+   /* the raster states draws asked for beyond those two (cull, winding, fill, depth clamp and
+    * bias: rwa_draw), made the first time each is asked for and kept, with the key they were
+    * made from */
+   struct rwa_rast_entry {
+      struct pipe_rasterizer_state key;
+      void *cso;
+   } rast_cache[8];
+   unsigned rast_cached;
+   bool rast_halfz, rast_multisample;   /* what the pipeline's own two were made with */
    struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
 
    /* What the vertex descriptor was turned into, empty for a stage that fetches no
@@ -7877,6 +7886,64 @@ blend_state_from_metal(const struct rwa_render_shape *shape, struct pipe_screen 
    return true;
 }
 
+/*
+ * The raster state of a draw that asks for more than the pipeline's two (rwa_draw: cull mode,
+ * winding, fill mode, depth clamp, depth bias), made once per distinct ask and kept with the
+ * pipeline -- a 3D pass asks for one or two of them over and over.
+ *
+ * THE WINDING IS AS METAL SEES IT, IN THE ATTACHMENT, and it is Gallium's own sense: front_ccw
+ * is set for Metal's counter-clockwise, the viewport's flip of y to Metal's top-left origin
+ * (rwa_render_draw) notwithstanding. Measured, not argued -- the first reading was that the flip
+ * reverses it, and tools/air/rastcheck.sh, which draws one triangle each way round with each
+ * face culled, came back with every case the wrong way round.
+ */
+static void *
+raster_state_for(struct rwa_render *render, const struct rwa_draw *draw, char *why, size_t why_size)
+{
+   struct pipe_context *pipe = render->device->pipe;
+   struct pipe_rasterizer_state key = {
+      .half_pixel_center = 1, .bottom_edge_rule = 1,
+      .clip_halfz = render->rast_halfz, .multisample = render->rast_multisample,
+      .scissor = draw->scissor != NULL,
+      .cull_face = draw->cull_mode == 1 ? PIPE_FACE_FRONT
+                 : draw->cull_mode == 2 ? PIPE_FACE_BACK : PIPE_FACE_NONE,
+      .front_ccw = draw->winding == 1,
+      .fill_front = draw->fill_mode == 1 ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL,
+      .fill_back = draw->fill_mode == 1 ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL,
+      .depth_clip_near = !draw->depth_clamp, .depth_clip_far = !draw->depth_clamp,
+      .depth_clamp = draw->depth_clamp != 0,
+   };
+   if (draw->depth_bias != 0.0f || draw->depth_slope_scale != 0.0f) {
+      /* Metal's bias is in the depth buffer's smallest steps, as Gallium's offset_units is
+       * for a fixed-point depth buffer and twice it for a float one: freedreno and softpipe
+       * both scale units by the format's minimum resolvable difference */
+      key.offset_tri = key.offset_line = key.offset_point = 1;
+      key.offset_units = draw->depth_bias;
+      key.offset_scale = draw->depth_slope_scale;
+      key.offset_clamp = draw->depth_bias_clamp;
+   }
+   for (unsigned i = 0; i < render->rast_cached; i++)
+      if (!memcmp(&render->rast_cache[i].key, &key, sizeof(key)))
+         return render->rast_cache[i].cso;
+   void *cso = pipe->create_rasterizer_state(pipe, &key);
+   if (!cso) {
+      say(why, why_size, "%s would not make a raster state for this draw",
+          rwa_device_name(render->device));
+      return NULL;
+   }
+   if (render->rast_cached == ARRAY_SIZE(render->rast_cache)) {
+      /* the oldest goes: a pipeline that asks for more than eight is rare enough */
+      pipe->delete_rasterizer_state(pipe, render->rast_cache[0].cso);
+      memmove(&render->rast_cache[0], &render->rast_cache[1],
+              sizeof(render->rast_cache[0]) * (ARRAY_SIZE(render->rast_cache) - 1));
+      render->rast_cached--;
+   }
+   render->rast_cache[render->rast_cached].key = key;
+   render->rast_cache[render->rast_cached].cso = cso;
+   render->rast_cached++;
+   return cso;
+}
+
 unsigned
 rwa_render_patch_vertices(const struct rwa_render *render)
 {
@@ -8314,6 +8381,8 @@ rwa_render_create(struct rwa_device *device,
     * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
     * honest state for a multisample pass and not the thing that turns multisampling on.
     */
+   render->rast_halfz = zs_format != 0;
+   render->rast_multisample = samples > 1;
    render->rast = device->pipe->create_rasterizer_state(device->pipe,
       &(struct pipe_rasterizer_state){
          .cull_face = PIPE_FACE_NONE, .half_pixel_center = 1, .bottom_edge_rule = 1,
@@ -8473,6 +8542,8 @@ rwa_render_destroy(struct rwa_render *render)
    }
    if (render->rast_scissor)
       pipe->delete_rasterizer_state(pipe, render->rast_scissor);
+   for (unsigned i = 0; i < render->rast_cached; i++)
+      pipe->delete_rasterizer_state(pipe, render->rast_cache[i].cso);
    if (render->velem) {
       /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
        * a reference of its own to whatever is bound there (set_vertex_buffers took it),
@@ -8897,8 +8968,14 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
    pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
       .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                      (uint8_t)(draw->stencil_reference[1] & 0xff) } });
-   pipe->bind_rasterizer_state(pipe, draw->scissor && render->rast_scissor ? render->rast_scissor
-                                                                           : render->rast);
+   void *rast = draw->scissor && render->rast_scissor ? render->rast_scissor : render->rast;
+   if (draw->cull_mode || draw->winding || draw->fill_mode || draw->depth_clamp ||
+       draw->depth_bias != 0.0f || draw->depth_slope_scale != 0.0f) {
+      rast = raster_state_for(render, draw, why, why_size);
+      if (!rast)
+         return -1;
+   }
+   pipe->bind_rasterizer_state(pipe, rast);
    pipe->bind_vs_state(pipe, render->vs_cso);
    pipe->bind_fs_state(pipe, render->fs_cso);
 

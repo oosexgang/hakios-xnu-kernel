@@ -1451,6 +1451,22 @@ struct rwa_draw {
 	 */
 	const unsigned *color_level;
 	const unsigned *color_layer;
+
+	/*
+	 * The encoder's raster state, which Metal keeps per draw and this contract dropped
+	 * (every draw was two-sided, filled, clipped and unbiased): -setCullMode: (MTLCullMode:
+	 * 0 none, 1 front, 2 back), -setFrontFacingWinding: (MTLWinding: 0 clockwise, 1
+	 * counter-clockwise, as the triangle is SEEN in the attachment, Metal's sense),
+	 * -setTriangleFillMode: (MTLTriangleFillMode: 0 fill, 1 lines), -setDepthClipMode:
+	 * (MTLDepthClipMode: 0 clip, 1 clamp) and -setDepthBias:slopeScale:clamp:. All zero
+	 * is what every draw was given before these fields were here. At the END of the
+	 * struct, so that nothing before them moves.
+	 */
+	unsigned cull_mode;
+	unsigned winding;
+	unsigned fill_mode;
+	unsigned depth_clamp;
+	float depth_bias, depth_slope_scale, depth_bias_clamp;
 };
 
 int rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
