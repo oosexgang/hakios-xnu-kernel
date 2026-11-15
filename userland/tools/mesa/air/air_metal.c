@@ -862,11 +862,36 @@ scratch_to_temp_array(nir_shader *nir)
          if (!load && intr->intrinsic != nir_intrinsic_store_scratch)
             continue;
          nir_def *value = load ? NULL : intr->src[0].ssa;
-         if ((load ? intr->def.bit_size : value->bit_size) != 32)
+         unsigned bits = load ? intr->def.bit_size : value->bit_size;
+         if (bits != 32 && bits != 64)
             continue;
          b.cursor = nir_before_instr(instr);
          nir_def *word = nir_ushr_imm(&b, intr->src[load ? 0 : 1].ssa, 2);
          nir_deref_instr *base = nir_build_deref_var(&b, arr);
+         if (bits == 64) {
+            /* a 64-bit value as two words, low first (RealityKit's fsImageColorPresentation
+             * zeroes a struct of them, and nir_to_tgsi stopped at the store_scratch left) */
+            unsigned n = load ? intr->def.num_components : value->num_components;
+            unsigned mask = load ? 0 : nir_intrinsic_write_mask(intr);
+            nir_def *comps[4];
+            for (unsigned k = 0; k < n; k++) {
+               nir_deref_instr *lo = nir_build_deref_array(&b, base, nir_iadd_imm(&b, word, 2 * k));
+               nir_deref_instr *hi = nir_build_deref_array(&b, base, nir_iadd_imm(&b, word, 2 * k + 1));
+               if (load) {
+                  comps[k] = nir_pack_64_2x32_split(&b, nir_load_deref(&b, lo), nir_load_deref(&b, hi));
+               } else if (mask & (1u << k)) {
+                  nir_def *v = nir_channel(&b, value, k);
+                  nir_store_deref(&b, lo, nir_unpack_64_2x32_split_x(&b, v), 1);
+                  nir_store_deref(&b, hi, nir_unpack_64_2x32_split_y(&b, v), 1);
+               }
+            }
+            if (load)
+               nir_def_replace(&intr->def, nir_vec(&b, comps, n));
+            else
+               nir_instr_remove(instr);
+            progress = true;
+            continue;
+         }
          if (load) {
             nir_def *comps[4];
             for (unsigned k = 0; k < intr->def.num_components; k++)
