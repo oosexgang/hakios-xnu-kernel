@@ -47,6 +47,10 @@ $DYN -dynamiclib -install_name /redwood/lib/libhakios-mescal.dylib -framework Fo
 $DYN -O2 -fblocks -dynamiclib -install_name /redwood/lib/libhakios-kc.dylib -framework CoreFoundation \
 	-framework Security -lobjc -o "$O/libhakios-kc.dylib" "$RN/userland/inject_kc.c"
 $DYN -fblocks -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -framework Foundation -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
+# hactivation: inside mobileactivationd, make MobileGestalt read as a development-fused part so the daemon
+# short-circuits activation state to "Activated" (ported from 16.5; unblocked the App Store there). The
+# never-set-up device is otherwise Unactivated, which a real browsing iPhone never is. (root26 INJECT_MORE)
+$DYN -fblocks -dynamiclib -install_name /redwood/lib/libhakios-mad.dylib -framework CoreFoundation -lobjc -Wl,-undefined,dynamic_lookup -o "$O/libhakios-mad.dylib" "$RN/userland/inject_mad.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-ios.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"
