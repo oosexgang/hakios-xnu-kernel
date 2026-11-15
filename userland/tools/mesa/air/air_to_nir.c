@@ -849,6 +849,21 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
                              "type"), NULL;
       break;
    case AIR_PTR_CONSTANT_DATA:
+      /* at an offset known here, the numbers themselves, for NIR to fold as it did when the
+       * static initializers' values were read (air_static_value) */
+      if (nir_src_is_const(nir_src_for_ssa(off)) && bits % 8 == 0 &&
+          nir_src_as_uint(nir_src_for_ssa(off)) + comps * bits / 8 <= c->nir->constant_data_size) {
+         const uint8_t *at = (const uint8_t *)c->nir->constant_data +
+                             nir_src_as_uint(nir_src_for_ssa(off));
+         nir_const_value v[NIR_MAX_VEC_COMPONENTS];
+         for (unsigned i = 0; i < comps; i++) {
+            uint64_t u = 0;
+            memcpy(&u, at + i * bits / 8, bits / 8);
+            v[i] = nir_const_value_for_raw_uint(u, bits);
+         }
+         res = nir_build_imm(&c->b, comps, bits, v);
+         break;
+      }
       res = nir_load_constant(&c->b, comps, bits, off, .base = 0, .range = c->nir->constant_data_size,
                               .align_mul = align);
       break;
@@ -6586,6 +6601,92 @@ air_decode_sampler_state(uint64_t w)
    return s;
 }
 
+/* A constant's bytes as the module lays out its type (air_type_alloc_size, member offsets), into
+ * `dst`: numbers, arrays, vectors, structs, and what is zero or undefined as zeros. False for
+ * what has no bytes here (an expression, a pointer). */
+static bool
+const_bytes(struct air_ctx *c, const struct air_value *v, const struct air_type *t, uint8_t *dst)
+{
+   const struct air_constant *k = air_value_as_constant(v);
+   if (!k)
+      return false;
+   uint64_t size = air_type_alloc_size(c->m, t);
+   if (k->ckind == AIR_CONST_NULL || k->ckind == AIR_CONST_UNDEF || k->ckind == AIR_CONST_POISON) {
+      memset(dst, 0, size);
+      return true;
+   }
+   if (t->kind == AIR_TYPE_INT || air_type_is_float(t)) {
+      if (k->ckind != AIR_CONST_INT && k->ckind != AIR_CONST_FLOAT)
+         return false;
+      unsigned bytes = t->kind == AIR_TYPE_INT ? MAX2(DIV_ROUND_UP(t->bits, 8), 1)
+                     : t->kind == AIR_TYPE_DOUBLE ? 8 : t->kind == AIR_TYPE_FLOAT ? 4 : 2;
+      uint64_t u = k->u;
+      memcpy(dst, &u, MIN2(bytes, 8));   /* (little endian, as the GPU and the module are) */
+      return true;
+   }
+   if (t->kind == AIR_TYPE_ARRAY || t->kind == AIR_TYPE_VECTOR) {
+      const struct air_type *e = t->elem;
+      if (!e)
+         return false;
+      uint64_t stride = t->kind == AIR_TYPE_VECTOR ? air_type_alloc_size(c->m, e)
+                                                   : air_type_alloc_size(c->m, e);
+      if (t->kind == AIR_TYPE_VECTOR && e->kind == AIR_TYPE_INT && e->bits == 1)
+         return false;
+      if (k->ckind == AIR_CONST_DATA) {
+         unsigned bytes = e->kind == AIR_TYPE_INT ? MAX2(DIV_ROUND_UP(e->bits, 8), 1)
+                        : e->kind == AIR_TYPE_DOUBLE ? 8 : e->kind == AIR_TYPE_FLOAT ? 4 : 2;
+         for (unsigned i = 0; i < k->num_elems && i < t->count; i++) {
+            uint64_t u = k->data[i];
+            memcpy(dst + i * stride, &u, MIN2(bytes, 8));
+         }
+         return true;
+      }
+      if (k->ckind != AIR_CONST_AGGREGATE)
+         return false;
+      for (unsigned i = 0; i < k->num_elems && i < t->count; i++)
+         if (!const_bytes(c, k->elems[i], e, dst + i * stride))
+            return false;
+      return true;
+   }
+   if (t->kind == AIR_TYPE_STRUCT) {
+      if (k->ckind != AIR_CONST_AGGREGATE)
+         return false;
+      for (unsigned i = 0; i < k->num_elems && i < t->num_members; i++)
+         if (!const_bytes(c, k->elems[i], t->members[i], dst + air_struct_member_offset(c->m, t, i)))
+            return false;
+      return true;
+   }
+   return false;
+}
+
+/* A `constant` the module holds -- an array or struct with an initializer, in the constant address
+ * space -- as the shader's constant data (nir->constant_data, read with load_constant), with its
+ * place there in `offset`. In private memory it was a region nothing ever wrote: a table read at
+ * an index the shader computes read zeros (tools/air/const_table.ll), and MercuryPoster's Flocon
+ * ramps were 197 KB of it per thread. False where the initializer has no bytes here. */
+static bool
+global_to_constant_data(struct air_ctx *c, const struct air_global *g, unsigned *offset)
+{
+   uint64_t size = air_type_alloc_size(c->m, g->value_type);
+   if (!size || size > (1u << 24))
+      return false;
+   unsigned align = MAX2(MAX2(g->align, air_type_abi_align(c->m, g->value_type)), 4);
+   unsigned at = ALIGN_POT(c->nir->constant_data_size, align);
+   uint8_t *bytes = rzalloc_size(c->mem_ctx, size);
+   if (!const_bytes(c, g->init, g->value_type, bytes))
+      return false;
+   unsigned end = at + (unsigned)size;
+   uint8_t *grown = rerzalloc_size(c->nir, c->nir->constant_data, c->nir->constant_data_size,
+                                   ALIGN_POT(end, 4));
+   if (!grown)
+      return false;
+   memcpy(grown + at, bytes, size);
+   c->nir->constant_data = grown;
+   c->nir->constant_data_size = ALIGN_POT(end, 4);
+   *offset = at;
+   return true;
+}
+
 static void
 plan_globals(struct air_ctx *c)
 {
@@ -6723,6 +6824,12 @@ plan_globals(struct air_ctx *c)
          pl->var = nir_variable_create(c->nir, nir_var_shader_temp,
                                        param_glsl_type(c, g->value_type), name);
 
+      } else if (g->addrspace == 2 && g->is_const && g->init && !g->externally_initialized &&
+                 (g->value_type->kind == AIR_TYPE_ARRAY ||
+                  g->value_type->kind == AIR_TYPE_STRUCT) &&
+                 global_to_constant_data(c, g, &pl->offset)) {
+         pl->class = AIR_PTR_CONSTANT_DATA;
+         pl->has_offset = true;
       } else {
          /* a program-scope variable: private to the invocation, written by
           * the static initializers below
@@ -7486,6 +7593,10 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
    }
 
    c.nir->scratch_size = c.scratch_size;
+   if (c.nir->constant_data_size) {
+      c.info->constant_data = ralloc_memdup(mem_ctx, c.nir->constant_data, c.nir->constant_data_size);
+      c.info->constant_data_size = c.nir->constant_data_size;
+   }
    c.nir->info.shared_size = c.shared_size;
    c.info->threadgroup_bytes = c.shared_size;
    c.nir->info.io_lowered = false;
