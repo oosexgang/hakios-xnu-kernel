@@ -162,16 +162,48 @@ Glass's own `glass_background_sdf_all_lpf` (110 ms, 2,740 ir3 instructions), and
 needs is 21 full registers (`glass_background_all_lpf`). So the shaders the glass is drawn with are within
 what the phone's compiler takes.
 
-## Why it was not done in this pass
+### Every library of Darwin 27, through the phone's compiler
 
-Each of steps 2–6 needs at least one thing this environment does not have:
-- Darwin 27's own files: the IPSW and its `default.metallib`. Apple's files are local build inputs, never repository
-  content.
-- A Mesa build: it needs a third-party toolchain, and this session may not build or run external code.
-- The phone, or a Mac with an Apple GPU for the reference cases.
+The same sweep over all 258 `.metallib` files of the Darwin 27 image under 3 MB (everything but MPS's, Espresso's
+and GESS's large ones), run as the 15 November library stood:
 
-The brightness work, by contrast, was finished and tested here (`docs/backlight.md`). It is independent of
-the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims whatever the framebuffer copies.
+| | Functions |
+| --- | --- |
+| compiled by ir3 for the Adreno 642L | **3,784** |
+| not entry points -- `air.visible` library functions and modules with no entry-point metadata, which Metal links into a pipeline and never compiles alone | 2,438 |
+| refused | 556 |
+| crashed the compiler | 2 (an ir3 register-allocation check in `NRFV1`'s BlinkDetection and `H13FastRawScale`; camera, not drawing) |
+
+So 87% of the entry points Darwin 27 ships compile for the phone's GPU. What the sweep found, and what was
+fixed for it on the way (each a commit of its own):
+
+- **ir3's prefetched sample used the texture's index as its sampler's** (`userland/tools/mesa26/darwin.patch`, ir3_compiler_nir.c).
+  GL never sees it; QuartzCore's own shaders sample texture 3 with sampler 0, and on the phone such a sample
+  read sampler 3. The fix is in the library the image carries.
+- **The two stages of a pipeline were linked by order, not by name, and every varying took a whole slot**
+  (`link_varyings` in `air_metal.c`): MercuryPoster's tori wallpapers pass 40 and failed in ir3. They are now
+  linked by name and packed; `ir3sweep -p VERTEX FRAGMENT` compiles a pair as the driver links it.
+- **RenderBox's linked functions** (`custom_blend`, `custom_fn`) behind closed function constants, as function
+  pointers, and with static initializers of their own: 48 of 109 to 74, and 82 with an effect linked.
+- **A texture written at a mip level a constant buffer names** (VariableBlurrer, the wallpapers' blur): the
+  level is read at the bind and the view made there.
+- Arrays of textures indexed at run time (App Store's chicletFragment); a function table in a local array
+  (MercuryPoster's shippou); the queries of a depth texture, which crashed the translation; return jumps left
+  in an entry point, which crashed ir3; and the SIMD operations and builtins MetalFX and the video libraries use.
+
+## What stays open
+
+- **Tile memory** (`air.imageblock`, 134 functions, QuartzCore's 46 among them): Apple's GPU keeps a tile in fast
+  memory between draws, and the Adreno has nothing a shader can address that way. CoreAnimation has paths
+  without these kernels; whether every layer it draws does is for the phone to show.
+- **Argument buffers of the Tier 2 kind** (VFX, the dynamic wallpapers, ~70 functions): values stored in the
+  buffer itself (`air.indirect_constant`) and resources written into it by `gpuResourceID`/`gpuAddress`. The
+  driver answers that it has no argument buffers and no bindless handles; doing it means bindless descriptors
+  in the library.
+- **Visible function tables** (90) and `[[stage_in]]` in compute kernels (VFX).
+- **More than 16 textures in a stage**: freedreno binds 16 without bindless, and so does this library.
+- **Under QEMU** the driver runs on softpipe and the first frames wait on 30-second compiles; that is the
+  emulator, not the phone, which compiles the same shaders in milliseconds (the costs above).
 
 ## What the next person with the phone can do in an afternoon
 
