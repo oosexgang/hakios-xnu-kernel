@@ -6467,6 +6467,10 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
       NIR_PASS(_, c.nir, nir_lower_vars_to_ssa);
       NIR_PASS(_, c.nir, nir_opt_dce);
    }
+   /* and the entry point's own: a `ret` inside a branch that nir_lower_goto_ifs left as a
+    * return jump, which nir_divergence_analysis asserts on in ir3 ("Unsupported return
+    * instruction": CoreRE3DGSFoundation's DecompressFreetime, a kernel that calls nothing) */
+   NIR_PASS(_, c.nir, nir_lower_returns);
 
    AIR_T("inline+ssa");
    if (air_timing) {
