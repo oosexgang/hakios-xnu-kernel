@@ -43,12 +43,15 @@ AIR_RUN = os.environ.get(
     "AIR_RUN",
     os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/air_run"))
 
-LIBS = [
-    "darwin165/rootfs/System/Library/VideoDecoders/AV1SW.metallib",
-    "darwin165/rootfs/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib",
-    "darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib",
-    "darwin165/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib",
-]
+# DARWIN_ROOTFS: an extracted system to take them from (default the repository's darwin165/rootfs;
+# Darwin 27's has all four, at /home/user/darwin27/rootfs on the build machine)
+DARWIN_ROOTFS = os.environ.get("DARWIN_ROOTFS", os.path.join(ROOT, "darwin165/rootfs"))
+LIBS = [os.path.join(DARWIN_ROOTFS, p) for p in (
+    "System/Library/VideoDecoders/AV1SW.metallib",
+    "System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib",
+    "System/Library/CoreImage/PortraitFilters.cifilter/default.metallib",
+    "System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib",
+)]
 
 # One row per cause, in the order a reader wants them: what works, then what is
 # ours, then what is not ours, then the named limits. The matcher is a substring
