@@ -5117,14 +5117,8 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
                          "was given", name);
       return -1;
    }
-   /* The frontend puts that buffer at threadgroup address 0 (air_to_nir.c): so the
-    * kernel may declare no threadgroup memory of its own as well. */
-   if (compute->dynamic_threadgroup && compute->info.threadgroup_bytes != 0) {
-      say(why, why_size, "%s takes a threadgroup buffer sized at dispatch and declares "
-                         "%u bytes of threadgroup memory of its own, which would be the "
-                         "same bytes", name, compute->info.threadgroup_bytes);
-      return -1;
-   }
+   /* (The frontend puts that buffer after the kernel's own threadgroup memory, where Gallium
+    * puts the variable part: the two may both be there.) */
 
    /* Everything the kernel declares has to be bound, of the right kind and big enough.
     * The same check, in the same words, guards a draw's stages -- check_bindings.

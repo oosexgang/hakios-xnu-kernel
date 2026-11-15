@@ -6611,6 +6611,18 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
 
    if (!c.error[0])
       plan_globals(&c);
+   /* The threadgroup buffer sized at dispatch goes after the kernel's own threadgroup memory, where
+    * Gallium puts variable_shared_mem (after static_shared_mem): it was at 0 and a kernel with both
+    * was refused at the dispatch, the two being the same bytes. The static part is rounded up to 16
+    * bytes so that the buffer starts on Metal's own alignment for it. */
+   for (unsigned i = 0; i < c.num_params && !c.error[0]; i++) {
+      struct air_val *v = c.params[i];
+      if (v && v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_SHARED && !v->ptr.offset) {
+         c.shared_size = ALIGN_POT(c.shared_size, 16);
+         if (c.shared_size)
+            v->ptr.offset = nir_imm_int(&c.b, c.shared_size);
+      }
+   }
    if (!c.error[0])
       materialise_globals(&c);
    if (!c.error[0])
