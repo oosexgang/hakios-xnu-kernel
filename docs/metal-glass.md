@@ -142,6 +142,21 @@ Then the rest of the system, in the order it stopped:
    speed, not a missing piece: on the phone ir3 compiles on the real cores. Under QEMU the way on is a
    pipeline cache that survives a boot, or fewer variants asked for at once.
 
+### The phone's GPU compiler over Darwin 27's shaders
+
+`userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
+ir3 for the Adreno 642L (chip 0x06060010) -- over a `.metallib` on Linux, with no GPU (`rwa_ir3_cost`):
+
+| Library | Compiled by ir3 | Refused, and why |
+| --- | --- | --- |
+| QuartzCore `default.metallib` | **203 of 249** | the 46 tile-memory kernels (`air.imageblock`) |
+| RenderBox `default.metallib` | **48 of 109** | 30 call a function the pipeline links at run time (`custom_blend`, `custom_fn`), which a sweep has none of; 27 are `air.visible` library functions; 4 more of the linked kind |
+
+No compiler crash in either. QuartzCore's 203 take 1.8 s of host time together; the costliest is Liquid
+Glass's own `glass_background_sdf_all_lpf` (110 ms, 2,740 ir3 instructions), and the most registers any of them
+needs is 21 full registers (`glass_background_all_lpf`). So the shaders the glass is drawn with are within
+what the phone's compiler takes.
+
 ## Why it was not done in this pass
 
 Each of steps 2–6 needs at least one thing this environment does not have:
