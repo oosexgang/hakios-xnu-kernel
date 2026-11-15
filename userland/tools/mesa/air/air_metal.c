@@ -4728,6 +4728,16 @@ image_view_level(const struct air_resource *r, const struct rwa_bindings *bindin
       } else {
          *level = v;
       }
+      if (r->level_bias) {
+         int64_t at_bias = (int64_t)*level + r->level_bias;
+         if (at_bias < 0) {
+            say(why, why_size, "%s writes image %u at mip level %u%+d of buffer %u, which is "
+                               "below the base level", name, r->index, *level, r->level_bias,
+                r->level_buffer);
+            return -1;
+         }
+         *level = (unsigned)at_bias;
+      }
    }
    if (*level > t->res->last_level) {
       say(why, why_size, "%s writes image %u at mip level %u, and the %s bound there has %u",
