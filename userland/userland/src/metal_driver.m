@@ -410,6 +410,13 @@ struct rwa_draw {
 	/* each colour attachment's mip level and slice; NULL: 0 (air_metal.h) */
 	const unsigned *color_level;
 	const unsigned *color_layer;
+	/* the encoder's raster state: MTLCullMode, MTLWinding, MTLTriangleFillMode,
+	 * MTLDepthClipMode and the depth bias (air_metal.h; at the end, as above) */
+	unsigned cull_mode;
+	unsigned winding;
+	unsigned fill_mode;
+	unsigned depth_clamp;
+	float depth_bias, depth_slope_scale, depth_bias_clamp;
 };
 
 /*
@@ -1404,6 +1411,9 @@ rw_bisect_within(void)
 	 * them, and the work runs in order, each dispatch waited for (rwa_dispatch). */
 	id indirectBuffer;
 	size_t indirectOffset;
+	/* the encoder's raster state at the draw (rwa_draw.cull_mode and after) */
+	unsigned cullMode, winding, fillMode, depthClamp;
+	float depthBias[3];
 	unsigned threadgroupBytes[32];  /* -setThreadgroupMemoryLength:atIndex:, by index */
 	/* a blit (HakiosMetalBlitEncoder): which kind, from what to what, where */
 	unsigned blit;
@@ -5380,6 +5390,13 @@ rw_bisect_skipped_group(void)
 		.vertex_buffer_table_count = work->vertexBufferCount,
 		.fragment_buffer_table = fragment_table,
 		.fragment_buffer_table_count = work->count,
+		.cull_mode = work->cullMode,
+		.winding = work->winding,
+		.fill_mode = work->fillMode,
+		.depth_clamp = work->depthClamp,
+		.depth_bias = work->depthBias[0],
+		.depth_slope_scale = work->depthBias[1],
+		.depth_bias_clamp = work->depthBias[2],
 	};
 
 	if (work->indexBuffer != nil && draw.index_buffer == NULL) {
@@ -5611,6 +5628,8 @@ rw_bisect_skipped_group(void)
 	BOOL _drew;                     /* a draw has been recorded in this pass */
 	id _indirect;                   /* the next draw's arguments are here (an indirect draw) */
 	NSUInteger _indirectOffset;
+	unsigned _cullMode, _winding, _fillMode, _depthClamp;   /* raster state, Metal's enums */
+	float _depthBias[3];
 	id _depth;
 	id _depthStencilState;
 	float _clearDepth;
@@ -5868,9 +5887,11 @@ rw_bisect_skipped_group(void)
 	_scissor[2] = (unsigned)rect.width;
 	_scissor[3] = (unsigned)rect.height;
 }
-- (void)setCullMode:(NSUInteger)mode                  { (void)mode; }
-- (void)setFrontFacingWinding:(NSUInteger)winding     { (void)winding; }
-- (void)setTriangleFillMode:(NSUInteger)mode          { (void)mode; }
+/* Raster state, kept on the encoder as Metal keeps it and handed to each draw (rwa_draw): every
+ * draw was two-sided, filled, clipped and unbiased whatever was set here. */
+- (void)setCullMode:(NSUInteger)mode                  { _cullMode = mode <= 2 ? (unsigned)mode : 0; }
+- (void)setFrontFacingWinding:(NSUInteger)winding     { _winding = winding == 1; }
+- (void)setTriangleFillMode:(NSUInteger)mode          { _fillMode = mode == 1; }
 
 /* The depth/stencil state, recorded like the pipeline state: nothing runs at encode time,
  * so what a draw tests against is whatever was bound when that draw was encoded. A state
@@ -5970,6 +5991,11 @@ rw_bisect_skipped_group(void)
 	work->baseInstance = (unsigned)baseInstance;
 	work->indirectBuffer = _indirect;
 	work->indirectOffset = (size_t)_indirectOffset;
+	work->cullMode = _cullMode;
+	work->winding = _winding;
+	work->fillMode = _fillMode;
+	work->depthClamp = _depthClamp;
+	memcpy(work->depthBias, _depthBias, sizeof(_depthBias));
 	work->vertexBufferCount = _vertexBufferCount;
 	for (unsigned i = 0; i < _vertexBufferCount; i++) {
 		work->vertexBuffers[i] = _vertexBuffers[i];
@@ -6273,15 +6299,13 @@ rw_bisect_skipped_group(void)
  * it. Said once rather than ignored. */
 - (void)setDepthClipMode:(NSUInteger)mode
 {
-	if (mode != MTLDepthClipModeClip && !_complained) {
-		rw_print("MTLDepthClipModeClamp is not implemented; this pass clips "
-		         "against the depth range instead of clamping to it\n");
-		_complained = YES;
-	}
+	_depthClamp = mode == MTLDepthClipModeClamp;
 }
 - (void)setDepthBias:(float)bias slopeScale:(float)scale clamp:(float)clamp
 {
-	(void)bias; (void)scale; (void)clamp;
+	_depthBias[0] = bias;
+	_depthBias[1] = scale;
+	_depthBias[2] = clamp;
 }
 /* The stencil reference, which Metal keeps on the encoder and not in the state object, so
  * it is recorded with the draw like the clear colour. */
