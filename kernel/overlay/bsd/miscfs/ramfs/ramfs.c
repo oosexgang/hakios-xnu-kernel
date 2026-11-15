@@ -233,27 +233,60 @@ ramfs_say_ranges(void)
 }
 
 /*
- * A page of file data. It is mapped in the kernel's shared data range (KMA_DATA_SHARED), and in the
- * private one (KMA_DATA) only once that has no room left. Kept in the private range alone, a Darwin session
- * with a 4 GB system image filled it (KERN_NO_SPACE with free pages to spare: the addresses, not the memory, ran
- * out), and the code-signature blobs that also live there could no longer be allocated -- launchd then
- * stops the system on "unexpected exec of non-platform binary". Both ranges are as large and hold bags
- * of bytes; kmem_free() finds either by its address.
+ * A page of file data, mapped in one of the kernel's two data ranges, which are as large and hold bags of
+ * bytes; kmem_free() finds either by its address. Neither may be filled by files alone:
+ *
+ *   - kept in the private range (KMA_DATA) only, a Darwin session with a 4 GB system image filled it
+ *     (KERN_NO_SPACE with free pages to spare: the addresses, not the memory, ran out), and the
+ *     code-signature blobs that also live there could no longer be allocated -- launchd then stops the
+ *     system on "unexpected exec of non-platform binary";
+ *   - kept in the shared range (KMA_DATA_SHARED) first, a Darwin 27 session under QEMU filled that one
+ *     (15 November: 927 MB of files), and what the kernel shares with other domains through it -- the
+ *     data of Mach messages among them -- could not be allocated: SpringBoard and a dozen daemons died
+ *     within a second ("Too many corpses being created") and the home screen went black.
+ *
+ * So the shared range takes files up to half of it, the private one after that, and the shared one
+ * again, up to three quarters, only when the private one has no room either.
  */
+static _Atomic uint64_t ramfs_shared_pages;
+
+static bool
+ramfs_in_shared(vm_offset_t addr)
+{
+	struct mach_vm_range *r = kmem_range(KMEM_RANGE_ID_DATA_SHARED);
+
+	return addr >= r->min_address && addr < r->max_address;
+}
+
+static uint64_t
+ramfs_shared_cap(unsigned quarters)
+{
+	struct mach_vm_range *r = kmem_range(KMEM_RANGE_ID_DATA_SHARED);
+
+	return ((r->max_address - r->min_address) / PAGE_SIZE) * quarters / 4;
+}
+
 static void *
 ramfs_page_alloc(bool wait)
 {
 	vm_offset_t addr = 0;
 	kma_flags_t flags = KMA_KOBJECT | KMA_ZERO | (wait ? KMA_NONE : KMA_NOPAGEWAIT);
-	kern_return_t kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA_SHARED, VM_KERN_MEMORY_FILE);
+	kern_return_t kr = KERN_NO_SPACE;
 	static _Atomic uint32_t private, refusals;
 
+	if (os_atomic_load(&ramfs_shared_pages, relaxed) < ramfs_shared_cap(2)) {
+		kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA_SHARED, VM_KERN_MEMORY_FILE);
+	}
 	if (kr == KERN_NO_SPACE) {
 		if (os_atomic_inc(&private, relaxed) == 1) {
-			printf("ramfs: the kernel's shared data range is full: pages go to the private data range\n");
+			printf("ramfs: files have half of the kernel's shared data range: pages go to the private "
+			    "data range\n");
 			ramfs_say_ranges();
 		}
 		kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA, VM_KERN_MEMORY_FILE);
+	}
+	if (kr == KERN_NO_SPACE && os_atomic_load(&ramfs_shared_pages, relaxed) < ramfs_shared_cap(3)) {
+		kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA_SHARED, VM_KERN_MEMORY_FILE);
 	}
 	if (kr != KERN_SUCCESS) {
 		/* Which refusal it was: no page (the free list), or no room in the kernel's data ranges. */
@@ -264,12 +297,18 @@ ramfs_page_alloc(bool wait)
 		}
 		return NULL;
 	}
+	if (ramfs_in_shared(addr)) {
+		os_atomic_inc(&ramfs_shared_pages, relaxed);
+	}
 	return (void *)addr;
 }
 
 static void
 ramfs_page_free(void *page)
 {
+	if (ramfs_in_shared((vm_offset_t)page)) {
+		os_atomic_dec(&ramfs_shared_pages, relaxed);
+	}
 	kmem_free(kernel_map, (vm_offset_t)page, PAGE_SIZE);
 }
 
