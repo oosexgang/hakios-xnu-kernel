@@ -587,7 +587,9 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
    } else if (!strcmp(op, "mul_hi")) {
       r = is_signed ? nir_imul_high(&c->b, a[0], a[1]) : nir_umul_high(&c->b, a[0], a[1]);
    } else if (!strcmp(op, "popcount")) {
-      r = nir_bit_count(&c->b, a[0]);
+      /* (NIR's bit_count, like find_lsb and find_msb, answers 32 bits whatever it counts:
+       * back to the argument's width, as Metal's answer is) */
+      r = nir_u2uN(&c->b, nir_bit_count(&c->b, a[0]), a[0]->bit_size);
    } else if (!strcmp(op, "clz")) {
       /* through the highest set bit, which ir3 has: it has no uclz ("Unhandled ALU op: uclz",
        * Recon3D's ReduceLightChangePerThreadgroup). (width - 1) - msb, and msb is -1 for zero,
@@ -597,9 +599,9 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = nir_u2uN(&c->b, nir_isub(&c->b, nir_imm_int(&c->b, (int)w - 1), msb), w);
    } else if (!strcmp(op, "ctz")) {
       /* Metal's ctz returns the type's width when the value is zero */
-      nir_def *lsb = nir_find_lsb(&c->b, a[0]);
-      r = nir_bcsel(&c->b, nir_ieq_imm(&c->b, a[0], 0),
-                    nir_imm_intN_t(&c->b, a[0]->bit_size, a[0]->bit_size), lsb);
+      unsigned w = a[0]->bit_size;
+      nir_def *lsb = nir_u2uN(&c->b, nir_find_lsb(&c->b, a[0]), w);
+      r = nir_bcsel(&c->b, nir_ieq_imm(&c->b, a[0], 0), nir_imm_intN_t(&c->b, w, w), lsb);
    } else if (!strcmp(op, "reverse_bits")) {
       r = nir_bitfield_reverse(&c->b, a[0]);
    } else if (!strcmp(op, "rotate")) {
