@@ -4016,6 +4016,38 @@ translate_ptr_cmp(struct air_ctx *c, const struct air_inst *in, bool *done)
    else if (a->kind == AIR_VAL_PTR && b->kind == AIR_VAL_PTR && same_ptr(&a->ptr, &b->ptr) &&
             a->fn == b->fn)
       eq = nir_imm_true(&c->b);
+   else if (a->kind == AIR_VAL_PTR && b->kind == AIR_VAL_PTR && a->fn == b->fn &&
+            a->ptr.class == b->ptr.class && a->ptr.class != AIR_PTR_NONE &&
+            a->ptr.binding == b->ptr.binding && a->ptr.is_image == b->ptr.is_image &&
+            a->ptr.var == b->ptr.var && a->ptr.index == b->ptr.index) {
+      /* the same place at two offsets (a loop that walks a pointer up to an end pointer):
+       * equal when the offsets are */
+      nir_def *oa = a->ptr.offset ? a->ptr.offset : nir_imm_int(&c->b, 0);
+      nir_def *ob = b->ptr.offset ? b->ptr.offset : nir_imm_int(&c->b, 0);
+      eq = nir_ieq(&c->b, oa, ob);
+   } else if (a->kind == AIR_VAL_PTR && b->kind == AIR_VAL_PTR && !a->fn && !b->fn &&
+              a->ptr.class == AIR_PTR_VARIABLE && b->ptr.class == AIR_PTR_VARIABLE &&
+              a->ptr.var && b->ptr.var && a->ptr.var != b->ptr.var)
+      eq = nir_imm_false(&c->b);   /* two variables are never one */
+   else if (a->kind == AIR_VAL_PTR && b->kind == AIR_VAL_PTR && !a->ptr.index && !b->ptr.index &&
+            (a->ptr.class == AIR_PTR_SSBO || a->ptr.class == AIR_PTR_UBO) &&
+            (b->ptr.class == AIR_PTR_SSBO || b->ptr.class == AIR_PTR_UBO) &&
+            a->ptr.binding < 32 && b->ptr.binding < 32) {
+      /* two buffer arguments: the same pointer when the same buffer is bound at both indices
+       * and the pointers are as far into it, counting the offsets the buffers are bound at,
+       * which only the dispatch says (AIR_BUFFER_ID_INPUT) */
+      c->info->compares_buffers = true;
+      nir_def *w[4];
+      for (unsigned k = 0; k < 4; k++)
+         w[k] = nir_load_kernel_input(&c->b, 1, 32,
+                                      nir_imm_int(&c->b, 8 * (k < 2 ? a : b)->ptr.binding +
+                                                            4 * (k & 1)),
+                                      .base = AIR_BUFFER_ID_INPUT, .range = 256);
+      nir_def *oa = a->ptr.offset ? nir_u2u32(&c->b, a->ptr.offset) : nir_imm_int(&c->b, 0);
+      nir_def *ob = b->ptr.offset ? nir_u2u32(&c->b, b->ptr.offset) : nir_imm_int(&c->b, 0);
+      eq = nir_iand(&c->b, nir_ieq(&c->b, w[0], w[2]),
+                    nir_ieq(&c->b, nir_iadd(&c->b, w[1], oa), nir_iadd(&c->b, w[3], ob)));
+   }
    if (!eq)
       return true;   /* (not one of these: the number comparison below says why it cannot) */
    air_set(c, &in->base, air_val_ssa(c, in->sub == AIR_ICMP_EQ ? eq : nir_inot(&c->b, eq)));
