@@ -3962,6 +3962,22 @@ air_value_kind_name(const struct air_value *v)
 static bool
 translate_instruction(struct air_ctx *c, const struct air_inst *in)
 {
+   /* A vector NIR has no register for: NIR's are 1 to 5, 8 and 16 components, and LLVM's are
+    * any length -- CMImaging accumulates ten coefficients in a <10 x float> phi, which
+    * nir_validate aborted on after the variables went to SSA. Refused by its length here,
+    * where it is still an instruction with a name, until a vector is padded to the next size
+    * NIR has. (A call's operand 0 is the callee, which is no vector.) */
+   const struct air_type *rt = in->base.type;
+   if (rt && rt->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(rt->count))
+      return air_error(c, "instruction: a vector of %u elements, which NIR has no register "
+                          "for", (unsigned)rt->count);
+   for (unsigned i = 0; i < in->num_operands; i++) {
+      const struct air_type *ot = in->operands[i] ? in->operands[i]->type : NULL;
+      if (ot && ot->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(ot->count))
+         return air_error(c, "instruction: a vector of %u elements, which NIR has no register "
+                             "for", (unsigned)ot->count);
+   }
+
    switch (in->op) {
    case AIR_OP_BINOP:
       return translate_binop(c, in);
