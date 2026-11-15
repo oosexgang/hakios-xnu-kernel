@@ -1363,6 +1363,45 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
       air_set(c, &in->base, air_val_ssa(c, r));
       return true;
    }
+   /* llvm.{min,max}num.<type>: what LLVM folds fmin()/fmax() of half and float into when the
+    * call is fast-math (ARKit's stencil_bilinear_resample and RawCamera's focus-pixel
+    * correction, on f16; Darwin 27). A NaN operand gives the other operand there; NIR's
+    * fmin/fmax leave NaN to the backend, and ir3's min.f/max.f return the non-NaN one. */
+   if (!strncmp(name, "llvm.minnum.", 12) || !strncmp(name, "llvm.maxnum.", 12)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]);
+      nir_def *b = air_get_ssa(c, in->operands[2]);
+      if (!a || !b)
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, name[6] == 'a' ? nir_fmax(&c->b, a, b)
+                                                         : nir_fmin(&c->b, a, b)));
+      return true;
+   }
+   /* llvm.abs.<type>(x, i1 int_min_is_poison): abs() of an integer (RawCamera, i16). The
+    * flag only says what INT_MIN may give; iabs gives INT_MIN for it, which is LLVM's answer
+    * when the flag is false. */
+   if (!strncmp(name, "llvm.abs.", 9)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]);
+      if (!a)
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, nir_iabs(&c->b, a)));
+      return true;
+   }
+   /* llvm.bitreverse.i32: reverse_bits() (ARKit's blur_cubemap: a radical inverse, the
+    * Hammersley sequence). NIR reverses 32 bits; a narrower type is reversed in 32 and
+    * shifted down, a wider one is not done. */
+   if (!strncmp(name, "llvm.bitreverse.", 16)) {
+      nir_def *a = air_get_ssa(c, in->operands[1]);
+      if (!a)
+         return false;
+      unsigned bits = a->bit_size;
+      if (bits > 32)
+         return air_error(c, "intrinsic: %s (wider than NIR's 32-bit bitfield_reverse)", name);
+      nir_def *r = nir_bitfield_reverse(&c->b, bits == 32 ? a : nir_u2u32(&c->b, a));
+      if (bits < 32)
+         r = nir_u2uN(&c->b, nir_ushr_imm(&c->b, r, 32 - bits), bits);
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
    if (!strcmp(name, "llvm.trap"))
       return air_error(c, "intrinsic: llvm.trap");
    return air_error(c, "intrinsic: %s", name);
