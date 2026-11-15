@@ -3163,6 +3163,18 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
                                                         t->ptr.binding == AIR_NULL_BINDING)));
       return true;
    }
+   /* air.map_screen_to_physical_coordinates / map_physical_to_screen_coordinates(coord, map, layer):
+    * through a rasterization rate map (RealityKit's foveated passes). The device has none to give
+    * (-supportsRasterizationRateMapWithLayerCount: answers no), so every pass is rasterised at one
+    * rate and screen and physical coordinates are the same: the coordinate as it came. */
+   if (!strcmp(n.part[0], "map_screen_to_physical_coordinates") ||
+       !strcmp(n.part[0], "map_physical_to_screen_coordinates")) {
+      nir_def *coord = in->num_operands > 1 ? air_get_ssa(c, in->operands[1]) : NULL;
+      if (!coord)
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, coord));
+      return true;
+   }
    if (!strcmp(n.part[0], "get_read_sampler")) {
       air_set(c, &in->base, air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_SAMPLER,
                                                              .binding = AIR_NULL_BINDING }));
