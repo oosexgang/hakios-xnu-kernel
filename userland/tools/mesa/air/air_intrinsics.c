@@ -1835,6 +1835,7 @@ struct air_tex_name {
    bool is_array, is_ms, is_buffer;
    bool grad;             /* the _grad form: explicit dPdx and dPdy */
    bool no_offset;        /* this dimensionality takes no offset argument */
+   const char *atomic;    /* "atomic": add, sub, and, or, xor, min, max, exchange */
 };
 
 static bool
@@ -1868,6 +1869,21 @@ parse_tex_name(const char *name, struct air_tex_name *t)
       t->op = "read";
    } else if (eat(&s, "write_")) {
       t->op = "write";
+   } else if (eat(&s, "atomic_")) {
+      /* air.atomic_fetch_max_explicit_texture_2d (MetalFX's motion-vector splats) */
+      static const char *ops[] = { "add", "sub", "and", "or", "xor", "min", "max" };
+      static char *const pre[] = { "fetch_add_explicit_", "fetch_sub_explicit_",
+                                   "fetch_and_explicit_", "fetch_or_explicit_",
+                                   "fetch_xor_explicit_", "fetch_min_explicit_",
+                                   "fetch_max_explicit_" };
+      t->op = "atomic";
+      for (unsigned i = 0; i < ARRAY_SIZE(ops) && !t->atomic; i++)
+         if (eat(&s, pre[i]))
+            t->atomic = ops[i];
+      if (!t->atomic && eat(&s, "exchange_explicit_"))
+         t->atomic = "exchange";
+      if (!t->atomic)
+         return false;
    } else if (eat(&s, "calculate_clamped_lod_") || eat(&s, "calculate_unclamped_lod_")) {
       t->op = "lod";
    } else if (eat(&s, "get_")) {
@@ -2462,6 +2478,57 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          res = nir_channel(&c->b, size, comp);
       }
       air_set(c, &in->base, air_val_ssa(c, nir_u2uN(&c->b, res, dest_bits)));
+      return true;
+   }
+
+   if (!strcmp(t.op, "atomic")) {
+      /* air.atomic_fetch_<op>_explicit_texture_2d(tex, coord, <2 x i16> zero, <4 x i32> value,
+       * order, scope) -> <4 x i32> with what the texel held in .x: Metal's texture atomics,
+       * on the R32 integer formats it allows them on. The vector after the coordinate is zero
+       * in every call seen and is refused otherwise; the order and scope are relaxed and the
+       * texture's, which is what an image atomic is. */
+      nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
+      if (!coord)
+         return false;
+      nir_def *extra = in->num_operands > arg + 1 ? air_get_ssa(c, in->operands[arg]) : NULL;
+      if (extra && extra->num_components == coord->num_components &&
+          in->operands[arg + 1]->type->kind == AIR_TYPE_VECTOR) {
+         if (!nir_src_is_const(nir_src_for_ssa(extra)) ||
+             nir_src_comp_as_uint(nir_src_for_ssa(extra), 0) ||
+             nir_src_comp_as_uint(nir_src_for_ssa(extra), extra->num_components - 1))
+            return air_error(c, "intrinsic: air.%s with a second coordinate that is not zero",
+                             n->part[0]);
+         arg++;
+      }
+      nir_def *value = air_get_ssa(c, in->operands[arg++]);
+      if (!value)
+         return false;
+      if (!tex.is_image)
+         return air_error(c, "intrinsic: air.%s on a texture the interface says is not "
+                             "written", n->part[0]);
+      bool sgn = n->num > 2 && !strcmp(n->part[2], "s");
+      nir_atomic_op op = !strcmp(t.atomic, "add") || !strcmp(t.atomic, "sub") ? nir_atomic_op_iadd
+                       : !strcmp(t.atomic, "and") ? nir_atomic_op_iand
+                       : !strcmp(t.atomic, "or") ? nir_atomic_op_ior
+                       : !strcmp(t.atomic, "xor") ? nir_atomic_op_ixor
+                       : !strcmp(t.atomic, "min") ? (sgn ? nir_atomic_op_imin : nir_atomic_op_umin)
+                       : !strcmp(t.atomic, "max") ? (sgn ? nir_atomic_op_imax : nir_atomic_op_umax)
+                                                  : nir_atomic_op_xchg;
+      nir_def *v = nir_u2u32(&c->b, nir_channel(&c->b, value, 0));
+      if (!strcmp(t.atomic, "sub"))
+         v = nir_ineg(&c->b, v);
+      nir_def *was = nir_image_atomic(&c->b, 32,
+                                      tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)
+                                                : nir_imm_int(&c->b, tex.binding),
+                                      nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
+                                      nir_imm_int(&c->b, 0), v,
+                                      .image_dim = t.dim, .image_array = t.is_array,
+                                      .format = sgn ? PIPE_FORMAT_R32_SINT : PIPE_FORMAT_R32_UINT,
+                                      .atomic_op = op);
+      const struct air_type *rt = in->base.type;
+      unsigned rc = rt && rt->kind == AIR_TYPE_VECTOR ? (unsigned)rt->count : 1;
+      nir_def *r = rc > 1 ? nir_pad_vector_imm_int(&c->b, was, 0, rc) : was;
+      air_set(c, &in->base, air_val_ssa(c, r));
       return true;
    }
 
