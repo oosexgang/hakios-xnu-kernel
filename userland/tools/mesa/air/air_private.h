@@ -78,6 +78,10 @@ struct air_val {
    enum air_val_kind kind;
    nir_def *def;
    struct air_ptr ptr;
+   /* A FUNCTION as a value: an AIR_VAL_PTR of class AIR_PTR_NONE with this set, and a call
+    * through it a call of this function (RenderBox hands its linked custom_fn down to
+    * sample_custom as a function pointer). NULL for the null function pointer. */
+   const struct air_function *fn;
    unsigned num_elems;
    struct air_val **elems;
 };
@@ -233,6 +237,13 @@ struct air_ctx {
    struct hash_table *globals;
 
    char error[256];
+   /* the first call of a linked function the pipeline does not link, which the translation went
+    * on past with a marker in its place (emit_module_call): an error only if the function
+    * constants leave the marker where it can run */
+   char unlinked[256];
+   /* the linked function being translated has static initializers of its own module, to be
+    * run at the top of its body (link_visible, translate_callee) */
+   bool link_init;
 };
 
 bool air_error(struct air_ctx *c, const char *fmt, ...) PRINTFLIKE(2, 3);

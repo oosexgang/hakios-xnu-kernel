@@ -343,6 +343,16 @@ air_get(struct air_ctx *c, const struct air_value *v)
          air_set(c, v, val);
       return val;
    }
+   if (v->kind == AIR_VALUE_FUNCTION) {
+      /* a function used as a value rather than called: its address, which this translator
+       * has no number for, so the function itself -- what a call through it calls */
+      struct air_val *val = rzalloc(c->mem_ctx, struct air_val);
+      val->kind = AIR_VAL_PTR;
+      val->ptr.class = AIR_PTR_NONE;
+      val->fn = (const struct air_function *)v;
+      air_set(c, v, val);
+      return val;
+   }
    air_error(c, "instruction: a %s value used before it is defined%s%s",
              v->kind == AIR_VALUE_GLOBAL ? "global" :
              v->kind == AIR_VALUE_FUNCTION ? "function" :
@@ -3665,6 +3675,9 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
             return false;
          if (fp->kind != AIR_VAL_PTR || fp->ptr.class != AIR_PTR_NONE)
             return air_error(c, "instruction: a call through a pointer");
+         /* a function handed down as a value: a call of it, as if it were called by name */
+         if (fp->fn && fp->fn->base.name)
+            return air_translate_call(c, in, fp->fn->base.name);
          const struct air_type *rt = in->base.type;
          if (rt->kind != AIR_TYPE_VOID) {
             if (!ret_member_is_number(rt))
@@ -3900,6 +3913,7 @@ reverse_post_order(struct air_ctx *c, const struct air_function *f, unsigned *or
 
 static bool translate_body(struct air_ctx *c);
 static void materialise_globals(struct air_ctx *c);
+static void run_static_initializers(struct air_ctx *c);
 
 /* Does this value hold a pointer anywhere inside it? */
 static bool
@@ -4000,8 +4014,8 @@ spec_key_val(const struct air_ctx *c, char **key, const struct air_val *v, bool 
       return false;
    switch (v->kind) {
    case AIR_VAL_PTR:
-      ralloc_asprintf_append(key, "P%u.%u.%u.%p.%p.", v->ptr.class, v->ptr.binding, v->ptr.is_image,
-                             (void *)v->ptr.var, (const void *)v->ptr.pointee);
+      ralloc_asprintf_append(key, "P%u.%u.%u.%p.%p.%p.", v->ptr.class, v->ptr.binding, v->ptr.is_image,
+                             (void *)v->ptr.var, (const void *)v->ptr.pointee, (const void *)v->fn);
       if (!v->ptr.offset)
          ralloc_strcat(key, "0;");
       else if (nested ? nir_src_is_const(nir_src_for_ssa(v->ptr.offset)) : !ptr_offset_is_param(c, v))
@@ -4079,6 +4093,60 @@ struct air_link_saved {
    const struct air_to_nir_options *options;
 };
 
+/* How many linked functions the module calls (declarations named NAME.MTL_VISIBLE_FN_REF) */
+static unsigned
+visible_refs(const struct air_module *m)
+{
+   static const char suffix[] = ".MTL_VISIBLE_FN_REF";
+   unsigned n = 0;
+   for (unsigned i = 0; i < m->num_functions; i++) {
+      const char *name = m->functions[i]->base.name;
+      size_t len = name ? strlen(name) : 0;
+      n += m->functions[i]->is_declaration && len > sizeof(suffix) - 1 &&
+           !strcmp(name + len - (sizeof(suffix) - 1), suffix);
+   }
+   return n;
+}
+
+/* The linked function a call of NAME.MTL_VISIBLE_FN_REF calls: the one of that name -- or, with one
+ * function linked into a module that calls one, that one, by whatever name the driver had for it
+ * (a function made with MTLFunctionDescriptor.specializedName). Not where the module calls more:
+ * RenderBox's custom_effect_fragment calls custom_fn and also custom_blend behind a constant, and
+ * its pipelines link custom_fn alone, which made the closed custom_blend branch a call of the
+ * custom effect -- glassBackground_v1's module, static initializers and all. */
+static const struct air_linked_function *
+find_linked(const struct air_ctx *c, const char *name, size_t len)
+{
+   const struct air_to_nir_options *o = c->options;
+   const struct air_linked_function *l = NULL;
+   for (unsigned i = 0; o && i < o->num_linked && !l; i++)
+      if (o->linked[i].name && strlen(o->linked[i].name) == len &&
+          !strncmp(o->linked[i].name, name, len))
+         l = &o->linked[i];
+   if (!l && o && o->num_linked == 1 && visible_refs(c->m) == 1)
+      l = &o->linked[0];
+   return l;
+}
+
+/* The length of NAME without .MTL_VISIBLE_FN_REF when f is the declaration of a linked function
+ * the pipeline does not link, else 0. RenderBox's fragment shaders call custom_blend and
+ * custom_fn only behind a bit of their function constants (shader_state), and link them only
+ * for a pipeline with that bit set: for every other pipeline the call is in a branch the
+ * constants close, which Metal never asks to be linked -- and the translation stopped at it,
+ * so 26 of RenderBox's 109 functions made no pipeline at all with their ordinary blend modes. */
+static size_t
+visible_unlinked(const struct air_ctx *c, const struct air_function *f)
+{
+   static const char suffix[] = ".MTL_VISIBLE_FN_REF";
+   const char *name = f->base.name ? f->base.name : "";
+   size_t len = strlen(name);
+   if (!f->is_declaration || len <= sizeof(suffix) - 1 ||
+       strcmp(name + len - (sizeof(suffix) - 1), suffix))
+      return 0;
+   len -= sizeof(suffix) - 1;
+   return find_linked(c, name, len) ? 0 : len;
+}
+
 static const struct air_function *
 link_visible(struct air_ctx *c, const struct air_function *f, struct air_link_saved *saved)
 {
@@ -4090,13 +4158,7 @@ link_visible(struct air_ctx *c, const struct air_function *f, struct air_link_sa
    len -= sizeof(suffix) - 1;
 
    const struct air_to_nir_options *o = c->options;
-   const struct air_linked_function *l = NULL;
-   for (unsigned i = 0; o && i < o->num_linked && !l; i++)
-      if (o->linked[i].name && strlen(o->linked[i].name) == len &&
-          !strncmp(o->linked[i].name, name, len))
-         l = &o->linked[i];
-   if (!l && o && o->num_linked == 1)
-      l = &o->linked[0];
+   const struct air_linked_function *l = find_linked(c, name, len);
    if (!l) {
       air_error(c, "intrinsic: a call of the linked function %.*s, and the pipeline links %u "
                    "function%s, none of that name", (int)len, name, o ? o->num_linked : 0,
@@ -4131,13 +4193,13 @@ link_visible(struct air_ctx *c, const struct air_function *f, struct air_link_sa
                 l->entry ? l->entry : "with a body");
       return NULL;
    }
+   /* Its module's static initializers -- RenderBox's glassBackground_v1 and displacementMap_v1
+    * copy a function constant (RB::shaderVariant) into a program-scope variable in one -- run at
+    * the top of its body, where its own globals are (translate_callee), and not in the caller's */
+   bool init = false;
    for (unsigned i = 0; i < m2->num_functions; i++) {
       const struct air_function *h = m2->functions[i];
-      if (!h->is_declaration && h->section && !strcmp(h->section, "air.static_init")) {
-         air_error(c, "intrinsic: the function linked as %.*s has static initializers, which "
-                      "a linked module does not run here", (int)len, name);
-         return NULL;
-      }
+      init |= !h->is_declaration && h->section && !strcmp(h->section, "air.static_init");
    }
    if (g->num_args != f->num_args) {
       air_error(c, "intrinsic: %s takes %u arguments and the call of %.*s passes %u",
@@ -4159,6 +4221,7 @@ link_visible(struct air_ctx *c, const struct air_function *f, struct air_link_sa
    c->globals = _mesa_pointer_hash_table_create(c->mem_ctx);
    c->static_stores = NULL;
    c->static_mem = NULL;
+   c->link_init = init;
    plan_globals(c);
    return g;
 }
@@ -4172,6 +4235,7 @@ unlink_visible(struct air_ctx *c, const struct air_link_saved *saved)
    c->static_stores = saved->static_stores;
    c->static_mem = saved->static_mem;
    c->options = saved->options;
+   c->link_init = false;
 }
 
 static nir_function *
@@ -4377,6 +4441,11 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
 
    /* this function's own globals, built in its own builder */
    materialise_globals(c);
+   /* and a linked function's, set by its own module's static initializers (link_visible) */
+   if (c->link_init) {
+      c->link_init = false;
+      run_static_initializers(c);
+   }
 
    bool ok = true;
    /* The caller passes each deref's own def and the callee casts it back, which
@@ -4496,6 +4565,22 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
       if (!emit_module_call(c, in, f, name, b, tmp, fields))
          return false;
       air_split_end(c, &sp);
+      return true;
+   }
+
+   /* A linked function the pipeline does not link: a marker where the call was, its result
+    * left undefined (the locals it would have filled are never stored), and an error after the
+    * constants have been folded if the marker is still there (air_to_nir) */
+   size_t unlinked = visible_unlinked(c, f);
+   if (unlinked) {
+      if (!c->unlinked[0]) {
+         const struct air_to_nir_options *o = c->options;
+         snprintf(c->unlinked, sizeof(c->unlinked),
+                  "intrinsic: a call of the linked function %.*s, and the pipeline links %u "
+                  "function%s, none of that name", (int)unlinked, f->base.name,
+                  o ? o->num_linked : 0, o && o->num_linked == 1 ? "" : "s");
+      }
+      nir_debug_break(&c->b);
       return true;
    }
 
@@ -6437,6 +6522,20 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
    }
 
    AIR_T("opt loops");
+   /* a call of a linked function the pipeline does not link, which the constants left in */
+   if (c.unlinked[0]) {
+      bool reached = false;
+      nir_foreach_function_impl(impl, c.nir) nir_foreach_block(block, impl) nir_foreach_instr(instr, block)
+         reached |= instr->type == nir_instr_type_intrinsic &&
+                    nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_debug_break;
+      if (reached) {
+         if (error)
+            *error = ralloc_strdup(mem_ctx, c.unlinked);
+         ralloc_free(c.nir);
+         ralloc_free(ctx);
+         return NULL;
+      }
+   }
    if (stage == MESA_SHADER_FRAGMENT && !getenv("AIR_DEMOTE") && defer_demote(c.nir)) {
       NIR_PASS(_, c.nir, nir_lower_vars_to_ssa);
       NIR_PASS(_, c.nir, nir_opt_dce);
