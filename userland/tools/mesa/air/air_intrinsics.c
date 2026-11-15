@@ -815,6 +815,9 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
    if (pv->kind != AIR_VAL_PTR)
       return air_error(c, "intrinsic: an atomic on something that is not a pointer");
    struct air_ptr p = pv->ptr;
+   /* an atomic member of an argument buffer, in the set's own (device) buffer */
+   if (p.class == AIR_PTR_ARGBUF && !air_argbuf_data_ptr(c, &p))
+      return false;
 
    bool shared = !strcmp(where, "local");
    if (shared != (p.class == AIR_PTR_SHARED))

@@ -794,13 +794,11 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
       break;
    }
    case AIR_PTR_ARGBUF:
-      /* argbuf_load answers a load through an argument buffer before it gets
-       * here, so this is a load that resolution could not make: through a
-       * pointer CHOSEN at run time between two sets, which load_through_choice
-       * would read from both of. There is nothing to read either way -- the
-       * bytes in an argument buffer are the runtime's 8-byte handles.
-       */
-      return air_error(c, "instruction: a load of bytes out of an argument buffer"), NULL;
+      /* Bytes out of a set: its values, read through the set's own buffer. A set of
+       * descriptors only has none -- its bytes are the runtime's 8-byte handles. */
+      if (!air_argbuf_data_ptr(c, &ptr))
+         return NULL;
+      return air_load_ptr(c, ptr, type, align);
    case AIR_PTR_NONE:
       /* Through null. Darwin 26's QuartzCore passes null for a buffer its function constants
        * say is absent (`select i1 %fc, ptr null, ptr %weights`) to a helper whose only call
@@ -850,11 +848,13 @@ air_store_ptr(struct air_ctx *c, struct air_ptr ptr, nir_def *value, unsigned al
    case AIR_PTR_CONSTANT_DATA:
       return air_error(c, "instruction: a store into constant memory");
    case AIR_PTR_ARGBUF:
-      /* Writing a descriptor from inside the shader. The handle it would write
-       * is the runtime's, and this frontend has resolved the set's members to
-       * bindings rather than to addresses, so there is nothing to write.
-       */
-      return air_error(c, "instruction: a store into an argument buffer");
+      /* A value written into a set, through the set's own buffer (constant memory refuses
+       * it as constant memory does). Writing a DESCRIPTOR from inside the shader has
+       * nowhere to go -- this frontend resolves members to bindings and not to addresses
+       * -- and a set with no values is refused here for that. */
+      if (!air_argbuf_data_ptr(c, &ptr))
+         return false;
+      return air_store_ptr(c, ptr, value, align);
    case AIR_PTR_NONE:
       return true;      /* through null: dead code of the same kind as the load above */
    default:
@@ -1721,10 +1721,19 @@ descriptor_kind_key(const struct air_md *desc)
  */
 static bool
 argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_type *st,
-               struct air_argbuf *ab)
+               struct air_argbuf *ab, uint64_t base, unsigned id_base)
 {
    unsigned n = 0;
    for (unsigned i = 0; i < sti->num_ops; n++) {
+      /* an inline struct: Apple writes its own struct_type_info BEFORE the five fields */
+      bool inline_struct = false;
+      unsigned lead_at = i;
+      const char *lead = md_str(sti, i);
+      if (lead && !strcmp(lead, "air.struct_type_info") && i + 1 < sti->num_ops &&
+          sti->ops[i + 1] && sti->ops[i + 1]->kind == AIR_MD_NODE) {
+         inline_struct = true;
+         i += 2;
+      }
       uint64_t off = 0, msize = 0, flag = 0;
       const char *mtype = md_str(sti, i + 3), *mname = md_str(sti, i + 4);
       if (!md_int(sti, i, &off) || !md_int(sti, i + 1, &msize) ||
@@ -1738,14 +1747,72 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
 
       const char *key = md_str(sti, i + 5);
       const struct air_md *desc = NULL;
+      uint64_t value_id = 0;
+      bool value_by_number = false;
       if (key && !strcmp(key, "air.indirect_argument") && i + 6 < sti->num_ops &&
           sti->ops[i + 6] && sti->ops[i + 6]->kind == AIR_MD_NODE)
          desc = sti->ops[i + 6];
-      if (!desc)
+      /* an atomic member: its descriptor is the bare [[id(n)]] (`"air.indirect_argument",
+       * i32 3` in VFX's spline sets) */
+      else if (key && !strcmp(key, "air.indirect_argument") && i + 6 < sti->num_ops &&
+               md_int(sti, i + 6, &value_id))
+         value_by_number = true;
+      if (!desc && !value_by_number)
          return air_error(c, "interface: member %s of the argument buffer %s is followed "
                              "by %s and not by an air.indirect_argument descriptor",
                           mname, ab->name ? ab->name : "unnamed", key ? key : "nothing");
       i += 7;
+
+      /* A VALUE in the set: `air.indirect_constant`, an inline struct or an atomic. Its
+       * bytes are the set's own, at its offset, and it takes no binding -- the set's buffer
+       * is what reads it (air_argbuf_data_ptr). The struct type still has to agree on where
+       * it is: the loads go through that type.
+       */
+      bool is_value = value_by_number || inline_struct ||
+                      md_key(desc, "air.indirect_constant") >= 0;
+      if (is_value) {
+         uint64_t vid = value_id;
+         if (desc) {
+            int vli = md_key(desc, "air.location_index");
+            if (vli < 0 || !md_int(desc, vli + 1, &vid))
+               return air_error(c, "interface: the value member %s of the argument buffer "
+                                   "%s has no air.location_index", mname,
+                                ab->name ? ab->name : "unnamed");
+         }
+         if (n >= st->num_members ||
+             air_struct_member_offset(c->m, st, n) != off ||
+             air_type_alloc_size(c->m, st->members[n]) != msize)
+            return air_error(c, "interface: the value member %s of the argument buffer %s "
+                                "is %u bytes at byte %u, and the module's struct type does "
+                                "not put it there", mname, ab->name ? ab->name : "unnamed",
+                             (unsigned)msize, (unsigned)off);
+         /* An inline struct is its members, flattened into the set: each at the struct's
+          * offset plus its own, and numbered from the struct's [[id(n)]] on, which is how
+          * Metal numbers a struct inside an argument buffer. VFX wraps a texture so
+          * (`texture2d_wrapper { texture2d storage; }` at id 201 is the texture at id
+          * 201), and an atomic is a struct of one int. */
+         if (inline_struct) {
+            const struct air_type *inner = st->members[n];
+            if (inner->kind != AIR_TYPE_STRUCT)
+               return air_error(c, "interface: the member %s of the argument buffer %s is "
+                                   "described as a struct and is not one in the module",
+                                mname, ab->name ? ab->name : "unnamed");
+            if (!argbuf_members(c, sti->ops[lead_at + 1], inner, ab, base + off,
+                                id_base + (unsigned)vid))
+               return false;
+            continue;
+         }
+         unsigned k = ab->num_members;
+         ab->members = reralloc(c->mem_ctx, ab->members, struct air_argbuf_member, k + 1);
+         ab->members[k] = (struct air_argbuf_member) {
+            .offset = base + off, .metal_id = id_base + (unsigned)vid, .index = ~0u,
+            .value = true, .size = msize, .read = true, .name = mname, .type_name = mtype,
+            .node = desc,
+         };
+         ab->num_members = k + 1;
+         ab->has_values = true;
+         continue;
+      }
 
       /* A set inside a set. The member's descriptor would have a member table
        * of its own, reached through a pointer LOADED out of this one and then
@@ -1839,16 +1906,23 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
                          : write ? AIR_RESOURCE_IMAGE : AIR_RESOURCE_TEXTURE;
       }
 
-      ab->members = reralloc(c->mem_ctx, ab->members, struct air_argbuf_member, n + 1);
-      ab->members[n] = (struct air_argbuf_member) {
-         .offset = off, .kind = rk, .metal_id = (unsigned)mid, .index = ~0u,
+      unsigned k = ab->num_members;
+      ab->members = reralloc(c->mem_ctx, ab->members, struct air_argbuf_member, k + 1);
+      ab->members[k] = (struct air_argbuf_member) {
+         .offset = base + off, .kind = rk, .metal_id = id_base + (unsigned)mid, .index = ~0u,
          .addrspace = addrspace, .read = read, .write = write,
          .name = mname, .type_name = mtype, .node = desc,
       };
-      ab->num_members = n + 1;
+      ab->num_members = k + 1;
    }
 
-   if (n != st->num_members)
+   /* padding the compiler put at the end of the struct (`[8 x i8]`) is no member */
+   unsigned typed = st->num_members;
+   while (typed > n && st->members[typed - 1]->kind == AIR_TYPE_ARRAY &&
+          st->members[typed - 1]->elem->kind == AIR_TYPE_INT &&
+          st->members[typed - 1]->elem->bits == 8)
+      typed--;
+   if (n != typed)
       return air_error(c, "interface: the argument buffer %s declares %u members and its "
                           "struct type has %u", ab->name ? ab->name : "unnamed", n,
                        st->num_members);
@@ -1935,12 +2009,36 @@ translate_argument_buffer(struct air_ctx *c, const struct air_md *node, unsigned
       .metal_index = (unsigned)set_index, .size = (unsigned)size, .param = param,
       .name = name, .type_name = tn,
    };
-   if (!argbuf_members(c, sti, st, ab))
+   if (!argbuf_members(c, sti, st, ab, 0, 0))
       return false;
-   /* eight bytes per member is what MTLArgumentEncoder writes and what the
-    * runtime's encodedLength has to answer; a set whose declared size is not
-    * that is a layout this frontend has not seen */
-   if (size != 8ull * ab->num_members)
+   /* A set with values in it is laid out as its struct is, values at their own sizes and
+    * every descriptor eight bytes, and is as long as Apple says (`air.buffer_size`, which
+    * encodedLength answers). The values are read out of the set's own buffer, bound at the
+    * set's index like any other buffer argument and in the set's own address space.
+    */
+   if (ab->has_values) {
+      for (unsigned k = 0; k < ab->num_members; k++) {
+         const struct air_argbuf_member *m = &ab->members[k];
+         if (m->offset + (m->value ? m->size : 8) > size)
+            return air_error(c, "interface: member %s of the argument buffer %s ends past "
+                                "its %u bytes", m->name ? m->name : "unnamed",
+                             name ? name : "unnamed", (unsigned)size);
+      }
+      uint64_t as = 2;
+      md_key_int(node, "air.address_space", &as);
+      if (as != 1 && as != 2)
+         return air_error(c, "interface: an argument buffer (%s) with values in it in "
+                             "address space %u", name ? name : "unnamed", (unsigned)as);
+      ab->data_device = as == 1;
+      bool read = md_key(node, "air.read") >= 0 || md_key(node, "air.read_write") >= 0;
+      bool write = md_key(node, "air.write") >= 0 || md_key(node, "air.read_write") >= 0;
+      if (!add_resource(c, as == 1 ? AIR_RESOURCE_DEVICE_BUFFER : AIR_RESOURCE_CONSTANT_BUFFER,
+                        ab->metal_index, size, read || !write, write, param, node))
+         return false;
+   } else if (size != 8ull * ab->num_members)
+      /* eight bytes per member is what MTLArgumentEncoder writes and what the
+       * runtime's encodedLength has to answer; a set whose declared size is not
+       * that is a layout this frontend has not seen */
       return air_error(c, "interface: the argument buffer %s is %u bytes with %u members, "
                           "and this frontend knows the eight-bytes-per-member layout "
                           "only", name ? name : "unnamed", (unsigned)size,
@@ -2000,6 +2098,8 @@ allocate_argbuf_indices(struct air_ctx *c)
       struct air_argbuf *ab = &c->argbufs[s];
       for (unsigned k = 0; k < ab->num_members; k++) {
          struct air_argbuf_member *m = &ab->members[k];
+         if (m->value)
+            continue;      /* read through the set's own buffer, no binding of its own */
          switch (m->kind) {
          case AIR_RESOURCE_CONSTANT_BUFFER:
          case AIR_RESOURCE_DEVICE_BUFFER:
@@ -2033,11 +2133,32 @@ allocate_argbuf_indices(struct air_ctx *c)
  * resolves by the same lookup as the buffer shape, with nothing special about
  * it and no second path to keep right.
  */
+bool
+air_argbuf_data_ptr(struct air_ctx *c, struct air_ptr *ptr)
+{
+   const struct air_argbuf *ab = &c->argbufs[ptr->binding];
+   if (!ab->has_values)
+      return air_error(c, "instruction: bytes read or written in the argument buffer %s, "
+                          "which holds descriptors and no values",
+                       ab->name ? ab->name : "unnamed");
+   ptr->class = ab->data_device ? AIR_PTR_SSBO : AIR_PTR_UBO;
+   ptr->binding = ab->metal_index;
+   return true;
+}
+
 static struct air_val *
-argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type)
+argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
+            unsigned align)
 {
    const struct air_argbuf *ab = &c->argbufs[ptr.binding];
    const char *abname = ab->name ? ab->name : "unnamed";
+
+   /* a value out of a set that has values: its bytes, where they lie in the set's buffer
+    * (an index into an array in it is an offset like any other) */
+   if (type->kind != AIR_TYPE_POINTER && ab->has_values) {
+      nir_def *v = air_load_ptr(c, ptr, type, align);
+      return v ? air_val_ssa(c, v) : NULL;
+   }
 
    uint64_t off = 0;
    if (ptr.offset) {
@@ -2057,6 +2178,11 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type)
    if (!m) {
       air_error(c, "instruction: a load from byte %u of the argument buffer %s, which "
                    "declares no member there", (unsigned)off, abname);
+      return NULL;
+   }
+   if (m->value) {
+      air_error(c, "instruction: a pointer loaded from the value member %s of the argument "
+                   "buffer %s", m->name ? m->name : "unnamed", abname);
       return NULL;
    }
 
@@ -3985,7 +4111,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
        * becomes a pointer and not an instruction.
        */
       if (p->ptr.class == AIR_PTR_ARGBUF) {
-         struct air_val *res = argbuf_load(c, p->ptr, in->base.type);
+         struct air_val *res = argbuf_load(c, p->ptr, in->base.type, in->align);
          if (!res)
             return false;
          air_set(c, &in->base, res);

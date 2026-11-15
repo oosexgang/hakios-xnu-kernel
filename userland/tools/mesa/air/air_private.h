@@ -116,6 +116,14 @@ struct air_argbuf_member {
    bool read, write;
    const char *name, *type_name;
    const struct air_md *node;   /* the member's own air.indirect_argument descriptor */
+
+   /* A VALUE and not a descriptor: `air.indirect_constant`, an inline struct, or an atomic
+    * -- bytes the application writes through -constantDataAtIndex: and the shader reads
+    * where they lie. No binding of its own (`kind` and `index` mean nothing): it is read
+    * through the set's own buffer (air_argbuf.data_index).
+    */
+   bool value;
+   uint64_t size;
 };
 
 struct air_argbuf {
@@ -125,6 +133,14 @@ struct air_argbuf {
    const char *name, *type_name;
    unsigned num_members;
    struct air_argbuf_member *members;
+
+   /* A set with a value member in it is ALSO a buffer: the one bound at metal_index, read
+    * and written where the values lie, as a constant buffer or a device one as the set's
+    * own address space says. `has_values` false: the set is descriptors only, and there
+    * are no bytes in it a shader reads.
+    */
+   bool has_values;
+   bool data_device;
 };
 
 struct air_ctx {
@@ -288,6 +304,9 @@ void air_note(struct air_ctx *c, const char *fmt, ...) PRINTFLIKE(2, 3);
 nir_def *air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
                       unsigned align);
 bool air_store_ptr(struct air_ctx *c, struct air_ptr ptr, nir_def *value, unsigned align);
+/* A pointer into an argument buffer's VALUES as the pointer into the set's own buffer it
+ * is; false and an error for a set that has none. */
+bool air_argbuf_data_ptr(struct air_ctx *c, struct air_ptr *ptr);
 struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes);
 
 /* air.* and llvm.* calls; the result is set on the instruction by the callee */
