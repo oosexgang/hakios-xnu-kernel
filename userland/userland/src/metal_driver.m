@@ -1400,11 +1400,15 @@ rw_bisect_within(void)
 	/* a copy of a surface the GPU could not take (newTextureWithDescriptor:iosurface:plane:): the surface, and
 	 * what is needed to copy it again while its owner is still drawing into it */
 	IOSurfaceRef _copiedFrom;
+	/* ... or of part of a buffer (-[HakiosMetalBuffer newTextureWithDescriptor:offset:bytesPerRow:]) */
+	id _copiedFromBuffer;
+	NSUInteger _bufferOffset, _bufferRow;
 	uint64_t _copiedAt, _copiedHash;
 	unsigned _copiedStable;
 	uint32_t _copiedSeed;      /* the surface's seed when last copied: a writer that locked it changes it */
 }
 - (void)copyFromSurface:(IOSurfaceRef)surface;
+- (void)copyFromBuffer:(id)buffer offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row;
 - (void)writeBackToSurface;
 @property (readonly) struct rwa_texture *mesaTexture;
 /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
@@ -3428,11 +3432,29 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
 - (id)newTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
 		   bytesPerRow:(NSUInteger)bytesPerRow
 {
-	(void)descriptor; (void)offset; (void)bytesPerRow;
-	RW_ONCE("hakiosmetal: a texture over a buffer was asked for; the contract lays a texture "
-		"over an IOSurface and over memory of its own, but not over a buffer this driver "
-		"already holds\n");
-	return nil;
+	/*
+	 * A texture laid over this buffer, which the contract has no call for: a texture of the device's
+	 * own instead, the buffer's bytes copied in now and again whenever they have changed, and what the
+	 * GPU draws into it written back (-[HakiosMetalTexture copyFromBuffer:...], the way a surface the
+	 * GPU cannot take is served). backboardd asks for one at its first frames under QEMU, and had nil.
+	 */
+	NSUInteger height = [descriptor height] ? [descriptor height] : 1;
+
+	if (_contents == NULL || bytesPerRow == 0 || [descriptor textureType] != MTLTextureType2D ||
+	    offset + bytesPerRow * (height - 1) > _length) {
+		RW_ONCE("hakiosmetal: a texture over a buffer was asked for that this driver cannot copy "
+			"(a 2D one, inside the buffer, with its rows given, is what it can)\n");
+		return nil;
+	}
+	id texture = [_owner newTextureWithDescriptor:descriptor];
+	if (![texture isKindOfClass:[HakiosMetalTexture class]]) {
+		[texture release];
+		return nil;
+	}
+	RW_ONCE("hakiosmetal: a texture over a buffer is a copy of the buffer's bytes, taken again when "
+		"they change, and written back when the GPU draws into it\n");
+	[(HakiosMetalTexture *)texture copyFromBuffer:self offset:offset bytesPerRow:bytesPerRow];
+	return texture;
 }
 
 - (id)newLinearTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
@@ -3491,6 +3513,7 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
 	if (_texture != NULL) {
 		MESA_VOID(texture_destroy, _texture);
 	}
+	[_copiedFromBuffer release];
 	if (_copiedFrom != NULL) {
 		CFRelease(_copiedFrom);
 	}
@@ -3559,6 +3582,17 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
  */
 - (void)writeBackToSurface
 {
+	if (_copiedFromBuffer != nil) {
+		uint8_t *base = [_copiedFromBuffer contents];
+		size_t rows = _shape.height ? _shape.height : 1;
+
+		if (base != NULL) {
+			[self getBytes:base + _bufferOffset bytesPerRow:_bufferRow
+			    fromRegion:MTLRegionMake2D(0, 0, _shape.width, rows) mipmapLevel:0];
+			_copiedHash = rw_bytes_hash(base + _bufferOffset, _bufferRow * rows);
+		}
+		return;
+	}
 	if (_copiedFrom == NULL) {
 		return;
 	}
@@ -3581,8 +3615,46 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 	_copiedAt = mach_absolute_time();
 }
 
+/* the FNV-1a of a run of bytes, every fifth word: what tells a changed buffer from one that has not */
+static uint64_t
+rw_bytes_hash(const uint8_t *bytes, size_t length)
+{
+	const uint64_t *w = (const uint64_t *)bytes;
+	uint64_t h = 1469598103934665603ull;
+
+	for (size_t x = 0; x < length / 8; x += 5) {
+		h = (h ^ w[x]) * 1099511628211ull;
+	}
+	return h;
+}
+
+- (void)copyFromBuffer:(id)buffer offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row
+{
+	const uint8_t *base = [buffer contents];
+
+	if (base == NULL) {
+		return;
+	}
+	if (_copiedFromBuffer == nil) {
+		_copiedFromBuffer = [buffer retain];
+		_bufferOffset = offset;
+		_bufferRow = row;
+	}
+	uint64_t h = rw_bytes_hash(base + offset, row * (_shape.height ? _shape.height : 1));
+	if (_copiedAt != 0 && h == _copiedHash) {
+		return;
+	}
+	[self replaceRegion:MTLRegionMake2D(0, 0, _shape.width, _shape.height ? _shape.height : 1) mipmapLevel:0
+		  withBytes:base + offset bytesPerRow:row];
+	_copiedHash = h;
+	_copiedAt = mach_absolute_time();
+}
+
 - (struct rwa_texture *)mesaTexture
 {
+	if (_copiedFromBuffer != nil) {
+		[self copyFromBuffer:_copiedFromBuffer offset:_bufferOffset bytesPerRow:_bufferRow];
+	}
 	if (_copiedFrom != NULL) {
 		static mach_timebase_info_data_t tb;
 
