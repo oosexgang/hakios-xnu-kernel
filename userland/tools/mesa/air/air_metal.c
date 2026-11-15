@@ -6318,6 +6318,32 @@ build_vertex_state(const struct air_shader_info *vinfo,
    return true;
 }
 
+static double cost_now_ms(void);
+
+/* The driver's lock on the Gallium context, as rwa_set_pipe_lock gives it (air_metal.h). */
+static void (*pipe_lock_enter)(void), (*pipe_lock_leave)(void);
+
+void
+rwa_set_pipe_lock(void (*enter)(void), void (*leave)(void))
+{
+   pipe_lock_enter = enter;
+   pipe_lock_leave = leave;
+}
+
+static void
+lib_pipe_enter(void)
+{
+   if (pipe_lock_enter)
+      pipe_lock_enter();
+}
+
+static void
+lib_pipe_leave(void)
+{
+   if (pipe_lock_leave)
+      pipe_lock_leave();
+}
+
 /* A compiled pipeline for drawing. The shaders are kept pristine under mem_ctx and a
  * clone is handed to the driver, for the reason compute_state_for gives: a Gallium
  * driver steals the NIR it is given, so what this library frees at destroy must be its
@@ -6365,6 +6391,9 @@ struct rwa_render {
     * the draw binds the streams it names instead of the quad.
     */
    struct rwa_vertex_state vstate;
+
+   /* how long its making took, by part (rwa_render_times) */
+   double times_ms[RWA_RENDER_TIMES];
 };
 
 /* struct rwa_render's frag_sw_pair: renumber each sample to its texture's unit, keeping the
@@ -7406,6 +7435,7 @@ rwa_render_create(struct rwa_device *device,
                   const struct rwa_render_shape *shape,
                   struct rwa_render_info *info, char *why, size_t why_size)
 {
+   bool locked = false;   /* (the driver's lock on the context: taken before the first use of it) */
    if (!shape) {
       say(why, why_size, "a render pipeline with no attachment description");
       return NULL;
@@ -7572,9 +7602,11 @@ rwa_render_create(struct rwa_device *device,
    const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
                                              .linked = flinked, .num_linked = num_flinked };
    const char *error;
+   double t_fs = cost_now_ms();
    nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
                                fragment_entry, &fopts, device->nir_options, &render->finfo,
                                &error);
+   render->times_ms[0] = cost_now_ms() - t_fs;
    if (!fs) {
       say(why, why_size, "%s", error ? error : "the fragment module could not be translated");
       goto fail;
@@ -7629,8 +7661,10 @@ rwa_render_create(struct rwa_device *device,
       unsigned num_vlinked = module_linked(render->mem_ctx, vertex_bitcode, &vlinked);
       const struct air_to_nir_options vopts = { .constants = vfc, .num_constants = num_vfc,
                                                 .linked = vlinked, .num_linked = num_vlinked };
+      double t_vs = cost_now_ms();
       vs = air_to_nir(render->mem_ctx, vertex_bitcode, vertex_size, vertex_entry, &vopts,
                       device->nir_options, &render->vinfo, &error);
+      render->times_ms[1] = cost_now_ms() - t_vs;
       if (!vs) {
          say(why, why_size, "%s", error ? error : "the vertex module could not be translated");
          goto fail;
@@ -7715,17 +7749,28 @@ rwa_render_create(struct rwa_device *device,
       out.generated_vertex_stage = 1;
    }
 
+   double t_link = cost_now_ms();
    if (!render->generated_vertex &&
        !link_varyings(vs, &render->vinfo, fs, &render->finfo, why, why_size))
       goto fail;
+   render->times_ms[2] = cost_now_ms() - t_link;
 
    /* Compile both stages now. A failure here is a creation failure and says so; the
     * stages are linked later, at the draw.
     */
+   /* From here on the Gallium context is used, and it is the driver's to share (rwa_set_pipe_lock):
+    * what came before -- the translations and the link, the part that grows with the shader -- ran
+    * without it, so a draw of another thread was not kept waiting behind it */
+   lib_pipe_enter();
+   locked = true;
+   double t_cso = cost_now_ms();
    render->fs_cso = make_stage_cso(device, fs, render->frag_sw_pair, why, why_size);
+   render->times_ms[3] = cost_now_ms() - t_cso;
    if (!render->fs_cso)
       goto fail;
+   t_cso = cost_now_ms();
    render->vs_cso = make_stage_cso(device, vs, render->vert_sw_pair, why, why_size);
+   render->times_ms[4] = cost_now_ms() - t_cso;
    /* the generated stage is standalone (not under mem_ctx); the driver has a clone, so
     * the source is this library's to free either way
     */
@@ -7907,11 +7952,28 @@ rwa_render_create(struct rwa_device *device,
 
    if (info)
       *info = out;
+   lib_pipe_leave();
+   if (getenv("RWA_TIMES")) {
+      const double *ms = render->times_ms;
+      fprintf(stderr, "rwa_render_create %s: %.1f ms: fragment %.1f, vertex %.1f, link %.1f, "
+                      "compiled %.1f + %.1f\n", fn, ms[0] + ms[1] + ms[2] + ms[3] + ms[4], ms[0],
+              ms[1], ms[2], ms[3], ms[4]);
+   }
    return render;
 
 fail:
+   if (!locked)
+      lib_pipe_enter();
    rwa_render_destroy(render);
+   lib_pipe_leave();
    return NULL;
+}
+
+void
+rwa_render_times(const struct rwa_render *render, double ms[RWA_RENDER_TIMES])
+{
+   for (unsigned i = 0; i < RWA_RENDER_TIMES; i++)
+      ms[i] = render ? render->times_ms[i] : 0;
 }
 
 void

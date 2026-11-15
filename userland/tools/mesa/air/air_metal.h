@@ -1160,6 +1160,19 @@ struct rwa_render *rwa_render_create(struct rwa_device *device,
 				     const struct rwa_render_shape *shape,
 				     struct rwa_render_info *info, char *why, size_t why_size);
 void rwa_render_destroy(struct rwa_render *render);
+/* How long a pipeline's making took, in milliseconds, by part: translating the fragment stage
+ * and the vertex stage, linking their varyings, and the screen's compiling of each (the
+ * fragment's, then the vertex's). A driver says them for a pipeline that took long: under QEMU
+ * CoreAnimation's took tens of seconds, and which part is the question. */
+/* The driver's lock on the Gallium context, which this library takes itself around what in
+ * rwa_render_create uses the context. A driver that has given it calls rwa_render_create
+ * without holding the lock, and the translation -- the part that grows with the shader --
+ * runs beside its draws instead of in front of them: under QEMU CoreAnimation's render server
+ * kept every frame waiting behind pipelines that took tens of seconds to make, and its
+ * clients' display queries gave up. Every other call still wants the lock held. */
+void rwa_set_pipe_lock(void (*enter)(void), void (*leave)(void));
+#define RWA_RENDER_TIMES 5
+void rwa_render_times(const struct rwa_render *render, double ms[RWA_RENDER_TIMES]);
 
 /*
  * One draw into one render pass, which is what MTLRenderPassDescriptor plus one
