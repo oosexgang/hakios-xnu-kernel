@@ -3221,6 +3221,28 @@ translate_binop(struct air_ctx *c, const struct air_inst *in)
    return true;
 }
 
+/* A pointer as a pointer to something else: the same resolution with the new pointee -- and a
+ * pointer chosen at run time, the same choice between its two sides cast (MOVStreamIO's
+ * joinWarholIntoBayer selects one of two buffers, offsets into it as bytes and casts the result
+ * to the vector it loads) */
+static struct air_val *
+cast_pointer(struct air_ctx *c, const struct air_val *v, const struct air_type *pointee)
+{
+   if (v->kind == AIR_VAL_PTR) {
+      struct air_ptr p = v->ptr;
+      p.pointee = pointee;
+      struct air_val *r = air_val_ptr(c, p);
+      r->fn = v->fn;
+      return r;
+   }
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      struct air_val *a = cast_pointer(c, v->elems[0], pointee);
+      struct air_val *b = cast_pointer(c, v->elems[1], pointee);
+      return a && b ? air_val_ptr_select(c, v->def, a, b) : NULL;
+   }
+   return NULL;
+}
+
 static bool
 translate_cast(struct air_ctx *c, const struct air_inst *in)
 {
@@ -3234,13 +3256,10 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
    if ((in->sub == AIR_CAST_BITCAST || in->sub == AIR_CAST_ADDRSPACECAST) &&
        dt->kind == AIR_TYPE_POINTER && st->kind == AIR_TYPE_POINTER) {
       struct air_val *v = air_get(c, in->operands[0]);
-      if (!v || v->kind != AIR_VAL_PTR)
+      struct air_val *r = v ? cast_pointer(c, v, dt->elem) : NULL;
+      if (!r)
          return air_error(c, "instruction: a%s of something that is not a pointer",
                           in->sub == AIR_CAST_BITCAST ? " bitcast" : "n addrspacecast");
-      struct air_ptr p = v->ptr;
-      p.pointee = dt->elem;
-      struct air_val *r = air_val_ptr(c, p);
-      r->fn = v->fn;
       air_set(c, &in->base, r);
       return true;
    }
@@ -3842,12 +3861,12 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          return air_error(c, "instruction: a store of a pointer into memory, which this "
                              "frontend has no address to write");
       }
-      if (p->kind == AIR_VAL_PTR_SELECT)
-         return air_error(c, "instruction: a store through a chosen pointer, which would "
-                             "have to write both of them");
       nir_def *v = air_get_ssa(c, in->operands[0]);
       if (!v)
          return false;
+      if (p->kind == AIR_VAL_PTR_SELECT)
+         return air_error(c, "instruction: a store through a chosen pointer, which would "
+                             "have to write both of them");
       if (p->kind != AIR_VAL_PTR)
          return air_error(c, "instruction: a store to something that is not a pointer");
       return air_store_ptr(c, p->ptr, v, in->align);
