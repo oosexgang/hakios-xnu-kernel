@@ -192,12 +192,12 @@ and GESS's large ones), run as the 15 November library stood:
 
 | | Functions |
 | --- | --- |
-| compiled by ir3 for the Adreno 642L | **3,784** |
+| compiled by ir3 for the Adreno 642L | **3,843** (3,784 at the first sweep the same day) |
 | not entry points -- `air.visible` library functions and modules with no entry-point metadata, which Metal links into a pipeline and never compiles alone | 2,438 |
-| refused | 556 |
+| refused | 497 (556) |
 | crashed the compiler | 2 (an ir3 register-allocation check in `NRFV1`'s BlinkDetection and `H13FastRawScale`; camera, not drawing) |
 
-So 87% of the entry points Darwin 27 ships compile for the phone's GPU. And they do so without a memory
+So 88.5% of the entry points Darwin 27 ships compile for the phone's GPU. And they do so without a memory
 error: `userland/tools/air/memcheck.sh` runs the same path under valgrind's memcheck, a process per function,
 and QuartzCore's 249, RenderBox's 109 and MercuryPoster's 52 are clean -- a read past a buffer there would be
 a crash of backboardd or SpringBoard on the phone, where nothing would say why. What the sweep found, and what was
@@ -228,6 +228,11 @@ fixed for it on the way (each a commit of its own):
   in the library.
 - **Visible function tables** (90) and `[[stage_in]]` in compute kernels (VFX).
 - **More than 16 textures in a stage**: freedreno binds 16 without bindless, and so does this library.
+- **Tessellation** (13 functions: BiometricKitUI's MTLSpline, LocalAuthentication's UI, RoomPlan, ARKitUI): a
+  post-tessellation vertex function takes its control points through `MTL_CONTROL_POINT_FN(i, patch)` and its
+  place in the patch as `[[position_in_patch]]`. The way in without the GPU's own tessellator is a vertex shader
+  over a grid per patch -- the point's index giving the patch and the place, the control points fetched as the
+  vertex descriptor lays them out, the factors read once the kernel that writes them has run.
 - **Under QEMU** the driver runs on softpipe and the first frames wait on 30-second compiles; that is the
   emulator, not the phone, which compiles the same shaders in milliseconds (the costs above).
 
