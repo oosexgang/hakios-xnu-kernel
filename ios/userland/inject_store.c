@@ -3246,37 +3246,37 @@ dump_tracked_promises(void)
  * proceeds (requests its bag / reaches amp-api) the way 16.5 did, or aborts. resolve(toError:) completes
  * a promise regardless of its value type, so no type is guessed. One shot, from the report thread.
  */
+/* the empty Array<T> value is the address of libswiftCore's __swiftEmptyArrayStorage singleton
+ * (0x1ef0d1df0 unslid, external __AUTH.__data); it is immortal, so a value-witness retain of it is safe,
+ * and it is a valid empty array for ANY element type. */
+static void *empty_array_value;
+
 static void
 force_resolve_prereqs(void)
 {
 	static bool done;
 	const char *on = knob("HAKIOS_FORCE_RESOLVE");
-	void *resolve_to_error = (void *)(0x1a6ee22f8UL + slide);        /* Promise.resolve(toError:) body */
-	Class err_class = objc_getClass("NSError");
-	id error;
-	int n = tracked_promise_n < 2 ? tracked_promise_n : 2;
+	void *resolve = (void *)(0x1a6e99624UL + slide);        /* Promise.resolve(_:) = the SUCCESS path */
+	void *p;
 
-	if (done || on == NULL || *on == '0' || slide == 0 || n == 0 || err_class == Nil) {
+	if (done || on == NULL || *on == '0' || slide == 0 || tracked_promise_n == 0) {
 		return;
 	}
 	done = true;
-	error = ((id (*)(id, SEL, id, long, id))objc_msgSend)((id)err_class,
-	    sel_registerName("errorWithDomain:code:userInfo:"), (id)CFSTR("hakios.forced"), 1, NULL);
-	CFRetain((CFTypeRef)error);
 	/*
-	 * ON THE MAIN QUEUE. Rejecting from the report thread trapped in a Swift assertion inside the promise's
-	 * continuation handler (run 223031, signal 5 in JetEngine.Promise.reject -> _assertionFailure): a
-	 * JetEngine UI promise expects to be resolved on its own (main) executor. Dispatched there instead.
+	 * VALUE (SUCCESS) PATH, on the main queue. Rejecting (resolve(toError:)) trapped in a hard Swift
+	 * assertion inside Promise.reject's continuation, from any thread (runs 223031/224207). resolve(_:)
+	 * takes the SUCCESS continuation instead, and a pointer to the value in x0. Promise #0 (func_20b45d7dc)
+	 * is over Array<T> (Ghidra: Say...G), so an empty array -- type-agnostic -- is a valid success value.
+	 * If the bootstrap then proceeds, the prerequisite was a local gate; if it hangs on #1, try that next.
 	 */
-	for (int i = 0; i < n; i++) {
-		void *p = tracked_promises[i].p;
-
-		if (p != NULL && !tracked_promises[i].resolved) {
-			say("hakios: store: FORCING promise #%d %p to fail on the main queue\n", i, p);
-			dispatch_async(dispatch_get_main_queue(), ^{
-				hakios_call_resolve(p, (void *)error, resolve_to_error);
-			});
-		}
+	empty_array_value = (void *)(0x1ef0d1df0UL + slide);
+	p = tracked_promises[0].p;
+	if (p != NULL && !tracked_promises[0].resolved) {
+		say("hakios: store: FORCING promise #0 %p to SUCCEED with an empty array (main queue)\n", p);
+		dispatch_async(dispatch_get_main_queue(), ^{
+			hakios_call_resolve(p, &empty_array_value, resolve);
+		});
 	}
 }
 
