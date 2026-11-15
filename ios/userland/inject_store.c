@@ -3112,7 +3112,7 @@ new_prereqs(void)
  * promise appears among those creation sites -- the earliest ones, created right after start(). Report
  * prints them (symbolize with scratchpad/names.sh). HAKIOS_TRACK_PROMISES=1, AppStore only.
  */
-static struct { void *p; void *caller; } tracked_promises[24];
+static struct { void *p; void *caller; bool resolved; } tracked_promises[24];
 static int tracked_promise_n;
 static bool bootstrap_running;
 static volatile int in_recorder;        /* re-entrancy guard: Promise.init() nests */
@@ -3130,9 +3130,10 @@ static volatile int in_recorder;        /* re-entrancy guard: Promise.init() nes
  * init() is hooked (0x1a6e999a8): an awaited, externally-resolved prerequisite is a bare Promise, made
  * with init() and fulfilled later; init(task:)/init(value:) are hot async paths and are left alone.
  */
-void *old_promise_init_g;
+void *old_promise_init_g, *old_promise_resolve_g;
 
-void hakios_record_promise(void *promise, void *caller);        /* called from the trampoline */
+void hakios_record_promise(void *promise, void *caller);        /* called from the trampolines */
+void hakios_record_resolved(void *promise);
 
 void
 hakios_record_promise(void *promise, void *caller)
@@ -3144,9 +3145,29 @@ hakios_record_promise(void *promise, void *caller)
 	if (tracked_promise_n < 24 && promise != NULL) {
 		tracked_promises[tracked_promise_n].p = promise;
 		tracked_promises[tracked_promise_n].caller = caller;
+		tracked_promises[tracked_promise_n].resolved = false;
 		tracked_promise_n++;
 	}
 	in_recorder = 0;
+}
+
+/*
+ * ... and when any promise is resolved (Promise.resolve(_:) @0x1a6e99624), mark the matching tracked one.
+ * resolve() is hot and app-wide, but it only ever reads our small table (24 entries), so the cost is a
+ * handful of compares. The one tracked promise still unresolved at the report is the stuck prerequisite.
+ */
+void
+hakios_record_resolved(void *promise)
+{
+	if (promise == NULL) {
+		return;
+	}
+	for (int i = 0; i < tracked_promise_n; i++) {
+		if (tracked_promises[i].p == promise) {
+			tracked_promises[i].resolved = true;
+			return;
+		}
+	}
 }
 
 /* one trampoline: save fp/lr (lr = the caller's creation site); call the original with every caller
@@ -3167,8 +3188,22 @@ __asm__(
 "	ldp x0, x1, [sp], #16\n"
 "	ldp x29, x30, [sp], #16\n"
 "	retab\n"
+"	.p2align 2\n"
+"_hakios_tramp_resolve:\n"                      /* Promise.resolve(_:): self (the promise) is in x20 */
+"	pacibsp\n"
+"	stp x29, x30, [sp, #-16]!\n"
+"	mov x29, sp\n"
+"	str x20, [sp, #-16]!\n"                 /* save self before the call; keep 16-byte alignment */
+"	adrp x17, _old_promise_resolve_g@PAGE\n"
+"	ldr  x17, [x17, _old_promise_resolve_g@PAGEOFF]\n"
+"	blr  x17\n"                             /* original resolve: x20,x0-x7,x8 untouched; returns void */
+"	ldr  x0, [sp], #16\n"                   /* x0 = the resolved promise */
+"	bl  _hakios_record_resolved\n"
+"	ldp x29, x30, [sp], #16\n"
+"	retab\n"
 );
 extern void hakios_tramp_init(void);
+extern void hakios_tramp_resolve(void);
 
 static void
 dump_tracked_promises(void)
@@ -3178,8 +3213,9 @@ dump_tracked_promises(void)
 	}
 	say("hakios: store: %d JetEngine promises created early in the bootstrap:\n", tracked_promise_n);
 	for (int i = 0; i < tracked_promise_n; i++) {
-		say("hakios: store: promise #%d %p made from %#lx (unslid)\n", i, tracked_promises[i].p,
-		    (uintptr_t)tracked_promises[i].caller - slide);
+		say("hakios: store: promise #%d %p made from %#lx (unslid) %s\n", i, tracked_promises[i].p,
+		    (uintptr_t)tracked_promises[i].caller - slide,
+		    tracked_promises[i].resolved ? "resolved" : "<-- PENDING (never resolved)");
 	}
 }
 
@@ -3270,7 +3306,8 @@ hook_bootstrap(void)
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
 	if (track != NULL && *track != '0') {
 		hook((void *)(0x1a6e999a8UL + slide), (void *)hakios_tramp_init, &old_promise_init_g);
-		say("hakios: store: JetEngine.Promise init is tracked (recording starts at start())\n");
+		hook((void *)(0x1a6e99624UL + slide), (void *)hakios_tramp_resolve, &old_promise_resolve_g);
+		say("hakios: store: JetEngine.Promise init+resolve tracked (recording starts at start())\n");
 	}
 	if (knob("HAKIOS_EMPTY_PREREQS") != NULL && *knob("HAKIOS_EMPTY_PREREQS") != '0') {
 		hook((void *)(0x20b9555c0UL + slide), (void *)new_prereqs, (void **)&old_prereqs);
