@@ -29,7 +29,9 @@
 #include <objc/runtime.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 #define MERCURY     CFSTR("com.apple.MercuryPoster")
@@ -193,9 +195,108 @@ method_of(const char *class_name, bool class_method, const char *selector, const
 	return m;
 }
 
+/*
+ * THE POSTER EXTENSION'S WATCHDOG, under an emulator. PosterBoard runs the wallpaper in an extension process
+ * and gives its scene a few seconds to be made ("Provision violated for watchdog scene-create"); with Metal
+ * on the processor (boot-arg rwa_software=1, QEMU) the collections poster takes longer than that to draw
+ * its first frame, and PosterBoard killed it and started another, eleven times in a minute, so no wallpaper
+ * was ever shown. There the termination a watchdog asks of its delegate
+ * (-watchdog:requestsTerminationOf:forReason:, in whichever class implements it) is said and not done.
+ * On the phone, without that boot-arg, nothing here changes.
+ */
+static unsigned watchdog_spared;
+
+static void
+spare_from_watchdog(id self, SEL selector, id watchdog, id process, id reason)
+{
+	char line[200];
+
+	(void)self, (void)selector, (void)watchdog, (void)reason;
+	if (watchdog_spared++ < 20) {
+		snprintf(line, sizeof(line), "hakios: PosterBoard: a watchdog asked for %s to be ended; under the "
+		    "emulator it is left running\n", process != nil ? object_getClassName(process) : "a process");
+		say(line);
+	}
+}
+
+static bool
+software_metal(void)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+
+	return sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "rwa_software=1") != NULL;
+}
+
+/* the classes FrontBoard makes a watchdog's delegate, looked at first: asking the runtime for every class
+ * realizes all of them, tens of thousands, which under the emulator is time of its own */
+static const char *const watchdog_delegates[] = {
+	"FBProcess", "FBApplicationProcess", "FBExtensionProcess", "FBProcessManager", "FBWorkspace",
+	"FBSceneManager", "FBProcessWatchdog",
+};
+
+static unsigned
+spare_in(Class *classes, unsigned count, SEL sel)
+{
+	unsigned spared = 0;
+	char line[200], types[48] = "?";
+
+	for (unsigned i = 0; classes != NULL && i < count; i++) {
+		if (classes[i] == Nil) {
+			continue;
+		}
+		unsigned n = 0;
+		Method *methods = class_copyMethodList(classes[i], &n);
+
+		for (unsigned k = 0; k < n; k++) {
+			if (method_getName(methods[k]) != sel) {
+				continue;
+			}
+			if (!types_of(methods[k], types, sizeof(types)) || strcmp(types, "v@:@@@") != 0) {
+				snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s %s] is %s, left alone\n",
+				    class_getName(classes[i]), sel_getName(sel), types);
+				say(line);
+				continue;
+			}
+			method_setImplementation(methods[k], (IMP)spare_from_watchdog);
+			snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s watchdog:requestsTerminationOf:forReason:] "
+			    "says and does not end (rwa_software=1)\n", class_getName(classes[i]));
+			say(line);
+			spared++;
+		}
+		free(methods);
+	}
+	return spared;
+}
+
+static void
+watchdogs_off(void)
+{
+	SEL sel = sel_registerName("watchdog:requestsTerminationOf:forReason:");
+	Class first[sizeof(watchdog_delegates) / sizeof(watchdog_delegates[0])];
+	unsigned n = sizeof(first) / sizeof(first[0]);
+
+	for (unsigned i = 0; i < n; i++) {
+		first[i] = objc_getClass(watchdog_delegates[i]);
+	}
+	if (spare_in(first, n, sel) == 0) {
+		unsigned count = 0;
+		Class *classes = objc_copyClassList(&count);
+
+		if (spare_in(classes, count, sel) == 0) {
+			say("hakios: PosterBoard: no watchdog delegate found to leave the poster extension running\n");
+		}
+		free(classes);
+	}
+}
+
 __attribute__((constructor)) static void
 poster_init(void)
 {
+	if (software_metal()) {
+		watchdogs_off();
+	}
+
 	Method initial = method_of("PBFInitialPosterHelper", true, "initialPosterConfigurationsWithModelCoordinatorProvider:role:", "@@:@@");
 	Method incoming = method_of("PBFInitialPosterHelper", true, "incomingPosterConfigurationForRole:templatePath:userInfo:", "@@:@@@");
 	Method coordinator = method_of("PBFPosterExtensionDataStore", false, "pbf_posterExtensionStoreCoordinatorForProviderIdentifier:error:", "@@:@^@");
