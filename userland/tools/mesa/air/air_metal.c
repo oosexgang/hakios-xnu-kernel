@@ -855,9 +855,10 @@ fold_threadgroup_base(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 static void
-fold_threadgroup_bases(nir_shader *nir, const unsigned len[32])
+fold_threadgroup_bases(nir_shader *nir, const unsigned len[32], unsigned imageblock_bytes)
 {
-   struct threadgroup_bases tb = { { 0 } };
+   /* (an explicit imageblock comes first, its size the group's: nir_air.h) */
+   struct threadgroup_bases tb = { { ALIGN_POT(imageblock_bytes, 16) } };
    for (unsigned k = 1; k < 32; k++)
       tb.base[k] = tb.base[k - 1] + ALIGN_POT(len ? len[k - 1] : 0, 16);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_threadgroup_base,
@@ -963,7 +964,7 @@ static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
    /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
-   fold_threadgroup_bases(nir, NULL);
+   fold_threadgroup_bases(nir, NULL, 0);
    fold_grid_threads(nir, -1);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
@@ -4035,7 +4036,8 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3], int grid
    cs->info.workgroup_size[1] = block[1];
    cs->info.workgroup_size[2] = block[2];
    cs->info.workgroup_size_variable = false;
-   fold_threadgroup_bases(cs, compute->threadgroup_len);
+   fold_threadgroup_bases(cs, compute->threadgroup_len,
+                          compute->info.imageblock_pixel_bytes * block[0] * block[1]);
    fold_grid_threads(cs, grid_slot);
    if (guarded)
       guard_grid(cs, (unsigned)grid_slot);
@@ -5398,7 +5400,10 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
          return -1;
       }
    }
-   /* every buffer up to the last the kernel takes, each rounded up as its base was */
+   /* every buffer up to the last the kernel takes, each rounded up as its base was, after
+    * an explicit imageblock of a pixel per thread of the group's x by y */
+   variable_shared = ALIGN_POT(compute->info.imageblock_pixel_bytes * group_size[0] *
+                               group_size[1], 16);
    for (unsigned k = 0; k < 32; k++)
       if (compute->info.threadgroup_buffers >> k)
          variable_shared += ALIGN_POT(compute->threadgroup_len[k], 16);
@@ -5475,7 +5480,8 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
       .work_dim = 3,
       .block = { group_size[0], group_size[1], group_size[2] },
       .grid = { groups[0], groups[1], groups[2] },
-      .variable_shared_mem = compute->dynamic_threadgroup ? variable_shared : 0,
+      .variable_shared_mem = compute->dynamic_threadgroup || compute->info.imageblock_pixel_bytes
+                                ? variable_shared : 0,
    };
    pipe->launch_grid(pipe, &grid);
 
