@@ -3618,6 +3618,28 @@ translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
     * asked for, and nothing in this tree can check a vertex clip distance
     * numerically.
     */
+   /* Clip distances (VectorKit's raised fills and strokes write one and two, RealityKit's
+    * lighting six): NIR's form is one compact float[N] at CLIP_DIST0, which ir3 and softpipe
+    * both read, a scalar as float[1]. */
+   if (location == VARYING_SLOT_CLIP_DIST0 &&
+       (air_type_is_float(t) ||
+        (t->kind == AIR_TYPE_ARRAY && t->count >= 1 && t->count <= 8 && t->elem &&
+         air_type_is_float(t->elem) && t->elem->kind != AIR_TYPE_VECTOR))) {
+      unsigned n = t->kind == AIR_TYPE_ARRAY ? (unsigned)t->count : 1;
+      nir_variable *var = nir_variable_create(c->nir, nir_var_shader_out,
+                                              glsl_array_type(glsl_float_type(), n, 0),
+                                              name ? name : "clip_distance");
+      var->data.location = VARYING_SLOT_CLIP_DIST0;
+      var->data.compact = true;
+      var->data.driver_location = c->nir->num_outputs++;
+      c->nir->info.clip_distance_array_size = n;
+      c->info->clip_distances = n;
+      c->outputs[field].location = location;
+      c->outputs[field].var = var;
+      c->outputs[field].clip_array = t->kind == AIR_TYPE_ARRAY ? n : 0;
+      return true;
+   }
+
    if (t->kind == AIR_TYPE_ARRAY || t->kind == AIR_TYPE_STRUCT) {
       const char *tn = md_key_str(node, "air.arg_type_name");
       if (t->kind == AIR_TYPE_ARRAY)
@@ -4730,6 +4752,23 @@ air_split_load(struct air_ctx *c, struct air_val *regs)
    return v;
 }
 
+/* A vertex shader's clip distances into their compact float[N], an element a store (an element
+ * left undef is written as 0, inside the clip volume, rather than left to whatever was there). */
+static void
+store_clip_distances(struct air_ctx *c, nir_variable *var, unsigned n, const struct air_val *v)
+{
+   nir_deref_instr *arr = nir_build_deref_var(&c->b, var);
+   for (unsigned k = 0; k < MAX2(n, 1); k++) {
+      const struct air_val *e = n ? (v->kind == AIR_VAL_AGG && k < v->num_elems ? v->elems[k] : NULL)
+                                  : v;
+      nir_def *d = e && e->kind == AIR_VAL_SSA ? nir_channel(&c->b, e->def, 0) : NULL;
+      if (d && d->bit_size != 32)
+         d = nir_f2f32(&c->b, d);
+      nir_store_deref(&c->b, nir_build_deref_array_imm(&c->b, arr, k),
+                      d ? d : nir_imm_float(&c->b, 0.0f), 1);
+   }
+}
+
 /* -- the CFG ------------------------------------------------------------ */
 
 static nir_block *
@@ -4791,6 +4830,10 @@ emit_return(struct air_ctx *c, const struct air_inst *in)
             continue;
          if (!c->outputs[i].var)
             return air_error(c, "interface: field %u of the result has no output", i);
+         if (c->outputs[i].location == VARYING_SLOT_CLIP_DIST0 && v->elems[i]) {
+            store_clip_distances(c, c->outputs[i].var, c->outputs[i].clip_array, v->elems[i]);
+            continue;
+         }
          if (!v->elems[i] || v->elems[i]->kind != AIR_VAL_SSA)
             continue; /* a field left undef is a target nothing writes */
          nir_store_var(&c->b, c->outputs[i].var, air_output_bits(c, c->outputs[i].var,
