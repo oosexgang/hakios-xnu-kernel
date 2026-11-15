@@ -681,6 +681,10 @@ saver_is_asked(void)
 
 	loader("ufs_write=1 var_save_ms=400");
 	hakios_ufs_init();
+	/* the saver's 400 ms in real time: divided by loader()'s 1000 they were 8 ms, and a thread of the
+	 * test scheduled later than that on a loaded machine (qemu-aarch64) read as one that does not
+	 * answer. The wait ends when the saver answers, so only the part where it does not takes 400 ms. */
+	fake_delay_divisor = 1;
 	hakios_var_save_on_return();
 	CHECK(!logged("var_store:"), "no saver registered: nothing is asked, nothing waited for: %s", log_text);
 	CHECK(try_as_root("var_save", VAR_SAVE_DONE) == EINVAL, "done is an answer, not a thing to say unasked");
