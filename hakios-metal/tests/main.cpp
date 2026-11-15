@@ -31,8 +31,9 @@ int main(int argc, char** argv) {
             bool timed = false;
             for (const char* t : kTimed) timed |= strcmp(t, c.name) == 0;
             // (a test that submits nothing says so with zeros: its line still tells a test added or taken away)
-            std::printf("%s submits %u words %llu draws %u loads %u stream %016llx state %016llx%s%s\n", c.name, s.submits, (unsigned long long)s.words, s.draws,
-                        s.loads, (unsigned long long)(s.submits && !timed ? s.stream : 0), (unsigned long long)(s.submits && !timed ? s.state : 0),
+            std::printf("%s submits %u words %llu draws %u loads %u stream %016llx state %016llx names %u %016llx%s%s\n", c.name, s.submits,
+                        (unsigned long long)s.words, s.draws, s.loads, (unsigned long long)(s.submits && !timed ? s.stream : 0),
+                        (unsigned long long)(s.submits && !timed ? s.state : 0), timed ? 0 : s.named, (unsigned long long)(timed ? 0 : s.names),
                         s.bad ? " (unread)" : "", timed ? " (by timing: not summed)" : "");
         } else {
             std::printf("%s %s\n", test::failures() == before ? "ok  " : "FAIL", c.name);

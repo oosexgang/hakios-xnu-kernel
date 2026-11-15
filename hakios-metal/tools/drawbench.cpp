@@ -890,9 +890,10 @@ int main(int argc, char** argv) {
             // (a frame of several command buffers in flight at once: which of their counter-stamp buffers comes back to the
             // queue's pool first is the threads' to decide, and the next frame's addresses with it -- its state alone is summed)
             const bool timed = r.sums.submits > 1;
-            std::printf("%s draws %u refused %u submits %u words %llu loads %u stream %016llx state %016llx%s%s%s\n", r.letter.c_str(), r.draws, r.refused,
-                        r.sums.submits, (unsigned long long)r.sums.words, r.sums.loads, (unsigned long long)(timed ? 0 : r.sums.stream),
-                        (unsigned long long)r.sums.state, r.sums.bad ? " (unread)" : "", r.error.empty() ? "" : " (error)", timed ? " (stream by timing: not summed)" : "");
+            std::printf("%s draws %u refused %u submits %u words %llu loads %u stream %016llx state %016llx names %u %016llx%s%s%s\n", r.letter.c_str(), r.draws,
+                        r.refused, r.sums.submits, (unsigned long long)r.sums.words, r.sums.loads, (unsigned long long)(timed ? 0 : r.sums.stream),
+                        (unsigned long long)r.sums.state, r.sums.named, (unsigned long long)(timed ? 0 : r.sums.names), r.sums.bad ? " (unread)" : "",
+                        r.error.empty() ? "" : " (error)", timed ? " (stream and names by timing: not summed)" : "");
         }
         return 0;
     }

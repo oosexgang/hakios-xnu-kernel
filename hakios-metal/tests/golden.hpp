@@ -9,6 +9,10 @@
 //            draw's state that is not in the stream. A source the stream itself fills by CP_MEMCPY before the load
 //            (a constant range bound where the load cannot read) is summed at the copy's own source.
 //
+//   names    the buffers the submission names for the kernel besides its command stream's own -- each one's address
+//            and whether it is read, written or both -- in whatever order: a buffer a draw reads and the submission
+//            does not name is memory the GPU may find gone.
+//
 // Sums, not copies: tests/golden/*.txt holds a line a scene or a test, and `make -f tools/dev.mk check` compares.
 #pragma once
 
@@ -23,8 +27,9 @@ namespace golden {
 
 struct Sums {
     uint64_t stream = 0xcbf29ce484222325ull, state = 0xcbf29ce484222325ull;
+    uint64_t names = 0;                    // (a sum of each named buffer's own: the order they are named in is not summed)
     uint64_t words = 0;                    // read by the command processor, bodies counted each time they are called
-    uint32_t submits = 0, draws = 0, loads = 0;
+    uint32_t submits = 0, draws = 0, loads = 0, named = 0;
     bool bad = false;                      // a header that does not parse, or a body or a load's source outside every buffer
 
     void reset() { *this = Sums{}; }
@@ -114,6 +119,13 @@ inline void hook(hakios::metal::FakeGpu& gpu, uint64_t address, uint32_t words, 
     std::vector<Sums::Copy> copies;
     s.submits++;
     s.walk(gpu, address, words, copies, 0);
+    for (const hakios::metal::FakeGpu::Named& n : gpu.named()) {
+        uint64_t h = 0xcbf29ce484222325ull;
+        Sums::mix(&h, &n.iova, sizeof n.iova);
+        Sums::mix(&h, &n.flags, sizeof n.flags);
+        s.names += h;
+        s.named++;
+    }
 }
 
 // every submission to any fake GPU summed into INTO from now on (nullptr: no longer)

@@ -2845,7 +2845,13 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
         Job job{++submitted_, c.iova + cmd->submit_offset, cmd->size / 4};
         s->fence = job.fence;
-        if (submitHook != nullptr) submitHook(*this, job.address, job.words, submitHookContext);
+        if (submitHook != nullptr) {
+            named_.clear();
+            for (uint32_t i = 0; i < s->nr_bos; i++) {
+                if (i != cmd->submit_idx) named_.push_back(Named{buffers_.at(bos[i].handle).iova, bos[i].flags});
+            }
+            submitHook(*this, job.address, job.words, submitHookContext);
+        }
         // (a wedged GPU still takes submissions, as the kernel's ring does until it is full: they are never run)
         if (wedged_) {
             return 0;
