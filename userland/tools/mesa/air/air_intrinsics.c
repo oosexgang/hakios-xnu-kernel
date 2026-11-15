@@ -884,6 +884,29 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
    /* air.atomic.{global,local}.<op>[.<sign>].<type>(ptr, value?, order,
     * scope, volatile)
     */
+   /* air.atomic.fence(mem_flags, order, scope): Metal's atomic_thread_fence, an ordering of
+    * memory with no meeting of threads -- the flags as a barrier's (1 device, 2 threadgroup,
+    * 4 texture), the scope 1 threadgroup, 2 device, 3 SIMD group */
+   if (n->num == 2 && !strcmp(n->part[1], "fence")) {
+      uint64_t flags = 1, scope = 2;
+      if (in->num_operands > 1)
+         air_const_uint(in->operands[1], &flags);
+      if (in->num_operands > 3)
+         air_const_uint(in->operands[3], &scope);
+      nir_variable_mode modes = 0;
+      if (flags & 1)
+         modes |= nir_var_mem_ssbo | nir_var_mem_global;
+      if (flags & 2)
+         modes |= nir_var_mem_shared;
+      if (flags & 4)
+         modes |= nir_var_image;
+      if (!modes)
+         modes = nir_var_mem_ssbo | nir_var_mem_global | nir_var_mem_shared;
+      mesa_scope ms = scope == 1 ? SCOPE_WORKGROUP : scope == 3 ? SCOPE_SUBGROUP : SCOPE_DEVICE;
+      nir_barrier(&c->b, .execution_scope = SCOPE_NONE, .memory_scope = ms,
+                  .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = modes);
+      return true;
+   }
    if (n->num < 3)
       return air_error(c, "intrinsic: an atomic without a name");
    const char *where = n->part[1];
