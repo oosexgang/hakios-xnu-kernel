@@ -91,6 +91,25 @@ ShaderGraph's MaterialX and CoreImage) are not entry points: Metal stitches or l
 driver links): `dynamic_system_ootf_decimate`, a compute kernel reading one texture and writing another,
 dispatched and its output read back.
 
+### The library built on Linux, run on Darwin 27
+
+`userland/tools/mk-mesa26-linux.sh` builds `libhakios-air.dylib` and `air_run` for Darwin without a Mac (LLVM's
+clang and ld64.lld, theos's SDK). Its `air_run`, put into the small image of a Darwin 27.2 boot under QEMU on
+this kernel (no GPU: softpipe), drew QuartzCore's own `upsample_frag_lpf` from the system image's
+`default.metallib`. The pixel it read back, against the same program built for the build machine:
+
+| | x86-64 Linux | Darwin 27.2, arm64, QEMU |
+| --- | --- | --- |
+| r | 2.14462191e-16 | 2.14462191e-16 |
+| g | 4.26559651e-16 | 4.26559572e-16 |
+| b | 6.41021723e-16 | 6.41021723e-16 |
+| a | 399.91925 | 399.91922 |
+
+The last digits differ where fast math lets each compiler contract differently; the shader, the frontend and
+softpipe are the same. So Mesa, the frontend and Gallium run in a Darwin 27 process on this kernel; what is
+left for CoreAnimation is the Metal device itself (`metal_driver.m`, step 3 above) and, on the phone, the
+GPU instead of softpipe.
+
 ## Why it was not done in this pass
 
 Each of steps 2–6 needs at least one thing this environment does not have:
