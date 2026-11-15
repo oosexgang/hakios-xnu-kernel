@@ -2834,6 +2834,41 @@ new_auth_for_client_id(id self, SEL cmd, void *client, void *identifier)
 	return an_authorization_for((id)client, answer);
 }
 
+/*
+ * ... and the one that is actually asked. Beside the four private gates there is a PUBLIC one on the
+ * same class -- isClientEntitledToAccessAccountTypeWithIdentifier: -- and under it the daemon's general
+ * question about a client, -[ACDClient hasEntitlement:]. Those two are the shape of "client is not
+ * authorized to access".
+ */
+static BOOL (*old_entitled_type)(id, SEL, void *);
+static BOOL (*old_has_entitlement)(id, SEL, void *);
+
+static BOOL
+new_entitled_type(id self, SEL cmd, void *identifier)
+{
+	static int told;
+
+	(void)self, (void)cmd, (void)identifier;
+	if (told < 3) {
+		told++;
+		say("hakios: store: a client was asked for its entitlement to an account type; YES\n");
+	}
+	return YES;
+}
+
+static BOOL
+new_has_entitlement(id self, SEL cmd, void *entitlement)
+{
+	static int told;
+	BOOL real = old_has_entitlement != NULL ? old_has_entitlement(self, cmd, entitlement) : NO;
+
+	if (!real && told < 4) {
+		told++;
+		say("hakios: store: a client lacked an entitlement; YES is answered\n");
+	}
+	return YES;
+}
+
 static void
 one_grant(Class cls, const char *selector, IMP replacement, void *original)
 {
@@ -2871,6 +2906,10 @@ grant_account_access(void)
 	    &old_granted_client);
 	one_grant(filter, "_accessGrantedForBundleID:onAccountTypeID:", (IMP)new_granted_bundle,
 	    &old_granted_bundle);
+	one_grant(filter, "isClientEntitledToAccessAccountTypeWithIdentifier:", (IMP)new_entitled_type,
+	    &old_entitled_type);
+	one_grant(objc_getClass("ACDClient"), "hasEntitlement:", (IMP)new_has_entitlement,
+	    &old_has_entitlement);
 	{
 		Class manager = objc_getClass("ACDClientAuthorizationManager");
 
@@ -3958,6 +3997,73 @@ new_access_keys_for(id self, SEL cmd, void *type)
 	return keys_or_ours(answer, (id)type);
 }
 
+/*
+ * THE PLACE THE REFUSAL IS MADE. With every error in accountsd named by its maker, the code-9 the client
+ * reports comes from here, every time:
+ *   _AMSCustomSubclassedError <- _AMSCustomError
+ *   <- -[AMSBagActiveAccountProvider _handleFetchedLocalAccount:fetchError:mustContainStorefront:
+ *      mediaType:error:]
+ *   <- ___100-[AMSBagActiveAccountProvider _localAccountInStore:mediaType:mustContainStorefront:sync:
+ *      completion:]_block_invoke
+ * So AMS asks the account store for the local account, is refused, and wraps the refusal. This hands it
+ * the account instead: when it was given none and an error, the error is dropped and the account this
+ * phone does have is put in its place. HAKIOS_FEED_LOCAL_ACCOUNT=1.
+ */
+static id (*old_handle_fetched)(id, SEL, void *, void *, BOOL, void *, void *);
+
+static id
+new_handle_fetched(id self, SEL cmd, void *account, void *fetch_error, BOOL must_have_storefront,
+    void *media_type, void *error)
+{
+	const char *on = knob("HAKIOS_FEED_LOCAL_ACCOUNT");
+	static int told;
+
+	if (on != NULL && *on != '0' && account == NULL) {
+		Class store_class = objc_getClass("ACAccountStore");
+		id store = store_class != Nil ? ((id (*)(Class, SEL))objc_msgSend)(store_class,
+		    sel_registerName("new")) : NULL;
+		id ours = store != NULL ? ((id (*)(id, SEL))objc_msgSend)(store,
+		    sel_registerName("ams_localiTunesAccount")) : NULL;
+
+		if (ours != NULL) {
+			if (told < 3) {
+				char text[200];
+
+				told++;
+				say("hakios: store(%s): the local account was refused; %s is handed over "
+				    "instead\n", who_i_am(), text_of(ours, text, sizeof(text)));
+			}
+			return old_handle_fetched != NULL ? old_handle_fetched(self, cmd, ours, NULL,
+			    must_have_storefront, media_type, error) : ours;
+		}
+		/*
+		 * ... and inside accountsd there is none to be had by asking: ACAccountStore there asks the
+		 * daemon, which is this process, which is what refused. So one is made instead -- the same
+		 * fabricated account this library hands to the App Store when the database is empty.
+		 */
+		ours = store != NULL ? fabricated_account(store) : NULL;
+		if (ours != NULL) {
+			if (told < 3) {
+				char text[200];
+
+				told++;
+				say("hakios: store(%s): the local account was refused and none could be "
+				    "fetched here; a made one is handed over: %s\n", who_i_am(),
+				    text_of(ours, text, sizeof(text)));
+			}
+			return old_handle_fetched != NULL ? old_handle_fetched(self, cmd, ours, NULL,
+			    must_have_storefront, media_type, error) : ours;
+		}
+		if (told < 3) {
+			told++;
+			say("hakios: store(%s): the local account was refused and this process has none to "
+			    "hand over\n", who_i_am());
+		}
+	}
+	return old_handle_fetched != NULL ? old_handle_fetched(self, cmd, account, fetch_error,
+	    must_have_storefront, media_type, error) : NULL;
+}
+
 static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
 static void (*old_add_storefront_header)(id, SEL, void *, void *, void *, void *);
 
@@ -4799,6 +4905,9 @@ static struct replacement replacements[] = {
 	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
 	  (IMP *)&old_xpc_init, false },
+	{ "AMSBagActiveAccountProvider",
+	  "_handleFetchedLocalAccount:fetchError:mustContainStorefront:mediaType:error:", false,
+	  (IMP)new_handle_fetched, (IMP *)&old_handle_fetched, false },
 	{ "ACAccountType", "accessKeys", false, (IMP)new_access_keys, (IMP *)&old_access_keys, false },
 	{ "ACAccountStore", "accessKeysForAccountType:", false, (IMP)new_access_keys_for,
 	  (IMP *)&old_access_keys_for, false },
@@ -4960,6 +5069,39 @@ hakios_store_init(void)
 		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
 		watch_account_types();
 		grant_account_access();
+		/*
+		 * ... and, when asked, the two doors NSError is made through, so that the refusal the client
+		 * reports ("Error returned from daemon: com.apple.accounts Code=9") is named by its maker's
+		 * frames. This process replaces nothing else, so these go in by hand.
+		 */
+		if (knob("HAKIOS_NAME_THE_REFUSAL") != NULL && *knob("HAKIOS_NAME_THE_REFUSAL") != '0') {
+			Class error = objc_getClass("NSError");
+			Method w = error != Nil ? class_getClassMethod(error,
+			    sel_registerName("errorWithDomain:code:userInfo:")) : NULL;
+			Method i = error != Nil ? class_getInstanceMethod(error,
+			    sel_registerName("initWithDomain:code:userInfo:")) : NULL;
+
+			if (w != NULL) {
+				old_errorWith = (id (*)(id, SEL, void *, long, void *))method_getImplementation(w);
+				method_setImplementation(w, (IMP)new_errorWith);
+			}
+			if (i != NULL) {
+				old_errorInit = (id (*)(id, SEL, void *, long, void *))method_getImplementation(i);
+				method_setImplementation(i, (IMP)new_errorInit);
+			}
+			say("hakios: store: every error this daemon makes will name its maker\n");
+		}
+		/*
+		 * ... and the refusal is made HERE, inside this daemon, by AMS's own code -- the frames say
+		 * so. The table that would have replaced it is not installed in this process, so the one
+		 * method that matters goes in by hand.
+		 */
+		if (knob("HAKIOS_FEED_LOCAL_ACCOUNT") != NULL && *knob("HAKIOS_FEED_LOCAL_ACCOUNT") != '0') {
+			one_grant(objc_getClass("AMSBagActiveAccountProvider"),
+			    "_handleFetchedLocalAccount:fetchError:mustContainStorefront:mediaType:error:",
+			    (IMP)new_handle_fetched, &old_handle_fetched);
+			say("hakios: store: a refused local account will be answered with the one that exists\n");
+		}
 		if (knob("HAKIOS_MAKE_TYPES") != NULL) {
 			/* the accessor has to be hooked before the daemon first hands a connection out, which is
 			 * long before the thread below wakes up to want one */
