@@ -291,11 +291,14 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = nir_fsin(&c->b, a[0]);
    } else if (!strcmp(op, "fast_cos") || !strcmp(op, "cos")) {
       r = nir_fcos(&c->b, a[0]);
-   } else if (!strcmp(op, "sinpi") || !strcmp(op, "cospi") || !strcmp(op, "tanpi")) {
-      /* of pi times the argument (CMCapture's BBRNetAnisoGaussian, cospi.f16) */
+   } else if (!strcmp(op, "sinpi") || !strcmp(op, "cospi") || !strcmp(op, "tanpi") ||
+              !strcmp(op, "fast_sinpi") || !strcmp(op, "fast_cospi") || !strcmp(op, "fast_tanpi")) {
+      /* of pi times the argument (CMCapture's BBRNetAnisoGaussian, cospi.f16; SetupAssistant's
+       * textFragment, fast_sinpi.f32) */
+      char k = op[strncmp(op, "fast_", 5) ? 0 : 5];
       nir_def *x = nir_fmul(&c->b, a[0], nir_imm_floatN_t(&c->b, M_PI, a[0]->bit_size));
-      r = op[0] == 's' ? nir_fsin(&c->b, x) : op[0] == 'c' ? nir_fcos(&c->b, x)
-                       : nir_fdiv(&c->b, nir_fsin(&c->b, x), nir_fcos(&c->b, x));
+      r = k == 's' ? nir_fsin(&c->b, x) : k == 'c' ? nir_fcos(&c->b, x)
+                   : nir_fdiv(&c->b, nir_fsin(&c->b, x), nir_fcos(&c->b, x));
    } else if (!strcmp(op, "fast_tan") || !strcmp(op, "tan")) {
       r = nir_fdiv(&c->b, nir_fsin(&c->b, a[0]), nir_fcos(&c->b, a[0]));
    } else if (!strcmp(op, "fast_atan2") || !strcmp(op, "atan2")) {
