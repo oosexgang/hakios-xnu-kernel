@@ -693,6 +693,7 @@ static struct {
 				const struct rwa_buffer_bind *, unsigned, const unsigned[3],
 				const unsigned[3], char *, size_t);
 	void (*threadgroup_memory)(struct rwa_compute *, unsigned);
+	void (*threadgroup_memory_at)(struct rwa_compute *, unsigned, unsigned);
 	int (*clear_pass)(struct rwa_texture *const *, unsigned, unsigned, const float (*)[4],
 			  struct rwa_texture *, const float *, const unsigned *, char *, size_t);
 	int (*clear_pass_levels)(struct rwa_texture *const *, const unsigned *, const unsigned *, unsigned,
@@ -776,6 +777,7 @@ mesa_available(void)
 	 * so -newArgumentEncoder... checks for these before it makes one. */
 	*(void **)&mesa.dispatch_buffers = dlsym(mesa.handle, "rwa_dispatch_buffers");
 	*(void **)&mesa.threadgroup_memory = dlsym(mesa.handle, "rwa_threadgroup_memory");
+	*(void **)&mesa.threadgroup_memory_at = dlsym(mesa.handle, "rwa_threadgroup_memory_at");
 	*(void **)&mesa.clear_pass = dlsym(mesa.handle, "rwa_clear_pass");
 	*(void **)&mesa.clear_pass_levels = dlsym(mesa.handle, "rwa_clear_pass_levels");
 	*(void **)&mesa.texture_copy = dlsym(mesa.handle, "rwa_texture_copy");
@@ -1392,7 +1394,7 @@ rw_bisect_within(void)
 	BOOL retained;                  /* -retainResources has run: dealloc gives them back */
 	unsigned count, textureCount, samplerCount;
 	unsigned groups[3], size[3];
-	unsigned threadgroupBytes;      /* -setThreadgroupMemoryLength:atIndex: (index 0) */
+	unsigned threadgroupBytes[32];  /* -setThreadgroupMemoryLength:atIndex:, by index */
 	/* a blit (HakiosMetalBlitEncoder): which kind, from what to what, where */
 	unsigned blit;
 	id blitFrom, blitTo;
@@ -5009,8 +5011,13 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 		 * through rwa_dispatch, and then a kernel with a set is refused by name
 		 * there and every offset is read as zero -- which is what an older library
 		 * did with one in any case, out loud. */
-		if (mesa.threadgroup_memory != NULL) {
-			MESA_VOID(threadgroup_memory, [work->pipeline compute], work->threadgroupBytes);
+		if (mesa.threadgroup_memory_at != NULL) {
+			for (unsigned k = 0; k < 32; k++) {
+				MESA_VOID(threadgroup_memory_at, [work->pipeline compute], k,
+					  work->threadgroupBytes[k]);
+			}
+		} else if (mesa.threadgroup_memory != NULL) {
+			MESA_VOID(threadgroup_memory, [work->pipeline compute], work->threadgroupBytes[0]);
 		}
 		int rc = mesa.dispatch_buffers != NULL
 			    ? MESA(dispatch_buffers, [work->pipeline compute], &bindings,
@@ -7180,7 +7187,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 	id _textures[RW_MAX_BUFFERS];
 	id _samplers[RW_MAX_BUFFERS];
 	unsigned _highest, _highestTexture, _highestSampler;
-	unsigned _threadgroupBytes;
+	unsigned _threadgroupBytes[32];
 	BOOL _complained;
 }
 
@@ -7314,7 +7321,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 	for (unsigned i = 0; i < _highestSampler; i++) {
 		work->samplers[i] = _samplers[i];
 	}
-	work->threadgroupBytes = _threadgroupBytes;
+	memcpy(work->threadgroupBytes, _threadgroupBytes, sizeof(_threadgroupBytes));
 	work->groups[0] = (unsigned)groups.width;
 	work->groups[1] = (unsigned)groups.height;
 	work->groups[2] = (unsigned)groups.depth;
@@ -7357,9 +7364,12 @@ rw_blit_unknown(id self, SEL sel, ...)
 - (void)memoryBarrierWithScope:(NSUInteger)scope { (void)scope; }
 - (void)setThreadgroupMemoryLength:(NSUInteger)length atIndex:(NSUInteger)index
 {
-	/* (one threadgroup buffer, at index 0, is what the AIR frontend takes: air_to_nir.c) */
-	if (index == 0) {
-		_threadgroupBytes = (unsigned)length;
+	/* any index: buffer n starts where 0..n-1 end, so the library compiles a kernel with
+	 * more than one from all their lengths (rwa_threadgroup_memory_at) */
+	if (index < 32) {
+		_threadgroupBytes[index] = (unsigned)length;
+	} else {
+		rw_print("a threadgroup buffer at index %lu; Metal has 31\n", (unsigned long)index);
 	}
 }
 
