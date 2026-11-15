@@ -233,8 +233,19 @@ fixed for it on the way (each a commit of its own):
 
 ## What the next person with the phone can do in an afternoon
 
-1. `python3 darwin/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with the GPU firmware in
-   place and the phone's package brought in before the kernel was built (`tools/device.py add NAME`).
-   Confirm the GPU block starts on 12377, and read the temperature lines.
-2. On the build machine: `userland/tools/metallib.py` on Darwin 27's `QuartzCore.framework/default.metallib`, then
-   `userland/tools/air/check.sh`. The number of Darwin 27 pipelines our compiler accepts tells how far step 4 is.
+Everything that runs on the phone is built on Linux now, and every step below has been run here (the last
+one under QEMU, on softpipe, which is the phone's path with the CPU in place of the Adreno):
+
+1. The compiler library and the driver, for Darwin:
+   `THEOS=… SDK=…/iPhoneOS16.5.sdk userland/tools/mk-mesa26-linux.sh` (out: `build/mesa26-linux/out/libhakios-air.dylib`,
+   with the ir3 sampler fix of `userland/tools/mesa26/darwin.patch`) and `userland/tools/mk-metal-linux.sh`
+   (out: `build/metal-linux/HakiosMetal.bundle`, `metal_props`, `metal_drv_test`).
+2. The system image with what Metal needs: `METAL=1 python3 darwin/tools/mkimage26.py OUT.apfs` (the MPS and
+   RenderBox metallibs, and the bundle's link to `/redwood/lib/HakiosMetal.bundle`), and the small image with the
+   two built files in its `lib/` and `metal_props on` before launchd.
+3. Boot with `--boot-arg gpu=1 --boot-arg metal=1 --boot-arg metal_profile=1`, the GPU firmware in place and the
+   phone's package brought in before the kernel was built (`tools/device.py add NAME`). Confirm the GPU block
+   starts on 12377 and read the temperature lines; `hakiosmetal[...]` lines say what the driver met, and
+   `sample_every=10` with `userland/tools/samples.py --profile` says where a process spends its time in it.
+4. Before that, on the build machine, what the phone's compiler makes of a library: `userland/tools/air/ir3sweep.sh`
+   (and `-p` for a vertex and fragment pair), and `userland/tools/air/memcheck.sh` for the same under memcheck.
