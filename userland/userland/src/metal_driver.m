@@ -1405,6 +1405,7 @@ rw_bisect_within(void)
 	uint32_t _copiedSeed;      /* the surface's seed when last copied: a writer that locked it changes it */
 }
 - (void)copyFromSurface:(IOSurfaceRef)surface;
+- (void)writeBackToSurface;
 @property (readonly) struct rwa_texture *mesaTexture;
 /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
  * byte per texel. Metal's own -getBytes: has no aspect to name and the compiler library
@@ -3548,6 +3549,38 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 	_copiedSeed = IOSurfaceGetSeed(surface);
 }
 
+/*
+ * And the other way: what the GPU drew into the copy, written to the surface it is a copy of. Without
+ * it a pass that renders into a surface the GPU could not take drew into this driver's copy alone --
+ * under QEMU, with no HakiosGPU to give a surface's memory to, that is every surface, the display's
+ * own included, and not one frame CoreAnimation drew through Metal reached the screen. Called by the
+ * command buffer once its work has finished, for each copy it drew or blitted into. The surface's
+ * new seed and contents are taken as the copy's, so the copy is not taken back in again.
+ */
+- (void)writeBackToSurface
+{
+	if (_copiedFrom == NULL) {
+		return;
+	}
+	BOOL locked = IOSurfaceLock(_copiedFrom, 0, NULL) == kIOReturnSuccess;
+	void *base = IOSurfaceGetBaseAddress(_copiedFrom);
+	size_t row = IOSurfaceGetBytesPerRow(_copiedFrom);
+	size_t width = MIN((size_t)_shape.width, IOSurfaceGetWidth(_copiedFrom));
+	size_t height = MIN((size_t)_shape.height, IOSurfaceGetHeight(_copiedFrom));
+
+	if (base != NULL && row != 0 && width != 0 && height != 0) {
+		[self getBytes:base bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0];
+	}
+	if (locked) {
+		IOSurfaceUnlock(_copiedFrom, 0, NULL);
+	}
+	if (base != NULL && row != 0) {
+		_copiedHash = rw_surface_hash(_copiedFrom, _shape.height, MIN(row, (size_t)_shape.width * 4));
+	}
+	_copiedSeed = IOSurfaceGetSeed(_copiedFrom);
+	_copiedAt = mach_absolute_time();
+}
+
 - (struct rwa_texture *)mesaTexture
 {
 	if (_copiedFrom != NULL) {
@@ -4892,6 +4925,20 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 					  userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithUTF8String:why] }] retain];
 		_status = RW_CB_ERROR;
 		goto done;
+	}
+	/* the surfaces this buffer drew into through copies of them, written back (-writeBackToSurface) */
+	for (HakiosMetalWork *work in _work) {
+		if (work->blit != 0) {
+			if ([work->blitTo isKindOfClass:[HakiosMetalTexture class]]) {
+				[(HakiosMetalTexture *)work->blitTo writeBackToSurface];
+			}
+			continue;
+		}
+		for (unsigned i = 0; i < work->colorCount && i < 8; i++) {
+			if ([work->color[i] isKindOfClass:[HakiosMetalTexture class]]) {
+				[(HakiosMetalTexture *)work->color[i] writeBackToSurface];
+			}
+		}
 	}
 	_status = RW_CB_SCHEDULED;   /* submitted; the fence below is what makes it completed */
 done:
