@@ -666,7 +666,9 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
                 d.dword[0] |= A6XX_TEX_CONST_0_TILE_MODE(TILE6_2);
                 d.dword[2] = A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D) | A6XX_TEX_CONST_2_PITCH(gmem->binW * a.texture->info().bytesPerPixel);
                 d.dword[3] = 0;
-                d.dword[4] = gmem->base[kt.fbTarget - 1u];
+                // (the descriptor's address is a GPU address: the GMEM's own plus the attachment's place in it, as turnip's
+                // input attachments have it, tu_cmd_buffer.cc:1946 gmem_base + gmem_offset; 0 on the A635, 0x100000 on the A610)
+                d.dword[4] = kGmemBase + gmem->base[kt.fbTarget - 1u];
                 d.dword[5] &= A6XX_TEX_CONST_5_DEPTH__MASK;
                 for (uint32_t w = 6; w < 16; w++) d.dword[w] = 0;
             }

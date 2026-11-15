@@ -526,7 +526,9 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
         const uint32_t ccu = reg(REG_A6XX_RB_CCU_CNTL);
         const uint64_t cache = uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT)) << A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE |
                                uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT)) << 21;
-        if (pitch != uint64_t(binW) * bpp || base + uint64_t(binW) * binH * bpp > cache ||
+        // (the bin by GMEM's own GPU address, kGmemBase: where the kernel maps GMEM for the texture unit, 0x100000 on the
+        // Adreno 610 and 0 on the 7c+ -- turnip adds the device's gmem_base to the offset, tu_emit_input_attachments)
+        if (pitch != uint64_t(binW) * bpp || base < kGmemBase || base - kGmemBase + uint64_t(binW) * binH * bpp > cache ||
             fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_2D ||
             fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT) != 1) {
             fault(who + text(": a GMEM read of pitch %llu at %#llx: ", pitch, base) + text("not the %llu-pixel bin's rows, ", binW) +

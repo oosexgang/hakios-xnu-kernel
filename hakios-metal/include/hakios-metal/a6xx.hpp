@@ -1410,6 +1410,7 @@ inline constexpr uint32_t kNumCcu = 2;                            // not-in-head
 inline constexpr uint32_t kSysmemPerCcuDepthCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_depth_cache_size (65536)
 inline constexpr uint32_t kSysmemPerCcuColorCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_color_cache_size (65536)
 // tiled rendering: the on-chip memory and the tile grid (a6xx_gen4 / adreno_7c3 in freedreno_devices.py)
+inline constexpr uint32_t kGmemBase = 0;                          // GMEM's GPU address: 0 on the A650 family and this chip (Linux adreno_gpu.c MSM_PARAM_GMEM_BASE)
 inline constexpr uint32_t kGmemBytes = 512 * 1024;                // not-in-headers: freedreno_devices.py adreno_7c3 gmem_size (Linux a6xx_gpu adreno_7c3 SZ_512K)
 inline constexpr uint32_t kGmemCcuColorCacheFraction = 4;          // not-in-headers: freedreno_devices.py a6xx_gen4 gmem_ccu_color_cache_fraction QUARTER
 inline constexpr uint32_t kTileAlignW = 32, kTileAlignH = 16;      // not-in-headers: freedreno_devices.py a6xx_gen4 tile_align_w/h
@@ -4091,7 +4092,8 @@ constexpr uint32_t binControlGmem(bool lrzFeedback, uint32_t binw, uint32_t binh
 constexpr uint32_t kGmemCcuColorOffset = kGmemBytes - kNumCcu * kSysmemPerCcuColorCacheSize / kGmemCcuColorCacheFraction;
 constexpr uint32_t rbCcuCntlGmem() {
     return (kHasGmemFastClear ? 0u : A6XX_RB_CCU_CNTL_GMEM_FAST_CLEAR_DISABLE) | A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI(kGmemCcuColorOffset >> 21) |
-           A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(CCU_CACHE_SIZE_QUARTER) | A6XX_RB_CCU_CNTL_COLOR_OFFSET(kGmemCcuColorOffset & 0x1fffff);
+           A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(kGmemCcuColorCacheFraction == 2 ? CCU_CACHE_SIZE_HALF : CCU_CACHE_SIZE_QUARTER) |
+           A6XX_RB_CCU_CNTL_COLOR_OFFSET(kGmemCcuColorOffset & 0x1fffff);
 }
 static_assert(rbCcuCntlGmem() == 0x3c400000, "the GMEM CCU layout turnip computes for this chip");
 
