@@ -3080,6 +3080,28 @@ hook_first_unlock(void)
  * calling through is safe; the sequence stops right after the last phase that completes, which names the
  * stall. HAKIOS_TRACE_BOOTSTRAP=1, AppStore only. Addresses are unslid cache vaddrs + slide.
  */
+/*
+ * THE DECISIVE TEST. ASKBootstrapV2.prerequisites getter (@0x20b9555c0) returns [JSStack.Prerequisite],
+ * which the bootstrap awaits; the first prerequisite's JetEngine.Promise never resolves (measured: not a
+ * thread, not an AMS promise, no network). This replaces that array with the EMPTY array singleton
+ * (__swiftEmptyArrayStorage @0x1ef0d1df0, the value a Swift [] literal is), so the bootstrap awaits
+ * nothing and proceeds straight to loading the AppStore bag + object graph. If the catalog then advances,
+ * the prerequisites were the wall; off by default (HAKIOS_EMPTY_PREREQS=1). Regular getter, not async.
+ */
+static void *(*old_prereqs)(void);
+
+static void *
+new_prereqs(void)
+{
+	static int told;
+
+	if (told < 2) {
+		told++;
+		say("hakios: store: bootstrap prerequisites replaced with the empty array\n");
+	}
+	return (void *)(0x1ef0d1df0UL + slide);
+}
+
 static void (*old_did_complete)(unsigned long);
 
 static void
@@ -3160,6 +3182,10 @@ hook_bootstrap(void)
 	done = true;
 	hook((void *)(0x20b5d6b80UL + slide), (void *)new_did_complete, (void **)&old_did_complete);
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
+	if (knob("HAKIOS_EMPTY_PREREQS") != NULL && *knob("HAKIOS_EMPTY_PREREQS") != '0') {
+		hook((void *)(0x20b9555c0UL + slide), (void *)new_prereqs, (void **)&old_prereqs);
+		say("hakios: store: ASKBootstrapV2.prerequisites will return empty\n");
+	}
 	hook((void *)(0x20b45c018UL + slide), (void *)new_prereq_a, (void **)&old_prereq_a);
 	hook((void *)(0x20b45de50UL + slide), (void *)new_prereq_b, (void **)&old_prereq_b);
 	hook((void *)(0x20b960ce4UL + slide), (void *)new_prereq_c, (void **)&old_prereq_c);
