@@ -1076,6 +1076,27 @@ static id
 new_errorInit(id self, SEL cmd, void *domain, long code, void *info)
 {
 	note_error((id)domain, code);
+	/*
+	 * ... and who made it, the same as the factory above. jetpackassetd makes its NSOSStatusErrorDomain
+	 * -50 this way, not through errorWithDomain:, which is why its errors were counted in every report
+	 * and never had a maker's name beside them.
+	 */
+	{
+		unsigned long *frame = (unsigned long *)__builtin_frame_address(0);
+		char line[160];
+		size_t used = 0;
+
+		for (int i = 0; i < 5 && frame != NULL && ((unsigned long)frame & 7) == 0; i++) {
+			int w = snprintf(line + used, sizeof(line) - used, " %lx", frame[1] - slide);
+
+			if (w < 0 || (size_t)w >= sizeof(line) - used) {
+				break;
+			}
+			used += (size_t)w;
+			frame = (unsigned long *)frame[0];
+		}
+		say("hakios: store: an error is begun from%s\n", used != 0 ? line : " (nowhere)");
+	}
 	log_live_error((id)domain, code, (id)info);
 	return old_errorInit(self, cmd, domain, code, info);
 }
@@ -1663,6 +1684,8 @@ dump_selectors(const char *class_name, const char *needle)
 	free(methods);
 }
 
+static int unlocked_since_boot_now(void);       /* defined with the keybag hook, below */
+
 static void
 one_report(unsigned seconds)
 {
@@ -1677,6 +1700,9 @@ one_report(unsigned seconds)
 	 */
 	say("hakios: store: KEY brotli entered %lu returned %lu, processStream entered %lu returned %lu\n",
 	    entered[COUNT_brotli], returned[COUNT_brotli], entered[COUNT_processStream], returned[COUNT_processStream]);
+	/* ... and the one answer jetpackassetd waits on before it does anything at all */
+	say("hakios: store(%s): KEY the device has been unlocked since boot: %d\n", who,
+	    unlocked_since_boot_now());
 
 	for (size_t i = 0; i < replacement_count(); i++) {
 		if (!replacements[i].done) {
@@ -2647,6 +2673,123 @@ watch_account_types(void)
 	old_update_default_content = (void (*)(id, SEL, void *))method_getImplementation(m);
 	method_setImplementation(m, (IMP)new_update_default_content);
 	say("hakios: store: watching what accountsd is told about its default content\n");
+}
+
+/*
+ * appstored dies the same death 1144 times in a run: signal 11 at 0x38, in std::mutex::lock, under
+ * AppleMediaServicesKitInternal's own logging call (sub_1ab7b2244 on 24B119). The outermost frame names
+ * what is being done -- AMSAccount.init(ACAccount) throws -- so the account is refused and the daemon
+ * dies WRITING DOWN why: the block that formats the line reads [x0+0x60], which is nil, and locks the
+ * mutex at +0x38 of nothing. Every restart of appstored takes the App Store's XPC connection with it
+ * (NSCocoaErrorDomain 4099, 1613 times), which is why the store never gets past "Loading...".
+ *
+ * The function's own first branch is "if the first argument is nil, return 0": answering 0 is what the
+ * code does when there is nothing to log, so that is what is answered here. The error is still made and
+ * still thrown -- our NSError hooks name it -- only AMS's own line about it is lost.
+ */
+static long (*old_ams_log)(void *, void *, void *, void *, void *, void *);
+
+static long
+new_ams_log(void *a, void *b, void *c, void *d, void *e, void *f)
+{
+	static bool said;
+
+	(void)a, (void)b, (void)c, (void)d, (void)e, (void)f;
+	if (!said) {
+		said = true;
+		say("hakios: store: AMS's own logging call is answered 0, the way it answers itself when "
+		    "there is nothing to log\n");
+	}
+	return 0;
+}
+
+static void
+hook_ams_log(void)
+{
+	static bool done, said;
+	const char *on = knob("HAKIOS_MUTE_AMS_LOG");
+	MSHookFunction_t hook = substrate_hook();
+	/*
+	 * Only once AppleMediaServicesKitInternal is in the process: its Swift symbols are exported, so
+	 * dlsym of one of them is both the question "is it here" and a second opinion on the slide.
+	 */
+	void *anchor = dlsym(RTLD_DEFAULT, "$s29AppleMediaServicesKitInternal0B7AccountVyACSo9ACAccountCKcfC");
+	const unsigned int *target;
+
+	if (done || on == NULL || *on == '0' || hook == NULL || slide == 0 || anchor == NULL) {
+		return;
+	}
+	target = (const unsigned int *)(0x1ab7b2244UL + slide);
+	/*
+	 * ... and only if the address still holds that function. Three words of it are the signature:
+	 * pacibsp; sub sp, sp, #0x80; stp x20, x19, [sp, #0x60]. A build whose cache differs stops here
+	 * instead of replacing whatever else is at the address.
+	 */
+	if (target[0] != 0xd503237fu || target[1] != 0xd10203ffu || target[2] != 0xa9064ff4u) {
+		if (!said) {
+			said = true;
+			say("hakios: store: AMS's logging call is NOT where this build expects it "
+			    "(%p holds %08x %08x %08x); nothing replaced\n", (void *)target,
+			    target[0], target[1], target[2]);
+		}
+		done = true;
+		return;
+	}
+	done = true;
+	hook((void *)target, (void *)new_ams_log, (void **)&old_ams_log);
+	say("hakios: store: AMS's logging call (%p) is replaced; appstored no longer dies writing down "
+	    "why an account was refused\n", (void *)target);
+}
+
+/*
+ * jetpackassetd does nothing at all before the device's first unlock: its own classes are called
+ * DefaultBeforeFirstUnlockChecker and beforeFirstUnlockChecker, it listens for
+ * com.apple.mobile.keybagd.first_unlock, and it asks MKBDeviceUnlockedSinceBoot(). Nothing of its bag
+ * machinery is ever entered in a run of ours -- not _bagAccountForAccountMediaType:, not one bag key --
+ * and the App Store's content is a JetPack that only this daemon fetches (URLJetPackAssetFetcher takes
+ * its downloadsBaseURL from the bag). So the store's "Loading..." and this question may be the same
+ * thing. What the phone answers is printed in every report; HAKIOS_UNLOCKED=1 answers 1 instead.
+ */
+static int (*old_unlocked_since_boot)(void);
+
+static int
+new_unlocked_since_boot(void)
+{
+	static bool said;
+	int real = old_unlocked_since_boot != NULL ? old_unlocked_since_boot() : -1;
+
+	if (!said) {
+		said = true;
+		say("hakios: store: MKBDeviceUnlockedSinceBoot answers %d by itself; 1 is answered instead\n",
+		    real);
+	}
+	return 1;
+}
+
+static int
+unlocked_since_boot_now(void)
+{
+	int (*f)(void) = (int (*)(void))(old_unlocked_since_boot != NULL ? (void *)old_unlocked_since_boot
+	    : dlsym(RTLD_DEFAULT, "MKBDeviceUnlockedSinceBoot"));
+
+	return f != NULL ? f() : -1;
+}
+
+static void
+hook_first_unlock(void)
+{
+	static bool done;
+	const char *on = knob("HAKIOS_UNLOCKED");
+	MSHookFunction_t hook = substrate_hook();
+	void *target = dlsym(RTLD_DEFAULT, "MKBDeviceUnlockedSinceBoot");
+
+	if (done || hook == NULL || target == NULL || on == NULL || *on == '0') {
+		return;
+	}
+	done = true;
+	hook(target, (void *)new_unlocked_since_boot, (void **)&old_unlocked_since_boot);
+	say("hakios: store: MKBDeviceUnlockedSinceBoot (%p) is replaced: this process is told the device "
+	    "has been unlocked since boot\n", target);
 }
 
 static void
@@ -4115,6 +4258,8 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 		return;
 	}
 	hook_fairplay();                /* as soon as AppleMediaServices is there, before it runs */
+	hook_ams_log();                 /* ... and the logging call that kills appstored, once its framework is in */
+	hook_first_unlock();            /* ... and the question jetpackassetd will not start without */
 	for (size_t i = 0; i < sizeof(replacements) / sizeof(replacements[0]); i++) {
 		struct replacement *r = &replacements[i];
 		Class cls;
@@ -4223,6 +4368,8 @@ hakios_store_init(void)
 	watch_for_faults();
 	name_uncaught_exceptions();
 	hook_fairplay();                /* first of all: the one call that never comes back */
+	hook_ams_log();                 /* ... and, if its framework is already in, the call that kills appstored */
+	hook_first_unlock();            /* ... and the first-unlock question, which MobileKeyBag always answers */
 	{
 		/*
 		 * The storefront, and whether anything is replaced at all, from the phone (see knob()).
