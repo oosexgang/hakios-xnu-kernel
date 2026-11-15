@@ -2719,6 +2719,169 @@ make_account_types(void)
 	}
 }
 
+/*
+ * accountsd's answer to appstored is "Failed to create/fetch the local account. error = { Error
+ * domain=com.apple.accounts, code=9 }" -- code 9 is the refusal, not the absence. The daemon decides it
+ * through ACDAccessPluginManager, and what the decision comes down to is one BOOL:
+ * -[ACDClientAuthorization isGranted]. With HAKIOS_GRANT_ACCOUNT_ACCESS=1 that answer is YES here.
+ *
+ * This process is a watcher by default (see the constructor), so the hook is put in by hand rather than
+ * through the table, the same way the database connection is.
+ */
+static BOOL (*old_is_granted)(id, SEL);
+
+static BOOL
+new_is_granted(id self, SEL cmd)
+{
+	static int told;
+	BOOL real = old_is_granted != NULL ? old_is_granted(self, cmd) : NO;
+
+	if (told < 3) {
+		told++;
+		say("hakios: store: a client's authorization said %s; YES is answered\n",
+		    real ? "YES" : "NO");
+	}
+	return YES;
+}
+
+/*
+ * ... and isGranted is not the one that is asked. The refusal names itself in appstored's log --
+ * "Attempted to register account monitor for types client is not authorized to access" -- and the class
+ * that refuses is ACDAccountStoreFilter, whose private gates are these four. All of them answer YES.
+ */
+static BOOL (*old_permitted_type)(id, SEL, void *);
+static BOOL (*old_permitted_account)(id, SEL, void *);
+static BOOL (*old_granted_client)(id, SEL, void *, void *);
+static BOOL (*old_granted_bundle)(id, SEL, void *, void *);
+
+static BOOL
+new_permitted_type(id self, SEL cmd, void *identifier)
+{
+	static int told;
+
+	(void)self, (void)cmd, (void)identifier;
+	if (told < 3) {
+		told++;
+		say("hakios: store: a client asked to reach an account type; YES is answered\n");
+	}
+	return YES;
+}
+
+static BOOL
+new_permitted_account(id self, SEL cmd, void *account)
+{
+	(void)self, (void)cmd, (void)account;
+	return YES;
+}
+
+static BOOL
+new_granted_client(id self, SEL cmd, void *client, void *type)
+{
+	(void)self, (void)cmd, (void)client, (void)type;
+	return YES;
+}
+
+static BOOL
+new_granted_bundle(id self, SEL cmd, void *bundle, void *type)
+{
+	(void)self, (void)cmd, (void)bundle, (void)type;
+	return YES;
+}
+
+/*
+ * ... and the reason isGranted is never reached: the manager answers nil for a client it has no row for,
+ * and nil is already the refusal. -[ACDClientAuthorizationManager authorizationForClient:accountType:]
+ * and its by-identifier twin make one here instead -- ACDClientAuthorization has initForClient:, and
+ * whatever it holds, the isGranted above answers YES.
+ */
+static id (*old_auth_for_client)(id, SEL, void *, void *);
+static id (*old_auth_for_client_id)(id, SEL, void *, void *);
+
+static id
+an_authorization_for(id client, id answer)
+{
+	Class cls = objc_getClass("ACDClientAuthorization");
+	id made;
+	static int told;
+
+	if (answer != NULL || cls == Nil || client == NULL) {
+		return answer;
+	}
+	made = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc"));
+	made = made != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(made, sel_registerName("initForClient:"),
+	    client) : NULL;
+	if (made != NULL && told < 3) {
+		told++;
+		say("hakios: store: this client had no authorization row; one is made for it\n");
+	}
+	return made;
+}
+
+static id
+new_auth_for_client(id self, SEL cmd, void *client, void *type)
+{
+	id answer = old_auth_for_client != NULL ? old_auth_for_client(self, cmd, client, type) : NULL;
+
+	return an_authorization_for((id)client, answer);
+}
+
+static id
+new_auth_for_client_id(id self, SEL cmd, void *client, void *identifier)
+{
+	id answer = old_auth_for_client_id != NULL ? old_auth_for_client_id(self, cmd, client, identifier)
+	    : NULL;
+
+	return an_authorization_for((id)client, answer);
+}
+
+static void
+one_grant(Class cls, const char *selector, IMP replacement, void *original)
+{
+	Method m = cls != Nil ? class_getInstanceMethod(cls, sel_registerName(selector)) : NULL;
+
+	if (m == NULL) {
+		say("hakios: store: %s is not there to replace\n", selector);
+		return;
+	}
+	*(IMP *)original = method_getImplementation(m);
+	method_setImplementation(m, replacement);
+}
+
+static void
+grant_account_access(void)
+{
+	const char *on = knob("HAKIOS_GRANT_ACCOUNT_ACCESS");
+	Class authorization = objc_getClass("ACDClientAuthorization");
+	Class filter = objc_getClass("ACDAccountStoreFilter");
+	Method m = authorization != Nil ? class_getInstanceMethod(authorization,
+	    sel_registerName("isGranted")) : NULL;
+
+	if (on == NULL || *on == '0') {
+		return;
+	}
+	if (m != NULL) {
+		old_is_granted = (BOOL (*)(id, SEL))method_getImplementation(m);
+		method_setImplementation(m, (IMP)new_is_granted);
+	}
+	one_grant(filter, "_isClientPermittedToAccessAccountTypeWithIdentifier:", (IMP)new_permitted_type,
+	    &old_permitted_type);
+	one_grant(filter, "_isClientPermittedToAccessAccount:", (IMP)new_permitted_account,
+	    &old_permitted_account);
+	one_grant(filter, "_accessGrantedForClient:onAccountTypeID:", (IMP)new_granted_client,
+	    &old_granted_client);
+	one_grant(filter, "_accessGrantedForBundleID:onAccountTypeID:", (IMP)new_granted_bundle,
+	    &old_granted_bundle);
+	{
+		Class manager = objc_getClass("ACDClientAuthorizationManager");
+
+		one_grant(manager, "authorizationForClient:accountType:", (IMP)new_auth_for_client,
+		    &old_auth_for_client);
+		one_grant(manager, "authorizationForClient:accountTypeWithIdentifier:",
+		    (IMP)new_auth_for_client_id, &old_auth_for_client_id);
+	}
+	say("hakios: store: every client's authorization to reach an account is answered YES\n");
+}
+
 static void
 watch_account_types(void)
 {
@@ -3691,6 +3854,110 @@ new_abc_proxy_sync(id self, SEL cmd, void *error)
 	return no_broker_service(self, cmd, error, "auto bug capture", old_abc_proxy_sync);
 }
 
+/*
+ * Which of the five calls inside the bag fetch does not come back. Statically, -[AMSBagNetworkTask
+ * _performFetchWithAttemptedCount:account:storefront:] does: clientInfo, sharedBagConfig, profile,
+ * profileVersion, _URLCookieNamesForProfile:, then _queryItemsForClientInfo:... and
+ * _createRequestWithQueryItems:. In amsaccountsd the last two are never entered while the cookies are
+ * answered, so the stall is in one of the first five. These two say so in one run.
+ */
+static id (*old_client_info)(id, SEL);
+static id (*old_cookie_names)(id, SEL, void *);
+
+static id
+new_client_info(id self, SEL cmd)
+{
+	static int in, out;
+	id answer;
+
+	if (in < 3) {
+		in++;
+		say("hakios: store(%s): -> clientInfo (call %d)\n", who_i_am(), in);
+	}
+	answer = old_client_info != NULL ? old_client_info(self, cmd) : NULL;
+	if (out < 3) {
+		out++;
+		say("hakios: store(%s): <- clientInfo (call %d)\n", who_i_am(), out);
+	}
+	return answer;
+}
+
+static id
+new_cookie_names(id self, SEL cmd, void *profile)
+{
+	static int in, out;
+	id answer;
+
+	if (in < 3) {
+		in++;
+		say("hakios: store(%s): -> _URLCookieNamesForProfile: (call %d)\n", who_i_am(), in);
+	}
+	answer = old_cookie_names != NULL ? old_cookie_names(self, cmd, profile) : NULL;
+	if (out < 3) {
+		out++;
+		say("hakios: store(%s): <- _URLCookieNamesForProfile: (call %d)\n", who_i_am(), out);
+	}
+	return answer;
+}
+
+/*
+ * The refusal is the CLIENT's, not the daemon's: appstored says "Attempted to register account monitor
+ * for types client is not authorized to access" in its own log, and all four of the daemon's gates are
+ * replaced and never called. What the client looks at is the account type's access keys
+ * (-[ACAccountType accessKeys], -[ACAccountStore accessKeysForAccountType:]). An empty set is a client
+ * that may not look. With HAKIOS_GRANT_ACCOUNT_ACCESS=1 the type answers with a set holding its own
+ * identifier, which is the shape of a key.
+ */
+static id (*old_access_keys)(id, SEL);
+static id (*old_access_keys_for)(id, SEL, void *);
+
+static id
+keys_or_ours(id answer, id type)
+{
+	long n = answer != NULL ? ((long (*)(id, SEL))objc_msgSend)(answer, sel_registerName("count")) : 0;
+	id identifier;
+	static int told;
+
+	if (n > 0) {
+		return answer;
+	}
+	identifier = type != NULL ? ((id (*)(id, SEL))objc_msgSend)(type,
+	    sel_registerName("identifier")) : NULL;
+	if (identifier == NULL) {
+		return answer;
+	}
+	if (told < 3) {
+		told++;
+		say("hakios: store: the account type had no access keys; its own identifier is answered\n");
+	}
+	return ((id (*)(Class, SEL, id))objc_msgSend)(objc_getClass("NSSet"),
+	    sel_registerName("setWithObject:"), identifier);
+}
+
+static id
+new_access_keys(id self, SEL cmd)
+{
+	id answer = old_access_keys != NULL ? old_access_keys(self, cmd) : NULL;
+	const char *on = knob("HAKIOS_GRANT_ACCOUNT_ACCESS");
+
+	if (on == NULL || *on == '0') {
+		return answer;
+	}
+	return keys_or_ours(answer, self);
+}
+
+static id
+new_access_keys_for(id self, SEL cmd, void *type)
+{
+	id answer = old_access_keys_for != NULL ? old_access_keys_for(self, cmd, type) : NULL;
+	const char *on = knob("HAKIOS_GRANT_ACCOUNT_ACCESS");
+
+	if (on == NULL || *on == '0') {
+		return answer;
+	}
+	return keys_or_ours(answer, (id)type);
+}
+
 static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
 static void (*old_add_storefront_header)(id, SEL, void *, void *, void *, void *);
 
@@ -4532,6 +4799,12 @@ static struct replacement replacements[] = {
 	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,
 	  (IMP *)&old_xpc_init, false },
+	{ "ACAccountType", "accessKeys", false, (IMP)new_access_keys, (IMP *)&old_access_keys, false },
+	{ "ACAccountStore", "accessKeysForAccountType:", false, (IMP)new_access_keys_for,
+	  (IMP *)&old_access_keys_for, false },
+	{ "AMSBagNetworkTask", "clientInfo", false, (IMP)new_client_info, (IMP *)&old_client_info, false },
+	{ "AMSBagNetworkTask", "_URLCookieNamesForProfile:", false, (IMP)new_cookie_names,
+	  (IMP *)&old_cookie_names, false },
 	{ "AMSDaemonConnection", "cookieServiceProxySyncWithError:", false, (IMP)new_cookie_proxy_sync,
 	  (IMP *)&old_cookie_proxy_sync, false },
 	{ "AMSDaemonConnection", "accountManagementServiceProxySyncWithError:", false,
@@ -4686,6 +4959,7 @@ hakios_store_init(void)
 		who = name;
 		say("hakios: store(%s): ours is in, to watch only: no method of this process is replaced\n", name);
 		watch_account_types();
+		grant_account_access();
 		if (knob("HAKIOS_MAKE_TYPES") != NULL) {
 			/* the accessor has to be hooked before the daemon first hands a connection out, which is
 			 * long before the thread below wakes up to want one */
