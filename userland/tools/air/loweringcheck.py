@@ -179,25 +179,20 @@ def cases():
                 sret("float, float, float, [8 x i8]", BRANCHED), "agree"))
     out.append(("struct return with a vector member",
                 sret("float, float, float, <2 x float>, [8 x i8]", STRAIGHT), "agree"))
-    out.append(("a phi of the struct (must be refused)",
-                sret("float, float, float, [8 x i8]", STRUCT_PHI),
-                # The phi is what cannot be translated, and that is where it is
-                # now refused: a struct is a tree of values here and never a NIR
-                # value, so no register carries one across an edge. It used to
-                # get a register of zero bits and fail further down at "a
-                # returned struct that was never built" -- true of the module,
-                # and not what is wrong with it.
-                "refuse:a phi of a struct, which NIR has no register for"))
+    # A phi of a struct is carried member by member, a register a leaf (air_to_nir.c,
+    # agg_decl_regs) -- what LLVM's own SROA makes of it. It was refused once, and
+    # this case expected the refusal long after the registers came.
+    out.append(("a phi of the struct",
+                sret("float, float, float, [8 x i8]", STRUCT_PHI), "agree"))
 
     # the chosen pointer, each side taken once
     out.append(("pointer chosen at run time, constant side", psel(0), "agree"))
     out.append(("pointer chosen at run time, buffer side", psel(1), "agree"))
 
-    # Storing a pointer to memory is the other half of the same problem and has
-    # no form here: a pointer is a resolution, not bytes. Refused by name so the
-    # wall has a reason rather than a symptom.
-    out.append(("a pointer stored into memory (must be refused)",
-                PSTORE, "refuse:a store of a pointer into memory"))
+    # A pointer stored into a local: no bytes are written, the local's slot keeps
+    # the resolution, and a load of it from the same place is that pointer (and a
+    # local written at a computed index keeps it as numbers: air_ptr_numeric).
+    out.append(("a pointer stored into a local", PSTORE, "agree"))
 
     # i32 -> <2 x half>, which 2 927 of Resident Evil 4's 7 879 modules do
     # (tools/air/typecensus.py), with the two halves chosen so that the
