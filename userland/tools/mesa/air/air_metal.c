@@ -8049,6 +8049,8 @@ raster_state_for(struct rwa_render *render, const struct rwa_draw *draw, char *w
       .fill_back = draw->fill_mode == 1 ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL,
       .depth_clip_near = !draw->depth_clamp, .depth_clip_far = !draw->depth_clamp,
       .depth_clamp = draw->depth_clamp != 0,
+      /* Metal clips by every clip distance the vertex shader writes */
+      .clip_plane_enable = BITFIELD_MASK(MIN2(render->vinfo.clip_distances, 8)),
    };
    if (draw->depth_bias != 0.0f || draw->depth_slope_scale != 0.0f) {
       /* Metal's bias is in the depth buffer's smallest steps, as Gallium's offset_units is
