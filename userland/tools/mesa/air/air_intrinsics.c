@@ -922,6 +922,30 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
    struct air_val *pv = air_get(c, in->operands[1]);
    if (!pv)
       return false;
+   /* on a pointer chosen at run time -- Vista's splat culling counts into one of two buffers
+    * loaded out of its argument buffer: the atomic on whichever it is, behind the choice, and
+    * the old value from the side that ran */
+   if (pv->kind == AIR_VAL_PTR_SELECT && pv->num_elems == 2) {
+      struct air_val *regs = NULL;
+      struct air_split sp;
+      bool has_ret = in->base.type->kind != AIR_TYPE_VOID;
+      air_split_begin(c, pv->def, &sp);
+      for (unsigned side = 0; side < 2; side++) {
+         if (side == 1)
+            air_split_else(c, &sp);
+         air_set(c, in->operands[1], pv->elems[side]);
+         bool ok = atomic_op(c, in, n);
+         air_set(c, in->operands[1], pv);
+         if (!ok)
+            return false;
+         if (has_ret)
+            regs = air_split_keep(c, air_get(c, &in->base), regs);
+      }
+      air_split_end(c, &sp);
+      if (has_ret)
+         air_set(c, &in->base, air_split_load(c, regs));
+      return true;
+   }
    if (pv->kind != AIR_VAL_PTR)
       return air_error(c, "intrinsic: an atomic on something that is not a pointer");
    struct air_ptr p = pv->ptr;
