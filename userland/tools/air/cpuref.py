@@ -574,12 +574,26 @@ def evaluate_ours(path, function, library=False):
     return values, None
 
 
+def number(s):
+    """A printed value: a decimal or an 0x integer."""
+    try:
+        return float(s)
+    except ValueError:
+        return float(int(s, 0))
+
+
 def compare(theirs, ours, tol):
     """What differs between LLVM's numbers and ours, or None."""
     if len(theirs) != len(ours):
         return "LLVM printed %d values, we printed %d" % (len(theirs), len(ours))
     for i, (a, b) in enumerate(zip(theirs, ours)):
-        fa, fb = float(a), float(b)
+        # a 16-bit or 8-bit integer is printed in hex by air2nir's folder, and Python's
+        # float() takes no hex integer: a word it cannot read is a difference to name,
+        # not an exception that ends the run over the whole library
+        try:
+            fa, fb = number(a), number(b)
+        except ValueError:
+            return "value %d: LLVM %s, ours %s, one of which is not a number" % (i, a, b)
         if fa == fb:
             continue
         if tol > 0:
