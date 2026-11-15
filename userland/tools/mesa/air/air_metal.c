@@ -6345,6 +6345,127 @@ lib_pipe_leave(void)
       pipe_lock_leave();
 }
 
+/*
+ * TRANSLATIONS KEPT, the way make_stage_cso keeps compiled stages: CoreAnimation asks for one
+ * function in one specialisation again and again, a pipeline per blend and attachment format it
+ * draws with -- under QEMU A3Xghfc was translated twelve times in the first minutes of a boot,
+ * four seconds each, after the stage cache had made its compiling a hit. A translation is a
+ * function of the module's bytes, the function's name, the constants and linked functions
+ * registered for those bytes, and the screen's NIR options, so that is the key; the NIR and the
+ * interface it came with are kept under a context of the cache's own and handed back as copies.
+ * Thirty-two of them, the oldest given up first.
+ */
+#define TRANSLATION_CACHE 32
+struct translation_entry {
+   blake3_hash key;
+   void *mem;                     /* the entry's own: its NIR and its info's arrays */
+   nir_shader *nir;
+   struct air_shader_info info;
+};
+static struct translation_entry translations[TRANSLATION_CACHE];
+static unsigned translations_next;
+static simple_mtx_t translation_lock = SIMPLE_MTX_INITIALIZER;
+
+static void
+translation_key(const void *bitcode, size_t size, const char *entry,
+                const struct air_to_nir_options *opts, const nir_shader_compiler_options *nir_options,
+                blake3_hash key)
+{
+   struct mesa_blake3 h;
+   _mesa_blake3_init(&h);
+   _mesa_blake3_update(&h, &size, sizeof(size));
+   _mesa_blake3_update(&h, bitcode, size);
+   _mesa_blake3_update(&h, entry ? entry : "", entry ? strlen(entry) + 1 : 1);
+   _mesa_blake3_update(&h, &nir_options, sizeof(nir_options));
+   _mesa_blake3_update(&h, &opts->num_constants, sizeof(opts->num_constants));
+   for (unsigned i = 0; i < opts->num_constants; i++)
+      _mesa_blake3_update(&h, &opts->constants[i], sizeof(opts->constants[i]));
+   _mesa_blake3_update(&h, &opts->num_linked, sizeof(opts->num_linked));
+   for (unsigned i = 0; i < opts->num_linked; i++) {
+      const struct air_linked_function *l = &opts->linked[i];
+      _mesa_blake3_update(&h, l->name ? l->name : "", l->name ? strlen(l->name) + 1 : 1);
+      _mesa_blake3_update(&h, l->entry ? l->entry : "", l->entry ? strlen(l->entry) + 1 : 1);
+      _mesa_blake3_update(&h, &l->size, sizeof(l->size));
+      _mesa_blake3_update(&h, l->bitcode, l->size);
+      for (unsigned k = 0; k < l->num_constants; k++)
+         _mesa_blake3_update(&h, &l->constants[k], sizeof(l->constants[k]));
+   }
+   _mesa_blake3_update(&h, &opts->library_wrapper, sizeof(opts->library_wrapper));
+   _mesa_blake3_final(&h, key);
+}
+
+static const char *
+info_strdup(void *mem, const char *s)
+{
+   return s ? ralloc_strdup(mem, s) : NULL;
+}
+
+/* an interface and everything it points at, under mem */
+static void
+info_copy(void *mem, struct air_shader_info *d, const struct air_shader_info *s)
+{
+   *d = *s;
+   d->entry_point = info_strdup(mem, s->entry_point);
+   d->resources = s->num_resources ? ralloc_memdup(mem, s->resources,
+                                                   s->num_resources * sizeof(*s->resources)) : NULL;
+   for (unsigned i = 0; i < s->num_resources; i++) {
+      d->resources[i].name = info_strdup(mem, s->resources[i].name);
+      d->resources[i].type_name = info_strdup(mem, s->resources[i].type_name);
+   }
+   d->varyings = s->num_varyings ? ralloc_memdup(mem, s->varyings,
+                                                 s->num_varyings * sizeof(*s->varyings)) : NULL;
+   for (unsigned i = 0; i < s->num_varyings; i++)
+      d->varyings[i].name = info_strdup(mem, s->varyings[i].name);
+   d->vertex_attributes = s->num_vertex_attributes
+      ? ralloc_memdup(mem, s->vertex_attributes, s->num_vertex_attributes * sizeof(*s->vertex_attributes))
+      : NULL;
+   for (unsigned i = 0; i < s->num_vertex_attributes; i++) {
+      d->vertex_attributes[i].name = info_strdup(mem, s->vertex_attributes[i].name);
+      d->vertex_attributes[i].type_name = info_strdup(mem, s->vertex_attributes[i].type_name);
+      d->vertex_attributes[i].function_constant =
+         info_strdup(mem, s->vertex_attributes[i].function_constant);
+   }
+   d->notes = s->num_notes ? ralloc_array(mem, const char *, s->num_notes) : NULL;
+   for (unsigned i = 0; i < s->num_notes; i++)
+      d->notes[i] = info_strdup(mem, s->notes[i]);
+}
+
+/* air_to_nir through the cache: what it returns is mem_ctx's, as air_to_nir's own is */
+static nir_shader *
+air_to_nir_kept(void *mem_ctx, const void *bitcode, size_t size, const char *entry,
+                const struct air_to_nir_options *opts, const nir_shader_compiler_options *nir_options,
+                struct air_shader_info *info, const char **error)
+{
+   blake3_hash key;
+   translation_key(bitcode, size, entry, opts, nir_options, key);
+   simple_mtx_lock(&translation_lock);
+   for (unsigned i = 0; i < TRANSLATION_CACHE; i++) {
+      struct translation_entry *e = &translations[i];
+      if (e->nir && memcmp(e->key, key, sizeof(key)) == 0) {
+         nir_shader *nir = nir_shader_clone(mem_ctx, e->nir);
+         info_copy(mem_ctx, info, &e->info);
+         simple_mtx_unlock(&translation_lock);
+         return nir;
+      }
+   }
+   simple_mtx_unlock(&translation_lock);
+
+   nir_shader *nir = air_to_nir(mem_ctx, bitcode, size, entry, opts, nir_options, info, error);
+   if (!nir)
+      return NULL;
+   void *mem = ralloc_context(NULL);
+   nir_shader *kept = nir_shader_clone(mem, nir);
+   simple_mtx_lock(&translation_lock);
+   struct translation_entry *e = &translations[translations_next++ % TRANSLATION_CACHE];
+   ralloc_free(e->mem);
+   e->mem = mem;
+   e->nir = kept;
+   memcpy(e->key, key, sizeof(key));
+   info_copy(mem, &e->info, info);
+   simple_mtx_unlock(&translation_lock);
+   return nir;
+}
+
 /* A compiled pipeline for drawing. The shaders are kept pristine under mem_ctx and a
  * clone is handed to the driver, for the reason compute_state_for gives: a Gallium
  * driver steals the NIR it is given, so what this library frees at destroy must be its
@@ -7618,9 +7739,9 @@ rwa_render_create(struct rwa_device *device,
                                              .linked = flinked, .num_linked = num_flinked };
    const char *error;
    double t_fs = cost_now_ms();
-   nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
-                               fragment_entry, &fopts, device->nir_options, &render->finfo,
-                               &error);
+   nir_shader *fs = air_to_nir_kept(render->mem_ctx, fragment_bitcode, fragment_size,
+                                    fragment_entry, &fopts, device->nir_options, &render->finfo,
+                                    &error);
    render->times_ms[0] = cost_now_ms() - t_fs;
    if (!fs) {
       say(why, why_size, "%s", error ? error : "the fragment module could not be translated");
@@ -7677,8 +7798,8 @@ rwa_render_create(struct rwa_device *device,
       const struct air_to_nir_options vopts = { .constants = vfc, .num_constants = num_vfc,
                                                 .linked = vlinked, .num_linked = num_vlinked };
       double t_vs = cost_now_ms();
-      vs = air_to_nir(render->mem_ctx, vertex_bitcode, vertex_size, vertex_entry, &vopts,
-                      device->nir_options, &render->vinfo, &error);
+      vs = air_to_nir_kept(render->mem_ctx, vertex_bitcode, vertex_size, vertex_entry, &vopts,
+                           device->nir_options, &render->vinfo, &error);
       render->times_ms[1] = cost_now_ms() - t_vs;
       if (!vs) {
          say(why, why_size, "%s", error ? error : "the vertex module could not be translated");
