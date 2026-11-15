@@ -482,10 +482,10 @@ interface_module(const struct module_ref *mod)
              r->argbuf_id == ~0u ? -1 : (int)r->argbuf_id);
       /* an image written at a mip level other than the base: the level, or where it is read */
       if (r->level_from_buffer)
-         printf("level	index=%u	buffer=%u	offset=%u	bytes=%u\n", r->index, r->level_buffer,
-                r->level_offset, r->level_bytes);
+         printf("level\tindex=%u\tbuffer=%u\toffset=%u\tbytes=%u%s\n", r->index, r->level_buffer,
+                r->level_offset, r->level_bytes, r->level_float ? "\tfloat" : "");
       else if (r->level)
-         printf("level	index=%u	level=%u\n", r->index, r->level);
+         printf("level\tindex=%u\tlevel=%u\n", r->index, r->level);
    }
    for (unsigned i = 0; i < info.num_notes; i++) {
       fputs("note\t", stdout);

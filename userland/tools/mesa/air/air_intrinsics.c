@@ -1790,7 +1790,17 @@ struct air_level_place {
    bool constant;
    uint64_t value;
    unsigned buffer, offset, bytes;
+   bool is_float;   /* the word is a float, and the level its whole part (SiriBlur's) */
 };
+
+/* the name of the function a call instruction calls, or NULL */
+static const char *
+called_name(const struct air_inst *in)
+{
+   if (in->op != AIR_OP_CALL || !in->num_operands || in->operands[0]->kind != AIR_VALUE_FUNCTION)
+      return NULL;
+   return in->operands[0]->name;
+}
 
 static bool
 level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place *out)
@@ -1801,11 +1811,26 @@ level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place
       return true;
    }
    unsigned elem = 0;
-   bool have_elem = false;
+   bool have_elem = false, is_float = false;
    for (;;) {
       if (v->kind != AIR_VALUE_INSTRUCTION)
          return false;
       const struct air_inst *in = (const struct air_inst *)v;
+      /* a float made a whole number: air.convert.u.iN.f.f32, of air.(fast_)floor.f32 or not --
+       * SiriBlur's level is (ushort)floor(the float its uniforms hold) */
+      const char *fn = called_name(in);
+      if (fn && !is_float && !have_elem && in->num_operands == 2 &&
+          (!strncmp(fn, "air.convert.u.i", 15) || !strncmp(fn, "air.convert.s.i", 15)) &&
+          strstr(fn, ".f.f32")) {
+         v = in->operands[1];
+         if (v->kind == AIR_VALUE_INSTRUCTION) {
+            const char *f2 = called_name((const struct air_inst *)v);
+            if (f2 && (!strcmp(f2, "air.fast_floor.f32") || !strcmp(f2, "air.floor.f32")))
+               v = ((const struct air_inst *)v)->operands[1];
+         }
+         is_float = true;
+         continue;
+      }
       if (in->op == AIR_OP_CAST && (in->sub == AIR_CAST_TRUNC || in->sub == AIR_CAST_ZEXT ||
                                     in->sub == AIR_CAST_SEXT) && !have_elem) {
          v = in->operands[0];
@@ -1823,16 +1848,19 @@ level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place
          return false;
       const struct air_type *t = in->base.type;
       const struct air_type *st = t->kind == AIR_TYPE_VECTOR ? t->elem : t;
-      if (!st || st->kind != AIR_TYPE_INT || st->bits % 8 || st->bits > 32 ||
-          (have_elem != (t->kind == AIR_TYPE_VECTOR)))
+      if (!st || (have_elem != (t->kind == AIR_TYPE_VECTOR)))
          return false;
+      if (is_float ? st->kind != AIR_TYPE_FLOAT
+                   : st->kind != AIR_TYPE_INT || st->bits % 8 || st->bits > 32)
+         return false;
+      unsigned bytes = is_float ? 4 : st->bits / 8;
       struct air_val *p = air_get(c, in->operands[0]);
       if (!p || p->kind != AIR_VAL_PTR || p->ptr.class != AIR_PTR_UBO ||
           (p->ptr.offset && !nir_src_is_const(nir_src_for_ssa(p->ptr.offset))))
          return false;
       unsigned off = p->ptr.offset ? (unsigned)nir_src_as_uint(nir_src_for_ssa(p->ptr.offset)) : 0;
       *out = (struct air_level_place){
-         .buffer = p->ptr.binding, .offset = off + elem * st->bits / 8, .bytes = st->bits / 8,
+         .buffer = p->ptr.binding, .offset = off + elem * bytes, .bytes = bytes, .is_float = is_float,
       };
       return true;
    }
@@ -1843,7 +1871,8 @@ level_place_equal(const struct air_level_place *a, const struct air_level_place 
 {
    return a->constant == b->constant &&
           (a->constant ? a->value == b->value
-                       : a->buffer == b->buffer && a->offset == b->offset && a->bytes == b->bytes);
+                       : a->buffer == b->buffer && a->offset == b->offset && a->bytes == b->bytes &&
+                            a->is_float == b->is_float);
 }
 
 static struct air_resource *
@@ -1866,7 +1895,7 @@ image_level(const struct air_resource *r)
 {
    if (r && r->level_from_buffer)
       return (struct air_level_place){ .buffer = r->level_buffer, .offset = r->level_offset,
-                                       .bytes = r->level_bytes };
+                                       .bytes = r->level_bytes, .is_float = r->level_float };
    return (struct air_level_place){ .constant = true, .value = r ? r->level : 0 };
 }
 
@@ -1884,6 +1913,7 @@ image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level
    r->level_buffer = lp->buffer;
    r->level_offset = lp->offset;
    r->level_bytes = lp->bytes;
+   r->level_float = lp->is_float;
    return true;
 }
 

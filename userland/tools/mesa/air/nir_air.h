@@ -132,6 +132,7 @@ struct air_resource {
    unsigned level;
    bool level_from_buffer;
    unsigned level_buffer, level_offset, level_bytes;
+   bool level_float;     /* the word is a 32-bit float and the level the whole number below it */
    bool level_written;   /* (the translator's: a write has decided the level) */
 };
 

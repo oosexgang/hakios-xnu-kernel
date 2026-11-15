@@ -4349,7 +4349,15 @@ image_view_level(const struct air_resource *r, const struct rwa_bindings *bindin
       }
       uint32_t v = 0;
       memcpy(&v, (const uint8_t *)b->map + at, r->level_bytes);
-      *level = v;
+      if (r->level_float) {
+         float f;
+         memcpy(&f, &v, sizeof(f));
+         /* the whole part, as the shader's conversion makes it; one past every level the texture
+          * could have is still a number, which the check below then refuses by name */
+         *level = !(f > 0.0f) ? 0 : f < 65535.0f ? (unsigned)f : 65535u;
+      } else {
+         *level = v;
+      }
    }
    if (*level > t->res->last_level) {
       say(why, why_size, "%s writes image %u at mip level %u, and the %s bound there has %u",
