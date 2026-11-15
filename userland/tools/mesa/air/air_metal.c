@@ -220,6 +220,9 @@ struct rwa_buffer {
  * programmer recognises, so a refusal names MTLPixelFormatRGBA32Float and not
  * R32G32B32A32_FLOAT.
  */
+static bool msaa_pretended(const struct pipe_screen *screen, enum pipe_format format,
+                           enum pipe_texture_target target, unsigned samples, unsigned bind);
+
 struct rwa_texture {
    struct rwa_device *device;
    struct pipe_resource *res;
@@ -228,6 +231,9 @@ struct rwa_texture {
    struct rwa_texture_shape shape;
    const char *format_name;         /* the MTLPixelFormat, spelled out */
    unsigned layers;                 /* array slices, or the six faces of a cube */
+   /* the samples per texel asked for, on a screen that pretends multisampling with one
+    * (msaa_pretended): what the texture answers to as an attachment; 0 when it has them */
+   unsigned pretended_samples;
 
    /* what MTLTextureUsage allowed, which is checked at every dispatch: a kernel that
     * writes a texture the application declared read-only is an application's mistake,
@@ -2021,6 +2027,9 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
     * and a multisample one is its own count to both.
     */
    unsigned query_samples = samples > 1 ? samples : 0;
+   bool pretend = msaa_pretended(device->screen, fmt->pipe, target, query_samples, bind);
+   if (pretend)
+      query_samples = 0;
 
    /* Asked before it is allocated, so that a format the driver does not do for this
     * binding is a sentence naming both rather than a NULL from resource_create naming
@@ -2053,6 +2062,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
    texture->shape = *shape;
    texture->format_name = fmt->name;
    texture->layers = array_size;
+   texture->pretended_samples = pretend ? samples : 0;
    texture->shader_read = read;
    texture->shader_write = write;
 
@@ -6321,6 +6331,24 @@ build_vertex_state(const struct air_shader_info *vinfo,
 
 static double cost_now_ms(void);
 
+/*
+ * MULTISAMPLING PRETENDED WITH ONE SAMPLE, where the screen asks for exactly that: softpipe sets
+ * pipe_caps.fake_sw_msaa and declines every sample count above one for every format, so under
+ * QEMU SpringBoard's first multisample texture -- BGRA8Unorm, four samples, the attachment it
+ * draws its layers into and resolves -- was refused, and with it everything SpringBoard drew
+ * through Metal. On such a screen a multisample texture or pass the screen cannot do is made with
+ * one sample and answers to the count it was asked for; the resolve at the end of the pass is then
+ * a copy. The Adreno does 2 and 4 samples itself and never gets here.
+ */
+static bool
+msaa_pretended(const struct pipe_screen *screen, enum pipe_format format, enum pipe_texture_target target,
+               unsigned samples, unsigned bind)
+{
+   return samples > 1 && screen->caps.fake_sw_msaa &&
+          !screen->is_format_supported((struct pipe_screen *)screen, format, target, samples, samples, bind) &&
+          screen->is_format_supported((struct pipe_screen *)screen, format, target, 0, 0, bind);
+}
+
 /* The driver's lock on the Gallium context, as rwa_set_pipe_lock gives it (air_metal.h). */
 static void (*pipe_lock_enter)(void), (*pipe_lock_leave)(void);
 
@@ -7665,6 +7693,8 @@ rwa_render_create(struct rwa_device *device,
          return NULL;
       }
       unsigned q = samples > 1 ? samples : 0;
+      if (msaa_pretended(device->screen, fmt->pipe, PIPE_TEXTURE_2D, q, PIPE_BIND_DEPTH_STENCIL))
+         q = 0;
       if (!device->screen->is_format_supported(device->screen, fmt->pipe, PIPE_TEXTURE_2D,
                                                q, q, PIPE_BIND_DEPTH_STENCIL)) {
          char ms[48] = "";
@@ -7702,6 +7732,8 @@ rwa_render_create(struct rwa_device *device,
          return NULL;
       }
       unsigned q = samples > 1 ? samples : 0;
+      if (msaa_pretended(device->screen, fmt->pipe, PIPE_TEXTURE_2D, q, PIPE_BIND_RENDER_TARGET))
+         q = 0;
       if (!device->screen->is_format_supported(device->screen, fmt->pipe,
                                                PIPE_TEXTURE_2D, q, q,
                                                PIPE_BIND_RENDER_TARGET)) {
@@ -8193,7 +8225,8 @@ attachment_shape_fits(const struct rwa_texture *t, unsigned samples, const char 
           texture_type_name(want_type));
       return false;
    }
-   unsigned have = t->res->nr_samples > 1 ? t->res->nr_samples : 1;
+   unsigned have = t->pretended_samples ? t->pretended_samples
+                                        : t->res->nr_samples > 1 ? t->res->nr_samples : 1;
    if (have != samples) {
       say(why, why_size, "%s has %u sample%s per pixel and the pipeline was made for %u",
           what, have, have == 1 ? "" : "s", samples);
