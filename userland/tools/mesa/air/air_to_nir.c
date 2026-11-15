@@ -3016,7 +3016,15 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
     * get_null_texture gives, a value is undef.
     */
    if (gated_off(c, node)) {
-      if (t->kind != AIR_TYPE_POINTER)
+      if (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY) {
+         /* a struct that is not there -- VectorKit's imageblock data behind
+          * useFV2BlendLayer -- is a tree of zeros, as a zeroinitializer of it is */
+         struct air_constant z = { .base = { .kind = AIR_VALUE_CONSTANT, .type = t },
+                                   .ckind = AIR_CONST_NULL };
+         c->params[param] = air_constant_val(c, &z);
+         if (!c->params[param])
+            return false;
+      } else if (t->kind != AIR_TYPE_POINTER)
          c->params[param] = air_val_ssa(c, nir_undef(&c->b, air_nir_components(t),
                                                      air_nir_bit_size(c, t)));
       else if (md_key(node, "air.texture") >= 0)
