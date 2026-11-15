@@ -741,6 +741,63 @@ widen_16bit(nir_shader *nir)
    return progress;
 }
 
+/*
+ * Private memory as a local array of words, for a screen without scratch (softpipe:
+ * finalize_for_gallium). nir_to_tgsi has no case for load_scratch and store_scratch ("Unknown
+ * intrinsic", then an assertion in ureg_swizzle), so a shader with a local array indexed at run
+ * time -- SiriBlur's taps, the frontend leaves what it cannot fold to constant offsets as scratch
+ * -- aborted the process that made the pipeline, which under QEMU is backboardd. A local array is
+ * what TGSI has (a temporary array, or the if-tree nir_to_tgsi makes of it), so each scratch
+ * access becomes an access to word offset/4 of one. The frontend's accesses are 32-bit words
+ * (widen_16bit has run); anything else is left alone, and nir_to_tgsi says so as before.
+ */
+static bool
+scratch_to_temp_array(nir_shader *nir)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   if (!impl || !nir->scratch_size)
+      return false;
+   unsigned words = DIV_ROUND_UP(nir->scratch_size, 4);
+   nir_variable *arr = nir_local_variable_create(impl, glsl_array_type(glsl_uint_type(), words, 4),
+                                                 "scratch_words");
+   bool progress = false;
+   nir_builder b = nir_builder_create(impl);
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr_safe(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         bool load = intr->intrinsic == nir_intrinsic_load_scratch;
+         if (!load && intr->intrinsic != nir_intrinsic_store_scratch)
+            continue;
+         nir_def *value = load ? NULL : intr->src[0].ssa;
+         if ((load ? intr->def.bit_size : value->bit_size) != 32)
+            continue;
+         b.cursor = nir_before_instr(instr);
+         nir_def *word = nir_ushr_imm(&b, intr->src[load ? 0 : 1].ssa, 2);
+         nir_deref_instr *base = nir_build_deref_var(&b, arr);
+         if (load) {
+            nir_def *comps[4];
+            for (unsigned k = 0; k < intr->def.num_components; k++)
+               comps[k] = nir_load_deref(&b, nir_build_deref_array(&b, base,
+                                                                    nir_iadd_imm(&b, word, k)));
+            nir_def_replace(&intr->def, nir_vec(&b, comps, intr->def.num_components));
+         } else {
+            unsigned mask = nir_intrinsic_write_mask(intr);
+            for (unsigned k = 0; k < value->num_components; k++)
+               if (mask & (1u << k))
+                  nir_store_deref(&b, nir_build_deref_array(&b, base, nir_iadd_imm(&b, word, k)),
+                                  nir_channel(&b, value, k), 1);
+            nir_instr_remove(instr);
+         }
+         progress = true;
+      }
+   }
+   if (progress)
+      nir->scratch_size = 0;
+   return nir_progress(progress, impl, nir_metadata_none);
+}
+
 /* demote(_if) as terminate(_if), for a screen without DEMOTE (softpipe: finalize_for_gallium) */
 static bool
 demote_to_terminate(nir_builder *b, nir_intrinsic_instr *intr, void *data)
@@ -770,6 +827,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
        * luma_boost discard). A discarded fragment that keeps running only matters to the derivatives
        * of its quad after the discard; softpipe's KILL ends it, which is what it can do */
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, demote_to_terminate, nir_metadata_control_flow, NULL);
+      NIR_PASS(_, nir, scratch_to_temp_array);
       NIR_PASS(_, nir, nir_opt_dce);
    }
    /* A fragment shader's [[position]]: the frontend hands it over as a system-value
