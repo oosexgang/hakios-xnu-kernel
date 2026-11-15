@@ -953,7 +953,7 @@ enum air_sysval {
    AIR_SV_FRONT_FACING, AIR_SV_SAMPLE_ID, AIR_SV_SAMPLE_MASK_IN, AIR_SV_POINT_COORD,
    AIR_SV_THREAD_POS_GRID, AIR_SV_THREAD_POS_TG, AIR_SV_TG_POS_GRID,
    AIR_SV_THREADS_PER_TG, AIR_SV_TGS_PER_GRID, AIR_SV_THREAD_INDEX_TG,
-   AIR_SV_THREADS_PER_GRID, AIR_SV_SIMD_LANE, AIR_SV_SIMD_INDEX, AIR_SV_SIMD_WIDTH,
+   AIR_SV_THREADS_PER_GRID, AIR_SV_SIMD_LANE, AIR_SV_SIMD_INDEX, AIR_SV_SIMD_WIDTH, AIR_SV_QUAD_LANE,
    AIR_SV_SIMDS_PER_TG,
 };
 
@@ -977,6 +977,7 @@ static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
    { "air.simdgroup_index_in_threadgroup", AIR_SV_SIMD_INDEX },
    { "air.threads_per_simdgroup", AIR_SV_SIMD_WIDTH },
    { "air.simdgroups_per_threadgroup", AIR_SV_SIMDS_PER_TG },
+   { "air.thread_index_in_quadgroup", AIR_SV_QUAD_LANE },
 };
 
 static nir_def *
@@ -1017,6 +1018,8 @@ load_sysval(struct air_ctx *c, enum air_sysval sv)
    case AIR_SV_THREADS_PER_GRID:
       return nir_imul(&c->b, nir_load_num_workgroups(&c->b), nir_load_workgroup_size(&c->b));
    case AIR_SV_SIMD_LANE: return nir_load_subgroup_invocation(&c->b);
+   /* a quad is four consecutive lanes of the SIMD group, as quad_shuffle and quad_broadcast take it */
+   case AIR_SV_QUAD_LANE: return nir_iand_imm(&c->b, nir_load_subgroup_invocation(&c->b), 3);
    case AIR_SV_SIMD_INDEX: return nir_load_subgroup_id(&c->b);
    case AIR_SV_SIMD_WIDTH: return nir_load_subgroup_size(&c->b);
    /* ir3 has this one and computes it rather than reading a register:
