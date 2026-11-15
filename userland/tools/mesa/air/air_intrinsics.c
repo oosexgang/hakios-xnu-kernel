@@ -2348,6 +2348,13 @@ tex_coord_and_layer(struct air_ctx *c, const struct air_inst *in,
 static bool
 texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
 {
+   /* texture.fence(): what this thread wrote to the texture is visible to its own reads after
+    * it -- an image memory barrier, with no meeting of threads (Metal's own words) */
+   if (!strncmp(n->part[0], "fence_texture_", 14)) {
+      nir_barrier(&c->b, .execution_scope = SCOPE_NONE, .memory_scope = SCOPE_INVOCATION,
+                  .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_image);
+      return true;
+   }
    struct air_tex_name t;
    if (!parse_tex_name(n->part[0], &t))
       return air_error(c, "intrinsic: air.%s (a texture name this cannot take apart)",
