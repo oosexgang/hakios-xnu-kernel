@@ -122,6 +122,20 @@ val_is_pointerish(const struct air_val *v)
    return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);
 }
 
+/* Does this value hold a handle taken out of an array at a computed index (air_ptr.index)? */
+static bool
+val_has_index(const struct air_val *v)
+{
+   if (!v)
+      return false;
+   if (v->kind == AIR_VAL_PTR)
+      return v->ptr.index != NULL;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      if (val_has_index(v->elems[i]))
+         return true;
+   return false;
+}
+
 /* Two resolutions that are the same resolution.
  *
  * This is what lets a `phi` or a `select` between pointers be answered without
@@ -136,7 +150,7 @@ static bool
 same_ptr(const struct air_ptr *a, const struct air_ptr *b)
 {
    if (a->class != b->class || a->binding != b->binding || a->is_image != b->is_image ||
-       a->var != b->var)
+       a->var != b->var || a->index != b->index)
       return false;
    if (a->offset == b->offset)
       return true;
@@ -2591,8 +2605,14 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       return translate_argument_buffer(c, node, param);
 
    if (md_key(node, "air.texture") >= 0) {
-      uint64_t index = 0;
-      md_key_int(node, "air.location_index", &index);
+      uint64_t index = 0, span = 1;
+      int tli = md_key(node, "air.location_index");
+      if (tli >= 0) {
+         md_int(node, tli + 1, &index);
+         md_int(node, tli + 2, &span);
+      }
+      if (span < 1 || span > 128)
+         return air_error(c, "interface: a texture array of %u", (unsigned)span);
       bool sample = md_key(node, "air.sample") >= 0;
       bool read = md_key(node, "air.read") >= 0;
       bool write = md_key(node, "air.write") >= 0 || md_key(node, "air.read_write") >= 0;
@@ -2604,8 +2624,10 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
          .binding = index,
          .is_image = write,
       };
-      add_resource(c, write ? AIR_RESOURCE_IMAGE : AIR_RESOURCE_TEXTURE, index, 0,
-                   sample || read, write, param, node);
+      /* an array<texture2d<...>, N> is N bindings from index on, each a resource of its own */
+      for (unsigned k = 0; k < span; k++)
+         add_resource(c, write ? AIR_RESOURCE_IMAGE : AIR_RESOURCE_TEXTURE, index + k, 0,
+                      sample || read, write, param, node);
       c->params[param] = air_val_ptr(c, p);
       return true;
    }
@@ -3619,12 +3641,23 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
        * first word (plan_globals): it is the binding itself. */
       if (in->base.type->kind == AIR_TYPE_POINTER &&
           (p->ptr.class == AIR_PTR_TEXTURE || p->ptr.class == AIR_PTR_SAMPLER)) {
-         if (p->ptr.offset && !(nir_src_is_const(nir_src_for_ssa(p->ptr.offset)) &&
-                                nir_src_as_uint(nir_src_for_ssa(p->ptr.offset)) == 0))
-            return air_error(c, "instruction: a handle loaded from inside a global binding");
+         /* ... or from inside an array of handles, a parameter or a global spanning several
+          * bindings: the binding as far into it as the byte offset says, eight bytes a handle --
+          * at a constant, that binding; at an index the shader computes, the first and the
+          * index (air_ptr.index), which the texture operation takes as its texture offset */
          struct air_ptr h = p->ptr;
          h.offset = NULL;
          h.pointee = in->base.type->elem;
+         if (p->ptr.offset && nir_src_is_const(nir_src_for_ssa(p->ptr.offset))) {
+            uint64_t off = nir_src_as_uint(nir_src_for_ssa(p->ptr.offset));
+            if (off % 8)
+               return air_error(c, "instruction: a handle loaded from byte %u of an array "
+                                   "of handles", (unsigned)off);
+            h.binding += (unsigned)(off / 8);
+         } else if (p->ptr.offset) {
+            nir_def *k = nir_ushr_imm(&c->b, nir_u2u32(&c->b, p->ptr.offset), 3);
+            h.index = h.index ? nir_iadd(&c->b, h.index, k) : k;
+         }
          air_set(c, &in->base, air_val_ptr(c, h));
          return true;
       }
@@ -4292,6 +4325,12 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
       if (argv && argv[i] && argv[i]->kind == AIR_VAL_PTR_SELECT) {
          air_error(c, "intrinsic: a call passing a pointer chosen at run time as "
                       "argument %u", i);
+         return NULL;
+      }
+      /* and a handle out of an array at a computed index: the index is the caller's def too */
+      if (argv && argv[i] && val_has_index(argv[i])) {
+         air_error(c, "intrinsic: a call passing a texture or sampler taken out of an array "
+                      "at a computed index, as argument %u", i);
          return NULL;
       }
       /* An argument the caller knows -- a function constant, or what one decided: the callee

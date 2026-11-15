@@ -48,6 +48,10 @@ struct air_ptr {
    unsigned binding;
    bool is_image;                    /* a texture the shader writes: an image, not a view */
    nir_def *offset;                  /* bytes, 32-bit; NULL means zero */
+   /* A TEXTURE or SAMPLER handle taken out of an array of them at an index the shader computes
+    * (`array<texture2d<half>, 16>`, App Store's chicletFragment): the binding is the array's
+    * first, and this the number of handles past it, 32-bit -- a def of the impl it was loaded in */
+   nir_def *index;
    const struct air_type *pointee;   /* for sizes, and for loads without a type */
    struct nir_variable *var;         /* AIR_PTR_VARIABLE */
 };

@@ -1866,7 +1866,8 @@ query_texture(struct air_ctx *c, const struct air_ptr *tex, const struct air_tex
               nir_texop op, nir_def *lod, unsigned comps)
 {
    if (tex->is_image) {
-      nir_def *index = nir_imm_int(&c->b, tex->binding);
+      nir_def *index = tex->index ? nir_iadd_imm(&c->b, tex->index, tex->binding)
+                                  : nir_imm_int(&c->b, tex->binding);
       switch (op) {
       case nir_texop_txs: {
          /* an image size has as many components as the image has dimensions;
@@ -1887,15 +1888,19 @@ query_texture(struct air_ctx *c, const struct air_ptr *tex, const struct air_tex
       }
    }
 
-   nir_tex_instr *q = nir_tex_instr_create(c->nir, lod ? 1 : 0);
+   nir_tex_instr *q = nir_tex_instr_create(c->nir, (lod ? 1 : 0) + (tex->index ? 1 : 0));
    q->op = op;
    q->sampler_dim = t->dim;
    q->is_array = t->is_array;
    q->dest_type = nir_type_int32;
    q->texture_index = tex->binding;
    q->sampler_index = 0;
+   unsigned qn = 0;
    if (lod)
-      q->src[0] = (nir_tex_src){ .src_type = nir_tex_src_lod, .src = nir_src_for_ssa(lod) };
+      q->src[qn++] = (nir_tex_src){ .src_type = nir_tex_src_lod, .src = nir_src_for_ssa(lod) };
+   if (tex->index)
+      q->src[qn++] = (nir_tex_src){ .src_type = nir_tex_src_texture_offset,
+                                    .src = nir_src_for_ssa(tex->index) };
    /* NIR fixes the size of a query's result itself -- txs is two components
     * for a 2D texture whatever the caller asks one of them for -- so it is
     * asked here and the component picked afterwards.
@@ -2175,7 +2180,8 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
                           n->part[0], tex.binding);
       if (!image_at_level(c, r, &lp, n->part[0]))
          return false;
-      nir_image_store(&c->b, nir_imm_int(&c->b, tex.binding),
+      nir_image_store(&c->b, tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)
+                                       : nir_imm_int(&c->b, tex.binding),
                       nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                       nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                       nir_imm_int(&c->b, 0),
@@ -2208,7 +2214,9 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       uint64_t extra;
       if (!tex_flag(c, in, arg, &extra))
          return false;
-      nir_def *res = nir_image_load(&c->b, 4, dest_bits, nir_imm_int(&c->b, tex.binding),
+      nir_def *res = nir_image_load(&c->b, 4, dest_bits,
+                                    tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)
+                                              : nir_imm_int(&c->b, tex.binding),
                                     nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                                     nir_imm_int(&c->b, t.is_ms ? extra : 0),
                                     nir_imm_int(&c->b, t.is_ms ? 0 : extra),
@@ -2261,7 +2269,7 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
     * exactly six, and the next source anyone adds should not be the one that overflows
     * this silently.
     */
-   nir_tex_src srcs[7];
+   nir_tex_src srcs[9];
    unsigned nsrc = 0;
    srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_coord,
                                  .src = nir_src_for_ssa(coord) };
@@ -2389,6 +2397,13 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       };
    }
 
+   /* a texture (and a sampler) out of an array at an index the shader computes (air_ptr.index) */
+   if (tex.index)
+      srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_texture_offset,
+                                    .src = nir_src_for_ssa(tex.index) };
+   if (have_sampler && samp.index)
+      srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_sampler_offset,
+                                    .src = nir_src_for_ssa(samp.index) };
    nir_tex_instr *tex_instr = nir_tex_instr_create(c->nir, nsrc);
    tex_instr->op = op;
    tex_instr->sampler_dim = t.dim;
