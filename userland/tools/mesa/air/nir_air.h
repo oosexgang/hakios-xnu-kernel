@@ -183,6 +183,13 @@ struct air_varying {
  * names. No tessellator: the factors do not shape the grid (docs/metal-glass.md). */
 #define AIR_TESS_LEVEL_INPUT 0x7c00
 
+/* Whether two buffer arguments are one buffer (MPS compares its source and destination to
+ * work in place): two words per Metal buffer index at this .base, the first equal for two
+ * indices bound to the same buffer and the second the byte offset it is bound at, which a
+ * runtime folds in when it compiles for a dispatch (air_shader_info.compares_buffers says it
+ * has to). */
+#define AIR_BUFFER_ID_INPUT 0x7d00
+
 enum air_tess_domain {
    AIR_TESS_NONE = 0,
    AIR_TESS_TRIANGLE,
@@ -242,6 +249,9 @@ struct air_shader_info {
     * threadgroup buffers after it are placed past width * height * this (the bases of
     * AIR_THREADGROUP_BASE_INPUT, word 0 included), and variable_shared_mem covers it. 0: none. */
    unsigned imageblock_pixel_bytes;
+
+   /* the shader compares two buffer arguments (AIR_BUFFER_ID_INPUT) */
+   bool compares_buffers;
 
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */
