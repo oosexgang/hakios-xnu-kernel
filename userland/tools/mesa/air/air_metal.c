@@ -410,6 +410,22 @@ lp_split_ffma(nir_builder *b, nir_alu_instr *alu, void *data)
    return true;
 }
 
+/* nor a signed remainder: TGSI has IDIV and a MOD nir_to_tgsi gives imod, and no case for irem
+ * ("Unknown NIR opcode: irem", VFX's lightfield_frag). a - (a / b) * b, the quotient truncated
+ * toward zero as IDIV's is, is irem's own definition (the sign of the dividend). */
+static bool
+sw_lower_irem(nir_builder *b, nir_alu_instr *alu, void *data)
+{
+   (void)data;
+   if (alu->op != nir_op_irem)
+      return false;
+   b->cursor = nir_before_instr(&alu->instr);
+   unsigned n = alu->def.num_components;
+   nir_def *x = nir_mov_alu(b, alu->src[0], n), *y = nir_mov_alu(b, alu->src[1], n);
+   nir_def_replace(&alu->def, nir_isub(b, x, nir_imul(b, nir_idiv(b, x, y), y)));
+   return true;
+}
+
 /* -- softpipe: no 8- or 16-bit values ------------------------------------------------------
  *
  * softpipe takes NIR through nir_to_tgsi, and TGSI has no 8- or 16-bit registers: a half that reaches it
@@ -1067,6 +1083,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
       /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
        * ("Unknown NIR opcode: ffma", QuartzCore's simple_rim_lpf): split, as for llvmpipe below */
       NIR_PASS(_, nir, nir_shader_alu_pass, lp_split_ffma, nir_metadata_control_flow, NULL);
+      NIR_PASS(_, nir, nir_shader_alu_pass, sw_lower_irem, nir_metadata_control_flow, NULL);
       /* and no DEMOTE: tgsi_exec has no case for it and asserts (QuartzCore's path_blit_frag and
        * luma_boost discard). A discarded fragment that keeps running only matters to the derivatives
        * of its quad after the discard; softpipe's KILL ends it, which is what it can do */
