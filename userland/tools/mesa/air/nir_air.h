@@ -170,6 +170,17 @@ struct air_varying {
  * whole groups, or with the count it was given for one that is not (Metal's
  * -dispatchThreads:threadsPerThreadgroup:, whose last groups are partial). */
 #define AIR_GRID_THREADS_INPUT 0x7b00
+/* A post-tessellation vertex function's subdivision: the patch is drawn as an N x N grid of
+ * quads (N^2 triangles for a triangle patch), N a kernel input at this .base that a runtime
+ * folds in when it compiles, and [[position_in_patch]] is the grid point the vertex index
+ * names. No tessellator: the factors do not shape the grid (docs/metal-glass.md). */
+#define AIR_TESS_LEVEL_INPUT 0x7c00
+
+enum air_tess_domain {
+   AIR_TESS_NONE = 0,
+   AIR_TESS_TRIANGLE,
+   AIR_TESS_QUAD,
+};
 
 struct air_shader_info {
    mesa_shader_stage stage;     /* MESA_SHADER_NONE for an air.visible function */
@@ -212,6 +223,12 @@ struct air_shader_info {
     * compiles. */
    uint32_t threadgroup_buffers;
 
+   /* A post-tessellation vertex function (air.patch on the entry point): its patch's shape
+    * and control points. A runtime draws each patch as an instance of
+    * air_tess_vertices(domain, N) vertices, triangles, and [[patch_id]] is the instance. */
+   enum air_tess_domain tess_domain;
+   unsigned tess_control_points;
+
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */
 
@@ -220,6 +237,14 @@ struct air_shader_info {
    unsigned num_notes;
    const char **notes;
 };
+
+/* the vertices a patch is drawn with at a subdivision of n: two triangles a cell of an n x n
+ * grid for a quad, n^2 triangles for a triangle */
+static inline unsigned
+air_tess_vertices(enum air_tess_domain domain, unsigned n)
+{
+   return domain == AIR_TESS_QUAD ? 6 * n * n : domain == AIR_TESS_TRIANGLE ? 3 * n * n : 0;
+}
 
 /* -- the translator --------------------------------------------------------- */
 

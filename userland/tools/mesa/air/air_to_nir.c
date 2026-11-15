@@ -1058,6 +1058,7 @@ enum air_sysval {
    AIR_SV_SIMDS_PER_TG,
    AIR_SV_AMPLIFICATION_ID, AIR_SV_AMPLIFICATION_COUNT, AIR_SV_VIEWPORT_INDEX,
    AIR_SV_DISPATCH_THREADS_PER_TG,
+   AIR_SV_PATCH_ID, AIR_SV_POSITION_IN_PATCH,
 };
 
 static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
@@ -1084,6 +1085,8 @@ static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
    { "air.quadgroup_index_in_threadgroup", AIR_SV_QUAD_INDEX },
    { "air.primitive_id", AIR_SV_PRIMITIVE_ID },
    { "air.dispatch_threads_per_threadgroup", AIR_SV_DISPATCH_THREADS_PER_TG },
+   { "air.patch_id", AIR_SV_PATCH_ID },
+   { "air.position_in_patch", AIR_SV_POSITION_IN_PATCH },
    { "air.amplification_id", AIR_SV_AMPLIFICATION_ID },
    { "air.amplification_count", AIR_SV_AMPLIFICATION_COUNT },
    { "air.viewport_array_index", AIR_SV_VIEWPORT_INDEX },
@@ -1094,6 +1097,55 @@ grid_threads(struct air_ctx *c)
 {
    return nir_load_kernel_input(&c->b, 3, 32, nir_imm_int(&c->b, 0),
                                 .base = AIR_GRID_THREADS_INPUT, .range = 12);
+}
+
+/* [[position_in_patch]] of the vertex this invocation is, on the grid a patch is drawn as.
+ *
+ * A quad: vertex v is corner v % 6 of cell v / 6, the cells row by row, the two triangles of a
+ * cell (0,0) (1,0) (1,1) and (0,0) (1,1) (0,1) -- the corner's x and y are bits of 0x16 and
+ * 0x34 -- and the point is (cell + corner) / N, a float2 in [0, 1]^2 as Metal's quad domain is.
+ *
+ * A triangle: triangle t of N^2, row r = floor(sqrt(t)) holding 2r + 1 of them, the even ones
+ * pointing up and the odd ones down; grid point (i, j) (row i, 0 <= j <= i) is the barycentric
+ * (1 - i/N, (i - j)/N, j/N), a float3 that sums to one as Metal's triangle domain does.
+ */
+static nir_def *
+position_in_patch(struct air_ctx *c)
+{
+   nir_builder *b = &c->b;
+   if (c->info->tess_domain == AIR_TESS_NONE)
+      return NULL;
+   nir_def *n = nir_load_kernel_input(b, 1, 32, nir_imm_int(b, 0),
+                                      .base = AIR_TESS_LEVEL_INPUT, .range = 4);
+   nir_def *nf = nir_u2f32(b, n);
+   nir_def *v = nir_load_vertex_id(b);
+   if (c->info->tess_domain == AIR_TESS_QUAD) {
+      nir_def *cell = nir_udiv_imm(b, v, 6), *corner = nir_umod_imm(b, v, 6);
+      nir_def *dx = nir_iand_imm(b, nir_ushr(b, nir_imm_int(b, 0x16), corner), 1);
+      nir_def *dy = nir_iand_imm(b, nir_ushr(b, nir_imm_int(b, 0x34), corner), 1);
+      nir_def *x = nir_iadd(b, nir_umod(b, cell, n), dx);
+      nir_def *y = nir_iadd(b, nir_udiv(b, cell, n), dy);
+      return nir_vec2(b, nir_fdiv(b, nir_u2f32(b, x), nf), nir_fdiv(b, nir_u2f32(b, y), nf));
+   }
+   nir_def *t = nir_udiv_imm(b, v, 3), *k3 = nir_umod_imm(b, v, 3);
+   /* floor(sqrt(t)), corrected by one either way: a float's root of an integer this small is
+    * within one of it */
+   nir_def *r = nir_f2u32(b, nir_fsqrt(b, nir_u2f32(b, t)));
+   r = nir_bcsel(b, nir_ult(b, t, nir_imul(b, r, r)), nir_iadd_imm(b, r, -1), r);
+   nir_def *r1 = nir_iadd_imm(b, r, 1);
+   r = nir_bcsel(b, nir_uge(b, t, nir_imul(b, r1, r1)), r1, r);
+   nir_def *k = nir_isub(b, t, nir_imul(b, r, r));
+   nir_def *half = nir_ushr_imm(b, k, 1);
+   nir_def *up = nir_ieq_imm(b, nir_iand_imm(b, k, 1), 0);
+   /* up: (r, h) (r+1, h) (r+1, h+1); down: (r, h) (r+1, h+1) (r, h+1) */
+   nir_def *k0 = nir_ieq_imm(b, k3, 0), *k1 = nir_ieq_imm(b, k3, 1);
+   nir_def *i = nir_bcsel(b, k0, r, nir_bcsel(b, k1, nir_iadd_imm(b, r, 1),
+                                              nir_bcsel(b, up, nir_iadd_imm(b, r, 1), r)));
+   nir_def *j = nir_bcsel(b, k0, half, nir_bcsel(b, k1, nir_bcsel(b, up, half,
+                                                                   nir_iadd_imm(b, half, 1)),
+                                               nir_iadd_imm(b, half, 1)));
+   nir_def *fi = nir_fdiv(b, nir_u2f32(b, i), nf), *fj = nir_fdiv(b, nir_u2f32(b, j), nf);
+   return nir_vec3(b, nir_fsub(b, nir_imm_float(b, 1.0), fi), nir_fsub(b, fi, fj), fj);
 }
 
 static nir_def *
@@ -1167,6 +1219,14 @@ load_sysval(struct air_ctx *c, enum air_sysval sv)
       return nir_imm_int(&c->b, 0);
    case AIR_SV_AMPLIFICATION_COUNT:
       return nir_imm_int(&c->b, 1);
+   /* A patch is an instance (nir_air.h, AIR_TESS_LEVEL_INPUT), counted from the draw's first
+    * patch as an instance from its base instance */
+   case AIR_SV_PATCH_ID:
+      if (c->info->tess_domain == AIR_TESS_NONE)
+         return NULL;
+      return nir_iadd(&c->b, nir_load_instance_id(&c->b), nir_load_base_instance(&c->b));
+   case AIR_SV_POSITION_IN_PATCH:
+      return position_in_patch(c);
    }
    return NULL;
 }
@@ -7015,6 +7075,26 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
             break;
          }
          translate_output(&c, out_node->ops[i], i, ft, &next_out_varying);
+      }
+   }
+
+   /* A post-tessellation vertex function says its patch after its inputs:
+    * `!{!"air.patch", !"quad", !"air.patch_control_point", i32 16}` (AvatarKit's OpenSubdiv
+    * shaders) -- read before the inputs, which [[position_in_patch]] is one of. */
+   if (!wrap && entry->num_ops > 3 && entry->ops[3] && entry->ops[3]->kind == AIR_MD_NODE &&
+       c.nir->info.stage == MESA_SHADER_VERTEX) {
+      const struct air_md *pn = entry->ops[3];
+      const char *dom = md_key_str(pn, "air.patch");
+      if (dom) {
+         if (!strcmp(dom, "quad"))
+            c.info->tess_domain = AIR_TESS_QUAD;
+         else if (!strcmp(dom, "triangle"))
+            c.info->tess_domain = AIR_TESS_TRIANGLE;
+         else
+            air_error(&c, "interface: a %s patch", dom);
+         uint64_t cp = 0;
+         md_key_int(pn, "air.patch_control_point", &cp);
+         c.info->tess_control_points = (unsigned)cp;
       }
    }
 
