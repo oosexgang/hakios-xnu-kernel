@@ -4554,6 +4554,33 @@ air_split_end(struct air_ctx *c, struct air_split *sp)
    c->b.cursor = nir_after_block(sp->merge_block);
 }
 
+/* A loop inside one AIR block, of the same blocks: a head that tests, a body that goes back to
+ * the head, an exit where translation carries on. What changes from one trip to the next lives
+ * in registers (nir_decl_reg at the impl's start), as across a split. */
+void
+air_loop_head(struct air_ctx *c, struct air_loop *lp)
+{
+   lp->head = air_new_block(c);
+   lp->body = air_new_block(c);
+   lp->exit = air_new_block(c);
+   nir_goto(&c->b, lp->head);
+   c->b.cursor = nir_after_block(lp->head);
+}
+
+void
+air_loop_test(struct air_ctx *c, struct air_loop *lp, nir_def *go_on)
+{
+   nir_goto_if(&c->b, lp->body, go_on, lp->exit);
+   c->b.cursor = nir_after_block(lp->body);
+}
+
+void
+air_loop_end(struct air_ctx *c, struct air_loop *lp)
+{
+   nir_goto(&c->b, lp->head);
+   c->b.cursor = nir_after_block(lp->exit);
+}
+
 /* What one side made, kept for the merge: a register per SSA leaf, declared at the impl's start on
  * the first side (*regs NULL) and stored to on both. Returns the value made of the registers,
  * to be loaded at the merge with air_split_load. */

@@ -1485,6 +1485,40 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
 
 /* -- llvm.* ------------------------------------------------------------- */
 
+/* A memcpy whose length is a run-time value (the BVH builder's fastGPUMemcpyKernel and its
+ * copies of primitive data): a loop of words while four bytes are left, then one of bytes,
+ * each built of blocks (air_loop_head) with its byte offset in a register. */
+static bool
+memcpy_runtime(struct air_ctx *c, struct air_ptr dst, struct air_ptr src,
+               const struct air_value *length)
+{
+   nir_def *len = air_get_ssa(c, length);
+   if (!len)
+      return false;
+   len = nir_u2u32(&c->b, len);
+   static const struct air_type u32 = { .kind = AIR_TYPE_INT, .bits = 32 };
+   static const struct air_type u8 = { .kind = AIR_TYPE_INT, .bits = 8 };
+   nir_builder at = nir_builder_at(nir_before_impl(c->b.impl));
+   nir_def *reg = nir_decl_reg(&at, 1, 32, 0);
+   nir_store_reg(&c->b, nir_imm_int(&c->b, 0), reg);
+   static const unsigned steps[] = { 4, 1 };
+   for (unsigned k = 0; k < 2; k++) {
+      unsigned step = steps[k];
+      struct air_loop lp;
+      air_loop_head(c, &lp);
+      nir_def *off = nir_load_reg(&c->b, reg);
+      air_loop_test(c, &lp, nir_uge(&c->b, len, nir_iadd_imm(&c->b, off, step)));
+      off = nir_load_reg(&c->b, reg);
+      struct air_ptr s = air_ptr_add(c, src, off), d = air_ptr_add(c, dst, off);
+      nir_def *v = air_load_ptr(c, s, step == 4 ? &u32 : &u8, step);
+      if (!v || !air_store_ptr(c, d, v, step))
+         return false;
+      nir_store_reg(&c->b, nir_iadd_imm(&c->b, off, step), reg);
+      air_loop_end(c, &lp);
+   }
+   return true;
+}
+
 static bool
 llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
 {
@@ -1521,7 +1555,7 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
          return air_error(c, "intrinsic: memcpy that is not between pointers");
       uint64_t bytes;
       if (!air_const_uint(in->operands[3], &bytes))
-         return air_error(c, "intrinsic: memcpy of a run-time length");
+         return memcpy_runtime(c, dst->ptr, src->ptr, in->operands[3]);
       /* in 4-byte pieces, which is what most memcpys are a multiple of (they copy float vectors
        * out of constant buffers), and the bytes after the last whole word one at a time: a
        * struct of 30 bytes copied (NRFV1, the camera's noise reduction) */
