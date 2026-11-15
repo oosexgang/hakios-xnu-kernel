@@ -441,6 +441,27 @@ air_get(struct air_ctx *c, const struct air_value *v)
    return NULL;
 }
 
+/* Whether every def a value holds -- its number, a pointer's offset and index, a choice's
+ * condition and sides, an aggregate's leaves -- is one of `impl`'s. A value resolved in one
+ * function and read in another (a pointer a caller stored into a local and a callee loads back)
+ * is a def used outside its function, which no pass repairs: nir_repair_ssa asserts on it. */
+static bool
+val_defs_in(const struct air_val *v, nir_function_impl *impl)
+{
+   if (!v)
+      return true;
+   if (v->def && nir_def_block(v->def)->impl != impl)
+      return false;
+   if (v->ptr.offset && nir_def_block(v->ptr.offset)->impl != impl)
+      return false;
+   if (v->ptr.index && nir_def_block(v->ptr.index)->impl != impl)
+      return false;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      if (!val_defs_in(v->elems[i], impl))
+         return false;
+   return true;
+}
+
 nir_def *
 air_get_ssa(struct air_ctx *c, const struct air_value *v)
 {
@@ -4155,6 +4176,10 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          if (!had)
             return air_error(c, "instruction: a load of a pointer from a local no pointer "
                                 "was stored into");
+         if (!val_defs_in(had, c->b.impl))
+            return air_error(c, "instruction: a pointer loaded in a callee from a local its "
+                                "caller stored it into, at an offset or index the caller "
+                                "computed");
          air_set(c, &in->base, had);
          return true;
       }
@@ -5108,6 +5133,14 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
             nir_def *k = nir_build_imm(&c->b, lc->def.num_components, lc->def.bit_size, lc->value);
             air_set(c, &f->args[i], air_val_ssa(c, k));
             continue;
+         }
+         if (!val_defs_in(argv[i], c->b.impl) && argv[i] && argv[i]->kind == AIR_VAL_AGG) {
+            /* (an aggregate holding a pointer: the caller's resolution can only stand here
+             * if nothing in it is a def of the caller's) */
+            air_error(c, "intrinsic: a call passing a struct with a pointer in it whose "
+                         "offset or index the caller computed, as argument %u", i);
+            ok = false;
+            break;
          }
          air_set(c, &f->args[i], argv[i]);   /* the caller's own resolution */
          continue;
