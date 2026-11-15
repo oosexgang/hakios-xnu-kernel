@@ -176,6 +176,7 @@ static const char *who_i_am(void);              /* this process name; defined be
 static void dump_tracked_promises(void);        /* defined with the bootstrap hooks */
 static void force_resolve_prereqs(void);        /* defined with the bootstrap hooks */
 static void dump_prereq_types(void);            /* defined with the bootstrap hooks */
+static void dump_tracked_conts(void);           /* defined with the bootstrap hooks */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -1797,6 +1798,7 @@ one_report(unsigned seconds)
 	dump_errors();
 	dump_threads();
 	dump_tracked_promises();
+	dump_tracked_conts();
 	dump_prereq_types();
 	force_resolve_prereqs();
 	/* the long dumps once; the numbers in every report, because only a late one survives the log */
@@ -3407,6 +3409,97 @@ dump_prereq_types(void)
 	}
 }
 
+/*
+ * CONTINUATION SPY (HAKIOS_CONT_SPY=1). The real gate is a SUSPENDED async task. A task suspends by
+ * awaiting an UnsafeContinuation (swift_continuation_await) that some callback resumes later
+ * (swift_continuation_resume / throwingResume / throwingResumeWithError). The one that is awaited but
+ * never resumed IS the stuck await; the caller of swift_continuation_await names the function doing it.
+ * These are plain exported C functions (dlsym), hooked with the same register-preserving trampoline as
+ * the promise tracker; the continuation arg is in x0 in all of them.
+ */
+static struct { void *cont; void *caller; bool resumed; } tracked_conts[64];
+static int tracked_cont_n;
+static volatile int in_cont_rec;
+void *old_cont_await_g, *old_cont_resume_g, *old_cont_tres_g, *old_cont_treserr_g;
+
+void hakios_record_cont_await(void *cont, void *caller);
+void hakios_record_cont_resumed(void *cont);
+
+void
+hakios_record_cont_await(void *cont, void *caller)
+{
+	if (!bootstrap_running || in_cont_rec || cont == NULL) {
+		return;
+	}
+	in_cont_rec = 1;
+	if (tracked_cont_n < 64) {
+		tracked_conts[tracked_cont_n].cont = cont;
+		tracked_conts[tracked_cont_n].caller = caller;
+		tracked_conts[tracked_cont_n].resumed = false;
+		tracked_cont_n++;
+	}
+	in_cont_rec = 0;
+}
+
+void
+hakios_record_cont_resumed(void *cont)
+{
+	if (cont == NULL) {
+		return;
+	}
+	for (int i = 0; i < tracked_cont_n; i++) {
+		if (tracked_conts[i].cont == cont) {
+			tracked_conts[i].resumed = true;
+			return;
+		}
+	}
+}
+
+__asm__(
+"	.text\n	.p2align 2\n"
+"_hakios_tramp_cont_init:\n"                            /* swift_continuation_init(ctx,flags)->task; lr=site */
+"	pacibsp\n	stp x29, x30, [sp, #-16]!\n	mov x29, sp\n"
+"	adrp x17, _old_cont_await_g@PAGE\n	ldr x17, [x17, _old_cont_await_g@PAGEOFF]\n	blr x17\n"
+"	stp x0, x1, [sp, #-16]!\n"                      /* x0 = the returned task (what resume later takes) */
+"	ldr x1, [x29, #8]\n	bl _hakios_record_cont_await\n"  /* record(task, caller); x0 already = task */
+"	ldp x0, x1, [sp], #16\n	ldp x29, x30, [sp], #16\n	retab\n"
+"	.p2align 2\n_hakios_tramp_cont_resume:\n"
+"	pacibsp\n	stp x29, x30, [sp, #-16]!\n	mov x29, sp\n	str x0, [sp, #-16]!\n"
+"	adrp x17, _old_cont_resume_g@PAGE\n	ldr x17, [x17, _old_cont_resume_g@PAGEOFF]\n	blr x17\n"
+"	ldr x0, [sp], #16\n	bl _hakios_record_cont_resumed\n	ldp x29, x30, [sp], #16\n	retab\n"
+"	.p2align 2\n_hakios_tramp_cont_tres:\n"
+"	pacibsp\n	stp x29, x30, [sp, #-16]!\n	mov x29, sp\n	str x0, [sp, #-16]!\n"
+"	adrp x17, _old_cont_tres_g@PAGE\n	ldr x17, [x17, _old_cont_tres_g@PAGEOFF]\n	blr x17\n"
+"	ldr x0, [sp], #16\n	bl _hakios_record_cont_resumed\n	ldp x29, x30, [sp], #16\n	retab\n"
+"	.p2align 2\n_hakios_tramp_cont_treserr:\n"
+"	pacibsp\n	stp x29, x30, [sp, #-16]!\n	mov x29, sp\n	str x0, [sp, #-16]!\n"
+"	adrp x17, _old_cont_treserr_g@PAGE\n	ldr x17, [x17, _old_cont_treserr_g@PAGEOFF]\n	blr x17\n"
+"	ldr x0, [sp], #16\n	bl _hakios_record_cont_resumed\n	ldp x29, x30, [sp], #16\n	retab\n"
+);
+extern void hakios_tramp_cont_init(void);
+extern void hakios_tramp_cont_resume(void);
+extern void hakios_tramp_cont_tres(void);
+extern void hakios_tramp_cont_treserr(void);
+
+static void
+dump_tracked_conts(void)
+{
+	int pend = 0;
+
+	for (int i = 0; i < tracked_cont_n; i++) {
+		if (!tracked_conts[i].resumed) {
+			pend++;
+		}
+	}
+	say("hakios: store: %d continuations awaited in the bootstrap, %d still PENDING\n", tracked_cont_n, pend);
+	for (int i = 0; i < tracked_cont_n; i++) {
+		if (!tracked_conts[i].resumed) {
+			say("hakios: store: CONT PENDING #%d %p awaited from %#lx (unslid)\n", i,
+			    tracked_conts[i].cont, (uintptr_t)tracked_conts[i].caller - slide);
+		}
+	}
+}
+
 static void
 hook_bootstrap(void)
 {
@@ -3414,8 +3507,9 @@ hook_bootstrap(void)
 	const char *on = knob("HAKIOS_TRACE_BOOTSTRAP");
 	const char *track = knob("HAKIOS_TRACK_PROMISES");
 	const char *tspy = knob("HAKIOS_TYPE_SPY");
+	const char *cspy = knob("HAKIOS_CONT_SPY");
 	bool want = (on != NULL && *on != '0') || (track != NULL && *track != '0')
-	    || (tspy != NULL && *tspy != '0');
+	    || (tspy != NULL && *tspy != '0') || (cspy != NULL && *cspy != '0');
 	MSHookFunction_t hook = substrate_hook();
 	const char *me = who_i_am();
 
@@ -3438,6 +3532,28 @@ hook_bootstrap(void)
 		hook((void *)(0x1a6e999a8UL + slide), (void *)hakios_tramp_init, &old_promise_init_g);
 		hook((void *)(0x1a6e99624UL + slide), (void *)hakios_tramp_resolve, &old_promise_resolve_g);
 		say("hakios: store: JetEngine.Promise init+resolve tracked (recording starts at start())\n");
+	}
+	if (cspy != NULL && *cspy != '0') {
+		/* init is synchronous (safe); await is a swiftasync function and hooking it crashed the app. */
+		void *aw = dlsym(RTLD_DEFAULT, "swift_continuation_init");
+		void *re = dlsym(RTLD_DEFAULT, "swift_continuation_resume");
+		void *tr = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResume");
+		void *te = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResumeWithError");
+
+		if (aw != NULL) {
+			hook(aw, (void *)hakios_tramp_cont_init, (void **)&old_cont_await_g);
+		}
+		if (re != NULL) {
+			hook(re, (void *)hakios_tramp_cont_resume, (void **)&old_cont_resume_g);
+		}
+		if (tr != NULL) {
+			hook(tr, (void *)hakios_tramp_cont_tres, (void **)&old_cont_tres_g);
+		}
+		if (te != NULL) {
+			hook(te, (void *)hakios_tramp_cont_treserr, (void **)&old_cont_treserr_g);
+		}
+		say("hakios: store: Swift continuations tracked (await@%p, resume@%p); un-resumed = the stuck await\n",
+		    aw, re);
 	}
 	if (tspy != NULL && *tspy != '0') {
 		void *gt = dlsym(RTLD_DEFAULT, "swift_getTypeByMangledNameInContext");
