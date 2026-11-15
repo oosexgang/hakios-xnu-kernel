@@ -308,7 +308,8 @@ struct rwa_compute {
    struct rwa_compute_info caps;
 
    bool dynamic_threadgroup;      /* a threadgroup buffer sized by the dispatch */
-   unsigned threadgroup_bytes;    /* ... its size for the next dispatch (rwa_threadgroup_memory) */
+   /* ... and their lengths for the next dispatch, by Metal index (rwa_threadgroup_memory_at) */
+   unsigned threadgroup_len[32];
 
    /* the texture slots, as above, and the states built for the samplers the shader
     * declares for itself: those are nothing for a driver to create (rwa_compute_info
@@ -332,6 +333,7 @@ struct rwa_compute {
     */
    void *cso;
    unsigned cso_block[3];
+   unsigned cso_tg_len[32];       /* the lengths its threadgroup bases were folded from */
 };
 
 /* The argument-buffer recorder, whose own block is further down beside the encode calls
@@ -822,9 +824,44 @@ demote_to_terminate(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
+/* The bases of a kernel's threadgroup buffers past the first (nir_air.h,
+ * AIR_THREADGROUP_BASE_INPUT): word k of the kernel input is where buffer k starts after
+ * buffer 0's, the sum of the lengths before it, each rounded up to Metal's 16. Folded into
+ * the code, so the drivers never see a kernel input; `len` NULL is a compile with none given
+ * (a cost or a sweep), every buffer then starting where the first does. */
+struct threadgroup_bases {
+   unsigned base[32];
+};
+
+static bool
+fold_threadgroup_base(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   const struct threadgroup_bases *tb = data;
+   if (intr->intrinsic != nir_intrinsic_load_kernel_input ||
+       nir_intrinsic_base(intr) != AIR_THREADGROUP_BASE_INPUT ||
+       !nir_src_is_const(intr->src[0]))
+      return false;
+   unsigned k = nir_src_as_uint(intr->src[0]) / 4;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def_replace(&intr->def, nir_imm_int(b, k < 32 && tb ? tb->base[k] : 0));
+   return true;
+}
+
+static void
+fold_threadgroup_bases(nir_shader *nir, const unsigned len[32])
+{
+   struct threadgroup_bases tb = { { 0 } };
+   for (unsigned k = 1; k < 32; k++)
+      tb.base[k] = tb.base[k - 1] + ALIGN_POT(len ? len[k - 1] : 0, 16);
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_threadgroup_base,
+            nir_metadata_control_flow, &tb);
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
+   /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
+   fold_threadgroup_bases(nir, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
       NIR_PASS(_, nir, widen_16bit);
       /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
@@ -3817,8 +3854,12 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3],
 {
    struct rwa_device *device = compute->device;
 
+   /* the threadgroup bases matter only to a kernel with a buffer past index 0 */
+   bool bases = compute->info.threadgroup_buffers & ~1u;
    if (compute->cso && compute->cso_block[0] == block[0] &&
-       compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2])
+       compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2] &&
+       (!bases || !memcmp(compute->cso_tg_len, compute->threadgroup_len,
+                          sizeof(compute->threadgroup_len))))
       return compute->cso;
 
    if (compute->cso) {
@@ -3835,6 +3876,7 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3],
    cs->info.workgroup_size[1] = block[1];
    cs->info.workgroup_size[2] = block[2];
    cs->info.workgroup_size_variable = false;
+   fold_threadgroup_bases(cs, compute->threadgroup_len);
 
    finalize_for_gallium(cs, device->screen);
 
@@ -3876,6 +3918,7 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3],
    compute->cso_block[0] = block[0];
    compute->cso_block[1] = block[1];
    compute->cso_block[2] = block[2];
+   memcpy(compute->cso_tg_len, compute->threadgroup_len, sizeof(compute->threadgroup_len));
    return cso;
 }
 
@@ -5110,7 +5153,14 @@ rwa_texture_generate_mipmaps(struct rwa_texture *texture, char *why, size_t why_
 void
 rwa_threadgroup_memory(struct rwa_compute *compute, unsigned bytes)
 {
-   compute->threadgroup_bytes = bytes;
+   rwa_threadgroup_memory_at(compute, 0, bytes);
+}
+
+void
+rwa_threadgroup_memory_at(struct rwa_compute *compute, unsigned index, unsigned bytes)
+{
+   if (index < 32)
+      compute->threadgroup_len[index] = bytes;
 }
 
 int
@@ -5167,12 +5217,21 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
       return -1;
    }
 
-   if (compute->dynamic_threadgroup && compute->threadgroup_bytes == 0) {
-      say(why, why_size, "%s takes a threadgroup buffer whose size only the dispatch can "
-                         "give (Metal's -setThreadgroupMemoryLength:atIndex:), and none "
-                         "was given", name);
-      return -1;
+   unsigned variable_shared = 0;
+   for (unsigned k = 0; k < 32; k++) {
+      if (!(compute->info.threadgroup_buffers & (1u << k)))
+         continue;
+      if (compute->threadgroup_len[k] == 0) {
+         say(why, why_size, "%s takes a threadgroup buffer at index %u whose size only the "
+                            "dispatch can give (Metal's -setThreadgroupMemoryLength:atIndex:), "
+                            "and none was given", name, k);
+         return -1;
+      }
    }
+   /* every buffer up to the last the kernel takes, each rounded up as its base was */
+   for (unsigned k = 0; k < 32; k++)
+      if (compute->info.threadgroup_buffers >> k)
+         variable_shared += ALIGN_POT(compute->threadgroup_len[k], 16);
    /* (The frontend puts that buffer after the kernel's own threadgroup memory, where Gallium
     * puts the variable part: the two may both be there.) */
 
@@ -5203,7 +5262,7 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
       .work_dim = 3,
       .block = { group_size[0], group_size[1], group_size[2] },
       .grid = { groups[0], groups[1], groups[2] },
-      .variable_shared_mem = compute->dynamic_threadgroup ? compute->threadgroup_bytes : 0,
+      .variable_shared_mem = compute->dynamic_threadgroup ? variable_shared : 0,
    };
    pipe->launch_grid(pipe, &grid);
 

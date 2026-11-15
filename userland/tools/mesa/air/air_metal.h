@@ -612,6 +612,9 @@ struct rwa_bindings {
 /* The size of the kernel's threadgroup buffer (Metal's -setThreadgroupMemoryLength:atIndex:,
  * index 0) for the dispatches that follow. */
 void rwa_threadgroup_memory(struct rwa_compute *compute, unsigned bytes);
+/* ... and at any index: a kernel's buffer n starts where buffers 0..n-1 end, each rounded up
+ * to 16 bytes, so the lengths of all of them are what its code is compiled with. */
+void rwa_threadgroup_memory_at(struct rwa_compute *compute, unsigned index, unsigned bytes);
 
 /* Metal's blit encoder (air_metal.c): copies between textures and buffers, fills, mipmaps. */
 int rwa_texture_copy(struct rwa_texture *src, unsigned src_slice, unsigned src_level,
