@@ -76,6 +76,17 @@ not are one case, `interface: input air.imageblock`: CoreAnimation's compute and
 device that does not report tile shading (`MTLGPUFamilyApple4` and up) should have CoreAnimation take those.
 That is the next thing to check in `metal_driver.m`'s family answers.
 
+Over every `.metallib` of Darwin 27.2 (42 libraries in the root file system and the OS cryptex), the entry
+points -- vertex, fragment and kernel functions -- went from 904 of 1036 translated to **928 of 1036** with
+what this pass added to the frontend: `llvm.minnum`/`maxnum`, `llvm.abs` and `llvm.bitreverse`; cube textures
+read and written by face; the SIMD lane, group index and width asked for by a call; `sincos` and its pointer;
+textures and samplers bound at program scope (`air.global_bindings`, MercuryPoster's posters). Of the 108 left,
+95 are the tile-memory kernels above. The other 13: four MercuryPoster compute shaders that call a material
+through a function pointer kept in memory; five argument-buffer layouts; two writes to a mip level chosen at
+run time (Gallium chooses the level where the image is bound, not in the instruction); one tessellation input
+(`air.patch_control_point_input`); one RawCamera kernel. The libraries' `air.visible` functions (3714, mostly
+ShaderGraph's MaterialX and CoreImage) are not entry points: Metal stitches or links them into a pipeline.
+
 `air_metal_test` on softpipe ran one of them end to end through `libhakios-air` (the library the Metal
 driver links): `dynamic_system_ootf_decimate`, a compute kernel reading one texture and writing another,
 dispatched and its output read back.
