@@ -5951,7 +5951,8 @@ struct air_ptr_phi_reg {
    /* a phi between DIFFERENT places (num_places > 1): which one in idx_reg, the offset in reg,
     * and the value a chain of AIR_VAL_PTR_SELECTs over places[] (resolve_pointer_phi) */
    unsigned num_places;
-   struct air_ptr places[4];
+   /* MPS's RNN kernels choose one of up to thirty-one input buffers by a switch */
+   struct air_ptr places[32];
    nir_def *idx_reg;
 };
 
@@ -5987,7 +5988,7 @@ phi_collect_places(struct air_ctx *c, struct air_ptr_phi_reg *r, struct air_val 
    if (phi_place_index(r, &v->ptr) >= 0)
       return true;
    if (r->num_places == ARRAY_SIZE(r->places))
-      return air_error(c, "instruction: a phi between pointers to more than four places");
+      return air_error(c, "instruction: a phi between pointers to more than thirty-two places");
    r->places[r->num_places] = v->ptr;
    r->places[r->num_places].offset = NULL;
    r->num_places++;
