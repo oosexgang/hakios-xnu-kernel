@@ -301,6 +301,14 @@ commit of its own:
   (`userland/tools/air/bufcmpcheck.sh`). A callee may hand back an array of numbers, an element a parameter
   (`userland/tools/air/wordcheck.sh`), and a pointer phi may choose among 32 places. Morpheus 297 -> 355 of 364,
   MPSNeuralNetwork 726 -> 836 of 868.
+- **Pointers kept in a local as numbers**: a pointer here is a place and an offset decided while translating,
+  with no bits, which is why one stored into a local was followed by slots at constant offsets. MPS's LSTM
+  kernels copy a table of their inputs in a loop, others store two pointers into one local on two paths,
+  and the RNN kernels carry a pointer from input to input around a loop. Such a function is translated
+  again with those pointers as two words, (offset, 1 + place), and a load of one is the choice among the
+  places by the second word (`air_ptr_numeric`; again once more where a place is met after a load chose
+  without it). `userland/tools/air/ptr_table.ll` and `ptr_loop.ll` check both on softpipe. MPSNeuralNetwork
+  836 -> 854 of 868.
 
 ### Tessellation without a tessellator
 
