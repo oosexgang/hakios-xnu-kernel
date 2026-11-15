@@ -3083,6 +3083,38 @@ new_is_local_account(id self, SEL cmd)
 	return old_is_local_account != NULL ? old_is_local_account(self, cmd) : NO;
 }
 
+/*
+ * THE STOREFRONT PUT ON THE ACCOUNT ITSELF (HAKIOS_SET_STOREFRONT=1).
+ *
+ * With the account types made, AMS makes its own local account -- and then says "The local account
+ * doesn't have a storefront", because a storefront is a property of the record and this one has none.
+ * Answering -ams_storefront for it is what this library has done all along, and it is not enough: the bag
+ * provider looks at the account, not at us. So the value is written where AMS looks for it, with AMS's
+ * own setter, and the account is saved. After that nothing of ours has to answer anything: the phone has
+ * an iTunes account with a storefront, which is what a phone that has been set up has.
+ */
+static void
+put_storefront_on(id store, id account)
+{
+	const char *wanted = knob("HAKIOS_SET_STOREFRONT");
+	static bool done;
+	id saved;
+
+	if (done || account == NULL || wanted == NULL || *wanted == '0') {
+		return;
+	}
+	done = true;
+	((void (*)(id, SEL, id))objc_msgSend)(account, sel_registerName("ams_setStorefront:"),
+	    (id)storefront);
+	saved = ((id (*)(id, SEL, id))objc_msgSend)(store, sel_registerName("ams_saveAccount:"), account);
+	{
+		char text[160] = "nothing back";
+
+		say("hakios: store: the storefront was put on the account itself; the save said %.120s\n",
+		    saved != NULL ? text_of(saved, text, sizeof(text)) : text);
+	}
+}
+
 static id
 local_account_of(id store, const char *who)
 {
@@ -3123,6 +3155,8 @@ local_account_of(id store, const char *who)
 		if (fake != NULL && *fake != '0') {
 			account = fabricated_account(store);
 		}
+	} else {
+		put_storefront_on(store, account);
 	}
 
 	if (!told) {
