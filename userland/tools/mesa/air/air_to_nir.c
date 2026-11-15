@@ -144,8 +144,12 @@ num_place(struct air_ctx *c, const struct air_val *v)
    }
    if (num->num_places == ARRAY_SIZE(num->places))
       return -1;
-   if (num->read)
-      num->grew = true;   /* (a load has chosen without it: air_to_nir starts again) */
+   if (num->read) {
+      /* a load has chosen without it: air_to_nir starts again, with it known */
+      num->grew = true;
+      air_error(c, "instruction: a pointer kept as a number into a place met after one was "
+                   "read back (translated again)");
+   }
    num->places[num->num_places] = *p;
    num->places[num->num_places].offset = NULL;
    num->places[num->num_places].pointee = NULL;
@@ -6120,7 +6124,30 @@ struct air_ptr_phi_reg {
    /* MPS's RNN kernels choose one of up to thirty-one input buffers by a switch */
    struct air_ptr places[32];
    nir_def *idx_reg;
+   /* a phi carried as the words air_ptr_numeric keeps (num_phi): its register of two */
+   nir_def *words_reg;
 };
+
+/* a phi as the next translation will know it: each reads the module afresh, so not by address */
+static uint64_t
+phi_key(struct air_ctx *c, const struct air_inst *in)
+{
+   unsigned fi = 0;
+   while (fi < c->m->num_functions && c->m->functions[fi] != c->fn)
+      fi++;
+   return (uint64_t)fi << 32 | in->base.id;
+}
+
+/* is this pointer phi one the last translation found a loop carrying to another place? */
+static bool
+num_phi(struct air_ctx *c, const struct air_inst *in)
+{
+   uint64_t key = c->num && c->num->on ? phi_key(c, in) : 0;
+   for (unsigned i = 0; c->num && c->num->on && i < c->num->num_phis; i++)
+      if (c->num->phis[i] == key)
+         return true;
+   return false;
+}
 
 static bool
 same_place(const struct air_ptr *a, const struct air_ptr *b)
@@ -6232,6 +6259,17 @@ resolve_pointer_phi_places(struct air_ctx *c, const struct air_inst *in, const b
 static bool
 resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *reachable)
 {
+   if (num_phi(c, in)) {
+      /* the two words in a register, each edge storing its operand's (the phi stores in
+       * translate_body), and the phi the choice they say */
+      struct air_ptr_phi_reg *r = rzalloc(c->mem_ctx, struct air_ptr_phi_reg);
+      nir_builder entry = nir_builder_at(nir_before_impl(c->b.impl));
+      r->words_reg = nir_decl_reg(&entry, 2, 32, 0);
+      nir_store_reg(&entry, nir_imm_ivec2(&entry, 0, 0), r->words_reg);
+      _mesa_hash_table_insert(c->phi_regs, in, r);
+      air_set(c, &in->base, ptr_decode(c, nir_load_reg(&c->b, r->words_reg)));
+      return true;
+   }
    struct air_val *first = NULL, *null_texture = NULL;
    bool missing = false, differ = false, many = false;
 
@@ -6576,6 +6614,15 @@ translate_body(struct air_ctx *c)
                struct air_val *pv = air_get(c, in->operands[k]);
                if (!pv)
                   return false;
+               if (pr->words_reg) {
+                  nir_def *words = ptr_encode(c, pv);
+                  if (!words)
+                     return air_error(c, "instruction: a pointer phi kept as numbers with an "
+                                         "operand they cannot say");
+                  nir_store_reg(&c->b, words, pr->words_reg);
+                  *(nir_cursor *)ce->data = c->b.cursor;
+                  continue;
+               }
                if (pr->num_places > 1) {
                   /* which place, and where in it (resolve_pointer_phi_places) */
                   nir_def *pidx, *poff;
@@ -6603,9 +6650,19 @@ translate_body(struct air_ctx *c)
                    (!same_place(&pv->ptr, &pr->place) &&
                     !(pv->ptr.class == AIR_PTR_TEXTURE &&
                       pv->ptr.binding == AIR_NULL_BINDING)))
+               {
+                  /* the next translation carries it as numbers (air_ptr_numeric) */
+                  if (c->num && c->num->num_phis < ARRAY_SIZE(c->num->phis)) {
+                     c->num->phis[c->num->num_phis++] = phi_key(c, in);
+                     if (c->num->on)
+                        c->num->grew = true;
+                     else
+                        c->num->want = true;
+                  }
                   return air_error(c, "instruction: a phi of pointers whose operand over a "
                                       "loop edge names another place than the others, so "
                                       "which resource it is depends on the iteration");
+               }
                nir_def *off = pv->ptr.offset ? nir_u2u32(&c->b, pv->ptr.offset)
                                              : nir_imm_int(&c->b, 0);
                nir_store_reg(&c->b, off, pr->reg);
@@ -7452,7 +7509,8 @@ air_to_nir_attempt(void *mem_ctx, const void *bitcode, size_t size, const char *
                    struct air_ptr_numeric *num);
 
 /* One translation, and again with pointers in private memory kept as numbers where the first said
- * it needed that (air_ptr_numeric), and once more where that met a place too late. */
+ * it needed that (air_ptr_numeric), and again where that met a place too late (each time with
+ * the places met so far known, which a translation that stopped early had not all met). */
 nir_shader *
 air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_point,
            const struct air_to_nir_options *options,
@@ -7461,7 +7519,7 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
 {
    struct air_ptr_numeric num = { 0 };
    nir_shader *nir = NULL;
-   for (unsigned attempt = 0; attempt < 3; attempt++) {
+   for (unsigned attempt = 0; attempt < 6; attempt++) {
       num.want = num.grew = num.read = false;
       nir = air_to_nir_attempt(mem_ctx, bitcode, size, entry_point, options, nir_options, info,
                                error, &num);
