@@ -175,6 +175,7 @@ static const char *knob(const char *name);     /* a switch from /var/hakios-stor
 static const char *who_i_am(void);              /* this process name; defined below */
 static void dump_tracked_promises(void);        /* defined with the bootstrap hooks */
 static void force_resolve_prereqs(void);        /* defined with the bootstrap hooks */
+static void dump_prereq_types(void);            /* defined with the bootstrap hooks */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -1796,6 +1797,7 @@ one_report(unsigned seconds)
 	dump_errors();
 	dump_threads();
 	dump_tracked_promises();
+	dump_prereq_types();
 	force_resolve_prereqs();
 	/* the long dumps once; the numbers in every report, because only a late one survives the log */
 	if (first) {
@@ -3340,13 +3342,80 @@ new_askboot_start(void)
 	}
 }
 
+/*
+ * TYPE SPY (HAKIOS_TYPE_SPY=1). The stuck prerequisite builds an Array<T> and the whole chain is dynamic
+ * dispatch, so static tools cannot read T. But every Swift generic type is realised at runtime through
+ * swift_getTypeByMangledNameInContext, and swift_getTypeName hands back its demangled name. Hooking the
+ * first (a plain C function -- safe) and naming each result while the bootstrap runs prints "Array<...>"
+ * and the prerequisite types in clear, which names the device state T stands for.
+ */
+typedef struct { const char *data; unsigned long length; } hakios_type_name;
+static const void *(*old_get_type_by_name)(const char *, unsigned long, const void *, const void *const *);
+static hakios_type_name (*swift_type_name_fn)(const void *, int);
+
+static const void *
+new_get_type_by_name(const char *name, unsigned long len, const void *ctx, const void *const *args)
+{
+	const void *md = old_get_type_by_name(name, len, ctx, args);
+	static int said;
+
+	if (bootstrap_running && md != NULL && swift_type_name_fn != NULL && said < 500) {
+		hakios_type_name tn = swift_type_name_fn(md, 1);
+
+		if (tn.data != NULL && tn.length > 0 && tn.length < 300) {
+			said++;
+			say("hakios: type #%d: %.*s\n", said, (int)tn.length, tn.data);
+		}
+	}
+	return md;
+}
+
+/*
+ * ... and, because func_20b45d7dc's Array<T> is realised ONCE and then served from a per-call-site cache
+ * (so the hook above, which fires only while the bootstrap runs, misses it), read those caches directly.
+ * func_20b45d7dc instantiates its types through the cache words at 0x2763ecbf0 / 0x2763ec610, and
+ * func_20b45ec50 through 0x2763ec500; after they have run, each holds the concrete Metadata*. Naming it
+ * with swift_getTypeName spells out T -- the thing the stuck prerequisite produces.
+ */
+static void
+dump_prereq_types(void)
+{
+	static bool done;
+	const char *on = knob("HAKIOS_TYPE_SPY");
+	unsigned long addrs[] = { 0x2763ecbf0UL, 0x2763ec610UL, 0x2763ec500UL };
+
+	if (done || on == NULL || *on == '0' || slide == 0 || swift_type_name_fn == NULL) {
+		return;
+	}
+	done = true;
+	for (unsigned i = 0; i < sizeof(addrs) / sizeof(addrs[0]); i++) {
+		void **cache = (void **)(addrs[i] + slide);
+		void *md = *cache;
+		void *clean = (void *)((unsigned long)md & ~3UL);
+
+		if (clean != NULL) {
+			hakios_type_name tn = swift_type_name_fn(clean, 1);
+
+			if (tn.data != NULL && tn.length > 0 && tn.length < 400) {
+				say("hakios: store: PREREQ TYPE [%#lx] = %.*s\n", addrs[i], (int)tn.length, tn.data);
+			} else {
+				say("hakios: store: PREREQ TYPE [%#lx] = (no name, md %p)\n", addrs[i], clean);
+			}
+		} else {
+			say("hakios: store: PREREQ TYPE [%#lx] = (cache empty)\n", addrs[i]);
+		}
+	}
+}
+
 static void
 hook_bootstrap(void)
 {
 	static bool done;
 	const char *on = knob("HAKIOS_TRACE_BOOTSTRAP");
 	const char *track = knob("HAKIOS_TRACK_PROMISES");
-	bool want = (on != NULL && *on != '0') || (track != NULL && *track != '0');
+	const char *tspy = knob("HAKIOS_TYPE_SPY");
+	bool want = (on != NULL && *on != '0') || (track != NULL && *track != '0')
+	    || (tspy != NULL && *tspy != '0');
 	MSHookFunction_t hook = substrate_hook();
 	const char *me = who_i_am();
 
@@ -3369,6 +3438,18 @@ hook_bootstrap(void)
 		hook((void *)(0x1a6e999a8UL + slide), (void *)hakios_tramp_init, &old_promise_init_g);
 		hook((void *)(0x1a6e99624UL + slide), (void *)hakios_tramp_resolve, &old_promise_resolve_g);
 		say("hakios: store: JetEngine.Promise init+resolve tracked (recording starts at start())\n");
+	}
+	if (tspy != NULL && *tspy != '0') {
+		void *gt = dlsym(RTLD_DEFAULT, "swift_getTypeByMangledNameInContext");
+
+		swift_type_name_fn = (hakios_type_name (*)(const void *, int))dlsym(RTLD_DEFAULT, "swift_getTypeName");
+		if (gt != NULL && swift_type_name_fn != NULL) {
+			hook(gt, (void *)new_get_type_by_name, (void **)&old_get_type_by_name);
+			say("hakios: store: Swift type instantiation is spied (names printed during bootstrap)\n");
+		} else {
+			say("hakios: store: TYPE_SPY: getTypeByMangledNameInContext %s, getTypeName %s\n",
+			    gt ? "found" : "MISSING", swift_type_name_fn ? "found" : "MISSING");
+		}
 	}
 	if (knob("HAKIOS_EMPTY_PREREQS") != NULL && *knob("HAKIOS_EMPTY_PREREQS") != '0') {
 		hook((void *)(0x20b9555c0UL + slide), (void *)new_prereqs, (void **)&old_prereqs);
