@@ -1212,8 +1212,54 @@ struct gem_close { uint32_t handle, pad; };
 	HakiosMetalDevice *_owner;
 	struct rwa_compute *_compute;
 	struct rwa_compute_info _info;
+	NSArray *_linked;   /* the linked functions, in the library's order (rw_register_linked) */
 }
+- (void)hakiosSetLinked:(NSArray *)linked;
 @end
+
+/*
+ * VISIBLE FUNCTION TABLES. A function handle is a linked function's place in its pipeline's
+ * list, plus one (rw_register_linked); a table is a buffer of eight-byte handles, which an encoder
+ * binds at the table's index as it binds a buffer, and which the library reads where the shader
+ * takes a function out of it (nir_air.h, function_tables). CoreImage's ubershader calls its
+ * kernels so.
+ */
+@interface HakiosMetalFunctionHandle : NSObject {
+	id _device, _function;
+	uint64_t _handle;
+}
+- (instancetype)initWithDevice:(id)device function:(id)function handle:(uint64_t)handle;
+- (uint64_t)hakiosHandle;
+@end
+
+@interface HakiosMetalVisibleFunctionTable : NSObject {
+	id _device, _buffer;
+	NSUInteger _count;
+	NSString *_label;
+}
+- (instancetype)initWithDevice:(id)device count:(NSUInteger)count;
+- (id)hakiosBuffer;
+@end
+
+/* the handle of `function` among `linked`, as functionHandleWithFunction: answers it */
+static id
+rw_function_handle(id device, NSArray *linked, id function)
+{
+	NSUInteger k = [linked indexOfObjectIdenticalTo:function];
+	if (k == NSNotFound && [function respondsToSelector:@selector(name)]) {
+		for (NSUInteger i = 0; i < [linked count]; i++) {
+			if ([[linked[i] name] isEqualToString:[function name]]) {
+				k = i;
+				break;
+			}
+		}
+	}
+	if (k == NSNotFound) {
+		return nil;   /* a function the pipeline does not link: Metal answers nil as well */
+	}
+	return [[[HakiosMetalFunctionHandle alloc] initWithDevice:device function:function
+							   handle:k + 1] autorelease];
+}
 
 /* One recorded dispatch. Metal's rule is that nothing runs until the command buffer is
  * committed, so an encoder records and the command buffer runs; dispatching at encode time
@@ -1346,11 +1392,13 @@ rw_bisect_within(void)
 	HakiosMetalDevice *_owner;
 	struct rwa_render *_render;
 	struct rwa_render_info _info;
+	NSArray *_linked;   /* the fragment stage's linked functions (rw_register_linked) */
 @public
 	unsigned _bisectGroup;          /* boot-arg metal_bisect: which group of pipelines it is in (its label's hash) */
 	char _names[128];               /* "vertex/fragment" function names, for boot-arg metal_sync's log */
 }
 - (struct rwa_render *)render;
+- (void)hakiosSetLinked:(NSArray *)linked;
 /* Not part of any Metal protocol: whether this pipeline's fragment shader stores to
  * [[depth]], which only whoever read the shader knows. A pass without a depth attachment
  * drops those writes -- Metal's own behaviour -- and a draw that says so is the difference
@@ -1602,6 +1650,68 @@ rw_draw_chosen(const char *key, const char *names, unsigned vertices)
 	[super dealloc];
 }
 @end
+
+/*
+ * MTLLinkedFunctions registered against a stage's bytes for the library to translate in
+ * (rwa_linked_register): `groups` name them as the stage's calls do, `functions` and
+ * `privateFunctions` by their own names. Answers the functions in the order they were
+ * registered, which is the order the library numbers them in for a visible function table
+ * (nir_air.h, function_tables: a handle is one more than the place here), or nil.
+ */
+static NSData *rw_function_air(id function);
+
+static NSArray *
+rw_register_linked(id linked, NSData *stage_air, NSString *label)
+{
+	if (linked == nil || mesa.linked_register == NULL || stage_air == nil) {
+		return nil;
+	}
+	NSMutableArray *fns = [NSMutableArray array], *names = [NSMutableArray array];
+	for (id fn in ([linked respondsToSelector:@selector(functions)] ? [linked functions] : nil)) {
+		[fns addObject:fn];
+		[names addObject:[fn name] ?: @""];
+	}
+	for (id fn in ([linked respondsToSelector:@selector(privateFunctions)] ? [linked privateFunctions] : nil)) {
+		[fns addObject:fn];
+		[names addObject:[fn name] ?: @""];
+	}
+	NSDictionary *groups = [linked respondsToSelector:@selector(groups)] ? [linked groups] : nil;
+	for (NSString *group in groups) {
+		for (id fn in groups[group]) {
+			[fns addObject:fn];
+			[names addObject:group];
+		}
+	}
+	struct rw_linked_function list[8];
+	NSData *keep[8];
+	NSMutableArray *registered = [NSMutableArray array];
+	unsigned count = 0;
+	for (NSUInteger k = 0; k < [fns count] && count < 8; k++) {
+		NSData *air = rw_function_air(fns[k]);
+		if (air == nil) {
+			continue;
+		}
+		keep[count] = air;
+		list[count] = (struct rw_linked_function){
+			.name = strdup([names[k] UTF8String] ?: ""),
+			.bitcode = [air bytes], .size = [air length],
+			.entry = strdup([[fns[k] name] UTF8String] ?: ""),
+		};
+		rw_print("pipeline %s: links %s as %s (%lu bytes)\n", [label UTF8String] ?: "(no label)",
+			 list[count].entry, list[count].name, (unsigned long)[air length]);
+		[registered addObject:fns[k]];
+		count++;
+	}
+	if (count > 0) {
+		mesa.linked_register([stage_air bytes], [stage_air length], list, count);
+	}
+	for (unsigned i = 0; i < count; i++) {
+		free((void *)list[i].name);
+		free((void *)list[i].entry);
+		keep[i] = nil;
+	}
+	return count > 0 ? registered : nil;
+}
 
 @implementation HakiosMetalDevice
 
@@ -1861,54 +1971,11 @@ static NSData *rw_function_air(id function);
 
 	/* MTLLinkedFunctions: the functions a stage calls through NAME.MTL_VISIBLE_FN_REF (RenderBox's
 	 * custom effects -- SwiftUI shaders such as MercuryPoster's wallpaper -- as custom_fn), registered
-	 * against the fragment's bytes for the library to translate in (rwa_linked_register). Its
-	 * `groups` name them as the call does; `functions` and `privateFunctions` by their own names. */
-	if ([descriptor respondsToSelector:@selector(fragmentLinkedFunctions)] && mesa.linked_register != NULL) {
-		id linked = [descriptor fragmentLinkedFunctions];
-		NSMutableArray *fns = [NSMutableArray array], *names = [NSMutableArray array];
-		if (linked != nil) {
-			for (id fn in ([linked respondsToSelector:@selector(functions)] ? [linked functions] : nil)) {
-				[fns addObject:fn];
-				[names addObject:[fn name] ?: @""];
-			}
-			for (id fn in ([linked respondsToSelector:@selector(privateFunctions)] ? [linked privateFunctions] : nil)) {
-				[fns addObject:fn];
-				[names addObject:[fn name] ?: @""];
-			}
-			NSDictionary *groups = [linked respondsToSelector:@selector(groups)] ? [linked groups] : nil;
-			for (NSString *group in groups) {
-				for (id fn in groups[group]) {
-					[fns addObject:fn];
-					[names addObject:group];
-				}
-			}
-		}
-		struct rw_linked_function list[8];
-		NSData *keep[8];
-		unsigned count = 0;
-		for (NSUInteger k = 0; k < [fns count] && count < 8; k++) {
-			NSData *air = rw_function_air(fns[k]);
-			if (air == nil) {
-				continue;
-			}
-			keep[count] = air;
-			list[count] = (struct rw_linked_function){
-				.name = strdup([names[k] UTF8String] ?: ""),
-				.bitcode = [air bytes], .size = [air length],
-				.entry = strdup([[fns[k] name] UTF8String] ?: ""),
-			};
-			rw_print("pipeline %s: links %s as %s (%lu bytes)\n", [[descriptor label] UTF8String] ?: "(no label)",
-			         list[count].entry, list[count].name, (unsigned long)[air length]);
-			count++;
-		}
-		if (count > 0) {
-			mesa.linked_register([fragment_air bytes], [fragment_air length], list, count);
-		}
-		for (unsigned i = 0; i < count; i++) {
-			free((void *)list[i].name);
-			free((void *)list[i].entry);
-			keep[i] = nil;
-		}
+	 * against the fragment's bytes for the library to translate in (rw_register_linked) */
+	NSArray *fragmentLinked = nil;
+	if ([descriptor respondsToSelector:@selector(fragmentLinkedFunctions)]) {
+		fragmentLinked = rw_register_linked([descriptor fragmentLinkedFunctions], fragment_air,
+						    [descriptor label]);
 	}
 
 	struct rwa_render_shape shape = { .sample_count = (unsigned)[descriptor sampleCount] };
@@ -2169,10 +2236,12 @@ static NSData *rw_function_air(id function);
 	if (shape.color_count > 0) {
 		rw_blend_result(info.blend_enabled_mask, info.color_write_masks);
 	}
-	return [[HakiosMetalRenderPipeline alloc] initWithHakiosDevice:self
-								 render:render
-								   info:&info
-							     descriptor:descriptor];
+	HakiosMetalRenderPipeline *made = [[HakiosMetalRenderPipeline alloc] initWithHakiosDevice:self
+										      render:render
+											info:&info
+										  descriptor:descriptor];
+	[made hakiosSetLinked:fragmentLinked];
+	return made;
 }
 
 - (id)newRenderPipelineStateWithDescriptor:(id)descriptor
@@ -2808,6 +2877,11 @@ static NSData *rw_function_air(id function);
 		}
 	}
 
+	/* MTLComputePipelineDescriptor.linkedFunctions: what the kernel calls by name or out of a
+	 * visible function table (CoreImage's ubershader), registered as a render pipeline's are */
+	NSArray *linked = [descriptor respondsToSelector:@selector(linkedFunctions)]
+				? rw_register_linked([descriptor linkedFunctions], air, [descriptor label]) : nil;
+
 	char why[512] = { 0 };
 	struct rwa_compute_info info = { 0 };
 	uint64_t t0 = mach_absolute_time();
@@ -2820,10 +2894,12 @@ static NSData *rw_function_air(id function);
 		 * which construct it refused, and an application can act on that. */
 		return [self fail:error with:[NSString stringWithUTF8String:why]];
 	}
-	return [[HakiosMetalComputePipeline alloc] initWithHakiosDevice:self
-								 compute:compute
-								    info:&info
-							      descriptor:descriptor];
+	HakiosMetalComputePipeline *made = [[HakiosMetalComputePipeline alloc] initWithHakiosDevice:self
+											    compute:compute
+											       info:&info
+											 descriptor:descriptor];
+	[made hakiosSetLinked:linked];
+	return made;
 }
 
 - (id)fail:(NSError **)error with:(NSString *)reason
@@ -4222,6 +4298,101 @@ rw_bytes_hash(const uint8_t *bytes, size_t length)
 
 - (id)device { return _owner; }
 
+- (void)hakiosSetLinked:(NSArray *)linked
+{
+	[_linked release];
+	_linked = [linked retain];
+}
+
+- (id)functionHandleWithFunction:(id)function
+{
+	return rw_function_handle(_owner, _linked, function);
+}
+
+- (id)newVisibleFunctionTableWithDescriptor:(id)descriptor
+{
+	NSUInteger count = [descriptor respondsToSelector:@selector(functionCount)] ? [descriptor functionCount] : 0;
+	return [[HakiosMetalVisibleFunctionTable alloc] initWithDevice:_owner count:count];
+}
+
+@end
+
+@implementation HakiosMetalFunctionHandle
+
+- (instancetype)initWithDevice:(id)device function:(id)function handle:(uint64_t)handle
+{
+	self = [super init];
+	if (self != nil) {
+		_device = [device retain];
+		_function = [function retain];
+		_handle = handle;
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[_device release];
+	[_function release];
+	[super dealloc];
+}
+
+- (uint64_t)hakiosHandle             { return _handle; }
+- (id)device                         { return _device; }
+- (NSString *)name                   { return [_function name]; }
+- (NSUInteger)functionType           { return [_function functionType]; }
+- (MTLResourceID)gpuResourceID       { return (MTLResourceID){ ._impl = _handle }; }
+
+@end
+
+@implementation HakiosMetalVisibleFunctionTable
+
+- (instancetype)initWithDevice:(id)device count:(NSUInteger)count
+{
+	self = [super init];
+	if (self != nil) {
+		_device = [device retain];
+		_count = count;
+		/* eight bytes a handle, zero (no function) until one is set */
+		_buffer = [device newBufferWithLength:MAX(count, 1) * 8 options:0];
+		if (_buffer != nil) {
+			memset([_buffer contents], 0, MAX(count, 1) * 8);
+		}
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[_buffer release];
+	[_device release];
+	[_label release];
+	[super dealloc];
+}
+
+- (id)hakiosBuffer                   { return _buffer; }
+- (id)device                         { return _device; }
+- (NSString *)label                  { return _label; }
+- (void)setLabel:(NSString *)label   { [_label release]; _label = [label copy]; }
+- (MTLResourceID)gpuResourceID       { return (MTLResourceID){ ._impl = (uint64_t)(uintptr_t)self }; }
+- (NSUInteger)allocatedSize          { return _count * 8; }
+
+- (void)setFunction:(id)function atIndex:(NSUInteger)index
+{
+	if (index >= _count || _buffer == nil) {
+		return;
+	}
+	uint64_t handle = [function respondsToSelector:@selector(hakiosHandle)] ? [function hakiosHandle] : 0;
+	((uint64_t *)[_buffer contents])[index] = handle;
+}
+
+- (void)setFunctions:(const id *)functions withRange:(NSRange)range
+{
+	for (NSUInteger i = 0; i < range.length; i++) {
+		[self setFunction:functions[i] atIndex:range.location + i];
+	}
+}
+
 @end
 
 @implementation HakiosMetalRenderPipeline
@@ -4316,6 +4487,26 @@ rw_bytes_hash(const uint8_t *bytes, size_t length)
 }
 
 - (struct rwa_render *)render { return _render; }
+
+- (void)hakiosSetLinked:(NSArray *)linked
+{
+	[_linked release];
+	_linked = [linked retain];
+}
+
+/* a render pipeline's handles and tables are its fragment stage's (the stage that links) */
+- (id)functionHandleWithFunction:(id)function stage:(NSUInteger)stage
+{
+	(void)stage;
+	return rw_function_handle(_owner, _linked, function);
+}
+
+- (id)newVisibleFunctionTableWithDescriptor:(id)descriptor stage:(NSUInteger)stage
+{
+	(void)stage;
+	NSUInteger count = [descriptor respondsToSelector:@selector(functionCount)] ? [descriptor functionCount] : 0;
+	return [[HakiosMetalVisibleFunctionTable alloc] initWithDevice:_owner count:count];
+}
 - (BOOL)writesDepth           { return _info.fragment_writes_depth != 0; }
 - (unsigned)vertexStreamMask  { return _info.vertex_stream_mask; }
 - (unsigned)vertexStreamCount { return _info.vertex_streams; }
@@ -6737,25 +6928,35 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 	RW_ONCE("visible and intersection function tables are not implemented; "
 		"this binding is dropped\n");
 }
+/* a visible function table is a buffer of handles (HakiosMetalVisibleFunctionTable), bound at its
+ * index as a buffer is; anything else is dropped as before */
 - (void)setVertexVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
-	(void)table; (void)index;
+	if ([table respondsToSelector:@selector(hakiosBuffer)]) {
+		[self setVertexBuffer:[table hakiosBuffer] offset:0 atIndex:index];
+		return;
+	}
 	[self hakiosNoFunctionTables];
 }
 - (void)setVertexVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
-	(void)tables; (void)range;
-	[self hakiosNoFunctionTables];
+	for (NSUInteger i = 0; i < range.length; i++) {
+		[self setVertexVisibleFunctionTable:tables[i] atBufferIndex:range.location + i];
+	}
 }
 - (void)setFragmentVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
-	(void)table; (void)index;
+	if ([table respondsToSelector:@selector(hakiosBuffer)]) {
+		[self setFragmentBuffer:[table hakiosBuffer] offset:0 atIndex:index];
+		return;
+	}
 	[self hakiosNoFunctionTables];
 }
 - (void)setFragmentVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
-	(void)tables; (void)range;
-	[self hakiosNoFunctionTables];
+	for (NSUInteger i = 0; i < range.length; i++) {
+		[self setFragmentVisibleFunctionTable:tables[i] atBufferIndex:range.location + i];
+	}
 }
 - (void)setTileVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
@@ -7733,15 +7934,21 @@ rw_blit_unknown(id self, SEL sel, ...)
 	RW_ONCE("visible and intersection function tables are not implemented; "
 		"this binding is dropped\n");
 }
+/* a visible function table is a buffer of handles (HakiosMetalVisibleFunctionTable), bound at its
+ * index as a buffer is (CoreImage's ubershader); anything else is dropped as before */
 - (void)setVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
-	(void)table; (void)index;
+	if ([table respondsToSelector:@selector(hakiosBuffer)]) {
+		[self setBuffer:[table hakiosBuffer] offset:0 atIndex:index];
+		return;
+	}
 	[self hakiosNoFunctionTables];
 }
 - (void)setVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
-	(void)tables; (void)range;
-	[self hakiosNoFunctionTables];
+	for (NSUInteger i = 0; i < range.length; i++) {
+		[self setVisibleFunctionTable:tables[i] atBufferIndex:range.location + i];
+	}
 }
 - (void)setIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
