@@ -1703,6 +1703,66 @@ one_report(unsigned seconds)
 	/* ... and the one answer jetpackassetd waits on before it does anything at all */
 	say("hakios: store(%s): KEY the device has been unlocked since boot: %d\n", who,
 	    unlocked_since_boot_now());
+	/*
+	 * ... and the three ways a process can be asked what bundle it is. The App Store's own log says
+	 * "Client bundle id com.apple.AppStore (executable: /Applications/AppStore.app/AppStore) is nil, not
+	 * allow listed or not entitled to use signing service" and then "Unable to create pool manager, not
+	 * a valid client": the signing service refuses because it cannot identify its client, and the thing
+	 * that cannot identify it is LaunchServices -- +[LSBundleRecord bundleRecordForCurrentProcess] is
+	 * the most-made error in the whole run (409 of them, from LSMakeNSErrorImpl), under containers that
+	 * answer NOT_CODESIGNED. Which of the three still works decides whether this is repairable from
+	 * inside the process or not.
+	 */
+	{
+		Class record = objc_getClass("LSBundleRecord");
+		Class proxy = objc_getClass("LSBundleProxy");
+		id main_bundle = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSBundle"),
+		    sel_registerName("mainBundle"));
+		id from_bundle = main_bundle != NULL ? ((id (*)(id, SEL))objc_msgSend)(main_bundle,
+		    sel_registerName("bundleIdentifier")) : NULL;
+		SEL rec_sel = sel_registerName("bundleRecordForCurrentProcess");
+		SEL prx_sel = sel_registerName("bundleProxyForCurrentProcess");
+		/* ... and only if the class really answers it: a selector that is not there is a crash, and a
+		   crash in the report would take the whole process with it */
+		id from_record = (record != Nil && class_getClassMethod(record, rec_sel) != NULL)
+		    ? ((id (*)(Class, SEL))objc_msgSend)(record, rec_sel) : NULL;
+		id from_proxy = (proxy != Nil && class_getClassMethod(proxy, prx_sel) != NULL)
+		    ? ((id (*)(Class, SEL))objc_msgSend)(proxy, prx_sel) : NULL;
+		char a[120] = "(nil)", b[160] = "(nil)", c[160] = "(nil)";
+
+		say("hakios: store(%s): KEY what bundle am I: NSBundle %s, LSBundleRecord %s, LSBundleProxy %s\n",
+		    who, from_bundle != NULL ? text_of(from_bundle, a, sizeof(a)) : a,
+		    from_record != NULL ? text_of(from_record, b, sizeof(b)) : b,
+		    from_proxy != NULL ? text_of(from_proxy, c, sizeof(c)) : c);
+	}
+	{
+		/*
+		 * ... and the answer underneath all of it. The containers say NOT_CODESIGNED (error 98) about
+		 * these processes, and that is what LaunchServices and the signing service both lean on. What
+		 * Security itself says about this process is the measurement that tells a repairable identity
+		 * from a missing signature.
+		 */
+		void *(*task_self)(void) = (void *(*)(void))dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+		void *(*copy_id)(void *) = (void *(*)(void *))dlsym(RTLD_DEFAULT,
+		    "SecTaskCopySigningIdentifier");
+		void *task = NULL, *ident = NULL;
+		char d[140] = "(nil)";
+
+		if (task_self != NULL && copy_id != NULL) {
+			/* SecTaskCreateFromSelf takes an allocator; NULL is the default one */
+			void *(*make)(void *) = (void *(*)(void *))task_self;
+
+			task = make(NULL);
+			if (task != NULL) {
+				void *(*copy)(void *, void *) = (void *(*)(void *, void *))copy_id;
+
+				ident = copy(task, NULL);
+			}
+		}
+		say("hakios: store(%s): KEY Security says this process is signed as %s\n", who,
+		    ident != NULL ? text_of((id)ident, d, sizeof(d)) : (task_self == NULL ? "(no SecTask here)"
+		    : task == NULL ? "(no task object)" : "NOTHING"));
+	}
 
 	for (size_t i = 0; i < replacement_count(); i++) {
 		if (!replacements[i].done) {
