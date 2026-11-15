@@ -4957,6 +4957,17 @@ emit_return(struct air_ctx *c, const struct air_inst *in)
       unsigned at = 0;
       return store_ret_leaves(c, c->ret_type, v, &at);
    }
+   if (c->ret_deref && in->operands[0]->type->kind == AIR_TYPE_POINTER) {
+      /* a pointer: its two words (ptr_encode), which the caller turns back into the choice
+       * among the places they can name (RealityKit's povcGetCrWorldToProjMatrix hands back a
+       * pointer into one of its constant buffers) */
+      nir_def *words = ptr_encode(c, air_get(c, in->operands[0]));
+      if (!words)
+         return air_error(c, "instruction: a return of a pointer to a texture, a sampler or a "
+                             "function, from a function called in the module");
+      nir_store_deref(&c->b, c->ret_deref, words, 0x3);
+      return true;
+   }
    if (c->ret_deref) {
       nir_def *d = air_get_ssa(c, in->operands[0]);
       if (!d)
@@ -5511,7 +5522,9 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
          };
       }
    } else if (has_ret) {
-      ret_glsl = param_glsl_type(c, rt);
+      /* a pointer is returned as the two words air_ptr_numeric keeps (ptr_encode) */
+      ret_glsl = rt->kind == AIR_TYPE_POINTER ? glsl_vector_type(GLSL_TYPE_UINT, 2)
+                                              : param_glsl_type(c, rt);
       fn->params[idx++] = (nir_parameter){
          .num_components = 1, .bit_size = 32,
          .is_return = true,
@@ -5870,7 +5883,9 @@ air_call_function(struct air_ctx *c, const struct air_inst *in, const struct air
          fields[i] = nir_local_variable_create(c->b.impl, param_glsl_type(c, leaf_types[i]),
                                                "callret");
    } else if (has_ret) {
-      tmp = nir_local_variable_create(c->b.impl, param_glsl_type(c, rt), "callret");
+      tmp = nir_local_variable_create(c->b.impl, rt->kind == AIR_TYPE_POINTER
+                                                    ? glsl_vector_type(GLSL_TYPE_UINT, 2)
+                                                    : param_glsl_type(c, rt), "callret");
    }
 
    if (!emit_module_call(c, in, f, name, argv, tmp, fields))
@@ -5880,7 +5895,9 @@ air_call_function(struct air_ctx *c, const struct air_inst *in, const struct air
       unsigned at = 0;
       air_set(c, &in->base, load_ret_leaves(c, rt, fields, &at));
    } else if (has_ret) {
-      air_set(c, &in->base, air_val_ssa(c, nir_load_var(&c->b, tmp)));
+      air_set(c, &in->base, rt->kind == AIR_TYPE_POINTER
+                               ? ptr_decode(c, nir_load_var(&c->b, tmp))
+                               : air_val_ssa(c, nir_load_var(&c->b, tmp)));
    }
    return true;
 }
@@ -7571,9 +7588,10 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
       num.want = num.grew = num.read = false;
       nir = air_to_nir_attempt(mem_ctx, bitcode, size, entry_point, options, nir_options, info,
                                error, &num);
-      if (nir || (!(num.want && !num.on) && !(num.grew && num.on)))
+      if (nir || (!(num.want && !num.on) && !num.grew))
          break;
-      num.on = true;
+      if (num.want)
+         num.on = true;
    }
    return nir;
 }
