@@ -110,6 +110,21 @@ softpipe are the same. So Mesa, the frontend and Gallium run in a Darwin 27 proc
 left for CoreAnimation is the Metal device itself (`metal_driver.m`, step 3 above) and, on the phone, the
 GPU instead of softpipe.
 
+### The Metal driver in Darwin 27's backboardd, under QEMU
+
+With `userland/tools/mk-metal-linux.sh`'s `HakiosMetal.bundle` and `libhakios-air.dylib` in the small image,
+`metal_props on` run by init before launchd and the kernel booted with `metal=1` (and `RWA_SOFTWARE=1` for
+backboardd through `exec_env`: there is no GPU, so the library draws with softpipe), **Metal's own discovery
+finds the driver in backboardd**: `IOAcceleratorES` names the bundle, Metal opens it, and CoreAnimation asks
+the device for its render pipelines -- its blits, its clears, `home_affordance_base_lph`, the blurs
+(`narrow_blur_19_frag_lph`, `variable_blur_frag_lph`) and its uber shader `A3Xghfc` (some 35 s to compile on
+softpipe under TCG). `metal_drv_test` in the same boot compiles eight compute pipelines of the system's own
+library through it.
+
+What it took on softpipe, each an abort of backboardd before it (`libhakios-air` on the softpipe screen only,
+`air_metal.c`): 8- and 16-bit values widened to 32 bits, ffma split, demote as terminate, the packed
+normalised conversions as arithmetic. The freedreno screen is not touched by any of it.
+
 ## Why it was not done in this pass
 
 Each of steps 2–6 needs at least one thing this environment does not have:
