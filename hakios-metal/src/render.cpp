@@ -2206,12 +2206,24 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
     }
     const uint32_t whole[4] = {0, 0, W - 1, H - 1};
     if (!gmemTiles(&p, whole)) return refuse(why, "a bin too wide for GMEM");
+    p.gridCols = p.cols;
+    p.gridRows = p.rows;
     *plan = p;
     return true;
 }
 
-bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
+bool gmemTiles(GmemPlan* plan, const uint32_t area[4], bool atArea) {
     GmemPlan p = *plan;
+    if (p.binW != 0 && p.binH != 0 && !atArea) {
+        // the bins of the plan's grid that the area touches (render.hpp: the VSC bins from the window's origin)
+        p.x0 = area[0] / p.binW * p.binW;
+        p.y0 = area[1] / p.binH * p.binH;
+        p.cols = divUp(area[2] + 1 - p.x0, p.binW);
+        p.rows = divUp(area[3] + 1 - p.y0, p.binH);
+        for (uint32_t k = 0; k < 4; k++) p.area[k] = area[k];
+        *plan = p;
+        return true;
+    }
     p.x0 = area[0] & ~(kTileAlignW - 1);
     p.y0 = area[1] & ~(kTileAlignH - 1);
     const uint32_t w = area[2] + 1 - p.x0, h = area[3] + 1 - p.y0;
@@ -2232,6 +2244,7 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     p.rows = divUp(h, fit);
     p.binH = alignUp(divUp(h, p.rows), kTileAlignH);
     for (uint32_t k = 0; k < 4; k++) p.area[k] = area[k];
+    if (atArea) p.gridCols = p.cols, p.gridRows = p.rows;   // (the twin: a grid of the area's own)
     *plan = p;
     return true;
 }
@@ -2355,10 +2368,16 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     const uint32_t bin = binControlGmem(o.binControlLrzFeedback, plan.binW, plan.binH);
     // The pipes: as fd's gmem layout groups bins (freedreno_gmem.c: tpp_y up by 2 until the rows fit the pipes, then
     // tpp_x up by 1), and each tile's place in its pipe the order the tiles are drawn in
+    // (the window's whole grid, of which the tiles drawn are the bins the render area touches: the VSC bins every draw
+    // by its place in the window)
+    const uint32_t gridCols = plan.gridCols != 0 ? plan.gridCols : plan.cols, gridRows = plan.gridRows != 0 ? plan.gridRows : plan.rows;
+    // (a plan whose corner is not a bin's -- gmemTiles' twin, the grid laid from the area -- counts its bins from its own corner, as it used to)
+    const bool onGrid = plan.binW != 0 && plan.binH != 0 && plan.x0 % plan.binW == 0 && plan.y0 % plan.binH == 0;
+    const uint32_t col0 = onGrid ? plan.x0 / plan.binW : 0, row0 = onGrid ? plan.y0 / plan.binH : 0;
     uint32_t tppX = 1, tppY = 1;
-    while (divUp(plan.rows, tppY) > kNumVscPipes) tppY += 2;
-    while (divUp(plan.rows, tppY) * divUp(plan.cols, tppX) > kNumVscPipes) tppX++;
-    const uint32_t pipesX = divUp(plan.cols, tppX);
+    while (divUp(gridRows, tppY) > kNumVscPipes) tppY += 2;
+    while (divUp(gridRows, tppY) * divUp(gridCols, tppX) > kNumVscPipes) tppX++;
+    const uint32_t pipesX = divUp(gridCols, tppX);
     const uint64_t drawStrm = vsc, drawSizes = vsc + uint64_t(kNumVscPipes) * kVscDrawPitch, primStrm = drawSizes + kVscSizesBytes;
     auto crumb = [&](uint32_t v) {
         if (o.gmemBinningTrace && vsc != 0) stream.memWrite(drawSizes + kVscTraceAt, &v, 1);
@@ -2366,7 +2385,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     crumb(0xa);
     if (vsc != 0) {
         // the binning pass (emit_binning_pass): the whole window, RM6_BIN_VISIBILITY, the bins' layout, every draw once
-        regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(plan.x0, plan.y0), regXY(plan.x0 + plan.cols * plan.binW - 1, plan.y0 + plan.rows * plan.binH - 1)});
+        regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(0, 0), regXY(gridCols * plan.binW - 1, gridRows * plan.binH - 1)});
         command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_VISIBILITY));
         command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
         command1(stream, CP_SET_MODE, 1);
@@ -2379,13 +2398,13 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         reg(stream, REG_A6XX_RB_BIN_CONTROL2, A6XX_RB_BIN_CONTROL2_BINW(plan.binW) | A6XX_RB_BIN_CONTROL2_BINH(plan.binH));
         reg(stream, REG_A6XX_VSC_BIN_SIZE, vscBinSize(plan.binW, plan.binH));
         reg64(stream, REG_A6XX_VSC_DRAW_STRM_SIZE_ADDRESS, drawSizes);
-        reg(stream, REG_A6XX_VSC_BIN_COUNT, vscBinCount(plan.cols, plan.rows));
+        reg(stream, REG_A6XX_VSC_BIN_COUNT, vscBinCount(gridCols, gridRows));
         {
             uint32_t pipes[kNumVscPipes] = {};
             uint32_t p = 0;
-            for (uint32_t y = 0; y < plan.rows; y += tppY) {
-                for (uint32_t x = 0; x < plan.cols; x += tppX) {
-                    pipes[p++] = vscPipeConfig(x, y, std::min(tppX, plan.cols - x), std::min(tppY, plan.rows - y));
+            for (uint32_t y = 0; y < gridRows; y += tppY) {
+                for (uint32_t x = 0; x < gridCols; x += tppX) {
+                    pipes[p++] = vscPipeConfig(x, y, std::min(tppX, gridCols - x), std::min(tppY, gridRows - y));
                 }
             }
             stream.registers(REG_A6XX_VSC_PIPE_CONFIG_REG, pipes, kNumVscPipes);
@@ -2410,7 +2429,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         // binning off from then on (CommandBuffer::finish) -- this frame is what it is, the next ones draw every draw
         {
             uint32_t used = 0;
-            for (uint32_t y = 0; y < plan.rows; y += tppY) used += divUp(plan.cols, tppX);
+            for (uint32_t y = 0; y < gridRows; y += tppY) used += divUp(gridCols, tppX);
             const uint64_t flag = drawSizes + kVscOverflowAt;
             for (uint32_t p = 0; p < used; p++) {
                 for (uint32_t k = 0; k < 2; k++) {
@@ -2451,11 +2470,12 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(x1, y1));
             const bool streams = vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3);
             if (streams) {
-                // this tile's streams: its pipe's, and its place in the pipe (fd6_emit_tile_prep)
-                const uint32_t pipe = (ty / tppY) * pipesX + tx / tppX;
-                const uint32_t px = (tx / tppX) * tppX, py = (ty / tppY) * tppY;
-                const uint32_t pw = std::min(tppX, plan.cols - px), ph = std::min(tppY, plan.rows - py);
-                const uint32_t n = (ty - py) * pw + (tx - px);
+                // this tile's streams: its pipe's, and its place in the pipe (fd6_emit_tile_prep), by its place in the grid
+                const uint32_t gx = col0 + tx, gy = row0 + ty;
+                const uint32_t pipe = (gy / tppY) * pipesX + gx / tppX;
+                const uint32_t px = (gx / tppX) * tppX, py = (gy / tppY) * tppY;
+                const uint32_t pw = std::min(tppX, gridCols - px), ph = std::min(tppY, gridRows - py);
+                const uint32_t n = (gy - py) * pw + (gx - px);
                 crumb(0x100 + ty * plan.cols + tx);
                 stream.waitForMe();
                 command1(stream, CP_SET_MODE, 0);
@@ -3276,7 +3296,7 @@ void CommandBuffer::closePass() {
         // fill it stands in for covers it -- over the draws' area alone the rest kept its old pixels, probe "a Clear in
         // the tiles": 1224468 of them)
         if (open_->area[0] <= open_->area[2] && open_->area[1] <= open_->area[3] && !(gmemOff_ & kGmemWholeArea) && open_->clears == 0) {
-            render::gmemTiles(&plan, open_->area);
+            render::gmemTiles(&plan, open_->area, open_->options.gmemTwin == 5);
         }
         // (past the right edge the granules land in the row's own padding, which gmemPlan saw the pitch hold; only the
         // rows past the bottom may be another layer's or level's)

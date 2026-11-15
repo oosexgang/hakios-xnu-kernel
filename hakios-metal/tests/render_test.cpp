@@ -5507,14 +5507,18 @@ TEST(a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn) {
 }
 
 // A pass whose draws touch a corner is tiled over that corner alone: tri_flat at a 100 x 50 viewport at (300, 1000)
-// and another at (350, 1010) -- one tile, its loads and stores over the area's granules, the rest of the target left as
-// it was (here the coordinates throughout: the fake draws nothing, so a store anywhere puts back what was loaded).
+// and another at (350, 1010) -- the bins of the window's grid that area touches, their loads and stores over the area's
+// granules, the rest of the target left as it was (here the coordinates throughout: the fake draws nothing, so a store
+// anywhere puts back what was loaded).
 TEST(a_gmem_pass_is_tiled_over_its_render_area) {
     Rig r;
     auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
     fillCoords(*t);
     RenderPass a;
     a.color0 = t.get();
+    render::GmemPlan p;
+    CHECK(render::gmemPlan(a, &p, nullptr));
+    const uint32_t tiles = (449 / p.binW - 300 / p.binW + 1) * (1059 / p.binH - 1000 / p.binH + 1);
     auto cb = r.queue->commandBuffer();
     Draw d1 = wholeDraw(3), d2 = wholeDraw(3);
     d1.viewport = Viewport{300, 1000, 100, 50, 0, 1};
@@ -5526,8 +5530,10 @@ TEST(a_gmem_pass_is_tiled_over_its_render_area) {
     CHECK(cb->status() == CommandBuffer::kCompleted);
     const auto s = r.fake->stats();
     CHECK_EQ(s.faults, 0u);
-    CHECK(s.tiles == 1 && s.tileLoads == 1 && s.tileStores == 1);
-    // the area (300, 1000)-(449, 1059) in 16 x 4 granules: x 288 to 463, y 1000 to 1059
+    CHECK(tiles >= 1 && tiles < p.tiles());
+    CHECK(s.tiles == tiles && s.tileLoads == tiles && s.tileStores == tiles);
+    // the area (300, 1000)-(449, 1059) in 16 x 4 granules: x 288 to 463, y 1000 to 1059, each granule stored once
+    // whichever bin it falls in
     CHECK_EQ(s.storedPixels, uint64_t(464 - 288) * (1060 - 1000));
     CHECK_EQ(coordsWrong(*t), 0u);
 }
@@ -5554,7 +5560,8 @@ TEST(a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has) {
     const auto s = r.fake->stats();
     CHECK_EQ(s.faults, 0u);
     if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
-    CHECK(cb->counts().gmemPasses == 1 && s.tiles == 1);
+    // (the bins of the window's grid the area (300, 1000)-(399, 1049) touches)
+    CHECK(cb->counts().gmemPasses == 1 && s.tiles == (399 / whole.binW - 300 / whole.binW + 1) * (1049 / whole.binH - 1000 / whole.binH + 1));
     const auto gd = r.fake->memory(s.lastDraw.fsTexConst, 64);
     uint32_t gw[16] = {};
     if (gd.size() == 64) memcpy(gw, gd.data(), 64);
@@ -5845,6 +5852,40 @@ TEST(each_profiled_pass_says_why_it_was_drawn_in_sysmem) {
         CHECK(std::string(cb->passSysmemWhy(0)).find("GMEM off") != std::string::npos);
     }
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// The bins are the window's grid, from its origin, whatever part of the window a pass draws: that is where the VSC bins
+// a draw. A binned pass over a corner is drawn in the grid's bins there, each given the streams of the bin it is; laid
+// from the corner itself (the twin) a tile is given the streams of another rectangle than the one it draws.
+TEST(bins_laid_from_the_render_areas_corner_are_not_the_vscs) {
+    for (int twin = 0; twin < 2; twin++) {
+        Rig r;
+        auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        fillCoords(*t);
+        RenderPass a;
+        a.color0 = t.get();
+        render::Options o;
+        o.gmemBinning = true;
+        o.gmemTwin = twin ? 5 : 0;
+        auto cb = r.queue->commandBuffer();
+        Draw d1 = wholeDraw(3), d2 = wholeDraw(3);
+        d1.viewport = Viewport{300, 1000, 100, 50, 0, 1};
+        d2.viewport = Viewport{350, 1010, 100, 50, 0, 1};
+        CHECK(cb->draw(flatProgram(), a, d1, Bindings{}, Bindings{}, o));
+        CHECK(cb->draw(flatProgram(), a, d2, Bindings{}, Bindings{}, o));
+        cb->commit();
+        cb->waitUntilCompleted();
+        const auto s = r.fake->stats();
+        if (twin == 0) {
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            CHECK_EQ(s.faults, 0u);
+            if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+            CHECK_EQ(coordsWrong(*t), 0u);
+        } else {
+            CHECK(cb->status() == CommandBuffer::kError);
+            CHECK(s.lastFault.find("the VSC bins from the window's origin") != std::string::npos);
+        }
+    }
 }
 
 // The command processor's part, on a stream mutated by hand (the flat draw in sysmem): a group for the sysmem pass

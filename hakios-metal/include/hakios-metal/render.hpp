@@ -479,6 +479,8 @@ struct Options {
                                     // buffer's sizes page at kVscTraceAt, so that a hang still says which packet it stopped at)
     bool gmemTileWfi = true;     // a CP_WAIT_FOR_IDLE after each tile's stores (turnip's tu6_render_tile): off only to measure it
     bool gmemLoad = true;        // each tile's load from memory (off: the fake's twin, whose stores then show GMEM's own contents)
+    uint8_t gmemTwin = 0;        // (the fake's twins of a binned pass: 5 the bins from the render area's corner instead of the
+                                 // window's origin; 0 the stream as it is meant)
     uint8_t rotate2d = 0;        // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
 };
@@ -498,10 +500,13 @@ struct GmemPlan {
     // the CCU's colour cache shared out by bytes a pixel. Fixed when the pass opens -- the draws are encoded with it --
     // while the bins' size waits for the render area at its end (gmemTiles).
     uint32_t base[kMaxColorOutputs] = {}, room[kMaxColorOutputs] = {}, bpp[kMaxColorOutputs] = {};
-    // the render area, X0 Y0 X1 Y1 inclusive (what the draws can touch), the grid's corner (aligned to the tile
-    // alignment) and the bins over it
+    // the render area, X0 Y0 X1 Y1 inclusive (what the draws can touch), the corner of the first bin drawn (a
+    // multiple of the bin's size: the bins lie where the VSC bins, from the window's origin) and the bins over the area
     uint32_t area[4] = {}, x0 = 0, y0 = 0;
     uint32_t binW = 0, binH = 0, cols = 0, rows = 0;
+    // the window's whole grid, which the binning pass bins over whatever part of it is drawn (the pipes and each
+    // tile's place in its pipe are the grid's)
+    uint32_t gridCols = 0, gridRows = 0;
     uint32_t tiles() const { return cols * rows; }
 };
 // whether PASS can be drawn in GMEM and how: its colour attachments the window's size, linear, single-sampled, 4 or 8
@@ -509,11 +514,16 @@ struct GmemPlan {
 // holds every attachment's pixels (CoreAnimation's main pass draws into two screens at once). False with *why
 // otherwise (the pass then runs in sysmem, as before).
 bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why);
-// PLAN's bins over the render area AREA (X0 Y0 X1 Y1 inclusive, inside the window): turnip's tiling of a render area
-// (tu_tiling_config_update_tile_layout) -- the grid's corner at the area's aligned down, the bins as wide as the plan's
-// (gmemPlan picks the width; a fetch's descriptor holds it), as tall as every attachment's room holds. A pass whose draws touch a corner of the screen is drawn in the
-// tiles over that corner, and loads and stores no more. False when no bin fits (the plan unchanged).
-bool gmemTiles(GmemPlan* plan, const uint32_t area[4]);
+// PLAN's bins over the render area AREA (X0 Y0 X1 Y1 inclusive, inside the window): the bins of the plan's own grid
+// that the area touches. The grid is the window's, from its origin, as both of Mesa's drivers have it on this family
+// (freedreno_gmem.c: "on a6xx, the max-scissor-rect is handled in fd6_gmem, and we just rely on CP_COND_EXEC to skip
+// bins with no geometry", minx = miny = 0; turnip's tiles are tile0's multiples): the VSC bins a draw by its place in
+// the window and has no register for a grid that starts elsewhere, so a tile laid from the area's corner was given the
+// visibility of another rectangle than the one it drew. A pass whose draws touch a corner of the screen is drawn in
+// the bins over that corner -- up to four where one laid on the corner did -- and its loads and stores are still the
+// area's granules alone (encodeGmem's blit scissor). False when no bin fits (the plan unchanged).
+// (AT_AREA: Options::gmemTwin 5, the grid from the area's corner as it used to be.)
+bool gmemTiles(GmemPlan* plan, const uint32_t area[4], bool atArea = false);
 // the pixels a draw can touch, X0 Y0 X1 Y1 inclusive: its viewport clamped to the window, within its scissor (both as
 // encodeInPass writes them); false for a draw it would refuse for them
 bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]);
