@@ -1616,10 +1616,10 @@ texture_type_name(unsigned type)
  * so the translation is the identity on memory and there is nothing in it to get subtly
  * wrong.
  *
- * What is deliberately absent is everything packed into a 32-bit word -- RGB10A2Unorm,
- * RG11B10Float, RGB9E5, the XR formats. Those names order their channels by one
- * convention and Gallium's by another, and a mistake there does not fail: it shifts a
- * channel by two bits in a texture that still looks like a texture. docs/air.md has
+ * What was deliberately absent is everything packed into a 32-bit word -- RGB10A2Unorm,
+ * RG11B10Float, RGB9E5 -- and the XR formats still are. A mistake there does not fail: it
+ * shifts a channel by two bits in a texture that still looks like a texture; the 32-bit
+ * ones are served now on the reading packed32_served gives, behind a switch. docs/air.md has
  * both shapes of that already -- zero printed as clamp_to_border by one of Apple's own
  * binaries while it means clamp_to_zero (3.3), and three shaders that "passed" against
  * a 2D texture bound where they sample a 3D one (5). A declined format is one sentence;
@@ -1706,6 +1706,13 @@ static const struct rwa_pixel_format rwa_pixel_formats[] = {
    {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
    {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
    {  70, "MTLPixelFormatRGBA8Unorm",      PIPE_FORMAT_R8G8B8A8_UNORM },
+   /* The packed 32-bit ones, first channel at the least significant bits (packed32_served):
+    * DXGI's names and order, which Gallium's are too */
+   {  90, "MTLPixelFormatRGB10A2Unorm",    PIPE_FORMAT_R10G10B10A2_UNORM },
+   {  91, "MTLPixelFormatRGB10A2Uint",     PIPE_FORMAT_R10G10B10A2_UINT },
+   {  92, "MTLPixelFormatRG11B10Float",    PIPE_FORMAT_R11G11B10_FLOAT },
+   {  93, "MTLPixelFormatRGB9E5Float",     PIPE_FORMAT_R9G9B9E5_FLOAT },
+   {  94, "MTLPixelFormatBGR10A2Unorm",    PIPE_FORMAT_B10G10R10A2_UNORM },
    {  71, "MTLPixelFormatRGBA8Unorm_sRGB", PIPE_FORMAT_R8G8B8A8_SRGB },
    {  72, "MTLPixelFormatRGBA8Snorm",      PIPE_FORMAT_R8G8B8A8_SNORM },
    {  73, "MTLPixelFormatRGBA8Uint",       PIPE_FORMAT_R8G8B8A8_UINT },
@@ -1816,10 +1823,34 @@ packed16_served(void)
    return on != 0;
 }
 
+/*
+ * The packed 32-bit formats (90-94), by a reading and not a boot: their names are DXGI's --
+ * R10G10B10A2, R11G11B10_FLOAT, R9G9B9E5_SHAREDEXP, B10G10R10A2 -- and DXGI's packed names
+ * put the first channel at the least significant bits, which is Gallium's rule as well
+ * (u_format.yaml), so the two names are the same letters in the same order. This frontend
+ * already reads Apple's shaders that way: air.unpack.unorm.rgb10a2 takes red from bits 0-9,
+ * and the shaders that call it are compared with Apple's renders. The 16-bit four go the
+ * other way round (above), and that was a boot's verdict; so this is a switch as theirs is,
+ * `RWA_PACKED32=0` declining the five again, until a screen says which it is. They were
+ * declined outright before, and the home screen's icon service asks for RGB10A2Unorm.
+ */
+static bool
+packed32_served(void)
+{
+   static int on = -1;
+   if (on < 0) {
+      const char *v = getenv("RWA_PACKED32");
+      on = !(v && *v == '0');
+   }
+   return on != 0;
+}
+
 static const struct rwa_pixel_format *
 pixel_format(unsigned mtl)
 {
    if (mtl >= 40 && mtl <= 43 && !packed16_served())
+      return NULL;
+   if (mtl >= 90 && mtl <= 94 && !packed32_served())
       return NULL;
    for (unsigned i = 0; i < ARRAY_SIZE(rwa_pixel_formats); i++)
       if (rwa_pixel_formats[i].mtl == mtl)
@@ -1848,8 +1879,8 @@ pixel_format_refusal(unsigned f)
              "public header names is one whose layout nothing here can read";
    if (f >= 90 && f <= 94)
       return "one of Metal's formats packed into a 32-bit word (RGB10A2, RG11B10, RGB9E5, "
-             "BGR10A2), whose field order and bias this library will not guess: an error of "
-             "two bits in a channel is a picture, not a failure";
+             "BGR10A2), which this library serves by default and RWA_PACKED32=0 has taken "
+             "out of the picture";
    if (f >= 130 && f <= 153)
       return "one of the BC compressed formats, whose texels come in blocks this library "
              "cannot make and whose rows are not rows of pixels";
