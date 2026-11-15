@@ -544,7 +544,12 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
    } else if (!strcmp(op, "popcount")) {
       r = nir_bit_count(&c->b, a[0]);
    } else if (!strcmp(op, "clz")) {
-      r = nir_uclz(&c->b, a[0]);
+      /* through the highest set bit, which ir3 has: it has no uclz ("Unhandled ALU op: uclz",
+       * Recon3D's ReduceLightChangePerThreadgroup). (width - 1) - msb, and msb is -1 for zero,
+       * so a zero counts the whole width, as Metal's clz does, at the argument's own width */
+      unsigned w = a[0]->bit_size;
+      nir_def *msb = nir_ufind_msb(&c->b, w < 32 ? nir_u2u32(&c->b, a[0]) : a[0]);
+      r = nir_u2uN(&c->b, nir_isub(&c->b, nir_imm_int(&c->b, (int)w - 1), msb), w);
    } else if (!strcmp(op, "ctz")) {
       /* Metal's ctz returns the type's width when the value is zero */
       nir_def *lsb = nir_find_lsb(&c->b, a[0]);
