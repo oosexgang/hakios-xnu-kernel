@@ -695,6 +695,7 @@ static struct {
 	void (*threadgroup_memory)(struct rwa_compute *, unsigned);
 	void (*threadgroup_memory_at)(struct rwa_compute *, unsigned, unsigned);
 	void (*grid_threads)(struct rwa_compute *, const unsigned[3]);
+	unsigned (*render_patch_vertices)(const struct rwa_render *);
 	int (*clear_pass)(struct rwa_texture *const *, unsigned, unsigned, const float (*)[4],
 			  struct rwa_texture *, const float *, const unsigned *, char *, size_t);
 	int (*clear_pass_levels)(struct rwa_texture *const *, const unsigned *, const unsigned *, unsigned,
@@ -780,6 +781,7 @@ mesa_available(void)
 	*(void **)&mesa.threadgroup_memory = dlsym(mesa.handle, "rwa_threadgroup_memory");
 	*(void **)&mesa.threadgroup_memory_at = dlsym(mesa.handle, "rwa_threadgroup_memory_at");
 	*(void **)&mesa.grid_threads = dlsym(mesa.handle, "rwa_grid_threads");
+	*(void **)&mesa.render_patch_vertices = dlsym(mesa.handle, "rwa_render_patch_vertices");
 	*(void **)&mesa.clear_pass = dlsym(mesa.handle, "rwa_clear_pass");
 	*(void **)&mesa.clear_pass_levels = dlsym(mesa.handle, "rwa_clear_pass_levels");
 	*(void **)&mesa.texture_copy = dlsym(mesa.handle, "rwa_texture_copy");
@@ -6363,14 +6365,21 @@ rw_bisect_skipped_group(void)
 
 /* Refused, each with its name in the log once.
  *
- * Tessellation: the library has no tessellator, so a patch draw records nothing. Said out
- * loud because a draw that silently does nothing is the one failure this driver has already
- * paid for twice (docs/metal.md 10.21, 10.26). */
+ * Tessellation, in the forms the library cannot draw: it has no tessellator, so a patch is a
+ * grid its post-tessellation vertex function is run over (rwa_render_patch_vertices), and a
+ * patch draw it cannot make that way records nothing. Said out loud because a draw that
+ * silently does nothing is the one failure this driver has already paid for twice
+ * (docs/metal.md 10.21, 10.26). */
 - (void)hakiosNoTessellation
 {
-	RW_ONCE("tessellation is not implemented; this patch draw records "
+	RW_ONCE("this form of tessellation is not implemented; this patch draw records "
 		"nothing\n");
 }
+
+/* A patch draw, as the library draws one: each patch an instance of a grid of triangles, the
+ * first patch the base instance, so [[patch_id]] counts from patchStart. A patch index buffer
+ * (which patch an instance is) and more than one instance of the patches are not drawn: both
+ * would need the patch count in the shader to tell [[patch_id]] from [[instance_id]]. */
 - (void)drawPatches:(NSUInteger)controlPoints
 	 patchStart:(NSUInteger)start
 	 patchCount:(NSUInteger)count
@@ -6379,9 +6388,29 @@ patchIndexBufferOffset:(NSUInteger)offset
       instanceCount:(NSUInteger)instances
        baseInstance:(NSUInteger)baseInstance
 {
-	(void)controlPoints; (void)start; (void)count; (void)indexBuffer; (void)offset;
-	(void)instances; (void)baseInstance;
-	[self hakiosNoTessellation];
+	(void)controlPoints; (void)offset; (void)baseInstance;
+	unsigned vertices = 0;
+
+	if (mesa.render_patch_vertices != NULL && _pipeline != nil) {
+		vertices = MESA(render_patch_vertices, [_pipeline render]);
+	}
+	if (vertices == 0) {
+		RW_ONCE("a patch draw with a pipeline whose vertex function is not a "
+			"post-tessellation one (or a library that draws no patches) records "
+			"nothing\n");
+		return;
+	}
+	if (indexBuffer != nil || instances > 1) {
+		RW_ONCE("a patch draw with %s records nothing: the patches are drawn as "
+			"instances, and that leaves no instance to tell apart\n",
+			indexBuffer != nil ? "a patch index buffer" : "more than one instance");
+		return;
+	}
+	if (count == 0) {
+		return;
+	}
+	[self recordDraw:MTLPrimitiveTypeTriangle vertexStart:0 count:vertices indexBuffer:nil
+	       indexType:0 indexOffset:0 baseVertex:0 instanceCount:count baseInstance:start];
 }
 - (void)drawPatches:(NSUInteger)controlPoints
    patchIndexBuffer:(id)indexBuffer
@@ -6420,17 +6449,19 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 	(void)controlPointOffset; (void)indirectBuffer; (void)indirectOffset;
 	[self hakiosNoTessellation];
 }
+/* The factors a tessellation kernel wrote, and their scale: taken and not read, every patch
+ * being drawn at the library's one level (RWA_TESS_LEVEL). Said once, because an application
+ * that varies them per patch gets the same subdivision everywhere. */
 - (void)setTessellationFactorBuffer:(id)buffer
 			     offset:(NSUInteger)offset
 		     instanceStride:(NSUInteger)stride
 {
 	(void)buffer; (void)offset; (void)stride;
-	[self hakiosNoTessellation];
+	RW_ONCE("tessellation factors are not read: every patch is drawn at one level\n");
 }
 - (void)setTessellationFactorScale:(float)scale
 {
 	(void)scale;
-	[self hakiosNoTessellation];
 }
 
 /* Indirect command buffers: a buffer of commands the GPU reads for itself. The device
