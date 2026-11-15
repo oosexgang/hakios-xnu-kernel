@@ -334,6 +334,13 @@ struct rwa_compute {
    void *cso;
    unsigned cso_block[3];
    unsigned cso_tg_len[32];       /* the lengths its threadgroup bases were folded from */
+   bool cso_guarded;              /* ... and whether it is the partial-group variant */
+
+   /* the threads the next dispatch asks for (rwa_grid_threads), zero for whole groups; a
+    * count the groups do not divide is run by the variant that guards its body on it, which
+    * reads the count from the constant buffer at grid_slot */
+   unsigned grid_threads[3];
+   unsigned grid_words[4];        /* ... as the constant buffer that hands them over */
 };
 
 /* The argument-buffer recorder, whose own block is further down beside the encode calls
@@ -857,11 +864,61 @@ fold_threadgroup_bases(nir_shader *nir, const unsigned len[32])
             nir_metadata_control_flow, &tb);
 }
 
+/* Metal's [[threads_per_grid]] (nir_air.h, AIR_GRID_THREADS_INPUT): for a dispatch of whole
+ * groups, the groups times their size; for one whose last groups are partial, the count it asked
+ * for, read from the constant buffer at `slot` -- the one channel into a running kernel that
+ * both freedreno and softpipe have, neither taking Gallium's last_block nor a kernel input. */
+static bool
+lower_grid_threads(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   const int *slot = data;
+   if (intr->intrinsic != nir_intrinsic_load_kernel_input ||
+       nir_intrinsic_base(intr) != AIR_GRID_THREADS_INPUT)
+      return false;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def *v = *slot < 0
+      ? nir_imul(b, nir_load_num_workgroups(b), nir_load_workgroup_size(b))
+      : nir_load_ubo(b, 3, 32, nir_imm_int(b, *slot), nir_imm_int(b, 0),
+                     .align_mul = 16, .align_offset = 0, .range_base = 0, .range = 12);
+   nir_def_replace(&intr->def, v);
+   return true;
+}
+
+static void
+fold_grid_threads(nir_shader *nir, int slot)
+{
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_grid_threads,
+            nir_metadata_control_flow, &slot);
+}
+
+/* The partial-group variant: the whole of the kernel behind `thread_position_in_grid <
+ * threads`, which is what Metal's non-uniform threadgroups are -- the threads past the edge do
+ * not exist, so they read nothing and write nothing. A barrier then sits in divergent control
+ * flow, where the threads that left are the ones that would not have been there at all. */
+static void
+guard_grid(nir_shader *nir, unsigned slot)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   nir_cf_list body;
+   nir_cf_extract(&body, nir_before_impl(impl), nir_after_impl(impl));
+   nir_builder b = nir_builder_at(nir_before_impl(impl));
+   nir_def *limit = nir_load_ubo(&b, 3, 32, nir_imm_int(&b, slot), nir_imm_int(&b, 0),
+                                 .align_mul = 16, .align_offset = 0, .range_base = 0,
+                                 .range = 12);
+   nir_def *in = nir_ball(&b, nir_ult(&b, nir_load_global_invocation_id(&b, 32), limit));
+   nir_push_if(&b, in);
+   nir_cf_reinsert(&body, b.cursor);
+   nir_pop_if(&b, NULL);
+   nir_progress(true, impl, nir_metadata_none);
+   nir->info.num_ubos = MAX2(nir->info.num_ubos, slot + 1);
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
    /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
    fold_threadgroup_bases(nir, NULL);
+   fold_grid_threads(nir, -1);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
       NIR_PASS(_, nir, widen_16bit);
       /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
@@ -3849,15 +3906,17 @@ rwa_compute_destroy(struct rwa_compute *compute)
  * the next size.
  */
 static void *
-compute_state_for(struct rwa_compute *compute, const unsigned block[3],
+compute_state_for(struct rwa_compute *compute, const unsigned block[3], int grid_slot,
                   char *why, size_t why_size)
 {
    struct rwa_device *device = compute->device;
+   bool guarded = grid_slot >= 0;
 
    /* the threadgroup bases matter only to a kernel with a buffer past index 0 */
    bool bases = compute->info.threadgroup_buffers & ~1u;
    if (compute->cso && compute->cso_block[0] == block[0] &&
        compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2] &&
+       compute->cso_guarded == guarded &&
        (!bases || !memcmp(compute->cso_tg_len, compute->threadgroup_len,
                           sizeof(compute->threadgroup_len))))
       return compute->cso;
@@ -3877,6 +3936,9 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3],
    cs->info.workgroup_size[2] = block[2];
    cs->info.workgroup_size_variable = false;
    fold_threadgroup_bases(cs, compute->threadgroup_len);
+   fold_grid_threads(cs, grid_slot);
+   if (guarded)
+      guard_grid(cs, (unsigned)grid_slot);
 
    finalize_for_gallium(cs, device->screen);
 
@@ -3919,6 +3981,7 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3],
    compute->cso_block[1] = block[1];
    compute->cso_block[2] = block[2];
    memcpy(compute->cso_tg_len, compute->threadgroup_len, sizeof(compute->threadgroup_len));
+   compute->cso_guarded = guarded;
    return cso;
 }
 
@@ -5157,6 +5220,13 @@ rwa_threadgroup_memory(struct rwa_compute *compute, unsigned bytes)
 }
 
 void
+rwa_grid_threads(struct rwa_compute *compute, const unsigned threads[3])
+{
+   for (unsigned i = 0; i < 3; i++)
+      compute->grid_threads[i] = threads ? threads[i] : 0;
+}
+
+void
 rwa_threadgroup_memory_at(struct rwa_compute *compute, unsigned index, unsigned bytes)
 {
    if (index < 32)
@@ -5242,7 +5312,39 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
                       name, why, why_size) != 0)
       return -1;
 
-   void *cso = compute_state_for(compute, group_size, why, why_size);
+   /* A dispatch of threads the groups do not divide (Metal's -dispatchThreads:): the
+    * partial-group variant, given the count in a constant buffer at the first index past
+    * every one the kernel binds -- which ir3 has sixteen of. */
+   int grid_slot = -1;
+   bool partial = false;
+   for (unsigned i = 0; i < 3; i++)
+      if (compute->grid_threads[i] && compute->grid_threads[i] != groups[i] * group_size[i])
+         partial = true;
+   if (partial) {
+      for (unsigned i = 0; i < 3; i++) {
+         if (compute->grid_threads[i] == 0 || compute->grid_threads[i] > groups[i] * group_size[i] ||
+             compute->grid_threads[i] <= (groups[i] - 1) * group_size[i]) {
+            say(why, why_size, "%ux%ux%u threads are not covered by %ux%ux%u groups of "
+                               "%ux%ux%u with the last one partial", compute->grid_threads[0],
+                compute->grid_threads[1], compute->grid_threads[2], groups[0], groups[1],
+                groups[2], group_size[0], group_size[1], group_size[2]);
+            return -1;
+         }
+      }
+      unsigned slot = 0;
+      for (unsigned r = 0; r < compute->info.num_resources; r++)
+         if (compute->info.resources[r].kind == AIR_RESOURCE_CONSTANT_BUFFER)
+            slot = MAX2(slot, compute->info.resources[r].index + 1);
+      if (slot >= 16) {
+         say(why, why_size, "%s binds constant buffers up to index %u, which leaves none of "
+                            "this GPU's sixteen to give it the threads of a dispatch whose "
+                            "last groups are partial", name, slot - 1);
+         return -1;
+      }
+      grid_slot = (int)slot;
+   }
+
+   void *cso = compute_state_for(compute, group_size, grid_slot, why, why_size);
    if (!cso)
       return -1;
    pipe->bind_compute_state(pipe, cso);
@@ -5257,6 +5359,17 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
                   compute->compare_sampler, NULL,
                   bindings, table, table_count, name, &bound, why, why_size) != 0)
       return -1;
+
+   if (grid_slot >= 0) {
+      /* (kept with the pipeline: a driver may read a user buffer when it emits the
+       * dispatch rather than when it is set) */
+      memcpy(compute->grid_words, compute->grid_threads, sizeof(compute->grid_threads));
+      compute->grid_words[3] = 0;
+      struct pipe_constant_buffer cb = {
+         .user_buffer = compute->grid_words, .buffer_size = 16,
+      };
+      pipe->set_constant_buffer(pipe, MESA_SHADER_COMPUTE, (unsigned)grid_slot, &cb);
+   }
 
    struct pipe_grid_info grid = {
       .work_dim = 3,
@@ -9050,6 +9163,14 @@ cost_compile(struct ir3_compiler *compiler, nir_shader *nir, struct ir3_shader *
    struct pipe_screen screen = { .caps = { .fs_position_is_sysval = true }, .get_name = cost_screen_name };
    double t1 = cost_now_ms();
    nir_shader *clone = nir_shader_clone(NULL, nir);
+   /* RWA_COST_PARTIAL=1: a kernel as the partial-group variant a -dispatchThreads: of a count
+    * its groups do not divide runs (compute_state_for), its threads read from constant buffer
+    * 15, so that what ir3 makes of the guard is measured too */
+   const char *partial = getenv("RWA_COST_PARTIAL");
+   if (partial && *partial == '1' && clone->info.stage == MESA_SHADER_COMPUTE) {
+      fold_grid_threads(clone, 15);
+      guard_grid(clone, 15);
+   }
    finalize_for_gallium(clone, &screen);
    ir3_nir_lower_io_to_bindless(clone);
    double t2 = cost_now_ms();

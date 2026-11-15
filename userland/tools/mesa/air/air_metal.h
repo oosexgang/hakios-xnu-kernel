@@ -615,6 +615,11 @@ void rwa_threadgroup_memory(struct rwa_compute *compute, unsigned bytes);
 /* ... and at any index: a kernel's buffer n starts where buffers 0..n-1 end, each rounded up
  * to 16 bytes, so the lengths of all of them are what its code is compiled with. */
 void rwa_threadgroup_memory_at(struct rwa_compute *compute, unsigned index, unsigned bytes);
+/* The threads the dispatches that follow ask for, Metal's -dispatchThreads: -- NULL or zeros
+ * for whole groups. When the groups given do not divide them, the last groups are partial: the
+ * kernel runs behind `thread_position_in_grid < threads`, and [[threads_per_grid]] is the
+ * count given and not the groups times their size. */
+void rwa_grid_threads(struct rwa_compute *compute, const unsigned threads[3]);
 
 /* Metal's blit encoder (air_metal.c): copies between textures and buffers, fills, mipmaps. */
 int rwa_texture_copy(struct rwa_texture *src, unsigned src_slice, unsigned src_level,
