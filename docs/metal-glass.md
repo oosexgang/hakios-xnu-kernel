@@ -279,7 +279,15 @@ commit of its own:
   nothing reads are not declared at all, the struct type is the parameter's pointee (`global_constants.634`),
   and padding inside a packed struct is passed over -- an array of bytes, or since 15 November a lone `i8`,
   which is how clang pads the byte between a bool and a half (the Ocean and clouds wallpapers'
-  `external_entity_constants`; `argbuf_halfpad.ll`). VFX: 453 -> 571 of 651.
+  `external_entity_constants`; `argbuf_halfpad.ll`). VFX: 453 -> 571 of 651. The four fragment shaders of
+  `DynamicBackgroundPosterExtension.appex` (Ocean twice, clouds, Glitter) all compile for the Adreno 642L once
+  the function VFX links into them at run time is linked here too:
+
+      tools/air/ir3sweep.c built as tools/air/ir3sweep.sh builds it, then
+      ir3sweep -l 'vfx::api::applySystemTreatments=VFX/vfx::api::applySystemTreatments.bc' 0x06060010 \
+               'Poster/vfx_custom_shader_Ocean_shader_31::vfx_fragment.bc=vfx_custom_shader_Ocean_shader_31::vfx_fragment'
+
+  (each `.bc` taken out of its `default.metallib` by `tools/metallib.py dump`).
 - **Threadgroup buffers past index 0** (VFX's merge sorts, CoreRE): buffer n starts where 0..n-1 end, and only
   the dispatch knows where, so the base is folded in per dispatch from the lengths
   (`rwa_threadgroup_memory_at`, `userland/tools/air/tgcheck.sh`).
