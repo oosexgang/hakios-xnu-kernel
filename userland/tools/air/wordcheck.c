@@ -1,6 +1,7 @@
 /*
  * wordcheck: one kernel of a .bc dispatched through libhakios-air on softpipe, buffer 0 a zeroed
- * 256 bytes, and its first words compared with the ones given (tools/air/wordcheck.sh):
+ * 256 bytes and buffer 1 sixteen words 1000 + i, and buffer 0's first words compared with the ones
+ * given (tools/air/wordcheck.sh):
  *
  *     wordcheck FILE.bc ENTRY THREADS WORD...
  *
@@ -25,8 +26,12 @@ int main(int argc, char **argv) {
 	if (!c) { printf("%s: %s\n", argv[2], why); return 1; }
 	struct rwa_buffer *b = rwa_buffer_create(d, 256, why, sizeof(why));
 	memset(rwa_buffer_map(b), 0, 256);
-	struct rwa_buffer *bufs[1] = { b };
-	struct rwa_bindings bind = { .buffers = bufs, .buffer_count = 1 };
+	struct rwa_buffer *in = rwa_buffer_create(d, 64, why, sizeof(why));
+	unsigned *words = rwa_buffer_map(in);
+	for (unsigned i = 0; i < 16; i++)
+		words[i] = 1000 + i;
+	struct rwa_buffer *bufs[2] = { b, in };
+	struct rwa_bindings bind = { .buffers = bufs, .buffer_count = 2 };
 	unsigned g[3] = { 1, 1, 1 }, s[3] = { (unsigned)atoi(argv[3]), 1, 1 };
 	if (rwa_dispatch(c, &bind, g, s, why, sizeof(why))) { printf("%s: %s\n", argv[2], why); return 1; }
 	const unsigned *o = rwa_buffer_map(b);
