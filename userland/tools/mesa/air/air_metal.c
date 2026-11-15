@@ -3955,10 +3955,16 @@ rwa_compute_create(struct rwa_device *device, const void *bitcode, size_t size,
     * frontend does not implement, and a driver asked to make a compute pipeline out of
     * one should be told that rather than handed a wrapper.
     */
+   /* and what the pipeline links (MTLComputePipelineDescriptor.linkedFunctions: CoreImage's
+    * ubershader calls them out of a visible function table), as a render pipeline's are */
+   struct air_linked_function *linked;
+   unsigned num_linked = module_linked(compute->mem_ctx, bitcode, &linked);
    const struct air_to_nir_options options = {
       .constants = constants,
       .num_constants = num_constants,
       .stage_in = module_stage_in(compute->mem_ctx, bitcode),
+      .linked = linked,
+      .num_linked = num_linked,
    };
    const char *error;
    compute->nir = air_to_nir(compute->mem_ctx, bitcode, size, entry, &options,
