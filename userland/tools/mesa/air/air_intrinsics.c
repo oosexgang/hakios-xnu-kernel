@@ -842,10 +842,48 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
     * can make a wrong compare-exchange show, and an atomic that is only
     * compiled is the one kind this project will not claim.
     */
-   if (!strcmp(op, "cmpxchg"))
-      return air_error(c, "intrinsic: air.atomic.%s.cmpxchg -- compare-exchange, whose "
-                          "result is the old value and whose `expected` is a pointer "
-                          "this does not write back yet", where);
+   /* ... and now taken, with tools/air/atomiccheck.py's third kernel to show it (a sum built by
+    * a compare-exchange loop in every thread, which a lost or doubled exchange cannot add up
+    * to). Darwin 27's form has one more i32 than the one above -- MLCompute's
+    *   i32 air.atomic.global.cmpxchg.weak.i32(ptr as(1), ptr, i32, i32 0, i32 0, i32 2, i32 0, i1)
+    * -- and both have the two orders at operands 4 and 5, which must be relaxed as for the rest. */
+   if (!strcmp(op, "cmpxchg")) {
+      uint64_t so, fo;
+      if (in->num_operands < 7 || !air_const_uint(in->operands[4], &so) ||
+          !air_const_uint(in->operands[5], &fo))
+         return air_error(c, "intrinsic: air.atomic.%s.cmpxchg whose memory orders are not "
+                             "constants", where);
+      if (so != 0 || fo != 0)
+         return air_error(c, "intrinsic: air.atomic.%s.cmpxchg with memory orders %u and %u; "
+                             "only relaxed (0) is translated", where, (unsigned)so, (unsigned)fo);
+      struct air_val *ev = air_get(c, in->operands[2]);
+      nir_def *desired = air_get_ssa(c, in->operands[3]);
+      if (!ev || !desired)
+         return false;
+      if (ev->kind != AIR_VAL_PTR)
+         return air_error(c, "intrinsic: air.atomic.%s.cmpxchg whose expected value is not "
+                             "behind a pointer", where);
+      const struct air_type *vt = in->operands[3]->type;
+      nir_def *expected = air_load_ptr(c, ev->ptr, vt, 4);
+      if (!expected)
+         return false;
+      nir_def *was;
+      if (shared) {
+         was = nir_shared_atomic_swap(&c->b, desired->bit_size, off, expected, desired,
+                                      .atomic_op = nir_atomic_op_cmpxchg);
+      } else if (p.class == AIR_PTR_SSBO) {
+         was = nir_ssbo_atomic_swap(&c->b, desired->bit_size, nir_imm_int(&c->b, p.binding), off,
+                                    expected, desired, .atomic_op = nir_atomic_op_cmpxchg);
+      } else {
+         return air_error(c, "intrinsic: an atomic on a pointer that is not a buffer");
+      }
+      /* what was there goes back through `expected`; on success that is what it already held */
+      if (!air_store_ptr(c, ev->ptr, was, 4))
+         return false;
+      if (in->base.type && in->base.type->kind != AIR_TYPE_VOID)
+         air_set(c, &in->base, air_val_ssa(c, was));
+      return true;
+   }
 
    /* The memory order, which this lowering is right for exactly one value of.
     * That argument is Metal's memory_order, and every atomic in the corpus

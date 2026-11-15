@@ -182,6 +182,81 @@ define void @local_atomics(ptr addrspace(1) %0, ptr addrspace(1) %1, i32 %2) loc
 """
 
 
+# Compare-exchange, the one atomic that writes back through a pointer: every thread adds
+# (its index + 1) to one word with the weak-CAS retry loop Metal's compiler emits, in Darwin 27's
+# own declaration of it (MLCompute's), and stores the value its successful exchange replaced.
+#
+#   the word must end at 1 + 2 + ... + 16 = 136: a lost exchange leaves less, a doubled one more;
+#   sorted, the replaced values must be a chain 0, a, a+b, ... in which each is the one before plus
+#   that thread's increment -- the predecessor sums, which no two threads can share;
+#   and a thread whose first try failed only got out of its loop because the value written back
+#   through `expected` was the word's -- on softpipe, which runs a group of four lane by lane,
+#   three of every four first tries fail, so the write-back is under test.
+CAS_KERNEL = r"""source_filename = "cas"
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
+target triple = "air64-apple-darwin16.5.0"
+
+declare i32 @air.atomic.global.cmpxchg.weak.i32(ptr addrspace(1), ptr, i32, i32, i32, i32, i32, i1) local_unnamed_addr
+
+define void @cas(ptr addrspace(1) %0, ptr addrspace(1) %1, i32 %2) local_unnamed_addr {
+entry:
+  %e = alloca i32, align 4
+  %add = add i32 %2, 1
+  %first = load i32, ptr addrspace(1) %0, align 4
+  store i32 %first, ptr %e, align 4
+  br label %loop
+
+loop:
+  %cur = load i32, ptr %e, align 4
+  %new = add i32 %cur, %add
+  %was = call i32 @air.atomic.global.cmpxchg.weak.i32(ptr addrspace(1) %0, ptr %e, i32 %new, i32 0, i32 0, i32 2, i32 0, i1 true)
+  %ok = icmp eq i32 %cur, %was
+  br i1 %ok, label %done, label %loop
+
+done:
+  %w = zext i32 %2 to i64
+  %p1 = getelementptr inbounds i32, ptr addrspace(1) %1, i64 %w
+  store i32 %was, ptr addrspace(1) %p1, align 4
+  ret void
+}
+
+!llvm.module.flags = !{!0}
+!air.version = !{!1}
+!air.language_version = !{!2}
+!air.kernel = !{!3}
+
+!0 = !{i32 1, !"wchar_size", i32 4}
+!1 = !{i32 2, i32 5, i32 0}
+!2 = !{!"Metal", i32 3, i32 0, i32 0}
+!3 = !{ptr @cas, !4, !5}
+!4 = !{}
+!5 = !{!6, !7, !8}
+!6 = !{i32 0, !"air.buffer", !"air.buffer_size", i32 64, !"air.location_index", i32 0, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"int", !"air.arg_name", !"total"}
+!7 = !{i32 1, !"air.buffer", !"air.buffer_size", i32 64, !"air.location_index", i32 1, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"int", !"air.arg_name", !"replaced"}
+!8 = !{i32 2, !"air.thread_index_in_threadgroup", !"air.arg_type_name", !"uint", !"air.arg_name", !"tid"}
+"""
+
+
+def check_cas(d):
+    """Compare-exchange. Returns a list of complaints."""
+    bufs, screen, out = run_kernel(d, "cas", CAS_KERNEL, b"\0" * 64)
+    if bufs is None or 0 not in bufs or 1 not in bufs:
+        tail = "\n      ".join((out or "").strip().splitlines()[-5:])
+        return ["the compare-exchange kernel did not read both buffers back:\n      " + tail]
+    bad = []
+    total = THREADS * (THREADS + 1) // 2
+    if bufs[0][0] != total:
+        bad.append("the compare-exchange sum is %d, want %d" % (bufs[0][0], total))
+    chain = sorted((bufs[1][i], i + 1) for i in range(THREADS))
+    at = 0
+    for was, inc in chain:
+        if was != at:
+            bad.append("a compare-exchange replaced %d where the chain was at %d" % (was, at))
+            break
+        at = was + inc
+    return bad
+
+
 def initial_bytes():
     """What both buffers start as. Every word is chosen, none is left to the
     harness's pattern, so a slot nothing wrote reads as something invalid
@@ -326,6 +401,7 @@ def main(argv):
 
     local_bad = check_local(d)
     bad += local_bad
+    bad += check_cas(d)
 
     for line in bad:
         print("WRONG   " + line)
@@ -333,8 +409,9 @@ def main(argv):
     if bad:
         print("atomiccheck: %d of the checks failed on %s" % (len(bad), screen))
         return 1
-    print("atomiccheck: the eight atomic operations the corpus uses agree, on %s" % screen)
-    print("atomiccheck: five on device memory, three on threadgroup memory across two")
+    print("atomiccheck: the nine atomic operations the corpus uses agree, on %s" % screen)
+    print("atomiccheck: six on device memory -- a compare-exchange loop among them --, three")
+    print("atomiccheck: on threadgroup memory across two")
     print("atomiccheck: barriers, every thread seeing all sixteen contributions")
     print("atomiccheck: %d threads each incremented once and were given a distinct"
           % THREADS)
