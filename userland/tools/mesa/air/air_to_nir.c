@@ -375,6 +375,15 @@ load_ret_leaves(struct air_ctx *c, const struct air_type *t, nir_variable **fiel
    if (ret_member_is_number(t))
       return air_val_ssa(c, nir_load_var(&c->b, fields[(*at)++]));
    bool array = ret_array_of_numbers(t);
+   /* padding, an array of bytes, is not passed back -- but a caller may still take it apart
+    * (VFX's SDF tree copies each of a struct's twelve padding bytes): undefined bytes */
+   if (t->kind == AIR_TYPE_ARRAY && t->elem && t->elem->kind == AIR_TYPE_INT &&
+       t->elem->bits == 8 && t->count <= 64) {
+      struct air_val *pad = air_val_agg(c, (unsigned)t->count);
+      for (unsigned i = 0; i < t->count; i++)
+         pad->elems[i] = air_val_ssa(c, nir_undef(&c->b, 1, 8));
+      return pad;
+   }
    if (t->kind != AIR_TYPE_STRUCT && !array)
       return NULL;
    unsigned members = array ? (unsigned)t->count : t->num_members;
