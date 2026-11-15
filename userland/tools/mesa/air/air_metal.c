@@ -387,9 +387,352 @@ lp_split_ffma(nir_builder *b, nir_alu_instr *alu, void *data)
    return true;
 }
 
+/* -- softpipe: no 8- or 16-bit values ------------------------------------------------------
+ *
+ * softpipe takes NIR through nir_to_tgsi, and TGSI has no 8- or 16-bit registers: a half that reaches it
+ * is "Unknown NIR opcode: f2f16" and an abort, a byte loaded from a constant buffer an assertion in
+ * ntt_emit_load_ubo. CoreAnimation's shaders are mostly half (Darwin 27's QuartzCore: 1421 f2f16 and 405
+ * 16-bit constant-buffer loads over its render pipelines) and keep their flags in bytes (98 8-bit loads),
+ * so on a machine without the GPU -- QEMU, where the Metal driver runs on softpipe -- every narrow value
+ * is widened here:
+ *
+ *   a half becomes the float32 holding the same number, and f2f16 rounds to half exactly (through
+ *   pack_half_2x16 and back, which TGSI has as PK2H and UP2H);
+ *   an 8- or 16-bit integer becomes the 32-bit one zero-extended, masked again after the operations that
+ *   can carry past its width, and sign-extended for the operations that read a sign;
+ *   a narrow load from a constant or device buffer becomes the 32-bit words around it, the bytes or
+ *   halves taken out of them;
+ *   outputs, textures and images say float32 or (u)int32 where they said the 16-bit type.
+ *
+ * Whether a 16-bit value is a half or an integer is what made it (an ALU op's output type) or, for a
+ * load, a constant, a phi or a select, what reads it; an 8-bit one is an integer. The freedreno screen
+ * never gets here: the Adreno has a half register file and ir3 takes narrow types as they are.
+ */
+static bool
+w16_read_as_int(nir_def *def, unsigned depth)
+{
+   nir_foreach_use(src, def) {
+      nir_instr *use = nir_src_use_instr(src);
+      if (use->type == nir_instr_type_alu) {
+         nir_alu_instr *alu = nir_instr_as_alu(use);
+         const nir_op_info *info = &nir_op_infos[alu->op];
+         for (unsigned i = 0; i < info->num_inputs; i++) {
+            if (&alu->src[i].src != src)
+               continue;
+            nir_alu_type base = nir_alu_type_get_base_type(info->input_types[i]);
+            if (base == nir_type_int || base == nir_type_uint)
+               return true;
+            if (base == nir_type_float)
+               return false;
+            /* mov, vecN, bcsel's two values: what reads those decides */
+            if (depth < 4 && alu->def.bit_size == def->bit_size)
+               return w16_read_as_int(&alu->def, depth + 1);
+         }
+      } else if (use->type == nir_instr_type_phi && depth < 4) {
+         return w16_read_as_int(&nir_instr_as_phi(use)->def, depth + 1);
+      } else if (use->type == nir_instr_type_intrinsic) {
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(use);
+         if (nir_intrinsic_has_src_type(intr)) {
+            nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_src_type(intr));
+            return base == nir_type_int || base == nir_type_uint;
+         }
+      }
+   }
+   return false;
+}
+
+static bool
+w16_is_int(nir_def *def)
+{
+   if (def->bit_size == 8)
+      return true;
+   nir_instr *p = nir_def_instr(def);
+   if (p->type == nir_instr_type_alu) {
+      nir_alu_type base = nir_alu_type_get_base_type(nir_op_infos[nir_instr_as_alu(p)->op].output_type);
+      if (base == nir_type_int || base == nir_type_uint)
+         return true;
+      if (base == nir_type_float)
+         return false;
+   }
+   if (p->type == nir_instr_type_tex) {
+      nir_alu_type base = nir_alu_type_get_base_type(nir_instr_as_tex(p)->dest_type);
+      return base == nir_type_int || base == nir_type_uint;
+   }
+   return w16_read_as_int(def, 0);
+}
+
+/* x (a float32) rounded to the nearest half and back, per component */
+static nir_def *
+w16_quantize(nir_builder *b, nir_def *x)
+{
+   nir_def *c[NIR_MAX_VEC_COMPONENTS];
+   for (unsigned i = 0; i < x->num_components; i++) {
+      nir_def *packed = nir_pack_half_2x16(b, nir_vec2(b, nir_channel(b, x, i), nir_imm_float(b, 0)));
+      c[i] = nir_channel(b, nir_unpack_half_2x16(b, packed), 0);
+   }
+   return nir_vec(b, c, x->num_components);
+}
+
+/* a widened BITS-bit integer, sign-extended to 32 */
+static nir_def *
+w16_sext(nir_builder *b, nir_def *x, unsigned bits)
+{
+   return nir_ishr_imm(b, nir_ishl_imm(b, x, 32 - bits), 32 - bits);
+}
+
+/* a narrow load of N components from a constant or device buffer, as 32-bit words */
+static nir_def *
+w16_load(nir_builder *b, nir_intrinsic_instr *intr, bool as_int)
+{
+   nir_def *c[NIR_MAX_VEC_COMPONENTS];
+   nir_def *index = intr->src[0].ssa, *offset = intr->src[1].ssa;
+   unsigned bytes = intr->def.bit_size / 8;
+   for (unsigned i = 0; i < intr->def.num_components; i++) {
+      nir_def *byte = nir_iadd_imm(b, offset, bytes * i);
+      nir_def *at = nir_iand_imm(b, byte, ~3u);
+      nir_def *word = intr->intrinsic == nir_intrinsic_load_ubo
+                         ? nir_load_ubo(b, 1, 32, index, at, .align_mul = 4, .range = ~0u)
+                         : nir_load_ssbo(b, 1, 32, index, at, .align_mul = 4);
+      nir_def *shift = nir_imul_imm(b, nir_iand_imm(b, byte, bytes == 1 ? 3 : 2), 8);
+      nir_def *v = nir_iand_imm(b, nir_ushr(b, word, shift), BITFIELD_MASK(intr->def.bit_size));
+      c[i] = as_int ? v : nir_channel(b, nir_unpack_half_2x16(b, v), 0);
+   }
+   return nir_vec(b, c, intr->def.num_components);
+}
+
+static nir_alu_type
+w16_type32(nir_alu_type t)
+{
+   unsigned size = nir_alu_type_get_type_size(t);
+   return size == 8 || size == 16 ? nir_alu_type_get_base_type(t) | 32 : t;
+}
+
+static bool
+widen_16bit(nir_shader *nir)
+{
+   bool progress = false;
+
+   nir_foreach_function_impl(impl, nir) {
+      nir_index_ssa_defs(impl);
+      /* what everything was, before anything changes: the narrow width (0 for none), and whether
+       * the value is an integer */
+      /* (indexed by the defs there were: what this pass makes is 32 bits and past the end) */
+      unsigned known = impl->ssa_alloc;
+      uint8_t *width = rzalloc_array(NULL, uint8_t, known + 1);
+      BITSET_WORD *is_int = rzalloc_array(NULL, BITSET_WORD, BITSET_WORDS(impl->ssa_alloc));
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            nir_def *def = nir_instr_def(instr);
+            if (def && (def->bit_size == 8 || def->bit_size == 16)) {
+               width[def->index] = def->bit_size;
+               if (w16_is_int(def))
+                  BITSET_SET(is_int, def->index);
+            }
+         }
+      }
+      nir_builder b = nir_builder_create(impl);
+#define WIDTH(s) ((s)->index < known ? width[(s)->index] : 0)
+
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr_safe(instr, block) {
+            nir_def *def = nir_instr_def(instr);
+            unsigned dw = def && (def->bit_size == 8 || def->bit_size == 16) ? def->bit_size : 0;
+
+            switch (instr->type) {
+            case nir_instr_type_alu: {
+               nir_alu_instr *alu = nir_instr_as_alu(instr);
+               const nir_op_info *info = &nir_op_infos[alu->op];
+               unsigned sw = info->num_inputs ? WIDTH(alu->src[0].src.ssa) : 0;
+               nir_def *r = NULL, *x = NULL;
+               b.cursor = nir_before_instr(instr);
+               if (info->num_inputs)
+                  x = nir_ssa_for_alu_src(&b, alu, 0);
+               switch (alu->op) {
+               case nir_op_f2f16:
+                  r = sw ? x : w16_quantize(&b, x);
+                  break;
+               case nir_op_f2f32:
+                  if (sw)
+                     r = x;
+                  break;
+               case nir_op_u2u8: case nir_op_u2u16: case nir_op_i2i8: case nir_op_i2i16:
+                  /* to a narrower or the same width: the low bits; to a wider one: as it is */
+                  r = sw && sw <= dw ? x
+                                     : nir_iand_imm(&b, sw ? x : nir_u2u32(&b, x), BITFIELD_MASK(dw));
+                  if (sw && sw < dw && (alu->op == nir_op_i2i8 || alu->op == nir_op_i2i16))
+                     r = nir_iand_imm(&b, w16_sext(&b, x, sw), BITFIELD_MASK(dw));
+                  break;
+               case nir_op_u2u32:
+                  if (sw)
+                     r = x;
+                  break;
+               case nir_op_i2i32:
+                  if (sw)
+                     r = w16_sext(&b, x, sw);
+                  break;
+               case nir_op_u2f16: case nir_op_u2f32:
+                  if (alu->op == nir_op_u2f16 || sw)
+                     r = nir_u2f32(&b, sw ? x : nir_u2u32(&b, x));
+                  break;
+               case nir_op_i2f16: case nir_op_i2f32:
+                  if (alu->op == nir_op_i2f16 || sw)
+                     r = nir_i2f32(&b, sw ? w16_sext(&b, x, sw) : nir_i2i32(&b, x));
+                  break;
+               case nir_op_f2u8: case nir_op_f2u16: case nir_op_f2i8: case nir_op_f2i16:
+                  r = nir_iand_imm(&b, alu->op == nir_op_f2u8 || alu->op == nir_op_f2u16 ? nir_f2u32(&b, x)
+                                                                                         : nir_f2i32(&b, x),
+                                   BITFIELD_MASK(dw));
+                  break;
+               case nir_op_b2f16:
+                  r = nir_b2f32(&b, x);
+                  break;
+               case nir_op_b2i8: case nir_op_b2i16:
+                  r = nir_b2i32(&b, x);
+                  break;
+               default:
+                  break;
+               }
+               if (r) {
+                  nir_def_replace(&alu->def, r);
+                  progress = true;
+                  break;
+               }
+               /* an operation that reads a sign: the narrow integers it reads, sign-extended */
+               switch (alu->op) {
+               case nir_op_ilt: case nir_op_ige: case nir_op_imin: case nir_op_imax:
+               case nir_op_ishr: case nir_op_idiv: case nir_op_irem: case nir_op_imod:
+               case nir_op_isign: case nir_op_iabs:
+                  for (unsigned i = 0; i < info->num_inputs; i++) {
+                     nir_def *s = alu->src[i].src.ssa;
+                     if (WIDTH(s) && !(alu->op == nir_op_ishr && i == 1)) {
+                        nir_src_rewrite(&alu->src[i].src, w16_sext(&b, s, WIDTH(s)));
+                        progress = true;
+                     }
+                  }
+                  break;
+               default:
+                  break;
+               }
+               if (dw) {
+                  alu->def.bit_size = 32;
+                  progress = true;
+                  /* what can carry past the width, masked again */
+                  switch (alu->op) {
+                  case nir_op_iadd: case nir_op_isub: case nir_op_imul: case nir_op_ishl:
+                  case nir_op_ineg: case nir_op_inot: case nir_op_ishr: case nir_op_isign:
+                  case nir_op_iabs: case nir_op_idiv: case nir_op_irem: case nir_op_imod:
+                  case nir_op_imin: case nir_op_imax: {
+                     b.cursor = nir_after_instr(instr);
+                     nir_def *m = nir_iand_imm(&b, &alu->def, BITFIELD_MASK(dw));
+                     nir_def_rewrite_uses_after(&alu->def, m);
+                     break;
+                  }
+                  default:
+                     break;
+                  }
+               }
+               break;
+            }
+            case nir_instr_type_load_const: {
+               if (!dw)
+                  break;
+               nir_load_const_instr *lc = nir_instr_as_load_const(instr);
+               nir_const_value v[NIR_MAX_VEC_COMPONENTS];
+               bool as_int = BITSET_TEST(is_int, def->index);
+               for (unsigned i = 0; i < def->num_components; i++)
+                  v[i] = dw == 8 ? nir_const_value_for_uint(lc->value[i].u8, 32)
+                         : as_int ? nir_const_value_for_uint(lc->value[i].u16, 32)
+                                  : nir_const_value_for_float(_mesa_half_to_float(lc->value[i].u16), 32);
+               b.cursor = nir_before_instr(instr);
+               nir_def_replace(def, nir_build_imm(&b, def->num_components, 32, v));
+               progress = true;
+               break;
+            }
+            case nir_instr_type_undef:
+            case nir_instr_type_phi:
+               if (dw) {
+                  def->bit_size = 32;
+                  progress = true;
+               }
+               break;
+            case nir_instr_type_tex: {
+               nir_tex_instr *tex = nir_instr_as_tex(instr);
+               if (dw) {
+                  tex->def.bit_size = 32;
+                  tex->dest_type = w16_type32(tex->dest_type);
+                  progress = true;
+               }
+               break;
+            }
+            case nir_instr_type_intrinsic: {
+               nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+               if (dw && (intr->intrinsic == nir_intrinsic_load_ubo ||
+                          intr->intrinsic == nir_intrinsic_load_ssbo)) {
+                  b.cursor = nir_before_instr(instr);
+                  nir_def_replace(def, w16_load(&b, intr, BITSET_TEST(is_int, def->index)));
+                  progress = true;
+                  break;
+               }
+               if (dw) {
+                  def->bit_size = 32;
+                  progress = true;
+               }
+               if (nir_intrinsic_has_dest_type(intr) && w16_type32(nir_intrinsic_dest_type(intr)) !=
+                                                           nir_intrinsic_dest_type(intr)) {
+                  nir_intrinsic_set_dest_type(intr, w16_type32(nir_intrinsic_dest_type(intr)));
+                  progress = true;
+               }
+               if (nir_intrinsic_has_src_type(intr) && w16_type32(nir_intrinsic_src_type(intr)) !=
+                                                          nir_intrinsic_src_type(intr)) {
+                  nir_intrinsic_set_src_type(intr, w16_type32(nir_intrinsic_src_type(intr)));
+                  progress = true;
+               }
+               break;
+            }
+            default:
+               break;
+            }
+         }
+      }
+#undef WIDTH
+      ralloc_free(width);
+      ralloc_free(is_int);
+      nir_progress(progress, impl, nir_metadata_none);
+   }
+   return progress;
+}
+
+/* demote(_if) as terminate(_if), for a screen without DEMOTE (softpipe: finalize_for_gallium) */
+static bool
+demote_to_terminate(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   if (intr->intrinsic == nir_intrinsic_demote) {
+      b->cursor = nir_before_instr(&intr->instr);
+      nir_terminate(b);
+   } else if (intr->intrinsic == nir_intrinsic_demote_if) {
+      b->cursor = nir_before_instr(&intr->instr);
+      nir_terminate_if(b, intr->src[0].ssa);
+   } else {
+      return false;
+   }
+   nir_instr_remove(&intr->instr);
+   return true;
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
+   if (!strcmp(screen->get_name(screen), "softpipe")) {
+      NIR_PASS(_, nir, widen_16bit);
+      /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
+       * ("Unknown NIR opcode: ffma", QuartzCore's simple_rim_lpf): split, as for llvmpipe below */
+      NIR_PASS(_, nir, nir_shader_alu_pass, lp_split_ffma, nir_metadata_control_flow, NULL);
+      /* and no DEMOTE: tgsi_exec has no case for it and asserts (QuartzCore's path_blit_frag and
+       * luma_boost discard). A discarded fragment that keeps running only matters to the derivatives
+       * of its quad after the discard; softpipe's KILL ends it, which is what it can do */
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, demote_to_terminate, nir_metadata_control_flow, NULL);
+      NIR_PASS(_, nir, nir_opt_dce);
+   }
    /* A fragment shader's [[position]]: the frontend hands it over as a system-value
     * variable, because that is the one form both of the drivers behind this library can
     * be served from (the long version is beside air.position in air_to_nir.c and in
