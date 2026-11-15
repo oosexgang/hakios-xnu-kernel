@@ -37,6 +37,14 @@ rd16(const uint8_t *p)
    return p[0] | p[1] << 8;
 }
 
+#define AIR_FAT_CPU_TYPE 0x01000017u
+
+static uint32_t
+rdbe32(const uint8_t *p)
+{
+   return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+}
+
 bool
 air_metallib_parse(void *mem_ctx, const void *data, size_t size, struct air_metallib *lib,
                    const char **error)
@@ -44,6 +52,27 @@ air_metallib_parse(void *mem_ctx, const void *data, size_t size, struct air_meta
    const uint8_t *b = data;
    memset(lib, 0, sizeof(*lib));
    *error = NULL;
+
+   /* Darwin 26 and 27 ship QuartzCore's library (and others) as a fat file, big-endian like
+    * Mach-O's: an AIR slice, CPU type 0x01000017, and Apple's GPU code precompiled, 0x01000013.
+    * The AIR slice is the library; the other is not ours to read (userland/tools/metallib.py
+    * takes the same slice). */
+   if (size >= 8 && rdbe32(b) == 0xcafebabe) {
+      uint32_t n = rdbe32(b + 4);
+      for (uint32_t i = 0; i < n && 8 + 20 * (size_t)(i + 1) <= size; i++) {
+         const uint8_t *e = b + 8 + 20 * i;
+         uint32_t cpu = rdbe32(e), off = rdbe32(e + 8), len = rdbe32(e + 12);
+         if (cpu != AIR_FAT_CPU_TYPE)
+            continue;
+         if ((uint64_t)off + len > size) {
+            *error = "the fat file's AIR slice runs past the file";
+            return false;
+         }
+         return air_metallib_parse(mem_ctx, b + off, len, lib, error);
+      }
+      *error = "a fat file with no AIR slice (CPU type 0x01000017)";
+      return false;
+   }
 
    if (size < 0x58 || memcmp(b, "MTLB", 4) != 0) {
       *error = "not an MTLB container";

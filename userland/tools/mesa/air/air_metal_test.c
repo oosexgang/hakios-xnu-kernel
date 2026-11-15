@@ -381,6 +381,25 @@ load_metallib(const char *path, struct metallib *lib)
       return false;
    }
    fclose(f);
+   /* a fat file (Darwin 26 and 27's QuartzCore library): its AIR slice, CPU type 0x01000017, is
+    * the library, as air_metallib_parse and tools/metallib.py take it */
+   if (lib->size >= 8 && lib->bytes[0] == 0xca && lib->bytes[1] == 0xfe && lib->bytes[2] == 0xba &&
+       lib->bytes[3] == 0xbe) {
+      const uint8_t *b = lib->bytes;
+#define BE32(p) ((uint32_t)(p)[0] << 24 | (uint32_t)(p)[1] << 16 | (uint32_t)(p)[2] << 8 | (p)[3])
+      uint32_t n = BE32(b + 4);
+      for (uint32_t i = 0; i < n && 8 + 20 * (size_t)(i + 1) <= lib->size; i++) {
+         uint32_t cpu = BE32(b + 8 + 20 * i), off = BE32(b + 16 + 20 * i), len = BE32(b + 20 + 20 * i);
+         if (cpu == 0x01000017 && (uint64_t)off + len <= lib->size) {
+            memmove(lib->bytes, lib->bytes + off, len);
+            lib->size = len;
+            return true;
+         }
+      }
+#undef BE32
+      fprintf(stderr, "air_metal_test: %s: a fat file with no AIR slice\n", path);
+      return false;
+   }
    return true;
 }
 
@@ -6475,20 +6494,8 @@ main(int argc, char **argv)
    }
 
    struct metallib lib = { 0 };
-   FILE *f = fopen(argv[1], "rb");
-   if (!f) {
-      perror(argv[1]);
+   if (!load_metallib(argv[1], &lib))
       return 1;
-   }
-   fseek(f, 0, SEEK_END);
-   lib.size = ftell(f);
-   fseek(f, 0, SEEK_SET);
-   lib.bytes = malloc(lib.size);
-   if (fread(lib.bytes, 1, lib.size, f) != lib.size) {
-      fprintf(stderr, "air_metal_test: short read of %s\n", argv[1]);
-      return 1;
-   }
-   fclose(f);
 
    char name[256];
    const uint8_t *bitcode = NULL;

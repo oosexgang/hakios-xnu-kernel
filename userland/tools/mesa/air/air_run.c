@@ -1437,7 +1437,7 @@ main(int argc, char **argv)
    size_t bitcode_size = size;
    const char *want = argc > 2 ? argv[2] : NULL;
    const char *name = argv[1];
-   if (size >= 4 && !memcmp(data, "MTLB", 4)) {
+   if (size >= 4 && (!memcmp(data, "MTLB", 4) || !memcmp(data, "\xca\xfe\xba\xbe", 4))) {
       struct air_metallib lib;
       const char *err;
       if (!air_metallib_parse(ctx, data, size, &lib, &err)) {

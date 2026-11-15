@@ -77,7 +77,7 @@ modules_of(void *ctx, const char *path, const char *only, struct module_ref **ou
    const uint8_t *data = map_file(path, &size);
    if (!data)
       return 0;
-   if (size >= 4 && !memcmp(data, "MTLB", 4)) {
+   if (size >= 4 && (!memcmp(data, "MTLB", 4) || !memcmp(data, "\xca\xfe\xba\xbe", 4))) {
       struct air_metallib lib;
       const char *err;
       if (!air_metallib_parse(ctx, data, size, &lib, &err)) {
