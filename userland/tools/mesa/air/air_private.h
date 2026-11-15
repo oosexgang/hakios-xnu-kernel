@@ -334,6 +334,7 @@ void air_set(struct air_ctx *c, const struct air_value *v, struct air_val *val);
 nir_def *air_get_ssa(struct air_ctx *c, const struct air_value *v);
 
 /* the NIR type of an AIR type: bit size and components */
+unsigned air_narrow_bits(const struct air_type *t);
 unsigned air_nir_bit_size(struct air_ctx *c, const struct air_type *t);
 unsigned air_nir_components(const struct air_type *t);
 

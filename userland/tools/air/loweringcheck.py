@@ -189,6 +189,14 @@ def cases():
     out.append(("pointer chosen at run time, constant side", psel(0), "agree"))
     out.append(("pointer chosen at run time, buffer side", psel(1), "agree"))
 
+    # A switch on a two-bit integer, as LLVM writes a small enum (Vista's splat culling): the
+    # case -2 is the bits 10, and the condition lives in 32 bits zero-extended
+    for xor in range(4):
+        out.append(("i2, three cases, xor %d" % xor,
+                    module("i2", xor, [(0, "c0", 0), (1, "c1", 1), (-2, "c2", 2)], 3), "arm"))
+    # sign, wrap, arithmetic shift and signed compare of an i3
+    out.append(("an i3: sext, a wrapping add, ashr, a signed compare", NARROW, "agree"))
+
     # A pointer stored into a local: no bytes are written, the local's slot keeps
     # the resolution, and a load of it from the same place is that pointer (and a
     # local written at a computed index keeps it as numbers: air_ptr_numeric).
@@ -414,6 +422,50 @@ define <{ <4 x float> }> @pstore(ptr addrspace(2) %u) local_unnamed_addr {
 !5 = !{!"air.render_target", i32 0, i32 0, !"air.arg_type_name", !"float4", !"air.arg_name", !"out"}
 !6 = !{!7}
 !7 = !{i32 0, !"air.buffer", !"air.buffer_size", i32 16, !"air.location_index", i32 0, i32 1, !"air.read", !"air.address_space", i32 2, !"air.arg_type_name", !"float4", !"air.arg_name", !"u"}
+"""
+
+# A narrow integer (air_narrow_bits): an i3 out of the buffer's first word -- 13 & 7 = 5, which
+# as three signed bits is -3 -- kept in 32 bits and zero-extended. Each lane is something the
+# 32 bits would get wrong without the mask or the sign: the sign extension (-3, not 5), an add
+# that wraps in three bits (5 + 3 = 0, not 8), an arithmetic shift that keeps the sign (-3 >> 1
+# = -2, read back unsigned as 6, not 2), and a signed comparison (-3 < 2, where 5 < 2 is not).
+NARROW = """source_filename = "nw"
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
+target triple = "air64-apple-darwin16.5.0"
+
+define <{ <4 x float> }> @nw(ptr addrspace(2) %u) local_unnamed_addr {
+  %w = load i32, ptr addrspace(2) %u, align 4
+  %a = trunc i32 %w to i3
+  %sa = sext i3 %a to i32
+  %f0 = sitofp i32 %sa to float
+  %b = add i3 %a, 3
+  %zb = zext i3 %b to i32
+  %f1 = uitofp i32 %zb to float
+  %c = ashr i3 %a, 1
+  %zc = zext i3 %c to i32
+  %f2 = uitofp i32 %zc to float
+  %d = icmp slt i3 %a, 2
+  %f3 = select i1 %d, float 1.0, float 0.0
+  %v0 = insertelement <4 x float> undef, float %f0, i64 0
+  %v1 = insertelement <4 x float> %v0, float %f1, i64 1
+  %v2 = insertelement <4 x float> %v1, float %f2, i64 2
+  %v3 = insertelement <4 x float> %v2, float %f3, i64 3
+  %o = insertvalue <{ <4 x float> }> undef, <4 x float> %v3, 0
+  ret <{ <4 x float> }> %o
+}
+
+!llvm.module.flags = !{!0}
+!air.version = !{!1}
+!air.language_version = !{!2}
+!air.fragment = !{!3}
+!0 = !{i32 1, !"wchar_size", i32 4}
+!1 = !{i32 2, i32 5, i32 0}
+!2 = !{!"Metal", i32 3, i32 0, i32 0}
+!3 = !{ptr @nw, !4, !6}
+!4 = !{!5}
+!5 = !{!"air.render_target", i32 0, i32 0, !"air.arg_type_name", !"float4", !"air.arg_name", !"out"}
+!6 = !{!7}
+!7 = !{i32 0, !"air.buffer", !"air.buffer_size", i32 16, !"air.location_index", i32 0, i32 1, !"air.read", !"air.address_space", i32 2, !"air.arg_type_name", !"uint", !"air.arg_name", !"u"}
 """
 
 # A bitcast that changes shape, both directions. One buffer, one word read out

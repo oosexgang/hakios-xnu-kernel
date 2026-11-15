@@ -295,6 +295,31 @@ air_set(struct air_ctx *c, const struct air_value *v, struct air_val *val)
    _mesa_hash_table_insert(c->values, v, val);
 }
 
+/* An integer narrower than 32 bits that NIR has no width for (i2 .. i31 but i8 and i16): its
+ * width, or 0 for any other type. Scalars only. */
+unsigned
+air_narrow_bits(const struct air_type *t)
+{
+   if (!t || t->kind != AIR_TYPE_INT)
+      return 0;
+   unsigned b = t->bits;
+   return b > 1 && b < 32 && b != 8 && b != 16 ? b : 0;
+}
+
+/* a narrow integer's 32 bits back to its own width: the high bits cleared */
+static nir_def *
+narrow_mask(struct air_ctx *c, nir_def *x, unsigned bits)
+{
+   return nir_iand_imm(&c->b, x, (1u << bits) - 1);
+}
+
+/* ... and its sign extended through the 32, for what reads it as signed */
+static nir_def *
+narrow_sext(struct air_ctx *c, nir_def *x, unsigned bits)
+{
+   return nir_ishr_imm(&c->b, nir_ishl_imm(&c->b, x, 32 - bits), 32 - bits);
+}
+
 unsigned
 air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
 {
@@ -312,6 +337,13 @@ air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
     * returned so that the instruction under construction stays well formed
     * while the error just set discards the shader.
     */
+   /* A scalar integer narrower than 32 bits and of no width NIR has -- `trunc i16 %x to i2`
+    * and a switch on it is how LLVM writes a two-bit enum (Vista's gaussianSplatCullingKernel_V1)
+    * -- lives in 32 bits, its value kept zero-extended: air_narrow_bits says which, and the
+    * casts, the arithmetic and the comparisons that would see the difference mask it or
+    * extend its sign. In memory and in a vector it is still refused. */
+   if (air_narrow_bits(t))
+      return 32;
    if (bits != 1 && bits != 8 && bits != 16 && bits != 32 && bits != 64) {
       /* Zero is a different fact wearing the same symptom, and saying so in one
        * message made 79 modules read as carrying a 0-bit integer when what they
@@ -643,6 +675,8 @@ scalar_constant(struct air_ctx *c, const struct air_type *t, uint64_t bits)
    unsigned n = air_type_bit_size(t);
    if (t->kind == AIR_TYPE_INT && t->bits == 1)
       return nir_imm_bool(&c->b, bits & 1);
+   if (air_narrow_bits(t))
+      return nir_imm_int(&c->b, (uint32_t)(bits & ((1ull << t->bits) - 1)));
    if (air_type_is_float(t)) {
       switch (n) {
       case 16: return nir_imm_intN_t(&c->b, bits, 16);
@@ -3911,7 +3945,16 @@ translate_binop(struct air_ctx *c, const struct air_inst *in)
    if (!x || !y)
       return false;
    bool is_float = air_type_is_float(air_type_scalar(in->base.type));
+   unsigned narrow = air_narrow_bits(in->base.type);
    nir_def *res;
+
+   /* a narrow integer read as signed: its sign through the 32 bits first */
+   if (narrow && (in->sub == AIR_BINOP_SDIV || in->sub == AIR_BINOP_SREM ||
+                  in->sub == AIR_BINOP_ASHR)) {
+      x = narrow_sext(c, x, narrow);
+      if (in->sub != AIR_BINOP_ASHR)
+         y = narrow_sext(c, y, narrow);
+   }
 
    /* Metal compiles with fast math on, and the modules say so per
     * instruction. Without the flags the arithmetic must not be reassociated,
@@ -3940,6 +3983,8 @@ translate_binop(struct air_ctx *c, const struct air_inst *in)
       return air_error(c, "instruction: binary operator %u", in->sub);
    }
    c->b.fp_math_ctrl = was_exact;
+   if (narrow)
+      res = narrow_mask(c, res, narrow);
    air_set(c, &in->base, air_val_ssa(c, res));
    return true;
 }
@@ -4026,6 +4071,13 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
    if (!x)
       return false;
    unsigned bits = air_nir_bit_size(c, dt);
+   unsigned narrow_to = air_narrow_bits(dt), narrow_from = air_narrow_bits(st);
+   /* from a narrow integer read as signed: its sign through the 32 bits */
+   if (narrow_from && (in->sub == AIR_CAST_SEXT || in->sub == AIR_CAST_SITOFP))
+      x = narrow_sext(c, x, narrow_from);
+   if ((narrow_to || narrow_from) && in->sub == AIR_CAST_BITCAST && dt != st)
+      return air_error(c, "instruction: a bitcast of a %u-bit integer",
+                       narrow_to ? narrow_to : narrow_from);
    nir_def *res;
    switch (in->sub) {
    case AIR_CAST_TRUNC:
@@ -4121,6 +4173,10 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
    default:
       return air_error(c, "instruction: cast %u", in->sub);
    }
+   /* to a narrow integer: its high bits cleared (a trunc, a conversion from float, a sign
+    * extension from a narrower one) */
+   if (narrow_to)
+      res = narrow_mask(c, res, narrow_to);
    air_set(c, &in->base, air_val_ssa(c, res));
    return true;
 }
@@ -4223,6 +4279,13 @@ translate_cmp(struct air_ctx *c, const struct air_inst *in)
    nir_def *y = air_get_ssa(c, in->operands[1]);
    if (!x || !y)
       return false;
+   /* narrow integers compared as signed: their signs through the 32 bits */
+   unsigned narrow = air_narrow_bits(in->operands[0]->type);
+   if (narrow && (in->sub == AIR_ICMP_SGT || in->sub == AIR_ICMP_SGE ||
+                  in->sub == AIR_ICMP_SLT || in->sub == AIR_ICMP_SLE)) {
+      x = narrow_sext(c, x, narrow);
+      y = narrow_sext(c, y, narrow);
+   }
    nir_def *res;
    switch (in->sub) {
    /* NaN never appears in these shaders (nnan is set on every one), so the
@@ -4559,6 +4622,10 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       return true;
    }
    case AIR_OP_LOAD: {
+      /* a narrow integer has no bytes of its own in memory to read 32 bits of */
+      if (air_narrow_bits(in->base.type))
+         return air_error(c, "instruction: a load of a %u-bit integer",
+                          air_narrow_bits(in->base.type));
       struct air_val *p = air_get(c, in->operands[0]);
       if (!p)
          return false;
@@ -4658,6 +4725,9 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       return true;
    }
    case AIR_OP_STORE: {
+      if (air_narrow_bits(in->operands[0]->type))
+         return air_error(c, "instruction: a store of a %u-bit integer",
+                          air_narrow_bits(in->operands[0]->type));
       struct air_val *p = air_get(c, in->operands[1]);
       if (!p)
          return false;
