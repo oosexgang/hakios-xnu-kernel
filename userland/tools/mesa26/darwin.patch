@@ -136,7 +136,7 @@ diff --git a/src/freedreno/fdl/fd6_layout.c b/src/freedreno/fdl/fd6_layout.c
           /* when possible, use a bit more alignment than necessary
 diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
 --- a/src/freedreno/ir3/ir3_compiler_nir.c	2026-10-15 02:12:24
-+++ b/src/freedreno/ir3/ir3_compiler_nir.c	2026-11-15 05:49:17
++++ b/src/freedreno/ir3/ir3_compiler_nir.c	2026-11-15 23:40:00
 @@ -410,6 +410,13 @@
           set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
        else if (rounding_mode == nir_rounding_mode_rtz)
@@ -163,7 +163,22 @@ diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compil
        }
  
        info.samp_tex = ir3_collect(b, texture, sampler);
-@@ -5800,6 +5810,14 @@
+@@ -4734,6 +4744,14 @@
+    bool inv;
+    struct ir3_instruction *condition =
+       get_branch_condition(ctx, &nif->condition, 0, &inv);
++   /* A condition computed in another block is a predicate the branch has to
++    * hold in p0.x across that block's successors, and ir3_ra_predicates then
++    * rematerialises it into one predecessor of the if and not the other: RA
++    * validation sees two definitions reach the predt (BlinkDetection of
++    * NRFV1.bundle, a loop whose if reuses a compare made before it). An
++    * ordinary br takes any predicate register. */
++   if (condition->block != ctx->block)
++      return NULL;
+    struct ir3_builder then_build = ir3_builder_at(ir3_after_block(then_block));
+    struct ir3_instruction *pred, *pred_inv;
+ 
+@@ -5800,6 +5818,14 @@
        ret = -1;
        goto out;
     }
