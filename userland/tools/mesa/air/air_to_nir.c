@@ -1903,8 +1903,15 @@ translate_argument_buffer(struct air_ctx *c, const struct air_md *node, unsigned
                           "air.struct_type_info, so nothing says what is in it",
                        name ? name : "unnamed");
 
-   const struct air_type *st = NULL;
-   if (tn) {
+   /* The set's struct type is the parameter's own pointee, which is the type the loads go
+    * through -- and not always the one its name finds: a module linked out of several
+    * sources keeps one copy of a struct per source and LLVM renames the later ones, so
+    * VFX's `global_constants` is `struct.global_constants.634`. By name only when the
+    * pointee says nothing.
+    */
+   const struct air_type *pt = c->fn->args[param].type->elem;
+   const struct air_type *st = pt && pt->kind == AIR_TYPE_STRUCT ? pt : NULL;
+   if (!st && tn) {
       char *sname = ralloc_asprintf(c->mem_ctx, "struct.%s", tn);
       st = named_struct(c->m, sname);
    }
