@@ -10,7 +10,13 @@
  *   - exits boot services, turns the MMU off and jumps to the kernel entry
  */
 #include "efi.h"
-#include "identity.h"         /* who Darwin shall think we are: from the iPhone's own device tree (mkidentity.py) */
+/* who Darwin shall think we are: from the iPhone's own device tree (mkidentity.py). LOADER_IDENTITY (build.sh) names
+ * another such header, for a Darwin whose files are another iPhone's */
+#ifdef LOADER_IDENTITY
+#include LOADER_IDENTITY
+#else
+#include "identity.h"
+#endif
 
 
 /*
