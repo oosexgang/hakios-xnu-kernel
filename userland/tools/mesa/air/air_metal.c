@@ -7188,6 +7188,42 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
       say(why, why_size, "out of memory compiling a shader stage");
       return NULL;
    }
+   /* A sample past the units this library binds would be refused at the draw anyway; on
+    * softpipe it cannot even be made, since samples are renumbered to their texture's unit
+    * (software_pair_samplers) and one past it keeps a sampler number another texture has --
+    * two targets on one unit, an assertion in tgsi_scan (RealityKit's fsImageColorPresentation,
+    * 43 textures). Refused by name here, and so is one unit sampled as two kinds of texture:
+    * TGSI gives a unit one target, where a shader whose function constants are left undefined
+    * keeps both of the kinds they choose between at one index (the same shader). */
+   if (device->software) {
+      uint8_t kind[RWA_MAX_TEXTURES] = { 0 };
+      nir_foreach_function_impl(impl, clone) {
+         nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+               if (instr->type != nir_instr_type_tex)
+                  continue;
+               nir_tex_instr *tex = nir_instr_as_tex(instr);
+               if (tex->texture_index >= RWA_MAX_TEXTURES) {
+                  say(why, why_size, "the %s stage samples texture %u, past the %u this library "
+                                     "binds", nir->info.stage == MESA_SHADER_VERTEX ? "vertex" : "fragment",
+                      tex->texture_index, RWA_MAX_TEXTURES);
+                  ralloc_free(clone);
+                  return NULL;
+               }
+               uint8_t k = 1 + (tex->sampler_dim | tex->is_array << 4 | tex->is_shadow << 5);
+               if (kind[tex->texture_index] && kind[tex->texture_index] != k) {
+                  say(why, why_size, "the %s stage samples texture %u as two kinds of texture, "
+                                     "which softpipe's TGSI cannot give one unit",
+                      nir->info.stage == MESA_SHADER_VERTEX ? "vertex" : "fragment",
+                      tex->texture_index);
+                  ralloc_free(clone);
+                  return NULL;
+               }
+               kind[tex->texture_index] = k;
+            }
+         }
+      }
+   }
    if (device->software && sw_pair)
       software_pair_samplers(clone, sw_pair);
    if (device->software)
