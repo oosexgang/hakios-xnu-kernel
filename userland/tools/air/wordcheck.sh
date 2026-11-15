@@ -13,7 +13,7 @@ cc -O1 -I"$ROOT/tools/mesa/air" -o "$WORK/wordcheck" "$ROOT/tools/air/wordcheck.
 CASES="
 callee_array.ll ca 1 1.0 2.0 3.0 4.0 10.0
 irem.ll ir 8 4294967295 0 4294967294 4294967295 0 1 2 0
-const_table.ll ct 8 8.0 7.0 6.0 5.0 4.0 3.0 2.0 1.0 0.5 1.5 2.5 3.5 4.5 5.5 6.5 7.5
+const_table.ll ct 8 8.0 7.0 6.0 5.0 4.0 3.0 2.0 1.0 0.5 1.5 2.5 3.5 4.5 5.5 6.5 7.5 10.0 20.0 30.0 40.0 10.0 20.0 30.0 40.0
 "
 bad=0
 while read -r ll entry threads words; do
