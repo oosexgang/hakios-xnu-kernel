@@ -3589,6 +3589,19 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          air_set(c, &in->base, res);
          return true;
       }
+      /* The handle of a texture or sampler bound at program scope, loaded from its global's
+       * first word (plan_globals): it is the binding itself. */
+      if (in->base.type->kind == AIR_TYPE_POINTER &&
+          (p->ptr.class == AIR_PTR_TEXTURE || p->ptr.class == AIR_PTR_SAMPLER)) {
+         if (p->ptr.offset && !(nir_src_is_const(nir_src_for_ssa(p->ptr.offset)) &&
+                                nir_src_as_uint(nir_src_for_ssa(p->ptr.offset)) == 0))
+            return air_error(c, "instruction: a handle loaded from inside a global binding");
+         struct air_ptr h = p->ptr;
+         h.offset = NULL;
+         h.pointee = in->base.type->elem;
+         air_set(c, &in->base, air_val_ptr(c, h));
+         return true;
+      }
       nir_def *res = air_load_ptr(c, p->ptr, in->base.type, in->align);
       if (!res)
          return false;
@@ -5415,6 +5428,25 @@ function_constant_index(struct air_ctx *c, const struct air_global *g)
    return -1;
 }
 
+/* The node air.global_bindings gives a program-scope resource (Metal's `[[texture(n)]]` on a
+ * global): !{!"air.global_binding", ptr @g, !{i32 -1, !"air.texture", !"air.location_index",
+ * i32 n, ...}}. The last operand is the same kind of node an argument has. NULL: none. */
+static const struct air_md *
+global_binding_of(struct air_ctx *c, const struct air_global *g)
+{
+   const struct air_named_md *n = named_md(c->m, "air.global_bindings");
+   for (unsigned i = 0; i < (n ? n->num_ops : 0); i++) {
+      const struct air_md *node = n->ops[i];
+      if (!node || node->kind != AIR_MD_NODE || node->num_ops < 3)
+         continue;
+      if (!node->ops[1] || node->ops[1]->kind != AIR_MD_VALUE || node->ops[1]->value != &g->base)
+         continue;
+      const struct air_md *desc = node->ops[node->num_ops - 1];
+      return desc && desc->kind == AIR_MD_NODE ? desc : NULL;
+   }
+   return NULL;
+}
+
 /* Decide what every global is: once per shader, because this appends inline
  * samplers to info->resources and lays out the shared and scratch memory. It
  * records rather than builds -- making the value needs a builder, and which
@@ -5465,7 +5497,32 @@ plan_globals(struct air_ctx *c)
          continue;
       }
 
-      if (g->externally_initialized) {
+      const struct air_md *gb;
+      if (g->externally_initialized && function_constant_index(c, g) < 0 &&
+          (gb = global_binding_of(c, g)) != NULL) {
+         /* A texture or sampler bound at program scope (MercuryPoster's Jurin and Ajisai
+          * posters, Darwin 27): a resource at its index, as an argument's would be, and the
+          * global holds its handle -- the load of the handle is the binding itself (see
+          * AIR_OP_LOAD). */
+         uint64_t index = 0;
+         md_key_int(gb, "air.location_index", &index);
+         if (md_key(gb, "air.texture") >= 0) {
+            bool write = md_key(gb, "air.write") >= 0 || md_key(gb, "air.read_write") >= 0;
+            bool read = md_key(gb, "air.sample") >= 0 || md_key(gb, "air.read") >= 0;
+            add_resource(c, write ? AIR_RESOURCE_IMAGE : AIR_RESOURCE_TEXTURE, index, 0, read,
+                         write, ~0u, gb);
+            pl->class = AIR_PTR_TEXTURE;
+            pl->is_image = write;
+         } else if (md_key(gb, "air.sampler") >= 0) {
+            add_resource(c, AIR_RESOURCE_SAMPLER, index, 0, true, false, ~0u, gb);
+            pl->class = AIR_PTR_SAMPLER;
+         } else {
+            air_error(c, "interface: a global binding (%s) that is not a texture or a sampler",
+                      name);
+            return;
+         }
+         pl->binding = index;
+      } else if (g->externally_initialized) {
          int idx = function_constant_index(c, g);
          if (idx < 0) {
             air_error(c, "interface: an externally initialized variable that is not a "
@@ -5593,6 +5650,7 @@ materialise_globals(struct air_ctx *c)
          .binding = pl->binding,
          .offset = pl->has_offset ? nir_imm_int(&c->b, pl->offset) : NULL,
          .var = pl->var,
+         .is_image = pl->is_image,
       };
       air_set(c, &g->base, air_val_ptr(c, p));
    }

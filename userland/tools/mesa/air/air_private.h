@@ -196,6 +196,7 @@ struct air_ctx {
       unsigned offset;      /* bytes, when has_offset */
       bool has_offset;
       bool skip;            /* llvm.* lists, and anything that failed */
+      bool is_image;        /* a global binding of a texture the shader writes */
       struct nir_variable *var;   /* AIR_PTR_VARIABLE */
    } *global_plan;
 
