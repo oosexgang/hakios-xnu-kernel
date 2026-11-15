@@ -24,6 +24,7 @@
  * alone and says so.
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -269,6 +270,48 @@ spare_in(Class *classes, unsigned count, SEL sel)
 	return spared;
 }
 
+/* ... and the policy a provider of them answers (FBProcessWatchdogProviding's
+ * -watchdogPolicyForProcess:eventContext:): none, so that no watchdog is made at all */
+static id
+no_watchdog_policy(id self, SEL selector, id process, id context)
+{
+	(void)self, (void)selector, (void)process, (void)context;
+	if (watchdog_spared++ < 20) {
+		say("hakios: PosterBoard: no watchdog policy for a process (rwa_software=1)\n");
+	}
+	return nil;
+}
+
+static unsigned
+policies_off(void)
+{
+	Protocol *providing = objc_getProtocol("FBProcessWatchdogProviding");
+	SEL sel = sel_registerName("watchdogPolicyForProcess:eventContext:");
+	unsigned count = 0, spared = 0;
+	Class *classes = providing != NULL ? objc_copyClassList(&count) : NULL;
+	char line[200], types[48] = "?";
+
+	for (unsigned i = 0; classes != NULL && i < count; i++) {
+		if (!class_conformsToProtocol(classes[i], providing)) {
+			continue;
+		}
+		Method m = class_getInstanceMethod(classes[i], sel);
+		if (m == NULL || !types_of(m, types, sizeof(types)) || strcmp(types, "@@:@@") != 0) {
+			snprintf(line, sizeof(line), "hakios: PosterBoard: %s provides watchdogs, its policy method %s\n",
+			    class_getName(classes[i]), m == NULL ? "not found" : types);
+			say(line);
+			continue;
+		}
+		method_setImplementation(m, (IMP)no_watchdog_policy);
+		snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s watchdogPolicyForProcess:eventContext:] answers "
+		    "none (rwa_software=1)\n", class_getName(classes[i]));
+		say(line);
+		spared++;
+	}
+	free(classes);
+	return spared;
+}
+
 static void
 watchdogs_off(void)
 {
@@ -279,15 +322,28 @@ watchdogs_off(void)
 	for (unsigned i = 0; i < n; i++) {
 		first[i] = objc_getClass(watchdog_delegates[i]);
 	}
-	if (spare_in(first, n, sel) == 0) {
+	unsigned spared = spare_in(first, n, sel);
+	if (spared == 0) {
 		unsigned count = 0;
 		Class *classes = objc_copyClassList(&count);
 
-		if (spare_in(classes, count, sel) == 0) {
-			say("hakios: PosterBoard: no watchdog delegate found to leave the poster extension running\n");
-		}
+		spared = spare_in(classes, count, sel);
 		free(classes);
 	}
+	spared += policies_off();
+	if (spared == 0) {
+		say("hakios: PosterBoard: no watchdog delegate or policy found to leave the poster extension running\n");
+	}
+}
+
+/* FrontBoard's classes are not all there when this library is loaded: looked for again once
+ * PosterBoard is running, and once more later, off its main thread (realizing every class is slow under
+ * the emulator; each method found again is replaced with the same) */
+static void
+watchdogs_off_later(void *context)
+{
+	(void)context;
+	watchdogs_off();
 }
 
 __attribute__((constructor)) static void
@@ -295,6 +351,10 @@ poster_init(void)
 {
 	if (software_metal()) {
 		watchdogs_off();
+		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
+		    watchdogs_off_later);
+		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
+		    watchdogs_off_later);
 	}
 
 	Method initial = method_of("PBFInitialPosterHelper", true, "initialPosterConfigurationsWithModelCoordinatorProvider:role:", "@@:@@");
