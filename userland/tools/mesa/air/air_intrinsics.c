@@ -649,6 +649,10 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
                                                : nir_load_num_workgroups(&c->b);
       r = nir_vector_extract(&c->b, v, nir_u2u32(&c->b, a[0]));
       r = nir_u2uN(&c->b, r, air_nir_bit_size(c, in->base.type));
+   } else if (!strcmp(op, "get_local_linear_id")) {
+      /* the thread's number in its group, counted x first (CMImaging) */
+      r = nir_u2uN(&c->b, nir_load_local_invocation_index(&c->b),
+                   air_nir_bit_size(c, in->base.type));
    } else if (!strcmp(op, "get_thread_index_in_simdgroup")) {
       /* the lane, asked for by a call rather than taken as [[thread_index_in_simdgroup]]
        * (RealityCoreRenderer's copyMemory kernels, Darwin 27): the same value as the input */
