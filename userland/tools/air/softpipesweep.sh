@@ -19,10 +19,13 @@ python3 "$ROOT/tools/metallib.py" dump "$LIBRARY" "$WORK/bc" > /dev/null
 "${LLVM:-/usr/lib/llvm-20/bin}/llvm-as" -o "$WORK/rf.bc" "$ROOT/tools/air/rast_frag.ll"
 ok=0 refused=0 died=0
 while read -r name stage; do
+	# (the file is named as metallib.py dump names it: '/' made '_', at most 120 characters)
+	file=${name//\//_}
+	file="$WORK/bc/${file:0:120}.bc"
 	case "$stage" in
-	fragment) args=(fragment "$WORK/bc/$name.bc" "$name") ;;
-	vertex) args=(vertex "$WORK/bc/$name.bc" "$name" "$WORK/rf.bc" rf) ;;
-	kernel) args=(kernel "$WORK/bc/$name.bc" "$name") ;;
+	fragment) args=(fragment "$file" "$name") ;;
+	vertex) args=(vertex "$file" "$name" "$WORK/rf.bc" rf) ;;
+	kernel) args=(kernel "$file" "$name") ;;
 	*) continue ;;
 	esac
 	if line=$(RWA_SOFTWARE=1 timeout 120 "$WORK/softpipesweep" "${args[@]}" 2> /dev/null); then
