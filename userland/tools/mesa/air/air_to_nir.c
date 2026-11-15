@@ -3940,6 +3940,28 @@ translate_gep(struct air_ctx *c, const struct air_inst *in)
 static bool
 translate_binop(struct air_ctx *c, const struct air_inst *in)
 {
+   /* A pointer turned into an integer (ptrtoint, below) plus or minus a number of bytes: the
+    * same pointer that many bytes on -- `inttoptr (ptrtoint %rows + %offset)` is how
+    * MPSImage's DilateFilter4 and ErodeFilter4 find their run-length rows in a buffer. */
+   if (in->sub == AIR_BINOP_ADD || in->sub == AIR_BINOP_SUB) {
+      struct air_val *a = air_get(c, in->operands[0]);
+      struct air_val *b = air_get(c, in->operands[1]);
+      if (!a || !b)
+         return false;
+      if (in->sub == AIR_BINOP_ADD && b->kind == AIR_VAL_PTR && a->kind == AIR_VAL_SSA) {
+         struct air_val *t = a;
+         a = b;
+         b = t;
+      }
+      if (a->kind == AIR_VAL_PTR && a->ptr.class != AIR_PTR_NONE && !a->fn &&
+          b->kind == AIR_VAL_SSA && b->def && b->def->num_components == 1) {
+         nir_def *bytes = air_u32(&c->b, b->def);
+         if (in->sub == AIR_BINOP_SUB)
+            bytes = nir_ineg(&c->b, bytes);
+         air_set(c, &in->base, air_val_ptr(c, air_ptr_add(c, a->ptr, bytes)));
+         return true;
+      }
+   }
    nir_def *x = air_get_ssa(c, in->operands[0]);
    nir_def *y = air_get_ssa(c, in->operands[1]);
    if (!x || !y)
@@ -4067,6 +4089,25 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
       }
    }
 
+   /* A pointer as an integer is still that pointer, kept as one: what an integer of it can
+    * be used for here is an offset added to it and a cast back (translate_binop), and
+    * anything else reads it as a number and is refused as before. */
+   if (in->sub == AIR_CAST_PTRTOINT || in->sub == AIR_CAST_INTTOPTR) {
+      struct air_val *v = air_get(c, in->operands[0]);
+      if (!v)
+         return false;
+      if (v->kind == AIR_VAL_PTR && v->ptr.class != AIR_PTR_NONE && !v->fn) {
+         if (in->sub == AIR_CAST_PTRTOINT) {
+            air_set(c, &in->base, v);
+            return true;
+         }
+         struct air_val *r = cast_pointer(c, v, dt->elem);
+         if (r) {
+            air_set(c, &in->base, r);
+            return true;
+         }
+      }
+   }
    nir_def *x = air_get_ssa(c, in->operands[0]);
    if (!x)
       return false;
