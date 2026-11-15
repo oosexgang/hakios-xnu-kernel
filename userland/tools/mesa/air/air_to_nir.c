@@ -2080,13 +2080,20 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
                                    "%s has no air.location_index", mname,
                                 ab->name ? ab->name : "unnamed");
          }
-         if (n >= st->num_members ||
-             air_struct_member_offset(c->m, st, n) != off ||
+         if (n >= st->num_members)
+            return air_error(c, "interface: the value member %s of the argument buffer %s "
+                                "is %u bytes at byte %u, and the module's struct type has "
+                                "only %u members", mname, ab->name ? ab->name : "unnamed",
+                             (unsigned)msize, (unsigned)off, st->num_members);
+         if (air_struct_member_offset(c->m, st, n) != off ||
              air_type_alloc_size(c->m, st->members[n]) != msize)
             return air_error(c, "interface: the value member %s of the argument buffer %s "
-                                "is %u bytes at byte %u, and the module's struct type does "
-                                "not put it there", mname, ab->name ? ab->name : "unnamed",
-                             (unsigned)msize, (unsigned)off);
+                                "is %u bytes at byte %u, and the module's struct type puts "
+                                "%u bytes at byte %u there", mname,
+                             ab->name ? ab->name : "unnamed", (unsigned)msize,
+                             (unsigned)off,
+                             (unsigned)air_type_alloc_size(c->m, st->members[n]),
+                             (unsigned)air_struct_member_offset(c->m, st, n));
          /* An inline struct is its members, flattened into the set: each at the struct's
           * offset plus its own, and numbered from the struct's [[id(n)]] on, which is how
           * Metal numbers a struct inside an argument buffer. VFX wraps a texture so
