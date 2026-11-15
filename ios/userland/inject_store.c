@@ -172,6 +172,7 @@ static size_t replacement_count(void);
 static void image_added(const struct mach_header *header, intptr_t image_slide);
 static void make_account_types(void);
 static const char *knob(const char *name);     /* a switch from /var/hakios-store.conf; see knob() */
+static const char *who_i_am(void);              /* this process name; defined below */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -3069,6 +3070,103 @@ hook_first_unlock(void)
 	    "has been unlocked since boot\n", target);
 }
 
+/*
+ * TRACE THE BOOTSTRAP. Static read of AppStoreKit (cache 24B119): the App Store shows
+ * DefaultBootstrapLoadingView ("Loading...") until ASKBootstrapV2.start() (@0x20b45c080) resolves its
+ * Promise<BaseObjectGraph>, which it does only after a list of JetEngine prerequisites all finish; each
+ * phase that finishes calls -[BootstrapPendingClosuresHandler didComplete:bootstrapPhase:] (@0x20b5d6b80).
+ * The store is stuck on Loading and never asks for its own bag or amp-api, so one prerequisite never
+ * finishes. didComplete is a class method (self in x20, callee-saved), so logging each completed phase and
+ * calling through is safe; the sequence stops right after the last phase that completes, which names the
+ * stall. HAKIOS_TRACE_BOOTSTRAP=1, AppStore only. Addresses are unslid cache vaddrs + slide.
+ */
+static void (*old_did_complete)(unsigned long);
+
+static void
+new_did_complete(unsigned long phase)
+{
+	say("hakios: store(%s): bootstrap phase completed: %lu\n", who_i_am(), phase);
+	if (old_did_complete != NULL) {
+		old_did_complete(phase);        /* x20 (self) is callee-saved, untouched here */
+	}
+}
+
+/*
+ * ... and the three prerequisite closures the bootstrap awaits (func_20b45c018 / 20b45de50 / 20b960ce4).
+ * start() entered but zero phases completed, so the FIRST prerequisite never finishes. Entry-logging each
+ * tells which one is reached; the one reached whose phase never completes is the stall. Call-through keeps
+ * the swift context registers (callee-saved) untouched, as with start().
+ */
+static void (*old_prereq_a)(void);
+static void (*old_prereq_b)(void);
+static void (*old_prereq_c)(void);
+
+static void
+new_prereq_a(void)
+{
+	static int told;
+	if (told < 2) { told++; say("hakios: store: prerequisite A (20b45c018) entered\n"); }
+	if (old_prereq_a != NULL) old_prereq_a();
+}
+static void
+new_prereq_b(void)
+{
+	static int told;
+	if (told < 2) { told++; say("hakios: store: prerequisite B (20b45de50) entered\n"); }
+	if (old_prereq_b != NULL) old_prereq_b();
+}
+static void
+new_prereq_c(void)
+{
+	static int told;
+	if (told < 2) { told++; say("hakios: store: prerequisite C (20b960ce4) entered\n"); }
+	if (old_prereq_c != NULL) old_prereq_c();
+}
+
+static void (*old_askboot_start)(void);
+
+static void
+new_askboot_start(void)
+{
+	static int told;
+
+	if (told < 3) {
+		told++;
+		say("hakios: store(%s): ASKBootstrapV2.start() entered\n", who_i_am());
+	}
+	if (old_askboot_start != NULL) {
+		old_askboot_start();
+	}
+}
+
+static void
+hook_bootstrap(void)
+{
+	static bool done;
+	const char *on = knob("HAKIOS_TRACE_BOOTSTRAP");
+	MSHookFunction_t hook = substrate_hook();
+	const char *me = who_i_am();
+
+	if (done || on == NULL || *on == '0' || hook == NULL || slide == 0) {
+		return;
+	}
+	if (me == NULL || strcmp(me, "AppStore") != 0) {
+		return;
+	}
+	/* only once AppStoreKit is in the process -- a Swift class of its is the signal */
+	if (objc_getClass("ASKRebootstrapCoordinator") == Nil) {
+		return;
+	}
+	done = true;
+	hook((void *)(0x20b5d6b80UL + slide), (void *)new_did_complete, (void **)&old_did_complete);
+	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
+	hook((void *)(0x20b45c018UL + slide), (void *)new_prereq_a, (void **)&old_prereq_a);
+	hook((void *)(0x20b45de50UL + slide), (void *)new_prereq_b, (void **)&old_prereq_b);
+	hook((void *)(0x20b960ce4UL + slide), (void *)new_prereq_c, (void **)&old_prereq_c);
+	say("hakios: store(%s): bootstrap is traced (didComplete @%p, start @%p)\n", me,
+	    (void *)(0x20b5d6b80UL + slide), (void *)(0x20b45c080UL + slide));
+}
+
 static void
 hook_fairplay(void)
 {
@@ -5159,6 +5257,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 		return;
 	}
 	hook_fairplay();                /* as soon as AppleMediaServices is there, before it runs */
+	hook_bootstrap();               /* ... and trace the store bootstrap phases (AppStore, if asked) */
 	hook_ams_log();                 /* ... and the logging call that kills appstored, once its framework is in */
 	hook_first_unlock();            /* ... and the question jetpackassetd will not start without */
 	for (size_t i = 0; i < sizeof(replacements) / sizeof(replacements[0]); i++) {
