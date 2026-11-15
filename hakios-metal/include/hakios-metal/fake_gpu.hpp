@@ -159,6 +159,30 @@ public:
         uint32_t tileClears = 0;    // ...and clears in GMEM
         uint32_t binningPasses = 0, binnedDraws = 0, binData = 0;   // binning passes, the draws in them, tiles told their streams
         uint64_t storedPixels = 0;  // pixels the stores wrote: the whole target once, granule padding included, when the tiles tile it
+        // What the command processor read and ran, as the CP microcode reads and runs it (the CP's state, below):
+        // every word it fetched -- the stream's, an indirect buffer's each time it was entered and as far as it was
+        // read, a draw-state group's each time it ran -- and of those the words inside draw-state groups; the draws a
+        // tile's visibility streams skipped (their packet read, nothing run); the indirect buffers not entered and
+        // those left early (CP_SKIP_IB2_ENABLE_GLOBAL and _LOCAL with nothing left visible); the groups run.
+        // And of what it ran: the registers written, the CP_LOAD_STATE6 packets, the CP_WAIT_FOR_IDLE; and group by
+        // group (ids 0 to 7; a higher one counts as 7) how often each ran and the words it ran.
+        uint64_t cpWords = 0, sdsWords = 0, cpRegisters = 0;
+        uint32_t drawsSkipped = 0, ibSkipped = 0, ibEarlyReturns = 0, groupsRun = 0, cpLoads = 0, cpWaits = 0;
+        uint32_t groupRuns[8] = {};
+        uint64_t groupWords[8] = {};
+        // One entry a draw that ran, when asked for (logDraws): the tile it ran in (counted from 0 in its submission;
+        // ~0 outside a tile), its number among the draw packets of that tile or of the binning pass or sysmem pass
+        // (counted from 0, skipped ones included), and a digest of everything the GPU holds for it then -- every
+        // register as written and each stage's loads. Two recordings of the same draws leave the same digests where
+        // they leave the GPU in the same state, which is how the draw-state groups are held to the plain stream.
+        // In a binned pass's tile the digest leaves out the registers that the pass's draws write only AFTER this
+        // one (found in the binning pass, which runs them all in order): the draw was recorded without them, and
+        // what they hold is whatever a later draw left there a tile ago -- another value in a stream that runs every
+        // draw's state than in one that runs the visible ones', and nothing the draw reads.
+        // (STATE, when asked for too: what the digest is of, word for word -- each register and its value, then each
+        // stage's loads -- for whoever must say WHERE two recordings part)
+        struct DrawLog { uint32_t tile, ordinal; bool binning; uint64_t digest; std::vector<uint64_t> state; };
+        std::vector<DrawLog> drawLog;
     };
 
     // ASYNC: submissions run on a thread of their own, after DELAY_US each, as the real GPU runs them after the call
@@ -191,6 +215,8 @@ public:
     static void (*submitHook)(FakeGpu& gpu, uint64_t address, uint32_t words, void* context);
     static void* submitHookContext;
     const uint8_t* peek(uint64_t iova, uint64_t length) { return at(iova, length); }   // (inside the hook alone)
+    // every draw that runs from now on leaves an entry in Stats::drawLog (STATE: with what its digest is of)
+    void logDraws(bool on, bool state = false);
 
     // what the kernel says about this GPU, for the fake to say the same and for a test to check it does
     static constexpr uint64_t kChipId = 0x06030500;      // dt qcom,chipid: an A635-family part, "Adreno 7c+ Gen 3" to Mesa
@@ -239,6 +265,9 @@ private:
         uint32_t programUnits = 0;
         std::vector<ConstLoad> consts;
         uint64_t constsFor = 0;            // the program (its preload's source) CONSTS were loaded after
+        // the constants as the stage would read them: each vec4 the words last loaded there since the stage's state
+        // was last invalidated (what the digest of a draw takes, where the list above keeps every load in order)
+        std::map<uint32_t, std::vector<uint32_t>> store;
         bool sampLoaded = false, texLoaded = false;
         uint64_t sampFrom = 0, texFrom = 0;
         uint32_t sampUnits = 0, texUnits = 0;
@@ -305,6 +334,59 @@ private:
     std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);
     bool tileState(uint32_t* binW, uint32_t* binH, uint32_t win[4]);
     bool eventBlit();
+    // --- The command processor's own state, as its microcode keeps it: read from a disassembly of the a630_sqe.fw an
+    // Adreno 610 runs (the firmware is the vendor's and is not in this tree; this is what it does; the A635's
+    // a660_sqe.fw has not been read, and is taken to agree where Mesa's drivers rely on the same packets):
+    // what Mesa's XML says of these packets is a sentence each, and two of them it gets no use of.
+    //   CP_SET_VISIBILITY_OVERRIDE 1   every draw runs. 0: in a tile after a binning pass a USE_VISIBILITY draw is
+    //                                  counted and runs only if the tile's streams name it
+    //   CP_SKIP_IB2_ENABLE_GLOBAL/LOCAL  both 1 and the tile's streams with no draw left: an indirect buffer is not
+    //                                  entered, and the one being read is left at once. LOCAL is cleared by
+    //                                  RM6_BIN_RENDER_START and by CP_SET_BIN_DATA5*: it is a tile's own
+    //   CP_SET_MARKER                  the mode CP_SET_DRAW_STATE's groups are held to: RM6_BIN_VISIBILITY binning,
+    //                                  RM6_DIRECT_RENDER sysmem, any other marker GMEM
+    //   CP_SET_MODE 1                  a CP_SET_DRAW_STATE's groups run at once rather than at the next draw.
+    //                                  CP_SET_VISIBILITY_OVERRIDE ends the "at once" until groups have next run, and
+    //                                  CP_SET_MODE 0 ends it for good; both witnesses write the override first and
+    //                                  the mode after it, at the binning pass's start and at each tile's
+    //   CP_SET_DRAW_STATE              each group kept by id; at a draw that runs, the pending ones of the mode in
+    //                                  force run from the lowest id up. One set again to the address and length it
+    //                                  last RAN with, without DIRTY, does not run again.
+    bool visOverride_ = false, skipGlobal_ = false, skipLocal_ = false;
+    bool sdsMode_ = false, sdsImmediate_ = false;   // CP_SET_MODE's word; whether a CP_SET_DRAW_STATE runs its groups at once
+    bool streamEnded_ = false;      // the tile's streams have no draw left (found at the draw after the last one they name)
+    bool skipActive_ = false;       // ...with both skips on when that was found or a skip was last written (let go by RM6_BIN_END_OF_DRAWS)
+    bool leaveIb_ = false;          // ...and the indirect buffer being read is to be left (execute's own, cleared as it returns)
+    bool binned_ = false;           // a binning pass ran in this pass: its tiles' draws consult the streams
+    uint32_t cpMode_ = a6xx::CP_SET_DRAW_STATE__0_SYSMEM;   // CP_SET_DRAW_STATE__0_BINNING, _GMEM or _SYSMEM
+    // The visibility streams, as far as a model that rasterizes nothing can have them: each draw of the binning pass
+    // reaches the bins its two scissors' rectangle touches (the hardware's own answer is that or fewer bins), the bins
+    // where VSC_BIN_SIZE puts them -- from the window's origin: the VSC has no register that says otherwise.
+    struct Binned { uint32_t x0, y0, x1, y1; };
+    std::vector<Binned> binnedDraws_;
+    bool tileStreams_ = false;      // CP_SET_BIN_DATA5* gave this tile its streams...
+    uint32_t tileBin_[4] = {};      // ...which are this bin's: X0 Y0 X1 Y1
+    uint32_t drawIndex_ = 0;        // the tile's USE_VISIBILITY draws counted so far
+    uint32_t drawOrdinal_ = 0, tileOrdinal_ = ~0u, tilesInSubmission_ = 0;   // (the draw log's)
+    struct Group {
+        bool enabled = false, pending = false, forced = false;
+        uint64_t address = 0, ranAddress = 0;
+        uint32_t words = 0, ranWords = 0, modes = 0;
+    };
+    Group groups_[32];
+    bool inGroup_ = false;          // a group's words are being run
+    bool logDraws_ = false, logState_ = false;
+    // (the registers the binning pass's draws wrote, in the order each was first written, and how many of them had
+    // been by each of its draws: what the digest of a tile's draw leaves out, above)
+    std::vector<uint32_t> bodyOrder_;
+    std::set<uint32_t> bodySeen_;
+    std::vector<size_t> definedAt_;
+    void tileReset();               // what RM6_BIN_RENDER_START and CP_SET_BIN_DATA5* do alike to the above
+    int drawRuns(uint32_t word0, int depth);    // CP_DRAW_*'s first word: 1 the draw runs, 0 the streams skip it (and what that sets off), -1 a fault
+    bool runGroups();               // the pending groups of the mode in force
+    bool setDrawState(const uint32_t* p, uint32_t count);
+    void invalidate(uint32_t bits);   // HLSQ_INVALIDATE_CMD
+    void logDraw(bool binning);
     uint64_t alwaysOn_ = 0;     // CP_ALWAYS_ON_COUNTER as the fake keeps it: one more at each CP_REG_TO_MEM of it
     uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0, drawsWithoutDepthFlush_ = 0;
     // the running sample count ZPASS_DONE copies out (an occlusion query's snapshots). The model has no rasterizer, so

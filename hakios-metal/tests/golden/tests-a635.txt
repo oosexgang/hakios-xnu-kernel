@@ -173,7 +173,7 @@ the_fake_refuses_a_draw_whose_fragment_output_path_is_broken submits 13 words 76
 the_fake_refuses_a_draw_whose_viewport_scissors_or_fetch_are_off submits 8 words 4683 draws 8 loads 16 stream 14e9692adadf90da state 29f464ce110bdd85
 the_fake_refuses_a_draw_whose_link_or_fs_inputs_disagree submits 10 words 5832 draws 10 loads 20 stream 1cba6d8ce222dba6 state 38d3788868897e50
 the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flushes submits 11 words 6509 draws 11 loads 22 stream 2108070a8e95a584 state 09bde857f6d3d994
-the_fake_refuses_the_packets_a_draw_stream_may_not_carry submits 7 words 4117 draws 7 loads 14 stream f9aa81f9989e75e9 state be376c9d3df73fc8
+the_fake_refuses_the_packets_a_draw_stream_may_not_carry submits 10 words 5881 draws 10 loads 20 stream 055291cf6c7231d5 state fc783749c5379831
 a_draw_pushes_a_fragment_constant_range_out_of_the_bound_buffer submits 1 words 688 draws 1 loads 3 stream d7cc710f48bc405c state 2a4251f1a42f82b4
 a_pushed_range_off_16_bytes_is_copied_by_the_gpu submits 2 words 1384 draws 2 loads 6 stream 3cf7c60365cf8db8 state 9fa69486849bc4f7
 a_draw_refuses_a_constant_range_it_cannot_serve_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
@@ -264,6 +264,7 @@ a_clear_in_gmem_comes_out_as_the_fill_does submits 8 words 5302 draws 8 loads 16
 a_binned_gmem_pass_bins_its_draws_then_tells_each_tile_its_streams submits 2 words 5232 draws 30 loads 60 stream e6ccaa499e1e026e state ec11bedfb1e9734d
 a_visibility_stream_overflow_turns_the_binning_off submits 3 words 7281 draws 42 loads 84 stream a10b70f57eb5313f state a1ca9d874ad3dcbd
 each_profiled_pass_says_why_it_was_drawn_in_sysmem submits 3 words 1867 draws 3 loads 6 stream b911ba4b51bf9332 state 6daed77ff6dca4f4
+the_fake_runs_draw_state_groups_as_the_microcode_does submits 5 words 2976 draws 7 loads 10 stream a8a6b79d9a3c2d64 state 16abf57547b8731c
 texture_pitch_is_mesas_layout_rule submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
 texture_make_lays_the_memory_out_and_refuses_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
 texture_replace_and_read_convert_the_callers_stride submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000

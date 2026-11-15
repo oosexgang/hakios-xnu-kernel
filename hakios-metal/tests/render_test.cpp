@@ -1904,11 +1904,37 @@ TEST(the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flush
 TEST(the_fake_refuses_the_packets_a_draw_stream_may_not_carry) {
     using namespace a6xx;
     {
+        // a group of 4 words at an address for no mode: nothing would ever run it
         Twin w;
         size_t ds = w.e.find(CP_SET_DRAW_STATE);
-        w.words[ds + 1] = setDrawState0(4, 0, 1);   // a group of 4 dwords at an address: applied at the draw over the direct writes
+        w.words[ds + 1] = setDrawState0(4, 0, 1);
         w.words[ds + 2] = uint32_t(w.e.table->gpuAddress());
-        CHECK(has(w.fault(), "draw-state groups are not what this GPU model runs: registers are written directly (only CP_SET_DRAW_STATE's 3-word disable-all form is taken)"));
+        w.words[ds + 3] = uint32_t(w.e.table->gpuAddress() >> 32);
+        CHECK(has(w.fault(), "draw-state group 1: 4 words at"));
+    }
+    {
+        // ...for the sysmem pass: it runs at the draw, over the direct writes -- and the table's words are no packets
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] = setDrawState0(4, CP_SET_DRAW_STATE__0_SYSMEM, 1);
+        w.words[ds + 2] = uint32_t(w.e.table->gpuAddress());
+        w.words[ds + 3] = uint32_t(w.e.table->gpuAddress() >> 32);
+        CHECK(has(w.fault(), "not a packet, or its parity is wrong"));
+    }
+    {
+        // ...outside every buffer
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] = setDrawState0(4, CP_SET_DRAW_STATE__0_SYSMEM, 1);
+        w.words[ds + 2] = 0x1000;
+        CHECK(has(w.fault(), "draw-state group 1: 4 words at"));
+    }
+    {
+        // the disable-all form with a count
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] |= 4;
+        CHECK(has(w.fault(), "CP_SET_DRAW_STATE disabling every group with a count"));
     }
     {
         Twin w;
@@ -5801,4 +5827,53 @@ TEST(each_profiled_pass_says_why_it_was_drawn_in_sysmem) {
         CHECK(std::string(cb->passSysmemWhy(0)).find("GMEM off") != std::string::npos);
     }
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// The command processor's part, on a stream mutated by hand (the flat draw in sysmem): a group for the sysmem pass
+// runs at the draw, over what the stream wrote directly; one for the tiles alone stays pending; set again to what it
+// last ran it does not run again, unless DIRTY; a group holds register writes and loads and nothing else.
+TEST(the_fake_runs_draw_state_groups_as_the_microcode_does) {
+    using namespace a6xx;
+    auto run = [](uint32_t modes, uint32_t flags, bool twice, bool wait, FakeGpu::Stats* out) {
+        Twin w;
+        std::string why;
+        auto blob = newBuffer(*w.r.gpu, 4096, &why);
+        CHECK(blob != nullptr);
+        // the group: the screen scissor at (1, 2)-(30, 31), and under WAIT a CP_WAIT_FOR_IDLE no group holds
+        pm4::Stream g;
+        const uint32_t sc[2] = {scissorXY(1, 2), scissorXY(30, 31)};
+        g.registers(regGrasScScreenScissor(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL, 0), sc, 2);
+        if (wait) g.waitForIdle();
+        memcpy(blob->contents(), g.words().data(), 4 * g.words().size());
+        const uint32_t set[4] = {pm4::type7(CP_SET_DRAW_STATE, 3), setDrawState0(uint32_t(g.words().size()), modes | flags, 5), uint32_t(blob->gpuAddress()),
+                                 uint32_t(blob->gpuAddress() >> 32)};
+        const size_t d = w.e.find(CP_DRAW_INDX_OFFSET);
+        CHECK(d != size_t(-1));
+        std::vector<uint32_t> drawWords(w.words.begin() + d, w.words.begin() + d + 4);
+        std::vector<uint32_t> add(set, set + 4);
+        if (twice) {
+            // the draw, the group set again, the draw again
+            add.insert(add.end(), drawWords.begin(), drawWords.end());
+            add.insert(add.end(), set, set + 4);
+        }
+        w.words.insert(w.words.begin() + d, add.begin(), add.end());
+        const uint32_t before = w.r.fake->stats().faults;
+        Raw raw(w.r);
+        raw.submit(w.words);
+        *out = w.r.fake->stats();
+        return out->faults != before ? out->lastFault : std::string();
+    };
+    FakeGpu::Stats s;
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, false, false, &s).empty());
+    CHECK(s.groupsRun == 1 && s.sdsWords == 3 && s.lastDraw.screenScissor[0] == 1 && s.lastDraw.screenScissor[3] == 31);
+    // for the tiles alone: pending through a sysmem draw, which keeps the scissor the stream wrote
+    CHECK(run(CP_SET_DRAW_STATE__0_GMEM, 0, false, false, &s).empty());
+    CHECK(s.groupsRun == 0 && s.lastDraw.screenScissor[0] == 0 && s.lastDraw.screenScissor[3] == 63);
+    // set twice to the same words: run once; DIRTY: twice
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, true, false, &s).empty());
+    CHECK(s.groupsRun == 1 && s.draws == 2);
+    CHECK(run(CP_SET_DRAW_STATE__0_SYSMEM, CP_SET_DRAW_STATE__0_DIRTY, true, false, &s).empty());
+    CHECK(s.groupsRun == 2 && s.draws == 2);
+    // a wait in a group
+    CHECK(has(run(CP_SET_DRAW_STATE__0_SYSMEM, 0, false, true, &s), "in a draw-state group: register writes and CP_LOAD_STATE6 are what a group holds"));
 }
