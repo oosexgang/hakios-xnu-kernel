@@ -85,6 +85,10 @@ struct air_ptr_numeric {
    bool read;                /* a load has chosen among places[] */
    unsigned num_places;
    struct air_ptr places[32];
+   /* the pointer phis a loop carries from place to place (MPS's RNN kernels step through their
+    * inputs): carried as the two words, a register of them, in the next translation */
+   unsigned num_phis;
+   uint64_t phis[16];        /* (the function's number in the module << 32) | the phi's value id */
 };
 
 struct air_val {
