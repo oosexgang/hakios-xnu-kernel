@@ -1313,6 +1313,20 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
       return true;
    }
 
+   if (!strcmp(op, "quad_shuffle")) {
+      /* quad_shuffle(data, lane): the value of lane `lane` of this thread's quad -- the quad
+       * being four consecutive lanes of the SIMD group, as the quad sysvals take it -- which is
+       * a shuffle to (own lane & ~3) | (lane & 3) */
+      nir_def *lane = air_get_ssa(c, in->operands[2]);
+      if (!lane)
+         return false;
+      nir_def *self = nir_load_subgroup_invocation(&c->b);
+      nir_def *to = nir_ior(&c->b, nir_iand_imm(&c->b, self, ~3u),
+                            nir_iand_imm(&c->b, nir_u2u32(&c->b, lane), 3));
+      air_set(c, &in->base, air_val_ssa(c, nir_shuffle(&c->b, a0, to)));
+      return true;
+   }
+
    if (!strcmp(op, "quad_shuffle_xor")) {
       /* quad_shuffle_xor(data, mask) hands each lane the value of the lane
        * whose number is its own exclusive-ored with the mask. Within a quad
