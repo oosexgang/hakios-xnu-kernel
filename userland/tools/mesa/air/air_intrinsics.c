@@ -1030,6 +1030,37 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
       return true;
    }
 
+   /* Metal 3.2's atomic_wait and atomic_notify (MPSCore's single_pass_scan waits for the group
+    * before it to publish its sum): wait(ptr, old, order, scope, ...) returns the value once it
+    * is no longer `old`, which here is a loop reading it until then -- the notify a waiter would
+    * be woken by is then nothing, the waiter seeing the store itself. An acquiring wait orders
+    * what follows after the value it saw. */
+   if (!strcmp(op, "notify"))
+      return true;
+   if (!strcmp(op, "wait")) {
+      if (in->num_operands <= 2)
+         return air_error(c, "intrinsic: air.atomic.%s.wait with no value", where);
+      nir_def *old = air_get_ssa(c, in->operands[2]);
+      if (!old)
+         return false;
+      struct air_loop lp;
+      air_loop_head(c, &lp);
+      nir_def *now = air_load_ptr(c, p, in->base.type, 0);
+      if (!now)
+         return false;
+      air_loop_test(c, &lp, nir_ieq(&c->b, now, old));
+      air_loop_end(c, &lp);
+      uint64_t order = 0;
+      if (in->num_operands > 3 && air_const_uint(in->operands[3], &order) && order != 0)
+         nir_barrier(&c->b, .execution_scope = SCOPE_NONE,
+                     .memory_scope = strcmp(where, "local") ? SCOPE_DEVICE : SCOPE_WORKGROUP,
+                     .memory_semantics = NIR_MEMORY_ACQ_REL,
+                     .memory_modes = strcmp(where, "local") ? nir_var_mem_ssbo | nir_var_mem_global
+                                                            : nir_var_mem_shared);
+      air_set(c, &in->base, air_val_ssa(c, now));
+      return true;
+   }
+
    /* The memory order, which this lowering is right for exactly one value of.
     * That argument is Metal's memory_order, and every atomic in the corpus
     * passes 0 -- memory_order_relaxed. A relaxed load or store of an aligned
@@ -1565,6 +1596,10 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
 {
    if (!strcmp(name, "llvm.assume"))
       return true;      /* a promise to the optimiser, nothing to compute */
+   /* Apple's own hint, in a spin loop, that the lane may give way to others (MPSCore's
+    * single_pass_scan waiting on its neighbour's partial sum): nothing to compute either */
+   if (!strncmp(name, "llvm.agx", 8) && strstr(name, ".yield"))
+      return true;
    if (!strncmp(name, "llvm.bswap.", 11)) {
       /* the bytes of each component in the other order (VideoToolbox's big-endian formats) */
       nir_def *x = air_get_ssa(c, in->operands[1]);
@@ -3122,6 +3157,30 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
    }
    if (!strcmp(n.part[0], "atomic"))
       return atomic_op(c, in, &n);
+   /* air.load.device_coherent / air.store.device_coherent: a load or a store another threadgroup
+    * may be reading or writing at the same time (MPSCore's single_pass_scan publishes partial
+    * sums so). A plain load or store of the place, made visible by the barriers and the atomics
+    * around it, which is how the shader orders them. */
+   if (n.num >= 2 && !strcmp(n.part[1], "device_coherent") &&
+       (!strcmp(n.part[0], "load") || !strcmp(n.part[0], "store"))) {
+      bool is_load = !strcmp(n.part[0], "load");
+      unsigned at = is_load ? 1 : 2;
+      struct air_val *pv = in->num_operands > at ? air_get(c, in->operands[at]) : NULL;
+      if (!pv)
+         return in->num_operands > at ? false
+                                      : air_error(c, "intrinsic: %s with no pointer", name);
+      if (pv->kind != AIR_VAL_PTR)
+         return air_error(c, "intrinsic: %s through something that is not a pointer", name);
+      if (is_load) {
+         nir_def *r = air_load_ptr(c, pv->ptr, in->base.type, 4);
+         if (!r)
+            return false;
+         air_set(c, &in->base, air_val_ssa(c, r));
+         return true;
+      }
+      nir_def *v = air_get_ssa(c, in->operands[1]);
+      return v && air_store_ptr(c, pv->ptr, v, 4);
+   }
    if (!strcmp(n.part[0], "discard_fragment"))
       return discard_op(c, in);
    /* Darwin 26: the sampler handed to every texel read (texture_op passes it over). A
