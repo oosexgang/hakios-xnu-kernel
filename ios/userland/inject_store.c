@@ -4171,6 +4171,62 @@ new_filter_accounts(id self, SEL cmd, void *type, void *options, void *completio
 	}
 }
 
+/*
+ * The store launches, has an account, cookies, a completed bag fetch -- and never presents content. Its
+ * own log repeats AMSSyncAccountFlagsTask: Failed and AMSSyncRestrictedRegionTask: Failed: the account's
+ * flags and region are synced from Apple's server for a fabricated account the server does not know, so
+ * they fail, and AppStoreKit's bootstrap does not leave onboarding for presentingContent. These answer
+ * performSync with an already-finished promise, so the bootstrap treats the sync as done and goes on --
+ * where it then makes the Mescal-signed amp-api request that sapd can sign. HAKIOS_FAKE_FLAG_SYNC=1.
+ */
+static id (*old_flags_sync)(id, SEL);
+static id (*old_region_perform)(id, SEL);
+
+static id
+a_finished_promise(void)
+{
+	Class promise = objc_getClass("AMSPromise");
+
+	if (promise == Nil) {
+		return NULL;
+	}
+	return ((id (*)(Class, SEL, id))objc_msgSend)(promise, sel_registerName("promiseWithResult:"), NULL);
+}
+
+static id
+new_flags_sync(id self, SEL cmd)
+{
+	const char *on = knob("HAKIOS_FAKE_FLAG_SYNC");
+	static int told;
+
+	if (on == NULL || *on == '0') {
+		return old_flags_sync != NULL ? old_flags_sync(self, cmd) : NULL;
+	}
+	if (told < 3) {
+		told++;
+		say("hakios: store(%s): AMSSyncAccountFlagsTask answered finished, without the server\n",
+		    who_i_am());
+	}
+	return a_finished_promise();
+}
+
+static id
+new_region_perform(id self, SEL cmd)
+{
+	const char *on = knob("HAKIOS_FAKE_FLAG_SYNC");
+	static int told;
+
+	if (on == NULL || *on == '0') {
+		return old_region_perform != NULL ? old_region_perform(self, cmd) : NULL;
+	}
+	if (told < 3) {
+		told++;
+		say("hakios: store(%s): AMSSyncRestrictedRegionTask answered finished, without the server\n",
+		    who_i_am());
+	}
+	return a_finished_promise();
+}
+
 static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
 static void (*old_add_storefront_header)(id, SEL, void *, void *, void *, void *);
 
@@ -5008,6 +5064,10 @@ static struct replacement replacements[] = {
 	  (IMP)no_restricted_region, &old_restricted_region, false },
 	{ "AMSSyncRestrictedRegionTask", "durationOfSyncRestrictedRegionValueFromBag:", true,
 	  (IMP)no_restricted_region, NULL, false },
+	{ "AMSSyncAccountFlagsTask", "performSync", false, (IMP)new_flags_sync, (IMP *)&old_flags_sync,
+	  false },
+	{ "AMSSyncRestrictedRegionTask", "performSync", false, (IMP)new_region_perform,
+	  (IMP *)&old_region_perform, false },
 	{ "AMSDefaults", "enableRemoteSecuritySigning", true, (IMP)no_remote_signing, NULL, false },
 	{ "AMSURLRequestEncoder", "enableRemoteSecuritySigning", false, (IMP)no_remote_signing, NULL, false },
 	{ "NSXPCConnection", "initWithMachServiceName:options:", false, (IMP)new_xpc_init,

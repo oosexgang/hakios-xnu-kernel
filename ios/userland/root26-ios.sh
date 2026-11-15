@@ -374,6 +374,13 @@ if len(text.encode()) >= 4096:
     raise SystemExit('inject.conf exceeds kern.exec_inject capacity')
 conf.write_text(text)
 PY
+# SETTINGS_NUDE=1: Preferences gets none of our injected libraries, to tell a white Settings screen that is
+# our doing from one that is the system's. Done after @apps is expanded, so it strips the explicit name too.
+if [ -n "${SETTINGS_NUDE:-}" ]; then
+	sed -i 's/ Preferences\b//g' "$T/etc/inject.conf"
+	sed -i '/\.dylib[[:space:]]*$/d' "$T/etc/inject.conf"
+	echo "root26-ios.sh: Preferences gets none of our libraries (SETTINGS_NUDE)"
+fi
 # chronod's CoreDuet store cannot create its missing parent directories in the fresh RAM /var.
 printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet/Knowledge\n' >> $T/etc/var.skel
 # CONSOLE_LOG="NAME ...": these programs get libhakios-console.dylib (standard error on the console; with
