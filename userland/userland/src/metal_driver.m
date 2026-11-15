@@ -694,6 +694,7 @@ static struct {
 				const unsigned[3], char *, size_t);
 	void (*threadgroup_memory)(struct rwa_compute *, unsigned);
 	void (*threadgroup_memory_at)(struct rwa_compute *, unsigned, unsigned);
+	void (*grid_threads)(struct rwa_compute *, const unsigned[3]);
 	int (*clear_pass)(struct rwa_texture *const *, unsigned, unsigned, const float (*)[4],
 			  struct rwa_texture *, const float *, const unsigned *, char *, size_t);
 	int (*clear_pass_levels)(struct rwa_texture *const *, const unsigned *, const unsigned *, unsigned,
@@ -778,6 +779,7 @@ mesa_available(void)
 	*(void **)&mesa.dispatch_buffers = dlsym(mesa.handle, "rwa_dispatch_buffers");
 	*(void **)&mesa.threadgroup_memory = dlsym(mesa.handle, "rwa_threadgroup_memory");
 	*(void **)&mesa.threadgroup_memory_at = dlsym(mesa.handle, "rwa_threadgroup_memory_at");
+	*(void **)&mesa.grid_threads = dlsym(mesa.handle, "rwa_grid_threads");
 	*(void **)&mesa.clear_pass = dlsym(mesa.handle, "rwa_clear_pass");
 	*(void **)&mesa.clear_pass_levels = dlsym(mesa.handle, "rwa_clear_pass_levels");
 	*(void **)&mesa.texture_copy = dlsym(mesa.handle, "rwa_texture_copy");
@@ -1394,6 +1396,7 @@ rw_bisect_within(void)
 	BOOL retained;                  /* -retainResources has run: dealloc gives them back */
 	unsigned count, textureCount, samplerCount;
 	unsigned groups[3], size[3];
+	unsigned threads[3];            /* -dispatchThreads:'s count when the groups do not divide it, or 0 */
 	unsigned threadgroupBytes[32];  /* -setThreadgroupMemoryLength:atIndex:, by index */
 	/* a blit (HakiosMetalBlitEncoder): which kind, from what to what, where */
 	unsigned blit;
@@ -5011,6 +5014,10 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 		 * through rwa_dispatch, and then a kernel with a set is refused by name
 		 * there and every offset is read as zero -- which is what an older library
 		 * did with one in any case, out loud. */
+		if (mesa.grid_threads != NULL) {
+			MESA_VOID(grid_threads, [work->pipeline compute],
+				  work->threads[0] != 0 ? work->threads : NULL);
+		}
 		if (mesa.threadgroup_memory_at != NULL) {
 			for (unsigned k = 0; k < 32; k++) {
 				MESA_VOID(threadgroup_memory_at, [work->pipeline compute], k,
@@ -7299,6 +7306,13 @@ rw_blit_unknown(id self, SEL sel, ...)
 
 - (void)dispatchThreadgroups:(MTLSize)groups threadsPerThreadgroup:(MTLSize)size
 {
+	[self hakiosDispatch:groups size:size threads:(MTLSize){ 0, 0, 0 }];
+}
+
+/* Both dispatches: `threads` zero for whole groups, or the count -dispatchThreads: asked for,
+ * which the library runs with the last groups partial (rwa_grid_threads). */
+- (void)hakiosDispatch:(MTLSize)groups size:(MTLSize)size threads:(MTLSize)threads
+{
 	HakiosMetalWork *work = [[HakiosMetalWork alloc] init];
 
 	if (_pipeline == nil || _complained) {
@@ -7328,32 +7342,43 @@ rw_blit_unknown(id self, SEL sel, ...)
 	work->size[0] = (unsigned)size.width;
 	work->size[1] = (unsigned)size.height;
 	work->size[2] = (unsigned)size.depth;
+	work->threads[0] = (unsigned)threads.width;
+	work->threads[1] = (unsigned)threads.height;
+	work->threads[2] = (unsigned)threads.depth;
 	[_commandBuffer recordWork:work];
 	[work release];
 }
 
-/* Metal counts threads here and threadgroups above; the division is Metal's own, and a
- * grid that does not divide evenly is refused rather than rounded, because rounding runs
- * threads the application did not ask for. */
+/* Metal counts threads here and threadgroups above. A count the groups do not divide runs
+ * with the last groups partial -- Metal's non-uniform threadgroups, which the library has as
+ * a variant of the kernel guarded on the count (rwa_grid_threads); a library without it
+ * cannot, and then the dispatch is refused rather than rounded, because rounding runs threads
+ * the application did not ask for. */
 - (void)dispatchThreads:(MTLSize)threads threadsPerThreadgroup:(MTLSize)size
 {
 	MTLSize groups;
 
-	if (size.width == 0 || size.height == 0 || size.depth == 0 ||
-	    threads.width % size.width != 0 || threads.height % size.height != 0 ||
-	    threads.depth % size.depth != 0) {
-		rw_print("%lux%lux%lu threads do not divide into groups of "
-		         "%lux%lux%lu, and this driver does not have the partial-group support "
-		         "that would need\n", (unsigned long)threads.width,
-		         (unsigned long)threads.height, (unsigned long)threads.depth,
-		         (unsigned long)size.width, (unsigned long)size.height,
+	if (size.width == 0 || size.height == 0 || size.depth == 0) {
+		rw_print("a dispatch of threads in groups of %lux%lux%lu has no threads in a "
+		         "group\n", (unsigned long)size.width, (unsigned long)size.height,
 		         (unsigned long)size.depth);
 		return;
 	}
-	groups.width = threads.width / size.width;
-	groups.height = threads.height / size.height;
-	groups.depth = threads.depth / size.depth;
-	[self dispatchThreadgroups:groups threadsPerThreadgroup:size];
+	groups.width = (threads.width + size.width - 1) / size.width;
+	groups.height = (threads.height + size.height - 1) / size.height;
+	groups.depth = (threads.depth + size.depth - 1) / size.depth;
+	BOOL whole = threads.width % size.width == 0 && threads.height % size.height == 0 &&
+		     threads.depth % size.depth == 0;
+
+	if (!whole && mesa.grid_threads == NULL) {
+		rw_print("%lux%lux%lu threads do not divide into groups of "
+		         "%lux%lux%lu, and this compiler library has no partial groups\n",
+		         (unsigned long)threads.width, (unsigned long)threads.height,
+		         (unsigned long)threads.depth, (unsigned long)size.width,
+		         (unsigned long)size.height, (unsigned long)size.depth);
+		return;
+	}
+	[self hakiosDispatch:groups size:size threads:whole ? (MTLSize){ 0, 0, 0 } : threads];
 }
 
 - (void)useResource:(id)resource usage:(NSUInteger)usage { (void)resource; (void)usage; }
