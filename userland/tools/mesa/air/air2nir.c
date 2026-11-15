@@ -480,6 +480,12 @@ interface_module(const struct module_ref *mod)
              r->kind, r->index, r->size, r->name ? r->name : "-",
              r->argbuf_set == ~0u ? -1 : (int)r->argbuf_set,
              r->argbuf_id == ~0u ? -1 : (int)r->argbuf_id);
+      /* an image written at a mip level other than the base: the level, or where it is read */
+      if (r->level_from_buffer)
+         printf("level	index=%u	buffer=%u	offset=%u	bytes=%u\n", r->index, r->level_buffer,
+                r->level_offset, r->level_bytes);
+      else if (r->level)
+         printf("level	index=%u	level=%u\n", r->index, r->level);
    }
    for (unsigned i = 0; i < info.num_notes; i++) {
       fputs("note\t", stdout);
