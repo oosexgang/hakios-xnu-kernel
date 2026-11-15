@@ -881,7 +881,9 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
    }
 
    nir_atomic_op aop;
+   bool negate = false;   /* sub: an add of the negation, as NIR has no atomic subtract */
    if (!strcmp(op, "add")) aop = nir_atomic_op_iadd;
+   else if (!strcmp(op, "sub")) { aop = nir_atomic_op_iadd; negate = true; }
    else if (!strcmp(op, "min")) aop = is_signed ? nir_atomic_op_imin : nir_atomic_op_umin;
    else if (!strcmp(op, "max")) aop = is_signed ? nir_atomic_op_imax : nir_atomic_op_umax;
    else if (!strcmp(op, "and")) aop = nir_atomic_op_iand;
@@ -893,6 +895,8 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
    nir_def *v = air_get_ssa(c, in->operands[2]);
    if (!v)
       return false;
+   if (negate)
+      v = nir_ineg(&c->b, v);
    nir_def *r;
    if (shared) {
       r = nir_shared_atomic(&c->b, v->bit_size, off, v, .atomic_op = aop);
@@ -1372,15 +1376,23 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
       if (dst->kind != AIR_VAL_PTR)
          return air_error(c, "intrinsic: memset of something that is not a pointer");
       uint64_t bytes;
-      if (!air_const_uint(in->operands[3], &bytes) || bytes % 4)
-         return air_error(c, "intrinsic: memset of a length that is not a multiple of 4");
+      if (!air_const_uint(in->operands[3], &bytes))
+         return air_error(c, "intrinsic: memset of a run-time length");
       if (!nir_src_is_const(nir_src_for_ssa(byte)))
          return air_error(c, "intrinsic: memset of a run-time byte");
       uint32_t b = nir_src_as_uint(nir_src_for_ssa(byte)) & 0xff;
       uint32_t word = b | b << 8 | b << 16 | b << 24;
-      for (uint64_t off = 0; off < bytes; off += 4) {
+      /* words while they last, then the bytes after them -- a struct of 30 bytes cleared
+       * (Portrait's and FRC's linePredictOutput kernels, NRFV1) */
+      uint64_t off = 0;
+      for (; off + 4 <= bytes; off += 4) {
          struct air_ptr d = air_ptr_add(c, dst->ptr, nir_imm_int(&c->b, off));
          if (!air_store_ptr(c, d, nir_imm_int(&c->b, word), 4))
+            return false;
+      }
+      for (; off < bytes; off++) {
+         struct air_ptr d = air_ptr_add(c, dst->ptr, nir_imm_int(&c->b, off));
+         if (!air_store_ptr(c, d, nir_imm_intN_t(&c->b, b, 8), 1))
             return false;
       }
       return true;
