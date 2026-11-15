@@ -260,6 +260,12 @@ commit of its own:
   asserts in the NIR builder, not refusals.
 - Two crashes turned into refusals by name: a value a caller stored in a local and a callee read back (eight
   of RealityKit's shaders), and a vector length NIR has no register for.
+- **Pointers compared** (Morpheus, MPS's in-place kernels): two buffer arguments are equal when the dispatch binds
+  one buffer at both indices and the pointers are as far into it, which is folded in per dispatch like the
+  threadgroup bases (`AIR_BUFFER_ID_INPUT`); a pointer walked up to an end pointer compares the two offsets
+  (`userland/tools/air/bufcmpcheck.sh`). A callee may hand back an array of numbers, an element a parameter
+  (`userland/tools/air/wordcheck.sh`), and a pointer phi may choose among 32 places. Morpheus 297 -> 355 of 364,
+  MPSNeuralNetwork 726 -> 836 of 868.
 
 ### Tessellation without a tessellator
 
