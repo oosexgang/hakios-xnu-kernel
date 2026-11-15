@@ -1636,6 +1636,24 @@ rw_say_pc(const char *tag, unsigned t, const char *what, uintptr_t pc)
 	}
 }
 
+/* sample_every=N: the period of a repeated sample, in seconds (0: the two at 90 and 150 s) */
+static unsigned rw_sample_period;
+
+/* does one of these addresses lie in the image whose file name has `part` in it? */
+static bool
+rw_in_image(const uintptr_t *pcs, unsigned n, const char *part)
+{
+	for (unsigned i = 0; i < n; i++) {
+		Dl_info dl;
+		uintptr_t pc = pcs[i] & 0x0000007fffffffffUL;
+
+		if (pc != 0 && dladdr((void *)pc, &dl) && dl.dli_fname != NULL && strstr(dl.dli_fname, part) != NULL) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static void
 rw_sample(void *context)
 {
@@ -1685,6 +1703,10 @@ rw_sample(void *context)
 			}
 		}
 		thread_resume(threads[t]);
+		/* in a repeated sample (sample_every=), only the threads inside the Metal library */
+		if (rw_sample_period != 0 && !rw_in_image(pcs, got, "libhakios-air")) {
+			continue;
+		}
 		say("hakios: sample %s t%u '%s'\n", tag, t, tname);
 		for (unsigned i = 0; i < got; i++) {
 			rw_say_pc(tag, t, i == 0 ? "pc" : i == 1 ? "lr" : "fr", pcs[i]);
@@ -1704,6 +1726,20 @@ rw_schedule_samples(const char *tag)
 	size_t size = sizeof(args) - 1;
 
 	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "sample=0") != NULL) {
+		return;
+	}
+	/* sample_every=N: every N seconds from the 30th, 200 times, the threads in the Metal library only --
+	 * a profile of where its time goes, which two samples are not (under QEMU a pipeline of
+	 * CoreAnimation's took tens of seconds that the host makes in milliseconds) */
+	const char *every = strstr(args, "sample_every=");
+	if (every != NULL && (every == args || every[-1] == ' ')) {
+		rw_sample_period = (unsigned)strtoul(every + strlen("sample_every="), NULL, 10);
+	}
+	if (rw_sample_period != 0) {
+		for (unsigned k = 0; k < 200; k++) {
+			dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 + k * rw_sample_period) * NSEC_PER_SEC),
+			    dispatch_get_global_queue(0, 0), (void *)tag, rw_sample);
+		}
 		return;
 	}
 	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 90 * NSEC_PER_SEC), dispatch_get_global_queue(0, 0), (void *)tag,
