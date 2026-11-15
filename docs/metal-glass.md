@@ -260,10 +260,10 @@ argument-buffer and dispatch work below and before tessellation:
 
 | | Functions |
 | --- | --- |
-| compiled by ir3 for the Adreno 642L | **22,972** (22,572 at the first sweep of the 300) |
+| compiled by ir3 for the Adreno 642L | **24,244** on 15 November (22,972 before tessellation; 22,572 at the first sweep of the 300) |
 | not entry points | 13,313 |
-| refused | 4,518 (4,659) |
-| crashed the compiler | 16 (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction; `NRFV1`'s BlinkDetection; one MPS matrix kernel, since fixed |
+| refused | 3,246 (4,518; 4,659): 1,770 of them MLX's and Morpheus' simdgroup matrices (`<64 x float>`), 505 ray tracing, 90 CoreImage's visible function tables that only a pipeline's linked functions fill |
+| crashed the compiler | 16 (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction; `NRFV1`'s BlinkDetection; MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
 
 What the refusals are, the MLX libraries set apart (they are machine learning, not drawing, and most of what
 is left in them is `<64 x float>` vectors and pointers kept in memory): tessellation (AvatarKit's 432 Memoji
