@@ -1304,8 +1304,13 @@ dump_threads(void)
 				 * three obvious ones (the daemon, our two), so the only way to name them is to
 				 * have the whole map. The shared cache is left out -- a2s names those.
 				 */
-				if (name != NULL && strstr(name, "/usr/lib/") != name
-				    && strstr(name, "dyld_shared_cache") == NULL) {
+				/*
+				 * /usr/lib used to be left out as noise, and that is exactly where the maker of
+				 * the refusal turned out to live: a frame at 0x10090d4fc fell between two
+				 * printed images and could not be named at all. Everything outside the shared
+				 * cache is printed now.
+				 */
+				if (name != NULL && strstr(name, "dyld_shared_cache") == NULL) {
 					say("hakios: store: image %p %s\n", header,
 					    last != NULL ? last + 1 : name);
 				}
@@ -2882,6 +2887,9 @@ one_grant(Class cls, const char *selector, IMP replacement, void *original)
 	method_setImplementation(m, replacement);
 }
 
+static void new_filter_accounts(id self, SEL cmd, void *type, void *options, void *completion);
+static void (*old_filter_accounts)(id, SEL, void *, void *, void *);
+
 static void
 grant_account_access(void)
 {
@@ -2913,6 +2921,13 @@ grant_account_access(void)
 	{
 		Class manager = objc_getClass("ACDClientAuthorizationManager");
 
+		if (knob("HAKIOS_BYPASS_ACCOUNT_FILTER") != NULL
+		    && *knob("HAKIOS_BYPASS_ACCOUNT_FILTER") != '0') {
+			one_grant(objc_getClass("ACDAccountStoreFilter"),
+			    "accountsWithAccountType:options:completion:", (IMP)new_filter_accounts,
+			    &old_filter_accounts);
+			say("hakios: store: the account filter forwards to its backing store\n");
+		}
 		one_grant(manager, "authorizationForClient:accountType:", (IMP)new_auth_for_client,
 		    &old_auth_for_client);
 		one_grant(manager, "authorizationForClient:accountTypeWithIdentifier:",
@@ -4062,6 +4077,44 @@ new_handle_fetched(id self, SEL cmd, void *account, void *fetch_error, BOOL must
 	}
 	return old_handle_fetched != NULL ? old_handle_fetched(self, cmd, account, fetch_error,
 	    must_have_storefront, media_type, error) : NULL;
+}
+
+/*
+ * THE INSTRUCTION THAT REFUSES. Static read of -[ACDAccountStoreFilter accountsWithAccountType:options:
+ * completion:]: it calls _isClientPermittedToAccessAccountTypeWithIdentifier: and, when that is NO
+ * (cbz w25, ...), falls into a block that does `mov w3, #0x9` and builds the error. Forcing the permit
+ * method to YES fires but does not clear the error (still made at the same site), which means a second
+ * accountsd instance or calls that reach it another way. So this is taken at the method: with
+ * HAKIOS_BYPASS_ACCOUNT_FILTER=1 the filter forwards straight to its backingAccountStore, which does the
+ * fetch without the client-permission gate.
+ */
+static void (*old_filter_accounts)(id, SEL, void *, void *, void *);
+
+static void
+new_filter_accounts(id self, SEL cmd, void *type, void *options, void *completion)
+{
+	const char *on = knob("HAKIOS_BYPASS_ACCOUNT_FILTER");
+	static int told;
+
+	if (on != NULL && *on != '0') {
+		id backing = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("backingAccountStore"));
+		SEL sel = sel_registerName("accountsWithAccountType:options:completion:");
+
+		if (backing != NULL && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(backing,
+		    sel_registerName("respondsToSelector:"), sel)) {
+			if (told < 3) {
+				told++;
+				say("hakios: store(%s): the account filter is bypassed; the backing store "
+				    "answers directly\n", who_i_am());
+			}
+			((void (*)(id, SEL, void *, void *, void *))objc_msgSend)(backing, sel, type, options,
+			    completion);
+			return;
+		}
+	}
+	if (old_filter_accounts != NULL) {
+		old_filter_accounts(self, cmd, type, options, completion);
+	}
 }
 
 static void (*old_add_absinthe)(id, SEL, void *, void *, void *, BOOL);
