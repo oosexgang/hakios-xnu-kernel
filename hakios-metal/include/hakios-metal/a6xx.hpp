@@ -3975,7 +3975,9 @@ constexpr uint32_t regVfdDestCntlInstr(uint32_t i) { return REG_A6XX_VFD_DEST_CN
 // by 2^23 (exact: a float has 24 significant bits). A finite value round-trips exactly (tests/a6xx_test.cpp holds it
 // to memcpy); NaN gives the quiet NaN, an infinity 0x7f800000 with its sign.
 constexpr uint32_t fui(float f) {
-    uint32_t sign = __builtin_signbit(f) ? 0x80000000u : 0u;
+    // (clang 18: __builtin_signbit is not a constant expression there and -Winvalid-constexpr stops the build;
+    // __builtin_copysignf is one in clang 18 and in gcc, and tells -0.0f from 0.0f the same way)
+    uint32_t sign = __builtin_copysignf(1.0f, f) < 0.0f ? 0x80000000u : 0u;
     if (f != f) {
         return 0x7fc00000u;
     }
