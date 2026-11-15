@@ -6555,10 +6555,13 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 	     instanceCount:(NSUInteger)instances
 	      baseInstance:(NSUInteger)baseInstance
 {
-	(void)controlPoints; (void)start; (void)count; (void)indexBuffer; (void)offset;
-	(void)controlPointBuffer; (void)controlPointOffset; (void)instances;
-	(void)baseInstance;
-	[self hakiosNoTessellation];
+	/* The control-point index buffer says where a patch's control points are for a function
+	 * that takes them through [[stage_in]], which the library refuses when it translates one;
+	 * a function this library draws reads its control points itself (OpenSubdiv's, by
+	 * [[patch_id]]), so for it this is -drawPatches:. */
+	(void)controlPointBuffer; (void)controlPointOffset;
+	[self drawPatches:controlPoints patchStart:start patchCount:count patchIndexBuffer:indexBuffer
+	   patchIndexBufferOffset:offset instanceCount:instances baseInstance:baseInstance];
 }
 - (void)drawIndexedPatches:(NSUInteger)controlPoints
 	  patchIndexBuffer:(id)indexBuffer
