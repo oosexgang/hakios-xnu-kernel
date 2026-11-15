@@ -4093,26 +4093,25 @@ struct air_link_saved {
    const struct air_to_nir_options *options;
 };
 
-/* How many linked functions the module calls (declarations named NAME.MTL_VISIBLE_FN_REF) */
-static unsigned
-visible_refs(const struct air_module *m)
+/* Does the module call a linked function of this name (declare NAME.MTL_VISIBLE_FN_REF)? */
+static bool
+calls_visible(const struct air_module *m, const char *name)
 {
    static const char suffix[] = ".MTL_VISIBLE_FN_REF";
-   unsigned n = 0;
-   for (unsigned i = 0; i < m->num_functions; i++) {
-      const char *name = m->functions[i]->base.name;
-      size_t len = name ? strlen(name) : 0;
-      n += m->functions[i]->is_declaration && len > sizeof(suffix) - 1 &&
-           !strcmp(name + len - (sizeof(suffix) - 1), suffix);
+   size_t n = name ? strlen(name) : 0;
+   for (unsigned i = 0; n && i < m->num_functions; i++) {
+      const char *f = m->functions[i]->base.name;
+      if (m->functions[i]->is_declaration && f && !strncmp(f, name, n) && !strcmp(f + n, suffix))
+         return true;
    }
-   return n;
+   return false;
 }
 
 /* The linked function a call of NAME.MTL_VISIBLE_FN_REF calls: the one of that name -- or, with one
- * function linked into a module that calls one, that one, by whatever name the driver had for it
- * (a function made with MTLFunctionDescriptor.specializedName). Not where the module calls more:
+ * function linked, that one, by whatever name the driver had for it (a function made with
+ * MTLFunctionDescriptor.specializedName), unless its name is that of another call of the module:
  * RenderBox's custom_effect_fragment calls custom_fn and also custom_blend behind a constant, and
- * its pipelines link custom_fn alone, which made the closed custom_blend branch a call of the
+ * a pipeline that links custom_fn alone had made the closed custom_blend branch a call of the
  * custom effect -- glassBackground_v1's module, static initializers and all. */
 static const struct air_linked_function *
 find_linked(const struct air_ctx *c, const char *name, size_t len)
@@ -4123,7 +4122,7 @@ find_linked(const struct air_ctx *c, const char *name, size_t len)
       if (o->linked[i].name && strlen(o->linked[i].name) == len &&
           !strncmp(o->linked[i].name, name, len))
          l = &o->linked[i];
-   if (!l && o && o->num_linked == 1 && visible_refs(c->m) == 1)
+   if (!l && o && o->num_linked == 1 && !calls_visible(c->m, o->linked[0].name))
       l = &o->linked[0];
    return l;
 }
