@@ -462,6 +462,82 @@ val_defs_in(const struct air_val *v, nir_function_impl *impl)
    return true;
 }
 
+/* A def of another function, as one of the function being translated: a constant built again
+ * here, anything else a parameter of this callee (air_ctx.imp) that its call passes. NULL where
+ * the function can take nothing from its caller -- the entry point, or a callee shared between
+ * call sites. */
+static nir_def *
+import_def(struct air_ctx *c, nir_def *def)
+{
+   if (!def || nir_def_block(def)->impl == c->b.impl)
+      return def;
+   nir_builder tb = nir_builder_at(nir_before_impl(c->b.impl));
+   nir_instr *di = nir_def_instr(def);
+   if (di->type == nir_instr_type_load_const) {
+      nir_load_const_instr *lc = nir_instr_as_load_const(di);
+      return nir_build_imm(&tb, lc->def.num_components, lc->def.bit_size, lc->value);
+   }
+   struct air_imports *imp = c->imp;
+   if (!imp)
+      return NULL;
+   for (unsigned i = 0; i < imp->num; i++)
+      if (imp->from[i] == def)
+         return imp->to[i];
+   nir_function *fn = imp->fn;
+   unsigned n = fn->num_params;
+   fn->params = reralloc(c->nir, fn->params, nir_parameter, n + 1);
+   fn->params[n] = (nir_parameter){ .num_components = def->num_components,
+                                    .bit_size = def->bit_size };
+   fn->num_params = n + 1;
+   imp->from = reralloc(c->mem_ctx, imp->from, nir_def *, imp->num + 1);
+   imp->to = reralloc(c->mem_ctx, imp->to, nir_def *, imp->num + 1);
+   imp->from[imp->num] = def;
+   imp->to[imp->num] = nir_load_param(&tb, n);
+   return imp->to[imp->num++];
+}
+
+/* A value resolved in the caller, as one of this function's: its defs imported (import_def), the
+ * value itself unchanged when it has none to import. NULL where one cannot be. */
+static struct air_val *
+import_val(struct air_ctx *c, struct air_val *v)
+{
+   if (!v || val_defs_in(v, c->b.impl))
+      return v;
+   struct air_val *w = rzalloc(c->mem_ctx, struct air_val);
+   *w = *v;
+   if (v->def && !(w->def = import_def(c, v->def)))
+      return NULL;
+   if (v->ptr.offset && !(w->ptr.offset = import_def(c, v->ptr.offset)))
+      return NULL;
+   if (v->ptr.index && !(w->ptr.index = import_def(c, v->ptr.index)))
+      return NULL;
+   if (v->num_elems) {
+      w->elems = rzalloc_array(c->mem_ctx, struct air_val *, v->num_elems);
+      for (unsigned i = 0; i < v->num_elems; i++)
+         if (v->elems[i] && !(w->elems[i] = import_val(c, v->elems[i])))
+            return NULL;
+   }
+   return w;
+}
+
+/* What the callee just translated takes from its caller, onto the call: each def as one of the
+ * calling function's own (import_def again, for a value the caller itself took from further
+ * up). False when one cannot be. */
+static bool
+pass_imports(struct air_ctx *c, nir_call_instr *call, unsigned idx)
+{
+   unsigned n = c->last_num_imports;
+   nir_def **from = c->last_imports;
+   for (unsigned i = 0; i < n; i++) {
+      nir_def *d = import_def(c, from[i]);
+      if (!d)
+         return air_error(c, "intrinsic: a call whose callee reads a value of a function "
+                             "further up that this one cannot pass on");
+      call->params[idx + i] = nir_src_for_ssa(d);
+   }
+   return true;
+}
+
 nir_def *
 air_get_ssa(struct air_ctx *c, const struct air_value *v)
 {
@@ -4278,10 +4354,10 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          if (!had)
             return air_error(c, "instruction: a load of a pointer from a local no pointer "
                                 "was stored into");
-         if (!val_defs_in(had, c->b.impl))
+         if (!(had = import_val(c, had)))
             return air_error(c, "instruction: a pointer loaded in a callee from a local its "
                                 "caller stored it into, at an offset or index the caller "
-                                "computed");
+                                "computed, in a callee shared between call sites");
          air_set(c, &in->base, had);
          return true;
       }
@@ -4972,6 +5048,7 @@ static nir_function *
 translate_callee(struct air_ctx *c, const struct air_function *f,
                  struct air_val **argv, bool *is_param, bool *off_param)
 {
+   c->last_num_imports = 0;   /* (a cached callee takes nothing: see the end) */
    /* A texture, sampler or buffer argument is not a value in this frontend: it
     * is resolved at translation time into a binding, and tex_handle wants an
     * AIR_VAL_PTR rather than an SSA def. Such an argument is bound from the
@@ -5158,6 +5235,11 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
     * values table above */
    nir_cursor saved_consts = c->const_cursor;
 
+   /* what this callee takes from its caller (import_def): only one translated for this call
+    * alone can, since what it takes is this call site's */
+   struct air_imports imp = { .fn = fn };
+   struct air_imports *saved_imp = c->imp;
+
    c->fn = f;
    c->values = _mesa_pointer_hash_table_create(c->mem_ctx);
    c->blocks = _mesa_pointer_hash_table_create(c->mem_ctx);
@@ -5171,6 +5253,7 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
     * is what the corpus's reader count caught, 456 falling to 454. */
    c->b.impl->structured = false;
    c->const_cursor = nir_before_impl(c->b.impl);
+   c->imp = specialised ? &imp : NULL;
    c->ret_deref = NULL;
    c->ret_fields = NULL;
    c->num_ret_fields = 0;
@@ -5236,15 +5319,17 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
             air_set(c, &f->args[i], air_val_ssa(c, k));
             continue;
          }
-         if (!val_defs_in(argv[i], c->b.impl) && argv[i] && argv[i]->kind == AIR_VAL_AGG) {
-            /* (an aggregate holding a pointer: the caller's resolution can only stand here
-             * if nothing in it is a def of the caller's) */
+         /* the caller's own resolution, with what it holds of the caller's taken as
+          * parameters (a struct of pointers at offsets the caller computed: MPS's) */
+         struct air_val *own = import_val(c, argv[i]);
+         if (!own) {
             air_error(c, "intrinsic: a call passing a struct with a pointer in it whose "
-                         "offset or index the caller computed, as argument %u", i);
+                         "offset or index the caller computed, as argument %u, to a callee "
+                         "shared between call sites", i);
             ok = false;
             break;
          }
-         air_set(c, &f->args[i], argv[i]);   /* the caller's own resolution */
+         air_set(c, &f->args[i], own);
          continue;
       }
       if (type_is_value_aggregate(f->args[i].type)) {
@@ -5267,6 +5352,13 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
    c->ret_fields = saved_ret_fields;
    c->num_ret_fields = saved_num_ret_fields;
    c->ret_type = saved_ret_type;
+   c->imp = saved_imp;
+   /* for the call being built; and a callee that took anything is this call site's alone,
+    * so not one a later call with the same key may reuse */
+   c->last_imports = imp.from;
+   c->last_num_imports = imp.num;
+   if (imp.num && skey)
+      _mesa_hash_table_remove_key(c->spec_fns, skey);
    return ok ? fn : NULL;
 }
 
@@ -5367,6 +5459,9 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
       if (off_param[i])
          call->params[idx++] = nir_src_for_ssa(nir_u2u32(&c->b, argv[i]->ptr.offset));
    }
+   /* and what the callee took from this function besides (import_def) */
+   if (!pass_imports(c, call, idx))
+      return false;
    nir_builder_instr_insert(&c->b, &call->instr);
    return true;
 }
@@ -5613,6 +5708,8 @@ wrap_library_function(struct air_ctx *c, const struct air_md *out_md,
          return air_error(c, "library: argument %u has no value to pass", i);
       call->params[idx++] = nir_src_for_ssa(a);
    }
+   if (!pass_imports(c, call, idx))
+      return false;
    nir_builder_instr_insert(&c->b, &call->instr);
 
    struct air_ptr out = { .class = AIR_PTR_SSBO, .binding = 1, .pointee = rt };

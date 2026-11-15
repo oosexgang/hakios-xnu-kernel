@@ -188,6 +188,23 @@ struct air_ctx {
    /* specialised callees by what they were specialised on (spec_key): one translation per
     * distinct resolution of the arguments rather than one per call site */
    struct hash_table *spec_fns;
+
+   /* The values a callee being translated takes from its caller beyond its arguments
+    * (import_def): defs of the caller's impl -- an offset, a texture index, a number inside a
+    * struct passed whole, a pointer read back from a local the caller stored it into -- each
+    * one a parameter of the callee appended to its own, which the call passes. NULL while
+    * the function being translated is the entry point or a callee shared between call sites,
+    * which can take nothing it would have to take differently at each. `last_imports` is what
+    * the callee translated last took, for the call being built to pass.
+    */
+   struct air_imports {
+      nir_function *fn;
+      nir_def **from;       /* the caller's defs, in parameter order */
+      nir_def **to;         /* ... and each one's load_param in the callee */
+      unsigned num;
+   } *imp;
+   nir_def **last_imports;
+   unsigned last_num_imports;
    nir_deref_instr *ret_deref;
 
    /* ... and, for a callee whose return type is a STRUCT, one out-parameter per
