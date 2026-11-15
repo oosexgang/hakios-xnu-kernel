@@ -139,8 +139,24 @@ Then the rest of the system, in the order it stopped:
 5. **"CoreAnimation: Unable to query displays from server"** in PosterBoard and chronod, and their abort: the
    render server in backboardd is busy compiling CoreAnimation's specialised pipelines -- `A3Xghfc` takes
    some 32 s each on softpipe under TCG -- and the clients' display query gives up. This is the emulator's
-   speed, not a missing piece: on the phone ir3 compiles on the real cores. Under QEMU the way on is a
-   pipeline cache that survives a boot, or fewer variants asked for at once.
+   speed, not a missing piece: on the phone ir3 compiles on the real cores.
+
+What the time was, measured (15 November, `rwa_render_times`, printed by the driver for any pipeline over a
+second): of `A3Xghfc`'s 39 s, 5 were its translation and 33 softpipe's compiling of the fragment stage --
+`nir_to_tgsi`'s own passes, by the one sample there was of it -- and the rest waiting. And it was asked for
+again and again: 339 pipelines of 42 functions in one boot, a pipeline per blend and attachment format, each
+translated and compiled from the start, all of it under the one lock the driver keeps around the Gallium
+context, so the render server's draws waited behind it. Four changes, each a commit:
+
+- the driver hands the library its lock (`rwa_set_pipe_lock`) and a pipeline is translated outside it;
+- compiled stages are shared on softpipe too (the stage cache had left software screens out): the second
+  `A3Xghfc` compiled in 0.45 s instead of 35;
+- translations are kept (`air_to_nir_kept`): the same function in the same specialisation is translated once;
+- multisampling is pretended with one sample where the screen asks for that (`fake_sw_msaa`): SpringBoard's
+  first 4-sample attachment had been refused on softpipe, and with it everything it drew through Metal.
+
+`sample_every=N` in the boot-args samples backboardd's and SpringBoard's threads in the library every N
+seconds, and `userland/tools/samples.py --profile` names where the time went.
 
 ### The phone's GPU compiler over Darwin 27's shaders
 
