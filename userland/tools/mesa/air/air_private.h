@@ -266,6 +266,7 @@ struct air_ctx {
       unsigned index;         /* dual-source index */
       nir_variable *var;
       bool gated_off;         /* its function-constant predicate is false: stored nowhere */
+      unsigned clip_array;    /* clip distances: a float[N] (compact), stored an element each */
    } *outputs;
 
    unsigned scratch_size;

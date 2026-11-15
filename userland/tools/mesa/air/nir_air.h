@@ -204,6 +204,9 @@ struct air_shader_info {
    unsigned num_varyings;     /* vertex outputs or fragment inputs */
    struct air_varying *varyings;
    unsigned num_render_targets;
+   /* a vertex shader's clip distances (`float clip [[clip_distance]] [N]`): Metal clips by
+    * every one written, so a runtime enables that many planes */
+   unsigned clip_distances;
    unsigned threadgroup_bytes; /* static threadgroup memory */
 
    unsigned num_vertex_attributes;
