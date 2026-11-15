@@ -3130,13 +3130,21 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
    const struct air_type *dt = in->base.type;
    const struct air_type *st = in->operands[0]->type;
 
-   if (in->sub == AIR_CAST_BITCAST && dt->kind == AIR_TYPE_POINTER) {
+   /* A pointer as another pointer: a bitcast, or an addrspacecast -- which says nothing here
+    * either, a pointer being where it points and not a number in some address space
+    * (MercuryPoster's shippou kernels hand a local array of function pointers to their
+    * helper as `addrspacecast ptr %18 to ptr addrspace(8)`). A function stays the function. */
+   if ((in->sub == AIR_CAST_BITCAST || in->sub == AIR_CAST_ADDRSPACECAST) &&
+       dt->kind == AIR_TYPE_POINTER && st->kind == AIR_TYPE_POINTER) {
       struct air_val *v = air_get(c, in->operands[0]);
       if (!v || v->kind != AIR_VAL_PTR)
-         return air_error(c, "instruction: a bitcast of something that is not a pointer");
+         return air_error(c, "instruction: a%s of something that is not a pointer",
+                          in->sub == AIR_CAST_BITCAST ? " bitcast" : "n addrspacecast");
       struct air_ptr p = v->ptr;
       p.pointee = dt->elem;
-      air_set(c, &in->base, air_val_ptr(c, p));
+      struct air_val *r = air_val_ptr(c, p);
+      r->fn = v->fn;
+      air_set(c, &in->base, r);
       return true;
    }
 
