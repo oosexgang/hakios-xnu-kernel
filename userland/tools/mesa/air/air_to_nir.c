@@ -3849,6 +3849,23 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
       return true;
    }
 
+   /* A texture's or a sampler's handle as an integer -- AvatarKit's lighting stores one into a
+    * field of a local struct and never reads it back -- is a token naming its binding, the
+    * class in the high word: a handle has no address here, and a shader that did arithmetic
+    * on it would be the first. Read back as a pointer it is refused, as any inttoptr is. */
+   if (in->sub == AIR_CAST_PTRTOINT) {
+      struct air_val *v = air_get(c, in->operands[0]);
+      if (v && v->kind == AIR_VAL_PTR &&
+          (v->ptr.class == AIR_PTR_TEXTURE || v->ptr.class == AIR_PTR_SAMPLER) &&
+          !v->ptr.index && dt->kind == AIR_TYPE_INT) {
+         uint64_t token = ((uint64_t)(v->ptr.class == AIR_PTR_TEXTURE ? 0x7e : 0x5a) << 32) |
+                          v->ptr.binding;
+         air_set(c, &in->base, air_val_ssa(c, nir_imm_intN_t(&c->b, token,
+                                                             air_nir_bit_size(c, dt))));
+         return true;
+      }
+   }
+
    nir_def *x = air_get_ssa(c, in->operands[0]);
    if (!x)
       return false;
