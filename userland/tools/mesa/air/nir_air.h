@@ -164,6 +164,8 @@ struct air_varying {
    bool flat, centroid, sample, no_perspective;
 };
 
+#define AIR_THREADGROUP_BASE_INPUT 0x7a00
+
 struct air_shader_info {
    mesa_shader_stage stage;     /* MESA_SHADER_NONE for an air.visible function */
    const char *entry_point;
@@ -197,6 +199,13 @@ struct air_shader_info {
       unsigned offset, size;   /* bytes, from the start of the set */
       const char *name;
    } *argbuf_values;
+
+   /* A bit per threadgroup buffer index the kernel takes ([[threadgroup(n)]]). Buffer n > 0
+    * starts where buffers 0..n-1 end, which only the dispatch knows: its base is
+    * `load_kernel_input` at .base AIR_THREADGROUP_BASE_INPUT, byte 4n, which a runtime
+    * replaces with the sum of the lengths before n (each rounded up to 16) before it
+    * compiles. */
+   uint32_t threadgroup_buffers;
 
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */

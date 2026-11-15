@@ -2995,13 +2995,14 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       case 3:
          p.class = AIR_PTR_SHARED;
          rk = AIR_RESOURCE_THREADGROUP_BUFFER;
-         /* a threadgroup argument is sized at dispatch; its base is where the
-          * previous ones end, which only the runtime knows. One is all the
-          * corpus uses, so its base is zero and anything else is refused.
-          */
-         if (index != 0)
-            return air_error(c, "interface: a second threadgroup buffer (index %u)",
+         /* a threadgroup argument is sized at dispatch, and its base is where the
+          * previous ones end, which only the runtime knows: buffer 0's is fixed (after
+          * the kernel's own threadgroup memory), a later one's is read at run time
+          * (AIR_THREADGROUP_BASE_INPUT) */
+         if (index >= 32)
+            return air_error(c, "interface: a threadgroup buffer at index %u",
                              (unsigned)index);
+         c->info->threadgroup_buffers |= 1u << index;
          break;
       default:
          return air_error(c, "interface: a buffer in address space %u", (unsigned)as);
@@ -6955,12 +6956,28 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
     * Gallium puts variable_shared_mem (after static_shared_mem): it was at 0 and a kernel with both
     * was refused at the dispatch, the two being the same bytes. The static part is rounded up to 16
     * bytes so that the buffer starts on Metal's own alignment for it. */
+   /* A threadgroup buffer at index k > 0 starts after buffers 0..k-1, whose lengths only the
+    * dispatch gives: the base is read from kernel input word k, which the runtime folds into
+    * the code once the lengths are known (each length rounded up to 16 bytes, as Metal
+    * requires of them). Gallium's variable_shared_mem is then the sum of all of them. */
    for (unsigned i = 0; i < c.num_params && !c.error[0]; i++) {
       struct air_val *v = c.params[i];
       if (v && v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_SHARED && !v->ptr.offset) {
+         unsigned k = 0;
+         for (unsigned r = 0; r < c.info->num_resources; r++)
+            if (c.info->resources[r].kind == AIR_RESOURCE_THREADGROUP_BUFFER &&
+                c.info->resources[r].param == i)
+               k = c.info->resources[r].index;
          c.shared_size = ALIGN_POT(c.shared_size, 16);
-         if (c.shared_size)
-            v->ptr.offset = nir_imm_int(&c.b, c.shared_size);
+         nir_def *base = c.shared_size ? nir_imm_int(&c.b, c.shared_size) : NULL;
+         if (k) {
+            nir_def *after = nir_load_kernel_input(&c.b, 1, 32, nir_imm_int(&c.b, 4 * k),
+                                                   .base = AIR_THREADGROUP_BASE_INPUT,
+                                                   .range = 4 * 32);
+            base = base ? nir_iadd(&c.b, base, after) : after;
+         }
+         if (base)
+            v->ptr.offset = base;
       }
    }
    if (!c.error[0])
