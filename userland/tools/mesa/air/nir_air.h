@@ -261,6 +261,12 @@ struct air_shader_info {
    /* the shader compares two buffer arguments (AIR_BUFFER_ID_INPUT) */
    bool compares_buffers;
 
+   /* The Metal buffer indices that hold visible function tables: a table is a buffer of eight-
+    * byte handles, the low word of each one more than the function's place among the functions
+    * the pipeline links (air_to_nir_options.linked) and zero for none, which a runtime binds as
+    * it binds a buffer at that index. */
+   uint32_t function_tables;
+
    /* The module's constant tables, as the shader's constant data (nir_shader.constant_data, read
     * with load_constant): a copy, for a runtime whose driver does not take load_constant itself
     * -- softpipe -- to bind as the constant buffer at AIR_CONSTANT_DATA_UBO. */
