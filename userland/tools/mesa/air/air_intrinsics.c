@@ -2370,9 +2370,12 @@ imageblock_pixel_offset(struct air_ctx *c, nir_def *x, nir_def *y)
 static bool
 imageblock_data(struct air_ctx *c, const struct air_inst *in)
 {
-   if (!c->info->imageblock_pixel_bytes)
-      return air_error(c, "intrinsic: air.imageblock_data in a function with no explicit "
-                          "imageblock");
+   /* a block its function constant leaves out (CMImaging's texture-style filters gate theirs)
+    * is not there: what reaches it is the null pointer, as for any parameter left out */
+   if (!c->info->imageblock_pixel_bytes) {
+      air_set(c, &in->base, air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE }));
+      return true;
+   }
    nir_def *coord = in->num_operands > 1 ? air_get_ssa(c, in->operands[1]) : NULL;
    if (!coord || coord->num_components != 2)
       return coord ? air_error(c, "intrinsic: air.imageblock_data with a %u-component "
@@ -2399,21 +2402,31 @@ imageblock_data(struct air_ctx *c, const struct air_inst *in)
 static bool
 imageblock_slice_write(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
 {
-   if (!c->info->imageblock_pixel_bytes || in->num_operands < 8)
-      return air_error(c, "intrinsic: air.%s with no explicit imageblock to write",
-                       n->part[0]);
+   if (!c->info->imageblock_pixel_bytes)
+      return true;   /* (a block left out: nothing to write, as imageblock_data says) */
+   if (in->num_operands < 8)
+      return air_error(c, "intrinsic: air.%s with %u operands", n->part[0], in->num_operands);
+   /* the member's type, from the name's last part: [vN]{f,i}{16,32} */
    const char *vt = n->part[n->num - 1];
-   const struct air_type *et = NULL;
+   unsigned count = 1, bits = 0;
+   char kind = 0;
+   if (sscanf(vt, "v%u%c%u", &count, &kind, &bits) != 3) {
+      count = 1;
+      if (sscanf(vt, "%c%u", &kind, &bits) != 2)
+         kind = 0;
+   }
    static const struct air_type half = { .kind = AIR_TYPE_HALF };
    static const struct air_type flt = { .kind = AIR_TYPE_FLOAT };
-   static const struct air_type h4 = { .kind = AIR_TYPE_VECTOR, .count = 4, .elem = &half };
-   static const struct air_type f4 = { .kind = AIR_TYPE_VECTOR, .count = 4, .elem = &flt };
-   if (!strcmp(vt, "v4f16"))
-      et = &h4;
-   else if (!strcmp(vt, "v4f32"))
-      et = &f4;
-   else
+   static const struct air_type i16 = { .kind = AIR_TYPE_INT, .bits = 16 };
+   static const struct air_type i32 = { .kind = AIR_TYPE_INT, .bits = 32 };
+   const struct air_type *scalar = kind == 'f' ? (bits == 16 ? &half : bits == 32 ? &flt : NULL)
+                                 : kind == 'i' ? (bits == 16 ? &i16 : bits == 32 ? &i32 : NULL)
+                                               : NULL;
+   if (!scalar || count < 1 || count > 4)
       return air_error(c, "intrinsic: air.%s of %s pixels", n->part[0], vt);
+   struct air_type *vec = rzalloc(c->mem_ctx, struct air_type);
+   *vec = (struct air_type){ .kind = AIR_TYPE_VECTOR, .count = count, .elem = scalar };
+   const struct air_type *et = count == 1 ? scalar : vec;
 
    struct air_ptr tex;
    if (!tex_handle(c, in, 1, AIR_PTR_TEXTURE, &tex))
@@ -2431,6 +2444,10 @@ imageblock_slice_write(struct air_ctx *c, const struct air_inst *in, const struc
    nir_def *dst = air_get_ssa(c, in->operands[6]);
    if (!origin || !size || !dst)
       return false;
+   /* a size left undefined is the whole block: the group's x by y (CMImaging's write) */
+   const struct air_constant *sk = air_value_as_constant(in->operands[5]);
+   if (sk && (sk->ckind == AIR_CONST_UNDEF || sk->ckind == AIR_CONST_POISON))
+      size = nir_trim_vector(&c->b, nir_load_workgroup_size(&c->b), 2);
    struct air_level_place lp;
    if (!level_place(c, in->operands[7], &lp))
       return air_error(c, "intrinsic: air.%s to a mip level the shader computes", n->part[0]);
@@ -2471,7 +2488,7 @@ imageblock_slice_write(struct air_ctx *c, const struct air_inst *in, const struc
                    nir_pad_vector(&c->b, to, 4), nir_imm_int(&c->b, 0),
                    nir_pad_vector(&c->b, v, 4), nir_imm_int(&c->b, 0),
                    .image_dim = GLSL_SAMPLER_DIM_2D, .image_array = false,
-                   .src_type = v->bit_size == 16 ? nir_type_float16 : nir_type_float32);
+                   .src_type = (kind == 'f' ? nir_type_float : nir_type_uint) | v->bit_size);
    nir_store_reg(&c->b, nir_iadd_imm(&c->b, x, 1), rx);
    air_loop_end(c, &lx);
    nir_store_reg(&c->b, nir_iadd_imm(&c->b, nir_load_reg(&c->b, ry), 1), ry);
