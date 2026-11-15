@@ -3112,50 +3112,83 @@ new_prereqs(void)
  * promise appears in those backtraces -- the earliest ones, created right after start(). Report prints
  * them. HAKIOS_TRACK_PROMISES=1, AppStore only; C-only (no self-register asm).
  */
-static void *(*old_promise_init)(void *, void *);
 static struct { void *p; char frames[130]; } tracked_promises[16];
 static int tracked_promise_n;
 static bool bootstrap_running;
 
-static void
-record_promise(void *p, uintptr_t fp)
+/*
+ * A C passthrough cannot call a Swift constructor through: it does not know the real signature, so it
+ * clobbers the generic-metadata / swiftself / swifterror registers and crashes the process (measured:
+ * signal 9, the store never bootstraps). The right way is an asm trampoline that leaves EVERY register as
+ * the caller set it, calls the original, and only then -- with the return (x0 = the new promise) saved --
+ * calls a C recorder. These globals and C entry are what the trampolines below use.
+ */
+void *old_promise_init_g, *old_promise_task_g, *old_promise_value_g;
+
+void hakios_record_promise(void *promise, uintptr_t caller_fp);        /* called from the trampolines */
+
+void
+hakios_record_promise(void *promise, uintptr_t caller_fp)
 {
-	if (bootstrap_running && tracked_promise_n < 16 && p != NULL) {
-		frames_from(fp, tracked_promises[tracked_promise_n].frames,
+	if (bootstrap_running && tracked_promise_n < 16 && promise != NULL) {
+		frames_from(caller_fp, tracked_promises[tracked_promise_n].frames,
 		    sizeof(tracked_promises[tracked_promise_n].frames));
-		tracked_promises[tracked_promise_n].p = p;
+		tracked_promises[tracked_promise_n].p = promise;
 		tracked_promise_n++;
 	}
 }
 
-static void *
-new_promise_init(void *a0, void *a1)
-{
-	void *p = old_promise_init != NULL ? old_promise_init(a0, a1) : NULL;
-
-	record_promise(p, (uintptr_t)__builtin_frame_address(0));
-	return p;
-}
-
-static void *(*old_promise_task)(void *, void *, void *);
-static void *
-new_promise_task(void *a0, void *a1, void *a2)
-{
-	void *p = old_promise_task != NULL ? old_promise_task(a0, a1, a2) : NULL;
-
-	record_promise(p, (uintptr_t)__builtin_frame_address(0));
-	return p;
-}
-
-static void *(*old_promise_value)(void *, void *);
-static void *
-new_promise_value(void *a0, void *a1)
-{
-	void *p = old_promise_value != NULL ? old_promise_value(a0, a1) : NULL;
-
-	record_promise(p, (uintptr_t)__builtin_frame_address(0));
-	return p;
-}
+/* three trampolines (one per old pointer), all of this shape:
+ *   save fp/lr; call the original with the caller's registers intact; save its x0 return;
+ *   call hakios_record_promise(x0, our_fp); restore x0; return.               */
+__asm__(
+"	.text\n"
+"	.p2align 2\n"
+"_hakios_tramp_init:\n"
+"	pacibsp\n"
+"	stp x29, x30, [sp, #-16]!\n"
+"	mov x29, sp\n"
+"	adrp x16, _old_promise_init_g@PAGE\n"
+"	ldr  x16, [x16, _old_promise_init_g@PAGEOFF]\n"
+"	blr  x16\n"
+"	stp x0, x1, [sp, #-16]!\n"
+"	mov x1, x29\n"
+"	bl  _hakios_record_promise\n"
+"	ldp x0, x1, [sp], #16\n"
+"	ldp x29, x30, [sp], #16\n"
+"	retab\n"
+"	.p2align 2\n"
+"_hakios_tramp_task:\n"
+"	pacibsp\n"
+"	stp x29, x30, [sp, #-16]!\n"
+"	mov x29, sp\n"
+"	adrp x16, _old_promise_task_g@PAGE\n"
+"	ldr  x16, [x16, _old_promise_task_g@PAGEOFF]\n"
+"	blr  x16\n"
+"	stp x0, x1, [sp, #-16]!\n"
+"	mov x1, x29\n"
+"	bl  _hakios_record_promise\n"
+"	ldp x0, x1, [sp], #16\n"
+"	ldp x29, x30, [sp], #16\n"
+"	retab\n"
+"	.p2align 2\n"
+"_hakios_tramp_value:\n"
+"	pacibsp\n"
+"	stp x29, x30, [sp, #-16]!\n"
+"	mov x29, sp\n"
+"	adrp x16, _old_promise_value_g@PAGE\n"
+"	ldr  x16, [x16, _old_promise_value_g@PAGEOFF]\n"
+"	blr  x16\n"
+"	stp x0, x1, [sp, #-16]!\n"
+"	mov x1, x29\n"
+"	bl  _hakios_record_promise\n"
+"	ldp x0, x1, [sp], #16\n"
+"	ldp x29, x30, [sp], #16\n"
+"	retab\n"
+);
+extern void hakios_tramp_init(void);
+extern void hakios_tramp_task(void);
+extern void hakios_tramp_value(void);
 
 static void
 dump_tracked_promises(void)
@@ -3252,9 +3285,9 @@ hook_bootstrap(void)
 	hook((void *)(0x20b5d6b80UL + slide), (void *)new_did_complete, (void **)&old_did_complete);
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
 	if (knob("HAKIOS_TRACK_PROMISES") != NULL && *knob("HAKIOS_TRACK_PROMISES") != '0') {
-		hook((void *)(0x1a6e999a8UL + slide), (void *)new_promise_init, (void **)&old_promise_init);
-		hook((void *)(0x1a6ecb5f4UL + slide), (void *)new_promise_task, (void **)&old_promise_task);
-		hook((void *)(0x1a6e9a254UL + slide), (void *)new_promise_value, (void **)&old_promise_value);
+		hook((void *)(0x1a6e999a8UL + slide), (void *)hakios_tramp_init, &old_promise_init_g);
+		hook((void *)(0x1a6ecb5f4UL + slide), (void *)hakios_tramp_task, &old_promise_task_g);
+		hook((void *)(0x1a6e9a254UL + slide), (void *)hakios_tramp_value, &old_promise_value_g);
 		bootstrap_running = true;        /* start() can run before this hook installs; record from now */
 		say("hakios: store: JetEngine.Promise init is tracked\n");
 	}
