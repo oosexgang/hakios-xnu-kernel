@@ -531,6 +531,36 @@ BITOPS = {
     "popcount": lambda x, w: bin(x).count("1"),
 }
 
+def _sat(v, w, signed):
+    lo, hi = (-(1 << (w - 1)), (1 << (w - 1)) - 1) if signed else (0, (1 << w) - 1)
+    return min(max(v, lo), hi)
+
+
+def _s(x, w):
+    return x - (1 << w) if x >> (w - 1) else x
+
+
+def _fsh(a, b, k, w, left):
+    k %= w
+    cat = (a << w) | b
+    return ((cat << k) >> w) % (1 << w) if left else (cat >> k) % (1 << w)
+
+
+# LLVM's integer intrinsics, on unsigned w-bit operands, answered at w bits
+LLVM_IOPS = {
+    "uadd": lambda a, b, w: _sat(a + b, w, False),
+    "usub": lambda a, b, w: _sat(a - b, w, False),
+    "sadd": lambda a, b, w: _sat(_s(a, w) + _s(b, w), w, True),
+    "ssub": lambda a, b, w: _sat(_s(a, w) - _s(b, w), w, True),
+    "ctpop": lambda a, w: bin(a).count("1"),
+    "ctlz": lambda a, *r: r[-1] - a.bit_length(),
+    "cttz": lambda a, *r: (a & -a).bit_length() - 1 if a else r[-1],
+    "fshl": lambda a, b, k, w: _fsh(a, b, k, w, True),
+    "fshr": lambda a, b, k, w: _fsh(a, b, k, w, False),
+}
+LLVM_ARITY = {"uadd": 2, "usub": 2, "sadd": 2, "ssub": 2, "ctpop": 1, "ctlz": 2,
+              "cttz": 2, "fshl": 3, "fshr": 3}
+
 # integer operations, by (base name, signed)
 IOPS = {
     ("ctz", None): lambda w: (1, None),
@@ -621,6 +651,8 @@ def ref_elementwise(op, args, argtys, signed):
             # counted on the bits, at the declared width, and answered at it:
             # ctz and clz of zero are the width, as Metal's are
             return BITOPS[op](args[0] % (1 << w), w)
+        if op in LLVM_IOPS:
+            return wrap(LLVM_IOPS[op](*[v % (1 << w) for v in args], w), w, False)
         fn = {"min": min, "max": max,
               "clamp": lambda x, lo, hi: min(max(x, lo), hi)}[op]
         # air.min.u is an unsigned minimum: umin(0, 0xffff) is 0, not -1, and
@@ -2201,6 +2233,7 @@ def main(argv):
         family = ("convert" if plain == "convert"
                   else plain if plain in ("dot", "all", "any")
                   else "op" if plain in OPS or (plain, sign) in IOPS
+                  or (name.startswith("llvm.") and plain in LLVM_IOPS)
                   else None)
         if family is None:
             skipped.append((name, "not an operation this check has a reference for"))
@@ -2208,6 +2241,7 @@ def main(argv):
         # the integer min/max/clamp live in their own table and take their
         # arity from the name, not from OPS
         want_args = (OPS[plain][0] if plain in OPS
+                     else LLVM_ARITY[plain] if plain in LLVM_ARITY
                      else 1 if plain in BITOPS
                      else 3 if plain == "clamp" else 2)
         if family == "op" and want_args != len(argtys):
