@@ -20,15 +20,8 @@ void hakios_adreno_stop(void) { gpu_stopped++; }
 void hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
 void hakios_input_init(void);
 
-/* the loader's log, where the latency lines go: kept where logged() looks */
-void loader_log_putc(char c);
-void
-loader_log_line(const char *line)
-{
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-}
+/* (the loader's log, where the latency lines go, is the fake kernel's loader_log_line: kept where
+ * logged() looks) */
 
 /* (the kernel's printf takes %llu for a uint64_t, which on this host is an unsigned long of the same size) */
 #pragma GCC diagnostic push

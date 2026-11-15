@@ -17,6 +17,7 @@
 #include <machine/machine_routines.h>
 
 extern void loader_log_putc(char c);
+extern void loader_log_line(const char *line);
 
 /* The line to the loader's log, and to the kernel's if `kernel_log_too`. Returns its length. */
 static inline int __printflike(2, 0)
@@ -25,9 +26,10 @@ hakios_vsay(bool kernel_log_too, const char *format, va_list list)
 	char line[400];
 	int length = vsnprintf(line, sizeof(line), format, list);
 
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
+	/* the whole line under the log's lock (loader_return.c): a driver's own thread and a caller of it
+	 * that both say something were written a character each, interleaved -- the workbench's torch
+	 * test read "THE LIGHT IS DARWIN'S (/dev/hakiotorch: 43813.389 s: a s-torch) fregister thrat" */
+	loader_log_line(line);
 	if (kernel_log_too) {
 		printf("%s", line);
 	}

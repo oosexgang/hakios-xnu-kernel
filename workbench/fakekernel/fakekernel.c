@@ -666,6 +666,23 @@ clock_get_calendar_microtime(clock_sec_t *seconds, clock_usec_t *micro)
 }
 bool ml_get_interrupts_enabled(void) { return false; }      /* (everything to the loader's log only) */
 
+/* a line at once, as the kernel's loader_log_line does it under its lock */
+void
+loader_log_line(const char *line)
+{
+	pthread_mutex_lock(&big);
+	for (const char *c = line; *c != 0; c++) {
+		if (log_length + 1 < sizeof(log_text)) {
+			log_text[log_length++] = *c;
+			log_text[log_length] = 0;
+		}
+	}
+	pthread_mutex_unlock(&big);
+	if (getenv("BL_VERBOSE")) {
+		fputs(line, stderr);
+	}
+}
+
 void
 loader_log_putc(char c)
 {
