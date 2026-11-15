@@ -2133,7 +2133,7 @@ image_resource(struct air_ctx *c, unsigned binding)
 /* The image is bound at this level -- as a write or a size query has already said, or from now on.
  * One view, one level: a shader naming two is refused. */
 static bool image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level_place *lp,
-                           const char *what);
+                           const char *what, unsigned *binding);
 
 /* the level an image is written at, as its resource says (zero: the base level) */
 static struct air_level_place
@@ -2147,12 +2147,30 @@ image_level(const struct air_resource *r)
 
 static bool
 image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level_place *lp,
-               const char *what)
+               const char *what, unsigned *binding)
 {
    struct air_level_place had = image_level(r);
-   if (r->level_written && !level_place_equal(&had, lp))
-      return air_error(c, "intrinsic: air.%s at a second mip level of image %u, which is bound "
-                          "at one", what, r->index);
+   if (r->level_written && !level_place_equal(&had, lp)) {
+      /* another level of the same image: a slot of its own for that level (air_image_alias),
+       * found again for every write at it */
+      unsigned of = r->alias ? r->alias_of : r->index;
+      for (unsigned i = 0; i < c->info->num_resources; i++) {
+         struct air_resource *a = &c->info->resources[i];
+         struct air_level_place at = image_level(a);
+         if (a->kind == AIR_RESOURCE_IMAGE && a->level_written &&
+             (a->index == of || (a->alias && a->alias_of == of)) && level_place_equal(&at, lp)) {
+            *binding = a->index;
+            return true;
+         }
+      }
+      if (!lp->constant)
+         return air_error(c, "intrinsic: air.%s at a second mip level of image %u, one the "
+                             "shader reads out of a buffer", what, r->index);
+      r = air_image_alias(c, of);
+      if (!r)
+         return false;
+   }
+   *binding = r->index;
    r->level_written = true;
    r->level = lp->constant ? (unsigned)lp->value : 0;
    r->level_from_buffer = !lp->constant;
@@ -2452,7 +2470,7 @@ imageblock_slice_write(struct air_ctx *c, const struct air_inst *in, const struc
    if (!level_place(c, in->operands[7], &lp))
       return air_error(c, "intrinsic: air.%s to a mip level the shader computes", n->part[0]);
    struct air_resource *r = image_resource(c, tex.binding);
-   if (!r || !image_at_level(c, r, &lp, n->part[0]))
+   if (!r || !image_at_level(c, r, &lp, n->part[0], &tex.binding))
       return r ? false : air_error(c, "intrinsic: air.%s to image %u, which has no resource",
                                    n->part[0], tex.binding);
    origin = nir_u2u32(&c->b, origin);
@@ -2615,7 +2633,7 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
           * level 0. VariableBlurrer asks for the size of the level it writes, before it writes. */
          bool at_view = ir && in->num_operands > arg && level_place(c, in->operands[arg], &lp) &&
                         !(lp.constant && lp.value == 0);
-         if (at_view && !image_at_level(c, ir, &lp, n->part[0]))
+         if (at_view && !image_at_level(c, ir, &lp, n->part[0], &tex.binding))
             return false;
          if (in->num_operands > arg && !at_view) {
             nir_def *given = air_get_ssa(c, in->operands[arg]);
@@ -2709,8 +2727,13 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       if (!r)
          return air_error(c, "intrinsic: air.%s to image %u, which has no resource",
                           n->part[0], tex.binding);
-      if (!image_at_level(c, r, &lp, n->part[0]))
+      unsigned at = tex.binding;
+      if (!image_at_level(c, r, &lp, n->part[0], &at))
          return false;
+      if (at != tex.binding && tex.index)
+         return air_error(c, "intrinsic: air.%s at a second mip level of an image taken out "
+                             "of an array", n->part[0]);
+      tex.binding = at;
       nir_image_store(&c->b, tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)
                                        : nir_imm_int(&c->b, tex.binding),
                       nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),

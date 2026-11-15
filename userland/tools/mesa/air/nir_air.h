@@ -134,6 +134,13 @@ struct air_resource {
    unsigned level_buffer, level_offset, level_bytes;
    bool level_float;     /* the word is a 32-bit float and the level the whole number below it */
    bool level_written;   /* (the translator's: a write has decided the level) */
+
+   /* An image that is another level of the image at slot alias_of: a shader that writes one
+    * texture at two mip levels (a mipmap kernel, CoreRE's) gets a slot per level, and a
+    * runtime binds the texture bound at alias_of in each, at that slot's level. It counts in
+    * no total a driver fills -- the application binds alias_of only. */
+   bool alias;
+   unsigned alias_of;
 };
 
 /* the type a vertex attribute is read as: its format converts to this */

@@ -295,6 +295,7 @@ struct air_val *air_get(struct air_ctx *c, const struct air_value *v);
 struct air_split {
    struct nir_block *then_block, *else_block, *merge_block;
 };
+struct air_resource *air_image_alias(struct air_ctx *c, unsigned of);
 struct air_loop { nir_block *head, *body, *exit; };
 void air_loop_head(struct air_ctx *c, struct air_loop *lp);
 void air_loop_test(struct air_ctx *c, struct air_loop *lp, nir_def *go_on);

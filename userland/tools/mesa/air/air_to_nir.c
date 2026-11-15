@@ -4539,6 +4539,37 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
    }
 }
 
+/* Another slot for the image at slot `of` (nir_air.h, air_resource.alias), the next one past
+ * every texture and image the shader declares; NULL and an error when there is none left. */
+struct air_resource *
+air_image_alias(struct air_ctx *c, unsigned of)
+{
+   unsigned next = 0;
+   const struct air_resource *src = NULL;
+   for (unsigned i = 0; i < c->info->num_resources; i++) {
+      const struct air_resource *r = &c->info->resources[i];
+      if (r->kind == AIR_RESOURCE_TEXTURE || r->kind == AIR_RESOURCE_IMAGE)
+         next = MAX2(next, r->index + 1);
+      if (r->kind == AIR_RESOURCE_IMAGE && r->index == of && !r->alias)
+         src = r;
+   }
+   if (!src || next >= 16) {
+      air_error(c, "intrinsic: a write of image %u at another mip level, with %s", of,
+                src ? "no texture slot left for a second view of it" : "no image there");
+      return NULL;
+   }
+   struct air_resource copy = *src;
+   struct air_resource *r = add_resource(c, AIR_RESOURCE_IMAGE, next, copy.size, copy.read,
+                                         copy.write, copy.param, NULL);
+   if (!r)
+      return NULL;
+   r->name = copy.name;
+   r->type_name = copy.type_name;
+   r->alias = true;
+   r->alias_of = of;
+   return r;
+}
+
 /* -- a two-way split inside one AIR block ----------------------------------
  *
  * This translator builds an UNSTRUCTURED impl (nir_goto, nir_goto_if; nir_lower_goto_ifs makes it
