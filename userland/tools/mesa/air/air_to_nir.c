@@ -3348,9 +3348,68 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
    return true;
 }
 
+/* Whether a pointer is null, as a NIR boolean, or NULL where that cannot be said: the null pointer
+ * (a resolution of no class, and no function) is, a buffer, texture or local never is, and a
+ * pointer chosen at run time is whichever its choice made. */
+static nir_def *
+ptr_is_null(struct air_ctx *c, const struct air_val *v)
+{
+   if (!v)
+      return NULL;
+   if (v->kind == AIR_VAL_PTR)
+      return nir_imm_bool(&c->b, v->ptr.class == AIR_PTR_NONE && !v->fn);
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      nir_def *a = ptr_is_null(c, v->elems[0]), *b = ptr_is_null(c, v->elems[1]);
+      if (!a || !b)
+         return NULL;
+      nir_def *cond = v->def->bit_size == 1 ? v->def : nir_ine_imm(&c->b, v->def, 0);
+      return nir_bcsel(&c->b, cond, a, b);
+   }
+   return NULL;
+}
+
+/*
+ * `icmp eq/ne ptr %p, null`: SetupAssistant's textFragment (the setup screens' text) picks a glyph
+ * entry or null with a phi and asks which it got. A pointer is a resolution here, not a number, so
+ * the comparison is answered from what each side resolves to -- with one side null, whether the
+ * other is; two resolutions that are the same one are equal. Anything else stays refused.
+ */
+static bool
+translate_ptr_cmp(struct air_ctx *c, const struct air_inst *in, bool *done)
+{
+   *done = false;
+   if (in->operands[0]->type->kind != AIR_TYPE_POINTER ||
+       (in->sub != AIR_ICMP_EQ && in->sub != AIR_ICMP_NE))
+      return true;
+   struct air_val *a = air_get(c, in->operands[0]), *b = air_get(c, in->operands[1]);
+   if (!a || !b)
+      return false;
+   nir_def *an = ptr_is_null(c, a), *bn = ptr_is_null(c, b);
+   nir_def *eq = NULL;
+   bool a_null = a->kind == AIR_VAL_PTR && a->ptr.class == AIR_PTR_NONE && !a->fn;
+   bool b_null = b->kind == AIR_VAL_PTR && b->ptr.class == AIR_PTR_NONE && !b->fn;
+   if (a_null && bn)
+      eq = bn;
+   else if (b_null && an)
+      eq = an;
+   else if (a->kind == AIR_VAL_PTR && b->kind == AIR_VAL_PTR && same_ptr(&a->ptr, &b->ptr) &&
+            a->fn == b->fn)
+      eq = nir_imm_true(&c->b);
+   if (!eq)
+      return true;   /* (not one of these: the number comparison below says why it cannot) */
+   air_set(c, &in->base, air_val_ssa(c, in->sub == AIR_ICMP_EQ ? eq : nir_inot(&c->b, eq)));
+   *done = true;
+   return true;
+}
+
 static bool
 translate_cmp(struct air_ctx *c, const struct air_inst *in)
 {
+   bool done;
+   if (!translate_ptr_cmp(c, in, &done))
+      return false;
+   if (done)
+      return true;
    nir_def *x = air_get_ssa(c, in->operands[0]);
    nir_def *y = air_get_ssa(c, in->operands[1]);
    if (!x || !y)
