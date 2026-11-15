@@ -45,9 +45,9 @@ What each part is worth:
                        what softpipe computed. Two references that share no
                        code.
 
-  the refusals         nine shapes that must be refused BY NAME rather than
+  the refusals         eight shapes that must be refused BY NAME rather than
                        drawn over the wrong resource. The frontend names 23
-                       around argument buffers; these nine are the ones a
+                       around argument buffers; these eight are the ones a
                        module can be written for here, and the test is that
                        the message is the one the design names and not a
                        symptom further down.
@@ -279,6 +279,29 @@ def cases():
                 # (opcode, texture index, sampler index) the NIR must carry
                 [("tex", 0, 0), ("txf", 1, None)]))
 
+    # -- a descriptor chosen at run time ------------------------------------
+    # The set read at an index the shader computes (ImageIO's gain maps take a
+    # texture out of one of the set's structs so): the choice among the members a
+    # pointer of that kind could be, by offset. Thread t reads member 1 + (t & 1),
+    # so the two halves of the result come from two slots.
+    members = ["devrw", "devro", "devro"]
+    body = (chain("out", 0, 1)
+            + '  %oi = zext i32 %1 to i64\n'
+              '  %w = and i32 %1, 1\n'
+              '  %m = add i32 %w, 1\n'
+              '  %mi = zext i32 %m to i64\n'
+              '  %q = getelementptr inbounds ptr addrspace(1), ptr addrspace(2) %0, '
+              'i64 %mi\n'
+              '  %db = load ptr addrspace(1), ptr addrspace(2) %q, align 8\n'
+              '  %dp = getelementptr inbounds i32, ptr addrspace(1) %db, i64 %oi\n'
+              '  %dv = load i32, ptr addrspace(1) %dp, align 4\n'
+              '  %op = getelementptr inbounds i32, ptr addrspace(1) %out, i64 %oi\n'
+              '  store i32 %dv, ptr addrspace(1) %op, align 4\n')
+    out.append(("a descriptor chosen at run time", members,
+                build("argbuf_chosen", members, body),
+                [slot_base(1 + (i & 1)) + i for i in range(THREADS)],
+                [(1, 0, 0, 0), (1, 1, 0, 1), (1, 2, 0, 2)], False, []))
+
     # -- a phi of two copies of ONE getelementptr --------------------------
     # LLVM duplicates a getelementptr onto two paths and phis the copies back;
     # 207 of Resident Evil 4's pointer phis are that and none is anything else.
@@ -501,20 +524,6 @@ def refusals():
                 build("r3", ["devrw", "devro"], ok,
                       member_override={1: {"key": "air.indirect_buffer"}}),
                 "is itself an argument buffer"))
-
-    # a load through the set at an offset that is not constant
-    body = (chain("out", 0, 1)
-            + '  %oi = zext i32 %1 to i64\n'
-              '  %q = getelementptr inbounds ptr addrspace(1), ptr addrspace(2) %0, '
-              'i64 %oi\n'
-              '  %db = load ptr addrspace(1), ptr addrspace(2) %q, align 8\n'
-              '  %dp = getelementptr inbounds i32, ptr addrspace(1) %db, i64 %oi\n'
-              '  %dv = load i32, ptr addrspace(1) %dp, align 4\n'
-              '  %op = getelementptr inbounds i32, ptr addrspace(1) %out, i64 %oi\n'
-              '  store i32 %dv, ptr addrspace(1) %op, align 4\n')
-    out.append(("a descriptor chosen at run time",
-                build("r4", ["devrw", "devro"], body),
-                "at an offset that is not constant"))
 
     # A select between two different places IN THE SET -- the set's own pointer
     # chosen, not two handles already loaded out of it. The difference matters:
@@ -1041,6 +1050,9 @@ def why_not(label):
     if "sampler" in label:
         return ("it samples, and LLVM has no texture unit -- what softpipe "
                 "computed is the only execution of it")
+    if "chosen at run time" in label:
+        return ("the harness's set is read at constant indices; what this case is for "
+                "is the choice by offset, which softpipe ran")
     if "two sets" in label:
         return ("the harness builds one set of three pointers; what this case is "
                 "for is the indices, which the interface above states")
@@ -1093,7 +1105,7 @@ def main():
             print("FAIL  " + b)
         print("argbufcheck.py: %d of them" % len(bad))
         return 1
-    print("argbufcheck.py: the member table, the indices it allocates and nine of the 23 "
+    print("argbufcheck.py: the member table, the indices it allocates and eight of the 23 "
           "refusals, with\n              every slot holding different bytes and LLVM "
           "agreeing on the one case it can run.\n              Nothing here touches the "
           "runtime's half: there is no argument buffer to write.")
