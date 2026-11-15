@@ -304,6 +304,35 @@ def cases():
                 [slot_base(1) + i for i in range(THREADS)],
                 [(1, 0, 0, 0), (1, 1, 0, 1)], False, []))
 
+    # -- a phi between two DIFFERENT members' pointers ----------------------
+    #
+    # Once a refusal: a phi of two buffer pointers is a choice between two
+    # bindings, which the pointer-phi register answers (each place a binding,
+    # the phi choosing which one a load reads), and the handles were LOADED
+    # out of the set before the choice -- nothing about the set is chosen at
+    # run time. Threads 0-7 read member 1 and 8-15 member 2.
+    members = ["devrw", "devro", "devro"]
+    body = ('  %oi = zext i32 %1 to i64\n'
+            + chain("out", 0, 1)
+            + '  %c = icmp ult i32 %1, 8\n'
+              '  br i1 %c, label %ta, label %tb\n'
+              'ta:\n'
+            + chain("pa", 1, 1)
+            + '  br label %j\n'
+              'tb:\n'
+            + chain("pb", 2, 1)
+            + '  br label %j\n'
+              'j:\n'
+              '  %db = phi ptr addrspace(1) [ %pa, %ta ], [ %pb, %tb ]\n'
+              '  %dp = getelementptr inbounds i32, ptr addrspace(1) %db, i64 %oi\n'
+              '  %dv = load i32, ptr addrspace(1) %dp, align 4\n'
+              '  %op = getelementptr inbounds i32, ptr addrspace(1) %out, i64 %oi\n'
+              '  store i32 %dv, ptr addrspace(1) %op, align 4\n')
+    out.append(("a phi of two different members' pointers", members,
+                build("argbuf_phi2", members, body),
+                [slot_base(1) + i if i < 8 else slot_base(2) + i for i in range(THREADS)],
+                [(1, 0, 0, 0), (1, 1, 0, 1), (1, 2, 0, 2)], True, []))
+
     # -- two sets, whose members are numbered independently -----------------
     out.append(("two sets, both numbering their members from 0", ["devrw"],
                 TWO_SETS,
@@ -486,27 +515,6 @@ def refusals():
     out.append(("a descriptor chosen at run time",
                 build("r4", ["devrw", "devro"], body),
                 "at an offset that is not constant"))
-
-    # a phi between two DIFFERENT members
-    body = ('  %oi = zext i32 %1 to i64\n'
-            + chain("out", 0, 1)
-            + '  %c = icmp ult i32 %1, 8\n'
-              '  br i1 %c, label %ta, label %tb\n'
-              'ta:\n'
-            + chain("pa", 1, 1)
-            + '  br label %j\n'
-              'tb:\n'
-            + chain("pb", 2, 1)
-            + '  br label %j\n'
-              'j:\n'
-              '  %db = phi ptr addrspace(1) [ %pa, %ta ], [ %pb, %tb ]\n'
-              '  %dp = getelementptr inbounds i32, ptr addrspace(1) %db, i64 %oi\n'
-              '  %dv = load i32, ptr addrspace(1) %dp, align 4\n'
-              '  %op = getelementptr inbounds i32, ptr addrspace(1) %out, i64 %oi\n'
-              '  store i32 %dv, ptr addrspace(1) %op, align 4\n')
-    out.append(("a phi between two different members",
-                build("r5", ["devrw", "devro", "devro"], body),
-                "name different places"))
 
     # A select between two different places IN THE SET -- the set's own pointer
     # chosen, not two handles already loaded out of it. The difference matters:
