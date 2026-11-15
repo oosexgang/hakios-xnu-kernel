@@ -3546,6 +3546,10 @@ new_accountForMediaType(id self, SEL cmd, void *media_type, BOOL update_storefro
 		if (fake != NULL && *fake != '0') {
 			account = fabricated_account(self);
 		}
+	} else {
+		/* here, where AMS really hands the account out -- not in local_account_of(), which the two
+		 * activeiTunesAccount hooks reach and this path does not */
+		put_storefront_on(self, account);
 	}
 	promise = promise_class != Nil ? ((id (*)(id, SEL, id))objc_msgSend)((id)promise_class,
 	    sel_registerName("promiseWithResult:"), account) : NULL;
