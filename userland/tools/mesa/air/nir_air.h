@@ -133,6 +133,7 @@ struct air_resource {
    bool level_from_buffer;
    unsigned level_buffer, level_offset, level_bytes;
    bool level_float;     /* the word is a 32-bit float and the level the whole number below it */
+   int level_bias;       /* added to the word (CoreAnimation's variable blur writes at mip - 1) */
    bool level_written;   /* (the translator's: a write has decided the level) */
 
    /* An image that is another level of the image at slot alias_of: a shader that writes one
