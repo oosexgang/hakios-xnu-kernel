@@ -78,6 +78,15 @@ enum air_val_kind {
    AIR_VAL_PTR_SELECT,
 };
 
+struct air_ptr_numeric {
+   bool on;                  /* this translation keeps them as numbers */
+   bool want;                /* a store or a load needed it: translate again with on */
+   bool grew;                /* a place was met after a load chose among places: again */
+   bool read;                /* a load has chosen among places[] */
+   unsigned num_places;
+   struct air_ptr places[32];
+};
+
 struct air_val {
    enum air_val_kind kind;
    nir_def *def;
@@ -249,6 +258,15 @@ struct air_ctx {
     * -> the struct air_val stored there; a load of a pointer from the same place is that value */
    struct hash_table_u64 *ptr_slots;
    void *static_mem;
+
+   /* POINTERS KEPT IN PRIVATE MEMORY AS NUMBERS, for a function whose stores of pointers into a
+    * local the slots above cannot follow -- at an index the shader computes (MPS's LSTM kernels copy
+    * a table of their input buffers in a loop), or two different ones into one place on two paths.
+    * Such a translation stops and air_to_nir starts it again with `on`: every data pointer stored
+    * into private memory is then the two words (byte offset, 1 + its place's number in places[]),
+    * and a load of one is the choice among the places by that number. A place met only after a
+    * load has chosen among the ones known then starts it once more, with the place known. */
+   struct air_ptr_numeric *num;
 
    /* what the entry point's parameters are */
    unsigned num_params;
