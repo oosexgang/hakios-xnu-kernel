@@ -2044,6 +2044,27 @@ translate_argument_buffer(struct air_ctx *c, const struct air_md *node, unsigned
                           "only", name ? name : "unnamed", (unsigned)size,
                        ab->num_members);
 
+   /* and its layout, for the runtime's encoder */
+   struct air_shader_info *info = c->info;
+   info->argbuf_sets = reralloc(c->mem_ctx, info->argbuf_sets, struct air_argbuf_set_layout,
+                                info->num_argbuf_sets + 1);
+   uint64_t align = 0;
+   md_key_int(node, "air.arg_type_align_size", &align);
+   info->argbuf_sets[info->num_argbuf_sets++] = (struct air_argbuf_set_layout) {
+      .set = ab->metal_index, .size = (unsigned)size, .align = (unsigned)align,
+   };
+   for (unsigned k = 0; k < ab->num_members; k++) {
+      const struct air_argbuf_member *m = &ab->members[k];
+      if (!m->value)
+         continue;
+      info->argbuf_values = reralloc(c->mem_ctx, info->argbuf_values, struct air_argbuf_value,
+                                     info->num_argbuf_values + 1);
+      info->argbuf_values[info->num_argbuf_values++] = (struct air_argbuf_value) {
+         .set = ab->metal_index, .id = m->metal_id, .offset = (unsigned)m->offset,
+         .size = (unsigned)m->size, .name = m->name,
+      };
+   }
+
    struct air_ptr p = { .class = AIR_PTR_ARGBUF, .binding = c->num_argbufs++ };
    c->params[param] = air_val_ptr(c, p);
    return true;

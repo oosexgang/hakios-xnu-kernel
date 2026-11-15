@@ -178,6 +178,26 @@ struct air_shader_info {
    struct air_vertex_attribute *vertex_attributes;
    uint32_t vertex_attributes_read;  /* a bit per [[attribute(n)]] the shader reads */
 
+   /* Every argument buffer's layout beyond its descriptors: each set's length (Apple's
+    * air.buffer_size, which -[MTLArgumentEncoder encodedLength] answers) and the VALUE
+    * members in it -- air.indirect_constant, an inline struct's members, an atomic --
+    * which are bytes at an offset rather than resources, and which
+    * -constantDataAtIndex: hands the application by id. The descriptors are resources
+    * (argbuf_set, argbuf_id).
+    */
+   unsigned num_argbuf_sets;
+   struct air_argbuf_set_layout {
+      unsigned set;     /* the set's Metal buffer index */
+      unsigned size;    /* air.buffer_size */
+      unsigned align;   /* air.arg_type_align_size, 0 when the set does not say */
+   } *argbuf_sets;
+   unsigned num_argbuf_values;
+   struct air_argbuf_value {
+      unsigned set, id;        /* the set's Metal buffer index and the value's [[id(n)]] */
+      unsigned offset, size;   /* bytes, from the start of the set */
+      const char *name;
+   } *argbuf_values;
+
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */
 
