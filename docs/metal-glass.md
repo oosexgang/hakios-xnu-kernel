@@ -53,6 +53,33 @@ things, all of them device-independent apart from the kernel's GPU profile:
 6. **Frame rate.** With the GPU drawing, `fb_scan` and `fb_double` frame timing (`MiniIOMobileFramebuffer.cpp`)
    applies again. This overlaps hxff's FPS work.
 
+## Darwin 27's QuartzCore shaders through the frontend (2026-11-15)
+
+With Darwin 27.2's files at hand (24B119, `darwin/tools/aea.py`), step 4 started:
+
+- **The host build is Mesa 26.2.5.** `userland/tools/air/mk-host.sh` now builds the release and the patch the
+  phone's library is built from (`userland/tools/mesa26/darwin.patch`); it had stayed on Mesa 25.0.7, whose NIR the
+  frontend no longer compiles against. It needs `libdrm-dev` on Ubuntu for freedreno's DRM layer.
+- **`userland/tools/mesa/air/nir_air.h` was missing** from the repository (every frontend source includes it). It is
+  written again from what the sources use: the sampler word's fields and enumerations, the argument-buffer
+  and raster-order-group fields of a resource, vertex attributes, notes, linked functions and four-word
+  function constants.
+- **Fat libraries.** Darwin 26 and 27 ship `QuartzCore.framework/default.metallib` as a fat file, an AIR slice
+  (CPU type 0x01000017) beside Apple's precompiled GPU code; `air_metallib_parse`, `air2nir`, `air_run` and
+  `air_metal_test` now take the AIR slice, as `userland/tools/metallib.py` did.
+
+`air2nir --report` over that library: **249 functions, all 249 read, 203 translated to NIR.** The 46 that are
+not are one case, `interface: input air.imageblock`: CoreAnimation's compute and tile-shading blurs
+(`narrow_blur_*_compute`, `tile_simd_blur_*`, `downsample_*_compute`, `backdrop_capture_compute_tile_*`,
+`compute_clear`), which keep pixels in an Apple GPU's tile memory. The same blurs exist as render pipelines
+(`downsample_blur_vert_lpf`, `variable_blur_vert_lpf` and their fragment functions), which do translate; a Metal
+device that does not report tile shading (`MTLGPUFamilyApple4` and up) should have CoreAnimation take those.
+That is the next thing to check in `metal_driver.m`'s family answers.
+
+`air_metal_test` on softpipe ran one of them end to end through `libhakios-air` (the library the Metal
+driver links): `dynamic_system_ootf_decimate`, a compute kernel reading one texture and writing another,
+dispatched and its output read back.
+
 ## Why it was not done in this pass
 
 Each of steps 2–6 needs at least one thing this environment does not have:
