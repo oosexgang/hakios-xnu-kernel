@@ -871,6 +871,13 @@ run_draw(const char *path, const char *vfunc, const char *func, const char *colo
        * of asking for one: see probe_fill16.
        */
       bool packed16 = tex_format[i] >= 40 && tex_format[i] <= 43;
+      /* ... and the two 32-bit unorm ones with ten-bit fields, the same way */
+      bool packed32 = tex_format[i] == 90 || tex_format[i] == 94;
+      if (packed32 && !probe_fill16_given) {
+         fprintf(stderr, "air_metal_test: texture pixel format %u is packed into a 32-bit "
+                         "word; --pixel-formats fills it\n", tex_format[i]);
+         return 2;
+      }
       if (packed16 && !probe_fill16_given) {
          fprintf(stderr, "air_metal_test: texture pixel format %u is one of Metal's packed "
                          "16-bit formats, whose channels are too narrow for this program's "
@@ -879,7 +886,7 @@ run_draw(const char *path, const char *vfunc, const char *func, const char *colo
                          "per texel\n", tex_format[i]);
          return 2;
       }
-      if (!packed16 && tex_format[i] != MTL_RGBA32_FLOAT &&
+      if (!packed16 && !packed32 && tex_format[i] != MTL_RGBA32_FLOAT &&
           tex_format[i] != MTL_RGBA32_UINT && tex_format[i] != MTL_RGBA32_SINT) {
          fprintf(stderr, "air_metal_test: texture pixel format %u: this program writes "
                          "known texels in MTLPixelFormatRGBA32Float (%u), RGBA32Uint (%u) "
@@ -915,7 +922,17 @@ run_draw(const char *path, const char *vfunc, const char *func, const char *colo
       static union { float f[TEXELS]; int32_t i[TEXELS]; uint16_t h[TEXELS * 2]; } written;
       memset(&written, 0, sizeof(written));
       const unsigned extent[3] = { TEX, TEX, depth };
-      if (packed16) {
+      if (packed32) {
+         for (unsigned k = 0; k < TEX * TEX * depth; k++)
+            written.i[k] = (int32_t)probe_fill16;
+         if (rwa_texture_write(textures[i], 0, 0, origin, extent, &written, 0, why,
+                               sizeof(why)) != 0) {
+            printf("air_metal_test: rwa_texture_write (texture %u): %s\n", i, why);
+            return 1;
+         }
+         printf("air_metal_test: texture %u is %ux%u of pixel format %u, every texel the "
+                "32-bit word 0x%08x\n", i, TEX, TEX, tex_format[i], probe_fill16);
+      } else if (packed16) {
          /* One 16-bit word in every texel, the caller's. Every texel the same on
           * purpose: this measurement is about which FIELD of the word became which
           * channel, so a coordinate must not be able to change the answer.
@@ -5272,6 +5289,11 @@ run_pixel_formats(const char *path, const char *func)
         "PIPE_FORMAT_A4B4G4R4_UNORM", { 4, 8, 12, 0 }, { 4, 4, 4, 4 } },
       { 43, "MTLPixelFormatBGR5A1Unorm", "PIPE_FORMAT_R5G5B5A1_UNORM",
         "PIPE_FORMAT_B5G5R5A1_UNORM", { 0, 5, 10, 15 }, { 5, 5, 5, 1 } },
+      /* and the packed 32-bit unorm two, first channel at the low end (packed32_served) */
+      { 90, "MTLPixelFormatRGB10A2Unorm", "PIPE_FORMAT_R10G10B10A2_UNORM",
+        "PIPE_FORMAT_B10G10R10A2_UNORM", { 0, 10, 20, 30 }, { 10, 10, 10, 2 } },
+      { 94, "MTLPixelFormatBGR10A2Unorm", "PIPE_FORMAT_B10G10R10A2_UNORM",
+        "PIPE_FORMAT_R10G10B10A2_UNORM", { 20, 10, 0, 30 }, { 10, 10, 10, 2 } },
    };
    static const char *const channel[4] = { "red", "green", "blue", "alpha" };
 
@@ -5280,6 +5302,7 @@ run_pixel_formats(const char *path, const char *func)
     * asks for them whatever the environment says.
     */
    setenv("RWA_PACKED16", "1", 1);
+   setenv("RWA_PACKED32", "1", 1);
 
    unsigned cases = 0, exact = 0, wrong = 0, failed_run = 0;
    for (unsigned f = 0; f < COUNT_OF(formats); f++) {
@@ -5304,7 +5327,7 @@ run_pixel_formats(const char *path, const char *func)
          probe_fill16_given = true;
          memset(last_pixel, 0, sizeof(last_pixel));
          printf("air_metal_test: --pixel-formats %s, the %u-bit %s field at bit %u, "
-                "word 0x%04x\n", p->name, p->width[c], channel[c], p->shift[c], word);
+                "word 0x%08x\n", p->name, p->width[c], channel[c], p->shift[c], word);
          int rc = run_draw(path, NULL, func, "125", NULL, texspec);
          cases++;
          if (rc != 0) {
@@ -5341,7 +5364,12 @@ run_pixel_formats(const char *path, const char *func)
           * The alpha needs no special case. A format without one samples as 1 and the
           * target has nowhere to put it; a format with one carries whatever the probe
           * word set, which for a colour probe is 0 and for the alpha probe is 1.
+          *
+          * Not for the 32-bit two: this program reads back a 16-bit word or four 32-bit
+          * numbers, and a ten-bit target is neither, so their probe is the sampling alone.
           */
+         if (p->mtl >= 90)
+            continue;
          probe_fill16 = word;
          probe_fill16_given = true;
          last_word = ~0u;
@@ -5365,7 +5393,7 @@ run_pixel_formats(const char *path, const char *func)
    }
    probe_fill16_given = false;
 
-   printf("\npixfmt: %u probes over %u packed 16-bit formats: %u put the field in the "
+   printf("\npixfmt: %u probes over %u packed formats: %u put the field in the "
           "channel the reading says, %u did not, %u could not be drawn\n", cases,
           (unsigned)COUNT_OF(formats), exact, wrong, failed_run);
    printf("pixfmt: every texel held the same word, so no coordinate, filter or address "
