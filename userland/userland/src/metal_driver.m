@@ -179,6 +179,13 @@ static bool rw_is_generic(id base, id values);
  * tools/mesa/air/air_metal.h is the original and explains each call. */
 struct rwa_device;
 /* libhakios-air's own (tools/mesa/air/air_metal.h): one function constant's value */
+/* air_metal.h's struct rwa_stage_in: a compute pipeline's stageInputDescriptor in Metal's numbers */
+struct rw_stage_in {
+	struct { unsigned format, offset, buffer_index; } attribute[31];
+	struct { unsigned stride, step_function, step_rate; } layout[31];
+	unsigned index_buffer_index, index_type;
+};
+
 /* air_metal.h's struct rwa_linked_function */
 struct rw_linked_function {
 	const char *name;
@@ -712,6 +719,7 @@ static struct {
 					    struct rwa_render_info *, char *, size_t);
 	void (*render_destroy)(struct rwa_render *);
 	void (*set_pipe_lock)(void (*)(void), void (*)(void));
+	void (*stage_in_register)(const void *, size_t, const struct rw_stage_in *);
 	void (*render_times)(const struct rwa_render *, double *);
 	int (*render_draw)(struct rwa_render *, const struct rwa_draw *, char *, size_t);
 	struct rwa_depth_stencil *(*depth_stencil_create)(struct rwa_device *,
@@ -798,6 +806,7 @@ mesa_available(void)
 	 * made outside the lock and the translation does not hold up the draws (air_metal.h) */
 	*(void **)&mesa.set_pipe_lock = dlsym(mesa.handle, "rwa_set_pipe_lock");
 	*(void **)&mesa.render_times = dlsym(mesa.handle, "rwa_render_times");
+	*(void **)&mesa.stage_in_register = dlsym(mesa.handle, "rwa_stage_in_register");
 	if (mesa.set_pipe_lock != NULL) {
 		mesa.set_pipe_lock(rw_pipe_enter, rw_pipe_leave);
 	}
@@ -2723,6 +2732,33 @@ static NSData *rw_function_air(id function);
 
 	if (air == nil || [air length] == 0) {
 		return [self fail:error with:@"the function has no bitcode"];
+	}
+
+	/* The descriptor's stage-in, for a kernel with [[stage_in]] attributes: what the library reads
+	 * them out of (rwa_stage_in_register). VFX's particle kernels and CoreRE3DGS's take theirs so. */
+	id sid = [descriptor respondsToSelector:@selector(stageInputDescriptor)] ? [descriptor stageInputDescriptor] : nil;
+	if (sid != nil && mesa.stage_in_register != NULL) {
+		struct rw_stage_in si;
+		bool any = false;
+
+		memset(&si, 0, sizeof(si));
+		for (unsigned i = 0; i < 31; i++) {
+			MTLAttributeDescriptor *a = [[sid attributes] objectAtIndexedSubscript:i];
+			MTLBufferLayoutDescriptor *l = [[sid layouts] objectAtIndexedSubscript:i];
+
+			si.attribute[i].format = (unsigned)[a format];
+			si.attribute[i].offset = (unsigned)[a offset];
+			si.attribute[i].buffer_index = (unsigned)[a bufferIndex];
+			si.layout[i].stride = (unsigned)[l stride];
+			si.layout[i].step_function = (unsigned)[l stepFunction];
+			si.layout[i].step_rate = (unsigned)[l stepRate];
+			any |= si.attribute[i].format != 0;
+		}
+		si.index_buffer_index = (unsigned)[sid indexBufferIndex];
+		si.index_type = (unsigned)[sid indexType];
+		if (any) {
+			MESA_VOID(stage_in_register, [air bytes], [air length], &si);
+		}
 	}
 
 	char why[512] = { 0 };
