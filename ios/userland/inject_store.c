@@ -174,6 +174,7 @@ static void make_account_types(void);
 static const char *knob(const char *name);     /* a switch from /var/hakios-store.conf; see knob() */
 static const char *who_i_am(void);              /* this process name; defined below */
 static void dump_tracked_promises(void);        /* defined with the bootstrap hooks */
+static void force_resolve_prereqs(void);        /* defined with the bootstrap hooks */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -1795,6 +1796,7 @@ one_report(unsigned seconds)
 	dump_errors();
 	dump_threads();
 	dump_tracked_promises();
+	force_resolve_prereqs();
 	/* the long dumps once; the numbers in every report, because only a late one survives the log */
 	if (first) {
 		dump_selectors("AMSURLSession", "equest");
@@ -3201,9 +3203,26 @@ __asm__(
 "	bl  _hakios_record_resolved\n"
 "	ldp x29, x30, [sp], #16\n"
 "	retab\n"
+/* hakios_call_resolve(promise, arg, fn): call a Swift Promise method whose self is in x20 (swiftself)
+ * with the one argument (the error, or a pointer to the value) in x0. Used to force-resolve a stuck
+ * bootstrap promise from our own thread. */
+"	.p2align 2\n"
+"_hakios_call_resolve:\n"                        /* x0=promise, x1=arg, x2=fn */
+"	pacibsp\n"
+"	stp x29, x30, [sp, #-16]!\n"
+"	mov x29, sp\n"
+"	str x20, [sp, #-16]!\n"                 /* preserve caller's x20 (callee-saved) */
+"	mov x16, x2\n"
+"	mov x20, x0\n"                          /* swiftself = the promise */
+"	mov x0, x1\n"                           /* x0 = the argument (error word) */
+"	blr x16\n"
+"	ldr x20, [sp], #16\n"
+"	ldp x29, x30, [sp], #16\n"
+"	retab\n"
 );
 extern void hakios_tramp_init(void);
 extern void hakios_tramp_resolve(void);
+extern void hakios_call_resolve(void *promise, void *arg, void *fn);
 
 static void
 dump_tracked_promises(void)
@@ -3216,6 +3235,48 @@ dump_tracked_promises(void)
 		say("hakios: store: promise #%d %p made from %#lx (unslid) %s\n", i, tracked_promises[i].p,
 		    (uintptr_t)tracked_promises[i].caller - slide,
 		    tracked_promises[i].resolved ? "resolved" : "<-- PENDING (never resolved)");
+	}
+}
+
+/*
+ * FORCE the stuck bootstrap prerequisites to fail (HAKIOS_FORCE_RESOLVE=1). On 16.5 the catalog loaded
+ * even though prerequisites failed (AMSErrorDomain code 2); the iOS 27 bootstrap instead hangs on one
+ * whose promise never resolves at all. This fails the first two tracked promises (the AppStoreKit roots,
+ * #0 from func_20b45d7dc / #1 from func_20b45ec50) with an NSError, to see whether the bootstrap then
+ * proceeds (requests its bag / reaches amp-api) the way 16.5 did, or aborts. resolve(toError:) completes
+ * a promise regardless of its value type, so no type is guessed. One shot, from the report thread.
+ */
+static void
+force_resolve_prereqs(void)
+{
+	static bool done;
+	const char *on = knob("HAKIOS_FORCE_RESOLVE");
+	void *resolve_to_error = (void *)(0x1a6ee22f8UL + slide);        /* Promise.resolve(toError:) body */
+	Class err_class = objc_getClass("NSError");
+	id error;
+	int n = tracked_promise_n < 2 ? tracked_promise_n : 2;
+
+	if (done || on == NULL || *on == '0' || slide == 0 || n == 0 || err_class == Nil) {
+		return;
+	}
+	done = true;
+	error = ((id (*)(id, SEL, id, long, id))objc_msgSend)((id)err_class,
+	    sel_registerName("errorWithDomain:code:userInfo:"), (id)CFSTR("hakios.forced"), 1, NULL);
+	CFRetain((CFTypeRef)error);
+	/*
+	 * ON THE MAIN QUEUE. Rejecting from the report thread trapped in a Swift assertion inside the promise's
+	 * continuation handler (run 223031, signal 5 in JetEngine.Promise.reject -> _assertionFailure): a
+	 * JetEngine UI promise expects to be resolved on its own (main) executor. Dispatched there instead.
+	 */
+	for (int i = 0; i < n; i++) {
+		void *p = tracked_promises[i].p;
+
+		if (p != NULL && !tracked_promises[i].resolved) {
+			say("hakios: store: FORCING promise #%d %p to fail on the main queue\n", i, p);
+			dispatch_async(dispatch_get_main_queue(), ^{
+				hakios_call_resolve(p, (void *)error, resolve_to_error);
+			});
+		}
 	}
 }
 
