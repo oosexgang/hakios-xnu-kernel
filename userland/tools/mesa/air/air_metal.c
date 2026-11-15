@@ -3908,8 +3908,11 @@ rwa_compute_create(struct rwa_device *device, const void *bitcode, size_t size,
          /* A texture the kernel writes. Metal gives it a [[texture(n)]] index like any
           * other, so it counts in the same total a driver has to fill; what differs is
           * that Gallium wants it as an image view and not a sampler view
-          * (air_to_nir.c), which is why the two are counted apart as well.
+          * (air_to_nir.c), which is why the two are counted apart as well. (Another level
+          * of one is no slot the driver fills.)
           */
+         if (r->alias)
+            break;
          compute->caps.textures = MAX2(compute->caps.textures, r->index + 1);
          if (r->index < RWA_MAX_TEXTURES) {
             compute->slots[r->index].stored = true;
@@ -4561,17 +4564,18 @@ check_bindings(const struct air_shader_info *info, const struct rwa_slot *slots,
                                "library fills", name, r->index, RWA_MAX_TEXTURES);
             return -1;
          }
-         if (!member && !stored && (r->index >= bindings->texture_count ||
-                                    !bindings->textures[r->index]))
+         /* (another level of an image is the texture bound at that image's slot) */
+         unsigned src = r->alias ? r->alias_of : r->index;
+         if (!member && !stored && (src >= bindings->texture_count ||
+                                    !bindings->textures[src]))
             break;      /* sampled from a slot left empty: null_view stands in (bind_stage) */
-         if (!member && (r->index >= bindings->texture_count ||
-                         !bindings->textures[r->index])) {
+         if (!member && (src >= bindings->texture_count || !bindings->textures[src])) {
             say(why, why_size, "%s %s texture %u and %u texture%s bound", name,
-                stored ? "writes" : "reads", r->index, bindings->texture_count,
+                stored ? "writes" : "reads", src, bindings->texture_count,
                 bindings->texture_count == 1 ? " was" : "s were");
             return -1;
          }
-         const struct rwa_texture *t = member ? mtexture : bindings->textures[r->index];
+         const struct rwa_texture *t = member ? mtexture : bindings->textures[src];
          /* MTLTextureUsage, honoured rather than noted: Metal refuses to bind a
           * texture to a shader that writes it unless the application asked for
           * ShaderWrite, and a texture allocated without it may not even be laid out so
@@ -4765,9 +4769,11 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
                return -1;
             break;
          case AIR_RESOURCE_TEXTURE:
-         case AIR_RESOURCE_IMAGE:
-            t = r->index < bindings->texture_count ? bindings->textures[r->index] : NULL;
+         case AIR_RESOURCE_IMAGE: {
+            unsigned src = r->alias ? r->alias_of : r->index;
+            t = src < bindings->texture_count ? bindings->textures[src] : NULL;
             break;
+         }
          case AIR_RESOURCE_SAMPLER:
             if (!r->inline_sampler)
                sm = r->index < bindings->sampler_count ? bindings->samplers[r->index] : NULL;
@@ -5696,6 +5702,8 @@ count_resources(const struct air_shader_info *info, struct rwa_slot slots[RWA_MA
          }
          break;
       case AIR_RESOURCE_IMAGE:
+         if (r->alias)
+            break;   /* (another level of an image: no slot a driver fills) */
          *textures = MAX2(*textures, r->index + 1);
          if (r->index < RWA_MAX_TEXTURES) {
             slots[r->index].stored = true;
