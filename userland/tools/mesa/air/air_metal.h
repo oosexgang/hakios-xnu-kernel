@@ -621,6 +621,13 @@ void rwa_threadgroup_memory_at(struct rwa_compute *compute, unsigned index, unsi
  * count given and not the groups times their size. */
 void rwa_grid_threads(struct rwa_compute *compute, const unsigned threads[3]);
 
+/* A render pipeline whose vertex function is a post-tessellation one: the vertices each patch is
+ * drawn with -- a drawPatches is a draw of that many vertices, triangles, an instance a patch,
+ * the first patch the base instance -- or 0 for an ordinary pipeline. The patch is a grid
+ * (AIR_TESS_LEVEL_INPUT in nir_air.h): no tessellator, and the factors are not read. */
+struct rwa_render;   /* (declared again below, with the render pipeline's calls) */
+unsigned rwa_render_patch_vertices(const struct rwa_render *render);
+
 /* Metal's blit encoder (air_metal.c): copies between textures and buffers, fills, mipmaps. */
 int rwa_texture_copy(struct rwa_texture *src, unsigned src_slice, unsigned src_level,
 		     const unsigned src_origin[3], const unsigned size[3],

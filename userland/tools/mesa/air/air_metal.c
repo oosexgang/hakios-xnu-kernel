@@ -913,12 +913,41 @@ guard_grid(nir_shader *nir, unsigned slot)
    nir->info.num_ubos = MAX2(nir->info.num_ubos, slot + 1);
 }
 
+/* A post-tessellation vertex function's subdivision (nir_air.h, AIR_TESS_LEVEL_INPUT): every
+ * patch an N x N grid. 8 unless RWA_TESS_LEVEL says otherwise (1 to 64, Metal's own range of
+ * factors): the factors a kernel wrote are not read, so this is the one level every patch of a
+ * draw gets -- 128 triangles of a quad patch at 8. */
+static unsigned
+tess_level(void)
+{
+   static int level = -1;
+   if (level < 0) {
+      const char *e = getenv("RWA_TESS_LEVEL");
+      int v = e ? atoi(e) : 8;
+      level = v >= 1 && v <= 64 ? v : 8;
+   }
+   return (unsigned)level;
+}
+
+static bool
+fold_tess_level_instr(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_load_kernel_input ||
+       nir_intrinsic_base(intr) != AIR_TESS_LEVEL_INPUT)
+      return false;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def_replace(&intr->def, nir_imm_int(b, (int)tess_level()));
+   return true;
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
    /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
    fold_threadgroup_bases(nir, NULL);
    fold_grid_threads(nir, -1);
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
+            nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
       NIR_PASS(_, nir, widen_16bit);
       /* nor a fused multiply-add: TGSI's MAD is not one, and nir_to_tgsi has no case for ffma
@@ -7846,6 +7875,14 @@ blend_state_from_metal(const struct rwa_render_shape *shape, struct pipe_screen 
       out->independent_blend_enable = 1;
    }
    return true;
+}
+
+unsigned
+rwa_render_patch_vertices(const struct rwa_render *render)
+{
+   if (!render || render->generated_vertex)
+      return 0;
+   return air_tess_vertices(render->vinfo.tess_domain, tess_level());
 }
 
 struct rwa_render *
