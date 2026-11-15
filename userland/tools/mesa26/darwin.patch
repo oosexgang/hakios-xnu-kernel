@@ -136,7 +136,7 @@ diff --git a/src/freedreno/fdl/fd6_layout.c b/src/freedreno/fdl/fd6_layout.c
           /* when possible, use a bit more alignment than necessary
 diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
 --- a/src/freedreno/ir3/ir3_compiler_nir.c	2026-10-15 02:12:24
-+++ b/src/freedreno/ir3/ir3_compiler_nir.c	2026-10-27 04:34:03
++++ b/src/freedreno/ir3/ir3_compiler_nir.c	2026-11-15 05:49:17
 @@ -410,6 +410,13 @@
           set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
        else if (rounding_mode == nir_rounding_mode_rtz)
@@ -151,21 +151,33 @@ diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compil
     }
  
     return cov;
-@@ -5797,6 +5804,14 @@
-    ctx = ir3_context_init(compiler, shader, so);
-    if (!ctx) {
-       DBG("INIT failed!");
-+      ret = -1;
-+      goto out;
-+   }
+@@ -3694,7 +3701,10 @@
+          sampler = ir3_COV(b, sampler, TYPE_U32, TYPE_U16);
+       } else {
+          sampler = create_immed_typed(b, tex->sampler_index, TYPE_U16);
+-         info.samp_idx = tex->texture_index;
++         /* the sampler's own index, not the texture's: GL binds the two at one index and so
++          * never sees the difference, Metal does not -- a fragment shader's prefetched sample
++          * (sam->prefetch.samp) of texture 1 with sampler 0 read sampler 1 */
++         info.samp_idx = tex->sampler_index;
+       }
+ 
+       info.samp_tex = ir3_collect(b, texture, sampler);
+@@ -5800,6 +5810,14 @@
+       ret = -1;
+       goto out;
+    }
 +
 +   jmp_buf error_jmp;
 +   ctx->error_jmp = &error_jmp;
 +   if (setjmp(error_jmp)) {
 +      ctx->error_jmp = NULL;
-       ret = -1;
-       goto out;
-    }
++      ret = -1;
++      goto out;
++   }
+ 
+    emit_instructions(ctx);
+ 
 diff --git a/src/freedreno/ir3/ir3_context.h b/src/freedreno/ir3/ir3_context.h
 --- a/src/freedreno/ir3/ir3_context.h
 +++ b/src/freedreno/ir3/ir3_context.h
