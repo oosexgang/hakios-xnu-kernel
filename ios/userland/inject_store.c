@@ -170,6 +170,7 @@ struct replacement {
 static struct replacement replacements[];
 static size_t replacement_count(void);
 static void image_added(const struct mach_header *header, intptr_t image_slide);
+static void make_account_types(void);
 static const char *knob(const char *name);     /* a switch from /var/hakios-store.conf; see knob() */
 
 /*
@@ -1753,6 +1754,9 @@ late_report(__unused void *ignored)
 {
 	sleep(5);
 	tell_who_i_am();
+	if (who != NULL && strcmp(who, "accountsd") == 0) {
+		make_account_types();   /* after the daemon has its own database open */
+	}
 	/*
 	 * Every fifteen seconds, to the end of the run. The loader keeps the first 256 KB and the last
 	 * 1 MB of a run's log and drops everything between, and with iOS and REST=1 the middle is most
@@ -2383,6 +2387,64 @@ new_update_default_content(id self, SEL cmd, void *argument)
 	    argument != NULL ? text_of((id)argument, text, sizeof(text)) : "nil");
 	old_update_default_content(self, cmd, argument);
 	say("hakios: store: updateDefaultContentIfNecessary: came back\n");
+}
+
+/*
+ * ... and then made, by that same code (HAKIOS_MAKE_TYPES=1, accountsd only).
+ *
+ * Nothing calls updateDefaultContentIfNecessary: in this framework at all, so the types are never made
+ * here and the whole store is refused for want of one. They are Apple's rows, not ours, so Apple's code
+ * writes them: a connection of its own (-[ACDDatabaseConnection init], which finds the database the
+ * daemon uses), the initializer around it, its own -_addiTunesStoreAccountType, and its own save. What
+ * comes out is the row a restored iPhone is handed, with whatever access keys and owning bundle it sets,
+ * rather than the five columns a person would think to fill in by hand.
+ */
+static void
+make_account_types(void)
+{
+	const char *wanted = knob("HAKIOS_MAKE_TYPES");
+	Class conn_class = objc_getClass("ACDDatabaseConnection");
+	Class init_class = objc_getClass("ACDDatabaseInitializer");
+	id connection, initializer, error = NULL;
+	BOOL saved;
+
+	/* said whatever happens: a switch that was never seen and a switch that was seen and declined read
+	 * the same in a log that says nothing, and this one has cost two runs already. */
+	say("hakios: store: make the account types? %s (connection class %s, initializer %s)\n",
+	    wanted != NULL ? wanted : "(the switch is not set)", conn_class != Nil ? "there" : "MISSING",
+	    init_class != Nil ? "there" : "MISSING");
+	if (wanted == NULL || *wanted == '0' || conn_class == Nil || init_class == Nil) {
+		return;
+	}
+	/*
+	 * Said before the connection is made, not after: with the switch read ("make the account types? 1")
+	 * and nothing afterwards, the only thing between the two lines is this call, and a line on each side
+	 * of it is the difference between "it hung here" and "it did nothing".
+	 */
+	say("hakios: store: asking accountsd's own class for a database connection\n");
+	connection = ((id (*)(id, SEL))objc_msgSend)((id)conn_class, sel_registerName("alloc"));
+	connection = connection != NULL ? ((id (*)(id, SEL))objc_msgSend)(connection, sel_registerName("init"))
+	    : NULL;
+	if (connection == NULL) {
+		say("hakios: store: no database connection: no account types made\n");
+		return;
+	}
+	say("hakios: store: the connection is made; now the initializer\n");
+	initializer = ((id (*)(id, SEL))objc_msgSend)((id)init_class, sel_registerName("alloc"));
+	initializer = initializer != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(initializer,
+	    sel_registerName("initWithDatabaseConnection:"), connection) : NULL;
+	if (initializer == NULL) {
+		say("hakios: store: no initializer: no account types made\n");
+		return;
+	}
+	((void (*)(id, SEL))objc_msgSend)(initializer, sel_registerName("_addiTunesStoreAccountType"));
+	saved = ((BOOL (*)(id, SEL, id *))objc_msgSend)(connection, sel_registerName("saveWithError:"), &error);
+	{
+		char text[200] = "none";
+
+		say("hakios: store: the iTunes Store account type was made by accountsd's own code; saved %s (%.150s)\n",
+		    saved ? "yes" : "NO", error != NULL ? text_of(error, text, sizeof(text)) : text);
+	}
 }
 
 static void
