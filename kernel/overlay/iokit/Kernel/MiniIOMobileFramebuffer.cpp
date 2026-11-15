@@ -737,7 +737,7 @@ IOMobileFramebuffer::start(IOService * provider)
 	fColumnWeight = IONewZero(uint16_t, fPanelWidth);
 	fDiff = gDiff != 0;
 	fDiffLeft = fDiffTop = ~0u;
-	IOLog("MiniIOMobileFramebuffer: display %ux%u on a panel of %ux%u (%u bytes per row)\n", fWidth, fHeight,
+	printf("MiniIOMobileFramebuffer: display %ux%u on a panel of %ux%u (%u bytes per row)\n", fWidth, fHeight,
 	    fPanelWidth, fPanelHeight, fRowBytes);
 	/* (the frame: rows of 4 bytes a pixel, padded to 64 bytes as IOSurface pads them, and a little to spare) */
 	fScanLead = usToAbs(gScanLeadUs >= 1000 && gScanLeadUs <= 8000 ? gScanLeadUs : 2000);
@@ -1973,7 +1973,10 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 
 		gFBCalls[selector]++;
 		proc_selfname(procname, sizeof(procname));
-		IOLog("MiniIOMobileFramebuffer: %s[%d] selector %u (scalars %u in [0x%llx 0x%llx 0x%llx 0x%llx], %u out; "
+		/* printf and not IOLog: both reach the kernel's log, which the loader brings back from the
+		 * phone, and only printf reaches a serial console -- QEMU's, where these lines are how one
+		 * sees whether the window server swaps at all */
+		printf("MiniIOMobileFramebuffer: %s[%d] selector %u (scalars %u in [0x%llx 0x%llx 0x%llx 0x%llx], %u out; "
 		    "structure %u in, %u out)\n", procname, proc_selfpid(), selector, args->scalarInputCount,
 		    args->scalarInputCount > 0 ? in[0] : 0, args->scalarInputCount > 1 ? in[1] : 0,
 		    args->scalarInputCount > 2 ? in[2] : 0, args->scalarInputCount > 3 ? in[3] : 0, args->scalarOutputCount,
