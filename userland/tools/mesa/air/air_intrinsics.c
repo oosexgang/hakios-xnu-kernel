@@ -1762,6 +1762,33 @@ tex_coord_and_layer(struct air_ctx *c, const struct air_inst *in,
    if (!is_float)
       coord = nir_u2u32(&c->b, coord);
 
+   /* A cube read or written by texel: Metal's texturecube<T>::read(uint2 coord, uint face, ...)
+    * and write(value, uint2 coord, uint face, ...) name the face as an argument of its own,
+    * after the coordinate, as an array index is (ARKit's blur_cubemap and
+    * compute_cubemap_from_latlong, Darwin 27). NIR addresses a cube image as (x, y, face). A
+    * cube array would take the face and then the array index, the layer being 6 * index + face;
+    * nothing in the corpus does that, so it is refused rather than assembled untried. */
+   if (t->dim == GLSL_SAMPLER_DIM_CUBE && !is_float && coord->num_components == 2) {
+      if (t->is_array) {
+         air_error(c, "intrinsic: air.%s, a cube array addressed by face (not yet)", n->part[0]);
+         return NULL;
+      }
+      if (in->num_operands <= *arg) {
+         air_error(c, "intrinsic: air.%s without the face its signature has", n->part[0]);
+         return NULL;
+      }
+      nir_def *face = air_get_ssa(c, in->operands[(*arg)++]);
+      if (!face)
+         return NULL;
+      if (face->num_components != 1) {
+         air_error(c, "intrinsic: air.%s with a %u-component face", n->part[0],
+                   face->num_components);
+         return NULL;
+      }
+      coord = nir_vec3(&c->b, nir_channel(&c->b, coord, 0), nir_channel(&c->b, coord, 1),
+                       nir_u2u32(&c->b, face));
+   }
+
    if (t->is_array) {
       if (in->num_operands <= *arg) {
          air_error(c, "intrinsic: air.%s without the array index its signature has",
