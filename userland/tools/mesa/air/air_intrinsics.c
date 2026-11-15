@@ -291,6 +291,11 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = nir_fsin(&c->b, a[0]);
    } else if (!strcmp(op, "fast_cos") || !strcmp(op, "cos")) {
       r = nir_fcos(&c->b, a[0]);
+   } else if (!strcmp(op, "sinpi") || !strcmp(op, "cospi") || !strcmp(op, "tanpi")) {
+      /* of pi times the argument (CMCapture's BBRNetAnisoGaussian, cospi.f16) */
+      nir_def *x = nir_fmul(&c->b, a[0], nir_imm_floatN_t(&c->b, M_PI, a[0]->bit_size));
+      r = op[0] == 's' ? nir_fsin(&c->b, x) : op[0] == 'c' ? nir_fcos(&c->b, x)
+                       : nir_fdiv(&c->b, nir_fsin(&c->b, x), nir_fcos(&c->b, x));
    } else if (!strcmp(op, "fast_tan") || !strcmp(op, "tan")) {
       r = nir_fdiv(&c->b, nir_fsin(&c->b, a[0]), nir_fcos(&c->b, a[0]));
    } else if (!strcmp(op, "fast_atan2") || !strcmp(op, "atan2")) {
@@ -1096,6 +1101,13 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
       return true;
    }
 
+   /* simd_is_first(): whether this is the first active lane of the group, which is what NIR's
+    * elect answers (MetalFX's analyzeHistogram and reproject_warp) */
+   if (!strcmp(op, "simd_is_first")) {
+      air_set(c, &in->base, air_val_ssa(c, nir_elect(&c->b, 1)));
+      return true;
+   }
+
    if (!strcmp(op, "simd_ballot"))
       return air_error(c, "intrinsic: air.%s -- a 64-bit mask with one bit per lane "
                           "of the SIMD group, and ir3 runs this hardware's groups at "
@@ -1203,6 +1215,42 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
          nir_def *inside = up ? nir_uge(&c->b, pos, d) : nir_ult(&c->b, to, size);
          lane = nir_bcsel(&c->b, inside, nir_iadd(&c->b, base, to), inv);
       }
+      air_set(c, &in->base, air_val_ssa(c, nir_shuffle(&c->b, a0, lane)));
+      return true;
+   }
+   /* simd_shuffle_and_fill_down(data, filling, delta[, modulo]) and _up: the shift above within
+    * groups of `modulo` lanes (the SIMD group without it), and a lane that would read past its
+    * group's end (start) reads `filling` of the lane as far into the next (previous) group instead
+    * -- the two-register window a separable filter slides along a row. DeepVideoProcessingCore's
+    * gaussian3x3_filter_SIMD, with modulo 4 and the group size. */
+   if (!strcmp(op, "simd_shuffle_and_fill_down") || !strcmp(op, "simd_shuffle_and_fill_up")) {
+      nir_def *fill = air_get_ssa(c, in->operands[2]);
+      nir_def *d = in->num_operands > 3 ? air_get_ssa(c, in->operands[3]) : NULL;
+      nir_def *m = in->num_operands > 4 ? air_get_ssa(c, in->operands[4]) : NULL;
+      if (!fill || !d || (in->num_operands > 4 && !m))
+         return false;
+      bool up = strstr(op, "_up") != NULL;
+      d = nir_u2u32(&c->b, d);
+      nir_def *size = m ? nir_u2u32(&c->b, m) : nir_load_subgroup_size(&c->b);
+      nir_def *inv = nir_load_subgroup_invocation(&c->b);
+      nir_def *pos = nir_umod(&c->b, inv, size);
+      nir_def *base = nir_isub(&c->b, inv, pos);
+      nir_def *inside = up ? nir_uge(&c->b, pos, d) : nir_ult(&c->b, nir_iadd(&c->b, pos, d), size);
+      /* (pos - d + size and pos + d - size are the filling lane's place, in range exactly where
+       * the data lane's is not: d is less than the group, as Metal requires) */
+      nir_def *to = up ? nir_isub(&c->b, pos, d) : nir_iadd(&c->b, pos, d);
+      nir_def *from = up ? nir_iadd(&c->b, to, size) : nir_isub(&c->b, to, size);
+      nir_def *dv = nir_shuffle(&c->b, a0, nir_iadd(&c->b, base, nir_bcsel(&c->b, inside, to, pos)));
+      nir_def *fv = nir_shuffle(&c->b, fill, nir_iadd(&c->b, base, nir_bcsel(&c->b, inside, pos, from)));
+      air_set(c, &in->base, air_val_ssa(c, nir_bcsel(&c->b, inside, dv, fv)));
+      return true;
+   }
+   /* simd_shuffle_xor(data, mask): the lane whose number is this one's exclusive-ored with the mask */
+   if (!strcmp(op, "simd_shuffle_xor")) {
+      nir_def *mask = air_get_ssa(c, in->operands[2]);
+      if (!mask)
+         return false;
+      nir_def *lane = nir_ixor(&c->b, nir_load_subgroup_invocation(&c->b), nir_u2u32(&c->b, mask));
       air_set(c, &in->base, air_val_ssa(c, nir_shuffle(&c->b, a0, lane)));
       return true;
    }
