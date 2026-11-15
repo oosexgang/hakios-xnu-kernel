@@ -3196,6 +3196,17 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
 
    if (!strcmp(n.part[0], "imageblock_data"))
       return imageblock_data(c, in);
+   /* air.get_imageblock_width / _height: the block is the threadgroup's, a pixel a thread
+    * (imageblock_pixel_offset lays it out so), so its size is the group's x and y (Portrait's
+    * backgroundReplacement writes the block out by them) */
+   if (!strcmp(n.part[0], "get_imageblock_width") || !strcmp(n.part[0], "get_imageblock_height")) {
+      if (c->nir->info.stage != MESA_SHADER_COMPUTE)
+         return air_error(c, "intrinsic: air.%s outside a kernel", n.part[0]);
+      nir_def *size = nir_channel(&c->b, nir_load_workgroup_size(&c->b),
+                                  !strcmp(n.part[0], "get_imageblock_height"));
+      air_set(c, &in->base, air_val_ssa(c, nir_u2uN(&c->b, size, air_nir_bit_size(c, in->base.type))));
+      return true;
+   }
    if (!strncmp(n.part[0], "write_imageblock_slice_to_texture_", 34))
       return imageblock_slice_write(c, in, &n);
 
