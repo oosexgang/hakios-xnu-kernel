@@ -165,6 +165,11 @@ struct air_varying {
 };
 
 #define AIR_THREADGROUP_BASE_INPUT 0x7a00
+/* The threads a dispatch asked for, a uvec3 (Metal's [[threads_per_grid]]): a kernel input at
+ * this .base, which a runtime replaces -- with the groups times their size for a dispatch of
+ * whole groups, or with the count it was given for one that is not (Metal's
+ * -dispatchThreads:threadsPerThreadgroup:, whose last groups are partial). */
+#define AIR_GRID_THREADS_INPUT 0x7b00
 
 struct air_shader_info {
    mesa_shader_stage stage;     /* MESA_SHADER_NONE for an air.visible function */

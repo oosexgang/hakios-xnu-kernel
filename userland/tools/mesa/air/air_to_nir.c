@@ -1057,6 +1057,7 @@ enum air_sysval {
    AIR_SV_PRIMITIVE_ID,
    AIR_SV_SIMDS_PER_TG,
    AIR_SV_AMPLIFICATION_ID, AIR_SV_AMPLIFICATION_COUNT, AIR_SV_VIEWPORT_INDEX,
+   AIR_SV_DISPATCH_THREADS_PER_TG,
 };
 
 static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
@@ -1082,10 +1083,18 @@ static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
    { "air.thread_index_in_quadgroup", AIR_SV_QUAD_LANE },
    { "air.quadgroup_index_in_threadgroup", AIR_SV_QUAD_INDEX },
    { "air.primitive_id", AIR_SV_PRIMITIVE_ID },
+   { "air.dispatch_threads_per_threadgroup", AIR_SV_DISPATCH_THREADS_PER_TG },
    { "air.amplification_id", AIR_SV_AMPLIFICATION_ID },
    { "air.amplification_count", AIR_SV_AMPLIFICATION_COUNT },
    { "air.viewport_array_index", AIR_SV_VIEWPORT_INDEX },
 };
+
+static nir_def *
+grid_threads(struct air_ctx *c)
+{
+   return nir_load_kernel_input(&c->b, 3, 32, nir_imm_int(&c->b, 0),
+                                .base = AIR_GRID_THREADS_INPUT, .range = 12);
+}
 
 static nir_def *
 load_sysval(struct air_ctx *c, enum air_sysval sv)
@@ -1122,8 +1131,17 @@ load_sysval(struct air_ctx *c, enum air_sysval sv)
    case AIR_SV_THREADS_PER_TG: return nir_load_workgroup_size(&c->b);
    case AIR_SV_TGS_PER_GRID: return nir_load_num_workgroups(&c->b);
    case AIR_SV_THREAD_INDEX_TG: return nir_load_local_invocation_index(&c->b);
+   /* what the dispatch asked for, which is not the groups times their size when the last
+    * groups are partial: the runtime's to give (AIR_GRID_THREADS_INPUT) */
    case AIR_SV_THREADS_PER_GRID:
-      return nir_imul(&c->b, nir_load_num_workgroups(&c->b), nir_load_workgroup_size(&c->b));
+      return grid_threads(c);
+   /* the threads of THIS group, which is smaller than the size at the edge of a dispatch of
+    * threads: min(size, threads - group * size) */
+   case AIR_SV_DISPATCH_THREADS_PER_TG: {
+      nir_def *size = nir_load_workgroup_size(&c->b);
+      return nir_umin(&c->b, size, nir_isub(&c->b, grid_threads(c),
+                                            nir_imul(&c->b, nir_load_workgroup_id(&c->b), size)));
+   }
    case AIR_SV_SIMD_LANE: return nir_load_subgroup_invocation(&c->b);
    /* a quad is four consecutive lanes of the SIMD group, as quad_shuffle and quad_broadcast take it */
    case AIR_SV_QUAD_LANE: return nir_iand_imm(&c->b, nir_load_subgroup_invocation(&c->b), 3);
