@@ -88,9 +88,12 @@ LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
 # METAL=1: what the Metal driver (userland/src/metal_driver.m) needs that the rules above leave out. SpringBoard
 # makes an MPSImageGaussianBlur (Siri's orb) as soon as Metal has a device, and MetalPerformanceShaders asserts
 # without its kernels' libraries ("metallib not found: default.metallib for identifier
-# com.apple.MetalPerformanceShaders.MPSImage", Darwin 27 under QEMU). 53 MB before compression.
+# com.apple.MetalPerformanceShaders.MPSImage", Darwin 27 under QEMU). 56 MB before compression, with RenderBox's.
+# RenderBox (SwiftUI's renderer, in SpringBoard and iconservicesagent among others) draws with Metal as well and
+# aborts without its own shaders (Darwin 27 under QEMU, once MPS had its libraries).
 MPS = 'System/Library/Frameworks/MetalPerformanceShaders.framework/Frameworks/'
-METAL_FILES = tuple(MPS + f'{name}.framework/default.metallib' for name in ('MPSCore', 'MPSImage', 'MPSFunctions'))
+METAL_FILES = tuple(MPS + f'{name}.framework/default.metallib' for name in ('MPSCore', 'MPSImage', 'MPSFunctions')) + \
+    tuple(f'System/Library/PrivateFrameworks/RenderBox.framework/{name}.metallib' for name in ('default', 'archive'))
 
 
 def pruned(rel):
