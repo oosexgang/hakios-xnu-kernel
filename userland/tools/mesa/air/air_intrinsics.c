@@ -1394,17 +1394,24 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
       uint64_t bytes;
       if (!air_const_uint(in->operands[3], &bytes))
          return air_error(c, "intrinsic: memcpy of a run-time length");
-      /* in 4-byte pieces, which is what every memcpy in the corpus is a
-       * multiple of (they copy float vectors out of constant buffers)
-       */
-      if (bytes % 4)
-         return air_error(c, "intrinsic: memcpy of %u bytes", (unsigned)bytes);
-      for (uint64_t off = 0; off < bytes; off += 4) {
+      /* in 4-byte pieces, which is what most memcpys are a multiple of (they copy float vectors
+       * out of constant buffers), and the bytes after the last whole word one at a time: a
+       * struct of 30 bytes copied (NRFV1, the camera's noise reduction) */
+      static const struct air_type u32 = { .kind = AIR_TYPE_INT, .bits = 32 };
+      static const struct air_type u8 = { .kind = AIR_TYPE_INT, .bits = 8 };
+      uint64_t off = 0;
+      for (; off + 4 <= bytes; off += 4) {
          struct air_ptr s = air_ptr_add(c, src->ptr, nir_imm_int(&c->b, off));
          struct air_ptr d = air_ptr_add(c, dst->ptr, nir_imm_int(&c->b, off));
-         static const struct air_type u32 = { .kind = AIR_TYPE_INT, .bits = 32 };
          nir_def *v = air_load_ptr(c, s, &u32, 4);
          if (!v || !air_store_ptr(c, d, v, 4))
+            return false;
+      }
+      for (; off < bytes; off++) {
+         struct air_ptr s = air_ptr_add(c, src->ptr, nir_imm_int(&c->b, off));
+         struct air_ptr d = air_ptr_add(c, dst->ptr, nir_imm_int(&c->b, off));
+         nir_def *v = air_load_ptr(c, s, &u8, 1);
+         if (!v || !air_store_ptr(c, d, v, 1))
             return false;
       }
       return true;
