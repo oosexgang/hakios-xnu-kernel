@@ -6825,8 +6825,7 @@ plan_globals(struct air_ctx *c)
                                        param_glsl_type(c, g->value_type), name);
 
       } else if (g->addrspace == 2 && g->is_const && g->init && !g->externally_initialized &&
-                 (g->value_type->kind == AIR_TYPE_ARRAY ||
-                  g->value_type->kind == AIR_TYPE_STRUCT) &&
+                 g->value_type->kind != AIR_TYPE_POINTER &&
                  global_to_constant_data(c, g, &pl->offset)) {
          pl->class = AIR_PTR_CONSTANT_DATA;
          pl->has_offset = true;
