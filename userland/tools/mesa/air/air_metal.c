@@ -589,6 +589,42 @@ widen_16bit(nir_shader *nir)
                case nir_op_b2i8: case nir_op_b2i16:
                   r = nir_b2i32(&b, x);
                   break;
+               /* the packed normalised conversions: TGSI has none of them ("Unknown NIR opcode:
+                * unpack_unorm_4x8", CoreAnimation's backboardd), so they are the arithmetic GLSL's
+                * specification gives them */
+               case nir_op_unpack_unorm_4x8: case nir_op_unpack_snorm_4x8:
+               case nir_op_unpack_unorm_2x16: case nir_op_unpack_snorm_2x16: {
+                  bool snorm = alu->op == nir_op_unpack_snorm_4x8 || alu->op == nir_op_unpack_snorm_2x16;
+                  unsigned n = alu->op == nir_op_unpack_unorm_4x8 || alu->op == nir_op_unpack_snorm_4x8 ? 4 : 2;
+                  unsigned bits = 32 / n;
+                  float max = (float)((1u << (snorm ? bits - 1 : bits)) - 1);
+                  nir_def *c[4];
+                  for (unsigned i = 0; i < n; i++) {
+                     nir_def *f = snorm ? nir_i2f32(&b, nir_ishr_imm(&b, nir_ishl_imm(&b, x, 32 - bits * (i + 1)), 32 - bits))
+                                        : nir_u2f32(&b, nir_iand_imm(&b, nir_ushr_imm(&b, x, bits * i), BITFIELD_MASK(bits)));
+                     f = nir_fmul_imm(&b, f, 1.0 / max);
+                     c[i] = snorm ? nir_fmax(&b, f, nir_imm_float(&b, -1.0)) : f;
+                  }
+                  r = nir_vec(&b, c, n);
+                  break;
+               }
+               case nir_op_pack_unorm_4x8: case nir_op_pack_snorm_4x8:
+               case nir_op_pack_unorm_2x16: case nir_op_pack_snorm_2x16: {
+                  bool snorm = alu->op == nir_op_pack_snorm_4x8 || alu->op == nir_op_pack_snorm_2x16;
+                  unsigned n = alu->op == nir_op_pack_unorm_4x8 || alu->op == nir_op_pack_snorm_4x8 ? 4 : 2;
+                  unsigned bits = 32 / n;
+                  float max = (float)((1u << (snorm ? bits - 1 : bits)) - 1);
+                  r = nir_imm_int(&b, 0);
+                  for (unsigned i = 0; i < n; i++) {
+                     nir_def *f = nir_channel(&b, x, i);
+                     f = snorm ? nir_fmin(&b, nir_fmax(&b, f, nir_imm_float(&b, -1.0)), nir_imm_float(&b, 1.0))
+                               : nir_fsat(&b, f);
+                     nir_def *q = nir_f2i32(&b, nir_fround_even(&b, nir_fmul_imm(&b, f, max)));
+                     q = nir_ishl_imm(&b, nir_iand_imm(&b, q, BITFIELD_MASK(bits)), bits * i);
+                     r = nir_ior(&b, r, q);
+                  }
+                  break;
+               }
                default:
                   break;
                }
