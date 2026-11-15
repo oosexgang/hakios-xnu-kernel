@@ -122,6 +122,49 @@ val_is_pointerish(const struct air_val *v)
    return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);
 }
 
+/*
+ * A FUNCTION TABLE IN A LOCAL ARRAY, read at an index the shader computes. MercuryPoster's shippou
+ * kernels (a lock screen wallpaper) fill `[4 x ptr]` with four material functions and call
+ * `table[i]` in a loop:
+ *
+ *   store ptr @materialTop, ptr %18          ... @materialCenter, @materialBottom, @materialWorld
+ *   %61 = load ptr, ptr addrspace(8) %60      ; %60 = getelementptr ptr, %4, i64 %59
+ *   call %"struct.shippou::Material" %61(...)
+ *
+ * The stores are known (ptr_slots); the load is the choice among the functions stored into a
+ * local, by comparing the byte offset it reads at with where each was stored -- the last one where
+ * none is, which a table read in bounds never needs -- and a call through it is a call of each
+ * behind that choice (the AIR_OP_CALL case). NULL where no function was stored at all.
+ */
+static struct air_val *
+fn_table_load(struct air_ctx *c, nir_def *offset)
+{
+   uint64_t keys[64];
+   struct air_val *vals[64];
+   unsigned n = 0;
+   hash_table_u64_foreach(c->ptr_slots, e) {
+      struct air_val *v = e.data;
+      if (n < ARRAY_SIZE(keys) && v && v->kind == AIR_VAL_PTR && v->fn) {
+         /* in order of place, so the choice is the same every time */
+         unsigned at = n++;
+         while (at && keys[at - 1] > e.key) {
+            keys[at] = keys[at - 1];
+            vals[at] = vals[at - 1];
+            at--;
+         }
+         keys[at] = e.key;
+         vals[at] = v;
+      }
+   }
+   if (!n || !offset)
+      return NULL;
+   nir_def *off = nir_u2u32(&c->b, offset);
+   struct air_val *chosen = vals[n - 1];
+   for (unsigned i = n - 1; i-- > 0;)
+      chosen = air_val_ptr_select(c, nir_ieq_imm(&c->b, off, keys[i] - 1), vals[i], chosen);
+   return chosen;
+}
+
 /* Does this value hold a handle taken out of an array at a computed index (air_ptr.index)? */
 static bool
 val_has_index(const struct air_val *v)
@@ -3618,6 +3661,15 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       /* a pointer read back from the local it was stored into (the store above) */
       if (in->base.type->kind == AIR_TYPE_POINTER && p->ptr.class == AIR_PTR_SCRATCH) {
          uint64_t slot;
+         /* a function out of a local table of them at an index the shader computes: the choice
+          * between every function stored into a local, by where (fn_table_load) */
+         if (c->ptr_slots && !ptr_slot_of(&p->ptr, &slot)) {
+            struct air_val *chosen = fn_table_load(c, p->ptr.offset);
+            if (chosen) {
+               air_set(c, &in->base, chosen);
+               return true;
+            }
+         }
          struct air_val *had = c->ptr_slots && ptr_slot_of(&p->ptr, &slot)
                                   ? _mesa_hash_table_u64_search(c->ptr_slots, slot) : NULL;
          if (!had)
@@ -3722,6 +3774,28 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          struct air_val *fp = air_get(c, callee);
          if (!fp)
             return false;
+         /* through a function chosen at run time (fn_table_load): a call of each, behind the choice */
+         if (fp->kind == AIR_VAL_PTR_SELECT) {
+            struct air_val *regs = NULL;
+            struct air_split sp;
+            bool has_ret = in->base.type->kind != AIR_TYPE_VOID;
+            air_split_begin(c, fp->def, &sp);
+            for (unsigned side = 0; side < 2; side++) {
+               if (side == 1)
+                  air_split_else(c, &sp);
+               air_set(c, callee, fp->elems[side]);
+               bool ok = translate_instruction(c, in);
+               air_set(c, callee, fp);
+               if (!ok)
+                  return false;
+               if (has_ret)
+                  regs = air_split_keep(c, air_get(c, &in->base), regs);
+            }
+            air_split_end(c, &sp);
+            if (has_ret)
+               air_set(c, &in->base, air_split_load(c, regs));
+            return true;
+         }
          if (fp->kind != AIR_VAL_PTR || fp->ptr.class != AIR_PTR_NONE)
             return air_error(c, "instruction: a call through a pointer");
          /* a function handed down as a value: a call of it, as if it were called by name */
