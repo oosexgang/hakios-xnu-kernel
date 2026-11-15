@@ -4,6 +4,7 @@
  */
 #include <pthread.h>
 #include <time.h>
+#include <setjmp.h>
 #include <unistd.h>
 
 #include "fakekernel.h"
@@ -126,13 +127,22 @@ thread_wakeup(void *event __unused)
 
 struct start { thread_continue_t fn; void *arg; };
 
+/* where thread_terminate() takes a driver's thread: back to its start, which returns it to pthreads. Not
+ * pthread_exit(): that unwinds the stack, and an unwind at the moment the test's main thread called exit()
+ * aborted the program now and then (qemu-aarch64, a loaded machine: torch_driver_test battery_hot) */
+static __thread jmp_buf *thread_start;
+
 static void *
 thread_main(void *p)
 {
 	struct start s = *(struct start *)p;
+	jmp_buf start;
 
 	free(p);
-	s.fn(s.arg, 0);
+	thread_start = &start;
+	if (setjmp(start) == 0) {
+		s.fn(s.arg, 0);
+	}
 	return NULL;
 }
 
@@ -606,7 +616,10 @@ thread_t current_thread(void) { return NULL; }
 kern_return_t
 thread_terminate(thread_t thread __unused)
 {
-	pthread_exit(NULL);
+	if (thread_start != NULL) {
+		longjmp(*thread_start, 1);
+	}
+	pthread_exit(NULL);             /* (a thread not started by kernel_thread_start) */
 }
 
 void
