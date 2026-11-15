@@ -165,6 +165,29 @@ minutes -- CoreAnimation's first frame wants its whole set of pipelines, and the
 them, the last `TmuaA2Xhf_Isrc_IsrcM1` (23 minutes alone the boot before), when the run ended. Under TCG the
 first Metal frame is a matter of hours; on the phone those compiles are milliseconds each (the sweep above).
 
+### What crashed the software path, and a table that read zeros (15 November, evening)
+
+A boot with the day's library had backboardd restarting 17 times in 15 minutes: "Unknown NIR opcode:
+unpack_32_2x16_split_x", in the software path's own lowering of narrow loads (QuartzCore's `p3_clamp` and
+`edr` fragments). `userland/tools/air/softpipesweep.sh` now makes every fragment, vertex and kernel function
+of a library into a pipeline on softpipe, a process each, and names the ones whose process dies -- under QEMU
+that process is the window server. Over QuartzCore, VFX, RenderBox and MercuryPoster it found four causes:
+
+- `widen_16bit` did not take halves of a word apart (the backboardd restarts);
+- the argument buffer layouts and values of a shader were left in the translation's context and read after
+  it was freed (VFX's particle shaders: a use after free, so the phone's path as much as the emulator's);
+- `irem`, which nir_to_tgsi has no case for (VFX's lightfield);
+- MercuryPoster's Flocon snowflakes: a 49,248-word local array, which overflows TGSI's 16-bit register
+  numbers. That array was the module's colour ramps -- 197 KB of `constant` halves -- laid out in private
+  memory that nothing ever wrote: **a constant table read at an index the shader computes read zeros**, on
+  the Adreno too (`userland/tools/air/const_table.ll`). Such tables are now the shader's constant data, read
+  with `load_constant` (ir3 uploads it with the shader; on softpipe it is bound as constant buffer 31), and
+  folded to numbers where the offset is known. Flocon went from a crash to 2,655 ir3 instructions.
+
+A stage that would still overflow TGSI is refused by name, a pipeline the emulator cannot make rather than a
+render server that dies. After the fixes: QuartzCore 236 of 249 made on softpipe (the 13 others are tile
+kernels, refused), VFX 559 of 601, MercuryPoster 51 of 52, RenderBox 74 of 82, and none dies.
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
