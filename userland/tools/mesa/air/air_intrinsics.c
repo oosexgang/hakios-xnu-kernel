@@ -3107,10 +3107,40 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
       struct air_val *table = in->num_operands > 1 ? air_get(c, in->operands[1]) : NULL;
       if (!table)
          return false;
-      if (table->kind != AIR_VAL_PTR || table->ptr.class != AIR_PTR_NONE)
-         return air_error(c, "intrinsic: air.get_function_pointer_visible_function_table "
-                             "of a table the pipeline binds (linked functions: not yet)");
-      air_set(c, &in->base, air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE }));
+      if (table->kind == AIR_VAL_PTR && table->ptr.class == AIR_PTR_NONE) {
+         air_set(c, &in->base, air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE }));
+         return true;
+      }
+      /* A table the pipeline binds (CoreImage's ubershader): the handle's low word at
+       * 8 * index, and the function the choice among the pipeline's linked functions by it
+       * (nir_air.h, function_tables) -- each a placeholder that becomes the call of that
+       * linked function where it is called (air_call_table_function). */
+      if (table->kind != AIR_VAL_PTR || table->ptr.class != AIR_PTR_SSBO)
+         return air_error(c, "intrinsic: air.get_function_pointer_visible_function_table of "
+                             "something that is not a table");
+      const struct air_to_nir_options *o = c->options;
+      if (!o || !o->num_linked)
+         return air_error(c, "intrinsic: air.get_function_pointer_visible_function_table, and "
+                             "the pipeline links no functions");
+      nir_def *index = in->num_operands > 2 ? air_get_ssa(c, in->operands[2]) : NULL;
+      if (!index)
+         return false;
+      static const struct air_type u32 = { .kind = AIR_TYPE_INT, .bits = 32 };
+      struct air_ptr at = air_ptr_add(c, table->ptr, nir_imul_imm(&c->b, nir_u2u32(&c->b, index), 8));
+      nir_def *handle = air_load_ptr(c, at, &u32, 4);
+      if (!handle)
+         return false;
+      struct air_val *chosen = NULL;
+      for (int k = (int)o->num_linked - 1; k >= 0; k--) {
+         struct air_function *ph = rzalloc(c->mem_ctx, struct air_function);
+         ph->is_declaration = true;
+         ph->base.kind = AIR_VALUE_FUNCTION;
+         ph->base.name = ralloc_asprintf(c->mem_ctx, "%s.MTL_VISIBLE_FN_REF", o->linked[k].name);
+         struct air_val *v = air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE });
+         v->fn = ph;
+         chosen = chosen ? air_val_ptr_select(c, nir_ieq_imm(&c->b, handle, k + 1), v, chosen) : v;
+      }
+      air_set(c, &in->base, chosen);
       return true;
    }
    if (!strncmp(n.part[0], "get_null_texture", 16)) {
