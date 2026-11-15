@@ -257,6 +257,9 @@ std::vector<uint8_t> FakeGpu::memory(uint64_t iova, uint64_t length) {
     return p ? std::vector<uint8_t>(p, p + length) : std::vector<uint8_t>{};
 }
 
+void (*FakeGpu::submitHook)(FakeGpu&, uint64_t, uint32_t, void*) = nullptr;
+void* FakeGpu::submitHookContext = nullptr;
+
 uint8_t* FakeGpu::at(uint64_t iova, uint64_t length) {
     for (auto& [handle, b] : buffers_) {
         if (iova >= b.iova && length <= b.bytes.size() && iova - b.iova <= b.bytes.size() - length) {
@@ -410,6 +413,14 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
         (xs ? xs->programLoaded : cs_.programLoaded) = true;
         (xs ? xs->programFrom : cs_.programFrom) = from;
         (xs ? xs->programUnits : cs_.programUnits) = units;
+        // A graphics stage's constants are held to the constlen of the program they were loaded for (checkStageProgram):
+        // another program's preload begins another set. Kept across the whole submission, a frame whose stages differ in
+        // constlen -- a compositor's -- faulted on the first draw of a shorter stage after a longer one's, for constants
+        // that stage never reads. (The same program preloaded again keeps them: a draw's loads follow its preload.)
+        if (xs != nullptr && xs->constsFor != from) {
+            xs->consts.clear();
+            xs->constsFor = from;
+        }
         break;
     case ST6_CONSTANTS:
         {
@@ -2541,6 +2552,7 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
         Job job{++submitted_, c.iova + cmd->submit_offset, cmd->size / 4};
         s->fence = job.fence;
+        if (submitHook != nullptr) submitHook(*this, job.address, job.words, submitHookContext);
         // (a wedged GPU still takes submissions, as the kernel's ring does until it is full: they are never run)
         if (wedged_) {
             return 0;

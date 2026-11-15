@@ -22,6 +22,7 @@
 #include "hakios-metal/hakios_metal.h"
 #include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/metallib.hpp"
+#include "hakios-metal/testing.hpp"
 #include "../tests/fixtures/null_fs_bc.hpp"
 #include "hakios-metal/texture.hpp"
 
@@ -1183,6 +1184,54 @@ hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base
     r->color = base->color;
     return r;
 }
+
+}   // extern "C"
+
+namespace hakios::metal {
+hakios_metal_program* hakios_metal_program_from_stages(const Stage& vs, const Stage& fs, unsigned colorPixelFormat, unsigned fsIboBase, unsigned ssboWrites) {
+    if (vs.kind != kStageVertex || fs.kind != kStageFragment) {
+        failed("hakios_metal_program_from_stages: a vertex stage and a fragment stage, in that order");
+        return nullptr;
+    }
+    // each stage as compileStage leaves one: its Kernel pointing into vectors the CompiledStage owns
+    auto own = [](const Stage& s) {
+        auto c = std::make_shared<CompiledStage>();
+        c->stage = s;
+        c->words.assign(s.k.words, s.k.words + s.k.numWords);
+        if (s.k.immediates != nullptr) c->immediates.assign(s.k.immediates, s.k.immediates + s.k.numImmediates);
+        c->name = s.k.name != nullptr ? s.k.name : (s.kind == kStageVertex ? "vs" : "fs");
+        c->stage.k.words = c->words.data();
+        c->stage.k.immediates = c->immediates.empty() ? nullptr : c->immediates.data();
+        c->stage.k.name = c->name.c_str();
+        c->stage.k.source = "";
+        return c;
+    };
+    auto out = std::make_unique<CompiledProgram>();
+    out->vs = own(vs);
+    out->fs = own(fs);
+    out->fs->iboBase = fsIboBase;
+    out->vs->writesMemory = (ssboWrites & 1) != 0 && vs.k.numSsbos != 0;
+    out->fs->writesMemory = (ssboWrites & 2) != 0 && fs.k.numSsbos != 0;
+    std::string why;
+    if (!render::link(out->vs->stage, out->fs->stage, &out->program.link, &why)) {
+        failed(why);
+        return nullptr;
+    }
+    // (linkProgram's own tail)
+    out->name = out->vs->name + "+" + out->fs->name;
+    out->program.vs = out->vs->stage;
+    out->program.fs = out->fs->stage;
+    out->program.fsIboBase = out->fs->iboBase;
+    out->program.ssboWrites = uint8_t((out->vs->writesMemory ? 1 : 0) | (out->fs->writesMemory ? 2 : 0));
+    out->program.name = out->name.c_str();
+    auto* r = new hakios_metal_program;
+    r->program = std::move(out);
+    r->color = colorPixelFormat;
+    return r;
+}
+}  // namespace hakios::metal
+
+extern "C" {
 
 unsigned hakios_metal_program_stage_words(hakios_metal_program* p, unsigned stage) {
     if (p == nullptr || stage > 1) return 0;

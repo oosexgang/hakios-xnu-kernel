@@ -1,0 +1,14 @@
+A draws 20 refused 0 submits 1 words 1417 loads 74 stream 6de28c2564e9cb52 state 711c4414f8362c2d
+B draws 20 refused 0 submits 1 words 1564 loads 74 stream 322ebed2ca074410 state defbd1d5ef1dc40f
+C draws 143 refused 0 submits 1 words 74911 loads 6732 stream fe4bb4154c4790dd state c9a9899184d80939
+D draws 143 refused 0 submits 1 words 8077 loads 526 stream dee0f846eccc6025 state 613b84fbf63951c9
+E draws 143 refused 0 submits 1 words 8656 loads 526 stream 89ba1522fc6c7286 state 947ce2b970b8c58e
+F draws 143 refused 0 submits 4 words 74917 loads 6732 stream 0000000000000000 state c9a9899184d80939 (stream by timing: not summed)
+P draws 108 refused 0 submits 1 words 105269 loads 9504 stream 709ed5dd6a0fb726 state ce8538b531f9c505
+Q draws 108 refused 0 submits 1 words 167108 loads 9504 stream db49ac0e1ec16844 state 2de507abf9e8a10d
+R draws 108 refused 0 submits 1 words 4939 loads 432 stream 6d4ca98398d1275f state f90a178aa327c3f2
+G draws 1 refused 0 submits 1 words 602 loads 4 stream d18aa5cbb430bc42 state f7616e282bf666a6
+H draws 1 refused 0 submits 1 words 654 loads 4 stream a2837c99c813e12e state f7616e282bf666a6
+J draws 20 refused 0 submits 1 words 1508 loads 76 stream 8aaeef18eb048fa8 state 57cf1cdb921b5d8b
+K draws 110 refused 0 submits 1 words 126408 loads 8888 stream d2ccbdd9c915e765 state 6e861fe947d21dcd
+L draws 110 refused 0 submits 1 words 5953 loads 404 stream f2223875097b5abe state 32718647260908a1

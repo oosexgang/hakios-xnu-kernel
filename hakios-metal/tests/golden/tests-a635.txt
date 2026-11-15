@@ -1,0 +1,292 @@
+a6xx_type7_headers_for_the_dispatch_packets submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_register_offsets_are_mesas submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_sp_cs_ctrl_reg0 submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_hlsq_cs_cntl_constlen submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_sp_cs_ctrl_reg1_shared_and_constlen submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_load_state6_word_0 submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_buffer_ibo_descriptor submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_texture2d_descriptor submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_sampler_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_private_memory_fields_are_scaled submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_dispatch_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_batch_start_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_render_opcodes_events_and_enums submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_render_register_offsets_are_mesas submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_fui_is_the_floats_bits submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_first_draw_target_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_first_draw_pass_and_viewport_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_first_draw_program_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_first_draw_link_and_vfd_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a6xx_first_draw_fs_input_output_and_raster_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+c_api_copy_and_callbacks submits 21 words 2070 draws 0 loads 0 stream 47d27f29e65ddf65 state cbf29ce484222325
+c_api_free_inside_its_callback submits 51 words 1152 draws 0 loads 0 stream 8cd1911eeb1da2f1 state cbf29ce484222325
+c_api_fail_ends_in_error submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's compile and dispatch did not run)
+c_api_library_and_kernel submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+c_api_texture_replace_and_read_convert_the_stride submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's texture dispatch did not run)
+c_api_texture_dispatch submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's program and draw did not run)
+c_api_program_and_draw submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's textured draw did not run)
+c_api_draw_with_a_fragment_texture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's vertex texture did not run)
+c_api_draw_with_a_vertex_texture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's depth-only pipeline did not run)
+c_api_pipeline_without_a_fragment_function submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's multisampling did not run)
+c_api_multisample_draw_and_resolve submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+c_api_texture_over_an_iosurface_refuses_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's indexed draw did not run)
+c_api_indexed_draw submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the C interface's constexpr sampler draw did not run)
+c_api_draw_with_a_constexpr_sampler submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+c_api_the_device_counts_what_it_has_allocated submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+gpu_params submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+copy_moves_the_bytes submits 1 words 18 draws 0 loads 0 stream 281290c7eda89a58 state cbf29ce484222325
+fill_any_length submits 7 words 602 draws 0 loads 0 stream 68268d095fc7f228 state cbf29ce484222325
+copy_then_fill_in_one_buffer_keeps_order submits 1 words 180 draws 0 loads 0 stream ff31bf186aeac164 state cbf29ce484222325
+unaligned_copies_go_through_the_2d_engine_byte_for_byte submits 1 words 668 draws 0 loads 0 stream 4eaa47c2c9714855 state cbf29ce484222325
+copies_outside_a_buffer_and_unaligned_fills_are_refused submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+handlers_run_in_commit_order_while_the_gpu_is_behind submits 40 words 320 draws 0 loads 0 stream f19301abe19692d5 state cbf29ce484222325
+command_memory_is_used_again submits 100 words 10300 draws 0 loads 0 stream a2e9cec2b6fa60d5 state cbf29ce484222325
+buffers_are_given_back submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_bad_stream_is_a_hang_the_kernel_resets_the_gpu_for submits 2 words 2 draws 0 loads 0 stream 8aecc7613026cc32 state cbf29ce484222325 (unread)
+a_command_buffer_behind_a_hang_is_given_up_not_run submits 3 words 207 draws 0 loads 0 stream e5a642e8dfcc148a state cbf29ce484222325 (unread)
+without_recovery_the_first_hang_ends_every_later_wait submits 3 words 105 draws 0 loads 0 stream 9efcf556390aec4c state cbf29ce484222325 (unread)
+a_fence_never_handed_out_is_a_hang submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+big_copies_are_cut_into_packets_the_gpu_takes submits 1 words 1167 draws 0 loads 0 stream fb5fa7318f328cc5 state cbf29ce484222325
+       (no compiler in this build: the fixture comparison did not run)
+compiler_without_mesa_refuses_by_name_and_with_it_matches_the_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the query typing did not run)
+a_size_query_after_a_sample_leaves_the_texture_its_class submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the threadgroup layout did not run)
+a_threadgroup_argument_starts_past_the_static_arrays submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the pointer phis did not run)
+a_pointer_phi_into_one_buffer_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the texture fixture comparison did not run)
+compiler_matches_the_texture_fixtures submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_refuses_a_declaration_that_disagrees_with_the_instructions submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_reads_the_image_only_kernel_off_the_nir submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_reads_the_copy_kernel_off_the_nir submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_reads_the_sampling_kernel_off_the_nir submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the stage fixture comparison did not run)
+compiler_matches_the_stage_fixtures submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_refuses_a_kernel_as_a_stage_and_a_stage_as_a_kernel submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the link did not run)
+compiler_links_the_two_programs submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_link_refuses_what_the_first_draw_does_not_serve submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+compiler_specialises_a_stage_by_the_pipelines_function_constants submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: clz did not run)
+a_kernel_counting_leading_zeros_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_asking_whether_a_value_is_uniform_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_packing_halves_into_bytes_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_whose_pointer_phis_are_undef_over_an_edge_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+an_unwritten_output_is_not_the_position submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_pushing_ten_constant_ranges_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_taking_a_ballot_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_kernel_taking_its_execution_width_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_fragment_stage_writing_depth_compiles_and_links submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_dual_source_fragment_stage_compiles_and_links submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: bytes_id did not run)
+a_kernel_taking_a_word_into_bytes_compiles submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+argument_buffer_layouts_and_compiles_on_many_threads_agree submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: argument buffer layouts did not run)
+the_layout_of_an_argument_buffer_comes_from_the_metadata submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: argument buffers did not run)
+argument_buffer_members_are_bound_from_the_words_in_their_set submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the constant buffer's known reads did not run)
+a_stage_compiled_for_its_constant_buffer_reads_none_of_it submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the device-buffer writes did not run)
+a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       (no compiler in this build: the cache did not run)
+a_compiled_stage_comes_back_from_the_cache_and_from_a_seed submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_dispatch_gets_private_memory_and_the_threadgroup_memory_its_encoder_sets submits 1 words 112 draws 0 loads 2 stream 0459b476d8d32e2f state 73d60166aefc2a51
+an_indirect_dispatch_reads_its_counts_when_it_runs submits 1 words 181 draws 0 loads 4 stream 514a751e163e70ec state 65ad89869881ce17
+a_dispatch_of_fill_id_holds_together_and_the_fake_does_not_run_it submits 1 words 112 draws 0 loads 2 stream efb1320aababb718 state 73d60166aefc2a51
+a_dispatch_of_end_only_needs_no_buffers submits 1 words 95 draws 0 loads 1 stream c24ff6d18a99ab80 state fcfa8434f89a7626
+a_dispatch_of_the_air_kernel_uploads_what_ir3_asks_for submits 1 words 136 draws 0 loads 3 stream 449c19db9735da7e state 8c52fffceb2b5e22
+a_constant_shorter_than_its_pushed_range_is_read_from_the_objects_pages submits 1 words 136 draws 0 loads 3 stream 449c19db9735da7e state 3d0dc67eca1b1a1c
+a_refused_dispatch_is_left_out_when_the_buffer_skips_refusals submits 1 words 112 draws 0 loads 2 stream ee153db4dd4e1278 state 73d60166aefc2a51
+a_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+the_fake_refuses_a_program_preload_of_128_units submits 1 words 4 draws 0 loads 1 stream e509d397f8d2ce75 state eaed796d1368fce3
+the_fake_refuses_exec_cs_without_a_program submits 1 words 5 draws 0 loads 0 stream bde79d55b57ea77b state cbf29ce484222325
+the_fake_refuses_a_grid_that_does_not_match_the_ndrange submits 1 words 109 draws 0 loads 2 stream 8443117bfa5c7ac4 state 73d60166aefc2a51
+the_fake_refuses_an_ibo_outside_every_buffer submits 1 words 109 draws 0 loads 2 stream 5924ee0ef9b79adc state 1e92867caca7dcda
+the_fake_refuses_constants_past_constlen submits 1 words 109 draws 0 loads 2 stream 291eabda58ccb2e8 state 73d60166aefc2a51
+the_fake_refuses_a_wait_that_nothing_satisfies submits 2 words 19 draws 0 loads 0 stream 01e23f9065219321 state cbf29ce484222325
+an_event_with_the_timestamp_bit_writes_a_timestamp_not_the_value submits 2 words 190 draws 0 loads 2 stream 41e6d3a9fb2ebd49 state e05db0ae225f3b59
+the_fake_refuses_id_registers_whose_two_copies_differ submits 1 words 109 draws 0 loads 2 stream 7a040b8142ec5f80 state 73d60166aefc2a51
+a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_dispatch_of_an_image_only_kernel_puts_a_storage_descriptor_at_ibo_0_and_no_texture_state submits 2 words 264 draws 0 loads 4 stream bb3c4485c3ef5501 state c33297f818ec9d34
+an_image_kernel_stores_into_a_2d_array_or_a_3d_texture_through_a_layered_descriptor submits 2 words 264 draws 0 loads 4 stream adb47ccb19eaf3c1 state bfea58ec3ed85d91
+a_dispatch_of_tex_copy_loads_the_texture_table_with_a_zero_slot_0_and_one_zero_sampler submits 1 words 148 draws 0 loads 4 stream 7d80296886cf7580 state 04201b3d52ceed6f
+a_dispatch_of_tex_sample_gid_loads_the_sampler_it_was_given submits 2 words 296 draws 0 loads 8 stream 131d67a4cf994995 state 54292e7cd3a69e39
+an_image_slot_the_kernel_never_addresses_gets_a_hole_descriptor_over_the_table submits 1 words 145 draws 0 loads 4 stream ef92eafd93562be8 state 89383fb08121181d
+the_fake_refuses_a_texture_count_the_load_does_not_match submits 1 words 145 draws 0 loads 4 stream a55280ef45c2facf state 04201b3d52ceed6f
+the_fake_refuses_a_texture_outside_every_buffer submits 1 words 145 draws 0 loads 4 stream b85bad31e27cefa4 state c24f4122720d5804
+the_fake_refuses_a_texture_pitch_shorter_than_a_row submits 2 words 290 draws 0 loads 8 stream 4e595ac125037445 state 649fac805aae8ead
+the_fake_refuses_a_texture_of_a_format_it_does_not_know submits 1 words 145 draws 0 loads 4 stream b85bad31e27cefa4 state 3c2106c02fa7c2d8
+the_fake_refuses_a_texture_load_without_a_sampler submits 1 words 145 draws 0 loads 4 stream 3bcf169bce0462e4 state 2651c0f11da1bbaf
+the_fake_refuses_a_border_clamp_with_the_border_registers_unwritten submits 4 words 572 draws 0 loads 16 stream 1aadf8b3a4ed0e66 state b47e1600d4710e60
+the_fake_refuses_an_image_whose_rows_run_off_its_buffer submits 2 words 258 draws 0 loads 4 stream d0b52bff187a5a91 state a50a184efce5a965
+the_fake_refuses_a_load_of_ibos_into_the_texture_block submits 1 words 145 draws 0 loads 4 stream f6f4a772727c7664 state 2ef53f5fd5ca742f
+the_fake_refuses_a_zero_ibo_descriptor submits 2 words 274 draws 0 loads 6 stream 63c73bc6ec578015 state 81494f49fbe365ae
+a_dispatch_loads_the_ubo_descriptors_an_ldc_reads_through submits 2 words 234 draws 0 loads 4 stream 1c284906c094d544 state 01bfc3782cab1405
+a_kernel_longer_than_the_instruction_cache_gets_the_instrlen_workaround submits 1 words 1130 draws 0 loads 3 stream 8dcbe08bc49a37d2 state 767fa2306040d214
+end_only_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+fill_id_text_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+fill_id_air_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+tex_fill_air_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+tex_fill_h_air_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+tex_copy_air_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+tex_sample_gid_air_fixture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+buffer_kernels_have_no_texture_fields submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_fields_refuse_mutations submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+stage_fixtures_hold_the_kernel_invariants submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+stage_fixtures_carry_what_the_listings_say submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+link_tri_flat_is_the_position_alone submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+link_tri_color_puts_the_varying_first_and_the_position_at_4 submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+link_refuses_a_varying_the_vertex_stage_does_not_write submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+link_refuses_more_varyings_than_the_table_holds submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+metallib_reads_its_functions submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+metallib_universal_takes_air64 submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+metallib_refuses_what_does_not_hold_together submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+parity_is_odd submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+headers_match_mesa submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+decode_round_trips_and_catches_bad_parity submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+long_register_writes_are_cut submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+memcpy_layout_is_mesas submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+render_refuses_what_the_first_draw_does_not_serve_by_name submits 2 words 1380 draws 2 loads 8 stream 4087634dec79238d state 81caf134c68aec65
+render_encodes_the_first_triangles_registers submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+render_encodes_the_varying_link_of_tri_color submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+render_options_switch_each_group_and_each_alternative submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_of_tri_flat_holds_together_and_the_fake_does_not_rasterize_it submits 1 words 684 draws 1 loads 2 stream 5cb91e7c2ec037df state cb137a44d958688c
+a_draw_of_tri_color_and_of_the_hand_built_pair_hold_together submits 19 words 12610 draws 20 loads 40 stream f01c8c70bed3b3b1 state e45debd8551c044d
+the_fake_accepts_the_unmutated_flat_draw_raw submits 1 words 588 draws 1 loads 2 stream 3e6a10a153c92302 state cb137a44d958688c
+the_fake_refuses_a_draw_packet_that_is_not_the_three_word_triangle_form submits 6 words 3534 draws 6 loads 12 stream 7ce5282c0cc93ea7 state 54e81470edcf5a2d
+the_fake_refuses_a_draw_outside_a_begun_sysmem_pass submits 4 words 2324 draws 4 loads 8 stream b86294b161513dc0 state 1b6f8d91e4c1b5b5
+the_fake_refuses_a_draw_whose_stages_do_not_hold_together submits 14 words 8182 draws 14 loads 27 stream 6f79801b8676d5ba state ed39145395c3f9db
+the_fake_refuses_a_draw_whose_target_does_not_hold_together submits 11 words 6445 draws 11 loads 22 stream 9acf632f88d9021d state 09bde857f6d3d994
+the_fake_refuses_a_draw_whose_fragment_output_path_is_broken submits 13 words 7605 draws 13 loads 26 stream fc7bfa1da072db58 state 23940b549448dcbc
+the_fake_refuses_a_draw_whose_viewport_scissors_or_fetch_are_off submits 8 words 4683 draws 8 loads 16 stream 14e9692adadf90da state 29f464ce110bdd85
+the_fake_refuses_a_draw_whose_link_or_fs_inputs_disagree submits 10 words 5832 draws 10 loads 20 stream 1cba6d8ce222dba6 state 38d3788868897e50
+the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flushes submits 11 words 6509 draws 11 loads 22 stream 2108070a8e95a584 state 09bde857f6d3d994
+the_fake_refuses_the_packets_a_draw_stream_may_not_carry submits 7 words 4117 draws 7 loads 14 stream f9aa81f9989e75e9 state be376c9d3df73fc8
+a_draw_pushes_a_fragment_constant_range_out_of_the_bound_buffer submits 1 words 688 draws 1 loads 3 stream d7cc710f48bc405c state 2a4251f1a42f82b4
+a_pushed_range_off_16_bytes_is_copied_by_the_gpu submits 2 words 1384 draws 2 loads 6 stream 3cf7c60365cf8db8 state 9fa69486849bc4f7
+a_draw_refuses_a_constant_range_it_cannot_serve_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_fragment_stage_that_writes_no_colour_is_drawn_with_nothing_written submits 2 words 1292 draws 2 loads 4 stream 0ed4c278dc20d085 state 355edb16f056659d
+a_stage_that_wants_private_memory_gets_the_queues submits 1 words 676 draws 1 loads 2 stream 75d7cb3e37eed4cd state fec70d1c3dce25f1
+lines_are_drawn_as_the_hardwares_line_list_and_strip submits 2 words 1368 draws 2 loads 4 stream f0c6cb7e6a1cc714 state b2db15d81d80c4dd
+a_vertex_stage_gets_its_driver_params_every_draw submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_fetches_two_attributes_through_the_vertex_descriptor submits 3 words 1875 draws 3 loads 6 stream f251df2aa45988fd state af1beff45cf71e23
+each_vertex_format_family_decodes_as_metal_names_it submits 10 words 6890 draws 10 loads 20 stream 557eb1d5bce6c833 state 03c0d49008302f41
+a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_turned_copy_sets_the_2d_rotation_and_takes_the_sides_swapped submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_clear_fills_the_target_through_the_2d_engine_before_the_draw submits 2 words 1210 draws 2 loads 4 stream 0b0a97526713f30b state b2db15d81d80c4dd
+a_clear_packs_the_colour_as_each_format_holds_it submits 12 words 3744 draws 0 loads 0 stream 6ed81c1395b013f9 state cbf29ce484222325
+a_clear_without_a_draw_is_a_pass_of_its_own submits 1 words 312 draws 0 loads 0 stream 15f8026f1d329880 state cbf29ce484222325
+a_clear_refuses_a_colour_it_cannot_pack submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+the_fake_refuses_a_fill_whose_registers_do_not_hold_together submits 11 words 3399 draws 0 loads 0 stream 6cdab99705930c4e state cbf29ce484222325
+a_draw_blends_as_the_pipeline_says submits 2 words 1338 draws 2 loads 4 stream 7dc38e1ec1ee0b07 state b2db15d81d80c4dd
+a_command_buffer_counts_its_passes_and_draws submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_profiled_command_buffer_lists_its_passes submits 1 words 1042 draws 2 loads 4 stream b7f6b4897dbe2749 state b2db15d81d80c4dd
+       a draw then the same draw: 565 and 322 words written in full, 551 and 23 deduplicated
+a_draw_in_an_open_pass_leaves_out_registers_already_holding_their_values submits 2 words 1517 draws 4 loads 8 stream 9f26004ef0651a61 state 1b6f8d91e4c1b5b5
+       a draw with its pass start and end: 588 words, 519 of them register writes; opcode 100 2; opcode 101 2; opcode 20 5; opcode 29 2; opcode 38 3; opcode 50 12; opcode 52 4; opcode 56 4; opcode 60 7; opcode 67 4; opcode 70 20; opcode 99 4
+the_words_of_a_draw_counted submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_refuses_a_blend_it_cannot_serve submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_like_the_last_leaves_out_its_program_and_pass_state submits 2 words 1496 draws 4 loads 14 stream a0927314b42150ba state bfca4afb33d1aa29
+       (no Mesa in this build: a compressed texture: the UBWC layout is Mesa's, and this build has none; the compressed copy-in did not run)
+a_compressed_texture_is_copied_in_before_a_draw_samples_it_after_its_rows_changed submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_samples_a_texture_through_the_fs_prefetch submits 1 words 699 draws 1 loads 4 stream e5efd0eb0719180b state 39f18c791455d198
+a_draw_samples_a_texture_in_the_vertex_stage submits 2 words 1384 draws 2 loads 6 stream e7f6ec525829faeb state c15bf093ab8c4fb5
+a_draw_refuses_a_texture_the_fs_cannot_sample submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+the_fake_refuses_fs_textures_or_a_prefetch_that_do_not_hold_together submits 9 words 5411 draws 9 loads 34 stream aadf2818b6d9ec29 state 1b7d07060e9b0ded
+a_depth32float_texture_is_tiled_and_an_attachment_only submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_tests_and_writes_depth_through_its_attachment submits 2 words 995 draws 1 loads 2 stream 9ded2efcbf7bd79f state cb137a44d958688c
+a_pass_of_depth_alone_draws_depth submits 1 words 659 draws 1 loads 2 stream fd53589d43bfe70d state cb137a44d958688c
+a_draw_refuses_a_depth_setup_it_cannot_serve submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+the_fake_refuses_a_depth_draw_that_does_not_hold_together submits 6 words 3612 draws 6 loads 12 stream c4340e836b3eeee9 state 54e81470edcf5a2d
+a_texture_over_an_iosurface_draws_into_the_surfaces_memory submits 2 words 624 draws 0 loads 0 stream 5ab1b1a1cde14512 state cbf29ce484222325
+a_two_plane_surface_is_one_ycbcr_texture submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+an_indexed_draw_is_the_seven_word_form_with_primitive_restart submits 3 words 2079 draws 3 loads 6 stream 59553d81950982ce state af1beff45cf71e23
+an_indexed_or_instanced_draw_refuses_what_it_cannot_serve submits 1 words 689 draws 1 loads 2 stream 27af40ab9bfe7c67 state 58699d5de9f40f97
+a_draw_loads_the_ubo_descriptors_an_ldc_reads_through submits 3 words 1950 draws 3 loads 6 stream 78b0be44c726a793 state cbf1a96e2a2cfabb
+a_draw_loads_the_3d_ibo_table_an_ldib_reads_through submits 3 words 1752 draws 3 loads 9 stream c43d45ef50889b8b state 14cb646489072ce4
+draws_into_the_same_attachments_share_one_pass submits 4 words 5531 draws 10 loads 20 stream 2d244476da693d4e state 12bc3357a14e6a3d
+a_command_buffer_released_in_flight_gives_its_buffers_back submits 51 words 37184 draws 151 loads 302 stream 0000000000000000 state 0000000000000000 (by timing: not summed)
+draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_words_again submits 4 words 5452 draws 122 loads 244 stream c5d54b4cf4ad1ac1 state aa418883f5481e7d
+a_draw_binds_the_queues_null_texture_at_the_reserved_slot_over_anything_bound_there submits 2 words 1398 draws 2 loads 8 stream 00589408667cf061 state d520161e911e7cbd
+a_draw_writes_two_colour_targets_each_into_its_own_attachment submits 5 words 4336 draws 7 loads 14 stream 28074839119657d9 state 4149d82559294f4e
+a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_before_it submits 2 words 1432 draws 4 loads 16 stream d13a09cb5d99444d state fd0786e6f63b8aa9
+mip_levels_are_drawn_into_copied_and_generated submits 4 words 3456 draws 1 loads 2 stream f60d3abf44cb0353 state cb137a44d958688c
+a_draw_that_writes_only_color_1_leaves_attachment_0_unwritten submits 1 words 701 draws 1 loads 2 stream a67a85fa83449979 state 8984d8c1e40a1343
+a_stencil_attachment_is_the_s8_plane_and_its_test_the_draws_state submits 1 words 664 draws 1 loads 2 stream e0746650d7dfb3b7 state cb137a44d958688c
+a_program_longer_than_the_instruction_cache_is_preloaded_in_part submits 2 words 1256 draws 2 loads 4 stream 94f00222f870a0bd state b9b7f16a46e9b608
+an_occlusion_query_adds_the_draws_samples_to_its_word submits 4 words 2545 draws 4 loads 8 stream 1389ba39f0a47e9e state 1b6f8d91e4c1b5b5
+a_multisample_pass_draws_under_its_count submits 1 words 579 draws 1 loads 2 stream 46d47072494972ac state cb137a44d958688c
+a_multisample_texture_is_cleared_whole_and_resolved_to_the_mean submits 2 words 952 draws 0 loads 0 stream c10ff337edaa1590 state cbf29ce484222325
+a_draw_samples_a_depth_texture_through_a_compare_sampler submits 3 words 1938 draws 3 loads 15 stream 3c6062821573111b state 6e74c6fd08d15dd3
+a_draw_culls_as_its_cull_mode_and_winding_say submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_draw_into_a_cube_face_aims_at_that_face submits 1 words 684 draws 1 loads 2 stream b555efaa39e408e3 state cb137a44d958688c
+a_draw_into_a_depth_mip_level_aims_at_that_level submits 2 words 1318 draws 2 loads 4 stream e21ef62209586014 state b2db15d81d80c4dd
+a_vertex_stage_reads_its_constant_table submits 1 words 712 draws 1 loads 2 stream 5ad91c298dba14ff state 1782243338e5b3cd
+an_indirect_draw_reads_its_arguments_when_it_runs submits 1 words 679 draws 1 loads 2 stream 5d066884dfde2a09 state fec70d1c3dce25f1
+append_runs_another_command_buffers_work_after_this_ones submits 2 words 2704 draws 4 loads 8 stream 41810589042d14d5 state 98844b1048b23435
+generate_mipmaps_of_a_cube_makes_each_faces_own_levels submits 1 words 3830 draws 0 loads 0 stream fc4d588c7f05f1d1 state cbf29ce484222325
+rgb10a2_is_drawn_through_its_own_colour_format submits 3 words 1689 draws 2 loads 4 stream 0e1fb56e5c420747 state b2db15d81d80c4dd
+a_depth_array_is_drawn_layer_by_layer_and_sampled_whole submits 2 words 1318 draws 2 loads 4 stream d54d2f20dee12d85 state b2db15d81d80c4dd
+a_depth_slice_past_the_layers_is_refused submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_surface_texture_views_in_a_format_of_the_same_size submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_surface_reads_in_the_formats_of_its_fourccs_size submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_wider_format_reads_a_surface_as_fewer_pixels submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+       1125x2436 BGRA8Unorm: 2 x 12 tiles of 576 x 208
+       1125x2436 RGBA16Float: 2 x 26 tiles of 576 x 96
+       64x64 RGBA8Unorm: 1 x 1 tiles of 64 x 64
+       2048x100 RGBA8Unorm: 2 x 1 tiles of 1024 x 112
+       17x3 RGBA8Unorm: 1 x 1 tiles of 32 x 16
+the_gmem_plan_fits_the_bins_in_gmem_and_covers_the_target submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_pass_in_gmem_loads_and_stores_every_tile_in_place submits 6 words 13449 draws 58 loads 116 stream 8fc846bebd93cf25 state 70b05ed0e66ed57d
+a_gmem_store_without_its_load_shows submits 1 words 669 draws 1 loads 2 stream 71a1ea9c92722d5e state cb137a44d958688c
+a_draw_gmem_cannot_replay_sends_the_pass_to_sysmem submits 1 words 1621 draws 3 loads 6 stream 7784410851d68867 state 6daed77ff6dca4f4
+a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn submits 2 words 46086 draws 208 loads 416 stream c7e2e522dcd691ad state 609065a46d12d745
+a_gmem_pass_is_tiled_over_its_render_area submits 1 words 714 draws 2 loads 4 stream 896cddea85218c74 state b2db15d81d80c4dd
+a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has submits 1 words 713 draws 1 loads 4 stream 81ff037a2f426069 state accb62ce2869ae1b
+the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target submits 3 words 1963 draws 3 loads 6 stream 2a2200ea517c691b state 6daed77ff6dca4f4
+gmem_for_a_pass_of_enough_draws_decided_at_its_end submits 6 words 4235 draws 11 loads 28 stream 4eae8fc58ce2a337 state 44e549e09cea1985
+a_pass_whose_like_was_light_is_recorded_for_sysmem_alone submits 5 words 3736 draws 32 loads 64 stream 4aba82bef7c44036 state 179f28010791cba5
+a_dontcare_attachment_is_loaded_only_when_the_granules_pass_its_last_row submits 2 words 1353 draws 2 loads 4 stream 41847c8a56cf0cf3 state b2db15d81d80c4dd
+a_clear_in_gmem_comes_out_as_the_fill_does submits 8 words 5302 draws 8 loads 16 stream 35d6a13df4462175 state 29f464ce110bdd85
+a_binned_gmem_pass_bins_its_draws_then_tells_each_tile_its_streams submits 2 words 5232 draws 30 loads 60 stream e6ccaa499e1e026e state ec11bedfb1e9734d
+a_visibility_stream_overflow_turns_the_binning_off submits 3 words 7281 draws 42 loads 84 stream a10b70f57eb5313f state a1ca9d874ad3dcbd
+each_profiled_pass_says_why_it_was_drawn_in_sysmem submits 3 words 1867 draws 3 loads 6 stream b911ba4b51bf9332 state 6daed77ff6dca4f4
+texture_pitch_is_mesas_layout_rule submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_make_lays_the_memory_out_and_refuses_by_name submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_replace_and_read_convert_the_callers_stride submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_replace_of_a_sub_region_leaves_everything_else_alone submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_descriptors_are_the_worked_example_at_the_textures_address submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_takes_the_render_target_usage_and_its_fields_give_the_mrt_words submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+sampler_words_follow_galliums_encoding_of_metals_descriptor submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+texture_levels_are_laid_out_as_fdl6_layout_does_it submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+an_astc_texture_is_laid_out_in_blocks submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_3d_texture_is_slices_of_a_2d_layout submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_2d_array_is_layers_of_a_2d_layout submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_cube_is_six_faces_under_the_cube_type submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_multisample_texture_is_its_samples_side_by_side submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_multisample_depth_is_tiled_at_its_samples_cpp submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_texture_view_names_a_level_or_a_slice_of_its_parents_memory submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_textures_plan_is_the_memory_make_gives_it submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_1d_array_is_stored_through_the_2d_image_of_its_layers submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_2d_texture_views_as_an_array_and_a_cube_as_a_cube_array submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+an_etc2_texture_is_laid_out_in_blocks_of_its_size submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+an_array_or_a_cube_with_mip_levels_is_layer_after_layer submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_2d_chain_and_a_depth_buffer_view_as_one_slice_arrays submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+pvrtc_decodes_its_two_colours_its_modulation_and_its_block_order submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_layer_of_a_depth_array_views_as_2d submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_swizzled_view_composes_with_what_its_parent_reads submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_1d_texture_views_as_a_one_slice_1d_array submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000
+a_stencil_view_reads_the_s8_plane submits 0 words 0 draws 0 loads 0 stream 0000000000000000 state 0000000000000000

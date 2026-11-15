@@ -185,6 +185,12 @@ public:
     // stop running submissions until resume(): to see what a program does while the GPU is behind
     void pause();
     void resume();
+    // A submission as it arrives, before it runs: the GPU address and the words of its command stream. For whoever reads
+    // streams back word for word (tests/golden.hpp: the golden streams of the tests and of drawbench). Called on the
+    // submitting thread under the fake's lock, so the hook reads memory through peek(), not through memory().
+    static void (*submitHook)(FakeGpu& gpu, uint64_t address, uint32_t words, void* context);
+    static void* submitHookContext;
+    const uint8_t* peek(uint64_t iova, uint64_t length) { return at(iova, length); }   // (inside the hook alone)
 
     // what the kernel says about this GPU, for the fake to say the same and for a test to check it does
     static constexpr uint64_t kChipId = 0x06030500;      // dt qcom,chipid: an A635-family part, "Adreno 7c+ Gen 3" to Mesa
@@ -232,6 +238,7 @@ private:
         uint64_t programFrom = 0;
         uint32_t programUnits = 0;
         std::vector<ConstLoad> consts;
+        uint64_t constsFor = 0;            // the program (its preload's source) CONSTS were loaded after
         bool sampLoaded = false, texLoaded = false;
         uint64_t sampFrom = 0, texFrom = 0;
         uint32_t sampUnits = 0, texUnits = 0;
