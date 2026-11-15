@@ -197,7 +197,10 @@ and GESS's large ones), run as the 15 November library stood:
 | refused | 556 |
 | crashed the compiler | 2 (an ir3 register-allocation check in `NRFV1`'s BlinkDetection and `H13FastRawScale`; camera, not drawing) |
 
-So 87% of the entry points Darwin 27 ships compile for the phone's GPU. What the sweep found, and what was
+So 87% of the entry points Darwin 27 ships compile for the phone's GPU. And they do so without a memory
+error: `userland/tools/air/memcheck.sh` runs the same path under valgrind's memcheck, a process per function,
+and QuartzCore's 249, RenderBox's 109 and MercuryPoster's 52 are clean -- a read past a buffer there would be
+a crash of backboardd or SpringBoard on the phone, where nothing would say why. What the sweep found, and what was
 fixed for it on the way (each a commit of its own):
 
 - **ir3's prefetched sample used the texture's index as its sampler's** (`userland/tools/mesa26/darwin.patch`, ir3_compiler_nir.c).
