@@ -177,6 +177,7 @@ static void dump_tracked_promises(void);        /* defined with the bootstrap ho
 static void force_resolve_prereqs(void);        /* defined with the bootstrap hooks */
 static void dump_prereq_types(void);            /* defined with the bootstrap hooks */
 static void dump_tracked_conts(void);           /* defined with the bootstrap hooks */
+static void install_cont_spy(void);             /* deferred continuation hooks, put in at start() */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -3338,6 +3339,7 @@ new_askboot_start(void)
 	if (told < 3) {
 		told++;
 		say("hakios: store(%s): ASKBootstrapV2.start() entered\n", who_i_am());
+		install_cont_spy();     /* only now, so the app's own launch is not hooked (that hung it) */
 	}
 	if (old_askboot_start != NULL) {
 		old_askboot_start();
@@ -3501,6 +3503,37 @@ dump_tracked_conts(void)
 }
 
 static void
+install_cont_spy(void)
+{
+	static bool done;
+	const char *cspy = knob("HAKIOS_CONT_SPY");
+	MSHookFunction_t hook = substrate_hook();
+	void *init, *re, *tr, *te;
+
+	if (done || cspy == NULL || *cspy == '0' || hook == NULL) {
+		return;
+	}
+	done = true;
+	init = dlsym(RTLD_DEFAULT, "swift_continuation_init");
+	re = dlsym(RTLD_DEFAULT, "swift_continuation_resume");
+	tr = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResume");
+	te = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResumeWithError");
+	if (init != NULL) {
+		hook(init, (void *)hakios_tramp_cont_init, (void **)&old_cont_await_g);
+	}
+	if (re != NULL) {
+		hook(re, (void *)hakios_tramp_cont_resume, (void **)&old_cont_resume_g);
+	}
+	if (tr != NULL) {
+		hook(tr, (void *)hakios_tramp_cont_tres, (void **)&old_cont_tres_g);
+	}
+	if (te != NULL) {
+		hook(te, (void *)hakios_tramp_cont_treserr, (void **)&old_cont_treserr_g);
+	}
+	say("hakios: store: continuation hooks installed at start() (init@%p); un-resumed = the stuck await\n", init);
+}
+
+static void
 hook_bootstrap(void)
 {
 	static bool done;
@@ -3533,28 +3566,9 @@ hook_bootstrap(void)
 		hook((void *)(0x1a6e99624UL + slide), (void *)hakios_tramp_resolve, &old_promise_resolve_g);
 		say("hakios: store: JetEngine.Promise init+resolve tracked (recording starts at start())\n");
 	}
-	if (cspy != NULL && *cspy != '0') {
-		/* init is synchronous (safe); await is a swiftasync function and hooking it crashed the app. */
-		void *aw = dlsym(RTLD_DEFAULT, "swift_continuation_init");
-		void *re = dlsym(RTLD_DEFAULT, "swift_continuation_resume");
-		void *tr = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResume");
-		void *te = dlsym(RTLD_DEFAULT, "swift_continuation_throwingResumeWithError");
-
-		if (aw != NULL) {
-			hook(aw, (void *)hakios_tramp_cont_init, (void **)&old_cont_await_g);
-		}
-		if (re != NULL) {
-			hook(re, (void *)hakios_tramp_cont_resume, (void **)&old_cont_resume_g);
-		}
-		if (tr != NULL) {
-			hook(tr, (void *)hakios_tramp_cont_tres, (void **)&old_cont_tres_g);
-		}
-		if (te != NULL) {
-			hook(te, (void *)hakios_tramp_cont_treserr, (void **)&old_cont_treserr_g);
-		}
-		say("hakios: store: Swift continuations tracked (await@%p, resume@%p); un-resumed = the stuck await\n",
-		    aw, re);
-	}
+	/* CONT_SPY is installed later, from new_askboot_start (start()), not here: hooking the continuation
+	 * runtime at launch hung the app. hook_bootstrap still runs (the gate includes cspy) to put the start()
+	 * hook in, which is what then calls install_cont_spy(). */
 	if (tspy != NULL && *tspy != '0') {
 		void *gt = dlsym(RTLD_DEFAULT, "swift_getTypeByMangledNameInContext");
 
