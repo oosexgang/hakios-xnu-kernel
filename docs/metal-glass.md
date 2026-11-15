@@ -263,7 +263,7 @@ argument-buffer and dispatch work below and before tessellation:
 | compiled by ir3 for the Adreno 642L | **24,244** on 15 November (22,972 before tessellation; 22,572 at the first sweep of the 300) |
 | not entry points | 13,313 |
 | refused | 3,246 (4,518; 4,659): 1,770 of them MLX's and Morpheus' simdgroup matrices (`<64 x float>`), 505 ray tracing, 90 CoreImage's visible function tables that only a pipeline's linked functions fill |
-| crashed the compiler | 16 (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction; `NRFV1`'s BlinkDetection; MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
+| crashed the compiler | 16 (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction -- a sweep's artefact: their loops count by `threadsPerThreadgroup`, a function constant the sweep gives no value, and a pipeline must; `NRFV1`'s BlinkDetection, since compiled (a predicated branch on a compare from another block, which ir3's predicate allocation reloads into only one way in; such an `if` now takes an ordinary branch, `tools/mesa26/darwin.patch`); MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
 
 What the refusals are, the MLX libraries set apart (they are machine learning, not drawing, and most of what
 is left in them is `<64 x float>` vectors and pointers kept in memory): tessellation (AvatarKit's 432 Memoji
@@ -277,7 +277,9 @@ commit of its own:
   written and atomically updated where the values lie (`userland/tools/air/argbufvalcheck.sh`). The encoder answers
   the set's own `air.buffer_size` and alignment, finds members by id, and hands back a value's real place. Sets
   nothing reads are not declared at all, the struct type is the parameter's pointee (`global_constants.634`),
-  and padding inside a packed struct is passed over. VFX: 453 -> 571 of 651.
+  and padding inside a packed struct is passed over -- an array of bytes, or since 15 November a lone `i8`,
+  which is how clang pads the byte between a bool and a half (the Ocean and clouds wallpapers'
+  `external_entity_constants`; `argbuf_halfpad.ll`). VFX: 453 -> 571 of 651.
 - **Threadgroup buffers past index 0** (VFX's merge sorts, CoreRE): buffer n starts where 0..n-1 end, and only
   the dispatch knows where, so the base is folded in per dispatch from the lengths
   (`rwa_threadgroup_memory_at`, `userland/tools/air/tgcheck.sh`).
