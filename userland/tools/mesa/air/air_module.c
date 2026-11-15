@@ -15,6 +15,7 @@
 
 #include <inttypes.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "util/macros.h"
@@ -1450,26 +1451,34 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!fty || fty->kind != AIR_TYPE_FUNCTION)
          return fail(r, "call without a function type");
       unsigned n = fty->num_members;
-      unsigned ids[64];
-      if (n >= ARRAY_SIZE(ids))
-         return fail(r, "call of %u arguments", n);
+      /* as many as the function takes, and room for a varargs tail: Music's Panache gs4_fragment
+       * calls a helper with 129 arguments, past the 64 this was a fixed array of */
+      unsigned cap = n + 64;
+      unsigned *ids = malloc(cap * sizeof(*ids));
+      if (!ids)
+         return fail(r, "call of %u arguments, and no memory for them", n);
       for (unsigned i = 0; i < n; i++) {
-         if (fty->members[i]->kind == AIR_TYPE_LABEL)
+         if (fty->members[i]->kind == AIR_TYPE_LABEL) {
+            free(ids);
             return fail(r, "call with a label argument");
+         }
          ids[i] = take_value(r, &rc);
       }
       unsigned extra = 0;
       if (fty->vararg) {
-         while (more(&rc) && n + extra < ARRAY_SIZE(ids)) {
+         while (more(&rc) && n + extra < cap) {
             ids[n + extra] = take_value_type(r, &rc);
             extra++;
          }
       }
-      if (rc.bad || more(&rc))
+      if (rc.bad || more(&rc)) {
+         free(ids);
          return fail(r, "call record does not match its function type");
+      }
       in = new_inst(r, AIR_OP_CALL, fty->elem, 1 + n + extra);
       in->operand_ids[0] = callee;
       memcpy(in->operand_ids + 1, ids, (n + extra) * sizeof(unsigned));
+      free(ids);
       in->aux_type = fty;
       in->tail = cc & (1u << CALL_TAIL_BIT);
       in->flags = fmf;
