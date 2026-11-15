@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 
+#include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/compute.hpp"
 #include "hakios-metal/kernel.hpp"
 #include "hakios-metal/pm4.hpp"
@@ -544,6 +545,9 @@ constexpr uint64_t kVscSizesBytes = 0x1000;
 constexpr uint64_t kVscOverflowAt = 0x7f0;   // (in the sizes page: nonzero once a pass's streams overran a pipe's pitch, render::encodeGmem)
 constexpr uint64_t kVscTraceAt = 0x800;   // (in the sizes page, past the 32 pipes' words: gmemBinningTrace's word)
 constexpr uint64_t vscBytes() { return 32ull * (kVscDrawPitch + kVscPrimPitch) + kVscSizesBytes; }
+// where in that memory the overflow word lies: in the sizes page, which follows the draw streams of as many pipes as
+// the chip has (encodeGmem's layout: 32 on the A635, 16 on the A610) -- what CommandQueue::checkVsc reads
+constexpr uint64_t vscOverflowWordAt() { return uint64_t(a6xx::kNumVscPipes) * kVscDrawPitch + kVscOverflowAt; }
 // A Clear done in a tile by the event blit rather than by the 2D engine into memory and loaded back: the colour packed
 // as turnip packs it for RB_BLIT_CLEAR_COLOR (pack_blit_event_clear_value: the format's base, RGBA order, sRGB encoded)
 // -- 8-bit four-channel unorm and sRGB, and RGBA16Float; false for a format left to the fill

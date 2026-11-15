@@ -5779,8 +5779,26 @@ TEST(a_visibility_stream_overflow_turns_the_binning_off) {
     auto v = r.queue->vscBuffer(&why);
     CHECK(v != nullptr);
     if (v == nullptr) return;
-    // the word as the compare writes it: the fake's VSC leaves its size registers at 0, so the overrun is put there by hand
-    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt) = 2;
+    // the word as the compare writes it: the fake's VSC leaves its size registers at 0, so the overrun is put there by
+    // hand -- where the stream's own compares (CP_COND_WRITE5, their words 5 and 6 the address) are told to write it
+    {
+        pm4::Stream tiles;
+        render::GmemPlan plan;
+        CHECK(render::gmemPlan(a, &plan, nullptr));
+        render::encodeGmem(tiles, a, plan, v->gpuAddress(), 1, v->gpuAddress(), o, 1, 1, false, 0, nullptr, v->gpuAddress());
+        const std::vector<uint32_t>& w = tiles.words();
+        uint32_t compares = 0;
+        for (size_t i = 0; i < w.size();) {
+            const pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kCommand && h.opcode == a6xx::CP_COND_WRITE5 && h.count == 8) {
+                compares++;
+                CHECK_EQ(uint64_t(w[i + 6]) | uint64_t(w[i + 7]) << 32, v->gpuAddress() + render::vscOverflowWordAt());
+            }
+            i += 1 + h.count;
+        }
+        CHECK(compares != 0);
+    }
+    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + render::vscOverflowWordAt()) = 2;
     CHECK_EQ(pass(), 1u);   // (binned still: the word is read once this one completes)
     CHECK(!r.queue->binningOk());
     CHECK_EQ(pass(), 0u);
