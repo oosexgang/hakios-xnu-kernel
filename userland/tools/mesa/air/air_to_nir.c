@@ -2005,10 +2005,13 @@ descriptor_kind_key(const struct air_md *desc)
  * this feature records descriptors against (buffer, offset) and has no bytes
  * to record for a member that is not one.
  */
-/* an array of bytes: what a compiler pads a struct with */
+/* an array of bytes, or one byte: what a compiler pads a struct with (`i8` alone is the
+ * one byte between a bool and a half in VFX's external_entity_constants) */
 static bool
 is_padding(const struct air_type *t)
 {
+   if (t->kind == AIR_TYPE_INT && t->bits == 8)
+      return true;
    return t->kind == AIR_TYPE_ARRAY && t->elem && t->elem->kind == AIR_TYPE_INT &&
           t->elem->bits == 8;
 }
