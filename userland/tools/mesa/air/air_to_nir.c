@@ -7789,6 +7789,18 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
             a->function_constant = ralloc_strdup(mem_ctx, a->function_constant);
          }
       }
+      /* and the argument buffers' layouts and values, which were made in ctx as well and read
+       * after it is gone (VFX's particle shaders: a name freed with the module, the process
+       * died copying it) */
+      if (info->num_argbuf_sets)
+         info->argbuf_sets = ralloc_memdup(mem_ctx, info->argbuf_sets,
+                                           info->num_argbuf_sets * sizeof(*info->argbuf_sets));
+      if (info->num_argbuf_values) {
+         info->argbuf_values = ralloc_memdup(mem_ctx, info->argbuf_values,
+                                             info->num_argbuf_values * sizeof(*info->argbuf_values));
+         for (unsigned i = 0; i < info->num_argbuf_values; i++)
+            info->argbuf_values[i].name = ralloc_strdup(mem_ctx, info->argbuf_values[i].name);
+      }
       if (info->num_notes) {
          info->notes = ralloc_memdup(mem_ctx, info->notes,
                                      info->num_notes * sizeof(*info->notes));
