@@ -191,6 +191,10 @@ struct air_varying {
  * has to). */
 #define AIR_BUFFER_ID_INPUT 0x7d00
 
+/* The constant buffer a load of the shader's constant data becomes on a driver without
+ * load_constant (air_shader_info.constant_data): past Metal's 31 buffer indices. */
+#define AIR_CONSTANT_DATA_UBO 31
+
 enum air_tess_domain {
    AIR_TESS_NONE = 0,
    AIR_TESS_TRIANGLE,
@@ -256,6 +260,12 @@ struct air_shader_info {
 
    /* the shader compares two buffer arguments (AIR_BUFFER_ID_INPUT) */
    bool compares_buffers;
+
+   /* The module's constant tables, as the shader's constant data (nir_shader.constant_data, read
+    * with load_constant): a copy, for a runtime whose driver does not take load_constant itself
+    * -- softpipe -- to bind as the constant buffer at AIR_CONSTANT_DATA_UBO. */
+   const void *constant_data;
+   unsigned constant_data_size;
 
    uint32_t raster_order_groups;     /* a bit per raster order group the shader uses */
    uint32_t fbfetch_targets;         /* a bit per colour attachment read back ([[color(n)]] as input) */
