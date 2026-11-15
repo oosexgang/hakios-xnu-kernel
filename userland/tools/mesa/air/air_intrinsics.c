@@ -612,6 +612,25 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        */
       r = nir_reduce(&c->b, a[0],
                      .reduction_op = is_float ? nir_op_fadd : nir_op_iadd);
+   } else if (!strncmp(op, "quad_", 5) &&
+              (!strcmp(op + 5, "sum") || !strcmp(op + 5, "product") || !strcmp(op + 5, "min") ||
+               !strcmp(op + 5, "max") || !strcmp(op + 5, "and") || !strcmp(op + 5, "or") ||
+               !strcmp(op + 5, "xor"))) {
+      /* A reduction over a quad -- four lanes, 0-3, 4-7, ... -- given to each of them: NIR's
+       * clustered reduce with a cluster of 4, which ir3 lowers as it does the whole group's
+       * (MLX's quantised matrix-vector kernels, MetalFX). */
+      const char *k = op + 5;
+      bool sgn = n->num > 1 && !strcmp(n->part[1], "s");
+      nir_op rop = !strcmp(k, "sum") ? (is_float ? nir_op_fadd : nir_op_iadd)
+                 : !strcmp(k, "product") ? (is_float ? nir_op_fmul : nir_op_imul)
+                 : !strcmp(k, "min") ? (is_float ? nir_op_fmin : sgn ? nir_op_imin : nir_op_umin)
+                 : !strcmp(k, "max") ? (is_float ? nir_op_fmax : sgn ? nir_op_imax : nir_op_umax)
+                 : !strcmp(k, "and") ? nir_op_iand : !strcmp(k, "or") ? nir_op_ior : nir_op_ixor;
+      r = nir_reduce(&c->b, a[0], .reduction_op = rop, .cluster_size = 4);
+   } else if (!strcmp(op, "simd_and") || !strcmp(op, "simd_or") || !strcmp(op, "simd_xor")) {
+      r = nir_reduce(&c->b, a[0], .reduction_op = !strcmp(op, "simd_and") ? nir_op_iand
+                                                  : !strcmp(op, "simd_or") ? nir_op_ior
+                                                                           : nir_op_ixor);
    } else if (!strcmp(op, "simd_min") || !strcmp(op, "simd_max") || !strcmp(op, "simd_product")) {
       /* the other reductions, which MPSImage does call (the comment above predates it) */
       bool mn = !strcmp(op, "simd_min"), mx = !strcmp(op, "simd_max");
