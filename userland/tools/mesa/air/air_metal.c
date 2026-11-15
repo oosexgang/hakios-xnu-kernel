@@ -58,6 +58,9 @@
 #include "ir3/ir3_shader.h"
 #include "common/freedreno_dev_info.h"
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #include <time.h>
 #ifdef __APPLE__
 #include <malloc/malloc.h>
@@ -1030,6 +1033,26 @@ module_linked(void *mem_ctx, const void *bitcode, struct air_linked_function **o
 }
 
 
+/* The machine's boot-args say rwa_software=1: a Darwin boot with no GPU at all (QEMU), where every process
+ * that opens Metal -- backboardd, iconservicesagent, any application -- is to draw with softpipe. Said once
+ * for the machine, where RWA_SOFTWARE in the environment is one process's, and given by exec_env one file
+ * name at a time; the phone, which has a GPU to start, is never booted with it. */
+static bool
+boot_asks_for_software(void)
+{
+#ifdef __APPLE__
+   char args[1024] = "";
+   size_t size = sizeof(args) - 1;
+   const char *at;
+   if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0)
+      return false;
+   for (at = strstr(args, "rwa_software="); at; at = strstr(at + 1, "rwa_software="))
+      if (at == args || at[-1] == ' ')
+         return at[strlen("rwa_software=")] == '1';
+#endif
+   return false;
+}
+
 struct rwa_device *
 rwa_device_open(char *why, size_t why_size)
 {
@@ -1052,7 +1075,7 @@ rwa_device_open(char *why, size_t why_size)
     * is the Adreno's, and if there is none, saying so is more use than quietly
     * computing the answer on the processor at a thousandth of the speed.
     */
-   bool software = debug_get_bool_option("RWA_SOFTWARE", false);
+   bool software = debug_get_bool_option("RWA_SOFTWARE", false) || boot_asks_for_software();
    device->software = software;
 
 #ifdef GALLIUM_FREEDRENO
