@@ -2417,9 +2417,16 @@ make_account_types(void)
 		return;
 	}
 	/*
-	 * Said before the connection is made, not after: with the switch read ("make the account types? 1")
-	 * and nothing afterwards, the only thing between the two lines is this call, and a line on each side
-	 * of it is the difference between "it hung here" and "it did nothing".
+	 * Said before the connection is made, not after -- and the answer is in: "asking accountsd's own
+	 * class for a database connection" is the last line this function ever prints. -[ACDDatabaseConnection
+	 * init] DOES NOT COME BACK. The daemon lives on (it is our watcher thread that stops there), so it is
+	 * a wait, not a fault: a second connection to a store the daemon already holds open.
+	 *
+	 * So the way in is not to make one. -[ACDAccountStore databaseConnection] is the daemon's own, and
+	 * hooking that accessor purely to remember the object it returns costs nothing and gives the one
+	 * connection that is certainly usable; the initializer takes it
+	 * (-[ACDDatabaseInitializer initWithDatabaseConnection:]) and its own -_addiTunesStoreAccountType
+	 * writes the row. That is the next piece of work, and it is a hook and three messages.
 	 */
 	say("hakios: store: asking accountsd's own class for a database connection\n");
 	connection = ((id (*)(id, SEL))objc_msgSend)((id)conn_class, sel_registerName("alloc"));
