@@ -158,6 +158,13 @@ context, so the render server's draws waited behind it. Four changes, each a com
 `sample_every=N` in the boot-args samples backboardd's and SpringBoard's threads in the library every N
 seconds, and `userland/tools/samples.py --profile` names where the time went.
 
+With all of it, the boot after: `A3Xghfc`'s later pipelines took 1 s instead of 40, backboardd sampled 124 times
+was in the library in a handful of them, and the driver now writes what it drew into a surface copy back to the
+surface (the display's included). Still no frame: with `swaplog=1`, not one IOMobileFramebuffer swap in 40
+minutes -- CoreAnimation's first frame wants its whole set of pipelines, and the render server had made 93 of
+them, the last `TmuaA2Xhf_Isrc_IsrcM1` (23 minutes alone the boot before), when the run ended. Under TCG the
+first Metal frame is a matter of hours; on the phone those compiles are milliseconds each (the sweep above).
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
