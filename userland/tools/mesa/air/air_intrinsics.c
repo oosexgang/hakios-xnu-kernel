@@ -1331,6 +1331,19 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
       return true;
    }
 
+   /* quad_all(b) / quad_any(b): the vote over the four lanes of the thread's quad (RealityKit's
+    * unwarpVideo), by NIR's three swaps of the quad, as a word so that no 1-bit value is swapped */
+   if ((!strcmp(op, "quad_all") || !strcmp(op, "quad_any")) && a0) {
+      bool all = !strcmp(op, "quad_all");
+      nir_def *w = nir_b2i32(&c->b, a0->bit_size == 1 ? a0 : nir_ine_imm(&c->b, a0, 0));
+      nir_def *h = nir_quad_swap_horizontal(&c->b, w), *v = nir_quad_swap_vertical(&c->b, w);
+      nir_def *d = nir_quad_swap_diagonal(&c->b, w);
+      nir_def *r = all ? nir_iand(&c->b, nir_iand(&c->b, w, h), nir_iand(&c->b, v, d))
+                       : nir_ior(&c->b, nir_ior(&c->b, w, h), nir_ior(&c->b, v, d));
+      air_set(c, &in->base, air_val_ssa(c, nir_ine_imm(&c->b, r, 0)));
+      return true;
+   }
+
    if (!strcmp(op, "quad_shuffle_xor")) {
       /* quad_shuffle_xor(data, mask) hands each lane the value of the lane
        * whose number is its own exclusive-ored with the mask. Within a quad
