@@ -7279,24 +7279,23 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, uint8_t *sw_pair, cha
    /* (after the lookup: the stage as this library hands it over is the key, and finalising it --
     * a function of that and of the screen alone -- is part of what a hit saves) */
    finalize_for_gallium(clone, device->screen);
-   /* softpipe runs TGSI, whose register numbers are 16 bits: nir_to_tgsi gives every value
-    * a temporary before it allocates them, and every element of a local array one of its
-    * own, and past 32767 the number wraps and its liveness pass writes far outside its array
-    * (MercuryPoster's Flocon snowflakes, whose 197 KB colour ramps were a local array of
-    * 49,248 words until they became constant data: the process died). Refused by name
-    * instead, a stage too large for the emulator's path. */
+   /* softpipe runs TGSI, whose register numbers are 16 bits: nir_to_tgsi numbers every element
+    * of a local array as a register of its own before it allocates them, and past 32767 the
+    * number wraps and its liveness pass writes far outside its array (MercuryPoster's Flocon
+    * snowflakes, whose 197 KB colour ramps were a local array of 49,248 words until they became
+    * constant data: the process died). Refused by name instead, a stage too large for the
+    * emulator's path. The values themselves are not counted: most need no register of their
+    * own, and CoreAnimation's A3Xghfc, 35,500 of them, is made and draws. */
    if (device->software) {
-      unsigned values = 0;
+      unsigned elements = 0;
       nir_foreach_function_impl(impl, clone) {
-         nir_index_ssa_defs(impl);
-         values += impl->ssa_alloc;
          nir_foreach_function_temp_variable(var, impl)
-            values += glsl_type_is_array(var->type) ? glsl_get_aoa_size(var->type) : 0;
+            elements += glsl_type_is_array(var->type) ? glsl_get_aoa_size(var->type) : 0;
       }
-      if (values > 30000) {
-         say(why, why_size, "the %s stage needs %u registers, and softpipe's TGSI numbers "
-                            "its registers in 16 bits: too large for the software path",
-             nir->info.stage == MESA_SHADER_VERTEX ? "vertex" : "fragment", values);
+      if (elements > 30000) {
+         say(why, why_size, "the %s stage keeps %u words in local arrays, and softpipe's TGSI "
+                            "numbers its registers in 16 bits: too large for the software path",
+             nir->info.stage == MESA_SHADER_VERTEX ? "vertex" : "fragment", elements);
          ralloc_free(clone);
          return NULL;
       }
