@@ -316,6 +316,16 @@ if [ -n "${STOREFRONT:-}" ]; then
 		echo "/redwood/lib/libhakios-store.dylib ${STORE_PROCS:-appstored amsaccountsd AppStore accountsd}" >> $T/etc/inject.conf
 	fi
 	echo "/redwood/lib/libhakios-mescal.dylib appstored itunesstored AppStore" >> $T/etc/inject.conf
+	# STORE_CONF="KEY=VALUE;KEY=VALUE": the store library's switches, in the file it reads on the phone
+	# (/var/hakios-store.conf). They have to be there before the daemons start, and /var is new every
+	# boot, so the file comes from the image. HAKIOS_MAKE_TYPES=1 is the one that matters: with it
+	# accountsd builds its default content -- 55 account types, the iTunes Store among them -- which this
+	# phone has never had, and without which no client is authorized for a type and AMS has no account.
+	if [ -n "${STORE_CONF:-}" ]; then
+		mkdir -p $T/var
+		printf '%s\n' "$STORE_CONF" | tr ';' '\n' > $T/var/hakios-store.conf
+		printf 'f\t644\t0\t0\t/private/var/hakios-store.conf\t/var/hakios-store.conf\n' >> $T/etc/var.skel
+	fi
 fi
 # SIGNIN=1: and the keychain class that Apple ID sign-in cannot store here (ios/userland/inject_kc.c). Apart
 # from a sign-in it changes nothing, so it is its own knob.

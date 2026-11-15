@@ -2438,9 +2438,69 @@ new_all_accounts_sync(id self, SEL cmd)
 	return old_all_accounts_sync != NULL ? old_all_accounts_sync(self, cmd) : NULL;
 }
 
+/*
+ * ... and, since neither door to the connection is used, the connection itself. Any instance method of
+ * ACDDatabaseConnection has the connection as its receiver, so hooking one that the daemon certainly
+ * calls -- -managedObjectContext, which every query of its own goes through -- hands over the object
+ * without having to know which of accountsd's many paths reached it. Pass-through: the original is
+ * called and its answer returned.
+ */
+static id (*old_managed_object_context)(id, SEL);
+
+/*
+ * ... and the work is done HERE, inside the hook, the first time accountsd itself asks its connection for
+ * a context. Everything about that connection is confined to the daemon's own queue: a connection of our
+ * own never returns, -performBlockAndWait: from our thread never returns, and even asking the connection
+ * for its context from our thread never returns. Inside this hook none of that is a question -- the
+ * daemon called us, so we are already on its queue, with its context, between two pieces of its own work.
+ * It happens once, and the flag is set before the first message so that the initializer's own use of this
+ * same accessor does not come back round into it.
+ */
+static id
+new_managed_object_context(id self, SEL cmd)
+{
+	static bool making;
+	id context;
+
+	if (remembered_connection == NULL) {
+		remembered_connection = self;
+		say("hakios: store: accountsd's database connection, caught at work: %p\n", (void *)self);
+	}
+	context = old_managed_object_context != NULL ? old_managed_object_context(self, cmd) : NULL;
+	if (!making && knob("HAKIOS_MAKE_TYPES") != NULL && *knob("HAKIOS_MAKE_TYPES") != '0') {
+		Class init_class = objc_getClass("ACDDatabaseInitializer");
+		id initializer, error = NULL;
+		BOOL ok;
+
+		making = true;
+		initializer = init_class != Nil ? ((id (*)(id, SEL))objc_msgSend)((id)init_class,
+		    sel_registerName("alloc")) : NULL;
+		initializer = initializer != NULL ? ((id (*)(id, SEL, id))objc_msgSend)(initializer,
+		    sel_registerName("initWithDatabaseConnection:"), self) : NULL;
+		if (initializer == NULL) {
+			say("hakios: store: no initializer on the daemon's own queue\n");
+			return context;
+		}
+		say("hakios: store: on accountsd's own queue now; asking for the iTunes Store type\n");
+		((void (*)(id, SEL))objc_msgSend)(initializer, sel_registerName("_addiTunesStoreAccountType"));
+		ok = ((BOOL (*)(id, SEL, id *))objc_msgSend)(self, sel_registerName("saveWithError:"), &error);
+		{
+			char text[200] = "none";
+
+			say("hakios: store: the iTunes Store account type was made by accountsd's own code; "
+			    "saved %s (%.150s)\n", ok ? "yes" : "NO",
+			    error != NULL ? text_of(error, text, sizeof(text)) : text);
+		}
+	}
+	return context;
+}
+
 static void
 remember_database_connection(void)
 {
+	Class conn_class = objc_getClass("ACDDatabaseConnection");
+	Method context = conn_class != Nil ? class_getInstanceMethod(conn_class,
+	    sel_registerName("managedObjectContext")) : NULL;
 	Class store_class = objc_getClass("ACDAccountStore");
 	Method m = store_class != Nil ? class_getInstanceMethod(store_class,
 	    sel_registerName("databaseConnection")) : NULL;
@@ -2455,8 +2515,13 @@ remember_database_connection(void)
 		old_all_accounts_sync = (id (*)(id, SEL))method_getImplementation(all);
 		method_setImplementation(all, (IMP)new_all_accounts_sync);
 	}
-	say("hakios: store: watching for accountsd's database connection (accessor %s, store %s)\n",
-	    m != NULL ? "hooked" : "MISSING", all != NULL ? "hooked" : "MISSING");
+	if (context != NULL) {
+		old_managed_object_context = (id (*)(id, SEL))method_getImplementation(context);
+		method_setImplementation(context, (IMP)new_managed_object_context);
+	}
+	say("hakios: store: watching for accountsd's database connection (accessor %s, store %s, context %s)\n",
+	    m != NULL ? "hooked" : "MISSING", all != NULL ? "hooked" : "MISSING",
+	    context != NULL ? "hooked" : "MISSING");
 }
 
 static void
@@ -2514,7 +2579,51 @@ make_account_types(void)
 		say("hakios: store: no initializer: no account types made\n");
 		return;
 	}
-	((void (*)(id, SEL))objc_msgSend)(initializer, sel_registerName("_addiTunesStoreAccountType"));
+	/* a line between every step: with one line before the three of them and one after, a stop anywhere
+	 * in the middle reads the same */
+	say("hakios: store: the initializer is made (%p); asking it for the iTunes Store type\n",
+	    (void *)initializer);
+	/*
+	 * ON THE CONTEXT'S OWN QUEUE. -_addiTunesStoreAccountType never came back when it was called from
+	 * our thread: it is Core Data work, and accountsd's context is a private-queue one, so a call from
+	 * anywhere else waits for a queue it is not on. -performBlockAndWait: puts the work where the
+	 * context lives and returns when it is done, which is also what makes the save safe below.
+	 */
+	{
+		id context = ((id (*)(id, SEL))objc_msgSend)(connection,
+		    sel_registerName("managedObjectContext"));
+
+		if (context == NULL) {
+			say("hakios: store: the connection has no managed object context: no account types made\n");
+			return;
+		}
+		/*
+		 * ASYNCHRONOUSLY. -performBlockAndWait: did not come back either, which says the queue is
+		 * busy with something of the daemon's own, not that the call is wrong; so the work is handed
+		 * to the queue and this thread lets go. The whole of it -- the type and the save -- is inside
+		 * the block, because both have to happen where the context lives, and the block says how it
+		 * went when it gets there.
+		 */
+		((void (*)(id, SEL, void (^)(void)))objc_msgSend)(context,
+		    sel_registerName("performBlock:"), ^{
+			id save_error = NULL;
+			BOOL ok;
+
+			((void (*)(id, SEL))objc_msgSend)(initializer,
+			    sel_registerName("_addiTunesStoreAccountType"));
+			ok = ((BOOL (*)(id, SEL, id *))objc_msgSend)(connection,
+			    sel_registerName("saveWithError:"), &save_error);
+			{
+				char text[200] = "none";
+
+				say("hakios: store: the iTunes Store account type was made by accountsd's own "
+				    "code; saved %s (%.150s)\n", ok ? "yes" : "NO",
+				    save_error != NULL ? text_of(save_error, text, sizeof(text)) : text);
+			}
+		});
+	}
+	say("hakios: store: the work is on the context's queue; the block will say how it went\n");
+	return;
 	saved = ((BOOL (*)(id, SEL, id *))objc_msgSend)(connection, sel_registerName("saveWithError:"), &error);
 	{
 		char text[200] = "none";
