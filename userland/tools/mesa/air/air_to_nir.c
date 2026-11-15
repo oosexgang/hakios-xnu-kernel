@@ -5285,9 +5285,10 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
     * around such a function -- `tail call fastcc`, then extractvalue of each
     * field -- and before this they stopped at the call with "an aggregate where
     * a number belongs", which was emit_return inside the callee asking for the
-    * returned struct as a register.
+    * returned struct as a register. An array of numbers is returned the same way, an element
+    * a parameter: MPS's matrix products hand back their `[4 x float]` accumulators so.
     */
-   bool ret_struct = has_ret && rt->kind == AIR_TYPE_STRUCT;
+   bool ret_struct = has_ret && (rt->kind == AIR_TYPE_STRUCT || ret_array_of_numbers(rt));
    unsigned nret = 0;
    const struct air_type **leaf_types = NULL;
    if (ret_struct) {
@@ -5564,7 +5565,7 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
 
    const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
    bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-   bool ret_struct = has_ret && rt->kind == AIR_TYPE_STRUCT;
+   bool ret_struct = has_ret && (rt->kind == AIR_TYPE_STRUCT || ret_array_of_numbers(rt));
 
    nir_call_instr *call = nir_call_instr_create(c->nir, fn);
    unsigned idx = 0;
@@ -5632,7 +5633,7 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
 
    const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
    bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-   bool ret_struct = has_ret && rt->kind == AIR_TYPE_STRUCT;
+   bool ret_struct = has_ret && (rt->kind == AIR_TYPE_STRUCT || ret_array_of_numbers(rt));
 
    nir_variable *tmp = NULL;
    /* One local per member for a struct return, in the member order
