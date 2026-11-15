@@ -524,8 +524,18 @@ OPS = {
     "rsqrt":       (1, _rsqrt, False),
 }
 
+# bit counts, on the unsigned bits of a w-bit value
+BITOPS = {
+    "ctz": lambda x, w: (x & -x).bit_length() - 1 if x else w,
+    "clz": lambda x, w: w - x.bit_length(),
+    "popcount": lambda x, w: bin(x).count("1"),
+}
+
 # integer operations, by (base name, signed)
 IOPS = {
+    ("ctz", None): lambda w: (1, None),
+    ("clz", None): lambda w: (1, None),
+    ("popcount", None): lambda w: (1, None),
     ("min", True):  lambda w: (2, min),
     ("min", False): lambda w: (2, min),
     ("max", True):  lambda w: (2, max),
@@ -607,6 +617,10 @@ def ref_elementwise(op, args, argtys, signed):
         # integer min/max/clamp: no rounding anywhere, and the result is
         # whatever the declared width holds
         w = int(bty[1:])
+        if op in BITOPS:
+            # counted on the bits, at the declared width, and answered at it:
+            # ctz and clz of zero are the width, as Metal's are
+            return BITOPS[op](args[0] % (1 << w), w)
         fn = {"min": min, "max": max,
               "clamp": lambda x, lo, hi: min(max(x, lo), hi)}[op]
         # air.min.u is an unsigned minimum: umin(0, 0xffff) is 0, not -1, and
@@ -2194,6 +2208,7 @@ def main(argv):
         # the integer min/max/clamp live in their own table and take their
         # arity from the name, not from OPS
         want_args = (OPS[plain][0] if plain in OPS
+                     else 1 if plain in BITOPS
                      else 3 if plain == "clamp" else 2)
         if family == "op" and want_args != len(argtys):
             skipped.append((name, "%d arguments, the reference takes %d"
