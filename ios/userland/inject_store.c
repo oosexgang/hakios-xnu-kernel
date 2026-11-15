@@ -173,6 +173,7 @@ static void image_added(const struct mach_header *header, intptr_t image_slide);
 static void make_account_types(void);
 static const char *knob(const char *name);     /* a switch from /var/hakios-store.conf; see knob() */
 static const char *who_i_am(void);              /* this process name; defined below */
+static void dump_tracked_promises(void);        /* defined with the bootstrap hooks */
 
 /*
  * How many times each hook was entered: a count that survives a console that drops lines. The names
@@ -1793,6 +1794,7 @@ one_report(unsigned seconds)
 	dump_bagkeys();
 	dump_errors();
 	dump_threads();
+	dump_tracked_promises();
 	/* the long dumps once; the numbers in every report, because only a late one survives the log */
 	if (first) {
 		dump_selectors("AMSURLSession", "equest");
@@ -3102,6 +3104,47 @@ new_prereqs(void)
 	return (void *)(0x1ef0d1df0UL + slide);
 }
 
+/*
+ * TRACK JETENGINE PROMISES. The bootstrap stalls on an unresolved JetEngine.Promise before the bag; it is
+ * not on a thread (async) and not an AMS promise. This hooks JetEngine.Promise's plain init
+ * (_$s9JetEngine7PromiseCACyxGycfC @0x1a6e999a8) and records the backtrace of the FIRST promises created
+ * once the bootstrap is running (new_askboot_start sets the flag). The prerequisite that creates the stuck
+ * promise appears in those backtraces -- the earliest ones, created right after start(). Report prints
+ * them. HAKIOS_TRACK_PROMISES=1, AppStore only; C-only (no self-register asm).
+ */
+static void *(*old_promise_init)(void *, void *);
+static struct { void *p; char frames[130]; } tracked_promises[16];
+static int tracked_promise_n;
+static bool bootstrap_running;
+
+static void *
+new_promise_init(void *a0, void *a1)
+{
+	void *p = old_promise_init != NULL ? old_promise_init(a0, a1) : NULL;
+
+	if (bootstrap_running && tracked_promise_n < 16 && p != NULL) {
+		frames_from((uintptr_t)__builtin_frame_address(0),
+		    tracked_promises[tracked_promise_n].frames,
+		    sizeof(tracked_promises[tracked_promise_n].frames));
+		tracked_promises[tracked_promise_n].p = p;
+		tracked_promise_n++;
+	}
+	return p;
+}
+
+static void
+dump_tracked_promises(void)
+{
+	if (tracked_promise_n == 0) {
+		return;
+	}
+	say("hakios: store: %d JetEngine promises created early in the bootstrap:\n", tracked_promise_n);
+	for (int i = 0; i < tracked_promise_n; i++) {
+		say("hakios: store: promise #%d %p made from%s\n", i, tracked_promises[i].p,
+		    tracked_promises[i].frames);
+	}
+}
+
 static void (*old_did_complete)(unsigned long);
 
 static void
@@ -3152,6 +3195,7 @@ new_askboot_start(void)
 {
 	static int told;
 
+	bootstrap_running = true;
 	if (told < 3) {
 		told++;
 		say("hakios: store(%s): ASKBootstrapV2.start() entered\n", who_i_am());
@@ -3182,6 +3226,11 @@ hook_bootstrap(void)
 	done = true;
 	hook((void *)(0x20b5d6b80UL + slide), (void *)new_did_complete, (void **)&old_did_complete);
 	hook((void *)(0x20b45c080UL + slide), (void *)new_askboot_start, (void **)&old_askboot_start);
+	if (knob("HAKIOS_TRACK_PROMISES") != NULL && *knob("HAKIOS_TRACK_PROMISES") != '0') {
+		hook((void *)(0x1a6e999a8UL + slide), (void *)new_promise_init, (void **)&old_promise_init);
+		bootstrap_running = true;        /* start() can run before this hook installs; record from now */
+		say("hakios: store: JetEngine.Promise init is tracked\n");
+	}
 	if (knob("HAKIOS_EMPTY_PREREQS") != NULL && *knob("HAKIOS_EMPTY_PREREQS") != '0') {
 		hook((void *)(0x20b9555c0UL + slide), (void *)new_prereqs, (void **)&old_prereqs);
 		say("hakios: store: ASKBootstrapV2.prerequisites will return empty\n");
