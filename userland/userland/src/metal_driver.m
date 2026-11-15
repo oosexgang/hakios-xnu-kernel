@@ -7675,11 +7675,14 @@ rw_blit_unknown(id self, SEL sel, ...)
 	(void)buffer; (void)offset;
 	[self hakiosNoStageIn];
 }
+/* A kernel's explicit imageblock is a pixel per thread of the group's x by y (the library's,
+ * nir_air.h): a block of another size than the group is not kept, and is said once. */
 - (void)setImageblockWidth:(NSUInteger)width height:(NSUInteger)height
 {
 	(void)width; (void)height;
-	RW_ONCE("imageblocks are not implemented; this kernel's imageblock "
-		"size is ignored\n");
+	RW_ONCE("an imageblock of %lux%lu was asked for; a kernel's imageblock here is the size "
+		"of its threadgroup, whatever this says\n", (unsigned long)width,
+		(unsigned long)height);
 }
 /* An entry for this exists in _MTLCommandEncoder and it is one of Apple's abstract ones
  * (tools/metal/protometh.py --verdicts), so inheriting it is an abort rather than a
