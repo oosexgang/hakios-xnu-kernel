@@ -547,8 +547,15 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
          r = nir_fadd(&c->b, nir_fabs(&c->b, nir_ddx_fine(&c->b, x)), nir_fabs(&c->b, nir_ddy_fine(&c->b, x)));
       if (r->bit_size != a[0]->bit_size)
          r = nir_f2fN(&c->b, r, a[0]->bit_size);
-   } else if (!strcmp(op, "get_simd_width") || !strcmp(op, "get_thread_execution_width")) {
+   } else if (!strcmp(op, "get_simd_width") || !strcmp(op, "get_thread_execution_width") ||
+              !strcmp(op, "get_simdgroup_size")) {
       r = nir_load_subgroup_size(&c->b);
+   } else if (!strcmp(op, "get_thread_index_in_simdgroup")) {
+      /* the lane, asked for by a call rather than taken as [[thread_index_in_simdgroup]]
+       * (RealityCoreRenderer's copyMemory kernels, Darwin 27): the same value as the input */
+      r = nir_load_subgroup_invocation(&c->b);
+   } else if (!strcmp(op, "get_simdgroup_index_in_threadgroup")) {
+      r = nir_load_subgroup_id(&c->b);
    } else if (!strcmp(op, "all")) {
       r = nir_ball(&c->b, a[0]);
    } else if (!strcmp(op, "any")) {
