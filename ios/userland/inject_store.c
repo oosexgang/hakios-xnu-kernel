@@ -3848,6 +3848,35 @@ new_accounts_with_type_id(id self, SEL cmd, void *identifier)
  * had is a case the caller must already handle, and this library answers the cookie question itself
  * anyway (ams_addCookiesForAccount:... answers empty).
  */
+static id (*old_cookie_props)(id, SEL, void *, BOOL, void *);
+
+/*
+ * The local AMSCookieService still reaches the broker: its getCookiePropertiesForAccount:cookieDatabaseOnly:
+ * error: opens an AMSDaemonConnection and waits (measured: the hang moved into _initializeConnection). So
+ * the synchronous getter itself is answered -- an empty cookie set, no daemon, no wait. Cookies are empty,
+ * which is what 16.5 fetched the catalog with.
+ */
+static id
+new_cookie_props(id self, SEL cmd, void *account, BOOL db_only, void *error)
+{
+	const char *local = knob("HAKIOS_LOCAL_COOKIE_SERVICE");
+	static int told;
+
+	(void)self, (void)cmd, (void)account, (void)db_only;
+	if (local != NULL && *local != '0') {
+		if (error != NULL) {
+			*(id *)error = NULL;
+		}
+		if (told < 3) {
+			told++;
+			say("hakios: store(%s): cookie properties answered empty, without the daemon\n",
+			    who_i_am());
+		}
+		return ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSArray"), sel_registerName("array"));
+	}
+	return old_cookie_props != NULL ? old_cookie_props(self, cmd, account, db_only, error) : NULL;
+}
+
 static id (*old_cookie_proxy_sync)(id, SEL, void *);
 static id (*old_account_proxy_sync)(id, SEL, void *);
 static id (*old_security_proxy_sync)(id, SEL, void *);
@@ -3881,6 +3910,31 @@ no_broker_service(id self, SEL cmd, void *error, const char *which, id (*origina
 static id
 new_cookie_proxy_sync(id self, SEL cmd, void *error)
 {
+	const char *local = knob("HAKIOS_LOCAL_COOKIE_SERVICE");
+	static int told;
+
+	/*
+	 * Returning nil (HAKIOS_NO_COOKIE_SERVICE) unblocks the hang but breaks cookies, and letting the
+	 * call through hangs on the broker. The third way: hand back a LOCAL AMSCookieService -- a real
+	 * object that answers getCookiePropertiesForAccount:... from the on-device cookie store (empty here)
+	 * without any XPC, so cookies "work" empty and nothing waits on amsaccountsd. 16.5 loaded the
+	 * catalog with no real cookies at all (Mescal signing), so empty is the right shape.
+	 */
+	if (local != NULL && *local != '0') {
+		Class service = objc_getClass("AMSCookieService");
+		id made = service != Nil ? ((id (*)(Class, SEL))objc_msgSend)(service,
+		    sel_registerName("alloc")) : NULL;
+
+		made = made != NULL ? ((id (*)(id, SEL))objc_msgSend)(made, sel_registerName("init")) : NULL;
+		if (made != NULL) {
+			if (told < 3) {
+				told++;
+				say("hakios: store(%s): the cookie proxy is a local AMSCookieService; no XPC, no "
+				    "wait\n", who_i_am());
+			}
+			return made;
+		}
+	}
 	return no_broker_service(self, cmd, error, "cookie", old_cookie_proxy_sync);
 }
 
@@ -4967,6 +5021,8 @@ static struct replacement replacements[] = {
 	{ "AMSBagNetworkTask", "clientInfo", false, (IMP)new_client_info, (IMP *)&old_client_info, false },
 	{ "AMSBagNetworkTask", "_URLCookieNamesForProfile:", false, (IMP)new_cookie_names,
 	  (IMP *)&old_cookie_names, false },
+	{ "AMSCookieService", "getCookiePropertiesForAccount:cookieDatabaseOnly:error:", false,
+	  (IMP)new_cookie_props, (IMP *)&old_cookie_props, false },
 	{ "AMSDaemonConnection", "cookieServiceProxySyncWithError:", false, (IMP)new_cookie_proxy_sync,
 	  (IMP *)&old_cookie_proxy_sync, false },
 	{ "AMSDaemonConnection", "accountManagementServiceProxySyncWithError:", false,
