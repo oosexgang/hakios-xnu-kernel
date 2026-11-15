@@ -2037,6 +2037,7 @@ struct air_level_place {
    uint64_t value;
    unsigned buffer, offset, bytes;
    bool is_float;   /* the word is a float, and the level its whole part (SiriBlur's) */
+   int bias;        /* added to the word: `add i16 %word, -1` (CoreAnimation's variable blur) */
 };
 
 /* the name of the function a call instruction calls, or NULL */
@@ -2057,11 +2058,22 @@ level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place
       return true;
    }
    unsigned elem = 0;
-   bool have_elem = false, is_float = false;
+   bool have_elem = false, is_float = false, have_bias = false;
+   int bias = 0;
    for (;;) {
       if (v->kind != AIR_VALUE_INSTRUCTION)
          return false;
       const struct air_inst *in = (const struct air_inst *)v;
+      /* the word plus a constant, once, before anything else */
+      if (in->op == AIR_OP_BINOP && in->sub == AIR_BINOP_ADD && !have_bias && !have_elem &&
+          !is_float && in->base.type && in->base.type->kind == AIR_TYPE_INT &&
+          in->base.type->bits <= 32 && air_const_uint(in->operands[1], &k)) {
+         unsigned w = in->base.type->bits;
+         bias = (int)(w < 32 ? (int32_t)((uint32_t)k << (32 - w)) >> (32 - w) : (int32_t)k);
+         have_bias = true;
+         v = in->operands[0];
+         continue;
+      }
       /* a float made a whole number: air.convert.u.iN.f.f32, of air.(fast_)floor.f32 or not --
        * SiriBlur's level is (ushort)floor(the float its uniforms hold) */
       const char *fn = called_name(in);
@@ -2107,6 +2119,7 @@ level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place
       unsigned off = p->ptr.offset ? (unsigned)nir_src_as_uint(nir_src_for_ssa(p->ptr.offset)) : 0;
       *out = (struct air_level_place){
          .buffer = p->ptr.binding, .offset = off + elem * bytes, .bytes = bytes, .is_float = is_float,
+         .bias = bias,
       };
       return true;
    }
@@ -2118,7 +2131,7 @@ level_place_equal(const struct air_level_place *a, const struct air_level_place 
    return a->constant == b->constant &&
           (a->constant ? a->value == b->value
                        : a->buffer == b->buffer && a->offset == b->offset && a->bytes == b->bytes &&
-                            a->is_float == b->is_float);
+                            a->is_float == b->is_float && a->bias == b->bias);
 }
 
 static struct air_resource *
@@ -2141,7 +2154,8 @@ image_level(const struct air_resource *r)
 {
    if (r && r->level_from_buffer)
       return (struct air_level_place){ .buffer = r->level_buffer, .offset = r->level_offset,
-                                       .bytes = r->level_bytes, .is_float = r->level_float };
+                                       .bytes = r->level_bytes, .is_float = r->level_float,
+                                       .bias = r->level_bias };
    return (struct air_level_place){ .constant = true, .value = r ? r->level : 0 };
 }
 
@@ -2163,9 +2177,6 @@ image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level
             return true;
          }
       }
-      if (!lp->constant)
-         return air_error(c, "intrinsic: air.%s at a second mip level of image %u, one the "
-                             "shader reads out of a buffer", what, r->index);
       r = air_image_alias(c, of);
       if (!r)
          return false;
@@ -2178,6 +2189,7 @@ image_at_level(struct air_ctx *c, struct air_resource *r, const struct air_level
    r->level_offset = lp->offset;
    r->level_bytes = lp->bytes;
    r->level_float = lp->is_float;
+   r->level_bias = lp->constant ? 0 : lp->bias;
    return true;
 }
 
