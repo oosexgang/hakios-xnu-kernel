@@ -1493,7 +1493,8 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 
 			if (unfinishedReports < 4) {
 				unfinishedReports++;
-				IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; dropped, the "
+				/* (printf, as the swap lines below: a serial console shows them) */
+				printf("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; dropped, the "
 				    "frame on the panel stays\n", swapWord(swap, SWAP_ID), swapWord(swap, SWAP_SURFACE(layer)), SWAP_GPU_MS);
 			}
 			fStatWaiting += mach_absolute_time() - began;
@@ -1571,7 +1572,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	fLastFrame = began;
 	report = fSwapsShown < 8;
 	if (report) {
-		IOLog("MiniIOMobileFramebuffer: swap %u (#%u): surfaces %u %u %u %u, layers set 0x%x cleared 0x%x\n",
+		printf("MiniIOMobileFramebuffer: swap %u (#%u): surfaces %u %u %u %u, layers set 0x%x cleared 0x%x\n",
 		    swapWord(swap, SWAP_ID), fSwapsShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)),
 		    swapWord(swap, SWAP_SURFACE(2)), swapWord(swap, SWAP_SURFACE(3)), set, swapWord(swap, SWAP_LAYERS_CLEARED));
 	}
@@ -1613,7 +1614,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		memcpy(dst, swap + SWAP_DEST(layer), sizeof(dst));
 		s = surfaces[layer];
 		if (report) {
-			IOLog("MiniIOMobileFramebuffer: swap %u layer %u: surface %u%s (%ux%u '%c%c%c%c') "
+			printf("MiniIOMobileFramebuffer: swap %u layer %u: surface %u%s (%ux%u '%c%c%c%c') "
 			    "from %d,%d %dx%d to %d,%d %dx%d, layers set 0x%x\n", swapWord(swap, SWAP_ID), layer, sid,
 			    s ? "" : " MISSING", s ? s->info.width : 0, s ? s->info.height : 0,
 			    s ? (int) (s->info.pixelFormat >> 24 & 0xff) : '?', s ? (int) (s->info.pixelFormat >> 16 & 0xff) : '?',
@@ -1672,7 +1673,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		    fScanTarget != 0 ? micros(fScanTarget) : 0, fScanLate, micros(fScanLead));
 	}
 	if (layers != fLayersShown) {
-		IOLog("MiniIOMobileFramebuffer: swap #%u: surfaces in layers 0x%x now (0x%x before): %u %u %u %u\n", fSwapsShown, layers,
+		printf("MiniIOMobileFramebuffer: swap #%u: surfaces in layers 0x%x now (0x%x before): %u %u %u %u\n", fSwapsShown, layers,
 		    fLayersShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)), swapWord(swap, SWAP_SURFACE(2)),
 		    swapWord(swap, SWAP_SURFACE(3)));
 		fLayersShown = layers;
