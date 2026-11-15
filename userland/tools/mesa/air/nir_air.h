@@ -207,9 +207,23 @@ struct air_linked_function {
    unsigned num_constants;
 };
 
+/* A compute pipeline's stage-in (MTLComputePipelineDescriptor.stageInputDescriptor): what a kernel's
+ * [[stage_in]] attributes are read out of. Metal's own numbers: a format is MTLAttributeFormat, a step
+ * function MTLStepFunction, the index type MTLIndexType (0 uint16, 1 uint32). A format of 0 is an
+ * attribute the descriptor does not describe. */
+struct air_stage_in {
+   struct { unsigned format, offset, buffer_index; } attribute[31];
+   struct { unsigned stride, step_function, step_rate; } layout[31];
+   unsigned index_buffer_index, index_type;
+};
+
 struct air_to_nir_options {
    const struct air_constant_value *constants;
    unsigned num_constants;
+
+   /* a compute pipeline's stage-in, or NULL: then a [[stage_in]] attribute n is read as the layout a
+    * sweep compiles with -- buffer 30 - n, packed at its own type's size, one per thread along x */
+   const struct air_stage_in *stage_in;
 
    /* Translate an air.visible library function by generating an entry point
     * that calls it: argument i read from device buffer 0 at byte 16*i, the

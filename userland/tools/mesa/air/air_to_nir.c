@@ -1359,6 +1359,161 @@ add_vertex_attribute(struct air_ctx *c, const struct air_md *node, unsigned inde
       info->vertex_attributes_read |= 1u << index;
 }
 
+/* MTLAttributeFormat as (components, bits a component, kind): k 'f' float, 'h' half, 'i' signed, 'u'
+ * unsigned, 'n' unorm, 's' snorm. 0 components: one this does not read. */
+static void
+stage_in_format(unsigned format, unsigned *comps, unsigned *bits, char *kind)
+{
+   static const struct { unsigned format, comps, bits; char kind; } formats[] = {
+      { 1, 2, 8, 'u' }, { 2, 3, 8, 'u' }, { 3, 4, 8, 'u' }, { 4, 2, 8, 'i' }, { 5, 3, 8, 'i' },
+      { 6, 4, 8, 'i' }, { 7, 2, 8, 'n' }, { 8, 3, 8, 'n' }, { 9, 4, 8, 'n' }, { 10, 2, 8, 's' },
+      { 11, 3, 8, 's' }, { 12, 4, 8, 's' }, { 13, 2, 16, 'u' }, { 14, 3, 16, 'u' }, { 15, 4, 16, 'u' },
+      { 16, 2, 16, 'i' }, { 17, 3, 16, 'i' }, { 18, 4, 16, 'i' }, { 19, 2, 16, 'n' }, { 20, 3, 16, 'n' },
+      { 21, 4, 16, 'n' }, { 22, 2, 16, 's' }, { 23, 3, 16, 's' }, { 24, 4, 16, 's' }, { 25, 2, 16, 'h' },
+      { 26, 3, 16, 'h' }, { 27, 4, 16, 'h' }, { 28, 1, 32, 'f' }, { 29, 2, 32, 'f' }, { 30, 3, 32, 'f' },
+      { 31, 4, 32, 'f' }, { 32, 1, 32, 'i' }, { 33, 2, 32, 'i' }, { 34, 3, 32, 'i' }, { 35, 4, 32, 'i' },
+      { 36, 1, 32, 'u' }, { 37, 2, 32, 'u' }, { 38, 3, 32, 'u' }, { 39, 4, 32, 'u' }, { 45, 1, 8, 'u' },
+      { 46, 1, 8, 'i' }, { 47, 1, 8, 'n' }, { 48, 1, 8, 's' }, { 49, 1, 16, 'u' }, { 50, 1, 16, 'i' },
+      { 51, 1, 16, 'n' }, { 52, 1, 16, 's' }, { 53, 1, 16, 'h' },
+   };
+   *comps = 0;
+   for (unsigned i = 0; i < ARRAY_SIZE(formats); i++)
+      if (formats[i].format == format) {
+         *comps = formats[i].comps;
+         *bits = formats[i].bits;
+         *kind = formats[i].kind;
+      }
+}
+
+/*
+ * A COMPUTE KERNEL'S [[stage_in]]: attributes a compute pipeline's stageInputDescriptor lays out in
+ * buffers, one element per thread -- read here by the shader itself, there being no vertex fetch in
+ * a compute stage (ir3 asserted on the load_input this used to be: VFX's particle kernels, copy_generic
+ * and blend_generic, CoreRE3DGS's TransformGaussians). The element is the thread's position in the grid
+ * along x or y, or the index an index buffer holds there; its bytes are at element * stride + offset of
+ * the attribute's buffer, which becomes a buffer the kernel reads like any other; the format turns them
+ * into the attribute's type, its missing components (0, 0, 0, 1) as Metal fills them.
+ */
+static bool
+translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigned param,
+                           const struct air_type *t)
+{
+   uint64_t loc = 0;
+   md_key_int(node, "air.location_index", &loc);
+   if (loc >= 31)
+      return air_error(c, "interface: a [[stage_in]] attribute %u", (unsigned)loc);
+   const struct air_stage_in *si = c->options ? c->options->stage_in : NULL;
+   const struct air_type *st = air_type_scalar(t);
+   unsigned want = air_nir_components(t), want_bits = air_nir_bit_size(c, t);
+   unsigned format, offset, buffer, stride, step, rate;
+   if (si && si->attribute[loc].format) {
+      format = si->attribute[loc].format;
+      offset = si->attribute[loc].offset;
+      buffer = si->attribute[loc].buffer_index;
+      if (buffer >= 31)
+         return air_error(c, "interface: [[stage_in]] attribute %u from buffer %u", (unsigned)loc, buffer);
+      stride = si->layout[buffer].stride;
+      step = si->layout[buffer].step_function;
+      rate = si->layout[buffer].step_rate ? si->layout[buffer].step_rate : 1;
+   } else {
+      /* the layout a sweep compiles with (nir_air.h) */
+      bool fl = air_type_is_float(st);
+      unsigned n = want, b = want_bits;
+      format = fl ? (b == 16 ? (n == 1 ? 53 : 24 + n) : 27 + n) : st->kind == AIR_TYPE_INT ? 35 + n : 31 + n;
+      offset = 0;
+      buffer = 30 - (unsigned)loc;
+      stride = n * b / 8;
+      step = 5;
+      rate = 1;
+   }
+   unsigned comps = 0, bits = 0;
+   char kind = 0;
+   stage_in_format(format, &comps, &bits, &kind);
+   if (!comps)
+      return air_error(c, "interface: [[stage_in]] attribute %u in MTLAttributeFormat %u", (unsigned)loc,
+                       format);
+   unsigned bytes = comps * bits / 8;
+   if ((bits < 32 || offset % 4 || stride % 4) && (offset % 4 || stride % 4))
+      return air_error(c, "interface: [[stage_in]] attribute %u at byte %u of a stride of %u, not on a "
+                          "word, in a format of %u-bit components", (unsigned)loc, offset, stride, bits);
+
+   /* the element */
+   nir_def *gid = nir_load_global_invocation_id(&c->b, 32);
+   nir_def *elem;
+   switch (step) {
+   case 0: elem = nir_imm_int(&c->b, 0); break;                    /* Constant */
+   case 5: case 7: elem = nir_channel(&c->b, gid, 0); break;        /* ThreadPositionInGridX(Indexed) */
+   case 6: case 8: elem = nir_channel(&c->b, gid, 1); break;        /* ...Y(Indexed) */
+   default:
+      return air_error(c, "interface: [[stage_in]] attribute %u stepped by MTLStepFunction %u, which a "
+                          "compute stage has no meaning for", (unsigned)loc, step);
+   }
+   if (step == 7 || step == 8) {
+      unsigned ib = si ? si->index_buffer_index : 0;
+      bool u16 = si && si->index_type == 0;
+      if (ib >= 31)
+         return air_error(c, "interface: a stage-in index buffer at index %u", ib);
+      nir_def *ia = nir_imul_imm(&c->b, elem, u16 ? 2 : 4);
+      nir_def *w = nir_load_ssbo(&c->b, 1, 32, nir_imm_int(&c->b, ib), nir_iand_imm(&c->b, ia, ~3u),
+                                 .align_mul = 4);
+      elem = u16 ? nir_iand_imm(&c->b, nir_ushr(&c->b, w, nir_imul_imm(&c->b, nir_iand_imm(&c->b, ia, 2), 8)),
+                                0xffff)
+                 : w;
+      bool have = false;
+      for (unsigned i = 0; i < c->info->num_resources; i++)
+         have |= c->info->resources[i].index == ib && c->info->resources[i].kind == AIR_RESOURCE_DEVICE_BUFFER;
+      if (!have && !add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, ib, 0, true, false, param, node))
+         return false;
+   }
+   if (step == 0 && rate == 0)
+      rate = 1;
+   (void)rate;   /* (the rate divides a per-instance step, which a compute stage has not got) */
+
+   /* the words the element's bytes are in, loaded and taken apart */
+   nir_def *addr = nir_iadd_imm(&c->b, nir_imul_imm(&c->b, elem, stride), offset);
+   unsigned words = DIV_ROUND_UP(bytes, 4);
+   nir_def *raw = nir_load_ssbo(&c->b, words, 32, nir_imm_int(&c->b, buffer), addr, .align_mul = 4);
+   nir_def *v[4];
+   for (unsigned k = 0; k < comps; k++) {
+      unsigned bit = k * bits;
+      nir_def *w = nir_channel(&c->b, raw, bit / 32);
+      nir_def *x = bits == 32 ? w : nir_ubitfield_extract(&c->b, w, nir_imm_int(&c->b, bit % 32),
+                                                            nir_imm_int(&c->b, bits));
+      switch (kind) {
+      case 'f': v[k] = x; break;
+      case 'h': v[k] = nir_channel(&c->b, nir_unpack_half_2x16(&c->b, x), 0); break;
+      case 'u': v[k] = x; break;
+      case 'i': v[k] = bits == 32 ? x : nir_ibitfield_extract(&c->b, w, nir_imm_int(&c->b, bit % 32),
+                                                                nir_imm_int(&c->b, bits)); break;
+      case 'n': v[k] = nir_fdiv_imm(&c->b, nir_u2f32(&c->b, x), (double)((1u << bits) - 1)); break;
+      default: {
+         nir_def *si32 = nir_ibitfield_extract(&c->b, w, nir_imm_int(&c->b, bit % 32), nir_imm_int(&c->b, bits));
+         v[k] = nir_fmax(&c->b, nir_fdiv_imm(&c->b, nir_i2f32(&c->b, si32), (double)((1u << (bits - 1)) - 1)),
+                         nir_imm_float(&c->b, -1.0f));
+      }
+      }
+   }
+   bool flt = kind == 'f' || kind == 'h' || kind == 'n' || kind == 's';
+   for (unsigned k = comps; k < 4; k++)
+      v[k] = flt ? nir_imm_float(&c->b, k == 3 ? 1.0f : 0.0f) : nir_imm_int(&c->b, k == 3 ? 1 : 0);
+   nir_def *val = nir_vec(&c->b, v, MAX2(want, 1));
+   if (kind == 'f' || kind == 'h' || kind == 'n' || kind == 's')
+      val = want_bits == 16 ? nir_f2f16(&c->b, val) : val;
+   else
+      val = nir_u2uN(&c->b, val, want_bits);
+   if (want == 1)
+      val = nir_channel(&c->b, val, 0);
+
+   bool have = false;
+   for (unsigned i = 0; i < c->info->num_resources; i++)
+      have |= c->info->resources[i].index == buffer &&
+              c->info->resources[i].kind == AIR_RESOURCE_DEVICE_BUFFER;
+   if (!have && !add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, buffer, 0, true, false, param, node))
+      return false;
+   c->params[param] = air_val_ssa(c, val);
+   return true;
+}
+
 static bool
 translate_vertex_attribute(struct air_ctx *c, const struct air_md *node, unsigned param,
                            const struct air_type *t)
@@ -2918,6 +3073,8 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
        */
       if (c->nir->info.stage == MESA_SHADER_VERTEX)
          return translate_vertex_attribute(c, node, param, t);
+      if (c->nir->info.stage == MESA_SHADER_COMPUTE && md_key(node, "air.stage_in") >= 0)
+         return translate_compute_stage_in(c, node, param, t);
       unsigned slot = VARYING_SLOT_VAR0 + (*next_varying)++;
       const char *name = md_key_str(node, "air.arg_name");
       nir_variable *var = make_io_var(c, nir_var_shader_in, t, slot, name);
