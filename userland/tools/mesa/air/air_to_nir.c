@@ -3225,6 +3225,24 @@ translate_binop(struct air_ctx *c, const struct air_inst *in)
  * pointer chosen at run time, the same choice between its two sides cast (MOVStreamIO's
  * joinWarholIntoBayer selects one of two buffers, offsets into it as bytes and casts the result
  * to the vector it loads) */
+static bool
+store_through_choice(struct air_ctx *c, const struct air_val *p, nir_def *v, unsigned align)
+{
+   if (p->kind == AIR_VAL_PTR)
+      return air_store_ptr(c, p->ptr, v, align);
+   if (p->kind != AIR_VAL_PTR_SELECT || p->num_elems != 2)
+      return air_error(c, "instruction: a store to something that is not a pointer");
+   struct air_split sp;
+   air_split_begin(c, p->def, &sp);
+   if (!store_through_choice(c, p->elems[0], v, align))
+      return false;
+   air_split_else(c, &sp);
+   if (!store_through_choice(c, p->elems[1], v, align))
+      return false;
+   air_split_end(c, &sp);
+   return true;
+}
+
 static struct air_val *
 cast_pointer(struct air_ctx *c, const struct air_val *v, const struct air_type *pointee)
 {
@@ -3864,9 +3882,10 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       nir_def *v = air_get_ssa(c, in->operands[0]);
       if (!v)
          return false;
+      /* through a pointer chosen at run time: a store to whichever it is, behind the choice
+       * (MOVStreamIO's splitBayerIntoWarhol writes one of two buffers) */
       if (p->kind == AIR_VAL_PTR_SELECT)
-         return air_error(c, "instruction: a store through a chosen pointer, which would "
-                             "have to write both of them");
+         return store_through_choice(c, p, v, in->align);
       if (p->kind != AIR_VAL_PTR)
          return air_error(c, "instruction: a store to something that is not a pointer");
       return air_store_ptr(c, p->ptr, v, in->align);
