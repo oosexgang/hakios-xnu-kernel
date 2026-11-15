@@ -112,6 +112,29 @@ rw_say_slow(const char *what, const char *name, uint64_t t0)
 		rw_print("%s %s took %llu ms\n", what, name ? name : "?", (unsigned long long)ms);
 	}
 }
+/* A command buffer that took long to run, said with what was in it: under QEMU, where the
+ * shaders run on the processor, how long a frame of the window server's takes and whether it
+ * waited for another thread's work first. The first 40 of a process, then one in 50. */
+static void
+rw_say_slow_buffer(unsigned draws, unsigned dispatches, unsigned blits, uint64_t t_wait,
+                   uint64_t t0)
+{
+	static unsigned said;
+	mach_timebase_info_data_t tb;
+	mach_timebase_info(&tb);
+	uint64_t now = mach_absolute_time();
+	uint64_t ms = (now - t0) * tb.numer / tb.denom / 1000000ull;
+	uint64_t waited = (t0 - t_wait) * tb.numer / tb.denom / 1000000ull;
+	if (ms < 1000 && waited < 1000) {
+		return;
+	}
+	unsigned n = said++;
+	if (n < 40 || n % 50 == 0) {
+		rw_print("a command buffer of %u draws, %u dispatches and %u blits took %llu ms, after "
+		         "waiting %llu ms for the context\n", draws, dispatches, blits,
+		         (unsigned long long)ms, (unsigned long long)waited);
+	}
+}
 #import <Metal/Metal.h>          /* for MTLSize and the public enumerations, nothing private */
 #include <fcntl.h>
 #include <unistd.h>
@@ -4961,8 +4984,22 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 - (void)commit
 {
 	char why[512] = { 0 };
+	uint64_t t_wait = mach_absolute_time();
 
 	rw_pipe_enter();
+	/* the time from here on, and how long the lock kept this buffer waiting first (another
+	 * thread's draw: the context is one, rw_pipe_lock) */
+	uint64_t t0 = mach_absolute_time();
+	unsigned draws = 0, dispatches = 0, blits = 0;
+	for (HakiosMetalWork *work in _work) {
+		if (work->blit != 0) {
+			blits++;
+		} else if (work->render != nil) {
+			draws++;
+		} else if (!work->clearOnly) {
+			dispatches++;
+		}
+	}
 	_status = RW_CB_COMMITTED;
 	for (HakiosMetalWork *work in _work) {
 		if (work->blit != 0) {
@@ -5088,6 +5125,7 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 	_status = RW_CB_SCHEDULED;   /* submitted; the fence below is what makes it completed */
 done:
 	rw_pipe_leave();
+	rw_say_slow_buffer(draws, dispatches, blits, t_wait, t0);
 	/* The queue's slot goes back here and on every way out of this method, a failed draw
 	 * included: a buffer that errored is as finished as one that drew, and a slot kept
 	 * because of an error would turn one bad draw into a queue that blocks for ever. */
