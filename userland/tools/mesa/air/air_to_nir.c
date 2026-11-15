@@ -69,7 +69,7 @@ air_val_ptr(struct air_ctx *c, struct air_ptr ptr)
    return v;
 }
 
-static struct air_val *
+struct air_val *
 air_val_ptr_select(struct air_ctx *c, nir_def *cond,
                    struct air_val *a, struct air_val *b)
 {
@@ -3306,6 +3306,21 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       return true;
    }
 
+   /* A VISIBLE FUNCTION TABLE (CoreImage's ubershader): a buffer of the pipeline's function handles,
+    * eight bytes each, the low word one more than the function's place among the functions the
+    * pipeline links (nir_air.h, air_shader_info.function_tables) -- read where the shader takes a
+    * function out of it (air.get_function_pointer_visible_function_table) */
+   if (md_key(node, "air.visible_function_table") >= 0) {
+      uint64_t index = 0;
+      md_key_int(node, "air.location_index", &index);
+      if (index >= 32)
+         return air_error(c, "interface: a visible function table at index %u", (unsigned)index);
+      add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, index, 0, true, false, param, node);
+      c->info->function_tables |= 1u << index;
+      c->params[param] = air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_SSBO, .binding = index });
+      return true;
+   }
+
    if (md_key(node, "air.indirect_buffer") >= 0)
       return translate_argument_buffer(c, node, param);
 
@@ -4709,6 +4724,9 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          }
          if (fp->kind != AIR_VAL_PTR || fp->ptr.class != AIR_PTR_NONE)
             return air_error(c, "instruction: a call through a pointer");
+         /* a function out of a visible function table: the linked function it names */
+         if (fp->fn && !fp->fn->fn_type)
+            return air_call_table_function(c, in, fp->fn);
          /* a function handed down as a value: a call of it, as if it were called by name */
          if (fp->fn && fp->fn->base.name)
             return air_translate_call(c, in, fp->fn->base.name);
@@ -5773,6 +5791,9 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
    return true;
 }
 
+static bool air_call_function(struct air_ctx *c, const struct air_inst *in,
+                              const struct air_function *f, const char *name);
+
 bool
 air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *name)
 {
@@ -5787,6 +5808,33 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
    if (!f)
       return air_error(c, "intrinsic: a call of %s, which is not a function of this "
                           "module", name);
+   return air_call_function(c, in, f, name);
+}
+
+/* A call of a function out of a visible function table: the declaration a call by name of the
+ * linked function would have (NAME.MTL_VISIBLE_FN_REF, link_visible), of the call's own type --
+ * the table's placeholder (visible_table_function) has none until it is called. */
+bool
+air_call_table_function(struct air_ctx *c, const struct air_inst *in, const struct air_function *ph)
+{
+   const struct air_type *ft = in->aux_type;
+   if (!ft || ft->kind != AIR_TYPE_FUNCTION)
+      return air_error(c, "instruction: a call through a visible function table of no function type");
+   struct air_function *f = rzalloc(c->mem_ctx, struct air_function);
+   *f = *ph;
+   f->fn_type = ft;
+   f->is_declaration = true;
+   f->num_args = ft->num_members;
+   f->args = rzalloc_array(c->mem_ctx, struct air_value, MAX2(ft->num_members, 1));
+   for (unsigned i = 0; i < ft->num_members; i++)
+      f->args[i] = (struct air_value){ .kind = AIR_VALUE_ARGUMENT, .type = ft->members[i], .id = i };
+   return air_call_function(c, in, f, f->base.name);
+}
+
+static bool
+air_call_function(struct air_ctx *c, const struct air_inst *in, const struct air_function *f,
+                  const char *name)
+{
 
    if (in->num_operands - 1 != f->num_args)
       return air_error(c, "intrinsic: a call of %s with %u arguments, wanting %u", name,
