@@ -2723,7 +2723,15 @@ new_local_itunes_account(id self, SEL cmd)
 		return account;
 	}
 	fake = knob("HAKIOS_FAKE_ACCOUNT");
-	account = fake != NULL && *fake != '0' ? fabricated_account(self) : NULL;
+	if (fake == NULL || *fake == '0') {
+		return NULL;           /* nothing of ours by default: the account is a switch, not a policy */
+	}
+	account = fabricated_account(self);
+	/*
+	 * ... and only then is ACAccount taught a promise's messages. Adding them unconditionally would
+	 * change what -respondsToSelector: says about every account in the process, which is a thing AMS
+	 * is entitled to ask and nothing of ours should answer differently unless the account is ours.
+	 */
 	teach_account_to_be_a_promise();
 	/*
 	 * ... as a finished promise where the caller wants one (HAKIOS_LOCAL_ACCOUNT_IS_PROMISE=1). In
