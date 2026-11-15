@@ -341,6 +341,10 @@ struct rwa_compute {
     * reads the count from the constant buffer at grid_slot */
    unsigned grid_threads[3];
    unsigned grid_words[4];        /* ... as the constant buffer that hands them over */
+   /* for a kernel that compares buffers (AIR_BUFFER_ID_INPUT), the next dispatch's buffer
+    * per index, as the first index bound to it, and the offset each is bound at, two words
+    * an index; and what the compiled state was folded from */
+   unsigned buffer_ids[64], cso_buffer_ids[64];
 };
 
 /* The argument-buffer recorder, whose own block is further down beside the encode calls
@@ -960,12 +964,37 @@ sw_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes, uint8_t bit_siz
                                        .shift = nir_mem_access_shift_method_scalar };
 }
 
+/* Which Metal buffer indices are one buffer and at what offset each is bound (nir_air.h,
+ * AIR_BUFFER_ID_INPUT: two words an index): `ids` NULL is a compile with nothing bound yet,
+ * every index then a buffer of its own bound at 0. */
+static bool
+fold_buffer_id(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   const unsigned *ids = data;
+   if (intr->intrinsic != nir_intrinsic_load_kernel_input ||
+       nir_intrinsic_base(intr) != AIR_BUFFER_ID_INPUT || !nir_src_is_const(intr->src[0]))
+      return false;
+   unsigned w = nir_src_as_uint(intr->src[0]) / 4;
+   unsigned v = w < 64 ? (ids ? ids[w] : w & 1 ? 0 : w / 2) : 0;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def_replace(&intr->def, nir_imm_int(b, (int)v));
+   return true;
+}
+
+static void
+fold_buffer_ids(nir_shader *nir, const unsigned *ids)
+{
+   NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_buffer_id, nir_metadata_control_flow,
+            (void *)ids);
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
    /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
    fold_threadgroup_bases(nir, NULL, 0);
    fold_grid_threads(nir, -1);
+   fold_buffer_ids(nir, NULL);
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
@@ -4021,6 +4050,8 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3], int grid
    if (compute->cso && compute->cso_block[0] == block[0] &&
        compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2] &&
        compute->cso_guarded == guarded &&
+       (!compute->info.compares_buffers ||
+        !memcmp(compute->cso_buffer_ids, compute->buffer_ids, sizeof(compute->buffer_ids))) &&
        (!bases || !memcmp(compute->cso_tg_len, compute->threadgroup_len,
                           sizeof(compute->threadgroup_len))))
       return compute->cso;
@@ -4042,6 +4073,7 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3], int grid
    fold_threadgroup_bases(cs, compute->threadgroup_len,
                           compute->info.imageblock_pixel_bytes * block[0] * block[1]);
    fold_grid_threads(cs, grid_slot);
+   fold_buffer_ids(cs, compute->buffer_ids);
    if (guarded)
       guard_grid(cs, (unsigned)grid_slot);
 
@@ -4087,6 +4119,7 @@ compute_state_for(struct rwa_compute *compute, const unsigned block[3], int grid
    compute->cso_block[2] = block[2];
    memcpy(compute->cso_tg_len, compute->threadgroup_len, sizeof(compute->threadgroup_len));
    compute->cso_guarded = guarded;
+   memcpy(compute->cso_buffer_ids, compute->buffer_ids, sizeof(compute->buffer_ids));
    return cso;
 }
 
@@ -5453,6 +5486,25 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
          return -1;
       }
       grid_slot = (int)slot;
+   }
+
+   /* which indices are one buffer and the offsets they are bound at, for a kernel that
+    * compares them */
+   for (unsigned k = 0; compute->info.compares_buffers && k < 32; k++) {
+      compute->buffer_ids[2 * k] = k;
+      compute->buffer_ids[2 * k + 1] = table && k < table_count ? (unsigned)table[k].offset : 0;
+      struct rwa_buffer *bk = k < bindings->buffer_count ? bindings->buffers[k] : NULL;
+      if (!bk && table && k < table_count)
+         bk = table[k].buffer;
+      for (unsigned j = 0; bk && j < k; j++) {
+         struct rwa_buffer *bj = j < bindings->buffer_count ? bindings->buffers[j] : NULL;
+         if (!bj && table && j < table_count)
+            bj = table[j].buffer;
+         if (bj == bk) {
+            compute->buffer_ids[2 * k] = compute->buffer_ids[2 * j];
+            break;
+         }
+      }
    }
 
    void *cso = compute_state_for(compute, group_size, grid_slot, why, why_size);
