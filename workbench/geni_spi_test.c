@@ -1,5 +1,5 @@
 /*
- * SPI through a serial engine (kernel/overlay/bsd/dev/board/geni_spi.h), the part the touch screens' drivers
+ * SPI through a serial engine (drivers/board/geni_spi.h), the part the touch screens' drivers
  * share, against a model of the engine in its FIFO mode: what it is set up with, and transfers through
  * it -- bytes out a word at a time and never more than its FIFO holds, the device's bytes in, a last word
  * not full, an engine that says an error, one that is busy, and one that does not take a cancel.

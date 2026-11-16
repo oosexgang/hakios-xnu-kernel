@@ -25,8 +25,12 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 die() { echo "mutate.sh: $*" >&2; exit 2; }
 [ $# -eq 4 ] || die "usage: workbench/mutate.sh TEST SOURCE OLD NEW (the head of this file has an example)"
 name=$1 source=$2 old=$3 new=$4
-SRC=$HERE/../kernel/overlay/bsd/dev
 CC=${CC:-cc}
+W=$(mktemp -d)
+trap 'rm -rf "$W"' EXIT
+# the kernel's files of ours at their paths in its tree, as workbench/run.sh builds them (tools/kernel-view.sh)
+"$HERE/../tools/kernel-view.sh" "$W/kernel"
+SRC=$W/kernel/bsd/dev
 
 test=$HERE/$name.c
 [ -f "$test" ] || test=$HERE/../Documentation/examples/$name.c
@@ -41,8 +45,6 @@ for directory in "$(dirname "$test")" "$SRC" "$SRC/.." "$HERE/../arch/arm64/boot
 done
 [ -n "$original" ] || die "$source is not found where $name looks for it"
 
-W=$(mktemp -d)
-trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/copy/$(dirname "$source")"
 python3 - "$original" "$W/copy/$source" "$old" "$new" <<'PYTHON' || die "\"$old\" is not in $source"
 import sys

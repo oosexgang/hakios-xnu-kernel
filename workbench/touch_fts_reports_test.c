@@ -1,5 +1,5 @@
 /*
- * What the FT3658U driver (kernel/overlay/bsd/dev/board/fts.c, its protocol in board/fts_protocol.h) makes of
+ * What the FT3658U driver (drivers/board/fts.c, its protocol in board/fts_protocol.h) makes of
  * the controller's reports, compiled as it is into a host program. A report is decoded whole before any
  * finger moves: one of the wrong length, saying more fingers than there are, naming a finger twice, with an
  * event that is none, a position off the panel, or a count that is not its fingers' is refused and changes

@@ -150,7 +150,7 @@ The whole procedure, with what to take from the device tree and in which order t
    and commit it there, its `soc.dtsi` with it.
 
 Drivers that are specific to one device's parts (a touch controller, a speaker amplifier) are code,
-not data: they live in `kernel/overlay/bsd/dev/` and are started for the boards that have the part.
+not data: they live in `drivers/board/` and are started for the boards that have the part.
 
 ## Adding a kind of data
 
@@ -158,7 +158,7 @@ When a driver needs something of a device that no section has yet (an address, a
 directory), it becomes a key, not a constant in the driver. The `spmi { }` and `buttons { }` sections are a
 small example to copy; each step is one place:
 
-1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/board/board.h`),
+1. **The kernel's struct.** A field in `struct hakios_board` (`drivers/board/board.h`),
    with a comment that says which file and section it comes from.
 2. **The schema.** The key and its type in `SOC_SCHEMA` or `BOARD_SCHEMA` of `tools/boards.py`: what
    the chip has goes in the SoC file, what one phone has goes in the board file.

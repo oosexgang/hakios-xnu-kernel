@@ -1,6 +1,6 @@
 # Brightness and Auto-Brightness
 
-The panel's brightness and automatic brightness, for any device. Kernel: `kernel/overlay/bsd/dev/board/backlight.c`
+The panel's brightness and automatic brightness, for any device. Kernel: `drivers/board/backlight.c`
 (`bsd/dev/board/backlight.c`, the arithmetic in `bsd/dev/board/backlight_core.h`). Darwin side:
 `components/brightness/inject_brightness.c` (`libhakios-brightness.dylib`).
 

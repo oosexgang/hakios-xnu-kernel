@@ -1,5 +1,5 @@
 /*
- * QRTR's framing (kernel/overlay/bsd/dev/board/qrtr_frame.h), as it is: what another processor sends is
+ * QRTR's framing (drivers/board/qrtr_frame.h), as it is: what another processor sends is
  * taken apart into a header and the place of a datagram, in either version of the header, and nothing
  * that does not fit what arrived is taken.
  *

@@ -158,7 +158,7 @@ what each feature needs written down before it can be listed, key by key, in [fe
 ## 6. Parts that need a driver
 
 Some parts are not a matter of addresses: a touch controller speaks its own protocol on its own bus,
-an amplifier has its own registers. These are drivers, in `kernel/overlay/bsd/dev/`, and each has a
+an amplifier has its own registers. These are drivers, in `drivers/board/`, and each has a
 feature named after the part and the wiring it expects (`touch-goodix`, `haptic-aw86927`, ...).
 
 - If your phone has **the same part wired the same way**, list the feature and try it.

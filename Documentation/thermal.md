@@ -2,7 +2,7 @@
 
 The phone heats up: before graphics were removed, a GPU sensor read 69.1 °C (`darwin26-boot.md`, item 14), and
 `cpufreq=1` runs every core group at its top row with nothing holding it back. The kernel side is
-`kernel/overlay/bsd/dev/board/thermal.c` (the arithmetic is in
+`drivers/board/thermal.c` (the arithmetic is in
 `board/thermal_core.h`). It is device-independent: the sensor and frequency controller addresses come
 from the board's files.
 

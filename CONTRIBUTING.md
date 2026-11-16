@@ -42,7 +42,7 @@ restructuring: [Documentation/migrating.md](Documentation/migrating.md).
 - **Test what can run without the phone.** Arithmetic and state machines go in a header the host
   tests compile; a driver's register traffic can be tested against a model (`workbench/`).
 - **What two drivers need is written once.** Registers, waits, the log, the SoC's pins, the PMICs and
-  RPMh have a header each in `kernel/overlay/bsd/dev/board/`, with a test.
+  RPMh have a header each in `drivers/board/`, with a test.
   [Documentation/writing-a-driver.md](Documentation/writing-a-driver.md) lists them, and has an example driver to
   start from.
 - **Say what was verified.** "Compiles", "passes the host tests" and "seen working on the phone" are

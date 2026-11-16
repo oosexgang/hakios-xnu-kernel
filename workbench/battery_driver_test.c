@@ -1,5 +1,5 @@
 /*
- * The battery's driver itself (kernel/overlay/bsd/dev/board/battery.c), run as a host program. The
+ * The battery's driver itself (drivers/board/battery.c), run as a host program. The
  * loader keeps the firmware's charger drivers and publishes what they say in a page of memory, written
  * while the kernel runs; the kernel only reads it. So the model here is that page, as a loader would
  * write it: whole, in the middle of an update, with values that cannot be, or not there at all.

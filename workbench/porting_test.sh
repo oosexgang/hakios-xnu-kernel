@@ -51,12 +51,14 @@ says() {
 
 # --- a copy of what a port touches ----------------------------------------------------------------
 R=$W/repo
-mkdir -p "$R/kernel/overlay/bsd/dev" "$R/workbench" "$R/arch/arm64"
+mkdir -p "$R/drivers" "$R/workbench" "$R/arch/arm64"
 cp -r "$REPO/devices" "$REPO/tools" "$R/"
 cp -r "$REPO/arch/arm64/boot" "$R/arch/arm64/"
 # (the iPhone identity with nothing of Apple's in it: the one made from an IPSW is somebody's own)
 python3 "$R/arch/arm64/boot/mkidentity.py" --placeholder > "$R/arch/arm64/boot/identity.h"
-cp -r "$REPO"/kernel/overlay/bsd/dev/board "$R/kernel/overlay/bsd/dev/"
+cp -r "$REPO"/drivers/board "$R/drivers/"
+mkdir -p "$W/kernel/bsd/dev"
+ln -sfn "$R/drivers/board" "$W/kernel/bsd/dev/board"   # (the drivers at their path in the kernel's tree, as the kernel includes them)
 cp -r "$REPO/workbench/fakekernel" "$R/workbench/"
 B="$R/tools/boards.py"
 
@@ -181,7 +183,7 @@ main(int argc, char **argv)
 }
 EOF
 ask() {
-	${CC:-cc} -std=gnu11 -w -pthread -I"$R/workbench/fakekernel" -I"$R/kernel/overlay/bsd/dev" -I"$R/build/boards" "$W/ask.c" \
+	${CC:-cc} -std=gnu11 -w -pthread -I"$R/workbench/fakekernel" -I"$W/kernel/bsd/dev" -I"$R/build/boards" "$W/ask.c" \
 		"$R/workbench/fakekernel/fakekernel.c" -o "$W/ask" && "$W/ask" "$1"
 }
 says "the kernel finds the new board's row" "name=testphone soc=sm9999 features=\[\]" ask testphone

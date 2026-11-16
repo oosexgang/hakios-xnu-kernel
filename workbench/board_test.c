@@ -1,5 +1,5 @@
 /*
- * Which board the kernel takes itself for (kernel/overlay/bsd/dev/board/board.c), against the table
+ * Which board the kernel takes itself for (drivers/board/board.c), against the table
  * generated from the device packages: the row is picked by the loader's name, a board that is not known
  * has no feature at all, and hw.board.* says what was found. One scenario a process (the lookup is
  * done once), as the driver tests.

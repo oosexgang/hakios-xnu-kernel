@@ -767,7 +767,7 @@ class Generate(Sandbox):
         self.assertIn('sensors: one node sensor@0 { ... } or more', self.problems())
 
     def test_the_chips_a_board_may_name_are_the_camera_drivers(self):
-        driver = (ROOT / 'kernel/overlay/bsd/dev/board/camera.c').read_text()
+        driver = (ROOT / 'drivers/board/camera.c').read_text()
         listed = re.findall(r'^\t\{ "(\w+)", "camera-[\w-]+\.tab"', driver, re.M)
         self.assertEqual(tuple(listed), boards.CAMERA_CHIPS)
 

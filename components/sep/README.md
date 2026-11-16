@@ -7,7 +7,7 @@ never locked, unlocked since boot.
 
 | Where | What |
 |---|---|
-| [`kernel/overlay/iokit/Kernel/MiniAppleKeyStore.cpp`](../../kernel/overlay/iokit/Kernel/MiniAppleKeyStore.cpp) | The kernel's `AppleKeyStore`, as MobileKeyBag and libaks see it: the lock state, the system keybag's handle, the device's state (DER), and the wrapping and unwrapping of each item's key by its protection class, so that the keychain works. Requests that would need real keys (creating or loading bags) are refused, each logged once. |
+| [`drivers/iokit/MiniAppleKeyStore.cpp`](../../drivers/iokit/MiniAppleKeyStore.cpp) | The kernel's `AppleKeyStore`, as MobileKeyBag and libaks see it: the lock state, the system keybag's handle, the device's state (DER), and the wrapping and unwrapping of each item's key by its protection class, so that the keychain works. Requests that would need real keys (creating or loading bags) are refused, each logged once. |
 | `keychain_test.c` | Writes a keychain item, reads it back and deletes it, printing what Security.framework answers each time; `keep` and `read` across boots, for a data volume kept in the flash. Signed with `keychain_test.entitlements`; built by `userland/userland/build.sh`, run by the `rc.jobs.persist*` jobs. |
 
 ## What it is not

@@ -23,8 +23,8 @@ The device's path, its rate and channels, and the volume's ioctl are in
 
 ## In the kernel
 
-[`kernel/overlay/bsd/dev/board/audio.c`](../../kernel/overlay/bsd/dev/board/audio.c) is
-`/dev/hakios-audio`, [`speaker.c`](../../kernel/overlay/bsd/dev/board/speaker.c) the speaker
-amplifiers, [`mic.c`](../../kernel/overlay/bsd/dev/board/mic.c) the microphones' codec,
-[`haptic.c`](../../kernel/overlay/bsd/dev/board/haptic.c) the vibration motor and
-[`sound.c`](../../kernel/overlay/bsd/dev/board/sound.c) the sound through the audio DSP.
+[`drivers/board/audio.c`](../../drivers/board/audio.c) is
+`/dev/hakios-audio`, [`speaker.c`](../../drivers/board/speaker.c) the speaker
+amplifiers, [`mic.c`](../../drivers/board/mic.c) the microphones' codec,
+[`haptic.c`](../../drivers/board/haptic.c) the vibration motor and
+[`sound.c`](../../drivers/board/sound.c) the sound through the audio DSP.

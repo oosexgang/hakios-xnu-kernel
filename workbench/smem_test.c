@@ -1,6 +1,6 @@
 /*
  * The reading of the processors' shared memory that the drivers share
- * (kernel/overlay/bsd/dev/board/smem.h), against areas built here: one as a boot loader lays it out,
+ * (drivers/board/smem.h), against areas built here: one as a boot loader lays it out,
  * and ones whose headers say wrong things, which the reading must not follow outside the area.
  *
  *   smem_test SCENARIO

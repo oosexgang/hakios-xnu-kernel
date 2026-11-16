@@ -39,7 +39,7 @@ A reboot brings Android back.
 | Layer | Where | Changes when |
 | --- | --- | --- |
 | **Device data** | A device package per phone (`NAME/board.dts` and `NAME/soc.dtsi`, kept on the `devices` branch) | A new phone, or a new SoC. No code. |
-| **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
+| **Drivers for parts** | `drivers/board/`, `drivers/iokit/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
 | **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `arch/arm64/boot/`, `darwin/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
 
 The aim is that a new phone, on a known SoC or a new one, is a change to the first row only. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.

@@ -1,5 +1,5 @@
 /*
- * What the drivers share of the way to the always-on processor (kernel/overlay/bsd/dev/board/ipc.h), as it
+ * What the drivers share of the way to the always-on processor (drivers/board/ipc.h), as it
  * is: whether the mailbox that processor says is ours is one a message fits in, inside its block. Both
  * numbers are the other processor's.
  *

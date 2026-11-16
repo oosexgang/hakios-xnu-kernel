@@ -1,5 +1,5 @@
 /*
- * Host tests of the backlight's arithmetic (kernel/overlay/bsd/dev/board/backlight_core.h): workbench/run.sh
+ * Host tests of the backlight's arithmetic (drivers/board/backlight_core.h): workbench/run.sh
  * builds this against the kernel's own header, so what is tested is what the kernel compiles.
  */
 #include <stdio.h>

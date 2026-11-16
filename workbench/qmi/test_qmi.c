@@ -1,5 +1,5 @@
 /*
- * Tests of the QMI helpers (kernel/overlay/bsd/dev/board/qmi.c) on the machine that builds
+ * Tests of the QMI helpers (drivers/board/qmi.c) on the machine that builds
  * them; workbench/qmi/run.sh compiles and runs this, and workbench/run.sh runs that.
  *
  * Three kinds:

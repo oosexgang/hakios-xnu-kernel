@@ -1,5 +1,5 @@
 /*
- * The storage's driver itself (kernel/overlay/bsd/dev/board/ufs.c), run as a host program: the one
+ * The storage's driver itself (drivers/board/ufs.c), run as a host program: the one
  * place of the kernel from which a write can reach a phone's flash. It asks the loader, which stays on
  * core 0 with UEFI's driver, through a page of memory and a buffer. So the model here is that loader: a
  * thread that answers what the page asks, over a made-up disk, and that notes every request -- above all

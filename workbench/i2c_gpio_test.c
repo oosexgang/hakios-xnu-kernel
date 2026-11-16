@@ -1,6 +1,6 @@
 /*
  * I2C by hand on two of the SoC's pins, as the part drivers share it
- * (kernel/overlay/bsd/dev/board/i2c_gpio.h), against the model of the pins (tlmm_model.h) with a
+ * (drivers/board/i2c_gpio.h), against the model of the pins (tlmm_model.h) with a
  * device on the two lines that speaks I2C: it watches the lines for a start, takes its address and
  * bytes, acknowledges, gives bytes back, and can hold the clock low. What is tested is that the two
  * understand each other, that a line is never driven high, and that the pins are given back.

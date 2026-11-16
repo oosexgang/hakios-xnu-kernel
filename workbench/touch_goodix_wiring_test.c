@@ -1,5 +1,5 @@
 /*
- * Where the Goodix and FocalTech driver (kernel/overlay/bsd/dev/board/goodix.c) takes its wiring from. The
+ * Where the Goodix and FocalTech driver (drivers/board/goodix.c) takes its wiring from. The
  * driver is compiled as it is into a host program; nothing of the controller is modelled. What is
  * tested: every address, clock, vote and pin the driver uses is the board's (touch { } of its file); for
  * the phone the driver was written on they are the numbers that used to be in the code; for a board

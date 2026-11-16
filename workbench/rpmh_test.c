@@ -1,5 +1,5 @@
 /*
- * A request to RPMh as the drivers share it (kernel/overlay/bsd/dev/board/rpmh.h), by itself, against
+ * A request to RPMh as the drivers share it (drivers/board/rpmh.h), by itself, against
  * the model of a sequencer's first slot set (rsc_model.h): what is sent, and that the slot set is
  * left as it was found whatever RPMh does.
  *

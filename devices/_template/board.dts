@@ -22,7 +22,7 @@
 	// virtio          an emulator's virtio devices (network, tablet, keyboard): for QEMU's board, not a phone
 	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
-	// has that part on the same pins and bus (kernel/overlay/bsd/dev/board/board.h, Documentation/drivers.md):
+	// has that part on the same pins and bus (drivers/board/board.h, Documentation/drivers.md):
 	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
 	// wifi-wcn6750, mic-wcd938x, modem-sm7325
 	features = <>;

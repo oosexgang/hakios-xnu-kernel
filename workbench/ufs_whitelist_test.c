@@ -1,6 +1,6 @@
 /*
  * The one check every command of the kernel's own UFS driver passes before it goes into a slot of the
- * controller (kernel/overlay/bsd/dev/board/ufshc.c, hc_refusal()), as it is. That driver only ever reads:
+ * controller (drivers/board/ufshc.c, hc_refusal()), as it is. That driver only ever reads:
  * the whitelist is what makes it so, and a mistake in it would let a write reach the phone's flash. So
  * besides the driver's own cases (which it tries on the phone before its first command), every SCSI
  * operation is tried here with every flag and data direction: nothing that writes, or that is not on the

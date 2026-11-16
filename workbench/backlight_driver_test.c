@@ -1,5 +1,5 @@
 /*
- * The backlight driver itself (kernel/overlay/bsd/dev/board/backlight.c),
+ * The backlight driver itself (drivers/board/backlight.c),
  * run as a host program: the kernel's interfaces are workbench/fakekernel, the registers a model of the
  * hardware's (a Qualcomm DSI controller 2.5 and the display's clocks, as Linux's SDE driver and the phones'
  * device trees describe them). workbench/run.sh builds it for the host and for aarch64, the second run

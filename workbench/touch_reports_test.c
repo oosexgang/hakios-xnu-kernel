@@ -1,5 +1,5 @@
 /*
- * What the Goodix and FocalTech driver (kernel/overlay/bsd/dev/board/goodix.c) makes of the touches the
+ * What the Goodix and FocalTech driver (drivers/board/goodix.c) makes of the touches the
  * controller reports, compiled as it is into a host program: a report's fingers become touch-downs, moves
  * and lifts, each finger by its number; positions are scaled to 0..65535 and mirrored when the board asks;
  * a stylus and a finger number out of range are left out; a lifted finger is lifted once. And the checks

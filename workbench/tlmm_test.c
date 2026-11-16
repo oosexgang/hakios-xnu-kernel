@@ -1,5 +1,5 @@
 /*
- * The SoC's pins as the part drivers share them (kernel/overlay/bsd/dev/board/tlmm.h), against a
+ * The SoC's pins as the part drivers share them (drivers/board/tlmm.h), against a
  * model of the pin controller: what is written into a pin's configuration, that an output has its
  * level before it drives, and that only the pin asked for is touched.
  *

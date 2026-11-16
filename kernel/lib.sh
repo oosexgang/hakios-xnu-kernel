@@ -25,7 +25,23 @@ OVERLAY_PLACES=(
 	"arch/arm64/include/pexpert:pexpert/pexpert/arm64"
 	"arch/arm64/configs/xnu:config"
 	"security/amfi:libkern/amfi"
+	"drivers/board:bsd/dev/board"
+	"drivers/iokit:iokit/Kernel"
+	"include/board:bsd/sys/board"
+	"include/external:EXTERNAL_HEADERS"
 )
+
+# overlay_view DIR: every file of the overlay at its path in the kernel's tree, as a link to the repository's file
+# (DIR/bsd/dev/board/thermal.c, DIR/bsd/sys/board/input.h, ...): what the host's tests compile the kernel's files in,
+# with the same paths the kernel's build has
+overlay_view() {
+	local view=$1 file tree
+	mkdir -p "$view"
+	while IFS=$'\t' read -r file tree; do
+		mkdir -p "$view/$(dirname "$tree")"
+		ln -sfn "$REPO_DIR/$file" "$view/$tree"
+	done < <(overlay_files)
+}
 
 # overlay_files: every file the overlay adds to the tree, one a line, "REPOSITORY-PATH<tab>TREE-PATH" (the first
 # relative to the repository's top), kernel/overlay's first, then each place's

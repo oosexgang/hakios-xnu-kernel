@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and run the tests of the QMI helpers (kernel/overlay/bsd/dev/board/qmi.c) on this machine,
+# Build and run the tests of the QMI helpers (drivers/board/qmi.c) on this machine,
 # under the address and undefined-behaviour sanitizers. workbench/run.sh runs this.
 #
 # With ath11k's sources at hand (ATH11K=<the directory with its qmi.c and qmi.h>;
@@ -8,9 +8,11 @@
 # temporary directory each time.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-K=$HERE/../../kernel/overlay/bsd
 B=$(mktemp -d)
 trap 'rm -rf "$B"' EXIT
+# (the kernel's files at their paths in its tree: tools/kernel-view.sh)
+"$HERE/../../tools/kernel-view.sh" "$B/kernel"
+K=$B/kernel/bsd
 FLAGS=(-std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -pthread)
 if [ -n "${ATH11K:-}" ] && [ -f "$ATH11K/qmi.c" ]; then
 	"$HERE/extract.py" "$ATH11K" > "$B/tables.inc"

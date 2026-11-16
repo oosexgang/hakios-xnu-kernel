@@ -377,7 +377,7 @@ def package_prefix():
 def modem_firmware():
     """
     MODEM_FW=DIR: the phone's modem firmware as /fw of the image, where the modem driver (boot-arg modem=1,
-    kernel/overlay/bsd/dev/hakios_mpss.c) reads it: DIR/image is the phone's /vendor/firmware_mnt/image (with
+    drivers/board/mpss.c) reads it: DIR/image is the phone's /vendor/firmware_mnt/image (with
     /vendor/firmware's yupik_ipa_fws.* put in it), served to the modem over TFTP as /fw/image, and the modem's own
     image, modem.mdt and its segments, is /fw/modem.* as well (85 MB: too much for the small image). The phone's
     own files (firmware/BOARD/, never published).

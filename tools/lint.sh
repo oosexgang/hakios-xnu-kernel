@@ -9,7 +9,7 @@
 #   - every command of the QEMU shell (tools/qemu-init/main.c) has its row in Documentation/qemu.md
 #   - every host test (workbench/*_test.c, Documentation/examples/*_test.c) is run by a script of workbench/
 #   - the copies of the kernel's device interfaces that the Darwin side compiles against
-#     (userland/userland/src/board/*.h of kernel/overlay/bsd/sys/board/) say what the kernel's say
+#     (userland/userland/src/board/*.h of include/board/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -61,7 +61,7 @@ seen_by_programs() {
 	sed '1,/^ \*\/$/d' "$1" | awk '/^#ifdef KERNEL$/ { skip = 1; next } skip && /^#endif/ { skip = 0; next } !skip'
 }
 for copy in userland/userland/src/board/*.h; do
-	kernel=kernel/overlay/bsd/sys/board/$(basename "$copy")
+	kernel=include/board/$(basename "$copy")
 	[ -f "$kernel" ] || continue
 	if ! diff -q <(seen_by_programs "$kernel") <(seen_by_programs "$copy") > /dev/null; then
 		echo "lint: $copy does not say what $kernel says to programs:"

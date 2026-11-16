@@ -24,7 +24,7 @@ Each is one place in the example, but the one about waiting.
 
 ## What a driver has at hand
 
-Headers in `kernel/overlay/bsd/dev/`. Each says in its first lines what it is for; each that touches
+Headers in `drivers/board/`. Each says in its first lines what it is for; each that touches
 hardware has a test of its own in `workbench/`.
 
 | Header | What it gives | Where the data is |
@@ -54,7 +54,7 @@ needs it.
 
 ## Steps
 
-1. **Copy the example** to `kernel/overlay/bsd/dev/NAME.c`. A driver works on any board from its
+1. **Copy the example** to `drivers/board/NAME.c`. A driver works on any board from its
    data; one of a single part is named after the part.
 2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `board/board.h` and its name in
    `tools/boards.py`. An address the driver needs that no section has yet becomes a key:

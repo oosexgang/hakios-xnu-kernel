@@ -165,7 +165,7 @@ are checked for syntax, types and the formats of what they print only (`kernel/s
 headers it has at hand (the board's data, the log, registers, waits, the SoC's pins, the PMICs, RPMh),
 and the steps, with an example driver and its host test that `make check` builds and runs.
 
-In short: write the driver in `kernel/overlay/bsd/dev/` from the example, give it a feature and take
+In short: write the driver in `drivers/board/` from the example, give it a feature and take
 its addresses from the board, start it with a level that only reads, test it on the host against a
 model of its hardware, add it to `bsd/conf/files` in an assembled tree and export
 ([kernel/README.md](../kernel/README.md)), and name its boot argument in a comment so that `make docs`

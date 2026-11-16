@@ -1,5 +1,5 @@
 /*
- * The thermal limiter itself (kernel/overlay/bsd/dev/board/thermal.c),
+ * The thermal limiter itself (drivers/board/thermal.c),
  * run as a host program on the fake kernel (fakekernel/) against a model of two TSENS controllers and the
  * three EPSS groups of a lahaina-family SoC. workbench/run.sh builds it for the host and for aarch64
  * under qemu-aarch64.

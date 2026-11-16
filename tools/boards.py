@@ -42,7 +42,7 @@ from devicetree import from_dts  # noqa: E402  (what a device tree says of a boa
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICES = ROOT / 'devices'
-BOARD_HEADER = ROOT / 'kernel/overlay/bsd/dev/board/board.h'
+BOARD_HEADER = ROOT / 'drivers/board/board.h'
 # What `gen` writes, into one directory (--out; build/boards unless told otherwise). None of it is kept
 # in the repository: it is made from whichever device packages are there when something is built.
 OUT = ROOT / 'build/boards'
@@ -62,7 +62,7 @@ class U64(int):
 
 
 # key: (type, required). Types: str, int (32-bit), U64, bool, [int] and so on; a tuple of strings is a choice.
-TSENS_MAX = 8   # HAKIOS_TSENS_MAX (kernel/overlay/bsd/dev/board/board.h)
+TSENS_MAX = 8   # HAKIOS_TSENS_MAX (drivers/board/board.h)
 CAMERA_CLOCKS = 8       # HAKIOS_CAMERA_CLOCKS (the same)
 # where camcc has what the camera's driver switches (offsets in it, and the GCC's camera clocks in the GCC):
 # one each, and a list each of the MCLKs and of the CSI receivers' clocks

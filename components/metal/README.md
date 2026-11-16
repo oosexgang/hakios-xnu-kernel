@@ -29,9 +29,9 @@ its own place.
 
 ## In the kernel
 
-[`kernel/overlay/iokit/Kernel/BoardGPU.cpp`](../../kernel/overlay/iokit/Kernel/BoardGPU.cpp) is the GPU's
+[`drivers/iokit/BoardGPU.cpp`](../../drivers/iokit/BoardGPU.cpp) is the GPU's
 IOKit service (`IOAcceleratorES`, the user client Mesa's `darwin-drm` talks to);
-[`kernel/overlay/bsd/dev/board/adreno.c`](../../kernel/overlay/bsd/dev/board/adreno.c) the Adreno itself:
+[`drivers/board/adreno.c`](../../drivers/board/adreno.c) the Adreno itself:
 its power, clocks, ring buffer and memory.
 
 ## The other Metal

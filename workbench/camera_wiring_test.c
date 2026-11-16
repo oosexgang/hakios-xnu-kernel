@@ -1,5 +1,5 @@
 /*
- * Where the camera driver (kernel/overlay/bsd/dev/board/camera.c) takes its sensors from. The driver is
+ * Where the camera driver (drivers/board/camera.c) takes its sensors from. The driver is
  * compiled as it is into a host program; nothing of the cameras is modelled. What is tested: each sensor
  * the driver works on is put together from the board's camera { } and its sensor@N nodes, with its chip's
  * ways and the SoC's clock registers for its MCLK and CSI receiver; for the test phone that has the first

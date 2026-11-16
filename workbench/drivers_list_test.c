@@ -1,5 +1,5 @@
 /*
- * The list of drivers itself (kernel/overlay/bsd/dev/board/drivers.c), run as a host program with a
+ * The list of drivers itself (drivers/board/drivers.c), run as a host program with a
  * stand-in for every driver's start function that only writes its name down. What is tested: each
  * start function is called once, in the order the drivers depend on each other, on every board; and
  * a board gets the driver of the touch controller it lists, and no other.

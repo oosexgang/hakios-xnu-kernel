@@ -1,5 +1,5 @@
 /*
- * The sparse image's driver itself (kernel/overlay/bsd/dev/board/sparse.c), run as a host program. It
+ * The sparse image's driver itself (drivers/board/sparse.c), run as a host program. It
  * serves a disk out of a table and some blocks that sit at the end of the RAM disk, on the word of a
  * header there. So the model is that memory, as the build writes it and as it must not be believed:
  * with a table that points outside the image, with sizes whose sums wrap.

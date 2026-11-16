@@ -1,5 +1,5 @@
 /*
- * Where the microphones' driver (kernel/overlay/bsd/dev/board/mic.c) takes the audio subsystem's blocks
+ * Where the microphones' driver (drivers/board/mic.c) takes the audio subsystem's blocks
  * and pins from. The driver is compiled as it is into a host program; the registers are memory that
  * keeps what is written, and the TX SoundWire master, where a scenario wants it, a model of its link and
  * command FIFO, and the devices on its bus as registers. What is tested, on a

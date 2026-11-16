@@ -1,5 +1,5 @@
 /*
- * The buttons' driver itself (kernel/overlay/bsd/dev/board/buttons.c), run as a host program: the
+ * The buttons' driver itself (drivers/board/buttons.c), run as a host program: the
  * kernel's interfaces are workbench/fakekernel, the registers a model of the SoC's PMIC arbiter (version 5,
  * as Linux's spmi-pmic-arb.c has it) with the two peripherals the keys are on behind it. Where the
  * arbiter is and which peripherals the keys are on is the board's data, so the model is built from

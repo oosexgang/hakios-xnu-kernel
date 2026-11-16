@@ -44,7 +44,7 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/board/adreno.c`; the profile is `gpu { }` of the renoir package's board file (`renoir/board.dts` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
+| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `drivers/board/adreno.c`; the profile is `gpu { }` of the renoir package's board file (`renoir/board.dts` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/BoardGPU.cpp` | Mesa's shim and the Metal device both use it |
 | AIR → NIR → ir3 compiler (Mesa frontend) | `components/metal/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the Darwin 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`components/metal/docs/air.md`) |
 | Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `components/metal/src/metal_driver.m` | Written and measured against Darwin 16 and 26's Metal; not packaged for Darwin 27 |
@@ -68,7 +68,7 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
      conformance and four methods, and Darwin 27 may add required SPI.
    - Rebuild `metal_driver.m` for 24B119 and put it in the root image.
    - Publish the plug-in name on the accelerator service. On Darwin 16.5 that was the only thing keeping Metal from
-     finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `kernel/overlay/iokit/Kernel/MiniIOMobileFramebuffer.cpp`
+     finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `drivers/iokit/MiniIOMobileFramebuffer.cpp`
      restores it. With boot-arg `metal=1`, a user process may set `MetalPluginName`/`MetalPluginClassName` on
      `IOAcceleratorES`; nothing else is accepted, and an empty string removes them. Without it (the default),
      CoreAnimation keeps its software renderer, as in the release.

@@ -11,7 +11,7 @@ driver; this phone's panel is driven by the kernel ([`Documentation/backlight.md
 
 ## In the kernel
 
-[`kernel/overlay/bsd/dev/board/backlight.c`](../../kernel/overlay/bsd/dev/board/backlight.c) drives the
+[`drivers/board/backlight.c`](../../drivers/board/backlight.c) drives the
 panel's brightness (the panel's own DCS commands, as the board file says, or a dimming in software), with the curve of
 `backlight_core.h`; the ambient light sensor's daemon and the thermal limiter's cap act through it.
 `darwin/userland/inj26.sh` builds both libraries, `darwin/userland/root26-darwin.sh` puts them in.

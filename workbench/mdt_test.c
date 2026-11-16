@@ -1,5 +1,5 @@
 /*
- * The checks of a processor's firmware image the DSP drivers share (kernel/overlay/bsd/dev/board/mdt.h), as
+ * The checks of a processor's firmware image the DSP drivers share (drivers/board/mdt.h), as
  * they are: what is a header file, which segments are loaded, which lie in the processor's memory, and when
  * the header file is nothing but its three parts. The files come from a RAM disk; a count, an address or a
  * size made to be wrong must not get past.

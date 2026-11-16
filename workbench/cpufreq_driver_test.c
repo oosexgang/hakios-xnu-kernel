@@ -1,5 +1,5 @@
 /*
- * The CPU frequency driver itself (kernel/overlay/bsd/dev/board/cpufreq.c), run as a host program
+ * The CPU frequency driver itself (drivers/board/cpufreq.c), run as a host program
  * against a model of the EPSS block: a frequency table and a "row wanted" register for each group of
  * cores, where the board's SoC file says they are. What is tested: every group that has a core of the
  * kernel's is asked for the top row of its own table, a group without one is left alone, and nothing

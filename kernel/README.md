@@ -8,7 +8,7 @@ for every board it was built with. The board is identified at boot from `/chosen
 | Path | What it is |
 | --- | --- |
 | `UPSTREAM` | The Apple release the kernel is made from (URL, tag, commit). |
-| `overlay/` | The files HakiOS adds, as ordinary source files at their place in the XNU tree. |
+| `overlay/` | The files HakiOS adds that are kept at their place in the XNU tree here (most are kept at the top: below). |
 | `patches/` | The changes to Apple's own files, one patch per topic. `patches/series` says which file belongs to which patch; [patches/README.md](patches/README.md) says what each patch is for. |
 | `assemble.sh` | Makes the tree that is compiled: the release + `overlay/` + `patches/`. |
 | `export.sh` | Takes work done in a tree back into `overlay/` and `patches/`. |
@@ -19,15 +19,20 @@ for every board it was built with. The board is identified at boot from `/chosen
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
 | `lx/` | The Wi-Fi driver's other half: Linux's ath11k, compiled unmodified on FreeBSD's LinuxKPI headers and ours (`lx/include`, `lx/src`, `lx/patches`), into one object the kernel links when it is there. `lx/build.sh` fetches the pinned sources and makes it. |
 
-Where things are in `overlay/`:
+Where the kernel's files of ours are. Most are kept at the top of the repository, where Linux's tree keeps such
+parts; `kernel/lib.sh` (`OVERLAY_PLACES`) says which directory of the repository is which directory of the
+kernel's tree, and `assemble.sh`, `export.sh`, `verify.sh` and `syntax-check.sh` go by it.
+`tools/kernel-view.sh DIR` lays them out at their paths in the tree, as links, for the host's tests.
 
-| Path | Contents |
-| --- | --- |
-| `bsd/dev/board/` | Device drivers: display and GPU, touch, buttons, battery, audio, camera, Wi-Fi, storage, CPU frequency, backlight, thermal, and the headers they share. Which of them runs is the board's to say. |
-| `iokit/Kernel/` | Stand-ins for Apple's closed kernel extensions: IOMobileFramebuffer, IOSurface, AppleKeyStore, the GPU service, the battery, the platform expert. |
-| `bsd/miscfs/apfs/`, `ramfs/` | A read/write APFS implementation and the RAM file system the root lives in. |
-| `osfmk/arm64/` | Platform support: PSCI and CPU bring-up, GICv3, return to the loader, profiling. |
-| `libkern/amfi/`, `osfmk/minicrypto/` | Code-signing policy and crypto stand-ins. |
+| In the repository | In the kernel's tree | Contents |
+| --- | --- | --- |
+| `drivers/board/` | `bsd/dev/board/` | Device drivers: display and GPU, touch, buttons, battery, audio, camera, Wi-Fi, modem, storage, CPU frequency, backlight, thermal, and the headers they share. Which of them runs is the board's to say. |
+| `drivers/iokit/` | `iokit/Kernel/` | Stand-ins for Apple's closed kernel extensions: IOMobileFramebuffer, IOSurface, AppleKeyStore, the GPU service, the battery, the platform expert. |
+| `include/board/`, `include/external/` | `bsd/sys/board/`, `EXTERNAL_HEADERS/` | The drivers' headers user space shares; the headers of Apple's closed parts the open tree lacks (TrustCache, CoreEntitlements). |
+| `fs/apfs/`, `fs/ramfs/` | `bsd/miscfs/apfs/`, `ramfs/` | A read/write APFS implementation and the RAM file system `/private/var` lives in. |
+| `arch/arm64/kernel/`, `arch/arm64/include/pexpert/`, `arch/arm64/configs/xnu/` | `osfmk/arm64/`, `pexpert/pexpert/arm64/`, `config/` | Platform support: PSCI and CPU bring-up, GICv3, return to the loader, profiling; the machine's header; the build configuration. |
+| `security/amfi/`, `crypto/` | `libkern/amfi/`, `osfmk/minicrypto/` | Code-signing policy and crypto stand-ins. |
+| `kernel/overlay/` | the same paths | What belongs to none of those: the MAC policy (`bsd/kern/kern_minimac.c`) and the pthread kext's static part. |
 
 ## Building
 
@@ -56,7 +61,7 @@ was built with. The repository describes no phone: bring a phone's package in fi
 Either edit in the repository:
 
 ```sh
-$EDITOR kernel/overlay/bsd/dev/board/thermal.c
+$EDITOR drivers/board/thermal.c
 kernel/build.sh                                  # updates the tree, then builds
 ```
 

@@ -40,7 +40,7 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| GPU service | `kernel/overlay/iokit/Kernel/BoardGPU.cpp`, `bsd/dev/board/adreno.c` | msm-shaped buffers, submissions and fences through IOKit; an IOSurface's memory or a program's own pages as a GPU buffer (requests 0x7e, 0x7d); recovery after a hang (`gpu_recover`) |
+| GPU service | `drivers/iokit/BoardGPU.cpp`, `bsd/dev/board/adreno.c` | msm-shaped buffers, submissions and fences through IOKit; an IOSurface's memory or a program's own pages as a GPU buffer (requests 0x7e, 0x7d); recovery after a hang (`gpu_recover`) |
 | The plug-in's name | `IOAcceleratorES` in `MiniIOMobileFramebuffer.cpp` | with `metal=1`: `MetalPluginName` = HakiosMetal, `MetalPluginClassName` = HakiosMetalDevice. User space may remove them (an empty string) to go back to the software renderer without a reboot |
 | The driver | `components/metal/plugin/` (hakios-metal, with its history) | Metal's command model on the Adreno: blits, compute, the render pass, textures, IOSurface textures. Its tests run against a fake GPU; `make test` |
 | The compiler | `components/metal/plugin/tools/mesa/air` and `components/metal/plugin/src/compiler.cpp` | Apple's AIR to NIR (our front end), NIR to ir3 (Mesa), inside the driver, at pipeline creation |

@@ -5,9 +5,12 @@
 #   workbench/run.sh             all of them
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SRC=$HERE/../kernel/overlay/bsd/dev          # the drivers under test, as the kernel compiles them
 CC=${CC:-cc}
 WORK=$(mktemp -d)
+# the kernel's files of ours at their paths in its tree (drivers/board as bsd/dev/board, include/board as
+# bsd/sys/board, ...: tools/kernel-view.sh), and the drivers under test there, as the kernel compiles them
+"$HERE/../tools/kernel-view.sh" "$WORK/kernel"
+SRC=$WORK/kernel/bsd/dev
 # the iPhone identity with nothing of Apple's in it, for everything here that builds the loader or its parts:
 # identity.h is made from an IPSW, and one made on this machine must not decide what the tests see
 mkdir -p "$WORK/identity"
@@ -93,7 +96,7 @@ python3 "$HERE/place_kernel_test.py" 2>&1 | tail -3 || failed=1
 echo "== APFS images (userland/tools/apfs/mkapfs.py) read back by the kernel's reader, and the drivers' firmware lookup in them"
 "$HERE/apfs_image_test.sh" || failed=1
 
-echo "== qmi (kernel/overlay/bsd/dev/board/qmi.c under the sanitizers)"
+echo "== qmi (drivers/board/qmi.c under the sanitizers)"
 "$HERE/qmi/run.sh" 2>&1 | grep -v "said once" || failed=1
 
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"

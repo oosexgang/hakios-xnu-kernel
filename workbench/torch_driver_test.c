@@ -1,5 +1,5 @@
 /*
- * The flashlight's driver itself (kernel/overlay/bsd/dev/board/torch.c), run as a host program
+ * The flashlight's driver itself (drivers/board/torch.c), run as a host program
  * against the model of the PMIC arbiter (spmi_model.h) with a flash LED module and the PMIC's
  * temperature alarm behind it. This driver writes to a PMIC, which makes the phone's supplies, so what
  * is tested first is what it must never do: a write to a register that is not one of the module's six,

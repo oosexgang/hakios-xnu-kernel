@@ -1,5 +1,5 @@
 /*
- * Which pins the sound driver (kernel/overlay/bsd/dev/board/sound.c) sets up for the speakers' TDM
+ * Which pins the sound driver (drivers/board/sound.c) sets up for the speakers' TDM
  * interface, which it watches to see the interface's clock run, and how it gives the audio DSP its view of
  * the buffers through the apps SMMU. The driver is compiled as it is into a host program; of the hardware
  * the pin controller's registers and the SMMU's are modelled. What is tested: the four pins it sets up are

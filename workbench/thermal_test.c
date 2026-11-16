@@ -1,5 +1,5 @@
 /*
- * Host tests of the thermal limiter's arithmetic (kernel/overlay/bsd/dev/board/thermal_core.h).
+ * Host tests of the thermal limiter's arithmetic (drivers/board/thermal_core.h).
  */
 #include <stdio.h>
 

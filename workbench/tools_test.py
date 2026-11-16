@@ -166,7 +166,7 @@ class Repository(unittest.TestCase):
             self.assertTrue(first.startswith('/* Part of the loader (included by loader.c, not compiled alone): '), name)
         self.assertEqual(len(re.findall(r'(?m)^\| `src/', readme)), len(included) + 1)     # (and the row of src/ itself)
         # the drivers' list: every start function it calls is called once
-        calls = re.findall(r'(?m)^\t(\w+_(?:init|start))\(\);', (ROOT / 'kernel/overlay/bsd/dev/board/drivers.c').read_text())
+        calls = re.findall(r'(?m)^\t(\w+_(?:init|start))\(\);', (ROOT / 'drivers/board/drivers.c').read_text())
         self.assertGreater(len(calls), 20)
         self.assertEqual(len(calls), len(set(calls)))
 
@@ -201,7 +201,7 @@ class Repository(unittest.TestCase):
             return found
 
         loader = sources('arch/arm64/boot/src/*.c', 'arch/arm64/boot/src/*.h')
-        kernel = sources('kernel/overlay/bsd/dev/board/*.c', 'kernel/overlay/bsd/dev/board/*.h', 'kernel/overlay/bsd/sys/board/*.h',
+        kernel = sources('drivers/board/*.c', 'drivers/board/*.h', 'include/board/*.h',
                          'arch/arm64/kernel/*.c', 'arch/arm64/kernel/*.h')
         ours, theirs = defines(loader), defines(kernel)
         both = sorted(set(ours) & set(theirs))
@@ -214,9 +214,9 @@ class Repository(unittest.TestCase):
         # take it from the board's file, and the kernel refuses a loader whose value is not its own
         self.assertEqual(ours['BLOCK_WRITE_FIRST'], '(PLAT->own.write_first)')
         self.assertIn('hakios_board()->storage.write_first', theirs['UFS_WRITE_FIRST'])
-        ufs = (ROOT / 'kernel/overlay/bsd/dev/board/ufs.c').read_text()
+        ufs = (ROOT / 'drivers/board/ufs.c').read_text()
         self.assertIn('ufs_page->write_first != UFS_WRITE_FIRST', ufs)
-        for path in loader + [ROOT / 'kernel/overlay/bsd/dev/board/ufs.c']:
+        for path in loader + [ROOT / 'drivers/board/ufs.c']:
             self.assertIsNone(re.search(r'2042368|25374720|30617594|7c3457ef|fd6854ad', path.read_text()),
                               f'{path.name} has a number of one phone\'s partition')
         ours, theirs = structures(loader), structures(kernel)
@@ -241,7 +241,7 @@ class Repository(unittest.TestCase):
         # Where a block of the SoC is comes from the board's data: a driver that names an address is one
         # phone's. (Offsets inside a block, which are the block's own, are not addresses of a chip.)
         named = []
-        for path in sorted((ROOT / 'kernel/overlay/bsd/dev/board').glob('*.[ch]')):
+        for path in sorted((ROOT / 'drivers/board').glob('*.[ch]')):
             text = path.read_text()
             named += [f'{path.name}: {line.strip()}' for line in text.split('\n')
                       if re.search(r'#define\s+\w*(PHYS|_PA|_BASE)\s+\(?0x[0-9a-fA-F]{6,}', line) or

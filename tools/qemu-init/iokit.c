@@ -308,7 +308,7 @@ command_ioprop(int argc, char **argv)
 #define MACH_MSG_OOL_DESCRIPTOR         1
 #define MACH_MSG_VIRTUAL_COPY           1
 
-/* MiniIOMobileFramebuffer's and MiniIOSurface's selectors (kernel/overlay/iokit/Kernel) */
+/* MiniIOMobileFramebuffer's and MiniIOSurface's selectors (drivers/iokit) */
 #define FB_SWAP_BEGIN           4
 #define FB_SWAP_END             5
 #define FB_DISPLAY_SIZE         8

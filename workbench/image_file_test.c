@@ -1,5 +1,5 @@
 /*
- * The lookup of a file in the port's RAM disks (kernel/overlay/bsd/dev/board/image.c), run as a host
+ * The lookup of a file in the port's RAM disks (drivers/board/image.c), run as a host
  * program on an image tools/apfs/mkapfs.py made: the way the GPU's, the Wi-Fi DSP's and the audio DSP's
  * firmware reach their drivers before there is a root. The reader under it is the kernel's own
  * (bsd/miscfs/apfs/apfs_lib.c), built for this host as apfs-tool is. workbench/apfs_image_test.sh makes the

@@ -1,5 +1,5 @@
 /*
- * What the drivers of PMICs share (kernel/overlay/bsd/dev/board/spmi.h), by itself, against the
+ * What the drivers of PMICs share (drivers/board/spmi.h), by itself, against the
  * model of the arbiter (spmi_model.h), of version 5 and of version 8: that the arbiter is mapped where the
  * board's SoC file says and for the system it names, what a read and a write put on the bus, and what each status is said to
  * mean. The drivers' own tests cover what each does with it.

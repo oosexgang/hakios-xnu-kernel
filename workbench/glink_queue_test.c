@@ -1,6 +1,6 @@
 /*
  * The arithmetic of GLINK's two queues that the drivers share
- * (kernel/overlay/bsd/dev/board/glink_queue.h): how much is unread, how much room there is, bytes
+ * (drivers/board/glink_queue.h): how much is unread, how much room there is, bytes
  * taken out and put in around a queue's end -- and that marks the other processor may have written
  * anything into never lead outside the queue.
  *

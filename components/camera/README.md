@@ -22,7 +22,7 @@ On Darwin 16.5 the device is part of `libhakios-media.dylib` in `mediaserverd`
 
 ## In the kernel
 
-[`kernel/overlay/bsd/dev/board/camera.c`](../../kernel/overlay/bsd/dev/board/camera.c) starts the
+[`drivers/board/camera.c`](../../drivers/board/camera.c) starts the
 sensors and the camera's interface from the board file (`camera { }`, a `sensor@N { }` each) and hands
-the frames to `/dev/hakios-camera`; [`kernel/overlay/bsd/dev/board/torch.c`](../../kernel/overlay/bsd/dev/board/torch.c)
+the frames to `/dev/hakios-camera`; [`drivers/board/torch.c`](../../drivers/board/torch.c)
 is the flashlight.
