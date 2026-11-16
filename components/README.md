@@ -8,4 +8,5 @@ and check it, and the notes of how it was found out. What runs in the kernel sta
 
 | Directory | What it is |
 |---|---|
+| [`metal`](metal) | Metal on the Adreno: the Metal device Darwin loads, and the shader compiler from Apple's AIR through Mesa to the GPU. |
 | [`upstream.dts`](upstream.dts) | Everything taken from elsewhere, at the exact version it is taken (`tools/components.py`). |

@@ -116,7 +116,7 @@
 #      no MTLTextureType 4 of MTLPixelFormat NNN could be made for it
 #
 #    with each shader's own declaration and format, which the host already prints for all
-#    271 (tools/air/texdecl.sh): texture2d_ms<float, read> and 125 for the two Float ones
+#    271 (../components/metal/tools/air/texdecl.sh): texture2d_ms<float, read> and 125 for the two Float ones
 #    and for depth2d_ms<float, read>, texture2d_ms<int, read> and 124,
 #    texture2d_ms<uint, read> and 123, texture2d_ms<ushort, read> and 123. A row whose
 #    declaration reads "a texture whose metadata carries no type name" would mean the

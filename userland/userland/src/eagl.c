@@ -366,7 +366,7 @@ static int sync_frames = 1;             /* boot-arg glsync=0 (a test): a frame's
  * for a home screen. (Mesa's driver for this GPU drew the first triangle of each such quad
  * with pixels of another tile, fragments of other icons under the labels, until it was given a
  * flush before the first draw that reads the picture after one that does not:
- * tools/mesa/freedreno-darwin.patch, fd6_draw.cc.) Boot-arg glfetch=0 keeps the extension from
+ * ../components/metal/tools/mesa/freedreno-darwin.patch, fd6_draw.cc.) Boot-arg glfetch=0 keeps the extension from
  * CoreAnimation, to see the difference.
  */
 static int fetch_offered = 1;

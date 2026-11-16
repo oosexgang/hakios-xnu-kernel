@@ -15,7 +15,7 @@
 # through the driver's own aspect reader and must read 0.5, 0.5, 0.25, 0.75.
 #
 # On this machine, through the same library on softpipe, all four steps and all four depths
-# agree (tools/mesa/air/air_metal_test.c --draw-depth), so every line below has a reference
+# agree (../components/metal/tools/mesa/air/air_metal_test.c --draw-depth), so every line below has a reference
 # and not just an expectation.
 #
 # One process per line, and not one process for all of it, for rc.jobs.metaltex's reason: a

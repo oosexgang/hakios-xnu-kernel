@@ -2,7 +2,7 @@
 # What Darwin here believes about Metal (RC_JOBS=rc.jobs.metal, a run of half a minute): the services Metal
 # looks for and does not find, the GPU the registry does have under another name, whether a plug-in bundle
 # of this image would load at all, the nil a program gets, what MobileGestalt still says about graphics,
-# and whether CoreImage can run a filter kernel without Metal. See src/metal_test.m and docs/metal.md.
+# and whether CoreImage can run a filter kernel without Metal. See ../../components/metal/src/metal_test.m and docs/metal.md.
 #
 # The wait is so that the run is a realistic one: by then SpringBoard is up and, with gpu=1 on the
 # phone, the window server already holds the GPU and draws with it through src/eagl.c. That is the

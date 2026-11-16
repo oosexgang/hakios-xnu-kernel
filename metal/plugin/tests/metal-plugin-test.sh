@@ -5,7 +5,7 @@
 # usage: plugin/tests/metal-plugin-test.sh [DIR]
 #        GPU=1 plugin/tests/metal-plugin-test.sh [DIR]   the plug-in as built with hakios-metal (HAKIOS_METAL_GPU): this tree's
 #                                                        core linked in, which finds no kernel GPU on a Mac
-# HAKIOS= the hakios-xnu-kernel tree (default: beside this one), for its tools/metallib.py; without it every .metallib is read.
+# HAKIOS= the hakios-xnu-kernel tree (default: beside this one), for its components/metal/tools/metallib.py; without it every .metallib is read.
 set -e
 cd "$(dirname "$0")/../.."
 [ "$(uname)" = Darwin ] || { echo "metal-plugin-test: needs macOS (its Metal stands in for Darwin's)"; exit 0; }

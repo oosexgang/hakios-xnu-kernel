@@ -100,7 +100,7 @@
 #       "would not compile the vertex stage"
 #                          -- NEW GROUND. That pipeline was refused before ir3 ever saw
 #                             their vertex module, so this boot is the first time ir3 compiles
-#                             one of them in this driver. docs/air.md says all 135 translatable
+#                             one of them in this driver. ../components/metal/docs/air.md says all 135 translatable
 #                             QuartzCore modules do compile through ir3 on their own, so this
 #                             should not appear; if it does, it is a compiler report and not a
 #                             contract one.

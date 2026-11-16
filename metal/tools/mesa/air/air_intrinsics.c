@@ -13,7 +13,7 @@
  * What each name means is not guessed: it is read off Apple's own compiler.
  * AGXCompilerCore carries the whole vocabulary as a table of names at
  * 0x16d082..0x16d400 of the library in this device's shared cache (the list is
- * in docs/air.md section 3.2), and that table distinguishes exactly the
+ * in components/metal/docs/air.md section 3.2), and that table distinguishes exactly the
  * functions the Metal Shading Language Specification defines -- round from
  * rint, exp from exp2, fmod from mod, pow from powr. Two of this file's
  * handlers were guesses before that table was read; one of them was wrong.
@@ -82,7 +82,7 @@ is_signed_part(const char *s)
  *
  * and ir3 lowers it to the same three instructions (ir3_compiler.c sets
  * .lower_fmod). Two things are wrong with the formula, and
- * tools/air/intrincheck.py counted both: of 264 cases of air.fmod.f32 it
+ * components/metal/tools/air/intrincheck.py counted both: of 264 cases of air.fmod.f32 it
  * reported 47 wrong, 25 of them a sign and 22 of them a number.
  *
  *   - THE SIGN OF A ZERO IS LOST. fmod(-0, 5) is -0 and fmod(-1.5, 0.5) is
@@ -134,7 +134,7 @@ is_signed_part(const char *s)
  * difference, that difference reaches 253 for two normal floats, so twelve
  * passes of about ten instructions each would be the price, and its exactness
  * ON THE ADRENO could not be established from this machine at all for the
- * frcp reason above. It is not done here; section 4 of docs/air.md carries
+ * frcp reason above. It is not done here; section 4 of components/metal/docs/air.md carries
  * the condition and the measurement.
  *
  * Over the reference pool this leaves 7 of 264 cases differing, every one of
@@ -295,7 +295,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        * inputs with 1 614 wrong by more than four half-ulp (sinpi 42 494) --
        * which is a C model of that formula and not this code, since the
        * un-widened lowering was never built.
-       * `tools/air/intrincheck.py --domain16` sweeps that whole domain -- the
+       * `components/metal/tools/air/intrincheck.py --domain16` sweeps that whole domain -- the
        * only width where "does it ever disagree" can be answered rather than
        * sampled -- and this lowering is bit-exact on 65 536 of 65 536 for both.
        *
@@ -442,7 +442,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        * A DIFFERENCE OF TWO EXPONENTIALS HAS NO LOW BITS LEFT NEAR ZERO: at
        * x = 1e-8 both e^x and e^-x round to 1.0 in a float, so the formula
        * answers 0 where sinh(1e-8) is 1e-8 -- not an imprecise answer but a
-       * wrong one, and the first thing tools/air/intrincheck.py said about
+       * wrong one, and the first thing components/metal/tools/air/intrincheck.py said about
        * this lowering. sinh(x) = x + x^3/6, so below the x where x^3/6 falls
        * under the type's own precision the argument IS the answer, exactly;
        * 2^-12 is that point for a float (x^2/6 < 2^-24) and 2^-5 for a half.
@@ -573,9 +573,9 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        *
        * 11 of RenderBox's 47 modules call air.fmax3.f16 -- it is how a shape
        * function takes the widest of three coverage estimates -- and
-       * air.fmin3.f16 beside it. tools/air/intrincheck.py now carries the
+       * air.fmin3.f16 beside it. components/metal/tools/air/intrincheck.py now carries the
        * reference for both, so each is folded and drawn against it like every
-       * other operation here, and tools/air/airdefs.py emits an LLVM body so
+       * other operation here, and components/metal/tools/air/airdefs.py emits an LLVM body so
        * that a whole module calling one can still be compared on the CPU.
        */
       bool lo = strstr(op, "min") != NULL;   /* fmin3 or fmax3 */
@@ -722,7 +722,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        * that the 6-bit field is in the middle; which end component 0 is at is
        * in neither, and the two readings exchange red and blue. A draw through
        * air_run cannot separate them either: the pack and the number read back
-       * would both be ours. (docs/air.md 5e has what a draw on the DEVICE
+       * would both be ours. (components/metal/docs/air.md 5e has what a draw on the DEVICE
        * could and could not say, which is not what the refusal here used to
        * claim.) What settles it is the lowering in AGXCompilerCore -- this
        * device's own, ios165/20F66__iPhone10,3_6 -- read as instructions:
@@ -781,7 +781,7 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
        * So no input this operation can be given separates Apple's rounding
        * mode from the other one, and it is spelled rne because that is what
        * Apple's code names. Truncation does differ, on 7 551 of them, and that
-       * is the mistake the check can catch (tools/air/intrincheck.py, and
+       * is the mistake the check can catch (components/metal/tools/air/intrincheck.py, and
        * tools/air/pack565.ll for four colours readable by eye).
        */
       static const unsigned pack565_width[3] = { 5, 6, 5 };
@@ -948,7 +948,7 @@ atomic_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n
     * (load *expected, nir_atomic_op_cmpxchg, store the old value back through
     * `expected`, whose conditional-on-failure store may be unconditional
     * because on success it writes the value already there), and what stops it
-    * is not the operation but the check: nothing in tools/air/atomiccheck.py
+    * is not the operation but the check: nothing in components/metal/tools/air/atomiccheck.py
     * can make a wrong compare-exchange show, and an atomic that is only
     * compiled is the one kind this project will not claim.
     */
@@ -1053,7 +1053,7 @@ barrier_op(struct air_ctx *c, const struct air_inst *in, bool simdgroup)
     * fifteen are exactly the fifteen CMImaging modules with an explicit
     * imageblock, which stop at the interface (air_to_nir.c) and so never
     * arrive here. No module of the corpus calls air.simdgroup.barrier; 509 of
-    * the image's 10 242 do, and 106 of those stop here (docs/air.md 10).
+    * the image's 10 242 do, and 106 of those stop here (components/metal/docs/air.md 10).
     */
    uint64_t flags = 2;
    if (in->num_operands > 1)
@@ -1482,16 +1482,16 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
        * which is why the rotate refusal below is this same wall and not another
        * one. Reading `...Core` out is what would settle the fill's source lane;
        * it has not been read, and inventing the formula instead is the thing
-       * this frontend does not do (docs/air.md 10.3).
+       * this frontend does not do (components/metal/docs/air.md 10.3).
        */
       /* INSIDE air_error's 255 BYTES, counted rather than hoped: the name is 30
        * of them and the tail is 198, so the whole sentence arrives. The detail
-       * that does not fit is the comment above and docs/air.md 10.3.
+       * that does not fit is the comment above and components/metal/docs/air.md 10.3.
        */
       return air_error(c, "intrinsic: air.%s -- the `modulo` lane window (Apple passes "
                           "32, 4 and 8). Which lane of `filling_data` fills is settled "
                           "by AGXCompilerCore buildShuffleAndFillCore 0x1bbefaa1c, "
-                          "unread: docs/air.md 10.3", n->part[0]);
+                          "unread: components/metal/docs/air.md 10.3", n->part[0]);
    }
 
    if (!strcmp(op, "simd_shuffle_rotate_down") || !strcmp(op, "simd_shuffle_rotate_up")) {
@@ -1510,7 +1510,7 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
       return air_error(c, "intrinsic: air.%s -- a rotation in the SIMD group, which "
                           "AGXCompilerCore builds out of shuffle-and-fill "
                           "(AGC_SIMD_ROTATE_AS_SHUFFLE_AND_FILL), so it is that "
-                          "operation's wall: docs/air.md 10.3", n->part[0]);
+                          "operation's wall: components/metal/docs/air.md 10.3", n->part[0]);
    }
 
    if (!strcmp(op, "quad_shuffle") || !strcmp(op, "quad_broadcast")) {
@@ -1739,7 +1739,7 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
     * Which answer the Adreno gives is then ir3's: nir_ffma is one rounding,
     * and a backend that has no fused multiply-add would lower it. softpipe
     * does not have one -- TGSI's own specification lets MAD round the product
-    * first and its interpreter does -- which is why tools/air/intrincheck.py
+    * first and its interpreter does -- which is why components/metal/tools/air/intrincheck.py
     * sets air.fma aside on softpipe and leaves it to the phone. The same
     * applies to every llvm.fmuladd this translates.
     */
@@ -1784,7 +1784,7 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
  *
  * The largest family and the one with the long tail. Its vocabulary is
  * Apple's, read off AGXCompilerCore the same way the arithmetic was
- * (docs/air.md section 3.2): the names there end in an underscore --
+ * (components/metal/docs/air.md section 3.2): the names there end in an underscore --
  * air.sample_texture_, air.gather_compare_depth_, air.get_num_mip_levels_texture_
  * -- because the dimensionality is appended to them. That is why the earlier
  * survey counted "about 117 get_*_texture_* variants": it is some twenty
@@ -2215,7 +2215,7 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
     * RESERVED INDEX in that table. This frontend's textures are indices too
     * (Metal's own `[[texture(n)]]`, resolved while translating), so the
     * analogue is exact -- a zero-filled 1x1 texture the runtime binds at an
-    * index past the module's last. docs/air.md 3 costs it: for
+    * index past the module's last. components/metal/docs/air.md 3 costs it: for
     * fixed_frag_lph_cph that index is 15, because it declares 0..14, and
     * RWA_MAX_TEXTURES is 16, so it fits with nothing to spare. The frontend's
     * half is small and the runtime's is not this file's.
@@ -2314,7 +2314,7 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
     * compute_average_luma and the compute blurs). A texel fetch has no use for a sampler -- no
     * filter, no addressing beyond the texture's own size -- so it is passed over, and the offset
     * is taken when it is zero, which is every call seen; another is refused. (The first
-    * generation's front end, userland/tools/mesa/air, found this on iOS 26.)
+    * generation's front end, components/metal/tools/mesa/air, found this on iOS 26.)
     */
    bool read_with_sampler = false;
    if (!strcmp(t.op, "read") && in->num_operands > arg &&

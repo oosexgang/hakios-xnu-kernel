@@ -1,6 +1,6 @@
 # Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.airkernels).
 #
-# Every compute kernel of the corpus, dispatched on the Adreno (docs/air.md section 5).
+# Every compute kernel of the corpus, dispatched on the Adreno (../components/metal/docs/air.md section 5).
 # air_run waits on a fence, so a dispatch the GPU does not finish says so and exits
 # non-zero rather than printing the buffer the harness filled itself.
 #
@@ -21,7 +21,7 @@
 #
 # A canary runs first and after every eight kernels: probe_one_scalar stores a constant to
 # word 0 unconditionally, so when it stops writing the GPU has stopped answering. It needs
-# EXTRA_SHARE to carry tools/air's probe modules; without them those lines fail to open a
+# EXTRA_SHARE to carry ../components/metal/tools/air's probe modules; without them those lines fail to open a
 # file and the rest of the list still runs.
 #
 # The first line is the shader M1 is stated against, with --disasm: it proves the GPU is

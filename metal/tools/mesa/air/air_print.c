@@ -8,7 +8,7 @@
  * pointers). Attributes are not printed; everything else the reader keeps
  * is. The point is a test of the reader: llvm-as must accept the output,
  * and llvm-as | llvm-dis of it must equal llvm-dis of the original once
- * attributes are stripped from both (tools/air/reader-check.sh).
+ * attributes are stripped from both (components/metal/tools/air/reader-check.sh).
  */
 
 #include "air_module.h"

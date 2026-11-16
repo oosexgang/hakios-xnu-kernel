@@ -46,9 +46,9 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
 | --- | --- | --- |
 | Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/board/adreno.c`; the profile is `gpu { }` of the renoir package's board file (`renoir/board.dts` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/BoardGPU.cpp` | Mesa's shim and the Metal device both use it |
-| AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the Darwin 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
-| Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/metal_driver.m` | Written and measured against Darwin 16 and 26's Metal; not packaged for Darwin 27 |
-| Liquid Glass validation: QuartzCore's own pipelines drawn by Apple's GPU and by ours, compared pixel by pixel | `userland/tools/air/glassref.m`, `glasscase.c`, `glasscases.sh` | Built for Darwin 26's `default.metallib`; needs a Mac with an Apple GPU to record cases |
+| AIR → NIR → ir3 compiler (Mesa frontend) | `components/metal/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the Darwin 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`components/metal/docs/air.md`) |
+| Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `components/metal/src/metal_driver.m` | Written and measured against Darwin 16 and 26's Metal; not packaged for Darwin 27 |
+| Liquid Glass validation: QuartzCore's own pipelines drawn by Apple's GPU and by ours, compared pixel by pixel | `components/metal/tools/air/glassref.m`, `glasscase.c`, `glasscases.sh` | Built for Darwin 26's `default.metallib`; needs a Mac with an Apple GPU to record cases |
 | MetalPerformanceShaders for CA's blurs (`productName` = "Paravirtual device") | `metal_driver.m` | Darwin 26 |
 
 ## What stands between that and glass on Darwin 27, in order
@@ -63,7 +63,7 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
    `air_metal.h` contract), then run it through pacstrip and `ldid -Cadhoc` like the other libraries
    (root26-darwin.sh).
 3. **Metal device on Darwin 27.**
-   - Diff Metal's requirements between 26 and 27 with the existing tools (`userland/tools/metal/owes.py`,
+   - Diff Metal's requirements between 26 and 27 with the existing tools (`components/metal/tools/metal/owes.py`,
      `refusals.py`, `protometh.py` against Darwin 27's Metal): `MTLAddDevice` asserts on `MTLDevice`/`MTLDeviceSPI`
      conformance and four methods, and Darwin 27 may add required SPI.
    - Rebuild `metal_driver.m` for 24B119 and put it in the root image.
@@ -75,8 +75,8 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
    - Keep the system image's QuartzCore `default.metallib` (mkimage26 `KEPT_FILES` already keeps it) and its
      `default.pipelinelib`. The plug-in's `newLibraryWithFile` path was the first crash on 26 (`metal_driver.m`).
 4. **QuartzCore's Darwin 27 shaders.**
-   - Extract the AIR slice of Darwin 27's `QuartzCore.framework/default.metallib` (`userland/tools/metallib.py`).
-   - Run `userland/tools/air/check.sh` over it: what our reader, the NIR translation and ir3 accept.
+   - Extract the AIR slice of Darwin 27's `QuartzCore.framework/default.metallib` (`components/metal/tools/metallib.py`).
+   - Run `components/metal/tools/air/check.sh` over it: what our reader, the NIR translation and ir3 accept.
    - On a Mac running macOS 27, `glasscases.sh` records reference cases for every render pipeline glassref
      can feed. On the phone, `glasscase` replays them on the Adreno. Every difference is a translator bug, found
      shader by shader rather than as a wrong-looking screen.
@@ -89,16 +89,16 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
 
 With Darwin 27.2's files at hand (24B119, `darwin/tools/aea.py`), step 4 started:
 
-- **The host build is Mesa 26.2.5.** `userland/tools/air/mk-host.sh` now builds the release and the patch the
-  phone's library is built from (`userland/tools/mesa26/darwin.patch`); it had stayed on Mesa 25.0.7, whose NIR the
+- **The host build is Mesa 26.2.5.** `components/metal/tools/air/mk-host.sh` now builds the release and the patch the
+  phone's library is built from (`components/metal/tools/mesa26/darwin.patch`); it had stayed on Mesa 25.0.7, whose NIR the
   frontend no longer compiles against. It needs `libdrm-dev` on Ubuntu for freedreno's DRM layer.
-- **`userland/tools/mesa/air/nir_air.h` was missing** from the repository (every frontend source includes it). It is
+- **`components/metal/tools/mesa/air/nir_air.h` was missing** from the repository (every frontend source includes it). It is
   written again from what the sources use: the sampler word's fields and enumerations, the argument-buffer
   and raster-order-group fields of a resource, vertex attributes, notes, linked functions and four-word
   function constants.
 - **Fat libraries.** Darwin 26 and 27 ship `QuartzCore.framework/default.metallib` as a fat file, an AIR slice
   (CPU type 0x01000017) beside Apple's precompiled GPU code; `air_metallib_parse`, `air2nir`, `air_run` and
-  `air_metal_test` now take the AIR slice, as `userland/tools/metallib.py` did.
+  `air_metal_test` now take the AIR slice, as `components/metal/tools/metallib.py` did.
 
 `air2nir --report` over that library: **249 functions, all 249 read, 203 translated to NIR.** The 46 that are
 not are one case, `interface: input air.imageblock`: CoreAnimation's compute and tile-shading blurs
@@ -125,7 +125,7 @@ dispatched and its output read back.
 
 ### The library built on Linux, run on Darwin 27
 
-`userland/tools/mk-mesa26-linux.sh` builds `libhakios-air.dylib` and `air_run` for Darwin without a Mac (LLVM's
+`components/metal/tools/mk-mesa26-linux.sh` builds `libhakios-air.dylib` and `air_run` for Darwin without a Mac (LLVM's
 clang and ld64.lld, theos's SDK). Its `air_run`, put into the small image of a Darwin 27.2 boot under QEMU on
 this kernel (no GPU: softpipe), drew QuartzCore's own `upsample_frag_lpf` from the system image's
 `default.metallib`. The pixel it read back, against the same program built for the build machine:
@@ -144,7 +144,7 @@ GPU instead of softpipe.
 
 ### The Metal driver in Darwin 27's backboardd, under QEMU
 
-With `userland/tools/mk-metal-linux.sh`'s `HakiosMetal.bundle` and `libhakios-air.dylib` in the small image,
+With `components/metal/tools/mk-metal-linux.sh`'s `HakiosMetal.bundle` and `libhakios-air.dylib` in the small image,
 `metal_props on` run by init before launchd and the kernel booted with `metal=1` (and `RWA_SOFTWARE=1` for
 backboardd through `exec_env`: there is no GPU, so the library draws with softpipe), **Metal's own discovery
 finds the driver in backboardd**: `IOAcceleratorES` names the bundle, Metal opens it, and CoreAnimation asks
@@ -201,7 +201,7 @@ first Metal frame is a matter of hours; on the phone those compiles are millisec
 
 A boot with the day's library had backboardd restarting 17 times in 15 minutes: "Unknown NIR opcode:
 unpack_32_2x16_split_x", in the software path's own lowering of narrow loads (QuartzCore's `p3_clamp` and
-`edr` fragments). `userland/tools/air/softpipesweep.sh` now makes every fragment, vertex and kernel function
+`edr` fragments). `components/metal/tools/air/softpipesweep.sh` now makes every fragment, vertex and kernel function
 of a library into a pipeline on softpipe, a process each, and names the ones whose process dies -- under QEMU
 that process is the window server. Over QuartzCore, VFX, RenderBox and MercuryPoster it found four causes:
 
@@ -212,7 +212,7 @@ that process is the window server. Over QuartzCore, VFX, RenderBox and MercuryPo
 - MercuryPoster's Flocon snowflakes: a 49,248-word local array, which overflows TGSI's 16-bit register
   numbers. That array was the module's colour ramps -- 197 KB of `constant` halves -- laid out in private
   memory that nothing ever wrote: **a constant table read at an index the shader computes read zeros**, on
-  the Adreno too (`userland/tools/air/const_table.ll`). Such tables are now the shader's constant data, read
+  the Adreno too (`components/metal/tools/air/const_table.ll`). Such tables are now the shader's constant data, read
   with `load_constant` (ir3 uploads it with the shader; on softpipe it is bound as constant buffer 31), and
   folded to numbers where the offset is known. Flocon went from a crash to 2,655 ir3 instructions.
 
@@ -259,7 +259,7 @@ each a line the driver or the kernel prints:
   interpreter has no FBFETCH, so the mask read was whatever a register held, and the last shape covered
   everything. `air_metal.c` now makes a software fragment stage's fetch a texel fetch from a copy of the
   attachment taken before the draw (and again after its clear), bound past the shader's own textures;
-  `userland/tools/air/fbfetchdraw.sh` checks it through the library. The phone's freedreno fetches for itself
+  `components/metal/tools/air/fbfetchdraw.sh` checks it through the library. The phone's freedreno fetches for itself
   and is not touched.
 
 With both, the boot after drew the lock screen's wallpaper through Metal: swap 3, surface 27, Stripe Yellow
@@ -269,7 +269,7 @@ backboardd's render server out of the collections poster's layer, every pixel of
 
 ### The phone's GPU compiler over Darwin 27's shaders
 
-`userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
+`components/metal/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
 ir3 for the Adreno 642L (chip 0x06060010) -- over a `.metallib` on Linux, with no GPU (`rwa_ir3_cost`):
 
 | Library | Compiled by ir3 | Refused, and why |
@@ -300,12 +300,12 @@ and GESS's large ones), run as the 15 November library stood:
 | crashed the compiler | 2 (an ir3 register-allocation check in `NRFV1`'s BlinkDetection and `H13FastRawScale`; camera, not drawing) |
 
 So 88.5% of the entry points Darwin 27 ships compile for the phone's GPU. And they do so without a memory
-error: `userland/tools/air/memcheck.sh` runs the same path under valgrind's memcheck, a process per function,
+error: `components/metal/tools/air/memcheck.sh` runs the same path under valgrind's memcheck, a process per function,
 and QuartzCore's 249, RenderBox's 109 and MercuryPoster's 52 are clean -- a read past a buffer there would be
 a crash of backboardd or SpringBoard on the phone, where nothing would say why. What the sweep found, and what was
 fixed for it on the way (each a commit of its own):
 
-- **ir3's prefetched sample used the texture's index as its sampler's** (`userland/tools/mesa26/darwin.patch`, ir3_compiler_nir.c).
+- **ir3's prefetched sample used the texture's index as its sampler's** (`components/metal/tools/mesa26/darwin.patch`, ir3_compiler_nir.c).
   GL never sees it; QuartzCore's own shaders sample texture 3 with sampler 0, and on the phone such a sample
   read sampler 3. The fix is in the library the image carries.
 - **The two stages of a pipeline were linked by order, not by name, and every varying took a whole slot**
@@ -330,7 +330,7 @@ argument-buffer and dispatch work below and before tessellation:
 | compiled by ir3 for the Adreno 642L | **24,369** on 16 November (24,244 on the 15th; 22,972 before tessellation; 22,572 at the first sweep of the 300) |
 | not entry points | 13,313 |
 | refused | 3,122 on the 16th (3,246; 4,518; 4,659): 1,770 of them MLX's and Morpheus' simdgroup matrices (`<64 x float>`; GESS's 1,731 compile since the evening of the 16th), 505 ray tracing, 90 CoreImage's visible function tables that only a pipeline's linked functions fill |
-| crashed the compiler | 15 on the 16th, 16 on the 15th (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction -- a sweep's artefact: their loops count by `threadsPerThreadgroup`, a function constant the sweep gives no value, and a pipeline must; `NRFV1`'s BlinkDetection, since compiled (a predicated branch on a compare from another block, which ir3's predicate allocation reloads into only one way in; such an `if` now takes an ordinary branch, `userland/tools/mesa26/darwin.patch`); MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
+| crashed the compiler | 15 on the 16th, 16 on the 15th (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction -- a sweep's artefact: their loops count by `threadsPerThreadgroup`, a function constant the sweep gives no value, and a pipeline must; `NRFV1`'s BlinkDetection, since compiled (a predicated branch on a compare from another block, which ir3's predicate allocation reloads into only one way in; such an `if` now takes an ordinary branch, `components/metal/tools/mesa26/darwin.patch`); MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
 
 What the refusals are, the MLX libraries set apart (they are machine learning, not drawing, and most of what
 is left in them is `<64 x float>` vectors and pointers kept in memory): tessellation (AvatarKit's 432 Memoji
@@ -341,7 +341,7 @@ commit of its own:
 - **Argument buffers with values in them** (VFX, the dynamic wallpapers): an `air.indirect_constant`, an inline
   struct (its members flattened into the set, numbered from its own `[[id(n)]]`) or an atomic is bytes the
   application writes through `-constantDataAtIndex:`; the set is now also a buffer at its own index, read,
-  written and atomically updated where the values lie (`userland/tools/air/argbufvalcheck.sh`). The encoder answers
+  written and atomically updated where the values lie (`components/metal/tools/air/argbufvalcheck.sh`). The encoder answers
   the set's own `air.buffer_size` and alignment, finds members by id, and hands back a value's real place. Sets
   nothing reads are not declared at all, the struct type is the parameter's pointee (`global_constants.634`),
   and padding inside a packed struct is passed over -- an array of bytes, or since 15 November a lone `i8`,
@@ -350,24 +350,24 @@ commit of its own:
   `DynamicBackgroundPosterExtension.appex` (Ocean twice, clouds, Glitter) all compile for the Adreno 642L once
   the function VFX links into them at run time is linked here too:
 
-      tools/air/ir3sweep.c built as tools/air/ir3sweep.sh builds it, then
+      components/metal/tools/air/ir3sweep.c built as components/metal/tools/air/ir3sweep.sh builds it, then
       ir3sweep -l 'vfx::api::applySystemTreatments=VFX/vfx::api::applySystemTreatments.bc' 0x06060010 \
                'Poster/vfx_custom_shader_Ocean_shader_31::vfx_fragment.bc=vfx_custom_shader_Ocean_shader_31::vfx_fragment'
 
-  (each `.bc` taken out of its `default.metallib` by `tools/metallib.py dump`).
+  (each `.bc` taken out of its `default.metallib` by `components/metal/tools/metallib.py dump`).
 - **Threadgroup buffers past index 0** (VFX's merge sorts, CoreRE): buffer n starts where 0..n-1 end, and only
   the dispatch knows where, so the base is folded in per dispatch from the lengths
-  (`rwa_threadgroup_memory_at`, `userland/tools/air/tgcheck.sh`).
+  (`rwa_threadgroup_memory_at`, `components/metal/tools/air/tgcheck.sh`).
 - **Dispatches whose last groups are partial**: `-dispatchThreads:` with a count its groups do not divide was
   refused, and every image-sized dispatch of Apple's frameworks is one. The library runs a variant of the
   kernel behind `thread_position_in_grid < threads`, the count handed over in a constant buffer, and
-  `[[threads_per_grid]]` is the count (`userland/tools/air/gridcheck.sh`; `RWA_COST_PARTIAL=1` has the sweep compile
+  `[[threads_per_grid]]` is the count (`components/metal/tools/air/gridcheck.sh`; `RWA_COST_PARTIAL=1` has the sweep compile
   that variant, and QuartzCore's 203 kernels compile either way).
 - **RealityKit's stereo and layered inputs** (`amplification_id`, `amplification_count`, a fragment's
   `viewport_array_index`): the device amplifies nothing and draws one viewport. CoreRE 299 -> 356.
 - **A struct input its function constant leaves out** is a tree of zeros: Maps (VectorKit 305 -> 313) and the
   camera pipeline (CMImaging 104 -> 153).
-- Quad reductions, `asinh`/`acosh`/`atanh` (checked by `userland/tools/air/intrincheck.py`), OpenCL's grid queries,
+- Quad reductions, `asinh`/`acosh`/`atanh` (checked by `components/metal/tools/air/intrincheck.py`), OpenCL's grid queries,
   `atomic.fence`, and SIMD queries, `ctz` and `popcount` at the width the call returns -- four of which were
   asserts in the NIR builder, not refusals.
 - Two crashes turned into refusals by name: a value a caller stored in a local and a callee read back (eight
@@ -375,8 +375,8 @@ commit of its own:
 - **Pointers compared** (Morpheus, MPS's in-place kernels): two buffer arguments are equal when the dispatch binds
   one buffer at both indices and the pointers are as far into it, which is folded in per dispatch like the
   threadgroup bases (`AIR_BUFFER_ID_INPUT`); a pointer walked up to an end pointer compares the two offsets
-  (`userland/tools/air/bufcmpcheck.sh`). A callee may hand back an array of numbers, an element a parameter
-  (`userland/tools/air/wordcheck.sh`), and a pointer phi may choose among 32 places. Morpheus 297 -> 355 of 364,
+  (`components/metal/tools/air/bufcmpcheck.sh`). A callee may hand back an array of numbers, an element a parameter
+  (`components/metal/tools/air/wordcheck.sh`), and a pointer phi may choose among 32 places. Morpheus 297 -> 355 of 364,
   MPSNeuralNetwork 726 -> 836 of 868.
 - **Pointers kept in a local as numbers**: a pointer here is a place and an offset decided while translating,
   with no bits, which is why one stored into a local was followed by slots at constant offsets. MPS's LSTM
@@ -384,18 +384,18 @@ commit of its own:
   and the RNN kernels carry a pointer from input to input around a loop. Such a function is translated
   again with those pointers as two words, (offset, 1 + place), and a load of one is the choice among the
   places by the second word (`air_ptr_numeric`; again once more where a place is met after a load chose
-  without it). `userland/tools/air/ptr_table.ll` and `ptr_loop.ll` check both on softpipe. MPSNeuralNetwork
+  without it). `components/metal/tools/air/ptr_table.ll` and `ptr_loop.ll` check both on softpipe. MPSNeuralNetwork
   836 -> 854 of 868.
 - **The long tail, 15 November night**, each with a case of its own on softpipe or against LLVM:
   an atomic through a pointer chosen at run time, behind an if as a store through one already was (Vista's
-  splat culling; `userland/tools/air/ptr_atomic.ll`); a pointer through an integer and back,
+  splat culling; `components/metal/tools/air/ptr_atomic.ll`); a pointer through an integer and back,
   `inttoptr (ptrtoint %p + bytes)`, the integer kept as the pointer and the sum as the pointer moved
   (MPSImage's DilateFilter4 and ErodeFilter4, 1832 -> 1834 of 1837; `ptr_int.ll`); Metal 3.2's atomic
   wait, a loop reading the place until it changes, its notify, the device-coherent loads and stores and
   Apple's yield hint (MPSCore's single-pass scans, 49 -> 54; `wait_notify.ll`); and integers of two to
   thirty-one bits that NIR has no width for, kept zero-extended in 32 bits -- masked after arithmetic,
   their sign extended where it is read as signed (Vista's two-bit enum switch, 62 -> 73 with the atomic;
-  `userland/tools/air/loweringcheck.py` against LLVM, 25 of 25). ImageIO, swept again, compiles all 27.
+  `components/metal/tools/air/loweringcheck.py` against LLVM, 25 of 25). ImageIO, swept again, compiles all 27.
 - **16 November**: arrays in argument buffers -- Metal gives an array member one element's size and its
   count in the field after it; a value array is checked at its whole size and an array of up to 32
   descriptors is a member per element, each at its own place and `[[id]]` (ClothPhysics, ComputeGraph, MXI;
@@ -411,14 +411,14 @@ commit of its own:
   209 -> 212; `mip_read.ll`). That test found two older faults: a `read_write` texture was bound without
   read access, and softpipe's image load with no format of its own unpacked nothing -- every `read()` of a
   read_write texture on the QEMU bench returned zeros (the softpipe fix is in
-  `userland/tools/mesa26/darwin.patch`). QuartzCore, HDRProcessing, CoreImage and MPSImage swept again
+  `components/metal/tools/mesa26/darwin.patch`). QuartzCore, HDRProcessing, CoreImage and MPSImage swept again
   with no function lost.
 - **16 November, evening**: simdgroup matrices. Metal's `simdgroup_matrix<T, 8, 8>` is a `<64 x T>` in AIR
   of which a thread holds two elements, its `thread_elements()` in lanes 0 and 1 -- the only lanes MLX reads
   or writes -- so such a vector is those two lanes here, and
   `air.simdgroup_matrix_8x8_multiply_accumulate` reads row fm of A and column fn + j of B from the lanes
   holding them by shuffles within the group of 32, in Apple's layout (fm = 4 l4 + 2 l2 + l1,
-  fn = 4 l3 + 2 l0). Softpipe has no shuffle, so `userland/tools/air/simdmatrixcheck.py` checks the lane
+  fn = 4 l3 + 2 l0). Softpipe has no shuffle, so `components/metal/tools/air/simdmatrixcheck.py` checks the lane
   arithmetic on 32 simulated lanes against a plain product; ir3 compiles all 1,731 of GESS's MLX kernels that
   were refused for it. A pointer kept as numbers in a local is decoded only into the places of its
   own address space (MLX's implicit_gemm_conv), and `air.quadgroups_per_threadgroup` is answered.
@@ -431,7 +431,7 @@ instance of N x N cells, two triangles each for a quad patch and N^2 triangles f
 the vertex index names. `-drawPatches:` is then an ordinary instanced draw of `rwa_render_patch_vertices`
 vertices. N is 8 (`RWA_TESS_LEVEL`, 1 to 64), the same for every patch: the factors a tessellation kernel
 wrote are not read, so a patch the application wanted finer is as fine as the others and one it wanted
-coarser costs as much. `userland/tools/air/tesscheck.sh` draws two quad patches and a triangle one on softpipe and
+coarser costs as much. `components/metal/tools/air/tesscheck.sh` draws two quad patches and a triangle one on softpipe and
 checks every pixel's coordinates. AvatarKit's Memoji shaders read their control points out of buffers
 (OpenSubdiv) and compile. Control points through `[[stage_in]]` (`patch_control_point<T>`, read through a
 function Metal makes out of the vertex descriptor) are read since 16 November as a kernel's `[[stage_in]]` is,
@@ -447,7 +447,7 @@ Four things a Metal encoder sets were accepted and dropped, and each changes pic
 - **Raster state**: `-setCullMode:`, `-setFrontFacingWinding:`, `-setTriangleFillMode:`, `-setDepthClipMode:` and
   `-setDepthBias:slopeScale:clamp:` -- every draw was two-sided, filled, clipped and unbiased. They ride in
   `rwa_draw` now, and the library keeps a raster state per distinct ask with the pipeline.
-  `userland/tools/air/rastcheck.sh` draws a clockwise and a counter-clockwise triangle under every cull mode and
+  `components/metal/tools/air/rastcheck.sh` draws a clockwise and a counter-clockwise triangle under every cull mode and
   winding, as lines, and clipped and clamped outside the depth range; its first run had every culled case the
   wrong way round, which is how Metal's winding turned out to be Gallium's own sense despite the viewport's
   flip of y.
@@ -458,7 +458,7 @@ Four things a Metal encoder sets were accepted and dropped, and each changes pic
   by DXGI's order (first channel at the low end) behind `RWA_PACKED32=0`, as the 16-bit four are behind
   `RWA_PACKED16=0`; `air_metal_test --pixel-formats` probes the two unorm ones field by field.
 - **A callee reading its caller's values** -- a struct of pointers at computed offsets, a pointer read back from
-  a local -- now takes them as parameters of its own (`userland/tools/air/importcheck.sh`); before, they were
+  a local -- now takes them as parameters of its own (`components/metal/tools/air/importcheck.sh`); before, they were
   quietly undefined or crashed the compiler.
 
 Two of these were found by booting, not by a sweep: Darwin 27 under QEMU with this library (softpipe in place of
@@ -479,7 +479,7 @@ milliseconds).
 - **Visible function tables** (CoreImage's ubershader, 90): a table is now a buffer of handles -- a linked
   function's place in its pipeline's list, plus one -- that the driver makes (`newVisibleFunctionTableWithDescriptor:`,
   `functionHandleWithFunction:`) and binds as a buffer, and a call out of it is the choice among the linked
-  functions (`userland/tools/air/vftcheck.sh`). What CoreImage links into the ubershader is decided at run time,
+  functions (`components/metal/tools/air/vftcheck.sh`). What CoreImage links into the ubershader is decided at run time,
   so the sweep cannot compile those 90 by itself; on the phone they are for CoreImage's first frame to show.
 - **Tessellation factors**: patches are drawn at one level (above), with no per-patch factors and no
   crack-free edges between patches of different levels.
@@ -500,8 +500,8 @@ Everything that runs on the phone is built on Linux now, and every step below ha
 one under QEMU, on softpipe, which is the phone's path with the CPU in place of the Adreno):
 
 1. The compiler library and the driver, for Darwin:
-   `THEOS=… SDK=…/iPhoneOS16.5.sdk userland/tools/mk-mesa26-linux.sh` (out: `build/mesa26-linux/out/libhakios-air.dylib`,
-   with the ir3 sampler fix of `userland/tools/mesa26/darwin.patch`) and `userland/tools/mk-metal-linux.sh`
+   `THEOS=… SDK=…/iPhoneOS16.5.sdk components/metal/tools/mk-mesa26-linux.sh` (out: `build/mesa26-linux/out/libhakios-air.dylib`,
+   with the ir3 sampler fix of `components/metal/tools/mesa26/darwin.patch`) and `components/metal/tools/mk-metal-linux.sh`
    (out: `build/metal-linux/HakiosMetal.bundle`, `metal_props`, `metal_drv_test`).
 2. The system image with what Metal needs: `METAL=1 python3 darwin/tools/mkimage26.py OUT.apfs` (the MPS and
    RenderBox metallibs, and the bundle's link to `/redwood/lib/HakiosMetal.bundle`), and the small image with the
@@ -510,5 +510,5 @@ one under QEMU, on softpipe, which is the phone's path with the CPU in place of 
    phone's package brought in before the kernel was built (`tools/device.py add NAME`). Confirm the GPU block
    starts on 12377 and read the temperature lines; `hakiosmetal[...]` lines say what the driver met, and
    `sample_every=10` with `userland/tools/samples.py --profile` says where a process spends its time in it.
-4. Before that, on the build machine, what the phone's compiler makes of a library: `userland/tools/air/ir3sweep.sh`
-   (and `-p` for a vertex and fragment pair), and `userland/tools/air/memcheck.sh` for the same under memcheck.
+4. Before that, on the build machine, what the phone's compiler makes of a library: `components/metal/tools/air/ir3sweep.sh`
+   (and `-p` for a vertex and fragment pair), and `components/metal/tools/air/memcheck.sh` for the same under memcheck.

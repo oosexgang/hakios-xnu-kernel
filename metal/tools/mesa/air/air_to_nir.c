@@ -5,7 +5,7 @@
 
 /*
  * One AIR module -> one nir_shader. The mapping from AIR's named metadata to
- * NIR's variables, bindings and system values is the table in docs/air.md
+ * NIR's variables, bindings and system values is the table in components/metal/docs/air.md
  * section 3.1; this file is that table in code, and nothing here decides
  * anything the table does not state.
  */
@@ -640,7 +640,7 @@ air_get(struct air_ctx *c, const struct air_value *v)
        * [ -1, %22 ]` in MetalFaceMask_AddSeedPoint became `phi b3: %92,
        * b4: %0 (undefined)`: the -1 was the same constant as the one the
        * compare after the branch uses, so the store on the entry edge pointed
-       * at a def inside the branch (docs/air.md section 5).
+       * at a def inside the branch (components/metal/docs/air.md section 5).
        */
       bool outer = !c->in_const;
       nir_cursor use = c->b.cursor;
@@ -904,7 +904,7 @@ air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes)
     * Folding the pair removes the reference: a global's offset is always a
     * constant here, so the whole chain is one immediate built in the const
     * region with no operand at all. The latent ordering hazard it stands on is
-    * written down in docs/air.md rather than left to be rediscovered.
+    * written down in components/metal/docs/air.md rather than left to be rediscovered.
     */
    if (nir_src_is_const(nir_src_for_ssa(ptr.offset)) &&
        nir_src_is_const(nir_src_for_ssa(bytes)) &&
@@ -995,7 +995,7 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
          /* SHORT ON PURPOSE. 70 of these appear over the corpus, one per
           * constant, and the row that matters is the name beside the number of
           * modules -- a census. Repeating what it means 70 times would bury
-          * exactly that, so the consequence is said once in docs/air.md 3 and
+          * exactly that, so the consequence is said once in components/metal/docs/air.md 3 and
           * what is here is the fact.
           */
          air_note(c, "the function constant %s (index %u, %s) is read and no pipeline "
@@ -1017,7 +1017,7 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
        * own interface with the runtime rather than something read out of
        * Apple's: component i sits at bit i*width, which is the word a memcpy
        * of the value would produce on this little-endian target. NOTHING HERE
-       * MEASURES THAT -- every harness in tools/air supplies zero for every
+       * MEASURES THAT -- every harness in components/metal/tools/air supplies zero for every
        * constant, so all components are zero whatever the packing, and the
        * first thing that would tell a wrong packing from a right one is a
        * pipeline that sets one of these two constants.
@@ -1488,7 +1488,7 @@ make_io_var(struct air_ctx *c, nir_variable_mode mode, const struct air_type *t,
 }
 
 /* fragment inputs and vertex outputs take the slots in the order they appear;
- * the runtime links the two sides by name (docs/air.md section 7.5)
+ * the runtime links the two sides by name (components/metal/docs/air.md section 7.5)
  */
 static void
 add_varying(struct air_ctx *c, const char *name, unsigned slot, unsigned comps,
@@ -1942,7 +1942,7 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
  * Metal through SPIRV-Cross and how an MSL `[[id(n)]]` struct reaches it from
  * Metal itself. 7 620 of Resident Evil 4's 7 879 modules have one and 0 of
  * iOS 16.5's 671 do, so this is the one interface word that is invisible from
- * Apple's own libraries and is 97% of a game (docs/air.md section 8.2).
+ * Apple's own libraries and is 97% of a game (components/metal/docs/air.md section 8.2).
  *
  * The parameter does not become a buffer to read: it becomes a pointer of its
  * own class, and the member table built here is what a load through it
@@ -2293,7 +2293,7 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
     * a refusal rather than a shader: Mesa 25.0.7 has no tile memory anywhere in
     * src/freedreno, and the one instruction that reads the tile buffer is
     * fragment-only by assertion (ir3_compiler_nir.c, nir_texop_txf_ms_fb).
-    * docs/air.md section 3 has what the DRIVER would have to do instead -- break
+    * components/metal/docs/air.md section 3 has what the DRIVER would have to do instead -- break
     * the pass, resolve the attachment, dispatch an ordinary kernel -- which is
     * the round trip tile shading exists to avoid, and which belongs to whoever
     * writes the pass splitting and not to this function.
@@ -2310,7 +2310,7 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
                           "this device can ask for: CoreAnimation builds these only "
                           "behind -[MTLDevice supportsTileShaders] = "
                           "supportsFamily:Apple4, and this port claims at most Apple2 "
-                          "(docs/air.md 3 has the other wall)");
+                          "(components/metal/docs/air.md 3 has the other wall)");
 
    /* system values */
    for (unsigned i = 0; i < ARRAY_SIZE(sysvals); i++) {
@@ -2886,7 +2886,7 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
     * components, and NIR has an operation for exactly one redistribution of
     * exactly one width: pack_32_2x16 and unpack_32_2x16. That is the whole of
     * what this corpus asks for, and the number is the reason this is two cases
-    * and not a general repacker -- `tools/air/typecensus.py` over all 7 879 of
+    * and not a general repacker -- `components/metal/tools/air/typecensus.py` over all 7 879 of
     * Resident Evil 4's modules, reading the types out of llvm-dis rather than
     * out of our own reader, finds 111 657 bitcasts of 14 distinct type pairs,
     * and the ONLY two that change shape are:
@@ -2917,7 +2917,7 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
     * `dst.x = src0.x; dst.y = src0.x >> 16` -- the same halves in the same
     * order. Getting that backwards would not crash and would not look wrong:
     * both halves are still finite halves, so the shader would draw with every
-    * pair of 16-bit values transposed. tools/air/loweringcheck.py gives the
+    * pair of 16-bit values transposed. components/metal/tools/air/loweringcheck.py gives the
     * two halves values that cannot be confused for each other (13 and 113, 1
     * and -2) and checks them twice -- against LLVM running the same module on
     * this processor, and against the four numbers written out in the case
@@ -3403,7 +3403,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
        *
        * It is the wall fixed_frag_lph_cph reaches once its texture and sampler
        * choices are resolved, under BOTH the all-ones configuration and the
-       * compositor's own (docs/air.md section 3), which is what made it worth
+       * compositor's own (components/metal/docs/air.md section 3), which is what made it worth
        * taking rather than refusing: two configurations that disagree about
        * everything else converge here.
        */
@@ -3662,7 +3662,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
        * while translating -- and not an address, so it has no bytes. Naming
        * that here rather than letting air_get_ssa say "a pointer where a
        * number belongs" is the difference between a wall with a reason and a
-       * wall with a symptom; the reason is in docs/air.md section 3.
+       * wall with a symptom; the reason is in components/metal/docs/air.md section 3.
        */
       struct air_val *sv = air_get(c, in->operands[0]);
       if (!sv)
@@ -4114,7 +4114,7 @@ ptr_offset_to_pass(struct air_val *v)
  * asks for it now: the four `disparity_refinement_*` of
  * CIPortraitBlurStitchableV3 are a stitched function whose first act is to
  * rebuild the `coreimage::Sampler` CoreImage flattened into four arguments, and
- * 126 modules of the image do the same thing (docs/air.md 10).
+ * 126 modules of the image do the same thing (components/metal/docs/air.md 10).
  *
  * THE TWO FUNCTIONS BELOW ARE A PAIR AND THE ORDER IS THE CONTRACT. slot_leaves
  * collects the caller's defs; rebind_slot_contents rebuilds the tree with the
@@ -5165,7 +5165,7 @@ wrap_library_function(struct air_ctx *c, const struct air_md *out_md,
  *
  * A graph of air.visible functions compiled into one entry point, which is
  * what Metal does with these functions and what CoreImage actually uses
- * (newLibraryWithStitchedDescriptor:, docs/air.md section 5, "The stitching
+ * (newLibraryWithStitchedDescriptor:, components/metal/docs/air.md section 5, "The stitching
  * ABI, before any of it is built"). The wrapper above runs one body; this runs
  * a DAG of them, each node's arguments coming from another node's result, from
  * an argument of the stitched function, or from a bound resource.
@@ -5536,7 +5536,7 @@ stitch_graph(struct air_ctx *c)
  * reached only through a branch whose condition is decided while translating
  * is not entered, so a phi between two different resources has ONE operand
  * and resolves. That is how a shader specialised on its function constants
- * gets through here (translate_body, and docs/air.md section 3), and nothing
+ * gets through here (translate_body, and components/metal/docs/air.md section 3), and nothing
  * about this function had to change for it -- only what it is told is live.
  */
 /* An `undef` or `poison` operand: the phi may be anything over that edge, so
@@ -5712,7 +5712,7 @@ translate_body(struct air_ctx *c)
    const struct air_function *f = c->fn;
 
    /* phis first: each becomes a register, loaded where the phi is and stored
-    * at the end of every predecessor (docs/air.md: NIR's own
+    * at the end of every predecessor (components/metal/docs/air.md: NIR's own
     * nir_lower_goto_ifs does the same to make an unstructured CFG safe) --
     * except a phi of POINTERS, which has no bits and is resolved where it
     * stands (resolve_pointer_phi). It gets no register, and the store loop at
@@ -6213,7 +6213,7 @@ const_mentions(const struct air_value *v, const struct air_value *target,
    }
 }
 
-/* THE RESERVED SLOT A NULL TEXTURE LIVES IN -- road B of docs/air.md section 3,
+/* THE RESERVED SLOT A NULL TEXTURE LIVES IN -- road B of components/metal/docs/air.md section 3,
  * the frontend's half of it.
  *
  * `air.get_null_texture_2d` and its fifteen siblings are what a Metal shader
@@ -6294,7 +6294,7 @@ air_null_texture_slot(struct air_ctx *c)
  * one. plan_globals puts such a variable in SCRATCH, so what the body sees is
  * a load_scratch -- opaque -- and every one of those branches survives
  * translation, which is what left the two modules with fifteen phis between
- * two different textures (docs/air.md section 3). Metal does not compile them
+ * two different textures (components/metal/docs/air.md section 3). Metal does not compile them
  * that way: it specialises at pipeline creation, and this frontend already has
  * every function constant as an immediate (AIR_PTR_FUNCTION_CONSTANT). The
  * only thing in the way was the round trip through memory.
@@ -6329,7 +6329,7 @@ air_null_texture_slot(struct air_ctx *c)
  * air_load_ptr's AIR_PTR_FUNCTION_CONSTANT case, which answers with
  * air_constant_value.bits and does not look at `supplied` -- and
  * air_module_function_constants registers every constant a module DECLARES
- * with bits = 0 and supplied = false, so in every harness in tools/air this
+ * with bits = 0 and supplied = false, so in every harness in components/metal/tools/air this
  * folds a shader on zeros that nobody set. That is not a new invention: the
  * unfolded shader took the same branch for the same reason, at run time, off
  * an immediate the same case produced. What changes is where the consequence
@@ -6508,7 +6508,7 @@ plan_globals(struct air_ctx *c)
           * sentinel: the Adreno's texture instruction holds the sampler in a
           * four-bit field, and ~0u there asserts in ir3's encoder. The index
           * goes after the API's samplers, and the runtime creates the sampler
-          * from the state word (docs/air.md section 7.7).
+          * from the state word (components/metal/docs/air.md section 7.7).
           */
          unsigned next = 0;
          for (unsigned k = 0; k < c->info->num_resources; k++)
@@ -6894,7 +6894,7 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
       return NULL;
    }
    /* air.visible: a library function, linked into its caller at pipeline time
-    * (docs/air.md section 7.5). Not an entry point, so not a shader -- unless
+    * (components/metal/docs/air.md section 7.5). Not an entry point, so not a shader -- unless
     * the caller asks for the generated wrapper, which makes one compute shader
     * whose only job is to call it (wrap_library_function).
     */

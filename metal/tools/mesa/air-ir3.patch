@@ -70,7 +70,7 @@ dimensions -- and hides on the rest, which is presumably why it survived.
 +   unsigned num_fc = air_module_function_constants(NULL, bitcode, bitcode_size, &fc);
 +   /* An air.visible library function is not an entry point; the wrapper makes
 +    * one that calls it, so that these 135 modules can be compiled for the
-+    * Adreno at all (nir_air.h, docs/air.md section 5). Always on here: this
++    * Adreno at all (nir_air.h, components/metal/docs/air.md section 5). Always on here: this
 +    * tool exists to answer "does ir3 accept it", and a module that is not an
 +    * entry point has no other way to be asked.
 +    */

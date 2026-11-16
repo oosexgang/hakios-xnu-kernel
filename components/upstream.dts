@@ -115,7 +115,7 @@
 		what = "freedreno and the AIR-to-NIR shader frontend patches, for OpenGL ES and Metal on the Adreno";
 		source = "https://archive.mesa3d.org/";
 		pins = "25.0.7", "592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6";
-		pinned-in = "userland/tools/mk-mesa.sh";
+		pinned-in = "components/metal/tools/mk-mesa.sh";
 		used-for = "user space graphics (Darwin 16.5 generation)";
 		licence = "MIT";
 	};
@@ -124,7 +124,7 @@
 		what = "the same for the arm64e Darwin 26 user space";
 		source = "https://archive.mesa3d.org/";
 		pins = "26.2.5", "794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5";
-		pinned-in = "userland/tools/mk-mesa26.sh";
+		pinned-in = "components/metal/tools/mk-mesa26.sh";
 		used-for = "user space graphics (Darwin 26/27)";
 		licence = "MIT";
 	};

@@ -16,7 +16,7 @@
 
 /* Where a pointer points. AIR's address spaces say which kind of memory;
  * which buffer, and the byte offset into it, the translator tracks itself
- * (docs/air.md section 3): no pointer in the corpus is ever stored to
+ * (components/metal/docs/air.md section 3): no pointer in the corpus is ever stored to
  * memory or cast to an integer, so a pointer never has to become a number.
  */
 enum air_ptr_class {
@@ -77,7 +77,7 @@ enum air_val_kind {
     * CHOSEN at run time has no such resolution, so the choice itself is kept
     * and made where the pointer is used. A pointer STORED to memory is the
     * other half of the same problem and has no form here at all -- see
-    * docs/air.md section 3 for what that costs.
+    * components/metal/docs/air.md section 3 for what that costs.
     */
 
    /* `select i1 %c, ptr %a, ptr %b`: .def is the condition and .elems[0..1]
@@ -103,7 +103,7 @@ struct air_val {
  * itself, while a texture or sampler member is a one-field
  * `metal::texture2d` / `metal::sampler` wrapper whose field sits at byte 0 of
  * it -- so the extra `getelementptr` into the wrapper adds nothing to the
- * offset and resolves by the same lookup (docs/air.md section 8.2).
+ * offset and resolves by the same lookup (components/metal/docs/air.md section 8.2).
  */
 struct air_argbuf_member {
    uint64_t offset;        /* bytes from the start of the set: the KEY */

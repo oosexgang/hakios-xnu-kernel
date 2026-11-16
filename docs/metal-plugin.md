@@ -178,6 +178,6 @@ this machine: `metal_air_dump=1`, `metal/tools/airdump.py`, `sweep -a MODULE.air
 
 ## The first generation
 
-`userland/userland/src/metal_driver.m` and `userland/tools/mesa/air` are the Gallium-based plug-in and its front end
+`components/metal/src/metal_driver.m` and `components/metal/tools/mesa/air` are the Gallium-based plug-in and its front end
 of the iOS 16/26 work. That plug-in found most of what iOS 26 asks (items 1, 2 and 4 above came from it). Neither
-is built for iOS 27. The glass validation tools are with them: `userland/tools/air/glassref.m`, `glasscase.c`.
+is built for iOS 27. The glass validation tools are with them: `components/metal/tools/air/glassref.m`, `glasscase.c`.

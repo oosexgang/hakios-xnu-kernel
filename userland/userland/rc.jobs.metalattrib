@@ -47,11 +47,11 @@
 # the same offset in both shapes, because rwa_render_shape grew after sample_count and rwa_draw
 # grew at the end.
 #
-#   the library        AIR=1 tools/mk-mesa.sh, run FROM THIS WORKING COPY (it resolves its
+#   the library        AIR=1 ../components/metal/tools/mk-mesa.sh, run FROM THIS WORKING COPY (it resolves its
 #                      sources from its own path, and 21 working copies hold 21 different
 #                      air_metal.c). It must print a libhakios-air.dylib line, and
 #                      xnu-deps/build/mesa/mesa-25.0.7/src/compiler/air/air_metal.c must then
-#                      be the same size as tools/mesa/air/air_metal.c.
+#                      be the same size as ../components/metal/tools/mesa/air/air_metal.c.
 #   the image          CRYPTEXES=flash SYSTEM=1 GL=1 QUIET=1 JOBS="" \
 #                        RC_JOBS=rc.jobs.metalattrib ./build.sh
 #                      JOBS="" because nothing here needs the window server, and with it alive
@@ -161,7 +161,7 @@
 #
 #      - a 16-BIT ATTRIBUTE through the hardware fetch. std_vert0_lph's [[attribute(3)]] is
 #        `half4`, so the fetch delivers a 32-bit register and the shader narrows it with an
-#        f2f16 -- the regime docs/air.md 3.1 chose and which softpipe cannot compile at all
+#        f2f16 -- the regime ../components/metal/docs/air.md 3.1 chose and which softpipe cannot compile at all
 #        (it asserts on the 16-bit opcode, which is why 28 of QuartzCore's modules are
 #        measurable only here). Whether ir3 and the VFD agree about that register is a
 #        question only this line asks.

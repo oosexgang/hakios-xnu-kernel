@@ -1,6 +1,6 @@
 # Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalall).
 #
-# Every compute kernel of the corpus that tools/air/kstruct.py did not measure as unable to
+# Every compute kernel of the corpus that ../components/metal/tools/air/kstruct.py did not measure as unable to
 # terminate -- including the ones that declare textures and samplers, which the compiler
 # library refused by name until it grew them. The point of running all of them is that ir3
 # does not share softpipe's limits: on this machine 40 of them stop inside nir_to_tgsi, so

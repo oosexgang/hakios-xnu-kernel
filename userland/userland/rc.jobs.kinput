@@ -1,8 +1,8 @@
 # Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.kinput).
 #
 # Two questions in one boot, because a boot costs a cold reboot: where clip y = -1 lands on
-# the Adreno, and which of the kernels docs/air.md section 5 calls undispatchable will end
-# when given the values their exit tests actually compare against (tools/air/kinput.py --
+# the Adreno, and which of the kernels ../components/metal/docs/air.md section 5 calls undispatchable will end
+# when given the values their exit tests actually compare against (../components/metal/tools/air/kinput.py --
 # read its table before this file).
 #
 # The orientation question is first and cannot hang, so a wedge in the ladder below does not
@@ -19,12 +19,12 @@
 # This is now a VERIFICATION run for three compiler fixes, and the order is what each line
 # is evidence for, cheapest first:
 #
-#   AddSeedPoint          tools/mesa/ir3-ssbo-subdword.patch. Its one uchar store went to
+#   AddSeedPoint          ../components/metal/tools/mesa/ir3-ssbo-subdword.patch. Its one uchar store went to
 #                         byte 672 instead of byte 28 (spans[46] instead of spans[0]),
 #                         because ldib/stib count in the IBO descriptor's texels while the
 #                         lowering divided by the instruction's size. Must now put 0x5a at
 #                         byte 28 and leave word 168 alone.
-#   fbs_bistochastize_iter  tools/mesa/ir3-shift-split.patch. Its four outputs were
+#   fbs_bistochastize_iter  ../components/metal/tools/mesa/ir3-shift-split.patch. Its four outputs were
 #                         1/sqrt(3), 1/sqrt(4), 1/sqrt(5), 1/sqrt(6) because `(C + x) >> s`
 #                         was rewritten as `(x >> s) + (C >> s)`, which for a negative C
 #                         lands 2^30 past the buffer, where a6xx reads zero and says
@@ -49,7 +49,7 @@
 /hakios/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01
 # the control for the line below it: this one is known to print 101 201 302 400
 /hakios/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DUInt
-# the orientation question itself (tools/air/fragpos.ll, hand-written: not one of
+# the orientation question itself (../components/metal/tools/air/fragpos.ll, hand-written: not one of
 # Apple's 271 fragment shaders reads its own position)
 /hakios/bin/air_run /hakios/share/probes/fragpos.bc
 # the canary before the ladder, so there is a first dump to compare the rest against

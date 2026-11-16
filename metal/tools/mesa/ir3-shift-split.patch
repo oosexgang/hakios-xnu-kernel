@@ -18,7 +18,7 @@ elements, which is the same mistake in a smaller way.
 Measured on the phone's Adreno 7c+ Gen 3. `fbs_bistochastize_iter` of
 PortraitFilters.metallib reads `grid_buf[id - 1].n` through exactly this shape
 and sums `id + 1` terms when the read returns 0 instead of `id`. With input
-built from the module's own metadata (tools/air/kinput.py, docs/air.md section
+built from the module's own metadata (components/metal/tools/air/kinput.py, components/metal/docs/air.md section
 5) its four outputs should all be 1/sqrt(3) -- one term each -- and on the
 device they were:
 
@@ -56,7 +56,7 @@ code did before the folding and is always right.
 + * That was measured: fbs_bistochastize_iter reads grid_buf[id - 1].n with
 + * exactly this shape, and on an Adreno 7c+ Gen 3 it read 0 for every thread,
 + * which turned 1/sqrt(3) in all four of its outputs into 1/sqrt(3), 1/sqrt(4),
-+ * 1/sqrt(5), 1/sqrt(6) (docs/air.md section 5).
++ * 1/sqrt(5), 1/sqrt(6) (components/metal/docs/air.md section 5).
 + *
 + * So split only a constant that is a whole number of elements and cannot be a
 + * subtraction. Everything else keeps the shift outside the add, which is what

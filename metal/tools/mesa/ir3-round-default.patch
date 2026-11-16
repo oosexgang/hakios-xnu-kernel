@@ -32,7 +32,7 @@ two inputs that agree before the change are exactly the two where truncation and
 rounding coincide, so agreement there is the absence of a question.
 
 Reproduced independently down a second path with no GLSL in it at all: the AIR
-frontend's own test suite (tools/air/intrincheck.py, docs/air.md section 4)
+frontend's own test suite (components/metal/tools/air/intrincheck.py, components/metal/docs/air.md section 4)
 compiles one Metal operation per module and executes it on the same GPU, and
 air.convert.f.{f32,v2f32,v3f32}.{u,s}.* disagree with C on exactly the inputs
 that need rounding -- 5 declarations, and i2f truncates just as u2f does. Two

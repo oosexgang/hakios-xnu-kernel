@@ -35,7 +35,7 @@ load_ssbo/store_ssbo.
 
 Measured on the phone's Adreno 7c+ Gen 3, two of Apple's compute kernels from
 PortraitFilters.metallib, given input built from each module's own metadata
-(docs/air.md section 5):
+(components/metal/docs/air.md section 5):
 
   MetalFaceMask_AddSeedPoint    one `uchar` store, to byte 28 of the span
                                 table. The dispatch finished and byte 28 was

@@ -72,7 +72,7 @@ fi
 W=$ROOT/kernel/lx
 
 # --- FreeBSD's LinuxKPI and the kernel headers under it, with our patches on top. When the patches
-# change, the tree is taken from the archive again (as tools/mk-mesa.sh does with Mesa's).
+# change, the tree is taken from the archive again (as components/metal/tools/mk-mesa.sh does with Mesa's).
 FREEBSD=15.1
 FREEBSD_SHA256=cf5762da53fd52e1eaf0f9ceee9bf58cbe314c821031d0d9ffa76823185a89e1
 FSYS="compat/linuxkpi sys arm64/include net net80211 netinet netinet6 vm kern tools libkern ddb

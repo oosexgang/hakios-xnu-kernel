@@ -1,7 +1,7 @@
 /*
- * The OpenGL ES library behind src/eagl.c when that library is Mesa as tools/mk-mesa.sh builds
+ * The OpenGL ES library behind src/eagl.c when that library is Mesa as ../components/metal/tools/mk-mesa.sh builds
  * it: any of its drivers that draws into memory, reached through its off-screen interface
- * (OSMesa, given an OpenGL ES profile by tools/mesa/osmesa-es-profile.patch).
+ * (OSMesa, given an OpenGL ES profile by ../components/metal/tools/mesa/osmesa-es-profile.patch).
  *
  * This file is all that knows which library draws. eagl.c wants four things besides the gl*
  * functions themselves: a context of a version of OpenGL ES, that context made the calling
@@ -87,7 +87,7 @@ hakios_gl_library(void)
 }
 
 /*
- * OES_EGL_image, with the IOSurface's ID as the image (tools/mesa/freedreno-darwin.patch: the
+ * OES_EGL_image, with the IOSurface's ID as the image (../components/metal/tools/mesa/freedreno-darwin.patch: the
  * kernel's GPU driver makes a buffer of the surface's memory). The drivers that draw in memory
  * of their own with this processor are not asked: they refuse every time.
  */

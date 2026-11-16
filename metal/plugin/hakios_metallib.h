@@ -1,6 +1,6 @@
 /*
  * A .metallib taken apart: the MTLB container Apple's shader compiler writes, its list of functions, and where each
- * function's module (LLVM bitcode, "AIR") is. The same reading as tools/metallib.py, in C, for the Metal plug-in
+ * function's module (LLVM bitcode, "AIR") is. The same reading as components/metal/tools/metallib.py, in C, for the Metal plug-in
  * (userland/src/HakiosMetal.m: -newLibraryWithData:, -newLibraryWithURL:) and for tools/metallib-test.sh, which checks
  * the two against each other on every .metallib of the system.
  *
@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* the TYPE tag (tools/metallib.py, checked against the metadata of the system's 456 modules) */
+/* the TYPE tag (components/metal/tools/metallib.py, checked against the metadata of the system's 456 modules) */
 enum hakios_metallib_type {
 	HAKIOS_METALLIB_VERTEX = 0,
 	HAKIOS_METALLIB_FRAGMENT = 1,
@@ -55,7 +55,7 @@ int hakios_metallib_parse(const uint8_t *data, size_t size, struct hakios_metall
  */
 int hakios_metallib_thin(const uint8_t *data, size_t size, const uint8_t **thin, size_t *thin_size, const char **why);
 
-/* the TYPE number as tools/metallib.py names it: "vertex", "fragment", "kernel", ... */
+/* the TYPE number as components/metal/tools/metallib.py names it: "vertex", "fragment", "kernel", ... */
 const char *hakios_metallib_type_name(uint8_t type);
 
 /*

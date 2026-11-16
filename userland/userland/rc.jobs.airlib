@@ -5,8 +5,8 @@
 # These are air.visible functions: not entry points, and not dispatchable as themselves. Metal
 # stitches one into a caller at pipeline time through the ABI in its own metadata, which this
 # project does not implement. air_run --library runs the wrapper air_to_nir generates instead:
-# argument i from device buffer 0 at byte 16*i, the result into buffer 1 (docs/air.md section 5,
-# tools/air/libcheck.py). The argument buffer holds floats, not the usual byte pattern, because
+# argument i from device buffer 0 at byte 16*i, the result into buffer 1 (../components/metal/docs/air.md section 5,
+# ../components/metal/tools/air/libcheck.py). The argument buffer holds floats, not the usual byte pattern, because
 # these modules promise no infinities and no NaNs -- with arbitrary bytes both sides of a
 # comparison are outside the contract and a disagreement means nothing.
 #

@@ -12,7 +12,7 @@
 #      (mobile) and UIKit above it, and nobody has ever tried one.
 #   2  DOES THE DRAWABLE WORK. -[CAMetalLayer nextDrawable] asks a device exactly one thing,
 #      -newTextureWithDescriptor:iosurface:plane: (docs/metal.md 10.46). That method landed in
-#      src/metal_driver.m today and HAS NEVER EXECUTED. This boot is its first caller.
+#      ../../components/metal/src/metal_driver.m today and HAS NEVER EXECUTED. This boot is its first caller.
 #   3  DOES PRESENTATION REACH THE SCREEN. Presentation goes through no device at all: the
 #      drawable's IOSurface is registered in the layer's CAImageQueue by surface id and the
 #      window server takes it from there. A triangle on the panel is that whole chain at once,
@@ -54,7 +54,7 @@
 #
 # AND THE WARNING THAT COMES WITH IT, for every list, not this one. The same sequence --
 # probe, class, -initWithAcceleratorPort:, MTLAddDevice, probe -- is in
-# userland/src/metal_drv_test.m (around :7340 and on), src/metal_dev.m and src/metal_stubdev.m.
+# ../components/metal/src/metal_drv_test.m (around :7340 and on), ../../components/metal/src/metal_dev.m and ../../components/metal/src/metal_stubdev.m.
 # In a boot with the registry switch ON, every metal_drv_test mode that reaches it (--draw,
 # --picture, --time, --draw-attrib, --draw-depth, --draw-index ...) will abort at the same
 # instruction. Only --sweep is safe, because it returns at :7325 before that path, and
@@ -72,7 +72,7 @@
 #                      anything.
 #                      GL=1 for /hakios/lib/libhakios-air.dylib -- no compiler library, no
 #                      pipeline, and the driver says so by name. build.sh now hashes
-#                      tools/mesa/air/ against $M/built-from-air and rebuilds it when they
+#                      ../components/metal/tools/mesa/air/ against $M/built-from-air and rebuilds it when they
 #                      differ, so the stale-library trap of logs/235006-run.log (docs/metal.md
 #                      10.47: driver rebuilt, library byte for byte the same) is closed; this
 #                      is a double-check and not the only guard:
@@ -114,7 +114,7 @@
 #                      at leisure.
 #
 #   AND NOT gpu_recover=1, which is the one boot-arg it would be tempting to add here. It is the
-#   way out of the gpuWait latch that the --layer step below is ordered around (docs/air.md: a hang would
+#   way out of the gpuWait latch that the --layer step below is ordered around (../components/metal/docs/air.md: a hang would
 #   then cost one dispatch instead of the rest of the boot), and it HAS NEVER BEEN RUN -- its own
 #   measurement, userland/rc.jobs.metalrecover, is still waiting for a boot. Putting an untried
 #   kernel path into the boot that is meant to try the drawable would mean two new things at once
@@ -138,7 +138,7 @@
 # Why that half and not another, so that the prediction is derived and not hoped for. The
 # pipeline is asked for with NO vertex function, which makes the compiler library supply its own
 # full-screen quad; that quad's four corners are in a fixed order, (-1,-1), (1,-1), (-1,1),
-# (1,1) (rwa_quad_verts, tools/mesa/air/air_metal.c), so a draw of THREE vertices is the
+# (1,1) (rwa_quad_verts, ../components/metal/tools/mesa/air/air_metal.c), so a draw of THREE vertices is the
 # triangle through the first three. The viewport puts clip y = +1 in memory row 0
 # (docs/metal.md 10.28), so clip (-1,+1) is the top left, (-1,-1) the bottom left and (1,-1)
 # the bottom right -- and the interior is every pixel whose centre satisfies
@@ -262,7 +262,7 @@
 #
 # AND THE ONE OUTCOME THAT IS NOT A PICTURE: the log stopping. Every risky call says its own
 # name first ("triangle: step: ..."), flushed, so a stall names the call it entered -- the
-# picture mode of src/metal_drv_test.m cost one boot to learn that. The last "step:" line in the
+# picture mode of ../../components/metal/src/metal_drv_test.m cost one boot to learn that. The last "step:" line in the
 # log is the suspect.
 #
 # ------------------------------------------------------------------------------------------
@@ -322,7 +322,7 @@
 #    SpringBoard and nothing guarantees it the descriptors init gave launchd, which is why
 #    src/triangle_app.m opens /dev/console by name, as src/inject_app.c does). It runs here
 #    instead, and the reason is a measured one: ONE HUNG DISPATCH LATCHES THIS GPU and makes
-#    every dispatch after it empty (docs/air.md, the AIR suite's canary). The one thing this
+#    every dispatch after it empty (../components/metal/docs/air.md, the AIR suite's canary). The one thing this
 #    boot can produce that no log can is the PHOTOGRAPH, so the photograph gets the undisturbed
 #    GPU and this process goes after it. If the application has already drawn, nothing is lost;
 #    if it never launched, this still runs and still answers two of the three questions.
@@ -470,7 +470,7 @@
 #       (0x181a34bc8), the process registered a second Metal device and Apple's own assertion
 #       killed it -- "MTLCreateSystemDefaultDevice doesn't know what to do with more than one
 #       device" -- and that is this application's own mistake and not a finding about the port.
-#       tools/metal/unslide.py reads such a stack.
+#       ../components/metal/tools/metal/unslide.py reads such a stack.
 #
 #   grep -a 'triangle: step:' logs/NNNNNN-run.log | tail -3
 #       where it stopped, if it stopped.

@@ -21,7 +21,7 @@
 # driver fills above them correctly -- the primitive, the attachments, the count -- and simply
 # does not look at the index buffer. The run then prints two IDENTICAL halves and line 2's
 # verdict reads "a right angle came back on the wrong side". That is what it looks like, and
-# it is not a GPU result: rebuild both from this tree (tools/mk-mesa.sh with AIR=1, then
+# it is not a GPU result: rebuild both from this tree (../components/metal/tools/mk-mesa.sh with AIR=1, then
 # userland/build.sh) before reading a word of it. On this machine the header and the driver's
 # hand-typed copy of it were checked to agree -- 224 bytes, all twenty field offsets equal.
 #

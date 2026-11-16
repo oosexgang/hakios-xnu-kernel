@@ -7,7 +7,7 @@
 # docs/metal.md section 1 read the five steps Metal takes to find a GPU out of
 # Metal.framework. Steps 4 and 5 are the ones that decide whether a driver of ours is
 # possible at all: the class must be a subclass of _MTLDevice, and the object comes from
-# -initWithAcceleratorPort:. src/metal_dev.m walks those two by hand, in its own process,
+# -initWithAcceleratorPort:. ../../components/metal/src/metal_dev.m walks those two by hand, in its own process,
 # so that a crash costs a line in this log instead of the window server.
 #
 # It deliberately does NOT give the service the two properties (MetalPluginName,
@@ -44,14 +44,14 @@
 #
 # And the same question asked of the real driver library rather than of classes assembled at
 # runtime: does a source-declared subclass of the private _MTLDevice link and load here, and
-# does Metal take it? (src/metal_driver.m, src/metal_drv_test.m)
+# does Metal take it? (../../components/metal/src/metal_driver.m, ../../components/metal/src/metal_drv_test.m)
 /hakios/bin/metal_drv_test
 #
 # And the first dispatch worth trying: MetalFaceMask_InitMinMax takes exactly one device
 # buffer (24 bytes, read_write, `atomicMinMax`) and no textures or samplers, which is what
 # this driver can bind today; it also writes its buffer unconditionally, so an all-zero
 # result afterwards means the dispatch did not happen rather than that the kernel had
-# nothing to say. tools/air/kstruct.py sorted the corpus's 47 kernels for exactly this.
+# nothing to say. ../components/metal/tools/air/kstruct.py sorted the corpus's 47 kernels for exactly this.
 /hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
 #
 # And the same driver reached the way Metal's own discovery reaches a plug-in: through

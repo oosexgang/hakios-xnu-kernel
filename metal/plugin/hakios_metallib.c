@@ -1,10 +1,10 @@
 /*
- * The MTLB container (userland/src/hakios_metallib.h): what tools/metallib.py reads, with every offset checked.
+ * The MTLB container (userland/src/hakios_metallib.h): what components/metal/tools/metallib.py reads, with every offset checked.
  *
  *   0x00  "MTLB"
  *   0x04  u16 u16      the container's version
  *   0x10  u64          the file's size
- *   0x18  u64 u64      the function list: where it starts, and how long it is after its count (tools/metallib.py calls
+ *   0x18  u64 u64      the function list: where it starts, and how long it is after its count (components/metal/tools/metallib.py calls
  *                      the second "funcs_end" and does not use it; on every file of the system, the start plus 4 plus it is
  *                      where the entries end)
  *   0x28  u64 u64      the public metadata (offset, length)        not read here

@@ -23,7 +23,7 @@
 #                                   diagnostics, which a file given as RC_JOBS can then run
 #                      EXTRA_SHARE="..." directories on this machine to copy whole into /hakios/share,
 #                                   each under its own name: the data a one-off diagnostic reads, when it
-#                                   needs more than a program (tools/air/intrincheck.py --emit writes such
+#                                   needs more than a program (../../components/metal/tools/air/intrincheck.py --emit writes such
 #                                   a directory). This goes into the boot volume, which every recipe
 #                                   carries and which the flash recipe puts in RAM, so its size is paid
 #                                   for at every boot -- a few megabytes, not more
@@ -41,7 +41,7 @@
 #                                   it needs an option for it, not an environment variable -- which is why
 #                                   air_run grew --buffer.
 #                      GL=1         with an OpenGL ES implementation for the window server: Mesa
-#                                   (tools/mk-mesa.sh fetches and builds it) behind src/eagl.c, as
+#                                   (../../components/metal/tools/mk-mesa.sh fetches and builds it) behind src/eagl.c, as
 #                                   lib/libOSMesa.8.dylib (15 MB) and lib/libhakios-gl.dylib. Where the
 #                                   kernel has started the phone's GPU, CoreAnimation then draws with its
 #                                   OpenGL ES renderer, by that GPU (boot-arg gpu=1); anywhere else -- QEMU,
@@ -238,22 +238,22 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -o obj/cpu_test src/cpu_test.c
 		$DYN -framework CoreFoundation -framework IOSurface -o obj/cow_test src/cow_test.c
 		$DYN -framework CoreFoundation -framework CoreGraphics -framework IOSurface -o obj/cg_test src/cg_test.c
-		# what Darwin here believes about Metal, and what CoreImage does without it (src/metal_test.m);
+		# what Darwin here believes about Metal, and what CoreImage does without it (../../components/metal/src/metal_test.m);
 		# OpenGLES for the CIContext made over an EAGLContext, which is deprecated and the point
 		$DYN -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework CoreGraphics \
 			-framework CoreImage -framework IOKit -framework Metal -framework OpenGLES \
-			-lMobileGestalt -o obj/metal_test src/metal_test.m
+			-lMobileGestalt -o obj/metal_test ../../components/metal/src/metal_test.m
 		# the first question of subsystem (2): can a subclass of the private _MTLDevice be
-		# made here, and what does its initWithAcceleratorPort: do (src/metal_dev.m). No ARC:
+		# made here, and what does its initWithAcceleratorPort: do (../../components/metal/src/metal_dev.m). No ARC:
 		# it calls objc_msgSend by hand and allocates a class at runtime.
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/metal_dev src/metal_dev.m
+			-o obj/metal_dev ../../components/metal/src/metal_dev.m
 		# a device object that implements nothing and logs what Apple's own init asks it
-		# for (src/metal_stubdev.m); same reasons for no ARC and for -lobjc
+		# for (../../components/metal/src/metal_stubdev.m); same reasons for no ARC and for -lobjc
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/metal_stubdev src/metal_stubdev.m
+			-o obj/metal_stubdev ../../components/metal/src/metal_stubdev.m
 		# the device object of the driver itself, as the library a bundle would hold
-		# (src/metal_driver.m). It links against Metal's private _OBJC_CLASS_$__MTLDevice,
+		# (../../components/metal/src/metal_driver.m). It links against Metal's private _OBJC_CLASS_$__MTLDevice,
 		# which is bindable because IOGPU.framework imports the same symbol; -lobjc for
 		# class_addProtocol and no ARC because it calls objc_msgSend by hand.
 		# (with src/drawable.m beside it: the IOSurface a CAMetalLayer hands a
@@ -261,17 +261,17 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		# not Metal, and the two meet in one method -- docs/metal.md 10.46.)
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios-metal.dylib \
 			-framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/libhakios-metal.dylib src/metal_driver.m src/drawable.m
+			-o obj/libhakios-metal.dylib ../../components/metal/src/metal_driver.m src/drawable.m
 		# and the program that walks Metal's own steps 4 and 5 against it
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/metal_drv_test src/metal_drv_test.m
+			-o obj/metal_drv_test ../../components/metal/src/metal_drv_test.m
 		# An application of this port's own: a window, a CAMetalLayer, a drawable and a
 		# triangle in it (src/triangle_app.m). UIKit because that is the point -- every
 		# Metal result so far is from inside one of Apple's daemons, and this is an
 		# ordinary bundle in /Applications that SpringBoard launches; IOSurface because
 		# it reads the drawable's own surface back to say whether the texture WAS those
 		# pages; no ARC and -lobjc because it sends -initWithAcceleratorPort: by hand,
-		# the way src/metal_drv_test.m does. The bundle is assembled further down, where
+		# the way ../../components/metal/src/metal_drv_test.m does. The bundle is assembled further down, where
 		# a PREBUILT tree can assemble it too.
 		# (signed, if ldid is there, for the entitlements an application has and a
 		# /hakios/bin program does not: see src/triangle_app.entitlements, which says
@@ -283,19 +283,19 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			{ ${LDID:-ldid} -Ssrc/triangle_app.entitlements obj/HakiosTriangle 2>/dev/null ||
 			  echo "build.sh: no ldid: HakiosTriangle is unsigned, which still runs (AMFI here accepts everything) but holds no entitlements"; }
 		# what the device ANSWERS when an application asks what it supports
-		# (src/metal_caps.m). It takes the device from MTLCreateSystemDefaultDevice() so
+		# (../../components/metal/src/metal_caps.m). It takes the device from MTLCreateSystemDefaultDevice() so
 		# that the ivars behind Apple's inherited answers are filled by the registration
 		# Metal itself ran; no ARC and -lobjc because most of what it asks is MTLDeviceSPI,
 		# whose header this port has not got, so every send is an objc_msgSend by hand. MetalFX
 		# because the acceptance test's own capability gate is +supportsDevice: on its two
 		# scaler descriptors, and that gate can be measured without the game.
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-framework MetalFX -o obj/metal_caps src/metal_caps.m
+			-framework MetalFX -o obj/metal_caps ../../components/metal/src/metal_caps.m
 		# ... and the switch that steps 1 and 2 need: it puts MetalPluginName and
-		# MetalPluginClassName on the IOAcceleratorES service (src/metal_props.c). IOKit and
+		# MetalPluginClassName on the IOAcceleratorES service (../../components/metal/src/metal_props.c). IOKit and
 		# CoreFoundation only -- a program that flips this switch must not itself ask Metal,
 		# whose conditions are asserts. It needs the kernel booted with metal=1.
-		$DYN -framework CoreFoundation -framework IOKit -o obj/metal_props src/metal_props.c
+		$DYN -framework CoreFoundation -framework IOKit -o obj/metal_props ../../components/metal/src/metal_props.c
 		# where every thread of a process that hangs is (src/stackof.c), with the entitlement task_for_pid wants
 		$DYN -o obj/stackof src/stackof.c
 		$DYN -o obj/shm_test src/shm_test.c
@@ -360,23 +360,23 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		# executable: dyld uniques images by install_name, so a process that already has
 		# /hakios/lib/libhakios-metal.dylib would bind the bundle to it and fail that test.
 		$DYN -bundle -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/HakiosMetal src/metal_driver.m src/drawable.m
+			-o obj/HakiosMetal ../../components/metal/src/metal_driver.m src/drawable.m
 		if [ -n "$GL" ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
 			M=../xnu-deps/build/mesa/out
-			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../tools/mesa/*.patch ../tools/mesa/darwin-drm/* | sha256sum)" ] ||
-				../tools/mk-mesa.sh
+			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../../components/metal/tools/mesa/*.patch ../../components/metal/tools/mesa/darwin-drm/* | sha256sum)" ] ||
+				../../components/metal/tools/mk-mesa.sh
 			# ... and the compiler library separately, because the hash above covers the PATCHES
-			# and the library is built from tools/mesa/air/, which they do not mention. Two boots
+			# and the library is built from ../../components/metal/tools/mesa/air/, which they do not mention. Two boots
 			# of 22 October carried a libhakios-air.dylib three hours older than the driver beside
 			# it while rwa_render_shape had grown IN THE MIDDLE -- the image was the mismatch the
 			# contract warns about, and nothing in it said so. Silence is what made it expensive:
 			# the library is stripped, so the driver found the symbols it wanted and read a stride
 			# where a pixel format was.
-			[ "$(cat $M/built-from-air 2>/dev/null)" = "$(cat ../tools/mesa/air/* | sha256sum)" ] || {
-				echo "build.sh: tools/mesa/air/ has changed since libhakios-air.dylib was built"
-				AIR=1 ../tools/mk-mesa.sh
+			[ "$(cat $M/built-from-air 2>/dev/null)" = "$(cat ../../components/metal/tools/mesa/air/* | sha256sum)" ] || {
+				echo "build.sh: ../../components/metal/tools/mesa/air/ has changed since libhakios-air.dylib was built"
+				AIR=1 ../../components/metal/tools/mk-mesa.sh
 			}
 			./mkeagl.py src/eagl_slots.txt $M/gl.xml $M/exported-gl.txt src/eagl.c > obj/eagl_gen.h
 			$DYN -dynamiclib -install_name /hakios/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
@@ -387,14 +387,14 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			$DYN $M/libOSMesa.8.dylib -o obj/u2f_test src/u2f_test.c
 			cp $M/libOSMesa.8.dylib obj/
 			# air_run draws with a Metal shader translated by the AIR frontend
-			# and reads the pixels back (docs/air.md). It is built inside the
+			# and reads the pixels back (../../components/metal/docs/air.md). It is built inside the
 			# Mesa build, because it needs Gallium itself and not the gl*
-			# entry points this library exports; AIR=1 tools/mk-mesa.sh makes
+			# entry points this library exports; AIR=1 ../../components/metal/tools/mk-mesa.sh makes
 			# it, and it is copied in when it is there.
 			[ -f $M/air_run ] && cp $M/air_run obj/air_run
 			# The compiler the Metal driver asks for: AIR in, a dispatch on the
-			# Adreno out (tools/mesa/air/air_metal.h). It is copied whether or not
-			# GL is wanted, because src/metal_driver.m dlopens it by that path --
+			# Adreno out (../../components/metal/tools/mesa/air/air_metal.h). It is copied whether or not
+			# GL is wanted, because ../../components/metal/src/metal_driver.m dlopens it by that path --
 			# and its absence is a sentence the driver prints, not a crash.
 			[ -f $M/libhakios-air.dylib ] && cp $M/libhakios-air.dylib obj/
 		fi
@@ -495,19 +495,19 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 	[ -f obj/libhakios-metal.dylib ] && cp obj/libhakios-metal.dylib root/lib/
 	[ -f obj/libhakios-air.dylib ] && cp obj/libhakios-air.dylib root/lib/
 	# Darwin 26: the Metal driver's compiler and its test program from Mesa 26
-	# (tools/mk-mesa26.sh), which replace the Mesa 25 ones above when they have been built
+	# (../../components/metal/tools/mk-mesa26.sh), which replace the Mesa 25 ones above when they have been built
 	M26=../xnu-deps/build/mesa26/out
 	if [ -f $M26/libhakios-air.dylib ]; then
-		[ "$(cat $M26/built-from-air 2>/dev/null)" = "$(cat ../tools/mesa/air/* | shasum -a 256)" ] ||
-			echo "build.sh: WARNING: tools/mesa/air/ changed since $M26/libhakios-air.dylib was built (tools/mk-mesa26.sh)"
+		[ "$(cat $M26/built-from-air 2>/dev/null)" = "$(cat ../../components/metal/tools/mesa/air/* | shasum -a 256)" ] ||
+			echo "build.sh: WARNING: ../../components/metal/tools/mesa/air/ changed since $M26/libhakios-air.dylib was built (../../components/metal/tools/mk-mesa26.sh)"
 		cp $M26/libhakios-air.dylib root/lib/
 		mkdir -p root/bin
 		cp $M26/air_run root/bin/
 		# tools/air/glasscase: tools/air/glassref's draws again on the phone's GPU (rc.launchd26.glasscase)
-		$DYN -I../tools/mesa/air -o obj/glasscase ../tools/air/glasscase.c -L$M26 -lhakios-air &&
+		$DYN -I../../components/metal/tools/mesa/air -o obj/glasscase ../../components/metal/tools/air/glasscase.c -L$M26 -lhakios-air &&
 			cp obj/glasscase root/bin/
 	fi
-	# the pipelines a metal_bisect run skips one after another (src/metal_driver.m), when there is a list
+	# the pipelines a metal_bisect run skips one after another (../../components/metal/src/metal_driver.m), when there is a list
 	if [ -f bisect.txt ]; then cp bisect.txt root/bisect.txt; else rm -f root/bisect.txt; fi
 	if [ -f "${TAPS:-taps.txt}" ]; then cp "${TAPS:-taps.txt}" root/taps.txt; else rm -f root/taps.txt; fi     # boot-arg taps=1 (inject26.c); TAPS= another script
 	if [ -f obj/HakiosAudio ]; then
@@ -525,7 +525,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 	if [ -f obj/HakiosMetal ]; then
 		mkdir -p root/lib/HakiosMetal.bundle
 		cp obj/HakiosMetal root/lib/HakiosMetal.bundle/
-		cp src/metal_plugin.plist root/lib/HakiosMetal.bundle/Info.plist
+		cp ../../components/metal/src/metal_plugin.plist root/lib/HakiosMetal.bundle/Info.plist
 	fi
 	if [ -n "$GL" ]; then
 		cp obj/libOSMesa.8.dylib root/lib/

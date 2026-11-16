@@ -4,9 +4,9 @@
 #
 # The list is every kernel of the corpus that binds nothing but buffers -- the driver has no
 # textures yet, and the compiler library refuses a shader that wants one by name rather than
-# binding nothing -- MINUS the ones tools/air/kstruct.py measured as unable to terminate on a
+# binding nothing -- MINUS the ones ../components/metal/tools/air/kstruct.py measured as unable to terminate on a
 # harness's input: a loop that leaves only on a value the buffers do not contain does not
-# leave, and docs/air.md section 5 is about what one hung dispatch does to everything after it
+# leave, and ../components/metal/docs/air.md section 5 is about what one hung dispatch does to everything after it
 # (gpuWait latches, every later wait returns false at once, and the next boot panics).
 #
 # So: 16 kernels bind only buffers, 7 of those cannot end, 9 are here. Each runs in its own

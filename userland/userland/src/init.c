@@ -1360,7 +1360,7 @@ run_rc(const char *path)
 {
 	/*
 	 * 64 KB and not 8 KB: a generated job list is one line per case, and
-	 * tools/air/intrincheck.py --emit writes 226 of them, 21 KB. At 8 KB this read the
+	 * ../components/metal/tools/air/intrincheck.py --emit writes 226 of them, 21 KB. At 8 KB this read the
 	 * first 94 lines and the rest was not there -- no error, no short line, simply jobs
 	 * that did not run, which looks exactly like a test that found nothing.
 	 */

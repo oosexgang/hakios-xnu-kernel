@@ -37,7 +37,7 @@ cleared (`--bisect` found it, one boot). The fake writes a timestamp for that bi
 
 Apple's shaders, so far: the probe reads a `.metallib` off the phone's own filesystem, compiles a function of it on the
 device and runs it over canary-filled buffers (`--metallib FILE FUNCTION`), printing per buffer the words written, a
-hash of the whole buffer and the first eight words. The reference is kernelref.py in hakios-xnu-kernel's tools/air: the same kernel
+hash of the whole buffer and the first eight words. The reference is kernelref.py in hakios-xnu-kernel's components/metal/tools/air: the same kernel
 run on a Linux host through LLVM over the same buffers, printing the same line, so the two logs diff. On 28 October
 (hakios `logs/215528-run.log`) eight buffer-only kernels of PortraitFilters compiled on the phone and completed, and all
 eight came out identical to LLVM's execution, hash included (`MetalFaceMask_InitMinMax`, `MetalFaceMask_InitSpanTable`,

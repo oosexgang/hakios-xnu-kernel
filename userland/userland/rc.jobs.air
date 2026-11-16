@@ -2,7 +2,7 @@
 #
 # The first draw on this GPU by a shader Apple compiled for Metal (RC_JOBS=rc.jobs.air).
 # /hakios/bin/air_run translates one function of a .metallib with the AIR frontend
-# (docs/air.md), hands the NIR to Gallium as PIPE_SHADER_IR_NIR, draws one quad and prints
+# (../components/metal/docs/air.md), hands the NIR to Gallium as PIPE_SHADER_IR_NIR, draws one quad and prints
 # the pixel it reads back. With the Adreno present it opens the msm device and ir3 compiles
 # the shader; without one it falls back to softpipe and says so in its first line, so the
 # line "air_run: <name> on FD643" (or similar) is what tells the two apart -- read it before

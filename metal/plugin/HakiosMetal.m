@@ -12,7 +12,7 @@
  * pipeline and state objects that hold nothing). It cannot run anything on the GPU yet, and says so: a message it does not know
  * is logged ("HakiosMetal: asked and not implemented: -...") and answers nil/0/NO instead of crashing, so that the question
  * "what does Darwin ask a device first, and in what order?" can be read off the log rather than guessed. The compiler for the shaders is a separate piece and is largely done
- * (docs/air.md: Apple's shader bitcode into Mesa's NIR); the command queue and the kernel side are not started (docs/metal-plan.md).
+ * (components/metal/docs/air.md: Apple's shader bitcode into Mesa's NIR); the command queue and the kernel side are not started (docs/metal-plan.md).
  *
  * _MTLDevice is not in the SDK's Metal.tbd (it lives in the system's own copy of the framework), so the class is made at run
  * time, in the constructor that runs when the bundle is loaded, by objc_allocateClassPair on the _MTLDevice that is there.
@@ -310,7 +310,7 @@ stubFactory(__unused id self, SEL _cmd)
  *   libraries   -newLibraryWithData:error:, -newLibraryWithURL:error:, -newLibraryWithFile:error:, -newDefaultLibrary...:
  *               the .metallib read (hakios_metallib.c, every offset checked), its functions listed by name and type, and
  *               -newFunctionWithName: giving a function that knows its name, its type and its module (the AIR bitcode the
- *               shader compiler of docs/air.md takes). Nothing is compiled yet: a pipeline made of such a function is still
+ *               shader compiler of components/metal/docs/air.md takes). Nothing is compiled yet: a pipeline made of such a function is still
  *               the empty stub above, and the log says so.
  *
  * Each is a class of ours made at load time, as the others are (a subclass of Metal's private _MTLResource, _MTLLibrary and
@@ -729,7 +729,7 @@ functionNoConstants(__unused id self, __unused SEL _cmd)
 	return [NSDictionary dictionary];
 }
 
-/* not Metal's: the function's AIR module, for the shader compiler (docs/air.md) */
+/* not Metal's: the function's AIR module, for the shader compiler (components/metal/docs/air.md) */
 static id
 functionBitcode(id self, __unused SEL _cmd)
 {
@@ -1503,7 +1503,7 @@ registerQueueClass(void)
 /*
  * Whether this process may be shown the device, by the level of boot-arg metal (read from sysctl kern.bootargs):
  *
- *   metal=1  only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
+ *   metal=1  only the program metal_test (components/metal/src/metal_test.m): the safe level, for seeing what Metal does with the device
  *   metal=2  every process but backboardd
  *   metal=3  every process, backboardd too, to find out what the window server asks
  *

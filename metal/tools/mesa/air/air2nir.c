@@ -9,7 +9,7 @@
  *   air2nir FILE [FUNCTION]          translate and print the NIR
  *   air2nir --ll FILE [FUNCTION]     print what the bitcode reader read, as LLVM assembly
  *   air2nir --list FILE.metallib     the functions of a container
- *   air2nir --report FILE...         one line per module, for tools/air/corpus.py
+ *   air2nir --report FILE...         one line per module, for components/metal/tools/air/corpus.py
  *   air2nir --interface FILE [FUNC]  what the shader expects of the runtime
  *                                    (air_shader_info), key=value per line
  *
@@ -134,7 +134,7 @@ static unsigned num_stitch_fns = 0;
  * buffer loads are replaced by the bytes actually in the buffers. No
  * interpreter is needed: NIR's own constant folding is the interpreter, and
  * what comes out can be compared against LLVM's answer for the same bytes
- * (tools/air/cpuref.py). This is the check docs/air.md section 4 calls the
+ * (components/metal/tools/air/cpuref.py). This is the check components/metal/docs/air.md section 4 calls the
  * strongest one, and it needs no GPU.
  */
 
@@ -473,7 +473,7 @@ one_line(const char *s, FILE *fp)
 /* --interface: what air_shader_info says the shader expects of the runtime,
  * which nir_print_shader cannot show because it is not in the NIR. Its own
  * mode rather than a line added to the others: the report's lines are parsed
- * by tools/air/corpus.py and the translated NIR by tools/air/fbfetchcheck.py,
+ * by components/metal/tools/air/corpus.py and the translated NIR by components/metal/tools/air/fbfetchcheck.py,
  * and a field added to either would move numbers that are a baseline.
  *
  * One `key=value` per line, tab-separated, so a check can read it.
@@ -527,7 +527,7 @@ interface_module(const struct module_ref *mod)
       /* set and id are the Metal name of an argument-buffer member, which is
        * the one case where index is this frontend's number and not Metal's --
        * so a check can see both halves of the mapping and not just the one it
-       * would have guessed (tools/air/argbufcheck.py)
+       * would have guessed (components/metal/tools/air/argbufcheck.py)
        *
        * write and ir_write are two readings of one fact and are printed apart
        * for the same reason: write is what Metal declares the shader may do to
@@ -551,7 +551,7 @@ interface_module(const struct module_ref *mod)
    return 0;
 }
 
-/* tools/air/corpus.py reads these lines: tab-separated key=value */
+/* components/metal/tools/air/corpus.py reads these lines: tab-separated key=value */
 static void
 report_one(const struct module_ref *mod)
 {

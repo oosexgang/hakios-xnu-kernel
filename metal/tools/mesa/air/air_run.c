@@ -172,7 +172,7 @@ static unsigned num_linked_fns;
  *
  * For the 14 kernels whose loops leave on a count or a sentinel read out of a
  * buffer, the pattern is not an input at all -- the loop never ends and the GPU
- * runs forever (docs/air.md section 5, tools/air/kstruct.py). Zeros are a
+ * runs forever (components/metal/docs/air.md section 5, components/metal/tools/air/kstruct.py). Zeros are a
  * degenerate input but a *defined* one: a count of zero means the loop runs no
  * times, so the kernel reaches its end and the hardware answers. What that
  * proves is that the translated shader runs on the Adreno without hanging; it
@@ -237,7 +237,7 @@ pattern_byte(unsigned i)
  * It exists because the kernels that never finish do not need a whole buffer
  * chosen for them: they need a span table in one slot and a row index in
  * another, and the value their exit test compares against is a field or two
- * (tools/air/kinput.py works out which, and prints these arguments). A file is
+ * (components/metal/tools/air/kinput.py works out which, and prints these arguments). A file is
  * one fill for every buffer, so it cannot say "this slot and not that one".
  * Offsets are decimal so that a job line stays readable; init.c splits a line
  * on blanks and knows no variables, so each kernel has to be one line.
@@ -594,7 +594,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
  * evidence that it ran and no evidence about atomicity: a sum written by
  * threads that never raced looks exactly like a sum written by threads that
  * did. The kernel that can tell them apart is written for the purpose rather
- * than Apple's -- tools/air/atomiccheck.py, which makes each thread report the
+ * than Apple's -- components/metal/tools/air/atomiccheck.py, which makes each thread report the
  * value its own fetch_add returned, so the sixteen of them must be 0..15 with
  * nothing repeated whatever order the threads ran in. Even that is only
  * evidence of atomicity where the threads really do run at once, which here
@@ -609,7 +609,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
  * 128x1x1 reduction. Under 4x4x1 four threads have tid == 0 -- Metal's scalar
  * thread_position_in_threadgroup is the x component, not the flattened index -- so four of
  * them run the whole reduction over the four entries this shape writes, and the word they
- * add up is a property of the dispatch rather than of the kernel (docs/air.md section 5).
+ * add up is a property of the dispatch rather than of the kernel (components/metal/docs/air.md section 5).
  */
 static unsigned block[3] = { GRID, GRID, 1 };
 
@@ -738,7 +738,7 @@ texture_shapes(nir_shader *cs, enum pipe_format fmt[MAX_IMG], bool isf[MAX_IMG],
  * the buffer it had filled itself as though the GPU had answered: a page of
  * numbers that were a statement about the harness and not about the shader.
  * 21 of the 47 kernels of one run were vacuous that way before anyone noticed
- * (docs/air.md section 5).
+ * (components/metal/docs/air.md section 5).
  *
  * The hang itself turned out to be this harness too: the kernels that did it
  * loop until a buffer value they were never given, and the fill is a byte
@@ -765,7 +765,7 @@ finish_or_say_why(struct pipe_screen *screen, struct pipe_context *pipe, const c
              "this harness: a kernel whose buffers carry counts, indices or sentinels is being "
              "given (i * 7 + 13) & 0xff, and a loop that leaves on a value it was never given "
              "does not leave at all -- both kernels measured this way turned out to be exactly "
-             "that (docs/air.md section 5). And one timeout wedges this GPU for the rest of the "
+             "that (components/metal/docs/air.md section 5). And one timeout wedges this GPU for the rest of the "
              "boot, so every later run in it is vacuous too.\n", what);
    return done;
 }
@@ -783,7 +783,7 @@ print_own_sampler(unsigned slot, const struct air_sampler_state *a, bool compare
    static const char *const filt[] = { "nearest", "linear", "bicubic" };
    static const char *const mip[] = { "none", "nearest", "linear" };
    /* Metal's compare_func, in its own order: `none` at 0 and `never` at 8, which is
-    * the value Apple's default carries (docs/air.md 3.3).
+    * the value Apple's default carries (components/metal/docs/air.md 3.3).
     */
    static const char *const cmp[] = { "none", "less", "less_equal", "greater",
                                       "greater_equal", "equal", "not_equal", "always",
@@ -970,7 +970,7 @@ packed16_by_name(const char *want, const char **name)
  * distinct values over a 4x4 texture, every one exactly representable in binary32 and
  * every one a different answer -- so a comparison that read the wrong texel answers
  * differently, and a reference landing between two of them is exact on both sides.
- * tools/air/sampcheck.py computes its expectations from this same expression.
+ * components/metal/tools/air/sampcheck.py computes its expectations from this same expression.
  */
 static float
 depth_texel_value(unsigned x, unsigned y)
@@ -1180,7 +1180,7 @@ dispatch_kernel(struct pipe_screen *screen, const struct air_shader_info *info,
                 nir_shader *cs, const char *name, const char *how)
 {
    /* Metal's threadgroup size is a dispatch argument, not a shader constant,
-    * so the frontend leaves it variable (docs/air.md section 7.4) and whoever
+    * so the frontend leaves it variable (components/metal/docs/air.md section 7.4) and whoever
     * dispatches has to fix it. air_run is that whoever. It is not optional:
     * softpipe reads the block size from TGSI_PROPERTY_CS_FIXED_BLOCK_*, and
     * with a variable size those are zero, so it runs ZERO threads and the
@@ -1210,7 +1210,7 @@ dispatch_kernel(struct pipe_screen *screen, const struct air_shader_info *info,
     * a patched word looked changed by the kernel. Keeping the fill is also the
     * only way to say which words a kernel touched when it touches them past
     * the sixteen the dump prints -- and that is exactly what a prediction out
-    * of tools/air/kinput.py has to be compared against.
+    * of components/metal/tools/air/kinput.py has to be compared against.
     */
    uint8_t *before[32] = { 0 };
    unsigned sizes[32] = { 0 };
@@ -1478,7 +1478,7 @@ dispatch_kernel(struct pipe_screen *screen, const struct air_shader_info *info,
    printf("air_run: dispatching %ux%ux%u threads in one workgroup; %u device buffer%s bound, "
           "%u of them written, filled with %s\n",
           block[0], block[1], block[2], num_ssbo, num_ssbo == 1 ? "" : "s", num_written,
-          zero_fill ? "ZEROS (--zero: a degenerate input, see docs/air.md section 5)"
+          zero_fill ? "ZEROS (--zero: a degenerate input, see components/metal/docs/air.md section 5)"
                     : ones_fill ? "0xff BYTES (--ones: a degenerate input)"
                     : library_fill ? "the floats ((w * 13) % 29 - 14) / 4"
                                    : "(i * 7 + 13) & 0xff");
@@ -1544,7 +1544,7 @@ dispatch_kernel(struct pipe_screen *screen, const struct air_shader_info *info,
          printf("air_run: device buffer %u came back bit-identical to the fill, so this "
                 "dispatch wrote nothing visible. Either the shader writes elsewhere, or "
                 "the GPU has stopped making writes visible -- which it does after a few "
-                "dozen dispatches in one boot (docs/air.md section 4).\n", i);
+                "dozen dispatches in one boot (components/metal/docs/air.md section 4).\n", i);
       pipe_buffer_unmap(pipe, xfer);
    }
 
@@ -1992,7 +1992,7 @@ main(int argc, char **argv)
       if (base != GLSL_TYPE_FLOAT && base != GLSL_TYPE_FLOAT16 &&
           base != GLSL_TYPE_DOUBLE) {
          /* unsigned, not signed: an LLVM integer carries no signedness, so
-          * both this and tools/air/cpuref.py print the bits unsigned and the
+          * both this and components/metal/tools/air/cpuref.py print the bits unsigned and the
           * two can be compared
           */
          rt_format = PIPE_FORMAT_R32G32B32A32_UINT;
@@ -2005,7 +2005,7 @@ main(int argc, char **argv)
           * so the shader computed f32(x) while the reference computed f16(x)
           * and the comparison meant nothing. Ten declarations of the corpus
           * return half and every one of them was being reported as agreeing on
-          * the strength of a case that was never compared (docs/air.md,
+          * the strength of a case that was never compared (components/metal/docs/air.md,
           * section 4 item 4).
           *
           * The chain is still u32 -> f32 -> f16 rather than a single
@@ -2014,12 +2014,12 @@ main(int argc, char **argv)
           * double rounding. None of the pool's values does, but a future one
           * might, and that is a property of the harness and not of the GPU.
           */
-         /* As of now nothing reaches this branch: tools/air/intrincheck.py packs
+         /* As of now nothing reaches this branch: components/metal/tools/air/intrincheck.py packs
           * every float-ish result into a float4, so no generated shader declares
           * a half output. It is here because the target was one of the two things
           * missing and is the half that belongs on this side; the other half needs
           * a half render target in the generator, whose air.arg_type_name the
-          * corpus does not attest (docs/air.md, section 4 item 4).
+          * corpus does not attest (components/metal/docs/air.md, section 4 item 4).
           */
          rt_format = PIPE_FORMAT_R16G16B16A16_FLOAT;
          rt_is_float = true;
@@ -2237,7 +2237,7 @@ main(int argc, char **argv)
     *
     * A `constant` buffer and a `device` buffer are TWO BINDINGS and not one.
     * The frontend translates a load from the first into load_ubo and from the
-    * second into load_ssbo (docs/air.md section 3), and this path used to bind
+    * second into load_ssbo (components/metal/docs/air.md section 3), and this path used to bind
     * both with set_constant_buffer -- so a draw whose shader reads a device
     * buffer read ZEROS, and read them silently: the pixel came back, four
     * numbers wide, with nothing anywhere saying a binding had been missed. The
@@ -2317,7 +2317,7 @@ main(int argc, char **argv)
        * -- 101 where a comparison must answer 0 or 1, and for `always` and `never`
        * too, which no compare function and no clamp can explain -- against
        * r32g32b32a32_float bound for a Metal depth2d<float>, which is the one thing
-       * in that run that was this harness's own doing (docs/air.md 3.3).
+       * in that run that was this harness's own doing (components/metal/docs/air.md 3.3).
        *
        * So a slot a shadow instruction reads gets a real depth texture, and its
        * texels are the only pattern that fits: (x + TEX*y) / 16, which is sixteen

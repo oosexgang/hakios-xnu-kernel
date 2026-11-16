@@ -18,12 +18,12 @@
 #
 # air_run fills a buffer nobody named with (i * 7 + 13) & 0xff. A kernel whose buffers carry
 # counts, indices or sentinels, given that, loops on a condition that never comes
-# (docs/air.md section 5). That is a property of the input, not of the translated shader, so
+# (../components/metal/docs/air.md section 5). That is a property of the input, not of the translated shader, so
 # these two lines go on hanging whatever the compiler does -- unlike MetalFaceMask_PropagateParents
 # (logs/062627) and ConnectSpans-with---zero (section 5), whose hangs were ir3 bugs and are fixed:
 #
 #   fbs_bistochastize_iter          hung at the fourth dispatch of a fresh boot on this fill
-#                                   (docs/air.md section 5); its loop counts from one buffer
+#                                   (../components/metal/docs/air.md section 5); its loop counts from one buffer
 #                                   value to another, and the pattern makes that count enormous.
 #                                   With --zero it finishes every time, three boots out of three.
 #   MetalFaceMask_ConnectSpans      leaves its loop on -1 in a ushort; the pattern never puts

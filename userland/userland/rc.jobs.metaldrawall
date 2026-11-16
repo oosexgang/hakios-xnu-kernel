@@ -2,8 +2,8 @@
 #
 # Every fragment shader of AppleMetalGLRenderer's library, drawn through the Metal driver,
 # one line each. One shader drawn is an example; air_run has drawn all of them on softpipe and
-# compared the pixel (255 of 274 agreed with LLVM and were drawn, docs/air.md), so drawing them
-# all here turns the example into coverage -- and tools/air/metalcheck.py produces each
+# compared the pixel (255 of 274 agreed with LLVM and were drawn, ../components/metal/docs/air.md), so drawing them
+# all here turns the example into coverage -- and ../components/metal/tools/air/metalcheck.py produces each
 # reference itself rather than trusting a number written into the test.
 #
 # One process for the whole library on purpose: the loader keeps the first 256 KB and the last

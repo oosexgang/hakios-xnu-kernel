@@ -16,7 +16,7 @@ The variant is assembled once: ir3_shader_assemble frees the constant data it
 appends to the binary, so dump_info now takes the binary rather than calling it.
 
 Applies after air-frontend.patch, air-ir3.patch and ir3-round-default.patch
-(tools/air/mk-host.sh's order) on mesa-25.0.7, with the AIR frontend copied in.
+(components/metal/tools/air/mk-host.sh's order) on mesa-25.0.7, with the AIR frontend copied in.
 
 -o also writes the Kernel's texture fields (textures[], numTextureSlots,
 samplerMask) from a walk of the NIR before ir3 lowers it: which Metal texture

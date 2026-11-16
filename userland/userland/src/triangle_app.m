@@ -18,7 +18,7 @@
  *
  * WHAT IT DRAWS, and why exactly this. The pipeline is Apple's own clearFragment01 out of
  * AppleMetalGLRenderer's library with NO vertex function, which is the compiler library's
- * cue to supply its full-screen quad stage (tools/mesa/air/air_metal.h). That stage's quad
+ * cue to supply its full-screen quad stage (../components/metal/tools/mesa/air/air_metal.h). That stage's quad
  * has four corners in a fixed order -- (-1,-1), (1,-1), (-1,1), (1,1) -- so a draw of THREE
  * vertices of it is a triangle over the first three, and clearFragment01 fills it with the
  * float4 in the constant buffer at index 14. Both halves of that are already measured on
@@ -83,7 +83,7 @@
  *   discovery OFF   MTLCreateSystemDefaultDevice() answers nil, and this program walks
  *                   discovery's steps 3, 4 and 5 itself out of /hakios/lib/HakiosMetal.bundle
  *                   -- the bundle, the class, -initWithAcceleratorPort:, MTLAddDevice --
- *                   exactly as src/metal_drv_test.m does. Worth keeping, because then the only
+ *                   exactly as ../../components/metal/src/metal_drv_test.m does. Worth keeping, because then the only
  *                   Metal device in the system is the one made here, which makes every frame
  *                   below attributable without an argument.
  */
@@ -109,7 +109,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 
 /*
  * MTLAddDevice is not exported, so it is reached by its distance from one that is -- the
- * same two numbers src/metal_drv_test.m uses, from the same cache
+ * same two numbers ../../components/metal/src/metal_drv_test.m uses, from the same cache
  * (darwin165/20F66__iPhone10,3_6/dyld_shared_cache_arm64).
  */
 #define MTL_CREATE_DEVICE_UNSLID 0x181a34b3cUL
@@ -204,7 +204,7 @@ rwt_say(const char *format, ...)
  * between the device and the present can stall rather than fail -- a pipeline compile, a
  * dispatch the GPU never finishes, a present waiting on a transaction -- and a stall is
  * only readable if the log says which call was entered. The picture mode of
- * src/metal_drv_test.m cost one boot to learn that.
+ * ../../components/metal/src/metal_drv_test.m cost one boot to learn that.
  */
 static void
 rwt_step(const char *what)
@@ -221,7 +221,7 @@ rwt_step(const char *what)
  * Nothing branches on this -- the branch below is on the device Metal actually hands back,
  * which is the stronger test -- but it belongs in the log, because it is the one line that
  * says WHICH of the two roads this run was going to take and why. It is the same pair of
- * properties src/metal_props.c sets and the same way of reading them, so a disagreement
+ * properties ../../components/metal/src/metal_props.c sets and the same way of reading them, so a disagreement
  * between the two programs is visible.
  */
 static void

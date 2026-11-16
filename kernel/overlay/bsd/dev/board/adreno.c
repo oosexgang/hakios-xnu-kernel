@@ -3137,7 +3137,7 @@ static unsigned gpu_free_count;
  * default is msm's refusal; with the arg they are answered as what they are here, which is
  * the range the kernel allocates out of -- a number to size a heap or maxBufferLength against,
  * not a licence to place anything. Nothing in Mesa is affected either way: freedreno asks
- * VA_SIZE only at drm version 9 and up (FD_VERSION_VA_SIZE), and tools/mesa/darwin-drm says 1.7.
+ * VA_SIZE only at drm version 9 and up (FD_VERSION_VA_SIZE), and components/metal/tools/mesa/darwin-drm says 1.7.
  */
 uint32_t gpu_va;                        /* boot-arg gpu_va: 0 as before, 1 describe, 2 also guard */
 #define GPU_ADDRESS_GRANULE     0x10000ull      /* what one allocation is rounded up to */

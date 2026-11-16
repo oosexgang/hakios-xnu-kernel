@@ -3,15 +3,15 @@
 # WHAT THIS BOOT IS FOR: MTLArgumentEncoder, and the buffer OFFSET that goes with it.
 #
 # The frontend's half of argument buffers landed first and took Resident Evil 4 from 258
-# translated shader libraries to 2 990 (docs/air.md 8.2.1). Those shaders still could not
+# translated shader libraries to 2 990 (../components/metal/docs/air.md 8.2.1). Those shaders still could not
 # be USED, because an application binds their resources through an MTLArgumentEncoder and
 # this driver answered none of its sixteen selectors. It answers them now, as a RECORDER
 # rather than a writer -- the frontend resolved every member of every set to a binding
 # while translating, and Metal's 8-byte handles are an Apple GPU's descriptors, which a
-# Gallium driver cannot read -- and docs/air.md 8.2.2 is the whole of why.
+# Gallium driver cannot read -- and ../components/metal/docs/air.md 8.2.2 is the whole of why.
 #
 # Everything here has run on this machine already, on softpipe, through the same contract
-# (tools/air/argbufruncheck.sh: 20 checks, every one passing). What the phone adds is what
+# (../components/metal/tools/air/argbufruncheck.sh: 20 checks, every one passing). What the phone adds is what
 # softpipe cannot say: whether Metal's own classes hand the driver what it needs, and
 # whether the Adreno fetches a uniform block from an offset.
 #
@@ -52,7 +52,7 @@
 #     sampler member. encodedLength must be 24 and alignment 8 -- eight bytes per member,
 #     which is what Apple's own metadata says a set is: over Resident Evil 4's 7 858 sets,
 #     7 856 declare `air.arg_type_size` equal to 8 x members and all 7 858 declare
-#     `air.arg_type_align_size` 8 (tools/air/argbuflen.py). The two that do not are both
+#     `air.arg_type_align_size` 8 (../components/metal/tools/air/argbuflen.py). The two that do not are both
 #     in the one kernel that builds indirect command buffers, which this frontend refuses
 #     before an encoder could be made for it.
 #
@@ -132,7 +132,7 @@
 #     a shader that declares one, and this port has no container writer: Apple's libraries
 #     have none (0 of 456) and the game's are not something a job list can reach. The
 #     draw-through-the-encoder differential is the host's, on softpipe
-#     (tools/air/argbufruncheck.sh), where the same picture comes out of an encoder as out
+#     (../components/metal/tools/air/argbufruncheck.sh), where the same picture comes out of an encoder as out
 #     of direct arguments and every deliberately wrong record prints its own named
 #     picture. What the device adds is (a), (b) and (c).
 #   - NOTHING IS TIMED. What a recorded binding costs against a direct one is unmeasured;

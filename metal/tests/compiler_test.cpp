@@ -1474,7 +1474,7 @@ TEST(a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them) {
 // or written into the writable directory -- the window server's first minute without its 66 to 103 compiles
 // A stage that calls a visible function it only declares (linked_fs: `custom_fn.MTL_VISIBLE_FN_REF`, as RenderBox's
 // custom effects do) compiles with the function linked by its name, and is refused without it -- by that name, or
-// with only a function of another name linked. (userland/tools/air/linked_fs.ll runs it on softpipe with air_run.)
+// with only a function of another name linked. (components/metal/tools/air/linked_fs.ll runs it on softpipe with air_run.)
 TEST(a_stage_that_calls_a_function_it_only_declares_compiles_with_it_linked) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: nothing linked)\n");

@@ -74,7 +74,7 @@
  * the caller once (then on powers of two, with the count) and returns zeros, which is what Metal's own nil-stubs
  * return; a selector no protocol declares prints the same line and then raises, which is what Metal's own abstract
  * methods do. Nil-stubs INHERITED from Metal's base classes stay silent -- the runtime cannot tell them from a real
- * method, and only reading the cache can (the private tree's tools/metal/absmeth.py did) -- which is why the ones
+ * method, and only reading the cache can (the private tree's components/metal/tools/metal/absmeth.py did) -- which is why the ones
  * known to matter are overridden by name here.
  *
  * Every line carries the process it was written by: a driver is a library, several Metal clients may be alive in one
@@ -468,7 +468,7 @@ hm_now(void)
 /* The render pipeline state's base (what AGXA11FamilyRenderPipeline sends to super). It answers <MTLRenderPipelineState>
  * itself: -label and -device are ivars its initialiser fills, -gpuResourceID is -gpuHandle is the resourceIndex ivar,
  * and allocatedSize, imageblockSampleLength, imageblockMemoryLengthForDimensions:, maxTotalThreadsPerThreadgroup and
- * uniqueIdentifier are nil-stubs (tools/metal/absmeth.py over the class: 65 selectors, 5 nil-stubs, 21 ivars). The
+ * uniqueIdentifier are nil-stubs (components/metal/tools/metal/absmeth.py over the class: 65 selectors, 5 nil-stubs, 21 ivars). The
  * initialiser asserts a non-nil _MTLDevice and a non-nil MTLRenderPipelineDescriptor (see the header) and reads six
  * properties none of which is a function or an attachment, so what is handed to it has been checked here first. */
 @interface _MTLRenderPipelineState : NSObject
@@ -2598,7 +2598,7 @@ hm_boot_arg_set(const char *what)
  * iOS 26 and 27 ask this where 16.5 asked -targetDeviceInfo: +[MTLLoader sliceIDForDevice:legacyDriverVersion:
  * airntDriverVersion:] sends -targetDeviceArchitecture and asserts "Target device architecture is nil" on a nil -- the
  * first thing backboardd's CoreAnimation did with a device of ours on iOS 26, 117 ms into its life (measured with the
- * first generation's plug-in, userland/userland/src/metal_driver.m, whose answer this is). The answer is Metal's own
+ * first generation's plug-in, components/metal/src/metal_driver.m, whose answer this is). The answer is Metal's own
  * MTLTargetDeviceArchitecture, of which the loader reads the cpu type and subtype (the slice of a binary archive to
  * take) and the driver version: a cpu type of 0 is no Apple GPU's, so every precompiled slice misses and each pipeline
  * is compiled from its AIR, which is what this driver does anyway.

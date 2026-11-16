@@ -92,7 +92,7 @@ EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
 KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',
               'System/Library/Frameworks/QuartzCore.framework/default.metallib')
 LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
-# METAL=1: what the Metal driver (userland/src/metal_driver.m) needs that the rules above leave out. SpringBoard
+# METAL=1: what the Metal driver (components/metal/src/metal_driver.m) needs that the rules above leave out. SpringBoard
 # makes an MPSImageGaussianBlur (Siri's orb) as soon as Metal has a device, and MetalPerformanceShaders asserts
 # without its kernels' libraries ("metallib not found: default.metallib for identifier
 # com.apple.MetalPerformanceShaders.MPSImage", Darwin 27 under QEMU). 56 MB before compression, with RenderBox's.

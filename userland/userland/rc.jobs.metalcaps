@@ -131,7 +131,7 @@
 #         that it can be measured without the game. Resident Evil 4 asks the device almost
 #         nothing itself: of the 1 238 selectors its metal-cpp table registers, only
 #         -hasUnifiedMemory and -currentAllocatedSize have a send site anywhere in its 200 MB of
-#         code (tools/metal/appsends.py). Its one real capability question goes through MetalFX,
+#         code (../components/metal/tools/metal/appsends.py). Its one real capability question goes through MetalFX,
 #         which it links and drives as a TEMPORAL upscaler (setJitterOffsetX:, setMotionTexture:,
 #         setExposureTexture: are all in its __objc_selrefs), and it sends
 #         +[MTLFXTemporalScalerDescriptor supportsDevice:]. That method (0x20b2f06b8) asks

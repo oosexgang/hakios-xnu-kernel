@@ -3,7 +3,7 @@
  * OpenGL ES and nothing of ours.
  *
  * The AIR work found that the Adreno gives 4294967040 for (float)0xFFFFFFFF where C gives
- * 4294967296 -- the low eight bits dropped instead of rounded (docs/air.md). Three things could
+ * 4294967296 -- the low eight bits dropped instead of rounded (../components/metal/docs/air.md). Three things could
  * do that: the a6xx instruction itself, ir3's lowering of it, or our own AIR frontend asking for
  * the wrong thing. This program takes the third out of the question by not involving it: the
  * conversion is written in GLSL ES, compiled by the same Mesa and the same ir3 that the window

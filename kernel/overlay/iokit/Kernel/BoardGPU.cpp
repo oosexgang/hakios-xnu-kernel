@@ -5,7 +5,7 @@
  * starts this service. A program that opens it speaks the interface of Linux's msm DRM driver,
  * the one Mesa's freedreno knows: every request of that interface is a call of the user client
  * with the request's number as the selector and the request's structure passed in and back
- * (userland: tools/mesa/darwin-drm, which stands in for libdrm inside Mesa). What Linux does
+ * (userland: components/metal/tools/mesa/darwin-drm, which stands in for libdrm inside Mesa). What Linux does
  * with mmap() on the device is the client memory of the type that is the buffer's handle.
  *
  * What there is of the interface is what freedreno uses to draw: parameters, buffers (made,
@@ -186,7 +186,7 @@ struct hakios_show {
 /*
  * kHakiosGPUWorked: the GPU's own side of a measurement a program makes with its own clock.
  *
- * A program timing this driver (userland/src/metal_drv_test.m --time) can measure only wall
+ * A program timing this driver (components/metal/src/metal_drv_test.m --time) can measure only wall
  * time: the whole of a draw, which is its own work, this ioctl, the submission, the core's
  * execution and the wait. Nothing it can reach says how much of that was the core -- and the
  * kernel has known all along, because bsd/dev/board/adreno.c times every submission off
@@ -1212,7 +1212,7 @@ HakiosGPUUserClient::clientSurfaceBuffer(MiniIOSurface * s, struct hakios_surfac
  * Pages of the client's own as a buffer, as Linux's userptr: wired for as long as the buffer is there,
  * entered into the GPU's address space, and seen by the kernel through a mapping of its own (for the
  * cache: they are ordinary memory, pushed out of this processor's cache at every submission that
- * names them). Vulkan's VK_EXT_external_memory_host over it (Turnip, tools/mesa/darwin-drm): Metal's
+ * names them). Vulkan's VK_EXT_external_memory_host over it (Turnip, components/metal/tools/mesa/darwin-drm): Metal's
  * no-copy buffers, CoreAnimation's backing stores.
  */
 IOReturn

@@ -49,7 +49,7 @@ static int failed, checks;
 
 /*
  * The three calls of the compiler library this program needs, looked up the way the driver
- * looks them up (src/metal_driver.m): the library is opened by its path on the device, and a
+ * looks them up (../../components/metal/src/metal_driver.m): the library is opened by its path on the device, and a
  * symbol that is not there is a sentence rather than a failed link. rwa_texture_from_surface
  * is NOT among them -- drawable.m finds that one itself, and this program goes through
  * drawable.m on purpose, because the bridge is what is under test.

@@ -2,8 +2,8 @@
 
 > **Earlier generation.** These are the user-space sources of the Darwin 16.5 port, with its own layout and
 > build scripts. Parts are still used or being ported to Darwin 26/27: `userland/src/` (init, the injected
-> libraries, the audio plug-in, the Metal device), `tools/mesa/` and `tools/air/` (the Metal shader
-> compiler for Mesa), `tools/apfs/` (image tools). The current project starts at the
+> libraries, the audio plug-in), `tools/apfs/` (image tools). The Metal driver and its shader compiler for Mesa
+> were here and are [`../components/metal`](../components/metal) now. The current project starts at the
 > [top-level README](../README.md); the Darwin 26/27 side is `../darwin/`.
 
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of Darwin 16.5) on Android phone
@@ -43,7 +43,7 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 |---|---|
 | Lock screen, swipe to unlock, home screen with all icons (two pages), stock Darwin 16 wallpapers | Cellular, Bluetooth |
 | System gestures: swipe up (home, app switcher), edge swipe (back), Control Center | Charging under our kernel (the phone only discharges) |
-| Apps: Settings, Clock, Calendar, Photos, Notes, Safari and more; widgets (Weather, Calendar) on the phone | Metal for apps (in progress: 293 of 456 system shaders already run on the Adreno, see `docs/air.md` in hakios-xnu-userland) |
+| Apps: Settings, Clock, Calendar, Photos, Notes, Safari and more; widgets (Weather, Calendar) on the phone | Metal for apps (in progress: 293 of 456 system shaders already run on the Adreno, see `../components/metal/docs/air.md` in hakios-xnu-userland) |
 | Phone touchscreen (Goodix GT9916), multitouch, wake on touch; real power and volume keys | App Store content and Apple ID sign-in (no Secure Enclave; FairPlay daemon exits) |
 | Up to 8 CPU cores (`cpus=8`), big core at 2.4 GHz, ~20 s to the lock screen | Video and Live Photo recording |
 | Adreno 642L GPU through Mesa/freedreno (`gpu=1`, OpenGL ES for CoreAnimation) | |

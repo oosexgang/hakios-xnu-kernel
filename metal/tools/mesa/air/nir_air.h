@@ -5,7 +5,7 @@
 
 /*
  * AIR -> NIR: Metal shaders (the LLVM bitcode inside a .metallib) into NIR.
- * See docs/air.md of Darwin on redwood for the design and the mapping
+ * See components/metal/docs/air.md of Darwin on redwood for the design and the mapping
  * tables this follows.
  */
 
@@ -161,7 +161,7 @@ struct air_resource {
     * one past the module's highest declared index and says so with this flag,
     * which is Apple's own structure: where its textures are indices into a
     * heap, its null texture is a reserved index in that heap
-    * (AGCLLVMUserObject::replaceTexturesAndSamplers, docs/air.md section 3).
+    * (AGCLLVMUserObject::replaceTexturesAndSamplers, components/metal/docs/air.md section 3).
     *
     * WHAT THE RUNTIME OWES IT, and what it must NOT do: create a 1x1
     * zero-filled texture of the slot's own type and bind it there, and never
@@ -172,7 +172,7 @@ struct air_resource {
     * texture is the right answer only if Metal's null texture reads as zero,
     * and nothing this project can reach says that it does -- Apple's compiler
     * substitutes a handle and leaves the result to the descriptor, so there is
-    * no semantics in it to borrow (docs/air.md section 3 has the reading). What
+    * no semantics in it to borrow (components/metal/docs/air.md section 3 has the reading). What
     * this buys is not certainty but its LOCATION: the assumption lives in one
     * 1x1 texture a boot can change, instead of being folded into every sample
     * the frontend emits.
@@ -202,7 +202,7 @@ struct air_resource {
    /* A sampler the shader declares itself (Metal's constexpr sampler) rather
     * than one the API binds: the runtime has to create it from this state
     * word and bind it at .index, which the frontend assigns after the API's
-    * samplers. The word's layout is not decoded yet -- see docs/air.md.
+    * samplers. The word's layout is not decoded yet -- see components/metal/docs/air.md.
     */
    bool inline_sampler;
    uint64_t sampler_state;         /* the word itself, for a runtime that wants it raw */
@@ -237,7 +237,7 @@ struct air_resource {
     * that it depends on the metadata alone: the runtime's encoder has to answer
     * `encodedLength` for a set whichever of its members this shader reads, and
     * a numbering that skipped the unread ones would differ between two shaders
-    * sharing one set. See docs/air.md section 8.2.
+    * sharing one set. See components/metal/docs/air.md section 8.2.
     */
    unsigned argbuf_set;
    unsigned argbuf_id;
@@ -298,7 +298,7 @@ struct air_vertex_attribute {
 
    /* The width the SHADER reads, 8, 16 or 32. The NIR input is 32 bits wide
     * whatever this says, and the narrowing is an instruction in the shader --
-    * see docs/air.md: ir3 puts a 16-bit vertex input in the HALF register file
+    * see components/metal/docs/air.md: ir3 puts a 16-bit vertex input in the HALF register file
     * and then reports it in `ir3_shader_variant.inputs[]`, which has no half
     * flag, as a full register, which is the number fd6_program.cc programs
     * VFD_DEST_CNTL_INSTR_REGID from. A 32-bit input keeps the hardware fetch
@@ -384,7 +384,7 @@ struct air_shader_info {
     * The frontend does not refuse such a shader -- the coarser guarantee is
     * still a correct one -- but it does not pass over it in silence either:
     * every resource with a group leaves a note in `notes`, which
-    * `air2nir --report` prints and tools/air/corpus.py counts.
+    * `air2nir --report` prints and components/metal/tools/air/corpus.py counts.
     */
    unsigned raster_order_groups;
 
@@ -458,7 +458,7 @@ struct air_constant_value {
  * What is NOT here is the stitching ABI's four functions (load_argument,
  * copy_from_buffer, store_return_value, destroy). They are in the modules, with
  * bodies, and the graph says nothing about them: the frontend reads them from
- * the metadata of each function it stitches (docs/air.md section 5, "The
+ * the metadata of each function it stitches (components/metal/docs/air.md section 5, "The
  * stitching ABI, before any of it is built").
  */
 enum air_stitch_arg_kind {
@@ -543,7 +543,7 @@ struct air_to_nir_options {
     * not a convenience -- a one-node graph then has to produce exactly the
     * words `library_wrapper` produces for the same function, which is a
     * reference that already exists for 78 of the 135 and is what makes the
-    * graphs above it decidable (docs/air.md section 5).
+    * graphs above it decidable (components/metal/docs/air.md section 5).
     */
    const struct air_stitch_graph *stitch;
    const struct air_stitch_function *stitch_functions;

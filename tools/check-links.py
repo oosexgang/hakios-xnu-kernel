@@ -45,7 +45,12 @@ def main():
                     continue
                 # (from the repository's top, or from the document's own directory: metal/README.md names metal/'s
                 # files as metal/ itself does, tools/ and tests/ of its own)
-                if not (ROOT / target.rstrip('/.')).exists() and not (path.parent / target.rstrip('/.')).exists():
+                # (or from the top of the component the document is in: components/metal/docs/air.md names tools/air/ as
+                # components/metal's scripts are run, from components/metal)
+                parts = Path(name).parts
+                component = ROOT / parts[0] / parts[1] if len(parts) > 2 and parts[0] == 'components' else None
+                if not (ROOT / target.rstrip('/.')).exists() and not (path.parent / target.rstrip('/.')).exists() and \
+                        not (component and (component / target.rstrip('/.')).exists()):
                     problems.append(f'{name}:{number}: `{target}` is not in the repository')
     for problem in problems:
         print(problem, file=sys.stderr)

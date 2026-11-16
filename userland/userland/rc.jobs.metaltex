@@ -1,7 +1,7 @@
 # Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaltex).
 #
 # The fifteen fragment shaders of Apple's GL renderer that declare a texture, one process
-# each, each bound the kind and format its own module declares (tools/air/texdecl.sh prints
+# each, each bound the kind and format its own module declares (../components/metal/tools/air/texdecl.sh prints
 # the table; docs/metal.md 10.29).
 #
 # One process each, and not the sweep, because the first sweep that bound per-shader
