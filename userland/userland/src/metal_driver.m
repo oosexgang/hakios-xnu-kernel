@@ -119,6 +119,9 @@ rw_say_slow(const char *what, const char *name, uint64_t t0)
 /* A command buffer that took long to run, said with what was in it: under QEMU, where the
  * shaders run on the processor, how long a frame of the window server's takes and whether it
  * waited for another thread's work first. The first 40 of a process, then one in 50. */
+/* the command buffers run so far: what a no-copy buffer looks at its caller's pages again once per */
+static unsigned rw_commit_epoch;
+
 static void
 rw_say_slow_buffer(unsigned draws, unsigned dispatches, unsigned blits, uint64_t t_wait,
                    uint64_t t0)
@@ -1577,8 +1580,12 @@ rw_bisect_within(void)
 	NSUInteger _length;
 	struct rwa_buffer *_mesa; /* set instead when the memory came from Mesa */
 	int _responsibleProcess;  /* what <MTLResourceSPI> calls the owner, for accounting */
+	const void *_callerBytes; /* newBufferWithBytesNoCopy: the caller's pages this is a copy of */
+	uint64_t _callerHash;     /* ... as they were when last copied in */
+	unsigned _callerEpoch;    /* ... and the command buffer that last looked */
 }
 @property (readonly) struct rwa_buffer *mesaBuffer;
+- (void)followCallerBytes:(const void *)bytes;
 - (instancetype)initWithDevice:(HakiosMetalDevice *)device
 			   gpu:(io_connect_t)gpu
 			length:(NSUInteger)length;
@@ -3136,7 +3143,10 @@ static NSData *rw_function_air(id function);
 	HakiosMetalBuffer *buffer = [self newBufferWithBytes:bytes length:length options:options];
 
 	RW_ONCE("newBufferWithBytesNoCopy: the caller's pages are copied, not shared (the kernel "
-		"cannot give a process's own memory to the GPU yet)\n");
+		"cannot give a process's own memory to the GPU yet), and copied again when they change\n");
+	if (buffer != nil) {
+		[buffer followCallerBytes:bytes];
+	}
 	if (buffer != nil && deallocator != NULL) {
 		HakiosMetalDeallocNote *note = [HakiosMetalDeallocNote new];
 
@@ -3503,8 +3513,51 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
 	return self;
 }
 
+/* every word, for a no-copy buffer's pages: a write the sampled hash steps over would be lost */
+static uint64_t
+rw_bytes_hash_all(const uint8_t *bytes, size_t length)
+{
+	uint64_t h = 1469598103934665603ull;
+	size_t x;
+
+	for (x = 0; x + 8 <= length; x += 8) {
+		uint64_t w;
+
+		memcpy(&w, bytes + x, 8);
+		h = (h ^ w) * 1099511628211ull;
+	}
+	for (; x < length; x++) {
+		h = (h ^ bytes[x]) * 1099511628211ull;
+	}
+	return h;
+}
+
+- (void)followCallerBytes:(const void *)bytes
+{
+	_callerBytes = bytes;
+	_callerHash = bytes != NULL ? rw_bytes_hash_all(bytes, _length) : 0;
+	_callerEpoch = rw_commit_epoch;
+}
+
+/*
+ * The buffer as the GPU is to read it. A no-copy buffer is a copy of its caller's pages (the kernel
+ * cannot give them to the GPU), and Metal's contract is that the GPU sees what the caller writes to
+ * them: so once a command buffer, the pages are looked at again and copied in when they changed.
+ * CoreAnimation writes the lock screen's wallpaper colours into one after making it: copied once,
+ * the ground of Stripe Yellow came out black. A write the GPU made to the copy is kept as long as
+ * the caller's pages have not changed since.
+ */
 - (struct rwa_buffer *)mesaBuffer
 {
+	if (_callerBytes != NULL && _contents != NULL && _callerEpoch != rw_commit_epoch) {
+		uint64_t h = rw_bytes_hash_all(_callerBytes, _length);
+
+		_callerEpoch = rw_commit_epoch;
+		if (h != _callerHash) {
+			memcpy(_contents, _callerBytes, _length);
+			_callerHash = h;
+		}
+	}
 	return _mesa;
 }
 
@@ -5235,6 +5288,7 @@ rw_run_blit(HakiosMetalWork *w, char *why, size_t size)
 	uint64_t t_wait = mach_absolute_time();
 
 	rw_pipe_enter();
+	rw_commit_epoch++;
 	/* the time from here on, and how long the lock kept this buffer waiting first (another
 	 * thread's draw: the context is one, rw_pipe_lock) */
 	uint64_t t0 = mach_absolute_time();
