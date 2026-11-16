@@ -1,6 +1,6 @@
 #!/bin/bash
 # The checks of form, for every file the repository tracks:
-#   - every shell script parses (bash -n), every Python script parses
+#   - every shell script parses (bash -n), every Python script parses and passes pyflakes' checks (ruff or pyflakes)
 #   - every shell script of the repository passes shellcheck (kernel/lx/build.sh apart)
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components pins what the fetching scripts pin (tools/components.py)
@@ -38,6 +38,15 @@ if command -v shellcheck > /dev/null; then
 	shellcheck -S warning "${scripts[@]}" build.config.* || failed=1
 else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"
+fi
+
+# pyflakes' checks (names undefined, imported or assigned and never used), by ruff or pyflakes where there is one
+if command -v ruff > /dev/null; then
+	git ls-files -z '*.py' | xargs -0 ruff check --select F --no-cache --quiet || failed=1
+elif python3 -m pyflakes --version > /dev/null 2>&1; then
+	git ls-files -z '*.py' | xargs -0 python3 -m pyflakes || failed=1
+else
+	echo "lint: no ruff or pyflakes on this machine: the Python scripts were only parsed"
 fi
 
 tools/check-links.py || failed=1
