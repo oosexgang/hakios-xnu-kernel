@@ -1,0 +1,18 @@
+# The first run of a phone (Documentation/porting.md, step 4): Darwin on one core, drawn in software, and none of the
+# phone's own parts started, whatever the board's boot { } node turns on; the console on the screen and what fails
+# described. Then phone_look, then phone_metal.
+include debug
+cpus=1
+gpu=0
+metal=0
+wifi=0
+cpufreq=0
+ddr=0
+adsp=0
+sound=0
+cam=0
+haptic=0
+backlight=0
+touchscreen=0
+buttons=0
+battery=0
