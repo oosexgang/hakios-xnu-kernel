@@ -6,7 +6,7 @@
 # LOADER_IDENTITY=FILE: the identity Darwin is told (a header mkidentity.py made from another iPhone's device tree) in
 # place of identity.h -- the one of the iPhone whose files the system image holds. Darwin 27.2's 24B119 for iPhone12,1
 # needs that iPhone's (DeviceTree.n104ap.im4p): with identity.h's, SpringBoard asks for exclave-backed indicators that
-# device has, and stops (docs/darwin26-boot.md, "Darwin 27 in QEMU").
+# device has, and stops (Documentation/darwin26-boot.md, "Darwin 27 in QEMU").
 #
 # LOADER_CFLAGS adds to the compiler's flags: where the boot shim of a phone's UEFI puts the payload
 # elsewhere than at 0xF0000000, or reserves more than 64 MB for it, say so here, e.g.

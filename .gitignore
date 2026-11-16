@@ -31,7 +31,7 @@ qemu-kernel.log
 # the package manager's prefix userland/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages
 /userland/jb/
 
-# a phone's own files, taken from it or built from its firmware (loader/mkboot.py, docs/porting.md): never published
+# a phone's own files, taken from it or built from its firmware (loader/mkboot.py, Documentation/porting.md): never published
 /firmware/
 
 # what xl makes and fetches: its logs, the images it sends

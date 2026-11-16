@@ -34,7 +34,7 @@ struct platform {
  * The boards the loader knows: platform_NAME for each, and platforms[], the ones told apart by the
  * framebuffer base their UEFI reports (a display that matches none is QEMU's ramfb: platform_qemu_virt).
  * Generated from the repository's devices/NAME/board.dts (loader { }) and soc.dtsi (platform { }) by
- * tools/boards.py gen; a port to another device adds its files there (docs/porting.md), not code here.
+ * tools/boards.py gen; a port to another device adds its files there (Documentation/porting.md), not code here.
  * The board's name goes to the kernel as /chosen/darwin-board, where the kernel finds its own row
  * (bsd/dev/board/board.c).
  */

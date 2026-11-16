@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="hakios" width="830">
+  <img src="Documentation/assets/banner.svg" alt="hakios" width="830">
 </p>
 
 <p align="center">
@@ -7,12 +7,12 @@
 </p>
 
 <p align="center">
-  <a href="docs/architecture.md">Architecture</a> · <a href="docs/porting.md">Porting</a> · <a href="docs/building.md">Building</a> · <a href="docs/drivers.md">Drivers</a> · <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices">Devices</a> · <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="Documentation/architecture.md">Architecture</a> · <a href="Documentation/porting.md">Porting</a> · <a href="Documentation/building.md">Building</a> · <a href="Documentation/drivers.md">Drivers</a> · <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices">Devices</a> · <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/oosexgang/xnu-kernel-qcom/actions/workflows/check.yml"><img alt="checks" src="https://github.com/oosexgang/xnu-kernel-qcom/actions/workflows/check.yml/badge.svg"></a>
-  <a href="docs/README.md"><img alt="documentation" src="https://img.shields.io/badge/docs-read-5b6143"></a>
+  <a href="Documentation/README.md"><img alt="documentation" src="https://img.shields.io/badge/docs-read-5b6143"></a>
   <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices"><img alt="device packages" src="https://img.shields.io/badge/devices-branch-5b6143"></a>
   <a href="https://t.me/oosexgangdevs"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-oosexgangdevs-d8392b?logo=telegram&logoColor=white"></a>
   <a href="kernel/UPSTREAM"><img alt="XNU release" src="https://img.shields.io/badge/XNU-12377.121.6-3a402e"></a>
@@ -51,17 +51,17 @@ brings it into a checkout.
 - **The kernel in QEMU.** It boots on the emulator as on a phone, to a shell of its own, and its
   network, disks, files, sound, input, processes, threads, memory, IOKit and screen are tried there, with
   what BSD has a kernel refuse a user, a program and a file system; it runs its own tests there too, and
-  boots on four processors and on one ([docs/qemu.md](docs/qemu.md), `make qemu`).
+  boots on four processors and on one ([Documentation/qemu.md](Documentation/qemu.md), `make qemu`).
 - **Pinned inputs.** Everything taken from elsewhere is in [`components/upstream.dts`](components/upstream.dts), at an
   exact version.
 
 ## How it boots
 
 <p align="center">
-  <img src="docs/assets/boot-chain.svg" alt="The boot chain: stock fastboot, the UEFI, the loader, the kernel, Darwin user space" width="830">
+  <img src="Documentation/assets/boot-chain.svg" alt="The boot chain: stock fastboot, the UEFI, the loader, the kernel, Darwin user space" width="830">
 </p>
 
-How the pieces fit together: [docs/architecture.md](docs/architecture.md).
+How the pieces fit together: [Documentation/architecture.md](Documentation/architecture.md).
 
 ## Devices
 
@@ -70,7 +70,7 @@ The phones are device packages, kept apart from the code on the
 how far each is, and each package's own README says what works on that phone, what is written but not yet
 verified on it, and what is still off. This branch describes no phone; it has the QEMU `virt` board
 (`devices/qemu-virt/`), on which the current kernel boots to a shell of its own and is tested with its
-network, disk, sound, input, processes, threads, files, IOKit and screen ([docs/qemu.md](docs/qemu.md)).
+network, disk, sound, input, processes, threads, files, IOKit and screen ([Documentation/qemu.md](Documentation/qemu.md)).
 Each package carries its chip's SoC file; the packages there cover SM7350 and SM7325, and SM8845 (CPU
 levels, temperature sensors).
 
@@ -80,31 +80,31 @@ levels, temperature sensors).
 git clone https://github.com/oosexgang/xnu-kernel-qcom.git
 cd xnu-kernel-qcom
 make check                        # everything that needs no phone
-make kernel-check                 # every kernel file compiled and the kernel linked, with LLVM's tools (docs/building.md)
+make kernel-check                 # every kernel file compiled and the kernel linked, with LLVM's tools (Documentation/building.md)
 
 tools/device.py available         # the phones there are packages for
 tools/device.py add renoir        # bring one in (devices/renoir)
 tools/boards.py status renoir     # what it has on, what it can turn on next
 ```
 
-Then build: [docs/building.md](docs/building.md). For a phone that has no package yet:
-[docs/porting.md](docs/porting.md).
+Then build: [Documentation/building.md](Documentation/building.md). For a phone that has no package yet:
+[Documentation/porting.md](Documentation/porting.md).
 
 ## Start here
 
 | You want to | Read |
 | --- | --- |
-| Understand how it fits together | [docs/architecture.md](docs/architecture.md) |
-| Port it to your phone | [docs/porting.md](docs/porting.md) |
-| Build the kernel or the loader | [docs/building.md](docs/building.md) |
-| Run the kernel in QEMU, with no phone and nothing of Apple's | [docs/qemu.md](docs/qemu.md) |
-| Go from an Ubuntu machine to Darwin 27 on a phone (in Russian) | [docs/darwin27-ubuntu.ru.md](docs/darwin27-ubuntu.ru.md) |
-| Know what a driver or a boot argument does | [docs/drivers.md](docs/drivers.md), [docs/boot-args.md](docs/boot-args.md) |
-| Write a driver for a part nobody has one for | [docs/writing-a-driver.md](docs/writing-a-driver.md) |
-| Find out what a message in the log means | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Understand how it fits together | [Documentation/architecture.md](Documentation/architecture.md) |
+| Port it to your phone | [Documentation/porting.md](Documentation/porting.md) |
+| Build the kernel or the loader | [Documentation/building.md](Documentation/building.md) |
+| Run the kernel in QEMU, with no phone and nothing of Apple's | [Documentation/qemu.md](Documentation/qemu.md) |
+| Go from an Ubuntu machine to Darwin 27 on a phone (in Russian) | [Documentation/darwin27-ubuntu.ru.md](Documentation/darwin27-ubuntu.ru.md) |
+| Know what a driver or a boot argument does | [Documentation/drivers.md](Documentation/drivers.md), [Documentation/boot-args.md](Documentation/boot-args.md) |
+| Write a driver for a part nobody has one for | [Documentation/writing-a-driver.md](Documentation/writing-a-driver.md) |
+| Find out what a message in the log means | [Documentation/troubleshooting.md](Documentation/troubleshooting.md) |
 | Know how boards and packages are described | [devices/README.md](devices/README.md) |
 | Change something and send it back | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Carry over a branch or patch from an earlier layout | [docs/migrating.md](docs/migrating.md) |
+| Carry over a branch or patch from an earlier layout | [Documentation/migrating.md](Documentation/migrating.md) |
 | See what the restructuring changed | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Layout
@@ -120,7 +120,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components` | The parts of the port that make a subsystem of Darwin work (Metal, Apple ID, the SEP's keystore, ...), each in a directory of its own; `components/upstream.dts`: everything taken from elsewhere, pinned to an exact version. |
-| `docs/` | Documentation. |
+| `Documentation/` | Documentation. |
 | `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 
 ## Porting in one paragraph
@@ -133,8 +133,8 @@ each of the rest still needs, and `tools/boards.py compare NAME --dts phone.dts`
 against the tree at any time. Where the blocks of the chip are comes from the SoC file, not from the drivers' code (the one exception is the serial port a touch
 controller is wired to, which is in that part's driver). Parts nobody has a driver for yet (a touch
 controller, an amplifier) need one written, from an example that is built and tested with the rest
-([docs/writing-a-driver.md](docs/writing-a-driver.md)). When it works, the package goes to the
-`devices` branch. The guide: [docs/porting.md](docs/porting.md).
+([Documentation/writing-a-driver.md](Documentation/writing-a-driver.md)). When it works, the package goes to the
+`devices` branch. The guide: [Documentation/porting.md](Documentation/porting.md).
 
 ## What is not in this repository
 
@@ -142,7 +142,7 @@ Apple's files (XNU is fetched at build time; Darwin comes from Apple's IPSW on y
 firmware (taken from the same phone), and third-party toolchains. Also, for now, the resident loader
 and image tooling Renoir is booted with, which live in the team's unpublished working tree: until
 they are published, a Renoir boot cannot be reproduced from a clean checkout.
-Details: [docs/architecture.md](docs/architecture.md#what-is-not-in-this-repository).
+Details: [Documentation/architecture.md](Documentation/architecture.md#what-is-not-in-this-repository).
 
 ## Community
 

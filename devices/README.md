@@ -85,7 +85,7 @@ export HAKIOS_DEVICES=$PWD/../hakios-devices
 
 ## What is made of them
 
-![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](../docs/assets/device-data.svg)
+![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](../Documentation/assets/device-data.svg)
 
 ```sh
 tools/boards.py list                    # the boards that are here
@@ -128,7 +128,7 @@ chip each have a copy: `tools/boards.py new NAME --soc SOC` copies one from a pa
 SoC, and otherwise writes a new one with what the phone's device tree says, every value with what
 the template says of its key. Two things are never in a device tree and are filled in by hand: the
 display clocks' register offsets (from Linux's clock drivers for the chip) and the window over the
-peripherals ([docs/porting.md](../docs/porting.md), step 1). `camera { }` and `lpass { }` are not read
+peripherals ([Documentation/porting.md](../Documentation/porting.md), step 1). `camera { }` and `lpass { }` are not read
 from a tree yet; the template says where in the vendor's trees their values are.
 
 A board needs only the sections of what it turns on: one with `features = <>;` (none) and a software
@@ -139,7 +139,7 @@ A SoC file names where each value is from, in a comment: the device tree node, t
 ## Adding a phone
 
 The whole procedure, with what to take from the device tree and in which order to try the drivers, is
-[docs/porting.md](../docs/porting.md). In short:
+[Documentation/porting.md](../Documentation/porting.md). In short:
 
 1. `tools/boards.py new NAME --soc SOC --dts your.dts` and fill in what it could not read.
 2. `tools/boards.py check`, then `tools/boards.py status NAME`.

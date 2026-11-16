@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        The procedure is [docs/porting.md](https://github.com/oosexgang/xnu-kernel-qcom/blob/HEAD/docs/porting.md), in the order to do it. A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in Mu-Silicium.
+        The procedure is [Documentation/porting.md](https://github.com/oosexgang/xnu-kernel-qcom/blob/HEAD/docs/porting.md), in the order to do it. A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in Mu-Silicium.
 
         A port goes to two places. The phone's package (`NAME/board.dts` and `NAME/soc.dtsi`, with its README and notes) goes to the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices). Drivers go to the main branch.
   - type: input
@@ -27,7 +27,7 @@ body:
     id: stage
     attributes:
       label: How far it is
-      description: "The step of `docs/porting.md` you are at."
+      description: "The step of `Documentation/porting.md` you are at."
       options:
         - "Not started: asking whether it is feasible"
         - "1. Describing the board"

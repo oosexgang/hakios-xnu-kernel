@@ -2,7 +2,7 @@
 
 Liquid Glass, CASDF shapes and the large lock-screen clock are drawn by CoreAnimation's **Metal** renderer, in
 backboardd. Darwin 27 has no OpenGL renderer left, and its software renderer skips these effects. That is why the
-current `gpu=0` configuration shows them incomplete (`docs/darwin26-boot.md`, item 10). The glass needs three
+current `gpu=0` configuration shows them incomplete (`Documentation/darwin26-boot.md`, item 10). The glass needs three
 things, all of them device-independent apart from the kernel's GPU profile:
 - a Metal device for backboardd;
 - a compiler from Apple's shader bitcode (AIR) to the Adreno;

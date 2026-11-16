@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY = ('base/', 'userland/')
 LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
 # a path in backticks: starts at one of the repository's top-level directories and names a file or a directory
-TOP = ('devices', 'kernel', 'loader', 'darwin', 'workbench', 'tools', 'docs')
+TOP = ('devices', 'kernel', 'loader', 'darwin', 'workbench', 'tools', 'Documentation', 'components', 'docs')
 PATH = re.compile(r'`((?:' + '|'.join(TOP) + r')/[A-Za-z0-9_./-]+)`')
 
 
@@ -29,7 +29,7 @@ def main():
         text = path.read_text()
         past = False
         for number, line in enumerate(text.split('\n'), 1):
-            # between these two marks a document names paths that are gone on purpose (docs/migrating.md)
+            # between these two marks a document names paths that are gone on purpose (Documentation/migrating.md)
             if '<!-- paths of the old layout -->' in line:
                 past = True
             elif '<!-- end -->' in line:

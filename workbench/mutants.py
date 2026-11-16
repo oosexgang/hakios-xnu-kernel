@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SOURCES = (HERE / '../kernel/overlay/bsd/dev', HERE / '../loader', HERE / '../docs/examples')
+SOURCES = (HERE / '../kernel/overlay/bsd/dev', HERE / '../loader', HERE / '../Documentation/examples')
 SWAPS = [(' <= ', ' < '), (' >= ', ' > '), (' < ', ' <= '), (' > ', ' >= '), (' == ', ' != '), (' != ', ' == '),
          (' && ', ' || '), (' || ', ' && '), (' + 1', ''), (' - 1', '')]
 

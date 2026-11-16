@@ -5,7 +5,7 @@ Here it is `components/metal/plugin/` of the kernel's tree, with its history fro
 - `darwin/userland/metal.sh` builds the plug-in for iOS 26 and 27, arm64e, with the compiler in (`tools/mk-mesa.sh`);
 - `tools/mk-mesa-host.sh` builds the Mesa that `make test MESA=1` and `make sweep MESA=1` need.
 
-How CoreAnimation on iOS 27 draws through it: `docs/metal-glass.md`. The plug-in that serves it is
+How CoreAnimation on iOS 27 draws through it: `Documentation/metal-glass.md`. The plug-in that serves it is
 `plugin/HakiosMetalCA.m`.
 
 The Metal driver of [hakios](https://github.com/oosexgang/hakios-xnu-kernel), in C++: Metal's command model on the phone's

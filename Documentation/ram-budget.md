@@ -74,7 +74,7 @@ and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapf
   (`userland/tools/font_trim.py`).
 
 `darwin165/fetch.sh` adds the OS cryptex. It leaves out the dyld cache and DriverKit, then adds the dyld
-cache separately without `.symbols`. `userland/build.sh` (system image section) does the rest:
+cache separately without `.symbols`. `userland/userland/build.sh` (system image section) does the rest:
 
 - hard-links the selection into `sysroot`;
 - replaces LaunchDaemons with a link to `/hakios/LaunchDaemons`;

@@ -33,7 +33,7 @@ body:
     id: boot-args
     attributes:
       label: Boot arguments
-      description: "All of them, as passed to the boot tool or in the loader's command line. `docs/boot-args.md` lists what each one does."
+      description: "All of them, as passed to the boot tool or in the loader's command line. `Documentation/boot-args.md` lists what each one does."
       placeholder: "cpus=1 backlight=1"
       render: text
   - type: textarea

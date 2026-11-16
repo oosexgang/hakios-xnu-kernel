@@ -83,7 +83,7 @@ The storage controller the loader and the kernel may use directly (`ufs_native=`
 `ufs` of `platform { }` says; without that key it is not touched.
 
 So a new device needs no code here: its `loader { }` section and its SoC's `platform { }` section, then
-`build.sh`. [docs/porting.md](../docs/porting.md) says where each value comes from.
+`build.sh`. [Documentation/porting.md](../Documentation/porting.md) says where each value comes from.
 
 The loader knows the boards whose packages were present when it was built. The repository describes
 no phone: `tools/device.py add NAME` brings a phone's package in from the `devices` branch. Built with

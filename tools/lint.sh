@@ -6,8 +6,8 @@
 #   - components pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
 #   - no C format says a number with %#0Nx, which leaves the 0x off a zero ("0000"): 0x%0Mx says it one way
-#   - every command of the QEMU shell (tools/qemu-init/main.c) has its row in docs/qemu.md
-#   - every host test (workbench/*_test.c, docs/examples/*_test.c) is run by a script of workbench/
+#   - every command of the QEMU shell (tools/qemu-init/main.c) has its row in Documentation/qemu.md
+#   - every host test (workbench/*_test.c, Documentation/examples/*_test.c) is run by a script of workbench/
 #   - the copies of the kernel's device interfaces that the Darwin side compiles against
 #     (userland/userland/src/board/*.h of kernel/overlay/bsd/sys/board/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
@@ -40,7 +40,7 @@ if git grep -nE '%#0[0-9]+(l|ll)?x' -- '*.c' '*.cpp' '*.h' '*.m'; then
 	failed=1
 fi
 
-for test in workbench/*_test.c docs/examples/*_test.c; do
+for test in workbench/*_test.c Documentation/examples/*_test.c; do
 	name=$(basename "$test" .c)
 	if ! grep -qw "$name" workbench/*.sh; then
 		echo "lint: $test is run by no script of workbench/ (run.sh's list of tests, most often)"
@@ -49,8 +49,8 @@ for test in workbench/*_test.c docs/examples/*_test.c; do
 done
 
 for command in $(sed -n 's/^\t{ "\([a-z0-9-]*\)",.*/\1/p' tools/qemu-init/main.c); do
-	if ! grep -q "^| \`${command}[\` ]" docs/qemu.md && ! grep -q "^| .*, \`${command}[\` ]" docs/qemu.md; then
-		echo "lint: the QEMU shell's $command is not in docs/qemu.md's table of its commands"
+	if ! grep -q "^| \`${command}[\` ]" Documentation/qemu.md && ! grep -q "^| .*, \`${command}[\` ]" Documentation/qemu.md; then
+		echo "lint: the QEMU shell's $command is not in Documentation/qemu.md's table of its commands"
 		failed=1
 	fi
 done

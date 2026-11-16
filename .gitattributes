@@ -5,4 +5,4 @@
 *.patch -text
 
 # Written by a tool (make docs), not by hand: collapsed in a review, not counted as a language.
-docs/boot-args.md linguist-generated
+Documentation/boot-args.md linguist-generated

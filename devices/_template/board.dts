@@ -1,7 +1,7 @@
 /dts-v1/;
 
 // A board file with every key, explained. `tools/boards.py new NAME --soc SOC --dts FILE` writes a
-// shorter one with what your device tree says; this is the reference. docs/porting.md is the guide.
+// shorter one with what your device tree says; this is the reference. Documentation/porting.md is the guide.
 
 / {
 	name = "NAME";                          // the directory's name, and what the loader puts in /chosen/darwin-board
@@ -9,7 +9,7 @@
 	soc = "sm0000";                         // the name in soc.dtsi beside it: where the blocks of the chip are
 
 	// The drivers this board may start. Empty at first: add one once its driver has been seen to work
-	// here, in the order of docs/porting.md. The kernel knows these:
+	// here, in the order of Documentation/porting.md. The kernel knows these:
 	// cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs cpufreq { } in the SoC file
 	// cpufreq-scmi    firmware CPU performance queries (scmi_perf=1); needs scmi-perf { } in the SoC file
 	// ddr-rpmh        memory bandwidth votes through RPMh (ddr=); needs rpmh { } in the SoC file
@@ -22,12 +22,12 @@
 	// virtio          an emulator's virtio devices (network, tablet, keyboard): for QEMU's board, not a phone
 	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
-	// has that part on the same pins and bus (kernel/overlay/bsd/dev/board/board.h, docs/drivers.md):
+	// has that part on the same pins and bus (kernel/overlay/bsd/dev/board/board.h, Documentation/drivers.md):
 	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
 	// wifi-wcn6750, mic-wcd938x, modem-sm7325
 	features = <>;
 
-	// The panel's light (docs/backlight.md).
+	// The panel's light (Documentation/backlight.md).
 	backlight {
 		type = "soft";                  // "dcs": MIPI DCS 0x51 through the DSI controller (most AMOLED panels);
 		                                // "soft": the picture is darkened in software, which works anywhere;
@@ -41,7 +41,7 @@
 		// byte-order = "msb-first";    // "msb-first" when the node has qcom,mdss-dsi-bl-inverted-dbv, else "lsb-first"
 	};
 
-	// Holding the processors back when hot (docs/thermal.md). Leave the section out until thermal { } and
+	// Holding the processors back when hot (Documentation/thermal.md). Leave the section out until thermal { } and
 	// cpufreq { } are in the SoC file.
 	// thermal {
 		// floor-mhz = <1000 1100 1100>; // the slowest each group of cores is held back to: one value for each
@@ -176,7 +176,7 @@
 		//                              // not a BQ: Linux's qti_battery_charger.c); left out: in uAh
 	// };
 
-	// The GPU, for the feature "gpu-a660" (docs/drivers.md). From the SoC's -gpu.dtsi in the Android device
+	// The GPU, for the feature "gpu-a660" (Documentation/drivers.md). From the SoC's -gpu.dtsi in the Android device
 	// tree and the chip's entry in Linux's adreno-gpulist.h.
 	// gpu {
 		// model = "Adreno 642";        // for the log
@@ -226,7 +226,7 @@
 	// The loader (loader/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
 	// reports. Needs platform { } in the SoC file. Leave the section out while the phone is started another way.
 	// loader {
-		// fb-base = <0xE1000000>;      // what the loader prints at start: "display W x H at ..." (docs/porting.md,
+		// fb-base = <0xE1000000>;      // what the loader prints at start: "display W x H at ..." (Documentation/porting.md,
 		//                              // step 3). Only the emulator's board goes without.
 		// log-other-cpu;               // keep notes in the log partition while a kernel starts on another core
 		// uefi-charger;                // the firmware has Qualcomm's charger protocols: the loader reads the battery
@@ -246,7 +246,7 @@
 		// fastboot-product = "codename"; // what `fastboot getvar product` must answer: the tool refuses any other phone
 		// cpus = <8>;                  // how many cores the kernel is given
 		// bootargs = "cpufreq=1", "backlight=1"; // the boot arguments of a plain run, NAME or NAME=VALUE each;
-		//                              // `--boot-arg NAME=VALUE` adds to these or replaces one (docs/boot-args.md)
+		//                              // `--boot-arg NAME=VALUE` adds to these or replaces one (Documentation/boot-args.md)
 	// };
 
 	// Bluetooth H4: values below are illustrative; fill from the board's UART and power nodes.

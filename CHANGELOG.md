@@ -72,14 +72,14 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **The board tables are build outputs.** `tools/boards.py gen` writes the kernel's table, the loader's
   and the injected libraries' into `build/boards/`, and every build runs it. None is in the repository.
   The kernel, the loader and the libraries know the boards whose packages were present when built.
-- **A porting guide.** [docs/porting.md](docs/porting.md) goes from the device tree to sending the
+- **A porting guide.** [docs/porting.md](Documentation/porting.md) goes from the device tree to sending the
   package back in eight steps, with the log line that shows each piece worked, and ends with what is
   still tied to the first two phones. `workbench/porting_test.sh` runs its tool and data steps (1, 3, 8 and
   the data side of 4 and 5) on a made-up phone with a made-up SoC, on every push.
-- **What each feature needs, key by key.** [docs/features.md](docs/features.md) is written by
+- **What each feature needs, key by key.** [docs/features.md](Documentation/features.md) is written by
   `tools/boards.py features` from the tables the checker uses: for every feature, the sections and keys
   of the SoC file and of the board file it needs first, and the boot argument that starts it.
-- **A catalog of drivers.** [docs/drivers.md](docs/drivers.md) lists every driver with its part, its
+- **A catalog of drivers.** [docs/drivers.md](Documentation/drivers.md) lists every driver with its part, its
   feature and boot argument, and how tied it is to one phone.
 
 ### Building or changing the kernel
@@ -161,7 +161,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   monitor, and that both are powered down at once on a missing clock, a fault or a write that does
   not read back (`workbench/speaker_driver_test.c`, 22 scenarios, on the host and under qemu-aarch64).
 - **A guide to writing a driver**, with an example driver and its test that `make check` builds and
-  runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
+  runs: [docs/writing-a-driver.md](Documentation/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
   clock controller, RPMh, the SMMU, the PMIC arbiter and the way to the other processors were
   constants in up to eight drivers each; they are `pins { }`, `clocks { }`, `rpmh { }`, `smmu { }`, `spmi { }`
@@ -170,7 +170,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
   for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
   project portable, and says where each kind of change goes.
-- **Every boot argument is listed.** `tools/bootargs.py` writes [docs/boot-args.md](docs/boot-args.md)
+- **Every boot argument is listed.** `tools/bootargs.py` writes [docs/boot-args.md](Documentation/boot-args.md)
   from the comments beside the code: 236 arguments, 34 of them without a description yet.
 - **Pinned inputs in one place.** `components` lists the sixteen things fetched from elsewhere at
   their exact versions, and the lint checks it against the scripts that fetch. The macOS SDK archive is
@@ -189,7 +189,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **The boot tool reads its defaults from the board file.** `darwin/tools/boot26.py` takes `--board NAME`,
   or the one phone whose package is present.
 - **A branch or patch from the old layout** is carried over with `kernel/import-patch.sh`.
-  [docs/migrating.md](docs/migrating.md) has the steps.
+  [docs/migrating.md](Documentation/migrating.md) has the steps.
 
 - **The loader refuses a system image that does not lie in userdata, however it is described.** The
   check of an extent's start and length added the two, and a start or a length near 2^64 made the
@@ -252,18 +252,18 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `devices/*/soc.dtsi`; the first phone's package lists every former name |
 | The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, the build and tools of that kernel) | `legacy/` of its package on the `devices` branch |
 
-The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
-says how the parts fit together, and [docs/README.md](docs/README.md) is the index of the documentation.
+The full table is in [docs/migrating.md](Documentation/migrating.md). [docs/architecture.md](Documentation/architecture.md)
+says how the parts fit together, and [docs/README.md](Documentation/README.md) is the index of the documentation.
 
 ### Checks
 
 - **`make check`** runs everything that needs no phone, no Darwin files and no kernel toolchain: the lint,
-  the validation of the board and SoC files, whether `docs/boot-args.md` is current, the host tests.
+  the validation of the board and SoC files, whether `Documentation/boot-args.md` is current, the host tests.
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components`, looks
   for files that must never be published, and holds the Darwin side's copies of the kernel's device
   interfaces (`userland/userland/src/board/*.h`) to what the kernel's say.
-- **The host tests** (`workbench/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
+- **The host tests** (`workbench/run.sh`) run the drivers listed in [docs/drivers.md](Documentation/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
   flashlight, the battery, the vibration motor, the speaker amplifiers, the wiring of the touch
@@ -289,17 +289,17 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   makes a phone's seed once and keeps it outside the checkout; `darwin/tools/boot26.py` passes it
   (`identity=`), so a phone is the same device at every boot. Without a seed the loader takes a random
   one, from the firmware's generator where it has one, which now also fills the kernel's random seed.
-- **Brightness and Auto-Brightness** (`board/backlight.c`, [docs/backlight.md](docs/backlight.md)).
+- **Brightness and Auto-Brightness** (`board/backlight.c`, [docs/backlight.md](Documentation/backlight.md)).
   Brightness is set by MIPI DCS through the Qualcomm DSI controller, or in software on boards without a
   description. The side button and the idle timer make the panel dark or dimmed. Tested on the host and
   under `qemu-aarch64`. Not yet verified on a phone. The default, `backlight=1`, only reads. There is
   no light sensor driver yet: the light reading is the sysctl `hw.backlight.lux`.
-- **A thermal limiter** (`board/thermal.c`, [docs/thermal.md](docs/thermal.md)). It reads the
+- **A thermal limiter** (`board/thermal.c`, [docs/thermal.md](Documentation/thermal.md)). It reads the
   temperature sensors and, when hot, lowers the CPU groups' frequency and caps the panel's brightness.
   Tested on the host and under `qemu-aarch64`. Not yet verified on a phone. The default, `thermal=1`,
   only logs the hottest sensor; `thermal=2` holds back.
 - **The Metal plug-in gate** is back in the 12377 kernel, behind `metal=1`. It is one step of the plan
-  in [docs/metal-glass.md](docs/metal-glass.md). The Metal device plug-in is not packaged for Darwin 27.
+  in [docs/metal-glass.md](Documentation/metal-glass.md). The Metal device plug-in is not packaged for Darwin 27.
 
 ### Not changed, and not yet verified
 
@@ -313,7 +313,7 @@ Not changed:
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
 - The first phone has not been booted with Darwin 26/27. The emulator's board is not set up for this kernel.
 
-Not yet verified ([docs/building.md](docs/building.md) has the table):
+Not yet verified ([docs/building.md](Documentation/building.md) has the table):
 
 - **The Mesa builds and `libhakios26` without Apple's platform word.** Meson's cross files say no
   subsystem, and `libhakios26` links without the framebuffer framework's stub, its five calls left to
@@ -348,4 +348,4 @@ The first generation ran Darwin 16.5 on the first phone and in QEMU. Its workspa
 `base/`, and [base/README.md](base/README.md) describes it. Parts of it are still the only place for
 something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
 by `kernel/`. The notes on how Darwin 26 and 27 were brought to the home screen on Renoir, written before
-the restructuring, are in [docs/darwin26-boot.md](docs/darwin26-boot.md).
+the restructuring, are in [docs/darwin26-boot.md](Documentation/darwin26-boot.md).

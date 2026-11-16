@@ -90,7 +90,7 @@ loader = DR / f'prebuilt/{options.board}/resident-usb.img'
 share = DR / f'recovery/assets/{options.board}-darwin-share.bin'
 for path in (options.kernel, options.system, options.root, loader, share):
     if not path.is_file():
-        raise SystemExit(f'Missing {path} (docs/darwin26-boot.md says how it is made)')
+        raise SystemExit(f'Missing {path} (Documentation/darwin26-boot.md says how it is made)')
 try:
     with options.system.open('rb') as image:
         validate_apfs(image.read(4096), options.system.stat().st_size)

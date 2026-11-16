@@ -190,7 +190,7 @@ kernel (driver replacements) or by a library the kernel injects with `DYLD_INSER
 | `qemu/` | QEMU runs, touch input, screenshots, stack symbolication |
 | `tools/` | recording (`recording.py`, `sound.py`), UFS/flash tools, `mk-ath11k.sh`, `new-workspace.sh`, host tests |
 | `prebuilt/` | built kernel, loader and UEFI pieces (`NOTICES.md` for the third-party code in the kernel) |
-| `docs/` | screenshots, [checks.md](docs/checks.md), [PORTING.md](docs/PORTING.md) |
+| `Documentation/` | screenshots, [checks.md](docs/checks.md), [PORTING.md](docs/PORTING.md) |
 
 ## Debugging
 

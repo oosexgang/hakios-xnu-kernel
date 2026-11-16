@@ -120,7 +120,7 @@ def main():
     for path in files:
         if not path.is_file():
             raise SystemExit(f'mkboot.py: no {path}.\n  The UEFI of a phone is built from its own firmware and is '
-                             f'never in the repository: docs/porting.md, step 3, says how to make it.')
+                             f'never in the repository: Documentation/porting.md, step 3, says how to make it.')
     image, shim, dtb = (path.read_bytes() for path in files)
     payload = options.payload.read_bytes() if options.payload else b''
     options.output.write_bytes(pack(shim, image, dtb, payload, uefi))

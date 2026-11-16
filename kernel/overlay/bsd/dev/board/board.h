@@ -15,7 +15,7 @@
  *
  * A board that is not in the table (a new port's first boots, a loader that names none) gets NULL and
  * no feature: nothing of a phone is touched on a machine that was not described. Adding a device is a
- * directory under devices/ (docs/porting.md), not a change to the drivers.
+ * directory under devices/ (Documentation/porting.md), not a change to the drivers.
  *
  * Compiled by the host tests as well (workbench/), so nothing of the kernel's is included here.
  */

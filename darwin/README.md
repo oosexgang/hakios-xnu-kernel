@@ -33,7 +33,7 @@ It defaults to `ios27/` beside the repository. The images and the launchd jobs a
 | `console_log.c` | `libhakios-console.dylib`: the standard error of its program goes to the console, so into the loader's log. | The programs named in `CONSOLE_LOG="NAME ..."` for `root26-darwin.sh`. | Built by `inj26.sh`. |
 | `tweak_test.c`, `tweak_test.plist` | `hakios-tweaktest.dylib`: a tweak as a package installs it, to check the tweak path: the tweak loader (`libhakios-tweaks.dylib`, `userland/userland/src/inject_tweaks.c`) finds it in `/var/jb/usr/lib/TweakInject` by its filter (Settings), opens it, and it hooks `-[UIViewController viewDidLoad]` through ElleKit's `MSHookMessageEx`, saying each step on the console. | Settings, once a job list has copied both into `/var/jb/usr/lib/TweakInject` | Built by `inj26.sh`; the package manager's prefix in the system image (`userland/tools/mk-jb.sh`, then `mkimage26.py`). |
 | `inj26.sh` | Builds the libraries above and the first generation's (`libhakios`, `libhakios-sb`, `libhakios-app`) and the audio plug-in, arm64e. It puts SpringBoard's addresses for the Darwin build in (`BUILD`), then runs `pacstrip` and `ldid` over each. Output: `OBJ`. | `root26-darwin.sh` | `env.sh`'s. |
-| `metal.sh` | The Metal plug-in, arm64e: `components/metal/plugin/plugin/HakiosMetalCA.m` over `components/metal/plugin/`'s driver and Mesa's compiler (`components/metal/plugin/tools/mk-mesa.sh`), then `pacstrip` and `ldid`. Output: `$OBJ/HakiosMetal`. [docs/metal-glass.md](../docs/metal-glass.md) | `root26-darwin.sh` | `env.sh`'s, meson, ninja. |
+| `metal.sh` | The Metal plug-in, arm64e: `components/metal/plugin/plugin/HakiosMetalCA.m` over `components/metal/plugin/`'s driver and Mesa's compiler (`components/metal/plugin/tools/mk-mesa.sh`), then `pacstrip` and `ldid`. Output: `$OBJ/HakiosMetal`. [Documentation/metal-glass.md](../Documentation/metal-glass.md) | `root26-darwin.sh` | `env.sh`'s, meson, ninja. |
 | `root26-darwin.sh` | The small image (`/hakios`) for a boot towards SpringBoard: `init`, `stage0`, the libraries, the Metal plug-in when built, `net_test`, `rwtouch`, the phone's firmware (`firmware/BOARD/fw/`), the lines of `inject.conf`, and what Darwin expects in `/private/var`. Every Mach-O is signed ad hoc. It also makes the launchd jobs from Darwin's own plists. Writes `$IOS/root26-darwin.apfs`, `$IOS/jobs26` and `$IOS/flashboot.apfs` (the RAM disk of a boot whose system image is on the flash). `RC_JOBS=FILE`: the commands the demo job runs. | `mkimage26.py` (the jobs), `xl` (the images) | `env.sh`'s, the IPSW, `inj26.sh` run. |
 | `ssh.sh` | An SSH server and a shell for a running Darwin, arm64e: dropbear 2026.94 (keys only, patched by `ssh/dropbear-ios.patch` for a system without `/bin/sh` or `/etc/shells`) with its `scp`, and mksh R59c, downloaded once and checked against their SHA-256. The keys are this machine's `../ssh/` (`authorized_keys`, `ssh_host_ed25519_key`, converted to dropbear's format here), never the repository's. Output: `$OBJ/dropbear`, `scp`, `sh`, `ssh-keys/`. | `root26-darwin.sh`, which puts them into `/hakios/bin` and `/hakios/etc/ssh` (no keys with `SHARE=1`) | `env.sh`'s, curl, a C compiler for this machine. |
 | `rc.jobs.ssh` | The server started as soon as Wi-Fi is asked for, the lock screen swiped away, the address in the log. Then `ssh -i ../ssh/id_phone root@ADDRESS`, and `scp -O` for files. Darwin has almost no commands of its own (no `ls`, `uname`): the shell's built-ins (`cat` among them), `ps`, `netstat`, `ifconfig`, `ioreg`, and what is in `/hakios/bin`. `net_test announce en0 5` beside it says the phone's address to everybody every 5 s: a router may not pass a computer's ARP request on to the phone (one on 2.4 GHz asking for one on 5 GHz), and `ssh` then says "no route to host" although the phone is there. | `RC_JOBS=` for `root26-darwin.sh` | `ssh.sh` run, `wifi=1`, a long `XL_SECS`. |
@@ -65,7 +65,7 @@ checks their types, and leaves alone what is not as it expects.
 | `boot26.py` | Boots renoir from RAM through stock fastboot and darwin-renoir's resident loader. redwood boots with `xl` instead. | darwin-renoir (`recovery/payload.py`, `prebuilt/NAME/resident-usb.img`), a device package with `[boot]`, fastboot. |
 | `metal-cache-pull.sh` | Metal's compiled stages off a running phone (the server of `rc.jobs.ssh`), into `$OBJ/metal-cache-seed`; `root26-darwin.sh` puts them into the next small image, where the plug-in looks after its own cache, which starts empty at every boot. | `scp`, the key of `../ssh/`. |
 | `frames.py` | Frame pacing while something moves, from a run with `gpu_log=1 touch_lat=1` (and `rc.jobs.fps`): per phase of gestures, the frames a second, the share within 18 ms, the gaps over 50 ms and the GPU time, over the 0.7 s after each gesture. It reads the run's `.live` snapshots too (`XL_FOLLOW_KEEP=1`): the log itself keeps only the last minute or two of `tl:` lines. | Python. |
-| `ram-budget/` | The measurements behind [docs/ram-budget.md](../docs/ram-budget.md). Their intermediate files go to `/tmp`; `rootfs_select.py` and the two after it take darwin-renoir's `ios165/select-system.py`. | Python, the IPSW. |
+| `ram-budget/` | The measurements behind [Documentation/ram-budget.md](../Documentation/ram-budget.md). Their intermediate files go to `/tmp`; `rootfs_select.py` and the two after it take darwin-renoir's `ios165/select-system.py`. | Python, the IPSW. |
 
 ## What depends on the phone
 
@@ -107,10 +107,10 @@ generated"). The phone's own steps, and what it runs, are in its package's READM
 
 ## More
 
-- [docs/architecture.md](../docs/architecture.md): "Darwin user space", and "What is not in this repository".
-- [docs/darwin26-boot.md](../docs/darwin26-boot.md): what stood between Darwin and its home screen, in order.
-- [docs/metal-glass.md](../docs/metal-glass.md): Metal on the Adreno, and CoreAnimation drawn by it.
-- [docs/ram-budget.md](../docs/ram-budget.md): does the image fit in 6 GB of RAM.
-- [docs/backlight.md](../docs/backlight.md): what `inject_backlight.c` and `inject_brightness.c` talk to.
-- [docs/porting.md](../docs/porting.md), step 7: the user-space side of a new phone.
+- [Documentation/architecture.md](../Documentation/architecture.md): "Darwin user space", and "What is not in this repository".
+- [Documentation/darwin26-boot.md](../Documentation/darwin26-boot.md): what stood between Darwin and its home screen, in order.
+- [Documentation/metal-glass.md](../Documentation/metal-glass.md): Metal on the Adreno, and CoreAnimation drawn by it.
+- [Documentation/ram-budget.md](../Documentation/ram-budget.md): does the image fit in 6 GB of RAM.
+- [Documentation/backlight.md](../Documentation/backlight.md): what `inject_backlight.c` and `inject_brightness.c` talk to.
+- [Documentation/porting.md](../Documentation/porting.md), step 7: the user-space side of a new phone.
 - [devices/README.md](../devices/README.md): the board file, and the tables made of it.

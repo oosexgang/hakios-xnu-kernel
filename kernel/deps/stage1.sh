@@ -11,7 +11,7 @@
 #                               script), unifdef, unzbm
 #
 # What is there already is left alone, so it can be run again at any time. kernel/build.sh runs it by
-# itself when no darwin-renoir checkout provides the same (docs/building.md).
+# itself when no darwin-renoir checkout provides the same (Documentation/building.md).
 # Needs: git curl tar xz make cc flex bison m4 perl autoconf automake.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

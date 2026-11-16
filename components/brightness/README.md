@@ -2,7 +2,7 @@
 
 The screen's brightness: Control Center's and Settings' slider, Auto-Brightness, and the display modes
 (on, dimmed, off) Darwin takes the panel through. On an iPhone CoreBrightness talks to the display
-driver; this phone's panel is driven by the kernel ([`docs/backlight.md`](../../docs/backlight.md)).
+driver; this phone's panel is driven by the kernel ([`Documentation/backlight.md`](../../Documentation/backlight.md)).
 
 | Where | Inside | What it does |
 |---|---|---|

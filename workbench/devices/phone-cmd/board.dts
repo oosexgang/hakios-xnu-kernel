@@ -9,10 +9,10 @@
 	soc = "sm7350";
 
 	// What this board has a working driver for. The kernel starts a driver only where its feature is
-	// listed (and its boot-arg asks for it); docs/porting.md says what each needs.
+	// listed (and its boot-arg asks for it); Documentation/porting.md says what each needs.
 	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-ft3658u", "display-scan", "gpu-a660";
 
-	// The panel's light (docs/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
+	// The panel's light (Documentation/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
 	backlight {
 		type = "dcs";
 		panel-mode = "command";
@@ -23,7 +23,7 @@
 		byte-order = "msb-first";       // qcom,mdss-dsi-bl-inverted-dbv
 	};
 
-	// The slowest each group of cores is held back to when hot (docs/thermal.md): small, big, prime.
+	// The slowest each group of cores is held back to when hot (Documentation/thermal.md): small, big, prime.
 	thermal {
 		floor-mhz = <1000 1100 1100>;
 	};
@@ -92,7 +92,7 @@
 	// How the boot tool starts this phone (darwin/tools/boot26.py --board NAME): what stock fastboot must say it
 	// is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
 	// CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their Darwin 27 ports
-	// land (docs/darwin26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
+	// land (Documentation/darwin26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
 	boot {
 		fastboot-product = "phone-cmd";
 		cpus = <8>;

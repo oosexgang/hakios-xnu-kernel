@@ -2386,7 +2386,7 @@ publishDisplayNode(void)
  * ours -- CoreAnimation in backboardd among them, which then draws the screen with the GPU. A user
  * process may also change or remove the two (setProperties below), which is the way back to the
  * software renderer without a reboot. Without metal=1 (the default) nothing changes: CoreAnimation
- * keeps its software renderer, as in the RAM-only release. See docs/metal-glass.md.
+ * keeps its software renderer, as in the RAM-only release. See Documentation/metal-glass.md.
  */
 
 /* Metal's step 2 reads exactly these two, in this order, off this service (docs/metal.md 1). */

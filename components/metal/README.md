@@ -38,8 +38,8 @@ its power, clocks, ring buffer and memory.
 
 [`plugin/`](plugin) is a second Metal device, written apart from this one: a library
 of its own for the A6xx command stream with a QuartzCore plug-in over it
-([`docs/metal-plugin.md`](../../docs/metal-plugin.md)).
+([`Documentation/metal-plugin.md`](../../Documentation/metal-plugin.md)).
 
 ## Where it stands
 
-[`docs/metal-glass.md`](../../docs/metal-glass.md): what draws, what does not yet, and how it was measured.
+[`Documentation/metal-glass.md`](../../Documentation/metal-glass.md): what draws, what does not yet, and how it was measured.

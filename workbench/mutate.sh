@@ -29,8 +29,8 @@ SRC=$HERE/../kernel/overlay/bsd/dev
 CC=${CC:-cc}
 
 test=$HERE/$name.c
-[ -f "$test" ] || test=$HERE/../docs/examples/$name.c
-[ -f "$test" ] || die "no test $name (workbench/$name.c, docs/examples/$name.c)"
+[ -f "$test" ] || test=$HERE/../Documentation/examples/$name.c
+[ -f "$test" ] || die "no test $name (workbench/$name.c, Documentation/examples/$name.c)"
 # where the test finds the file: beside itself, among the kernel's drivers, in the loader
 original=
 for directory in "$(dirname "$test")" "$SRC" "$SRC/.." "$HERE/../loader"; do

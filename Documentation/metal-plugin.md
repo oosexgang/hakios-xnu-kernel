@@ -2,7 +2,7 @@
 
 Liquid Glass, CASDF shapes and the large lock-screen clock are drawn by CoreAnimation's **Metal** renderer, in
 backboardd. iOS 27 has no OpenGL renderer left, and its software renderer leaves these effects out. That is what
-`gpu=0` shows: the glass incomplete (`docs/darwin26-boot.md`, item 10).
+`gpu=0` shows: the glass incomplete (`Documentation/darwin26-boot.md`, item 10).
 
 With `gpu=1 metal=1` and the pieces below, backboardd takes a Metal device of ours, and CoreAnimation draws
 the screen on the Adreno.
@@ -54,7 +54,7 @@ Only the window server is shown the device (the plug-in's default). `metal_all=1
 
 ## Building and booting
 
-On top of the iOS 27 steps in `docs/darwin26-boot.md`, with the kernel built:
+On top of the iOS 27 steps in `Documentation/darwin26-boot.md`, with the kernel built:
 
 ```sh
 bash darwin/userland/metal.sh            # Mesa's compiler, the driver, the plug-in: $OBJ/HakiosMetal

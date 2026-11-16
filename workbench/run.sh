@@ -82,7 +82,7 @@ python3 "$HERE/qemu_helpers_test.py" 2>&1 | tail -3 || failed=1
 echo "== boot-args reference (tools/bootargs.py)"
 python3 "$HERE/bootargs_test.py" 2>&1 | tail -3 || failed=1
 
-echo "== porting_test (docs/porting.md on a made-up phone)"
+echo "== porting_test (Documentation/porting.md on a made-up phone)"
 "$HERE/porting_test.sh" || failed=1
 
 echo "== kernel_tools_test"
@@ -104,8 +104,8 @@ run synaptics_report_test -I"$SRC" "$HERE/synaptics_report_test.c"
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
 	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" -I"$WORK/identity" -I"$HERE/../loader" "$HERE/fakekernel/fakekernel.c")
-# (the last is the example driver of docs/writing-a-driver.md, which lives beside the guide)
-EXAMPLES=$HERE/../docs/examples
+# (the last is the example driver of Documentation/writing-a-driver.md, which lives beside the guide)
+EXAMPLES=$HERE/../Documentation/examples
 # On the host, under the address and undefined-behaviour sanitizers where the compiler has them: a read or
 # a write past a buffer, or a load of a 64-bit number from an address that is not a multiple of 8, fails
 # the scenario (what the drivers leak on purpose -- a run's memory is never given back -- is not looked for)
@@ -149,7 +149,7 @@ done
 
 # the helper that breaks a driver on purpose (workbench/mutate.sh), on the example driver: a change that
 # matters is caught, one that changes nothing is not, one that does not compile is said to be that
-echo "== mutate.sh (on docs/examples/example_led.c)"
+echo "== mutate.sh (on Documentation/examples/example_led.c)"
 mutation() {    # mutation WANTED-EXIT OLD NEW
 	local wanted=$1 got=0
 	"$HERE/mutate.sh" example_led_test example_led.c "$2" "$3" > "$WORK/mutation" 2>&1 || got=$?

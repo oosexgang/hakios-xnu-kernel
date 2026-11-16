@@ -6,7 +6,7 @@
 make check
 ```
 
-It must pass. It runs the lint, validates the board and SoC files, checks that `docs/boot-args.md` is
+It must pass. It runs the lint, validates the board and SoC files, checks that `Documentation/boot-args.md` is
 current and runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
 a change to a driver, `kernel/syntax-check.sh --tree DIR` says in seconds whether it still compiles,
 without the kernel toolchain; before you send a change to the kernel, `make kernel-check` compiles
@@ -25,9 +25,9 @@ HakiOS' files. There are none now: keep it so.
 | The loader | `loader/loader.c`, `loader/src/` | `loader/build.sh`; boards come from the board files, not from code. |
 | A library inserted into a Darwin process | `darwin/userland/` | — |
 
-[docs/architecture.md](docs/architecture.md) explains the split; [kernel/README.md](kernel/README.md)
+[Documentation/architecture.md](Documentation/architecture.md) explains the split; [kernel/README.md](kernel/README.md)
 has the two ways of working on the kernel. If you have a branch or a patch from before the
-restructuring: [docs/migrating.md](docs/migrating.md).
+restructuring: [Documentation/migrating.md](Documentation/migrating.md).
 
 ## Rules that keep the project portable
 
@@ -43,7 +43,7 @@ restructuring: [docs/migrating.md](docs/migrating.md).
   tests compile; a driver's register traffic can be tested against a model (`workbench/`).
 - **What two drivers need is written once.** Registers, waits, the log, the SoC's pins, the PMICs and
   RPMh have a header each in `kernel/overlay/bsd/dev/board/`, with a test.
-  [docs/writing-a-driver.md](docs/writing-a-driver.md) lists them, and has an example driver to
+  [Documentation/writing-a-driver.md](Documentation/writing-a-driver.md) lists them, and has an example driver to
   start from.
 - **Say what was verified.** "Compiles", "passes the host tests" and "seen working on the phone" are
   three different statements. Commit messages and documents say which one applies.

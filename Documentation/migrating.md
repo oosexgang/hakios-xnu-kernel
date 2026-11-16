@@ -27,6 +27,14 @@ behaviour on the first phone changed, and one thing changed on Renoir (below).
 | The kernel's files with the `hakios_` prefix: `bsd/dev/hakios_NAME.c`, `bsd/sys/hakios_NAME.h`, `osfmk/arm64/hakios_NAME.c`, `iokit/Kernel/HakiosNAME.cpp`, and the generated `hakios_board_table.h`, `hakios_boards.h`, `hakios_focaltech_fw.h`, `hakios_wlfw_ath11k.h` | `bsd/dev/board/NAME.c`, `bsd/sys/board/NAME.h` (included as `<sys/board/NAME.h>`), `osfmk/arm64/NAME.c`, `iokit/Kernel/BoardNAME.cpp`; `board_table.h`, `user_boards.h`, `focaltech_fw.h`, `wlfw_ath11k.h`. The symbols keep their names. A patch carries over with `sed -E 's#bsd/dev/hakios_#bsd/dev/board/#g; s#sys/hakios_#sys/board/#g'`. |
 | `userland/userland/src/hakiosmetal.m`, `hakiosdrawable.m`, `userland/tools/mesa/hakios-drm/hakios_drm.c` (copied into Mesa as `src/hakios-drm/`), `userland/tools/mesa26/hakios.patch` | `userland/userland/src/metal_driver.m`, `drawable.m`, `userland/tools/mesa/darwin-drm/darwin_drm.c` (`src/darwin-drm/`), `userland/tools/mesa26/darwin.patch`. What they print (`hakiosmetal:`, `hakiosdrawable:`), the launchd jobs' labels (`com.hakios.*`) and the libraries they make (`libhakios-*.dylib`) keep their names. |
 | `components.toml` | `components/upstream.dts` (for a while `components` at the top), in the syntax of the board files: one node a component (`xnu { pins = "..."; pinned-in = "..."; ... };`). `tools/components.py` reads and checks it as before. |
+| `docs/` | `Documentation/`, as in Linux's tree. |
+| The Metal device and its compiler in the first generation's userland: `userland/userland/src/metal_*.m`, `metal_props.c`, `metal_plugin.plist`, `rw_null.*`; `userland/tools/mesa/`, `mesa26/`, `air/`, `metal/`, `metallib.py`, `mk-mesa*.sh`, `mk-metal-linux.sh`; `userland/docs/air.md`, `air-report.md` | `components/metal/src/`, `components/metal/tools/` (the same names inside), `components/metal/docs/`. The scripts are run from `components/metal` and build into `components/metal/build/`. |
+| `metal/` at the top (the second Metal device, from appstore-ios27-wip) | `components/metal/plugin/`. |
+| `darwin/userland/inject_kc.c`, `inject_store.c`, `inject_mescal.m`, `inject_mad.c`, `absinthe_bag.h`; `userland/userland/src/inject_store.c`, `inject_fairplay.c`, `store_test.m` | `components/apple-id/src/`; `components/apple-id/first-generation/`. |
+| `userland/userland/src/keychain_test.c` | `components/sep/`. |
+| `darwin/userland/inject_poster.c`, `inject_wallpaper.m`; `inject_brightness.c`, `inject_backlight.c` | `components/wallpaper/`; `components/brightness/`. |
+| `userland/userland/src/camera_device.c`, `camera_isp.c`, `camera_isp.h`, `camera_test.c`, `camera_avtest.m`; `darwin/userland/inject_capture.c`, `inject_camera_app.c`; `userland/tools/camraw.py`, `camsensor.py`, `camtuning.py` | `components/camera/src/`, `components/camera/tools/`. |
+| `userland/userland/src/audio_plugin.c`, `audio_plugin.plist`, `sound_test.c`, `record_test.c` | `components/audio/`. |
 | `base/tools/camsensor.py`, `camtuning.py`, `camraw.py` | `userland/tools/`, where `userland/userland/build.sh` runs them from |
 | A driver's own copies of `rd()`/`wr()`, of the waits, of the lookup in RPMh's command database, of a request to RPMh, of a pin's registers | The headers `board/mmio.h`, `board/time.h`, `board/cmd_db.h`, `board/rpmh.h`, `board/tlmm.h` in `bsd/dev/` ([writing-a-driver.md](writing-a-driver.md)). A patch that touches such a copy has nothing to apply to; what it changed belongs in the header, or in the driver's call of it. |
 | `devices/NAME/board.toml`, `soc/SOC.toml` | `devices/NAME/board.dts`, and the SoC file as `devices/NAME/soc.dtsi` (above): the same keys, in the syntax of a device tree source (`key-name = <0x10>;`, `name = "text";`, a section is a node `speaker { ... };`, a camera sensor a node `sensor@0 { ... };`; [devices/README.md](../devices/README.md) has the format). `tools/boards.py convert board.toml` writes the new file beside the old one, comments kept. |
@@ -86,7 +94,7 @@ Edit a driver in `kernel/overlay/` and run `kernel/build.sh`, or edit in the tre
   (`platforms.h`, `hakios_board_table.h`) are generated: change the board file or the SoC file, never
   the table. Since the phones moved out (next section) the builds generate them, and no table is in the
   repository.
-- **`make check` runs in CI on every push.** A stale `docs/boot-args.md` or a hand-edited patch fails it.
+- **`make check` runs in CI on every push.** A stale `Documentation/boot-args.md` or a hand-edited patch fails it.
 
 ## The phones moved out of the main branch
 

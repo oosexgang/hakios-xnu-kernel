@@ -6,7 +6,7 @@
 #   kernel/syntax-check.sh
 #                     the C files HakiOS adds to the kernel compile, for syntax, types and formats, with the
 #                     runner's clang against the assembled tree's headers
-# The kernel itself is not built or linked here: that needs the Darwin toolchain (docs/building.md).
+# The kernel itself is not built or linked here: that needs the Darwin toolchain (Documentation/building.md).
 name: check
 
 on:

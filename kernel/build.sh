@@ -13,7 +13,7 @@
 #      SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
 #   3. the kernel's exported headers, then libfirehose_kernel.a and libpthread_kext.a built against them
 #   4. the kernel: $XNU_SRC/BUILD/obj/mach.development.bcm2837
-# Needs iPhoneOS16.5.sdk's headers, and Mach-O tools: theos' cctools, or LLVM's; see docs/building.md.
+# Needs iPhoneOS16.5.sdk's headers, and Mach-O tools: theos' cctools, or LLVM's; see Documentation/building.md.
 set -e -o pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 # shellcheck source=lib.sh
@@ -126,7 +126,7 @@ llvm)
 	for t in nmedit ctf_insert codesign_allocate; do link "$K/host/llvm/unused" host/bin/$t; done
 	;;
 *)
-	die "no Mach-O linker: theos' toolchain in $THEOS, or LLVM's (ld64.lld) in XNU_CLANG_DIR; see docs/building.md"
+	die "no Mach-O linker: theos' toolchain in $THEOS, or LLVM's (ld64.lld) in XNU_CLANG_DIR; see Documentation/building.md"
 	;;
 esac
 if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then

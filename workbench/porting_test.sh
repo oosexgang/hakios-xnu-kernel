@@ -1,5 +1,5 @@
 #!/bin/bash
-# docs/porting.md, run: a phone nobody has described and a SoC nobody has described are taken through the
+# Documentation/porting.md, run: a phone nobody has described and a SoC nobody has described are taken through the
 # guide's steps in a copy of the repository, with nothing but the tools a porter has. The phone is made
 # up, and so are its addresses -- none of them is one the two real phones have, so a value that is still
 # written into the code somewhere shows as a wrong answer here.

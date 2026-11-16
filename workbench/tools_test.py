@@ -53,7 +53,7 @@ class Links(Sandbox):
         self.write('tools/thing.py', '')
 
     def test_what_is_there_passes(self):
-        self.write('README.md', 'See [the guide](docs/guide.md#part), `tools/thing.py` and `docs/`.\n'
+        self.write('README.md', 'See [the guide](docs/guide.md#part), `tools/thing.py` and `Documentation/`.\n'
                                 'Elsewhere: [a site](https://example.org), [above](#top), `some/other/path`.\n')
         code, said, complained = self.run_tool(self.links)
         self.assertEqual((code, complained), (0, ''))
@@ -262,7 +262,7 @@ class Repository(unittest.TestCase):
         self.assertEqual(wrong, [], 'barriers without a "memory" clobber')
 
     def test_the_pictures_are_pictures_and_nothing_else(self):
-        pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
+        pictures = sorted((ROOT / 'Documentation/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])
         for path in pictures:
             text = path.read_text().replace('http://www.w3.org/2000/svg', '')

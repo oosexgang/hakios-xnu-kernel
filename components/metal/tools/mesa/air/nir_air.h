@@ -181,7 +181,7 @@ struct air_varying {
 /* A post-tessellation vertex function's subdivision: the patch is drawn as an N x N grid of
  * quads (N^2 triangles for a triangle patch), N a kernel input at this .base that a runtime
  * folds in when it compiles, and [[position_in_patch]] is the grid point the vertex index
- * names. No tessellator: the factors do not shape the grid (docs/metal-glass.md). */
+ * names. No tessellator: the factors do not shape the grid (Documentation/metal-glass.md). */
 #define AIR_TESS_LEVEL_INPUT 0x7c00
 
 /* Whether two buffer arguments are one buffer (MPS compares its source and destination to

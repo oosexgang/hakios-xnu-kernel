@@ -9,7 +9,7 @@ usage: [IOS=DIR] [WALLPAPER=COLOUR] [METAL=1] mkimage26.py [--min | --prune] [--
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
   (default) the files select-system.py chooses (the rules of 16.5's image), applied to iOS 26/27
-  --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
+  --prune the same, smaller for 6 GB of RAM (Documentation/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
   --metal with the system's Metal libraries (.metallib), which select-system.py leaves out, for a boot

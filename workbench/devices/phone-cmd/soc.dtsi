@@ -6,7 +6,7 @@
 	name = "sm7350";
 	description = "Qualcomm Snapdragon 780G (SM7350, shima)";
 
-	// The clocks the display block's registers need before they can be read (docs/porting.md, "Display").
+	// The clocks the display block's registers need before they can be read (Documentation/porting.md, "Display").
 	clocks {
 		gcc = <0x00100000>;             // clock-controller@100000
 		gcc-disp-ahb-cbcr = <0x27004>;  // gcc_disp_ahb_clk

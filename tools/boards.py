@@ -20,7 +20,7 @@
                                        comments kept (the .toml is left for you to remove)
 
 A board file says what a device has; its package's soc.dtsi says where the blocks of its chip are. The kernel is built with one table of the boards that are there and picks its row
-at boot by /chosen/darwin-board. docs/porting.md walks through adding a device.
+at boot by /chosen/darwin-board. Documentation/porting.md walks through adding a device.
 
 The files are written as a device tree source is, the syntax a porter reads in the phone's Android tree
 (tools/boardfile.py says what of it they take).
@@ -175,7 +175,7 @@ FEATURE_NEEDS = {'bluetooth-wcn-uart': ('pins', 'clocks', 'rpmh', 'spmi'), 'virt
 STREAM_OF = {'speaker-aw88261': 'audio_stream', 'wifi-wcn6750': 'wifi_stream', 'camera-sm7325': 'camera_stream'}
 WRITES_TO_PMIC = ('bluetooth-wcn-uart', 'torch-pm8350c', 'camera-sm7325')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
-# first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
+# first where there is one. (Documentation/boot-args.md has every argument; a test holds these names to it.)
 FEATURE_BOOTARGS = {
     'bluetooth-wcn-uart': 'bt=-1 looks; bt=1 powers and identifies',
     'cpufreq-scmi': 'scmi_perf=1',
@@ -316,7 +316,7 @@ def feature_requirements(feature):
 
 
 def features_text():
-    """docs/features.md: every feature a board can list, with what it needs written down first. Made from
+    """Documentation/features.md: every feature a board can list, with what it needs written down first. Made from
     the tables above, which are the ones `check` holds a board to."""
     out = ['# What each feature needs',
            '',
@@ -355,7 +355,7 @@ def status_text(name, board, soc):
 
     line('loader', 'known by its framebuffer' if 'fb_base' in board.get('loader', {}) else
          "the loader's fallback (the emulator)" if 'loader' in board else
-         'no [loader] section: started by another loader, or not yet (docs/porting.md, step 3)')
+         'no [loader] section: started by another loader, or not yet (Documentation/porting.md, step 3)')
     line('backlight', {'dcs': 'the panel takes MIPI DCS brightness (backlight=1 looks, backlight=2 writes)',
                        'soft': 'the picture is darkened in software',
                        'none': 'none'}.get(light.get('type'), 'no [backlight] section'))
@@ -374,11 +374,11 @@ def status_text(name, board, soc):
         elif needs:
             line(feature, 'needs ' + ', '.join(needs))
         elif part:
-            line(feature, "one part's driver: only if this phone has that part wired the same way (docs/drivers.md)")
+            line(feature, "one part's driver: only if this phone has that part wired the same way (Documentation/drivers.md)")
         else:
             line(feature, 'can be listed: what it needs is there' + (f' (then {how})' if how else ''))
-    out += ['', 'A feature that is on is started only with its boot argument, in brackets (docs/boot-args.md has',
-            'them all); docs/porting.md, step 5, has the order to try them in and the log line that says each',
+    out += ['', 'A feature that is on is started only with its boot argument, in brackets (Documentation/boot-args.md has',
+            'them all); Documentation/porting.md, step 5, has the order to try them in and the log line that says each',
             'one worked.', '']
     return as_written('\n'.join(out))
 
@@ -1295,14 +1295,14 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     started = 'Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.'
     out = Writer()
     out.comment(f'{description or name}. {started}',
-                'Every value here is to be checked against the device before it is relied on (docs/porting.md).')
+                'Every value here is to be checked against the device before it is relied on (Documentation/porting.md).')
     out.node('/')
     out.prop(f'name = "{name}";', ['what the loader puts in /chosen/darwin-board'])
     out.prop(f'description = {boardfile.value_text(description or name)};')
     out.prop(f'soc = "{soc_name}";')
     out.blank()
     out.comment('Nothing yet: a feature is listed once its driver has been seen to work on this board',
-                '(docs/porting.md goes through them in the order to try).')
+                '(Documentation/porting.md goes through them in the order to try).')
     out.prop('features = <>;')
     out.blank()
     light = board.get('backlight', {'type': 'soft'})
@@ -1384,7 +1384,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         print(f'wrote {shown(soc_path)}: a copy of {shown(same)}')
     else:
         out = Writer()
-        out.comment(f'{soc_name}. {started}', 'What every board with this SoC shares: where its blocks are (docs/porting.md).')
+        out.comment(f'{soc_name}. {started}', 'What every board with this SoC shares: where its blocks are (Documentation/porting.md).')
         out.node('/')
         out.prop(f'name = "{soc_name}";')
         out.prop(f'description = "{soc_name}";')
@@ -1414,7 +1414,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         print(f'wrote {shown(soc_path)}')
     for note in notes:
         print(as_written(f'note: {note}'))
-    print('next: tools/boards.py check, then docs/porting.md')
+    print('next: tools/boards.py check, then Documentation/porting.md')
 
 
 def tree_to_compare(text, panel=None):

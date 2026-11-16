@@ -6,8 +6,8 @@ body:
     id: document
     attributes:
       label: Which document
-      description: "Its path, and the section or step. `docs/boot-args.md` is generated from the comments in the kernel's sources: for it, name the argument."
-      placeholder: "docs/porting.md, step 3"
+      description: "Its path, and the section or step. `Documentation/boot-args.md` is generated from the comments in the kernel's sources: for it, name the argument."
+      placeholder: "Documentation/porting.md, step 3"
     validations:
       required: true
   - type: textarea

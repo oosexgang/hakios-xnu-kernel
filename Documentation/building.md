@@ -16,7 +16,7 @@ make check
 ```
 
 Runs the lint, validates the device packages that are present, checks that
-`docs/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
+`Documentation/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
 or Darwin: the tests run against three stand-in phones in `workbench/devices/`. CI runs the same on every push, plus
 `kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
 

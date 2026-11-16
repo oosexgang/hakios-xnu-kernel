@@ -1,6 +1,6 @@
 /*
  * An example driver: a light on one of the SoC's pins. It is not built into the kernel; it is here to
- * be read beside docs/writing-a-driver.md and to be copied. `make check` compiles it and runs it
+ * be read beside Documentation/writing-a-driver.md and to be copied. `make check` compiles it and runs it
  * against a model of the pins (example_led_test.c), so what the guide shows is code that works.
  *
  *   led=1      a look: the pin's configuration and level are read and said, nothing is written

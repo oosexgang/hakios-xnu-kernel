@@ -9,7 +9,7 @@ object graph (AGXMetalA11 alone is 53 classes and 1158 methods, IOGPU.framework 
 kernel ABI that submits work. Where a decision below constrains them it says so, and section 7
 collects those constraints in one list.
 
-Why this is worth doing at all, and what it costs, is argued in the first generation's metal.md (docs/ of hakios-xnu-userland) section 9. This
+Why this is worth doing at all, and what it costs, is argued in the first generation's metal.md (Documentation/ of hakios-xnu-userland) section 9. This
 document assumes those measurements and records the decisions taken on top of them.
 
 ## Where it stands, and what that does not mean
@@ -651,7 +651,7 @@ of counted. The numbers above are from suites where 11 of each conversion's 22 i
   **That latch now has a way out, behind a boot-arg — built, not yet run.** `gpu_recover=1`
   resets the 3D core's own half after a timeout, brings it back with the same two steps the boot
   uses, gives up the submission that hung and lets `gpuWait` wait again, so a hang costs one
-  dispatch instead of the rest of a boot. the first generation's metal.md (docs/ of hakios-xnu-userland) section 10.36 has what is done and
+  dispatch instead of the rest of a boot. the first generation's metal.md (Documentation/ of hakios-xnu-userland) section 10.36 has what is done and
   which source says so; `../../userland/userland/rc.jobs.metalrecover` is the measurement — the canary before
   and after three hangs of two different shapes, with both outcomes written down in advance.
   Until a boot says it works, every number in this section stands as it is and the ordering rules
@@ -891,7 +891,7 @@ before NIR. Neither is true of Darwin 16.5.
 
 ## 3. What a translation unit is
 
-A `.metallib` is a container of **one LLVM module per function** (the first generation's metal.md (docs/ of hakios-xnu-userland) 9.1). The unit
+A `.metallib` is a container of **one LLVM module per function** (the first generation's metal.md (Documentation/ of hakios-xnu-userland) 9.1). The unit
 of translation is therefore **one module → one `nir_shader`**, and the stage of that shader is read
 from the module's named metadata, never from the container: the container's `TYPE` tag and the
 metadata are cross-checked by the corpus tool and disagreements are reported.
@@ -1880,7 +1880,7 @@ technical writing, while corpus bytes committed as an *input* — a fixture a te
 place to get Apple's shaders; it may be a place that explains them.
 
 By that line, two things in these documents are excerpts and are kept: the three sampler words
-above, and the six-line listing of `clearFragment01` in the first generation's metal.md (docs/ of hakios-xnu-userland) section 9.5. Neither
+above, and the six-line listing of `clearFragment01` in the first generation's metal.md (Documentation/ of hakios-xnu-userland) section 9.5. Neither
 substitutes for the thing it came from, and both carry the analysis they exist to support. Nothing
 committed anywhere is corpus bytes as an input: `docs/air-report.md` holds module names, counts and
 error strings, which are facts about Apple's shaders and not Apple's shaders, and no test here has
@@ -1888,7 +1888,7 @@ a fixture — `tools/air/check.sh` reads `darwin165/rootfs`, which is not in the
 be.
 
 The part needing a decision rather than a convention: whether that line is the right one, and what
-it says about the twenty-odd screenshots in `docs/` of the running port, which are Apple's rendered
+it says about the twenty-odd screenshots in `Documentation/` of the running port, which are Apple's rendered
 artwork and a different class again. That belongs to whoever owns the repository, awake.
 
 ## 4. How it is proven right
@@ -3419,7 +3419,7 @@ Needed on this machine: meson, ninja, bison, flex, python3 with venv, and LLVM's
 ## 6a. Handing this to a runtime: what it has to do, and what it gets for free
 
 Written for whoever builds subsystem (2), the `_MTLDevice`/`IOGPUMetalDevice` object graph
-(the first generation's metal.md (docs/ of hakios-xnu-userland) section 4 weighs the three paths). This section is the interface, not advice: it
+(the first generation's metal.md (Documentation/ of hakios-xnu-userland) section 4 weighs the three paths). This section is the interface, not advice: it
 says what this frontend hands over and what it needs back, so that nobody has to read
 `air_run.c` to find out. Where a claim here has been exercised, it says by what; the rest is a
 promise this side keeps and nothing has tested.

@@ -1511,12 +1511,12 @@ class Repository(unittest.TestCase):
         self.assertIn('"two words" is not NAME or NAME=VALUE', str(refused.exception))
 
     def test_every_feature_says_how_it_is_started_and_the_argument_is_one_the_kernel_reads(self):
-        reference = (ROOT / 'docs/boot-args.md').read_text()
+        reference = (ROOT / 'Documentation/boot-args.md').read_text()
         for _, feature in boards.feature_bits():
             how = boards.FEATURE_BOOTARGS.get(feature)
             self.assertTrue(how, f'{feature} has no boot argument in FEATURE_BOOTARGS')
             for argument in re.findall(r'\b([a-z_]+)=', how):
-                self.assertIn(f'| `{argument}` ', reference, f'{feature}: docs/boot-args.md has no {argument}=')
+                self.assertIn(f'| `{argument}` ', reference, f'{feature}: Documentation/boot-args.md has no {argument}=')
         self.assertEqual(sorted(set(boards.FEATURE_BOOTARGS) - {name for _, name in boards.feature_bits()}), [])
 
     def test_the_repository_names_no_phone(self):
@@ -1551,8 +1551,8 @@ class Repository(unittest.TestCase):
 
     def test_the_page_of_what_each_feature_needs_is_what_the_checker_asks(self):
         # the page is the tool's own output
-        self.assertEqual((ROOT / 'docs/features.md').read_text(), boards.features_text(),
-                         'docs/features.md is not what tools/boards.py features prints: write it again')
+        self.assertEqual((ROOT / 'Documentation/features.md').read_text(), boards.features_text(),
+                         'Documentation/features.md is not what tools/boards.py features prints: write it again')
         for _, feature in boards.feature_bits():
             of_soc, of_board = boards.feature_requirements(feature)
             soc = {section: {key: 1 for key in keys} for section, keys in of_soc.items()}
@@ -1576,10 +1576,10 @@ class Repository(unittest.TestCase):
         root = boards.ROOT
         template = (root / 'devices/_template/board.dts').read_text()
         readme = (root / 'devices/README.md').read_text()
-        drivers = (root / 'docs/drivers.md').read_text()
+        drivers = (root / 'Documentation/drivers.md').read_text()
         for _, feature in boards.feature_bits():
             self.assertTrue(feature in template, f'the template does not list the feature {feature}')
-            self.assertTrue(f'`{feature}`' in drivers, f'docs/drivers.md does not have the feature {feature}')
+            self.assertTrue(f'`{feature}`' in drivers, f'Documentation/drivers.md does not have the feature {feature}')
         for section, keys in boards.BOARD_SCHEMA.items():
             if section:
                 self.assertTrue(re.search(rf'(?m)^\t(// )?{boards.boardfile.name_of(section)} {{', template),
