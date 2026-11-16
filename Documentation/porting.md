@@ -131,7 +131,8 @@ comes back through the loader. Look for, in this order:
 | launchd, then SpringBoard | Darwin is up, drawn in software. |
 
 Start with one core (`cpus=1`), then all of them. A hang at the second core is PSCI: check `psci` and
-`core-shift` in the SoC file.
+`core-shift` in the SoC file. `BENCH_DEFCONFIG=phone_first ./bench run` is this run: one core, every part of
+the phone off whatever the board file turns on, the console on the screen and what fails described.
 
 ## 5. Turn hardware on, one piece at a time
 
@@ -152,6 +153,10 @@ what each feature needs written down before it can be listed, key by key, in [fe
 | Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
 | Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
+
+`BENCH_DEFCONFIG=phone_look ./bench run` asks every part above that has a level that only reads for it, on every
+core, with the GPU, Wi-Fi, the sound and the clocks left off: its log, compared with Android's, is the first look at
+all of them at once. `phone_metal` then turns the GPU, Metal and Wi-Fi on, and `phone_perf` the clocks.
 
 `hw.board.features` in a running system shows what the kernel has for the board.
 
