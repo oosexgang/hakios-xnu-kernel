@@ -34,7 +34,8 @@
 #   BENCH_FOLLOW=N  fetch the kernel's log every N seconds of a run (default 10; empty: never), so that a kernel
 #                that hangs leaves what it said in logs/TIME-run.log.live
 #   BENCH_KERNEL    the kernel (default: kernel/build.sh's, $XNU_SRC/BUILD/obj/mach.development.bcm2837)
-#   BENCH_RAMDISK   the small image sent with the kernel, mounted on /hakios (default $IOS/root.apfs; none: none)
+#   BENCH_RAMDISK   the small image sent with the kernel, mounted on /hakios (default $IOS/root26-darwin.apfs, the one
+#                darwin/userland/root26-darwin.sh writes, else $IOS/root.apfs; none: none)
 #   IOS          the extracted IPSW and the images made from it (default: ios27 beside the repository)
 #   BENCH_HOME=fastboot   after a hang, keep the phone in its bootloader instead of Android: the next run
 #                starts at once. BENCH_REBOOT_AFTER=1: back to Android when a run is over (it charges there)
@@ -272,7 +273,9 @@ run() { # run OEM-COMMAND LABEL
 	log="logs/$stamp-$2.log"
 	if [ "$1" != "oem selftest" ]; then
 		[ -f "$K" ] || die "no kernel $K: kernel/build.sh"
-		local rd=${BENCH_RAMDISK:-$IOS/root.apfs}
+		# (Darwin 26/27's, root26-darwin.sh's, when it is there; else the first generation's)
+		local rd=${BENCH_RAMDISK:-$IOS/root26-darwin.apfs}
+		[ -n "${BENCH_RAMDISK:-}" ] || [ -f "$rd" ] || rd=$IOS/root.apfs
 		case "$rd" in
 		none) rd= ;;
 		*) [ -f "$rd" ] || die "no small image $rd (BENCH_RAMDISK)" ;;
