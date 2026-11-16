@@ -1192,7 +1192,11 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
-      sw_samplerless_units(nir);
+      /* a compute stage's only: a render stage's units are paired by software_pair_samplers, and
+       * renumbering them here as well was the one change to a softpipe draw between the boot that
+       * drew Stripe Yellow's ground and the one that drew its stripes over black */
+      if (nir->info.stage == MESA_SHADER_COMPUTE)
+         sw_samplerless_units(nir);
       NIR_PASS(_, nir, constant_data_to_ubo);
       NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
                &(nir_lower_mem_access_bit_sizes_options){
