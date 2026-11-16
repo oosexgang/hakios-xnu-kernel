@@ -5700,13 +5700,22 @@ rw_bisect_skipped_group(void)
 		sync = sysctlbyname("kern.bootargs", args, &sz, NULL, 0) == 0 && strstr(args, "metal_sync=1") != NULL;
 	}
 	if (sync) {
-		rw_print("sync draw %s (%s): %u colours (formats %lu %lu %lu), %u vertices\n",
+		rw_print("sync draw %s (%s): %u colours (formats %lu %lu %lu, the first %lux%lu), %u vertices "
+		         "x %u, clears 0x%x (%.2f %.2f %.2f %.2f), viewport %s%.0f,%.0f %.0fx%.0f, scissor %s%u,%u %ux%u, "
+		         "depth %s%s\n",
 		         [[work->pipeline label] UTF8String] ?: "?",
 		         work->render != nil ? ((HakiosMetalRenderPipeline *)work->render)->_names : "-", work->colorCount,
 		         work->colorCount > 0 ? (unsigned long)[work->color[0] pixelFormat] : 0ul,
 		         work->colorCount > 1 ? (unsigned long)[work->color[1] pixelFormat] : 0ul,
 		         work->colorCount > 2 ? (unsigned long)[work->color[2] pixelFormat] : 0ul,
-		         work->vertexCount);
+		         work->colorCount > 0 ? (unsigned long)[work->color[0] width] : 0ul,
+		         work->colorCount > 0 ? (unsigned long)[work->color[0] height] : 0ul,
+		         work->vertexCount, work->instanceCount, work->clearMask, work->clearColor[0][0],
+		         work->clearColor[0][1], work->clearColor[0][2], work->clearColor[0][3],
+		         work->hasViewport ? "" : "(none) ", work->viewport[0], work->viewport[1], work->viewport[2],
+		         work->viewport[3], work->hasScissor ? "" : "(none) ", work->scissor[0], work->scissor[1],
+		         work->scissor[2], work->scissor[3], work->depth != nil ? "yes" : "no",
+		         work->depthStencilState != nil ? " with a state" : "");
 	}
 	if (MESA(render_draw, [work->render render], &draw, why, size) != 0) {
 		rw_print("the draw failed: %s\n", why);
