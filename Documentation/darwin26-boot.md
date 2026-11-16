@@ -30,8 +30,8 @@ All in WSL. `darwin26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`
 ```
 tools/device.py add renoir             # Renoir's package, from the devices branch
 kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
-cc -O2 -o darwin/tools/pacstrip darwin/tools/pacstrip.c -lcrypto
-darwin/tools/pacstrip cache darwin26/dyld-strip darwin26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
+cc -O2 -o arch/arm64/tools/pacstrip arch/arm64/tools/pacstrip.c -lcrypto
+arch/arm64/tools/pacstrip cache darwin26/dyld-strip darwin26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
 python3 darwin/tools/fips26.py darwin26/dyld-strip
 darwin/userland/inj26.sh                      # our libraries, arm64e
 darwin/userland/root26-darwin.sh                 # /hakios image darwin26/root26-darwin.apfs, and the jobs darwin26/jobs26
@@ -125,7 +125,7 @@ cd "$HOME/darwin_kernel/hakios-arm64e-renoir"
 export DARWIN_FW="$HOME/darwin_kernel/darwin27"
 export OBJ="$PWD/darwin/userland/obj27"
 bash kernel/build.sh
-darwin/tools/pacstrip cache "$DARWIN_FW/dyld-strip" "$DARWIN_FW"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+arch/arm64/tools/pacstrip cache "$DARWIN_FW/dyld-strip" "$DARWIN_FW"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
 python3 darwin/tools/fips26.py "$DARWIN_FW/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1

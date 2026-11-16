@@ -55,8 +55,6 @@ checks their types, and leaves alone what is not as it expects.
 | File | What it does | Needs |
 | --- | --- | --- |
 | `unpack.sh` | Unpacks an IPSW into `IOS`: the system volume and both cryptexes (encrypted images opened with `ipsw fw aea`), LZBITMAP files expanded, links 7z leaves empty made again, `var.skel`, the decoded device tree. | unzip, 7-Zip 23 or newer, `ipsw`, a C compiler. |
-| `pacstrip.c` | Rewrites every PAC instruction into its plain equivalent, in a copy of a dyld shared cache or of a Mach-O, and makes the page hashes of the code signature again. `census` only counts; `resign` is for a later edit. | A C compiler and OpenSSL's libcrypto. Its input is Apple's files. |
-| `a64census.c` | Counts, in the executable mappings of a dyld shared cache, the instructions an ARMv8.2 core cannot execute. | A C compiler. Its input is Apple's cache. |
 | `fips26.py` | Puts the HMAC that corecrypto computes over its rewritten code in place of the stored one, so that the FIPS self test at boot passes; then `pacstrip resign`. The values in the file are Darwin 26.6.2's (23G90); another build's are given as arguments. | Python, `pacstrip` built beside it. Its input is the rewritten cache. |
 | `select-system.py` | Which files of the system volume an image takes (16.5's rules, applied to 26 and 27). | Python. |
 | `mkvarskel.py` | The template of `/private/var` with its owners and modes, from a `7z l -slt` listing of the system volume. | Python. Run by `unpack.sh`. |
@@ -88,7 +86,7 @@ The kernel built and `HAKIOS_DEVICES` as for its build, the phone's files in `fi
 
 ```sh
 darwin/tools/unpack.sh iPhone12,1_27.2_24B119_Restore.ipsw ../ios27
-darwin/tools/pacstrip cache ../ios27/dyld-strip ../ios27/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+arch/arm64/tools/pacstrip cache ../ios27/dyld-strip ../ios27/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
 python3 darwin/tools/fips26.py ../ios27/dyld-strip \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1

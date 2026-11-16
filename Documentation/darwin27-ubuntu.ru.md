@@ -144,8 +144,8 @@ darwin27/dyld/             dyld_shared_cache_arm64e и его подкэши (.0
 
 ```sh
 export DARWIN_FW=$DK/darwin27
-cc -O2 -o darwin/tools/pacstrip darwin/tools/pacstrip.c -lcrypto
-darwin/tools/pacstrip cache "$DARWIN_FW/dyld-strip" "$DARWIN_FW"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+cc -O2 -o arch/arm64/tools/pacstrip arch/arm64/tools/pacstrip.c -lcrypto
+arch/arm64/tools/pacstrip cache "$DARWIN_FW/dyld-strip" "$DARWIN_FW"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
 python3 darwin/tools/fips26.py "$DARWIN_FW/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1

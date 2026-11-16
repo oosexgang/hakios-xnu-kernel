@@ -22,6 +22,9 @@ OVERLAY_PLACES=(
 	"crypto:osfmk/minicrypto"
 	"fs/apfs:bsd/miscfs/apfs"
 	"fs/ramfs:bsd/miscfs/ramfs"
+	"arch/arm64/include/pexpert:pexpert/pexpert/arm64"
+	"arch/arm64/configs/xnu:config"
+	"security/amfi:libkern/amfi"
 )
 
 # overlay_files: every file the overlay adds to the tree, one a line, "REPOSITORY-PATH<tab>TREE-PATH" (the first

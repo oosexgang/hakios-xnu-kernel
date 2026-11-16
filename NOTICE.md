@@ -2,7 +2,7 @@
 
 ## Our work
 
-- `kernel/overlay/`, `kernel/patches/` and the parts of the kernel's tree kept at the top (`arch/arm64/kernel/`, `crypto/`, `fs/`) modify and extend Apple's xnu, published under the Apple Public Source
+- `kernel/overlay/`, `kernel/patches/` and the parts of the kernel's tree kept at the top (`arch/arm64/kernel/`, `arch/arm64/include/`, `arch/arm64/configs/xnu/`, `crypto/`, `fs/`, `security/`; `kernel/lib.sh` lists them) modify and extend Apple's xnu, published under the Apple Public Source
   License 2.0, and are distributed under the same licence (`LICENSES/other/APSL-2.0`).
 - `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
   HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `arch/arm64/boot/` and `kernel/deps/`, which were `base/xnuloader/` and

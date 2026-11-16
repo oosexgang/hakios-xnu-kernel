@@ -150,7 +150,7 @@ More: [arch/arm64/boot/README.md](../arch/arm64/boot/README.md).
 ## Darwin user space
 
 Darwin's own programs and frameworks are used as Apple ships them, with one transformation: on CPUs
-without pointer authentication, `darwin/tools/pacstrip.c` rewrites PAC instructions to their plain
+without pointer authentication, `arch/arm64/tools/pacstrip.c` rewrites PAC instructions to their plain
 equivalents and re-signs the pages.
 
 | Path | Contents |

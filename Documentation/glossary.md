@@ -24,7 +24,7 @@ the term is in general and, where it helps, where it shows in this repository.
 | **Loader** | `arch/arm64/boot/`: a UEFI application that plays iBoot's part. It finds the payload in RAM, builds the Apple-format device tree and `boot_args`, names the board and jumps to the kernel; afterwards it receives the kernel's log. |
 | **Look-only level** | The value of a driver's boot argument at which it reads and logs but writes nothing, usually 1 (`backlight=1`, `ddr=1`, `thermal=1`). The documents write "look only", "reads only" or "only looks". |
 | **Overlay** | `kernel/overlay/`: the files HakiOS adds to XNU, kept as ordinary sources at their place in the XNU tree. Not a device tree overlay, which [porting.md](porting.md) mentions once. |
-| **`pacstrip`** | `darwin/tools/pacstrip.c`: rewrites every PAC instruction of a Mach-O or of a dyld shared cache into its plain equivalent and recomputes the page hashes of the code signature, so that arm64e code runs on cores without pointer authentication. |
+| **`pacstrip`** | `arch/arm64/tools/pacstrip.c`: rewrites every PAC instruction of a Mach-O or of a dyld shared cache into its plain equivalent and recomputes the page hashes of the code signature, so that arm64e code runs on cores without pointer authentication. |
 | **Part driver** | A driver written for one part wired the way one phone has it, such as a touch controller or an amplifier. It runs only on a board that lists its feature; "part" in the Portability column of [drivers.md](drivers.md). |
 | **Payload** | What the loader starts: the kernel, the images and the boot arguments in one block of RAM, in the format the documents call "XNUP". `arch/arm64/boot/mkpayload.py` packs it. |
 | **`hakios_*`** | The prefix of the project's symbols (functions, types, `/dev` nodes). Its files are in `board/` directories instead (`bsd/dev/board/`). It says nothing about which phone the code is for: that is the board's. |
@@ -96,7 +96,7 @@ the term is in general and, where it helps, where it shows in this repository.
 | Term | Meaning |
 | --- | --- |
 | **AIR** | Apple's shader bitcode, the form in which Metal shaders are kept in a `.metallib`. A compiler from it to the Adreno is in `userland/`; [metal-glass.md](metal-glass.md). |
-| **AMFI** (Apple Mobile File Integrity) | Apple's closed kernel extension that enforces code-signing policy: which signatures and entitlements a program may run with. A stand-in is in `kernel/overlay/libkern/amfi/`. |
+| **AMFI** (Apple Mobile File Integrity) | Apple's closed kernel extension that enforces code-signing policy: which signatures and entitlements a program may run with. A stand-in is in `security/amfi/`. |
 | **APFS** (Apple File System) | The file system of Darwin. The kernel has an implementation of its own in `fs/apfs/`, which reads the Darwin images from RAM; the images are `.apfs` files. |
 | **AppleKeyStore** | Apple's closed kernel extension that keeps the keybags and the keys derived from the passcode. Its stand-in, `kernel/overlay/iokit/Kernel/MiniAppleKeyStore.cpp`, presents a device without a passcode. |
 | **arm64e** | Apple's variant of the arm64 ABI that uses pointer authentication; Darwin's own code is compiled for it. The kernel here is plain arm64, and for cores without PAC arm64e programs go through `pacstrip` first. |
@@ -123,7 +123,7 @@ the term is in general and, where it helps, where it shows in this repository.
 | **Metal** | Apple's programming interface to the GPU. Darwin finds a GPU through a Metal device plug-in; the boot argument `metal=1` lets one be named, and [metal-glass.md](metal-glass.md) says what exists. |
 | **mig** (Mach Interface Generator) | The tool that writes the C code for Mach message interfaces from `.defs` files. One of the host tools the kernel build needs; `kernel/deps/stage1.sh` builds it. |
 | **MobileGestalt** | The Darwin library that answers what the device is and can do, such as whether its camera has a flash. It appears once, under `torch` in [boot-args.md](boot-args.md). |
-| **PAC** (pointer authentication) | An ARMv8.3 feature: a pointer is signed into its unused upper bits and checked before use. arm64e code relies on it. For cores without it, `darwin/tools/pacstrip.c` rewrites the instructions and `arch/arm64/kernel/a64emu.c` emulates the few left. |
+| **PAC** (pointer authentication) | An ARMv8.3 feature: a pointer is signed into its unused upper bits and checked before use. arm64e code relies on it. For cores without it, `arch/arm64/tools/pacstrip.c` rewrites the instructions and `arch/arm64/kernel/a64emu.c` emulates the few left. |
 | **Platform expert** | The IOKit object that stands for the machine itself: it publishes the CPUs and answers for things like the time of day. Here `kernel/overlay/iokit/Kernel/GenericARMPE.cpp`. |
 | **Registry** | IOKit's tree of devices, drivers and their properties, which user space can read; the device tree appears in it. The inserted libraries read the board's name from `/chosen/darwin-board` there. |
 | **SDK** | Apple's headers and library stubs for building software for one platform. The builds use the iPhoneOS SDK that comes with theos and the DriverKit headers of the macOS SDK; [building.md](building.md). |

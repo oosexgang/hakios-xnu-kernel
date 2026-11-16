@@ -38,8 +38,8 @@ SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 # shellcheck disable=SC2034  # for the scripts that source this file
 DYN="xnu-clang -arch arm64e -isysroot $SDK -O1 -mios-version-min=16.0"
 export IOS OBJ BOARD LDID US SDK
-# pacstrip (darwin/tools/pacstrip.c): made here when it is missing or older than its source
-PACSTRIP=$IOS_REPO/darwin/tools/pacstrip
-if [ ! -x "$PACSTRIP" ] || [ "$IOS_REPO/darwin/tools/pacstrip.c" -nt "$PACSTRIP" ]; then
-	cc -O2 -o "$PACSTRIP" "$IOS_REPO/darwin/tools/pacstrip.c" -lcrypto || { echo "pacstrip did not build (it needs libcrypto)" >&2; exit 1; }
+# pacstrip (arch/arm64/tools/pacstrip.c): made here when it is missing or older than its source
+PACSTRIP=$IOS_REPO/arch/arm64/tools/pacstrip
+if [ ! -x "$PACSTRIP" ] || [ "$IOS_REPO/arch/arm64/tools/pacstrip.c" -nt "$PACSTRIP" ]; then
+	cc -O2 -o "$PACSTRIP" "$IOS_REPO/arch/arm64/tools/pacstrip.c" -lcrypto || { echo "pacstrip did not build (it needs libcrypto)" >&2; exit 1; }
 fi

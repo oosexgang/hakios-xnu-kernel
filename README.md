@@ -113,6 +113,8 @@ Then build: [Documentation/building.md](Documentation/building.md). For a phone 
 | --- | --- |
 | `devices/` | The templates, the emulator's package, and the packages you bring in: each a board file and its chip's SoC file. |
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
+| `arch/arm64/` | What is particular to the arm64 machines: `boot/` (the loader), `kernel/`, `include/`, `configs/` (defconfigs, the kernel's build configuration), `tools/` (`pacstrip`, `a64census`). |
+| `security/` | The kernel's stand-in for AMFI: entitlements and code-signing policy. |
 | `arch/arm64/kernel/` | The kernel's arm64 code of ours (`osfmk/arm64` of its tree): the other processors through PSCI, the GICv3, idle times, the arm64e instructions an ARMv8.2 core lacks, the way back to the loader. |
 | `fs/` | The kernel's file systems of ours: `apfs/` (Darwin's, read and written) and `ramfs/`. |
 | `crypto/` | The kernel's cryptography provider (minicrypto: AES, digests), in place of Apple's corecrypto kext. |

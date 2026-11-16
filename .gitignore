@@ -10,8 +10,8 @@ __pycache__/
 *.apfs
 *.metallib
 tools/export.local
-darwin/tools/a64census
-darwin/tools/pacstrip
+arch/arm64/tools/a64census
+arch/arm64/tools/pacstrip
 darwin/userland/obj26/
 darwin/userland/obj27/
 *.obj
