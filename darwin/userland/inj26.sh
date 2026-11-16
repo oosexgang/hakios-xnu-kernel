@@ -9,7 +9,8 @@ source "$RN/userland/env.sh"
 BUILD=${BUILD:-$(python3 -c "import plistlib, sys; print(plistlib.load(open(sys.argv[1], 'rb'))['ProductBuildVersion'])" "$IOS/BuildManifest.plist")}
 O=$OBJ
 mkdir -p "$O" "$O/src"
-cp "$US"/src/*.c "$US"/src/*.h "$O/src/"
+cp "$US"/src/*.c "$O/src/"
+cp -R "$US/src/board" "$O/src/"    # (the headers the libraries share with the kernel's drivers: board/input.h, ...)
 # SpringBoard's methods that are replaced, at the build's addresses: only those whose code was read and
 # found to do the same as on 16.5 (inject_sb.c checks each against the address it expects and leaves a
 # method alone otherwise).
