@@ -8,6 +8,9 @@ the layout Apple's thread_elements() has). The frontend reads row fm of A and co
 from the lanes that hold them by shuffles; the lane numbers below are the frontend's, constant
 for constant, so a slip in one of its masks or shifts is a wrong element here.
 
+And the same through memory: simdgroup_matrix_8x8_load, init_diag and _store, each lane taking its
+two elements at the frontend's addresses (element_at).
+
 Softpipe has no shuffle (nir_to_tgsi has no subgroup operations), so this is the check of the
 layout that can run without the phone.
 
@@ -69,7 +72,55 @@ def main():
                 bad += 1
     print("simdmatrixcheck: an 8x8 product over 32 lanes by the frontend's shuffles: %s"
           % ("WRONG" if bad else "ok"))
-    return 1 if bad else 0
+    bad_mem = memory_round_trip(rnd)
+    print("simdmatrixcheck: load, multiply and store through memory at an origin and a stride, "
+          "plain and transposed: %s" % ("WRONG" if bad_mem else "ok"))
+    return 1 if bad or bad_mem else 0
+
+
+def element_at(origin, stride, r, c):
+    """the element simdgroup_matrix_8x8_load and _store take for (r, c), as the frontend does"""
+    return (origin[0] + c) * stride[0] + (origin[1] + r) * stride[1]
+
+
+def memory_round_trip(rnd):
+    """A and B loaded out of a 16-wide array at an origin (B transposed: its stride swapped), the
+    product added to a matrix of init_diag(3), stored into another array, against numpy-free sums."""
+    bad = 0
+    L = 16
+    src_a = [rnd.randint(-9, 9) for _ in range(L * L)]
+    src_b = [rnd.randint(-9, 9) for _ in range(L * L)]
+    oa, ob, od = (3, 2), (5, 1), (4, 6)
+    sa, sb, sd = (1, L), (L, 1), (1, L)
+    A = [[src_a[element_at(oa, sa, r, c)] for c in range(8)] for r in range(8)]
+    B = [[src_b[element_at(ob, sb, r, c)] for c in range(8)] for r in range(8)]
+    want = [[(3 if i == j else 0) + sum(A[i][k] * B[k][j] for k in range(8)) for j in range(8)]
+            for i in range(8)]
+    held = {}
+    for l in range(32):
+        fm, fn = coord(l)
+        a = tuple(src_a[element_at(oa, sa, fm, fn + j)] for j in range(2))
+        b = tuple(src_b[element_at(ob, sb, fm, fn + j)] for j in range(2))
+        c = tuple(3 if fm == fn + j else 0 for j in range(2))
+        held[l] = (a, b, c)
+    out = [None] * (L * L)
+    for l in range(32):
+        fm, fn = coord(l)
+        acc = list(held[l][2])
+        for k in range(8):
+            av = held[from_a(l, k)][0][k & 1]
+            for j in range(2):
+                acc[j] += av * held[from_b(l, k)][1][j]
+        for j in range(2):
+            out[element_at(od, sd, fm, fn + j)] = acc[j]
+    for i in range(8):
+        for j in range(8):
+            got = out[element_at(od, sd, i, j)]
+            if got != want[i][j]:
+                bad += 1
+                if bad <= 5:
+                    print("simdmatrixcheck: stored (%d, %d) is %s, want %d" % (i, j, got, want[i][j]))
+    return bad
 
 
 if __name__ == "__main__":
