@@ -28,7 +28,6 @@ import hashlib
 import os
 import stat
 import struct
-import sys
 import unicodedata
 import zlib
 
@@ -233,7 +232,6 @@ class Tree:
             recs = self.levels[lvl][i]
             if lvl > 0:
                 # the child pointers: the children's ids (virtual) or addresses (physical)
-                first_child = sum(len(n) for n in self.levels[lvl - 1][:0])
                 children_before = sum(len(self.levels[lvl][j]) for j in range(i))
                 recs = [(k, struct.pack('<Q', where[(lvl - 1, children_before + c)][1]))
                         for c, (k, _) in enumerate(recs)]

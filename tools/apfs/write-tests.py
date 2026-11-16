@@ -753,7 +753,7 @@ def test_power_failure():
     each: the container is clean, the volume mounts, every other file is byte for byte what it
     was, and the blocks that changed are the target file's own and in order -- so a caller whose
     own checksum goes in last can tell that the write did not finish."""
-    path, size = '/big', 1 << 20
+    path = '/big'
     base, _ = fresh('pf-base')
     old = read_py_bytes(base, path)
     at, n = 8192, 12 * BS
