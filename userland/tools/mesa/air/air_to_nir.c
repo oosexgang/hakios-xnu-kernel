@@ -2637,9 +2637,26 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
    const struct air_argbuf *ab = &c->argbufs[ptr.binding];
    const char *abname = ab->name ? ab->name : "unnamed";
 
+   /* A texture's or a sampler's handle read as a 64-bit number, which the shader turns back
+    * into a texture with inttoptr (VFX's particle_ribbon_frag: `load i64` from the material's
+    * ribbon texture, then `inttoptr` and a sample through it): the handle is the descriptor,
+    * as a pointer load of the member makes it, and not the bytes in the set's buffer. */
+   bool as_handle = false;
+   if (type->kind == AIR_TYPE_INT && type->bits == 64 &&
+       (!ptr.offset || nir_src_is_const(nir_src_for_ssa(ptr.offset)))) {
+      uint64_t at = ptr.offset ? nir_src_as_uint(nir_src_for_ssa(ptr.offset)) : 0;
+      for (unsigned i = 0; i < ab->num_members; i++) {
+         const struct air_argbuf_member *m = &ab->members[i];
+         if (m->offset == at && !m->value &&
+             (m->kind == AIR_RESOURCE_TEXTURE || m->kind == AIR_RESOURCE_IMAGE ||
+              m->kind == AIR_RESOURCE_SAMPLER))
+            as_handle = true;
+      }
+   }
+
    /* a value out of a set that has values: its bytes, where they lie in the set's buffer
     * (an index into an array in it is an offset like any other) */
-   if (type->kind != AIR_TYPE_POINTER && ab->has_values) {
+   if (type->kind != AIR_TYPE_POINTER && ab->has_values && !as_handle) {
       nir_def *v = air_load_ptr(c, ptr, type, align);
       return v ? air_val_ssa(c, v) : NULL;
    }
@@ -2697,7 +2714,7 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
     * which are the runtime's 8-byte handle and mean nothing to a driver that
     * binds by index.
     */
-   if (type->kind != AIR_TYPE_POINTER) {
+   if (type->kind != AIR_TYPE_POINTER && !as_handle) {
       air_error(c, "instruction: a load of a value out of the argument buffer %s, whose "
                    "member %s at byte %u is a resource and has no bytes to read",
                 abname, m->name ? m->name : "unnamed", (unsigned)off);
@@ -2710,7 +2727,7 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
     * module's type table -- and either one alone would bind a constant buffer
     * as a device buffer without a word if it were wrong.
     */
-   if (type->addrspace != m->addrspace) {
+   if (!as_handle && type->addrspace != m->addrspace) {
       air_error(c, "instruction: a pointer in address space %u loaded from member %s of "
                    "the argument buffer %s, which the module's struct type puts in "
                    "address space %u", type->addrspace, m->name ? m->name : "unnamed",
@@ -2718,7 +2735,7 @@ argbuf_load(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
       return NULL;
    }
 
-   struct air_ptr p = { .binding = m->index, .pointee = type->elem };
+   struct air_ptr p = { .binding = m->index, .pointee = as_handle ? NULL : type->elem };
    switch (m->kind) {
    case AIR_RESOURCE_CONSTANT_BUFFER: p.class = AIR_PTR_UBO; break;
    case AIR_RESOURCE_DEVICE_BUFFER:   p.class = AIR_PTR_SSBO; break;
@@ -4013,6 +4030,59 @@ load_through_choice(struct air_ctx *c, struct air_val *v, const struct air_type 
    return nir_bcsel(&c->b, v->def, a, b);
 }
 
+/* Whether a pointer chosen at run time has a member of an argument buffer on either side. */
+static bool
+choice_has_argbuf(const struct air_val *v)
+{
+   if (v->kind == AIR_VAL_PTR)
+      return v->ptr.class == AIR_PTR_ARGBUF;
+   if (v->kind != AIR_VAL_PTR_SELECT || v->num_elems != 2)
+      return false;
+   return choice_has_argbuf(v->elems[0]) || choice_has_argbuf(v->elems[1]);
+}
+
+/* Whether every side of a choice is a pointer to a place (not null, not a function). */
+static bool
+choice_is_places(const struct air_val *v)
+{
+   if (v->kind == AIR_VAL_PTR)
+      return v->ptr.class != AIR_PTR_NONE && !v->fn;
+   if (v->kind != AIR_VAL_PTR_SELECT || v->num_elems != 2)
+      return false;
+   return choice_is_places(v->elems[0]) && choice_is_places(v->elems[1]);
+}
+
+static bool translate_instruction(struct air_ctx *c, const struct air_inst *in);
+
+/* A load through a choice that reaches into an argument buffer: the load made on each side, as
+ * the load of that side alone would be, and the two results chosen between. A number is a bcsel;
+ * a texture, a sampler or a pointer read out of a member stays a choice (AIR_VAL_PTR_SELECT),
+ * for whatever uses it to split on. A load has no effect to keep behind the choice. */
+static bool
+load_each_side(struct air_ctx *c, const struct air_inst *in, struct air_val *p)
+{
+   struct air_val *got[2];
+   for (unsigned side = 0; side < 2; side++) {
+      air_set(c, in->operands[0], p->elems[side]);
+      bool ok = translate_instruction(c, in);
+      air_set(c, in->operands[0], p);
+      if (!ok)
+         return false;
+      got[side] = air_get(c, &in->base);
+      if (!got[side])
+         return false;
+   }
+   if (got[0]->kind == AIR_VAL_SSA && got[1]->kind == AIR_VAL_SSA) {
+      nir_def *a = got[0]->def, *b = got[1]->def;
+      if (!a || !b || a->num_components != b->num_components || a->bit_size != b->bit_size)
+         return air_error(c, "instruction: a load through a choice whose sides differ");
+      air_set(c, &in->base, air_val_ssa(c, nir_bcsel(&c->b, p->def, a, b)));
+      return true;
+   }
+   air_set(c, &in->base, air_val_ptr_select(c, p->def, got[0], got[1]));
+   return true;
+}
+
 static bool
 gep_into(struct air_ctx *c, struct air_val *base, const struct air_inst *in,
          struct air_val **out)
@@ -4265,6 +4335,15 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
             return true;
          }
          struct air_val *r = cast_pointer(c, v, dt->elem);
+         if (r) {
+            air_set(c, &in->base, r);
+            return true;
+         }
+      }
+      /* and a choice between two such pointers -- a texture loaded out of one of two members
+       * of an argument buffer (load_each_side) -- the same choice */
+      if (v->kind == AIR_VAL_PTR_SELECT && choice_is_places(v)) {
+         struct air_val *r = in->sub == AIR_CAST_PTRTOINT ? v : cast_pointer(c, v, dt->elem);
          if (r) {
             air_set(c, &in->base, r);
             return true;
@@ -4645,22 +4724,16 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          if (!val_is_pointerish(pa) || !val_is_pointerish(pb))
             return air_error(c, "instruction: a select between a pointer and "
                                 "something that is not one");
-         /* A choice between two members of an argument buffer cannot be kept
-          * the way a choice between two buffers can: AIR_VAL_PTR_SELECT loads
-          * both sides and selects the values, and a texture or a sampler is
-          * not a value to load. Two names for ONE member is no choice at all
-          * and is answered; anything else is refused rather than drawn over
-          * whichever of the two the code happened to take.
+         /* Two names for ONE member of an argument buffer is no choice at all. Two different
+          * members are kept as a choice like two buffers are; a load through it is made on
+          * each side (choice_has_argbuf), so a texture or a sampler loaded out of one of two
+          * members stays a choice between the two, which the texture op splits on (VFX's
+          * particle_ribbon_frag samples its first or its second ribbon texture).
           */
-         if ((pa->kind == AIR_VAL_PTR && pa->ptr.class == AIR_PTR_ARGBUF) ||
-             (pb->kind == AIR_VAL_PTR && pb->ptr.class == AIR_PTR_ARGBUF)) {
-            if (pa->kind == AIR_VAL_PTR && pb->kind == AIR_VAL_PTR &&
-                same_ptr(&pa->ptr, &pb->ptr)) {
-               air_set(c, &in->base, pa);
-               return true;
-            }
-            return air_error(c, "instruction: a select between two different places in "
-                                "an argument buffer");
+         if (pa->kind == AIR_VAL_PTR && pb->kind == AIR_VAL_PTR &&
+             pa->ptr.class == AIR_PTR_ARGBUF && same_ptr(&pa->ptr, &pb->ptr)) {
+            air_set(c, &in->base, pa);
+            return true;
          }
          nir_def *pc = air_get_ssa(c, in->operands[0]);
          if (!pc)
@@ -4843,6 +4916,8 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          air_set(c, &in->base, ptr_decode(c, words));
          return true;
       }
+      if (p->kind == AIR_VAL_PTR_SELECT && choice_has_argbuf(p))
+         return load_each_side(c, in, p);
       if (p->kind == AIR_VAL_PTR_SELECT) {
          nir_def *res = load_through_choice(c, p, in->base.type, in->align);
          if (!res)
