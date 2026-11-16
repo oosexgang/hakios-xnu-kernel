@@ -586,6 +586,9 @@ texture_descriptor(MTLPixelFormat format, MTLTextureUsage usage)
 	return td;
 }
 
+static bool textures_for_shader(id<MTLDevice> dev, id<MTLFunction> fn, id<MTLTexture> *out,
+				unsigned slots, unsigned *declared, char *why, size_t why_size);
+
 static void
 compute_path(id<MTLDevice> dev, id<MTLLibrary> library, const char *only)
 {
@@ -594,6 +597,7 @@ compute_path(id<MTLDevice> dev, id<MTLLibrary> library, const char *only)
 	unsigned compiled = 0, refused = 0;
 	id<MTLComputePipelineState> first = nil;
 	NSString *firstName = nil;
+	id<MTLFunction> firstFn = nil;
 
 	for (NSString *name in names) {
 		id<MTLFunction> fn = [library newFunctionWithName:name];
@@ -616,6 +620,7 @@ compute_path(id<MTLDevice> dev, id<MTLLibrary> library, const char *only)
 		if (first == nil) {
 			first = [ps retain];
 			firstName = [name retain];
+			firstFn = [fn retain];
 		}
 	}
 	printf("drvtest: of %lu functions, %u compiled and %u were refused\n",
@@ -772,6 +777,29 @@ compute_path(id<MTLDevice> dev, id<MTLLibrary> library, const char *only)
 	[sd release];
 	printf("drvtest: %d of %d textures made, sampler %s\n", textures_made, RW_TEST_BUFFERS,
 	       sampler != nil ? class_getName(object_getClass(sampler)) : "nil");
+
+	/* A slot the kernel declares gets the element type it declares, as the draws do
+	 * (textures_for_shader): one format for every slot bound FilmGrainChromaKernel_Unorm's
+	 * texture2d<ushort> an RGBA32Float texture, which the driver refused by name and which
+	 * then proved nothing about the kernel. */
+	id<MTLTexture> declared_tex[RW_TEX_SLOTS] = { nil };
+	unsigned ndeclared = 0;
+	char declwhy[256] = "";
+
+	if (firstFn != nil && textures_for_shader(dev, firstFn, declared_tex, RW_TEX_SLOTS,
+						  &ndeclared, declwhy, sizeof(declwhy))) {
+		for (unsigned i = 0; i < RW_TEX_SLOTS && i < RW_TEST_BUFFERS; i++) {
+			if (declared_tex[i] == nil) {
+				continue;
+			}
+			[texs[i] release];
+			texs[i] = declared_tex[i];
+			printf("drvtest: slot %u is format %lu, as %s declares it\n", i,
+			       (unsigned long)[texs[i] pixelFormat], [firstName UTF8String]);
+		}
+	} else if (declwhy[0] != '\0') {
+		printf("drvtest: %s keeps the one format: %s\n", [firstName UTF8String], declwhy);
+	}
 
 	id<MTLCommandBuffer> cmd = [queue commandBuffer];
 	id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
