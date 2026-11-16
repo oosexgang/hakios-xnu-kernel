@@ -1,4 +1,4 @@
-# iOS 26/27 (RC_JOBS=darwin/userland/rc.jobs.ssh root26-darwin.sh, after darwin/userland/ssh.sh; wifi=1 and a long XL_SECS):
+# iOS 26/27 (RC_JOBS=darwin/userland/rc.jobs.ssh root26-darwin.sh, after darwin/userland/ssh.sh; wifi=1 and a long BENCH_SECS):
 # a shell over the network. The SSH server starts as soon as Wi-Fi is asked for (it listens before there is an
 # address), the lock screen is swiped away as rc.jobs.unlock does, and the address goes to the log ("net_test:
 # en0 ..."). Then, from this machine, with the key whose public half is in ../ssh/authorized_keys:

@@ -699,7 +699,7 @@ STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, loader_return_timer_init);
 
 /*
  * A loader that watches from another core also listens to the host, and passes on a request to
- * end the run ("xl stop") by setting loader_live.stop. Look once a second.
+ * end the run ("bench stop") by setting loader_live.stop. Look once a second.
  */
 static thread_call_t loader_stop_call;
 

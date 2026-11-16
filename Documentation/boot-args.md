@@ -237,7 +237,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("xl sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
+| `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("bench sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
 | `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (board/guard.c, on the phone): what reaches the amplifiers. |
 | `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (board/mic.c, mic=3), in both channels. |
 
@@ -343,7 +343,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `wifi_listen` | wifi_listen=S how long step 14 waits for the Wi-Fi firmware's service (default 3) |
 | `wifi_loud` | (wifi_loud=1 with it: nothing is kept back, for looking into a start that goes wrong.) The rest of this comment is about the steps one by one, wifi_step=N, which is how all this was found out. |
 | `wifi_lx` | With wifi_lx=2 and wifi_smmu=2, 100 words of ring set-up go into the registers of copy engines 0, 1, 2, 3, 4, 5 and 7 without an abort, 510 buffers are posted on each of the three receiving rings, and 9 ms later the firmware's first message is in a buffer of copy engine 2: HTC's "ready" (2 credits o… |
-| `wifi_mac` | wifi_mac=A the radio's own address for the driver (hakios_wifi_radio_address() below; xl takes it from a file that is not in the repository) |
+| `wifi_mac` | wifi_mac=A the radio's own address for the driver (hakios_wifi_radio_address() below; bench takes it from a file that is not in the repository) |
 | `wifi_new` | wifi_new=K steps K and later have not been seen to work (default: the last one) |
 | `wifi_pause` | wifi_pause=MS how long such a step waits after announcing a group of accesses (default 2200: the loader, watching from another core, notes the end of our log every two seconds, and after a silent reset that is all there is) |
 | `wifi_radio_read` | with wifi_radio_read=1, and only with the firmware in mission mode (outside it a read there has ended the kernel) Steps 1 to 5 are the survey; they write to nothing but the arbiter's command word. |

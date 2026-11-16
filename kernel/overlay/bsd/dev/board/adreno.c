@@ -125,7 +125,7 @@ static bool quiet;                      /* repeating accesses that have been ann
 /*
  * The kernel's log reaches the loader when a run is over, and a run that ends in a reset
  * without a word leaves none. The loader also reads a log of the kernel's from another core
- * while it runs (loader_return.c; xl keeps it with XL_FOLLOW): every line said here goes there
+ * while it runs (loader_return.c; bench keeps it with BENCH_FOLLOW): every line said here goes there
  * as well, before the next register is touched.
  */
 

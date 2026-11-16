@@ -414,7 +414,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 		if (write(device, k, sizeof(*k) + frame_bytes) != (ssize_t)(sizeof(*k) + frame_bytes)) {
 			perror("camera_test: the frame for the host");
 		} else {
-			printf("camera_test: the frame (RAW10) is the host's (xl camera)\n");
+			printf("camera_test: the frame (RAW10) is the host's (base/xl camera)\n");
 		}
 		close(device);
 		return 0;
@@ -444,7 +444,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	if (write(device, keep, sizeof(*keep) + picture) != (ssize_t)(sizeof(*keep) + picture)) {
 		perror("camera_test: the picture for the host");
 	} else {
-		printf("camera_test: the picture is the host's (xl camera)\n");
+		printf("camera_test: the picture is the host's (base/xl camera)\n");
 	}
 	close(device);
 	return 0;

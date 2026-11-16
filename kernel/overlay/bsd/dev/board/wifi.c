@@ -118,7 +118,7 @@
  *                      so that the radio can be shown memory (radio_space_on() below: THE
  *                      SMMU IS WRITTEN); taken back when the DSP is stopped
  *   wifi_mac=A         the radio's own address for the driver (hakios_wifi_radio_address()
- *                      below; xl takes it from a file that is not in the repository)
+ *                      below; bench takes it from a file that is not in the repository)
  *   wifi_scan=1        with wifi_lx=2: once the driver is up, an interface in station mode is
  *                      made and the radio scans, listening only; what it heard goes to the log
  *                      (other people's networks by name and address: the log is not for
@@ -137,7 +137,7 @@
  *   wifi_wide=1        the channel as wide as the access point offers (40 or 80 MHz) instead of
  *                      20 MHz; wifi=1 stands for it
  *   wifi_lx_step=MS    the driver's start says each stub it comes to and waits MS there: for
- *                      a run that ends without a word (follow it with XL_FOLLOW=2)
+ *                      a run that ends without a word (follow it with BENCH_FOLLOW=2)
  *   wifi_lx=1          step 15 is ath11k's own instead of the stand-in (board/lx.c), with
  *                      the radio's registers neither read nor written; 2: for real (which
  *                      wants wifi_smmu=2: the radio is given addresses of its rings)

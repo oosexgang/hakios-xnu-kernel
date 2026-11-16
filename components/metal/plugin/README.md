@@ -264,7 +264,7 @@ the real GPU can do: run the kernels. In hakios, as the GPU's only client (no wi
 
 ```sh
 EXTRA="../hakios-metal/out/ios/hakios-metal-probe" RC=rc.darwin.metalprobe userland/userland/build.sh
-XL_CMDLINE="-v bootcpu=7 cpus=8 cpufreq=1 gpu=1 gpu_recover=1" XL_SECS=100 ./xl run
+BENCH_CMDLINE="-v bootcpu=7 cpus=8 cpufreq=1 gpu=1 gpu_recover=1" BENCH_SECS=100 ./bench run
 ```
 
 or beside the window server, with `RC_JOBS=rc.jobs.metalprobe`. `gpu_recover=1` is not optional: a dispatch the GPU

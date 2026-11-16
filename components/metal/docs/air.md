@@ -2437,20 +2437,20 @@ Three references, each independent of the translator:
 
    The second is a property of the loader's log and will catch anything verbose:
    **the log keeps the first 256 KB and the last 1 MB and drops the middle**, saying so in one
-   line. With `XL_SECS=120` and `REST=1`, Darwin wrote more than a megabyte of `os_log` after the
+   line. With `BENCH_SECS=120` and `REST=1`, Darwin wrote more than a megabyte of `os_log` after the
    suite had finished, so the suite's own output was in the dropped middle — 27 modules survived,
-   at the front. `XL_FOLLOW`'s intermediate log does not help, because the drop has already
+   at the front. `BENCH_FOLLOW`'s intermediate log does not help, because the drop has already
    happened by the time it is fetched, and a filter removes lines that are already gone. Two levers
    keep a run under the cap and neither is sufficient alone — `QUIET=1`, which drops `launchd`'s own
-   thousands of lines, and a short `XL_SECS` — because the volume comes from the number of services
+   thousands of lines, and a short `BENCH_SECS` — because the volume comes from the number of services
    and from the length of the session both. What is actually diagnostic is the size of the file:
    1 466 58x bytes *is* the cap, so a log that size is truncated however many drop markers it
    carries (the intact run here has two and lost nothing; a truncated one had one). `README.md`
-   carries this beside `./xl log`, with the three runs tabulated, because it catches anything
+   carries this beside `./bench log`, with the three runs tabulated, because it catches anything
    verbose and not just this suite.
 
    **How much room is left is worth knowing before the suite grows.** In the run that worked, at
-   `XL_SECS=30`, `air_run`'s own output was 93 459 bytes for 225 modules — 415 bytes each — and the
+   `BENCH_SECS=30`, `air_run`'s own output was 93 459 bytes for 225 modules — 415 bytes each — and the
    other 1 092 137 bytes, 92% of the log, was Darwin booting *with* `QUIET=1` already on. So the
    headroom is about 280 KB, or roughly 650 more modules if they cost nothing in time, and fewer
    because each one adds 22 ms of further boot noise. `--cases 8` should still fit; past that it

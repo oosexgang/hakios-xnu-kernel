@@ -34,7 +34,7 @@
  *
  * With --picture [SECONDS] it draws the panel instead of a pixel: 64 of Apple's own
  * fragment shaders and Apple's own textured blit, at 1080x2400, put on the screen through
- * the kernel's GPU service so that `./xl screenshot` can take it. See picture_path below;
+ * the kernel's GPU service so that `./bench screenshot` can take it. See picture_path below;
  * RC_JOBS=rc.jobs.metalpicture runs it.
  *
  * With --time [REPEATS] it measures what all of that COSTS -- a compile, a draw at the
@@ -3749,7 +3749,7 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  *
  * The pixels reach the panel through the kernel's own GPU service -- kHakiosShow,
  * iokit/Kernel/BoardGPU.cpp, the selector src/gl_test.c already puts its triangle on the
- * screen with -- and that is what `./xl screenshot` reads. Said plainly because it
+ * screen with -- and that is what `./bench screenshot` reads. Said plainly because it
  * matters: THE PRESENTATION IS A COPY IN THE KERNEL AND IS NOT METAL'S. What is claimed
  * is that every one of the 2 592 000 pixels handed over was computed by this driver's
  * Metal pipelines on the Adreno. Nothing here is drawn by the processor -- no border, no
@@ -7415,7 +7415,7 @@ main(int argc, char **argv)
 	/* --picture [SECONDS]: the draw at the size of the panel, put on the panel. Its own
 	 * flag and not a size for --draw, because what it produces is not a pixel to compare
 	 * but a whole screen, and because it ends in a loop that repaints: a run is over when
-	 * XL_SECS says so, and the screenshot is taken while this is still painting. */
+	 * BENCH_SECS says so, and the screenshot is taken while this is still painting. */
 	if (argc > next && strcmp(argv[next], "--picture") == 0) {
 		picture = true;
 		next++;

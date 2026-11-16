@@ -2,8 +2,8 @@
 """frames.py RUN.log [AFTER_S]: frame pacing while something moves, from a run with boot-args gpu_log=1 touch_lat=1
 (rc.jobs.fps drives the gestures).
 
-A run's log keeps only its last minute or two of tl: lines, so the snapshots xl takes during the run
-(XL_FOLLOW_KEEP=1: RUN.log.live, RUN.log.live.N) are read first and the tl: lines they share counted once.
+A run's log keeps only its last minute or two of tl: lines, so the snapshots bench takes during the run
+(BENCH_FOLLOW_KEEP=1: RUN.log.live, RUN.log.live.N) are read first and the tl: lines they share counted once.
 The gestures are the bursts of touches (tl: i), and the gestures less than 2 s apart one phase of the run (the
 home screen's pages, Settings' list). For each phase, over the AFTER_S seconds after each gesture (0.7):
 

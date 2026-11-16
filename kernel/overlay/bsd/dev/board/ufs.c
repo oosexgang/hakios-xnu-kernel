@@ -182,7 +182,7 @@ static LCK_MTX_DECLARE(ufs_write_mtx, &ufs_lck_grp);
  *
  *   kern.hakios.var_save   the handshake. The saver writes VAR_SAVE_IDLE when it starts and is
  *                           then the one that will be asked; on the orderly way back to the loader
- *                           (loader_return_after expired, or "xl stop") the kernel writes
+ *                           (loader_return_after expired, or "bench stop") the kernel writes
  *                           VAR_SAVE_WANTED and waits, and the saver writes VAR_SAVE_DONE when the
  *                           volume is in the flash. Nobody registered: nothing is asked and
  *                           nothing waited for, so a run without a saver returns as it always did.

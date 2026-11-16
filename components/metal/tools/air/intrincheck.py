@@ -1758,7 +1758,7 @@ def parse_runner_log(path):
     # same four numbers for two different cases, so no per-line rule is safe.
     # The test is therefore global: the whole file must consist of adjacent
     # equal pairs. That is a property a real log does not have by accident, and
-    # the phone's own log (xl run) does not have at all -- it is not doubled.
+    # the phone's own log (bench run) does not have at all -- it is not doubled.
     if len(lines) >= 2 and len(lines) % 2 == 0 and \
        all(lines[i] == lines[i + 1] for i in range(0, len(lines), 2)):
         lines = lines[0::2]

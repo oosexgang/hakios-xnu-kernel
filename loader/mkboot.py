@@ -98,7 +98,7 @@ def pack(shim, image, dtb, payload, uefi):
         raise SystemExit('mkboot.py: the payload is not an XNUP container (loader/mkpayload.py)')
     if len(payload) > PAYLOAD_MAX - 0x1000:
         raise SystemExit(f'mkboot.py: the payload is {len(payload)} bytes; the UEFI reserves {PAYLOAD_MAX:#x} for '
-                         f'it. Send big images over USB instead (xl ramdisk)')
+                         f'it. Send big images over USB instead (bench ramdisk)')
     blob = shim + image + payload
     blob += b'\0' * (-len(blob) % 16)
     return boot_image(gzip.compress(blob, 6, mtime=0) + dtb, uefi.get('header_version', 1))

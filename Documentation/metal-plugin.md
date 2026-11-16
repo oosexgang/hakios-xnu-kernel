@@ -63,8 +63,8 @@ LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
     python3 darwin/tools/mkimage26.py --prune --metal "$IOS/system27-metal.apfs"
 python3 darwin/tools/darwin-write.py plan "$IOS/system27-metal.apfs" 0
 DARWIN_WRITE=yes python3 darwin/tools/darwin-write.py write "$IOS/system27-metal.apfs" 0
-./xl enter; ./xl ramdisk "$IOS/flashboot.apfs"
-XL_RAMDISK="$IOS/root26-darwin.apfs" XL_CMDLINE="gpu=1 metal=1 wifi=1" ./xl run
+./bench enter; ./bench ramdisk "$IOS/flashboot.apfs"
+BENCH_RAMDISK="$IOS/root26-darwin.apfs" BENCH_CMDLINE="gpu=1 metal=1 wifi=1" ./bench run
 ```
 
 Notes:
@@ -155,7 +155,7 @@ this machine: `metal_air_dump=1`, `components/metal/plugin/tools/airdump.py`, `s
   presenter's copy of each frame to the panel: scaled 828x1792 to 1080x2400 on the processor, in stripes behind
   the panel's readout so that no picture tears, it takes 10.7–11 ms a frame however few frames come -- a ceiling
   near 92 a second; at 69 a second 271 of 346 swaps waited for the frame before. Past it: the display block
-  scanning the surface out itself, scaled by its own scaler, with no copy. (`xl screenshot` reads the panel's
+  scanning the surface out itself, scaled by its own scaler, with no copy. (`bench screenshot` reads the panel's
   memory while a copy writes it, so a screenshot in motion holds rows of two frames; the recording does not.)
 - **Compiled stages across boots.** `/private/var` starts empty at every boot of iOS 27 here. The stages a run
   compiled are taken off the phone over SSH (`darwin/tools/metal-cache-pull.sh`) into the next small image, where

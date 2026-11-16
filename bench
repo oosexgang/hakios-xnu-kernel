@@ -1,50 +1,55 @@
 #!/bin/bash
-# xl -- the phone on the bench: start the resident loader, give it images, run a kernel, fetch its log.
+# bench -- the phone on the bench: start the resident loader, give it images, run a kernel, fetch its log.
 # Everything is in the phone's RAM: nothing here flashes, erases or writes its storage, and a reboot
 # brings Android back.
 #
-#   xl state            where the phone is now, and what that means for xl
-#   xl enter            start the resident loader (from Android or the phone's own fastboot)
-#   xl ramdisk [FILE]   send the system image (default $IOS/system.apfs) once; it stays in the phone's RAM
-#                       across runs and is the root file system (/dev/md0). "xl ramdisk none" drops it
-#   xl run [N]          send the kernel and the small image, run (stopping at checkpoint N), fetch the log
-#   xl log              the loader's log; during a run, the kernel's so far as well
-#   xl screenshot [F]   the phone's screen as a PNG (default logs/screen.png); during a run too
-#   xl recording [F]    the screen recording the last run made (rec_secs=N), as a video
-#   xl sound [F]        the sound the last run recorded (rec_sound=N), as a WAV file
-#   xl stop             end the run in progress (the kernel returns as when its time is up)
-#   xl selftest         only the kernel-to-loader return path
-#   xl hang             make the loader hang on purpose: tests the watchdog
-#   xl memmap           the phone's memory map as its firmware reports it
-#   xl reboot           cold-reset the phone (back to Android)
-#   xl reload           restart into a freshly built loader (after loader/build.sh)
+#   bench state            where the phone is now, and what that means for bench
+#   bench enter            start the resident loader (from Android or the phone's own fastboot)
+#   bench ramdisk [FILE]   send the system image (default $IOS/system.apfs) once; it stays in the phone's RAM
+#                       across runs and is the root file system (/dev/md0). "bench ramdisk none" drops it
+#   bench run [N]          send the kernel and the small image, run (stopping at checkpoint N), fetch the log
+#   bench log              the loader's log; during a run, the kernel's so far as well
+#   bench screenshot [F]   the phone's screen as a PNG (default logs/screen.png); during a run too
+#   bench recording [F]    the screen recording the last run made (rec_secs=N), as a video
+#   bench sound [F]        the sound the last run recorded (rec_sound=N), as a WAV file
+#   bench stop             end the run in progress (the kernel returns as when its time is up)
+#   bench selftest         only the kernel-to-loader return path
+#   bench hang             make the loader hang on purpose: tests the watchdog
+#   bench memmap           the phone's memory map as its firmware reports it
+#   bench reboot           cold-reset the phone (back to Android)
+#   bench reload           restart into a freshly built loader (after loader/build.sh)
 #
-# Which phone: XL_BOARD (or HAKIOS_BOARD), else the only device package here with a [uefi] section
+# Which phone: BENCH_BOARD (or HAKIOS_BOARD), else the only device package here with a [uefi] section
 # (tools/device.py add NAME; HAKIOS_DEVICES as for the builds). Its board file gives the boot arguments
 # of a plain run ([boot] bootargs, cpus) and what its own fastboot calls it ([boot] fastboot_product):
-# xl starts nothing on a phone that answers another name. Its UEFI build is in firmware/NAME/uefi/.
+# bench starts nothing on a phone that answers another name. Its UEFI build is in firmware/NAME/uefi/.
 #
 # Environment:
-#   XL_CMDLINE   boot arguments of this run, NAME or NAME=VALUE: each replaces the board's argument of
-#                that name or is added (XL_CMDLINE="gpu=1 -v"); one of NAME=KEY=VALUE by NAME=KEY, so that
-#                several stay (caenv=CA_A=1 caenv=CA_B=1); XL_PLAIN=1: these alone, without the board's
-#   XL_SECS      seconds after which the kernel returns to the loader on its own (default 180; 0: never)
-#   XL_FOLLOW=N  fetch the kernel's log every N seconds of a run (default 10; empty: never), so that a kernel
+#   BENCH_CMDLINE   boot arguments of this run, NAME or NAME=VALUE: each replaces the board's argument of
+#                that name or is added (BENCH_CMDLINE="gpu=1 -v"); one of NAME=KEY=VALUE by NAME=KEY, so that
+#                several stay (caenv=CA_A=1 caenv=CA_B=1); BENCH_PLAIN=1: these alone, without the board's
+#   BENCH_SECS      seconds after which the kernel returns to the loader on its own (default 180; 0: never)
+#   BENCH_FOLLOW=N  fetch the kernel's log every N seconds of a run (default 10; empty: never), so that a kernel
 #                that hangs leaves what it said in logs/TIME-run.log.live
-#   XL_KERNEL    the kernel (default: kernel/build.sh's, $XNU_SRC/BUILD/obj/mach.development.bcm2837)
-#   XL_RAMDISK   the small image sent with the kernel, mounted on /hakios (default $IOS/root.apfs; none: none)
+#   BENCH_KERNEL    the kernel (default: kernel/build.sh's, $XNU_SRC/BUILD/obj/mach.development.bcm2837)
+#   BENCH_RAMDISK   the small image sent with the kernel, mounted on /hakios (default $IOS/root.apfs; none: none)
 #   IOS          the extracted IPSW and the images made from it (default: ios27 beside the repository)
-#   XL_HOME=fastboot   after a hang, keep the phone in its bootloader instead of Android: the next run
-#                starts at once. XL_REBOOT_AFTER=1: back to Android when a run is over (it charges there)
+#   BENCH_HOME=fastboot   after a hang, keep the phone in its bootloader instead of Android: the next run
+#                starts at once. BENCH_REBOOT_AFTER=1: back to Android when a run is over (it charges there)
 #
 # One phone, several working copies: a run holds a lock outside all of them; while it lasts only state,
-# screenshot, log, stop and reboot are taken. stop and reboot of another copy's run need XL_FORCE=1.
+# screenshot, log, stop and reboot are taken. stop and reboot of another copy's run need BENCH_FORCE=1.
 # The resident system image outlives runs and copies: `ramdisk` notes who sent what, `run` says so.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
+# (this was ./xl: what was set for it under its former names still counts, unless the new name is set)
+for v in BOARD CMDLINE PLAIN SECS FOLLOW FOLLOW_KEEP KERNEL RAMDISK HOME REBOOT_AFTER FORCE; do
+	o=XL_$v n=BENCH_$v
+	[ -z "${!n+x}" ] && [ -n "${!o+x}" ] && export "$n=${!o}"
+done
 TOP=$PWD
 source kernel/env.sh
 IOS=${IOS:-$(cd .. && pwd)/ios27}
-K=${XL_KERNEL:-$XNU_SRC/BUILD/obj/mach.development.bcm2837}
+K=${BENCH_KERNEL:-$XNU_SRC/BUILD/obj/mach.development.bcm2837}
 L=loader/loader.efi
 mkdir -p logs
 PHONE=${XDG_RUNTIME_DIR:-/tmp}/hakios-phone
@@ -52,13 +57,13 @@ PHONE=${XDG_RUNTIME_DIR:-/tmp}/hakios-phone
 adb() { command adb "$@" 8>&-; }
 # one fastboot at a time (a run in one terminal, a screenshot in another)
 fb() { flock -w 90 "$PHONE.lock" timeout "${FB_TIMEOUT:-10}" fastboot "$@" 2>&1; }
-say() { echo "xl: $*"; }
-die() { echo "xl: $*" >&2; exit 1; }
+say() { echo "bench: $*"; }
+die() { echo "bench: $*" >&2; exit 1; }
 
 # --- the board ---------------------------------------------------------------------------------
-# NAME, then KEY=VALUE lines: what xl needs of the board file
+# NAME, then KEY=VALUE lines: what bench needs of the board file
 board_info() {
-	python3 - "${XL_BOARD:-${HAKIOS_BOARD:-}}" <<'PY'
+	python3 - "${BENCH_BOARD:-${HAKIOS_BOARD:-}}" <<'PY'
 import sys
 sys.path.insert(0, 'tools')
 import boards
@@ -66,11 +71,11 @@ name = sys.argv[1] or None
 found = {n: b for n, b in boards.load()[1].items() if 'uefi' in b}
 if name is None:
     if len(found) != 1:
-        sys.exit('xl: which phone? XL_BOARD=NAME (here: ' + (', '.join(sorted(found)) or
+        sys.exit('bench: which phone? BENCH_BOARD=NAME (here: ' + (', '.join(sorted(found)) or
                  'no package with a [uefi] section; tools/device.py add NAME') + ')')
     name = next(iter(found))
 if name not in found:
-    sys.exit(f'xl: no board "{name}" with a [uefi] section (tools/boards.py list)')
+    sys.exit(f'bench: no board "{name}" with a [uefi] section (tools/boards.py list)')
 boot = found[name].get('boot', {})
 print(name)
 print('product=' + boot.get('fastboot_product', ''))
@@ -117,10 +122,10 @@ describe() {
 	case "$1" in
 	loader) echo "in the resident loader ($(FB_TIMEOUT=5 fb getvar board | sed -n 's/^board: *//p')), ready for a run" ;;
 	loader-busy) echo "in the resident loader, which is not answering: a kernel is running, or has hung (the watchdog resets it)" ;;
-	fastboot) echo "in its own bootloader (fastboot): xl enter starts the loader from here" ;;
+	fastboot) echo "in its own bootloader (fastboot): bench enter starts the loader from here" ;;
 	fastbootd) echo "in Android's fastbootd, which cannot boot an image: reboot it to the bootloader (fastboot reboot bootloader)" ;;
-	android) echo "in Android: xl enter takes it to its bootloader and starts the loader" ;;
-	recovery) echo "in recovery: adb reboot bootloader, then xl enter" ;;
+	android) echo "in Android: bench enter takes it to its bootloader and starts the loader" ;;
+	recovery) echo "in recovery: adb reboot bootloader, then bench enter" ;;
 	unauthorized) echo "in Android, but this computer is not allowed on adb: accept the prompt on the phone's screen" ;;
 	absent) echo "not on USB: off, on its logo, or on another cable" ;;
 	esac
@@ -132,15 +137,15 @@ wait_for() { # wait_for STATE SECONDS
 }
 
 # After a hang the watchdog resets the phone. What comes up is Android, or its bootloader, or the logo
-# (where nothing reaches it over USB). XL_HOME=fastboot: keep it in the bootloader instead.
+# (where nothing reaches it over USB). BENCH_HOME=fastboot: keep it in the bootloader instead.
 recover_phone() {
 	local i s
 	rm -f "$PHONE.ours"
 	for ((i = 0; i < 150; i += 3)); do
 		s=$(state)
-		if [ "${XL_HOME:-android}" = fastboot ]; then
+		if [ "${BENCH_HOME:-android}" = fastboot ]; then
 			case "$s" in
-			fastboot) say "the phone is back in its bootloader (XL_HOME=fastboot)"; return 0 ;;
+			fastboot) say "the phone is back in its bootloader (BENCH_HOME=fastboot)"; return 0 ;;
 			android) say "the phone came up in Android: sending it to its bootloader"; adb reboot bootloader ;;
 			loader*) fb reboot > /dev/null ;;
 			esac
@@ -165,7 +170,7 @@ check_product() {
 	local product
 	product=$(FB_TIMEOUT=5 fb getvar product | sed -n 's/^product: *//p')
 	[ "$product" = "$PRODUCT" ] && return 0
-	die "the phone's bootloader says it is \"$product\", the board $BOARD is \"$PRODUCT\": nothing started (XL_BOARD)"
+	die "the phone's bootloader says it is \"$product\", the board $BOARD is \"$PRODUCT\": nothing started (BENCH_BOARD)"
 }
 
 enter() {
@@ -189,7 +194,7 @@ enter() {
 		local board
 		board=$(FB_TIMEOUT=5 fb getvar board | sed -n 's/^board: *//p')
 		[ -z "$board" ] || [ "$board" = "$BOARD" ] ||
-			die "the resident loader took the phone for \"$board\", not $BOARD: xl reboot, then again"
+			die "the resident loader took the phone for \"$board\", not $BOARD: bench reboot, then again"
 		return 0
 	fi
 	check_product
@@ -197,8 +202,7 @@ enter() {
 	loader/mkpayload.py -o usb-payload.bin loader.efi=$L --usb > /dev/null || die "the payload was not made"
 	loader/mkboot.py --board "$BOARD" -p usb-payload.bin -o resident.img > /dev/null || exit 1
 	# Right after the phone enters its bootloader the first "boot" is sometimes not taken: twice.
-	local try
-	for try in 1 2; do
+	for _ in 1 2; do
 		FB_TIMEOUT=40 fb boot resident.img | grep -q OKAY || { sleep 3; continue; }
 		touch "$PHONE.ours"
 		sleep 6
@@ -222,7 +226,7 @@ resident_again() {
 		printf '%s\t%s\t%s\n' "$rwho" "$rwhat" "$rsize" > "$PHONE.ramdisk"
 		say "the loader was started anew: its resident image sent again ($rwhat)"
 	else
-		say "the loader was started anew, without the resident image $rwhat: send it again (xl ramdisk FILE)" >&2
+		say "the loader was started anew, without the resident image $rwhat: send it again (bench ramdisk FILE)" >&2
 	fi
 }
 
@@ -232,14 +236,14 @@ fetch_log() { # fetch_log FILE
 	[ -s "$1" ] && tr -d '\0' < "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
-# The boot arguments of the run: the board's, with XL_CMDLINE's in place of those of the same name
+# The boot arguments of the run: the board's, with BENCH_CMDLINE's in place of those of the same name
 run_args() {
-	python3 - "$BOARD_ARGS" "${XL_CMDLINE:-}" "${XL_PLAIN:-}" "$CPUS" <<'PY'
+	python3 - "$BOARD_ARGS" "${BENCH_CMDLINE:-}" "${BENCH_PLAIN:-}" "$CPUS" <<'PY'
 import sys
 board, run, plain, cpus = sys.argv[1].split(), sys.argv[2].split(), sys.argv[3], sys.argv[4]
 arguments = {}
 # (NAME=KEY=VALUE, as caenv=CA_SOMETHING=1, is one of several of that NAME, one for each KEY: its KEY is in the name it
-# replaces by -- two caenv= in XL_CMDLINE used to leave only the second)
+# replaces by -- two caenv= in BENCH_CMDLINE used to leave only the second)
 for argument in ([] if plain else board + ([f'cpus={cpus}'] if cpus else [])) + run:
     parts = argument.split('=', 2)
     arguments['='.join(parts[:2]) if len(parts) == 3 else parts[0]] = argument
@@ -253,24 +257,24 @@ run() { # run OEM-COMMAND LABEL
 	fi
 	enter || return 1
 	exec 8> "$PHONE.run"
-	flock -n 8 || { say "a run is in progress, started from $(cat "$PHONE.who" 2> /dev/null) (xl stop ends it)"; return 1; }
+	flock -n 8 || { say "a run is in progress, started from $(cat "$PHONE.who" 2> /dev/null) (bench stop ends it)"; return 1; }
 	pwd > "$PHONE.who"
 	local stamp log result
 	stamp=$(date +%H%M%S)
 	log="logs/$stamp-$2.log"
 	if [ "$1" != "oem selftest" ]; then
 		[ -f "$K" ] || die "no kernel $K: kernel/build.sh"
-		local rd=${XL_RAMDISK:-$IOS/root.apfs}
+		local rd=${BENCH_RAMDISK:-$IOS/root.apfs}
 		case "$rd" in
 		none) rd= ;;
-		*) [ -f "$rd" ] || die "no small image $rd (XL_RAMDISK)" ;;
+		*) [ -f "$rd" ] || die "no small image $rd (BENCH_RAMDISK)" ;;
 		esac
 		if [ -s "$PHONE.ramdisk" ]; then
 			local rwho rwhat rsize
 			IFS=$'\t' read -r rwho rwhat rsize < "$PHONE.ramdisk"
 			[ "$rwho" = "$TOP" ] || say "the resident image was sent from $rwho: $rwhat, $((rsize / 1048576)) MB" >&2
 		else
-			say "nothing here recorded what the resident image is; if this run needs one, send it (xl ramdisk)" >&2
+			say "nothing here recorded what the resident image is; if this run needs one, send it (bench ramdisk)" >&2
 		fi
 		local args
 		args=$(run_args) || return 1
@@ -280,15 +284,15 @@ run() { # run OEM-COMMAND LABEL
 		esac
 		say "$BOARD: $args"
 		loader/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} \
-			--cmdline "loader_return_after=${XL_SECS:-180} epoch=$(date +%s) $args" > /dev/null || return 1
+			--cmdline "loader_return_after=${BENCH_SECS:-180} epoch=$(date +%s) $args" > /dev/null || return 1
 		FB_TIMEOUT=60 fb stage run-payload.bin | grep -q OKAY || { say "the upload failed"; return 1; }
 	fi
 	fb $1 > /dev/null
 	if [ "$1" != "oem selftest" ]; then
 		# the loader goes on answering during a run: ask until the result is no longer "running", and
-		# fetch the log as it stands every XL_FOLLOW seconds, so that a phone that resets leaves it
-		local follow=${XL_FOLLOW-10} deadline=$(($(date +%s) + ${XL_SECS:-180} + 100)) followed n=0
-		[ "${XL_SECS:-180}" = 0 ] && deadline=$(($(date +%s) + 86400))
+		# fetch the log as it stands every BENCH_FOLLOW seconds, so that a phone that resets leaves it
+		local follow=${BENCH_FOLLOW-10} deadline=$(($(date +%s) + ${BENCH_SECS:-180} + 100)) followed n=0
+		[ "${BENCH_SECS:-180}" = 0 ] && deadline=$(($(date +%s) + 86400))
 		followed=$(date +%s)
 		while :; do
 			result=$(FB_TIMEOUT=15 fb getvar result | grep '^result:')
@@ -297,7 +301,7 @@ run() { # run OEM-COMMAND LABEL
 			if [ -n "$follow" ] && [ $(($(date +%s) - followed)) -ge "$follow" ]; then
 				followed=$(date +%s)
 				n=$((n + 1))
-				fb oem log | grep -q OKAY && fetch_log "$log.live" && { [ -z "${XL_FOLLOW_KEEP:-}" ] || cp "$log.live" "$log.live.$n"; }
+				fb oem log | grep -q OKAY && fetch_log "$log.live" && { [ -z "${BENCH_FOLLOW_KEEP:-}" ] || cp "$log.live" "$log.live.$n"; }
 			fi
 			sleep 2
 		done
@@ -320,8 +324,8 @@ run() { # run OEM-COMMAND LABEL
 		fb reboot > /dev/null; rm -f "$PHONE.ours"
 		return 2 ;;
 	esac
-	if [ -n "${XL_REBOOT_AFTER:-}" ]; then
-		say "XL_REBOOT_AFTER: the phone goes back to Android (it charges there)"
+	if [ -n "${BENCH_REBOOT_AFTER:-}" ]; then
+		say "BENCH_REBOOT_AFTER: the phone goes back to Android (it charges there)"
 		fb reboot > /dev/null; rm -f "$PHONE.ours"
 	fi
 }
@@ -378,18 +382,18 @@ with open(out, 'wb') as f:
 PY
 }
 
-# stop and reboot end a run; one started from another working copy is somebody else's (XL_FORCE=1)
+# stop and reboot end a run; one started from another working copy is somebody else's (BENCH_FORCE=1)
 not_anothers_run() {
 	flock -n "$PHONE.run" true 2> /dev/null && return 0
-	[ "$(cat "$PHONE.who" 2> /dev/null)" = "$TOP" ] || [ -n "${XL_FORCE:-}" ] && return 0
-	echo "xl: a run started from $(cat "$PHONE.who" 2> /dev/null) is in progress; XL_FORCE=1 ./xl $1 ends it all the same" >&2
+	[ "$(cat "$PHONE.who" 2> /dev/null)" = "$TOP" ] || [ -n "${BENCH_FORCE:-}" ] && return 0
+	echo "bench: a run started from $(cat "$PHONE.who" 2> /dev/null) is in progress; BENCH_FORCE=1 ./bench $1 ends it all the same" >&2
 	return 1
 }
 
 case "$1" in
 "" | run | selftest | state | screenshot | log | stop | reboot) ;;
 *)	if ! flock -n "$PHONE.run" true 2> /dev/null; then
-		echo "xl: a run is in progress: only state, screenshot, log, stop and reboot now" >&2; exit 1
+		echo "bench: a run is in progress: only state, screenshot, log, stop and reboot now" >&2; exit 1
 	fi ;;
 esac
 

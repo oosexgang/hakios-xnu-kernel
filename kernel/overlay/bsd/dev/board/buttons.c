@@ -59,7 +59,7 @@
 
 /*
  * Every line goes to the loader's log directly as well: without -v the kernel's own messages
- * reach that log only at the end of a run (with the kernel's message buffer), and "xl log"
+ * reach that log only at the end of a run (with the kernel's message buffer), and "bench log"
  * during a run is to show a press when it happens.
  */
 

@@ -31,7 +31,7 @@ extern void loader_log_line(const char *line);
 
 /*
  * A "tl:" line, for the kernel's drivers: into the loader's log as it is written -- the kernel's own
- * log keeps only the last of a run, and a live look at the loader's (XL_FOLLOW) then misses nothing.
+ * log keeps only the last of a run, and a live look at the loader's (BENCH_FOLLOW) then misses nothing.
  */
 void hakios_tl(const char *format, ...) __printflike(1, 2);
 

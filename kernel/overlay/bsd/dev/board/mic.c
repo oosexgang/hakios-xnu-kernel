@@ -46,7 +46,7 @@
  *            microphones (see datapath_on()); then the decimator unmuted after 200 ms and its
  *            filter settled after 300 ms, as tx-macro's delayed work does. Each second's level goes
  *            to the log; with rec_sound=N rec_sound_mic=1 the samples go into the recording that
- *            ./xl sound fetches. Every register write is read back (a few registers that read 0
+ *            ./bench sound fetches. Every register write is read back (a few registers that read 0
  *            whatever is written, as on Android, are said so); any mismatch or a DSP command
  *            refused stops it all. Tests: mic_input=0 (decimator 1 fed from ZERO: exact silence),
  *            mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held),

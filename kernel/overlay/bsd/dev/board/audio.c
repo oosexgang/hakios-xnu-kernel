@@ -9,7 +9,7 @@
  *
  *   into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept
  *               in one piece of memory that is left in place when the kernel returns to the
- *               loader, which hands it to the host ("xl sound"; under QEMU, the monitor's
+ *               loader, which hands it to the host ("bench sound"; under QEMU, the monitor's
  *               pmemsave), where tools/sound.py makes a WAV file of it. Only what is played
  *               takes room, the silence in between does not: every write is stored with the
  *               time it was made.
