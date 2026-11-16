@@ -377,6 +377,87 @@ governor_not_with_thermal(void)
 	CHECK(!gov_on && gov[1].base == 0, "a group governed");
 }
 
+/*
+ * The small cores parked (park_small, on by default): the eight-core phone with cores 0 to 3 small, each core
+ * as busy as fake_busy_pct says, and the parking thread looking every 0.4 ms (fake_delay_divisor 20). Without
+ * cpufreq=1: parking touches no clock.
+ */
+#define WAIT_FOR(cond, ms) do { for (int waited_ = 0; !(cond) && waited_ < (ms); waited_ += 5) usleep(5000); } while (0)
+
+static uint32_t
+recommended(void)
+{
+	return *(volatile uint32_t *)&fake_recommended_cores;
+}
+
+static void
+big_cores_busy(unsigned pct)
+{
+	for (unsigned i = 4; i < 8; i++) {
+		fake_busy_pct[i] = pct;
+	}
+}
+
+static void
+parking_phone(const char *arguments, unsigned small)
+{
+	phone("phone-cmd", 8);
+	fake_small_cores = small;
+	fake_idle_kept = true;
+	big_cores_busy(10);
+	boot_args = arguments;
+	hakios_cpufreq_init();
+}
+
+/* parked from the start, given back when the least busy big core is busy, parked again once all are calm */
+static void
+small_cores_parked(void)
+{
+	parking_phone("", 0x0f);
+	WAIT_FOR(recommended() == 0xf0, 1000);
+	CHECK(recommended() == 0xf0, "the big ones only: %#x", recommended());
+	big_cores_busy(95);
+	WAIT_FOR(recommended() == 0xff, 1000);
+	CHECK(recommended() == 0xff, "busy: every core: %#x", recommended());
+	big_cores_busy(70);                     /* between calm (60) and busy (85): kept as it is */
+	usleep(200000);
+	CHECK(recommended() == 0xff, "not calm yet: %#x", recommended());
+	big_cores_busy(30);
+	WAIT_FOR(recommended() == 0xf0, 1000);
+	CHECK(recommended() == 0xf0, "calm: parked again: %#x", recommended());
+	CHECK(all_writes() == 0 && epss.elsewhere == 0, "no clock touched: %u", all_writes());
+}
+
+/* one big core idle is enough to keep them parked: it is the least busy that counts */
+static void
+small_cores_kept_parked(void)
+{
+	parking_phone("", 0x0f);
+	WAIT_FOR(recommended() == 0xf0, 1000);
+	big_cores_busy(95);
+	fake_busy_pct[7] = 20;
+	usleep(200000);
+	CHECK(recommended() == 0xf0, "a big core has room: still parked: %#x", recommended());
+}
+
+/* park_small=0: never parked */
+static void
+small_cores_not_parked(void)
+{
+	parking_phone("park_small=0", 0x0f);
+	usleep(200000);
+	CHECK(recommended() == ~0u, "the scheduler never told: %#x", recommended());
+}
+
+/* a phone whose cores are all alike: nothing to park */
+static void
+nothing_to_park(void)
+{
+	parking_phone("", 0);
+	usleep(200000);
+	CHECK(recommended() == ~0u, "the scheduler never told: %#x", recommended());
+}
+
 int
 main(int argc, char **argv)
 {
@@ -386,7 +467,9 @@ main(int argc, char **argv)
 		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts },
 		{ "governor_goes_down_slowly", governor_goes_down_slowly }, { "governor_goes_up_at_once", governor_goes_up_at_once },
 		{ "governor_quiesced", governor_quiesced }, { "governor_leaves_a_shared_group", governor_leaves_a_shared_group },
-		{ "governor_not_with_thermal", governor_not_with_thermal },
+		{ "governor_not_with_thermal", governor_not_with_thermal }, { "small_cores_parked", small_cores_parked },
+		{ "small_cores_kept_parked", small_cores_kept_parked }, { "small_cores_not_parked", small_cores_not_parked },
+		{ "nothing_to_park", nothing_to_park },
 	};
 
 	if (argc < 2) {
