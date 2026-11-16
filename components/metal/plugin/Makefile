@@ -29,10 +29,10 @@ HOSTOUT   = out/host$(if $(SAN),-$(SAN))
 # the flags are settled when the rules are read.
 # the hakios tree (HAKIOS=) and what its builds put beside it (XNUDEPS=: the cross compiler, the Mesa builds), named
 # before the fragments: compiler.mk reads the iOS Mesa build's -D set from $(XNUDEPS)/build/mesa at parse time, which
-# an unset one would turn into a silent empty set. As components/metal-plugin/ of a tree with kernel/env.sh, that tree, and XNUDEPS as
+# an unset one would turn into a silent empty set. As components/metal/plugin/ of a tree with kernel/env.sh, that tree, and XNUDEPS as
 # that file sets it (export it, or source kernel/env.sh first); as hakios-metal/ of the older tree, that tree and its
 # xnu-deps/; beside it, HAKIOS= or the workspace of old
-HAKIOS    ?= $(if $(wildcard ../../kernel/env.sh),../..,$(if $(wildcard ../xnu/apply.sh),..,../workspace))
+HAKIOS    ?= $(if $(wildcard ../../../kernel/env.sh),../../..,$(if $(wildcard ../xnu/apply.sh),..,../workspace))
 XNUDEPS   ?= $(abspath $(HAKIOS))/xnu-deps
 # arm64 for iOS 16.5; arm64e for iOS 26 and 27, whose processes load no other (darwin/userland/metal.sh)
 IOS_ARCH  ?= arm64

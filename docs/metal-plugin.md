@@ -42,11 +42,11 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
 | --- | --- | --- |
 | GPU service | `kernel/overlay/iokit/Kernel/BoardGPU.cpp`, `bsd/dev/board/adreno.c` | msm-shaped buffers, submissions and fences through IOKit; an IOSurface's memory or a program's own pages as a GPU buffer (requests 0x7e, 0x7d); recovery after a hang (`gpu_recover`) |
 | The plug-in's name | `IOAcceleratorES` in `MiniIOMobileFramebuffer.cpp` | with `metal=1`: `MetalPluginName` = HakiosMetal, `MetalPluginClassName` = HakiosMetalDevice. User space may remove them (an empty string) to go back to the software renderer without a reboot |
-| The driver | `components/metal-plugin/` (hakios-metal, with its history) | Metal's command model on the Adreno: blits, compute, the render pass, textures, IOSurface textures. Its tests run against a fake GPU; `make test` |
-| The compiler | `components/metal-plugin/tools/mesa/air` and `components/metal-plugin/src/compiler.cpp` | Apple's AIR to NIR (our front end), NIR to ir3 (Mesa), inside the driver, at pipeline creation |
-| The plug-in | `components/metal-plugin/plugin/HakiosMetalCA.m` | the `MTLDevice` and its objects as Metal's private base classes want them, over the driver; the one that serves CoreAnimation |
-| Mesa for the phone | `components/metal-plugin/tools/mk-mesa.sh` | Mesa 25.0.7's compiler archives, cross-built arm64e |
-| Mesa for this machine | `components/metal-plugin/tools/mk-mesa-host.sh` | the same with the front end, for `make test MESA=1` and `make sweep MESA=1` |
+| The driver | `components/metal/plugin/` (hakios-metal, with its history) | Metal's command model on the Adreno: blits, compute, the render pass, textures, IOSurface textures. Its tests run against a fake GPU; `make test` |
+| The compiler | `components/metal/plugin/tools/mesa/air` and `components/metal/plugin/src/compiler.cpp` | Apple's AIR to NIR (our front end), NIR to ir3 (Mesa), inside the driver, at pipeline creation |
+| The plug-in | `components/metal/plugin/plugin/HakiosMetalCA.m` | the `MTLDevice` and its objects as Metal's private base classes want them, over the driver; the one that serves CoreAnimation |
+| Mesa for the phone | `components/metal/plugin/tools/mk-mesa.sh` | Mesa 25.0.7's compiler archives, cross-built arm64e |
+| Mesa for this machine | `components/metal/plugin/tools/mk-mesa-host.sh` | the same with the front end, for `make test MESA=1` and `make sweep MESA=1` |
 | The bundle | `darwin/userland/metal.sh` | the plug-in over the driver and Mesa, arm64e, pacstrip, ldid → `$OBJ/HakiosMetal` |
 | The images | `darwin/userland/root26-darwin.sh`, `darwin/tools/mkimage26.py --metal` | the bundle in the small image (`/hakios/lib/HakiosMetal.bundle`); in the system image the link `/System/Library/Extensions/HakiosMetal.bundle` to it, and the system's `.metallib` files |
 
@@ -85,7 +85,7 @@ in the log).
 occur, in seconds:
 
 ```sh
-components/metal-plugin/tools/mk-mesa-host.sh
+components/metal/plugin/tools/mk-mesa-host.sh
 make -C metal sweep MESA=1
 metal/out/host-mesa/sweep "$IOS/rootfs/System/Library/Frameworks/QuartzCore.framework/default.metallib"
 ```
@@ -140,7 +140,7 @@ What made the frames faster, in the order it was found (each commit has its meas
 
 To measure: `metal_fps=1` (every two seconds), `metal_fps=timeline` (a heavy frame's passes), `metal_fps=draws`
 (each draw of a sysmem pass timed), `gpu_log=1 touch_lat=1` with `frames.py`. To reproduce a specialisation on
-this machine: `metal_air_dump=1`, `components/metal-plugin/tools/airdump.py`, `sweep -a MODULE.air -k 0=HEX -c ...`
+this machine: `metal_air_dump=1`, `components/metal/plugin/tools/airdump.py`, `sweep -a MODULE.air -k 0=HEX -c ...`
 (`HAKIOS_METAL_PHASES=1` times each phase).
 
 ## What is next

@@ -43,8 +43,8 @@ def main():
                 # placeholders (NAME, SOC, …) and globs are not paths
                 if re.search(r'NAME|SOC|[*…]|\.\.\.', target):
                     continue
-                # (from the repository's top, or from the document's own directory: components/metal-plugin/README.md names components/metal-plugin/'s
-                # files as components/metal-plugin/ itself does, tools/ and tests/ of its own)
+                # (from the repository's top, or from the document's own directory: components/metal/plugin/README.md names components/metal/plugin/'s
+                # files as components/metal/plugin/ itself does, tools/ and tests/ of its own)
                 # (or from the top of the component the document is in: components/metal/docs/air.md names tools/air/ as
                 # components/metal's scripts are run, from components/metal)
                 parts = Path(name).parts

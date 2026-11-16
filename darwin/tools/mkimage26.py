@@ -18,7 +18,7 @@ usage: [IOS=DIR] [WALLPAPER=COLOUR] [METAL=1] mkimage26.py [--min | --prune] [--
           flash (darwin/tools/darwin-write.py), past what one fastboot download takes into RAM
 
 /System/Library/Extensions/HakiosMetal.bundle leads to /hakios/lib/HakiosMetal.bundle, the plug-in Metal opens
-when the kernel names it (boot-arg metal=1; components/metal-plugin/plugin, built by darwin/userland/metal.sh into the small image).
+when the kernel names it (boot-arg metal=1; components/metal/plugin/plugin, built by darwin/userland/metal.sh into the small image).
 
 /sbin/launchd is our stage0 ($OBJ/stage0, which darwin/userland/root26-darwin.sh builds: it mounts the small image
 on /hakios and runs its init), the real one /sbin/launchd.darwin. With LAUNCHDAEMONS=DIR (darwin/userland/root26-darwin.sh writes $IOS/jobs26)

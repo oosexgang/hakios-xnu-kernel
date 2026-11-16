@@ -21,6 +21,7 @@ included, on our GPU.
 | `tools/metallib.py` | Takes a `.metallib` apart: its function list and each function's bitcode. |
 | `tools/metal/` | What Darwin's programs ask of Metal: the classes and methods they use, against what the driver has. |
 | `docs/air.md` | The front end: the formats, what each part does, how it is tested. `air-report.md` the last run of `check.sh`. |
+| `plugin/` | The second Metal device (below): its A6xx library, the plug-in CoreAnimation draws through, its tests against a fake GPU. Built with its own `Makefile` (`make -C plugin test`). |
 | `build/` | What the scripts build (not kept). |
 
 The scripts are run from here (`tools/air/check.sh`, `tools/mk-metal-linux.sh`); each finds this directory from
@@ -35,7 +36,7 @@ its power, clocks, ring buffer and memory.
 
 ## The other Metal
 
-[`components/metal-plugin/`](../metal-plugin) is a second Metal device, written apart from this one: a library
+[`plugin/`](plugin) is a second Metal device, written apart from this one: a library
 of its own for the A6xx command stream with a QuartzCore plug-in over it
 ([`docs/metal-plugin.md`](../../docs/metal-plugin.md)).
 
