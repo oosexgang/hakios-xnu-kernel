@@ -115,7 +115,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
-| `metal/` | The Metal driver for the Adreno (hakios-metal, with its history): its core, the AIR compiler, the plug-in CoreAnimation draws through, its tests against a fake GPU. |
+| `components/metal-plugin/` | The Metal driver for the Adreno (hakios-metal, with its history): its core, the AIR compiler, the plug-in CoreAnimation draws through, its tests against a fake GPU. |
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |

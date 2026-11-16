@@ -2381,7 +2381,7 @@ publishDisplayNode(void)
  * over by both, which leaves CoreAnimation with its software renderer, as before.
  *
  * With boot-arg metal=1 the service names our Metal plug-in from the start: MetalPluginName
- * "HakiosMetal", MetalPluginClassName "HakiosMetalDevice" (metal/plugin/HakiosMetalCA.m, installed as
+ * "HakiosMetal", MetalPluginClassName "HakiosMetalDevice" (components/metal-plugin/plugin/HakiosMetalCA.m, installed as
  * /System/Library/Extensions/HakiosMetal.bundle), and a program that asks Metal for a device gets
  * ours -- CoreAnimation in backboardd among them, which then draws the screen with the GPU. A user
  * process may also change or remove the two (setProperties below), which is the way back to the

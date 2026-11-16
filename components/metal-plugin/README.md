@@ -1,6 +1,6 @@
 # hakios-metal
 
-Here it is `metal/` of the kernel's tree, with its history from hakios-xnu-kernel's `hakios-metal/`:
+Here it is `components/metal-plugin/` of the kernel's tree, with its history from hakios-xnu-kernel's `hakios-metal/`:
 - `make test` runs the tests on this machine;
 - `darwin/userland/metal.sh` builds the plug-in for iOS 26 and 27, arm64e, with the compiler in (`tools/mk-mesa.sh`);
 - `tools/mk-mesa-host.sh` builds the Mesa that `make test MESA=1` and `make sweep MESA=1` need.
@@ -263,7 +263,7 @@ the generated headers in DIR.
 the real GPU can do: run the kernels. In hakios, as the GPU's only client (no window server):
 
 ```sh
-EXTRA="../hakios-metal/out/ios/hakios-metal-probe" RC=rc.darwin.metalprobe userland/build.sh
+EXTRA="../hakios-metal/out/ios/hakios-metal-probe" RC=rc.darwin.metalprobe userland/userland/build.sh
 XL_CMDLINE="-v bootcpu=7 cpus=8 cpufreq=1 gpu=1 gpu_recover=1" XL_SECS=100 ./xl run
 ```
 

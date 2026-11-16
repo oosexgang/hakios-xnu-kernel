@@ -60,7 +60,7 @@
 #include <mach-o/dyld.h>
 #include <signal.h>
 /* <sys/ucontext.h>, not <ucontext.h>: the latter refuses to be included
- * without _XOPEN_SOURCE on the iOS SDK, and userland/src/inject.c takes the
+ * without _XOPEN_SOURCE on the iOS SDK, and userland/userland/src/inject.c takes the
  * same route for the same reason.
  */
 #include <sys/ucontext.h>
@@ -106,7 +106,7 @@ texel_value(unsigned slot, unsigned x, unsigned y, unsigned z, float out[4])
 /*
  * A program that dies on this port leaves nothing behind: the kernel says
  * "Failed to send exception EXC_CORPSE_NOTIFY" and that is the end of it. So
- * print the fault before dying. These two functions are userland/src/inject.c's
+ * print the fault before dying. These two functions are userland/userland/src/inject.c's
  * say_the_fault()/watch_for_faults() (branch sileo2, 6683521), with the slide
  * taken from this program's own image rather than from the shared cache, since
  * the pc of interest is in air_run or in libOSMesa and not in iOS.
@@ -1665,7 +1665,7 @@ main(int argc, char **argv)
     * device has no shell to set one with. iOS 16.5's own root carries no sh at
     * all -- /bin holds df and ps -- and the job list that runs this is read by
     * our init, which splits a line on blanks and has no notion of a variable
-    * (userland/src/init.c, run_command). So a generated suite whose every
+    * (userland/userland/src/init.c, run_command). So a generated suite whose every
     * module reads its own bytes could not be run on the phone until this
     * option existed: with it each module is one ordinary job line.
     */

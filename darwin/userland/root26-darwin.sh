@@ -166,7 +166,7 @@ cp "$US/src/audio_plugin.plist" "$T/lib/HakiosAudio.driver/Info.plist"
 if [ -f "$OBJ/HakiosMetal" ]; then
 	mkdir -p "$T/lib/HakiosMetal.bundle"
 	cp "$OBJ/HakiosMetal" "$T/lib/HakiosMetal.bundle/HakiosMetal"
-	cp "$IOS_REPO/metal/plugin/HakiosMetal.plist" "$T/lib/HakiosMetal.bundle/Info.plist"
+	cp "$IOS_REPO/components/metal-plugin/plugin/HakiosMetal.plist" "$T/lib/HakiosMetal.bundle/Info.plist"
 	echo "  the Metal plug-in: lib/HakiosMetal.bundle"
 fi
 

@@ -104,7 +104,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
 | `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
 | `darwin/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
-| `metal/` | Adreno 的 Metal 驱动（hakios-metal，保留历史）：核心、AIR 编译器、CoreAnimation 通过它绘制的插件，以及针对模拟 GPU 的测试。 |
+| `components/metal-plugin/` | Adreno 的 Metal 驱动（hakios-metal，保留历史）：核心、AIR 编译器、CoreAnimation 通过它绘制的插件，以及针对模拟 GPU 的测试。 |
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
 | `workbench/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |

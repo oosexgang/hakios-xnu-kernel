@@ -39,10 +39,10 @@ scan -lIi "cl[a]ude\\|anthrop[i]c" | while read -r f; do echo "tool name: $f"; d
 scan -lIi --exclude=export.local "hac[k]ios" | while read -r f; do echo "old name: $f"; done | grep . && bad=1
 tr '\0' '\n' < "$list" | grep -i "hac[k]ios" | while read -r f; do echo "old name in path: $f"; done | grep . && bad=1
 # embedded byte arrays (a firmware turned into a header) above 64 rows; the Metal library's test fixtures are
-# the bitcode of its own kernels (metal/tools/kernels/*.ll, made by metal/Makefile), not someone else's
+# the bitcode of its own kernels (components/metal-plugin/tools/kernels/*.ll, made by components/metal-plugin/Makefile), not someone else's
 for f in $(scan -lIE "0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x"); do
 	n=$(grep -cE "0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x[0-9a-f]{2}, 0x" "$f")
-	case "$f" in ./metal/tests/fixtures/*_bc.hpp) continue ;; esac
+	case "$f" in ./components/metal-plugin/tests/fixtures/*_bc.hpp) continue ;; esac
 	[ "$n" -gt 64 ] && say "byte array ($n rows): $f"
 done
 [ $bad = 0 ] && echo "nothing found"

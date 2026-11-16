@@ -6,7 +6,7 @@
  * What this shows and what it does not. Metal's private classes on macOS are not Darwin 16.5's (the plug-in takes _MTLResource,
  * _MTLLibrary and _MTLFunction where they exist, and both systems have them), so this checks the plug-in's own logic -- the
  * classes it makes at run time, their state, the buffers' memory, the reading of a .metallib, every object freed -- not that
- * Darwin's Metal is content with them. That is metal_test's to say, in QEMU (userland/rc.jobs.metal).
+ * Darwin's Metal is content with them. That is metal_test's to say, in QEMU (userland/userland/rc.jobs.metal).
  *
  * The binary must be called metal_test: the plug-in shows its device to that program only (metal=1, the level a Mac's
  * kern.bootargs gives, having no metal= in it).

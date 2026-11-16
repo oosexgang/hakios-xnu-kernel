@@ -14,7 +14,7 @@ the field makes it.
 
 Measured on the phone's Adreno 7c+ Gen 3, uint -> float, GLSL ES 3.0 through
 OSMesa with the value in a uniform so nothing could be folded on the host
-(userland/src/u2f_test.c, RC=rc.u2f), expectations from C on the host:
+(userland/userland/src/u2f_test.c, RC=rc.u2f), expectations from C on the host:
 
       input         before        after      C
   0xFFFFFFFF    4294967040   4294967296   4294967296

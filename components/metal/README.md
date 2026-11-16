@@ -35,7 +35,7 @@ its power, clocks, ring buffer and memory.
 
 ## The other Metal
 
-[`metal/`](../../metal) is a second Metal device, written apart from this one: a library
+[`components/metal-plugin/`](../metal-plugin) is a second Metal device, written apart from this one: a library
 of its own for the A6xx command stream with a QuartzCore plug-in over it
 ([`docs/metal-plugin.md`](../../docs/metal-plugin.md)).
 

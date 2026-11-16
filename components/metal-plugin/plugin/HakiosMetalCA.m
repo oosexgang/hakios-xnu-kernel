@@ -3,7 +3,7 @@
  * at eb9fdf5), the one that serves CoreAnimation's window server, with what this tree adds for it: CoreAnimation's
  * shaders chosen by pipeline (hm_bitcode_for()), QuartzCore's pipeline library given a default.metallib, stand-ins for
  * functions the library lacks (hm_stand_ins), and the device shown to the window server alone (metal_all=1: all).
- * Built instead of hakios-metal's plug-in with METAL_PLUGIN=ca (userland/build.sh); the library it needs comes from
+ * Built instead of hakios-metal's plug-in with METAL_PLUGIN=ca (userland/userland/build.sh); the library it needs comes from
  * tools/ca-metallib.py.
  */
 /*
@@ -114,7 +114,7 @@
 static void hm_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static int hm_print_fd = -1;    /* where hm_print writes: stderr, the console, or (metal_m2v=1) a copy of stderr kept aside */
 
-/* To stderr, as one write: a launchd job's stderr is the console (userland/mkjobs.py sets StandardErrorPath) and its
+/* To stderr, as one write: a launchd job's stderr is the console (userland/userland/mkjobs.py sets StandardErrorPath) and its
  * stdout is nowhere, so the window server's lines -- the client this plug-in is for -- reached no log while they went
  * to stdout; one write keeps two threads' lines from interleaving. Flushed every time for the same reason as before:
  * the processes that reach a refusal are the ones that then abort, and a line not written dies with them. */
@@ -2320,7 +2320,7 @@ hm_boot_arg_set(const char *what)
 		}
 	}
 	/* (hakios) metal_m2v=1: the device is UniXNU's Metal on Vulkan instead (AdrenoMetal's frontend over metal2vulkan
-	 * over Turnip, tools/mk-m2v.sh; linked in by userland/build.sh M2V=1): its own objects, from the device down */
+	 * over Turnip, tools/mk-m2v.sh; linked in by userland/userland/build.sh M2V=1): its own objects, from the device down */
 	if (native_bridge_metal_open != NULL && hm_boot_arg_set("metal_m2v=1")) {
 		/* boot-arg tu_debug=FLAGS[,FLAGS]: Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...) */
 		{
