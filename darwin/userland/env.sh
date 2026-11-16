@@ -7,6 +7,7 @@
 #   BOARD   the phone the small image is for: its firmware/BOARD/fw/ goes in. Default: HAKIOS_BOARD, or the
 #           only device package here with a [uefi] section; none: an image without a phone's firmware
 #   LDID    ldid (procursus' or theos'), for the signatures of what we build
+#   DARWIN_SDK  the iPhoneOS 16.5 SDK, when it is not theos' (sdks/)
 #
 # and they get US, the user-space sources of the first generation that iOS 26/27 still uses
 # (userland/userland: init, the injected libraries, mkjobs.py), and the cross compiler, xnu-clang, from
@@ -32,7 +33,7 @@ named = os.environ.get("HAKIOS_BOARD")
 found = [n for n, b in boards.load()[1].items() if "uefi" in b]
 print(named or (found[0] if len(found) == 1 else ""))')
 fi
-SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: another place of it, as kernel/build.sh takes)
 # our own arm64e code: built against the 16.5 SDK (theos), run on iOS 26/27 after pacstrip has taken its
 # pointer authentication out
 # shellcheck disable=SC2034  # for the scripts that source this file
