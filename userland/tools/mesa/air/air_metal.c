@@ -1179,6 +1179,12 @@ sw_samplerless_units(nir_shader *nir)
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
+   /* whether the fragment is a helper (simd_is_helper_thread, quad_active_threads_mask): as the
+    * load_helper_invocation every driver here reads and a demote updates. ir3 has no case for
+    * is_helper_invocation itself; its own finalize_nir lowers it so, and this library does not
+    * call that one ("Unhandled intrinsic type", RealityKit's fsOverdrawDebug) */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT)
+      NIR_PASS(_, nir, nir_lower_is_helper_invocation);
    /* (a compile that gave no lengths: compute_state_for folds the real ones first) */
    fold_threadgroup_bases(nir, NULL, 0);
    fold_grid_threads(nir, -1);
@@ -7073,6 +7079,7 @@ translation_key(const void *bitcode, size_t size, const char *entry,
    _mesa_blake3_update(&h, &opts->library_wrapper, sizeof(opts->library_wrapper));
    /* and the layout a [[stage_in]] is read out of: one kernel or post-tessellation vertex function
     * under two layouts is two translations */
+   _mesa_blake3_update(&h, &opts->sample_count, sizeof(opts->sample_count));
    bool has_stage_in = opts->stage_in != NULL;
    _mesa_blake3_update(&h, &has_stage_in, sizeof(has_stage_in));
    if (opts->stage_in)
@@ -8602,8 +8609,10 @@ rwa_render_create(struct rwa_device *device,
       module_constants(render->mem_ctx, fragment_bitcode, fragment_size, &ffc);
    struct air_linked_function *flinked;
    unsigned num_flinked = module_linked(render->mem_ctx, fragment_bitcode, &flinked);
+   /* (softpipe draws a multisampled attachment with one sample: fake_sw_msaa) */
    const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
-                                             .linked = flinked, .num_linked = num_flinked };
+                                             .linked = flinked, .num_linked = num_flinked,
+                                             .sample_count = device->software ? 1 : shape->sample_count };
    const char *error;
    double t_fs = cost_now_ms();
    nir_shader *fs = air_to_nir_kept(render->mem_ctx, fragment_bitcode, fragment_size,

@@ -342,6 +342,9 @@ struct air_to_nir_options {
    /* the functions the pipeline links, which the shader may call */
    const struct air_linked_function *linked;
    unsigned num_linked;
+
+   /* a render pipeline's sample count, what air.get_num_samples answers; 0 is one */
+   unsigned sample_count;
 };
 
 /* Translates one AIR module (one function of a .metallib). entry_point may

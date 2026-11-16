@@ -1398,6 +1398,20 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
       return true;
    }
 
+   /* quad_active_threads_mask(): a bit for each lane of the thread's quad that is a real fragment and
+    * not a helper, bit n for lane n -- each lane's own bit gathered by the quad's three swaps
+    * (RealityKit's resolve kernels) */
+   if (!strcmp(op, "quad_active_threads_mask")) {
+      nir_def *self = nir_load_subgroup_invocation(&c->b);
+      nir_def *bit = nir_bcsel(&c->b, nir_is_helper_invocation(&c->b, 1), nir_imm_int(&c->b, 0),
+                               nir_ishl(&c->b, nir_imm_int(&c->b, 1), nir_iand_imm(&c->b, self, 3)));
+      nir_def *m = nir_ior(&c->b, nir_ior(&c->b, bit, nir_quad_swap_horizontal(&c->b, bit)),
+                           nir_ior(&c->b, nir_quad_swap_vertical(&c->b, bit),
+                                   nir_quad_swap_diagonal(&c->b, bit)));
+      air_set(c, &in->base, air_val_ssa(c, nir_u2uN(&c->b, m, air_nir_bit_size(c, in->base.type))));
+      return true;
+   }
+
    /* quad_all(b) / quad_any(b): the vote over the four lanes of the thread's quad (RealityKit's
     * unwarpVideo), by NIR's three swaps of the quad, as a word so that no 1-bit value is swapped */
    if ((!strcmp(op, "quad_all") || !strcmp(op, "quad_any")) && a0) {
@@ -3172,6 +3186,14 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
    }
    if (!strcmp(n.part[0], "atomic"))
       return atomic_op(c, in, &n);
+   /* air.get_num_samples(): the render target's sample count, which the pipeline fixes and hands the
+    * translation (air_to_nir_options.sample_count) -- RealityKit's occlusion and overdraw shaders */
+   if (!strcmp(n.part[0], "get_num_samples")) {
+      unsigned samples = c->options && c->options->sample_count ? c->options->sample_count : 1;
+      air_set(c, &in->base, air_val_ssa(c, nir_imm_intN_t(&c->b, samples,
+                                                          air_nir_bit_size(c, in->base.type))));
+      return true;
+   }
    /* air.load.device_coherent / air.store.device_coherent: a load or a store another threadgroup
     * may be reading or writing at the same time (MPSCore's single_pass_scan publishes partial
     * sums so). A plain load or store of the place, made visible by the barriers and the atomics
