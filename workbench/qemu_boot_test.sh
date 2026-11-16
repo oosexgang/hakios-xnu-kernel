@@ -246,7 +246,7 @@ typed=(
 	'cd /'
 	'mv /tmp/notes/vectors /tmp/notes/other/vectors'
 	'ln /tmp/notes/vectors /tmp/notes/other/vectors'
-	'fill /tmp/notes/other/full 900000000'
+	'fill /tmp/notes/other/full 1900000000'
 	'write /tmp/notes/other/one-more x'
 	'rm /tmp/notes/other/full'
 	'write /tmp/notes/other/one-more x'
@@ -541,7 +541,7 @@ check "a pipe holds 64 KB, then says EAGAIN; full, poll does not find it writabl
 	grep -aq '^pipe-size: 65536 bytes, then EAGAIN; full, not writable; 512 read out, writable again' "$shell"
 check "ramfs filled: a write past its room refused (ENOSPC), the file kept to what fitted; the file removed, its room is there again" \
 	bash -c "grep -aq '^fill: /tmp/notes/other/full: error 28 (ENOSPC)' '$shell' &&
-		grep -aqE '^fill: /tmp/notes/other/full, [0-9]{9} bytes' '$shell' &&
+		grep -aqE '^fill: /tmp/notes/other/full, [0-9]{9,10} bytes' '$shell' &&
 		grep -aq '^write: /tmp/notes/other/one-more: error 28 (ENOSPC)' '$shell' &&
 		grep -aq '^write: 2 bytes to /tmp/notes/other/one-more' '$shell'"
 check "the .. of a file system mounted on a directory leads to that directory's own parent" \
