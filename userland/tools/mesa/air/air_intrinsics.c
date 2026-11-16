@@ -2676,7 +2676,11 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          air_set(c, &in->base, air_val_ssa(c, nir_imm_intN_t(&c->b, 0, zbits)));
          return true;
       }
-      set_tex_result(c, in, nir_imm_zero(&c->b, 4, zbits));
+      /* as many components as the result has: a depth texture's sample and compare are one
+       * (RealityKit's sampleShadowMap of a null depth2d stored a vec4 where a float belongs) */
+      const struct air_type *rt = in->base.type;
+      const struct air_type *vt = rt->kind == AIR_TYPE_STRUCT && rt->num_members ? rt->members[0] : rt;
+      set_tex_result(c, in, nir_imm_zero(&c->b, MAX2(air_nir_components(vt), 1), zbits));
       return true;
    }
 
