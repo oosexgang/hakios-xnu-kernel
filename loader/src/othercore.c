@@ -74,6 +74,7 @@ __asm__ (
         "  adrp x11, other_cpu_start\n"
         "  add  x11, x11, :lo12:other_cpu_start\n"
         "  ldr x11, [x11, #16]\n"               /* probe_keys_pa: physical pac_std_keys */
+        "  cbz x11, 3f\n"                       /* no keys (as in other_cpu_entry): no keys, no probe */
         "  ldp x12, x13, [x11, #0]\n   msr APIAKeyLo_EL1, x12\n  msr APIAKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #16]\n  msr APIBKeyLo_EL1, x12\n  msr APIBKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #32]\n  msr APDAKeyLo_EL1, x12\n  msr APDAKeyHi_EL1, x13\n"
@@ -105,7 +106,7 @@ __asm__ (
         "  dsb sy\n"
         /* one call into the firmware (PSCI_VERSION) with the keys in place: the hypervisor takes the
          * core's registers as they are now, keys included, instead of what it held from CPU_ON */
-        "  mov x20, x0\n"
+        "3: mov x20, x0\n"
         "  adrp x10, psci_by_hvc\n"
         "  ldr x9, [x10, :lo12:psci_by_hvc]\n"
         "  movz x0, #0x0000\n"
@@ -155,13 +156,16 @@ __asm__ (
         "  movk x15, #0x809a, lsl #16\n"
         "  movk x15, #0x0004, lsl #32\n"       /* x15 = 0x00000004809a3514 = loader's final TCR */
         "  msr tcr_el1, x15\n"
+        /* no keys (a kernel without __pac_keys, a core without pointer authentication, whose key
+         * registers do not exist): nothing to put in place */
+        "  cbz x11, 1f\n"
         "  ldp x12, x13, [x11, #0]\n   msr APIAKeyLo_EL1, x12\n  msr APIAKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #16]\n  msr APIBKeyLo_EL1, x12\n  msr APIBKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #32]\n  msr APDAKeyLo_EL1, x12\n  msr APDAKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #48]\n  msr APDBKeyLo_EL1, x12\n  msr APDBKeyHi_EL1, x13\n"
         "  ldp x12, x13, [x11, #64]\n  msr APGAKeyLo_EL1, x12\n  msr APGAKeyHi_EL1, x13\n"
         "  isb\n"
-        "  dsb sy\n"
+        "1: dsb sy\n"
         "  adrp x9, other_cpu_stage\n"
         "  add  x9, x9, :lo12:other_cpu_stage\n"
         "  mov x10, #1\n"

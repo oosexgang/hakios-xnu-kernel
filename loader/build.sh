@@ -12,8 +12,23 @@
 # elsewhere than at 0xF0000000, or reserves more than 64 MB for it, say so here, e.g.
 #   LOADER_CFLAGS="-DPAYLOAD_BASE=0xE8000000ULL -DPAYLOAD_MAX_SIZE=0x08000000ULL" loader/build.sh
 # (loader/src/conventions.h has both).
+#
+# Which iPhone Darwin is told it runs on is identity.h, made here from the device tree of your own IPSW: the one
+# darwin/tools/unpack.sh leaves as $IOS/DeviceTree.bin (IOS: ios27 beside the repository), or IDENTITY=FILE.
+# Without one the loader gets a placeholder with nothing of Apple's in it: the open kernel starts, Darwin does not.
 set -e
-cd "$(dirname "$0")"
+HERE=$(cd "$(dirname "$0")" && pwd)
+DT=${IDENTITY:-${IOS:-$HERE/../../ios27}/DeviceTree.bin}
+cd "$HERE"
+if [ -s "$DT" ]; then
+	python3 mkidentity.py "$DT" > identity.h.new
+elif [ ! -f identity.h ] || grep -q -- '--placeholder' identity.h; then
+	python3 mkidentity.py --placeholder > identity.h.new
+	echo "build.sh: no iPhone device tree ($DT): the loader is built with a placeholder identity, and Darwin will not start" >&2
+fi
+if [ -f identity.h.new ]; then
+	if cmp -s identity.h.new identity.h; then rm identity.h.new; else mv identity.h.new identity.h; fi
+fi
 ../tools/boards.py gen
 clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
   -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I../build/boards ${LOADER_CFLAGS:-} \

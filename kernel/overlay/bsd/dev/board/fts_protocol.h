@@ -2,8 +2,8 @@
  * Layout/CRC verified against OKX focaltech_3658u at 08bbb0c150ea.
  * The read begins at register 0x01; the vendor buffer's command byte is absent.
  */
-#ifndef HAKIOS_FTS_PROTOCOL_H
-#define HAKIOS_FTS_PROTOCOL_H
+#ifndef RENOIR_FTS_PROTOCOL_H
+#define RENOIR_FTS_PROTOCOL_H
 
 #define FTS_CONTACTS 10
 #define FTS_REPORT_BYTES (2 + 6 * FTS_CONTACTS)

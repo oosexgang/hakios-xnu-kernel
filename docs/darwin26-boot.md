@@ -231,7 +231,7 @@ jobs and three of our libraries; the system image `mkimage26.py --prune`'s. What
 2. **Memory.** The system image (4.27 GB) is staged in RAM next to the kernel, so with 8 GB the loader's
    window was 5.2 GB and Darwin had about 500 MB: free memory went to 7 MB and the memory killer took
    daemons. With 10 GB (`-m 10G`, the image at 0xFC000000) the window is 7.26 GB and 2.5 GB stay available.
-3. **The device.** `loader/identity.h` describes iPhone18,1 (V53), a device with exclaves: SpringBoard
+3. **The device.** The identity `loader/mkidentity.py` writes (`identity.h`, made by the build, not kept here) describes iPhone18,1 (V53), a device with exclaves: SpringBoard
    asked the secure-indicator manager for its "Camera" indicator, found no ExclaveOS cryptex and threw
    `CASecureIndicatorLayerInvalidName` (`CA_DISABLE_SECURE_INDICATOR=1` in the job did not avoid it).
    A loader built with the identity of the files' own device (`mkidentity.py` over

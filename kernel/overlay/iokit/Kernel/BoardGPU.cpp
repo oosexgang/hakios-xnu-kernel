@@ -41,6 +41,7 @@
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <mach/vm_param.h>
+extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
 #include <sys/systm.h>
 
 #include "MiniIOSurface.h"
@@ -91,6 +92,7 @@ enum {
 	kMsmSubmitQueueNew      = 0x4a,
 	kMsmSubmitQueueClose    = 0x4b,
 	kMsmSubmitQueueQuery    = 0x4c,
+	kHakiosUserMemory      = 0x7b,         /* ours: pages of the caller's own as a buffer (Linux's userptr: hakios-metal, Turnip) */
 	kHakiosHost            = 0x7c,         /* ours: pages of the caller's own memory as a buffer (Metal's no-copy buffers) */
 	kHakiosGPUWorked       = 0x7d,         /* ours: how long the 3D core itself has worked, and on how many */
 	kHakiosSurface         = 0x7e,         /* ours: an IOSurface's memory as a buffer */
@@ -152,6 +154,11 @@ struct msm_submitqueue_query {
 struct drm_gem_close {
 	uint32_t handle, pad;
 };
+struct hakios_user_memory {
+	uint64_t address, size;                 /* in the caller, in whole pages */
+	uint32_t handle;                        /* back: the buffer */
+	uint32_t flags;
+};
 /*
  * kHakiosHost: `bytes` of the caller's memory from `address` (both 4 KB aligned) as a buffer: the pages are wired and entered
  * into the GPU's address space for as long as the buffer is there, and pushed out of the cache before every submission that
@@ -212,10 +219,13 @@ struct hakios_worked {
 #define MSM_SUBMIT_CMD_BUF      1
 #define MSM_SUBMIT_FENCE_FD_OUT 0x20000000
 
+#define MSM_SUBMIT_BO_READ      0x0001          /* a submission's buffer flags: read by it ... */
+#define MSM_SUBMIT_BO_WRITE     0x0002          /* ... written by it */
 #define GPU_BUFFERS             8192            /* a client's, at most */
 #define GPU_BUFFER_MAX          (256u << 20)
 #define GPU_SUBMIT_CMDS         128
 #define GPU_SUBMIT_BOS          8192
+#define GPU_SHOWN_WAIT_MS       30              /* a submission waits for the display's copy of its surface this long at most */
 #define GPU_SUBMIT_BO_TRACK     0x8000u         /* a submission's buffer flag (Turnip's darwin transport): named for the surface's
                                                  * "drawn" mark only, not to be pushed out of the cache here (the plugin does) */
 #define GPU_PATIENCE_MS         5000            /* for a buffer or a submission that somebody waits for without a limit */
@@ -244,6 +254,7 @@ static struct {
 	uint32_t submissions, commands, buffers, surfaces, waits, over;
 	uint32_t made, given_again;             /* buffers of their own made for programs, and of those kept ones given again */
 	uint64_t making;                        /* ... and the time it took to make the others */
+	uint32_t shownWaits;                    /* submissions that waited for the display's copy of a surface they draw into */
 } gGPUStat;
 
 /* Wait for the 3D core to be done with submission `fence`; with the lock held, which is let go of while waiting. */
@@ -352,10 +363,17 @@ static uint64_t
 millisecondsUntil(const struct msm_timespec * when)
 {
 	uint64_t now;
-	int64_t left;
+	int64_t left, end;
 
 	absolutetime_to_nanoseconds(mach_continuous_time(), &now);
-	left = when->seconds * (int64_t) NSEC_PER_SEC + when->nanoseconds - (int64_t) now;
+	/* the seconds are the caller's: a number too big to be nanoseconds is a time far ahead (or far behind), not a wrapped one */
+	if (__builtin_mul_overflow(when->seconds, (int64_t) NSEC_PER_SEC, &end) || __builtin_add_overflow(end, when->nanoseconds, &end)) {
+		return when->seconds > 0 && when->nanoseconds >= 0 ? GPU_PATIENCE_MS : 0;
+	}
+	if (end <= 0) {
+		return 0;                       /* (the clock's reading is never negative: this is past) */
+	}
+	left = end - (int64_t) now;
 	if (left <= 0) {
 		return 0;
 	}
@@ -446,6 +464,7 @@ struct gpu_buffer {
 	IOMemoryDescriptor *            memory;         /* NULL: this handle is free */
 	uint8_t *                       kernel;         /* where it is in the kernel */
 	MiniIOSurface *                 surface;        /* whose memory it is, when not its own */
+	bool                            client;         /* the client's own pages (no kernel view: out of the cache by their physical addresses) */
 	uint64_t                        address;        /* the GPU's for it */
 	uint64_t                        size;
 	uint32_t                        flags;
@@ -468,6 +487,7 @@ struct gpu_left {
 	IOMemoryDescriptor *            memory;
 	IOMemoryMap *                   map;            /* gpu_buffer's */
 	MiniIOSurface *                 surface;
+	bool                            client;
 	uint64_t                        address, size;
 	uint32_t                        fence, flags;
 };
@@ -522,6 +542,7 @@ class HakiosGPUUserClient : public IOUserClient
 	void freeBuffer(struct gpu_buffer * b);
 	bool keep(IOMemoryDescriptor * memory, uint8_t * kernel, uint64_t address, uint64_t size, uint32_t flags);
 	IOReturn hostBuffer(struct hakios_host * request);
+	IOReturn userBuffer(struct hakios_user_memory * request);
 	void dropKept(struct gpu_kept * k);
 	void reap(void);
 	IOReturn gemNew(struct msm_gem_new * request);
@@ -575,8 +596,22 @@ HakiosGPUUserClient::start(IOService * provider)
  * written, and must not be somebody else's by then.
  */
 void
-HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
+HakiosGPUUserClient::freeBuffer(struct gpu_buffer * slot)
 {
+	/*
+	 * gpuWait() below lets go of the lock: take the buffer out of its handle first and work on a copy, so that
+	 * a second close of the same handle (or the client's closing) cannot free the same memory and address twice.
+	 */
+	struct gpu_buffer saved = *slot;
+	struct gpu_buffer * b = &saved;
+
+	slot->memory = NULL;
+	slot->surface = NULL;
+	slot->map = NULL;
+	slot->client = false;
+	fBufferCount--;
+	fBufferBytes -= b->size;
+
 	bool busy = hakios_gpu_ready() && b->fence != 0 && !hakios_gpu_done(b->fence);
 
 	if (busy && fLeftCount == GPU_LEFT) {
@@ -588,6 +623,7 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 		left->memory = b->memory;
 		left->map = b->map;
 		left->surface = b->surface;
+		left->client = b->client;
 		left->address = b->address;
 		left->size = b->size;
 		left->fence = b->fence;
@@ -604,7 +640,8 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 			if (said++ < 8) {
 				IOLog("HakiosGPU: the GPU is not done with what it was given: a buffer of %llu bytes stays its own\n", b->size);
 			}
-		} else if (b->surface == NULL && hakios_gpu_ready() && keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
+		} else if (b->surface == NULL && !b->client && hakios_gpu_ready() &&
+		    keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
 			b->memory = NULL;               /* (now the kept one's) */
 		} else if (hakios_gpu_ready()) {
 			hakios_gpu_unmap(b->address, b->size);
@@ -620,10 +657,6 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 			MiniIOSurfaceDrop(b->surface);
 		}
 	}
-	b->memory = NULL;
-	b->surface = NULL;
-	fBufferCount--;
-	fBufferBytes -= b->size;
 }
 
 /* The buffers that were given back early and that the GPU is done with now: freed. With the lock held. */
@@ -637,7 +670,7 @@ HakiosGPUUserClient::reap(void)
 			i++;
 			continue;
 		}
-		if (left->surface == NULL && hakios_gpu_ready() &&
+		if (left->surface == NULL && !left->client && hakios_gpu_ready() &&
 		    keep(left->memory, NULL, left->address, left->size, left->flags)) {
 			left->memory = NULL;
 		} else if (hakios_gpu_ready()) {
@@ -773,6 +806,7 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 	b->flushSize = 0;
 	b->surface = NULL;
 	b->map = NULL;
+	b->client = false;
 	fBufferCount++;
 	fBufferBytes += size;
 	return b;
@@ -1174,6 +1208,81 @@ HakiosGPUUserClient::clientSurfaceBuffer(MiniIOSurface * s, struct hakios_surfac
 	return kIOReturnSuccess;
 }
 
+/*
+ * Pages of the client's own as a buffer, as Linux's userptr: wired for as long as the buffer is there,
+ * entered into the GPU's address space, and seen by the kernel through a mapping of its own (for the
+ * cache: they are ordinary memory, pushed out of this processor's cache at every submission that
+ * names them). Vulkan's VK_EXT_external_memory_host over it (Turnip, tools/mesa/darwin-drm): Metal's
+ * no-copy buffers, CoreAnimation's backing stores.
+ */
+IOReturn
+HakiosGPUUserClient::userBuffer(struct hakios_user_memory * request)
+{
+	IOMemoryDescriptor * memory = NULL;
+	struct gpu_buffer * b;
+	uint64_t began = mach_absolute_time();
+
+	if ((request->address & PAGE_MASK) || (request->size & PAGE_MASK) || request->size == 0 ||
+	    request->size > GPU_BUFFER_MAX) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: not whole pages of %u bytes\n",
+			    request->address, request->size, (unsigned) PAGE_SIZE);
+		}
+		return kIOReturnBadArgument;
+	}
+	/* pages the client may only read (a window server's view of another program's backing store): the GPU reads them only */
+	IOReturn prepared = kIOReturnNoMemory;
+	for (int pass = 0; pass < 2 && prepared != kIOReturnSuccess; pass++) {
+		memory = IOMemoryDescriptor::withAddressRange(request->address, request->size,
+		    pass == 0 ? kIODirectionInOut : kIODirectionOut, fTask);
+		if (memory == NULL) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: no descriptor\n", request->address, request->size);
+			return kIOReturnNoMemory;
+		}
+		prepared = memory->prepare();
+		if (prepared != kIOReturnSuccess) {
+			memory->release();
+			memory = NULL;
+		} else if (pass == 1) {
+			request->flags |= MSM_BO_GPU_READONLY;
+		}
+	}
+	if (memory == NULL) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's cannot be wired: %#x\n",
+			    request->address, request->size, prepared);
+		}
+		return kIOReturnVMError;
+	}
+	IOLockLock(gGPULock);
+	b = newBuffer(memory, 0, request->size, request->flags, &request->handle);
+	if (b != NULL) {
+		b->memory = memory;             /* (its pages unwired as it goes: IOGeneralMemoryDescriptor::free) */
+		b->kernel = NULL;
+		b->client = true;
+		b->seen = true;
+		gGPUStat.surfaces++;
+	}
+	gGPUStat.taking += mach_absolute_time() - began;
+	IOLockUnlock(gGPULock);
+	if (b == NULL) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: no room for them in the GPU\n",
+			    request->address, request->size);
+		}
+		memory->complete();
+		memory->release();
+		return kIOReturnNoMemory;
+	}
+	return kIOReturnSuccess;
+}
+
 IOReturn
 HakiosGPUUserClient::gemInfo(struct msm_gem_info * request)
 {
@@ -1245,6 +1354,31 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		goto out;
 	}
 	IOLockLock(gGPULock);
+	/*
+	 * A surface this submission draws into that the display's driver is copying to the panel right now: waited for, the
+	 * lock let go meanwhile (MiniIOSurface shownReading). A copy takes some 10 ms at most; past GPU_SHOWN_WAIT_MS the
+	 * submission goes on all the same, as before.
+	 */
+	for (uint32_t waited = 0; waited < GPU_SHOWN_WAIT_MS * 10; waited++) {
+		bool reading = false;
+
+		for (uint32_t i = 0; i < request->nr_bos && !reading; i++) {
+			struct gpu_buffer * b = buffer(bos[i].handle);
+			uint32_t flags = bos[i].flags;
+
+			reading = b != NULL && b->surface != NULL && b->surface->shownReading != 0 &&
+			    ((flags & MSM_SUBMIT_BO_WRITE) != 0 || (flags & (MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE)) == 0);
+		}
+		if (!reading) {
+			break;
+		}
+		if (waited == 0) {
+			gGPUStat.shownWaits++;
+		}
+		IOLockUnlock(gGPULock);
+		delay_for_interval(100, NSEC_PER_USEC);
+		IOLockLock(gGPULock);
+	}
 	if (gGPUFairMs != 0 && fYields && fLastFence != 0 && !hakios_gpu_done(fLastFence)) {
 		uint64_t waited = mach_absolute_time();
 
@@ -1292,6 +1426,21 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 				b->seed = seed;
 				b->pushed = began;
 			}
+		} else if (b->client) {
+			/* the client's own pages are ordinary memory: out of the cache every time, by their physical addresses */
+			for (uint64_t offset = 0; offset < b->size;) {
+				IOByteCount length = 0;
+				addr64_t phys = b->memory->getPhysicalSegment(offset, &length, kIOMemoryMapperNone);
+
+				if (phys == 0 || length == 0) {
+					break;
+				}
+				length = MIN(length, b->size - offset);
+				flush_dcache64(phys, (unsigned) length, TRUE);
+				offset += length;
+			}
+			gGPUStat.flushed += b->size;
+			continue;
 		} else if (!(b->flags & GPU_BUFFER_HOST) && (!b->seen || !gGPUCached)) {
 			continue;               /* (a kHakiosHost buffer is the program's cached memory: pushed out every time) */
 		}
@@ -1363,23 +1512,31 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	/*
 	 * The surfaces named are being drawn into, or read, until this submission is done: the
 	 * display's driver waits for that before it puts one on the panel (MiniIOSurfaceDrawn()).
-	 * (freedreno names every buffer for reading and writing alike, so which it is cannot be
-	 * told; the last submission of a frame names the surface the frame is drawn into.)
+	 * A surface's "drawn" mark is the last submission that WRITES it, where the client says
+	 * which (hakios-metal does: an attachment or a copy's destination is written, a texture read).
+	 * Marked by a read too, a surface that a later submission only read looked drawn again when
+	 * it was swapped before its own frame's submission had come (show() waits for a newer mark
+	 * only when there is none), and the panel showed a picture some frames old: a dismissed alert
+	 * back for one frame. freedreno names every buffer for reading and writing alike, and a buffer
+	 * with neither flag is taken as written, as before.
 	 */
 	for (uint32_t i = 0; request->fence != 0 && i < request->nr_bos; i++) {
 		struct gpu_buffer * b = buffer(bos[i].handle);
+		uint32_t flags = bos[i].flags;
 
 		if (b != NULL) {
 			b->fence = request->fence;
-			if (b->surface != NULL) {
+			if (b->surface != NULL && ((flags & (MSM_SUBMIT_BO_WRITE | GPU_SUBMIT_BO_TRACK)) != 0 ||
+			    (flags & (MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE)) == 0)) {
 				b->surface->drawn = request->fence;
 			}
 		}
 	}
 	reap();
 	if (fSubmits++ < 4) {
+		/* (addresses and words are only set up to `count`: with no command buffer among the commands, the first would be stack garbage) */
 		IOLog("HakiosGPU: submission %u: %u command buffers, the first at %#llx, %u words\n", request->fence, count,
-		    addresses[0], words[0]);
+		    count != 0 ? addresses[0] : 0ull, count != 0 ? words[0] : 0u);
 	}
 	/* every five seconds in which something was submitted: how much, and what it cost here */
 	gGPUStat.submissions++;
@@ -1404,13 +1561,14 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		IOLog("HakiosGPU: %u submissions in %llu ms: %u command buffers and %u buffers named, %llu KB out of the cache "
 		    "in %llu us a submission; the GPU worked %llu us on each of %u (%u under 0.1 ms, %u under 0.25, %u under 0.5, "
 		    "%u under 1, %u under 2, %u under 4, %u longer; %llu ms in all); %u waits of %llu us, %u over before they "
-		    "began; %u IOSurfaces taken as buffers in %llu us each; %u buffers, %llu MB\n",
+		    "began; %u IOSurfaces taken as buffers in %llu us each; %u buffers, %llu MB; %u submissions waited for the display's "
+		    "copy of a surface they draw into\n",
 		    gGPUStat.submissions, nanos / NSEC_PER_MSEC, gGPUStat.commands, gGPUStat.buffers,
 		    (gGPUStat.flushed >> 10) / gGPUStat.submissions, flushing / NSEC_PER_USEC / gGPUStat.submissions,
 		    timed ? worked / timed : 0, timed, by[0], by[1], by[2], by[3], by[4], by[5], by[6], worked / 1000,
 		    gGPUStat.waits, gGPUStat.waits ? waiting / NSEC_PER_USEC / gGPUStat.waits : 0, gGPUStat.over,
 		    gGPUStat.surfaces, gGPUStat.surfaces ? taking / NSEC_PER_USEC / gGPUStat.surfaces : 0, fBufferCount,
-		    fBufferBytes >> 20);
+		    fBufferBytes >> 20, gGPUStat.shownWaits);
 		if (gGPUFairMs != 0) {
 			uint64_t waited;
 
@@ -1459,6 +1617,10 @@ HakiosGPUUserClient::show(const struct hakios_show * request)
 
 	if (request->width == 0 || request->width > 4096 || request->height == 0 || request->height > 4096 ||
 	    request->rowBytes < 4 * request->width) {
+		return kIOReturnBadArgument;
+	}
+	/* rowBytes is the caller's own number: without a limit it asks for terabytes of wired memory (no more than a buffer may be) */
+	if (size > GPU_BUFFER_MAX) {
 		return kIOReturnBadArgument;
 	}
 	pixels = (uint8_t *) IOMallocData(size);
@@ -1510,6 +1672,7 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		struct drm_gem_close close;
 		struct hakios_surface surface;
 		struct hakios_host host;
+		struct hakios_user_memory user;
 		struct hakios_show show;
 		struct hakios_worked worked;
 	} r;
@@ -1574,6 +1737,12 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 	case kMsmWaitFence:
 		waitBegan = mach_absolute_time();
 		IOLockLock(gGPULock);
+		/* a fence that was never issued is never done: refuse it, so that waiting for it cannot make gpuWait() declare the GPU dead for every client */
+		if ((int32_t)(r.waitFence.fence - hakios_gpu_last()) > 0) {
+			IOLockUnlock(gGPULock);
+			ret = kIOReturnBadArgument;
+			break;
+		}
 		patience = millisecondsUntil(&r.waitFence.timeout);
 		if (!gpuWait(r.waitFence.fence, patience)) {
 			ret = kIOReturnTimeout;
@@ -1641,6 +1810,9 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		break;
 	case kHakiosHost:
 		ret = hostBuffer(&r.host);
+		break;
+	case kHakiosUserMemory:
+		ret = userBuffer(&r.user);
 		break;
 	default:
 		IOLog("HakiosGPU: request %#x (%zu bytes) is not known here\n", selector, size);

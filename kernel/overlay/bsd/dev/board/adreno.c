@@ -92,6 +92,7 @@
  * vendor kernel agrees on every offset used here, and is the only source for the frequency counter.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>
@@ -660,8 +661,24 @@ count_clock(uint32_t ticks)
  * The rate in Hz of one of the GPU clock controller's clocks; 0 if it does not run, MEASURE_FAILED
  * if the counter does not finish. Everything that is changed for it is put back.
  */
+static LCK_GRP_DECLARE(measure_lck_grp, "hakios-adreno-measure");
+static LCK_MTX_DECLARE(measure_lock, &measure_lck_grp);   /* one user of the debug muxes at a time: bring-up, recovery, the thermal lines */
+
+static uint32_t measure_locked(uint32_t select);
+
 static uint32_t
 measure(uint32_t select)
+{
+	uint32_t hz;
+
+	lck_mtx_lock(&measure_lock);
+	hz = measure_locked(select);
+	lck_mtx_unlock(&measure_lock);
+	return hz;
+}
+
+static uint32_t
+measure_locked(uint32_t select)
 {
 	uint32_t gpu_mux = get(&gpucc, "debug mux", GPUCC_DEBUG_MUX), gpu_div = get(&gpucc, "debug divider", GPUCC_DEBUG_DIV);
 	uint32_t gpu_cbcr = get(&gpucc, "debug output", GPUCC_DEBUG_CBCR), mux = get(&gcc, "debug mux", GCC_DEBUG_MUX);
@@ -1655,7 +1672,9 @@ step_gmu_firmware(void)
 			if (block.size == 0) {
 				continue;
 			}
-			if (in_tcm(block.address) && in_tcm(block.address + block.size - 1)) {
+			/* the end is worked out in 64 bits: a block whose address and size wrap past 4 GB is not "inside the TCM" and is not written */
+			if (in_tcm(block.address) && (uint64_t)block.address + block.size <= 0x100000000ull &&
+			    in_tcm(block.address + block.size - 1)) {
 				uint32_t registers = block.address < GMU_DTCM_ADDRESS ? GMU_ITCM + block.address - GMU_ITCM_ADDRESS :
 				    GMU_DTCM + block.address - GMU_DTCM_ADDRESS;
 
@@ -1681,8 +1700,9 @@ step_gmu_firmware(void)
 					    block.size, block.address);
 					return false;
 				}
+				/* (64-bit sum: with 32 bits a block that wraps would pass and the copy would run past the block's memory) */
 				if (block.address >= gmu_blocks[i].address &&
-				    block.address + block.size <= gmu_blocks[i].address + gmu_blocks[i].size) {
+				    (uint64_t)block.address + block.size <= gmu_blocks[i].address + gmu_blocks[i].size) {
 					memcpy((void *)(gmu_blocks[i].memory + (block.address - gmu_blocks[i].address)), data, block.size);
 					to_memory(gmu_blocks[i].memory, gmu_blocks[i].size);
 					printf("adreno: %u: %#x bytes at the GMU's %#x, in memory\n", step, block.size, block.address);
@@ -3194,6 +3214,23 @@ hakios_gpu_ready(void)
 	return gpu_kept;
 }
 
+/*
+ * The 3D core's clock now, as the SoC's frequency counter measures it, in MHz (28 ms, asleep); 0 when the GPU is
+ * not up or its core has no power. For hakios_thermal.c's lines: the core's speed is the GMU's to set, and a GPU
+ * slowed by heat is told apart from a slow frame only so.
+ */
+uint32_t
+hakios_adreno_core_mhz(void)
+{
+	uint32_t hz;
+
+	if (!gpu_kept || !core_is_on) {
+		return 0;
+	}
+	hz = measure(GPUCC_DEBUG_GX_GFX3D);
+	return hz == MEASURE_FAILED ? 0 : (hz + 500000) / 1000000;
+}
+
 /* The answers to msm's GET_PARAM (Linux's adreno_get_param for this GPU; the numbers are msm_drm.h's). */
 bool
 hakios_gpu_parameter(uint32_t which, uint64_t *value)
@@ -3282,10 +3319,16 @@ hakios_gpu_address_free(uint64_t address, uint64_t size)
 	unsigned at;
 
 	size = gpu_address_span(size);
-	gpu_va_used -= size;
-	gpu_va_live--;
 	for (at = 0; at < gpu_free_count && gpu_free[at].start < address; at++) {
 	}
+	/* a range that overlaps one that is free already was given back twice: leave the list as it is, instead of merging it into nonsense */
+	if ((at > 0 && gpu_free[at - 1].start + gpu_free[at - 1].size > address) ||
+	    (at < gpu_free_count && address + size > gpu_free[at].start)) {
+		printf("adreno: the addresses %#llx (%#llx bytes) are free already: not given back again\n", address, size);
+		return;
+	}
+	gpu_va_used -= size;
+	gpu_va_live--;
 	if (at > 0 && gpu_free[at - 1].start + gpu_free[at - 1].size == address) {
 		gpu_free[at - 1].size += size;
 		if (at < gpu_free_count && address + size == gpu_free[at].start) {
@@ -3420,8 +3463,11 @@ gpu_times(void)
 			unsigned by = 0;
 
 			if (gpu_log) {
-				/* "tl: q FENCE took US": what the core spent on that submission (iokit/Kernel/BoardGPU.cpp: tl: Q) */
-				hakios_tl("tl: q %u took %llu\n", gpu_timed, ticks * 10 / 192);
+				/* "tl: q FENCE took US from US": what the core spent on that submission, and when it began by the
+				 * GPU's always-on counter (19.2 MHz, as the processor's; from another origin, some 21525 s from mach
+				 * time on redwood, so against iokit/Kernel/BoardGPU.cpp's tl: Q, when it was given, the gaps
+				 * between submissions are what compare) */
+				hakios_tl("tl: q %u took %llu from %llu\n", gpu_timed, ticks * 10 / 192, times[2 * slot] * 10 / 192);
 			}
 
 			while (by < 6 && ticks >= under[by]) {
@@ -3870,7 +3916,7 @@ out:
 
 /*
  * Where the panel's own refresh is, for the display driver (iokit/Kernel/MiniIOMobileFramebuffer.cpp,
- * boot-arg fb_scan). Renoir's panel is a command-mode one (display_probe() there, 30 October: intf1's
+ * boot-arg fb_scan). Renoir's panel is a command-mode one (redwood's a video one: hakios_display_scan_video() below) (display_probe() there, 30 October: intf1's
  * timing engine off, its frame counter counting 60.0 a second): at every tearing-effect edge of the
  * panel the display controller reads the framebuffer out to it, about 8.6 ms, its line counter going
  * 1 to 2400, and stands still at line 1 in between. The same chain of checks as display_probe() comes
@@ -3878,7 +3924,19 @@ out:
  * clock of its registers -- turned on where off, exactly the two writes display_probe() makes, nothing
  * else written -- and every read after that looks again that the last of them still runs.
  */
-static bool scan_ready;
+static bool scan_ready, scan_video;
+
+/*
+ * A video panel (redwood's, display_probe() there: intf1's timing engine on, 476 clocks a line, 2432 lines a refresh at
+ * 119.93 Hz, the picture's rows on lines 12 to 2411) is read out without pause: the line counter goes 0 to 2431 and
+ * round again, a row read 12 lines after its number. What follows is the same -- a band of rows written between two
+ * readouts of it -- with the readouts back to back.
+ */
+bool
+hakios_display_scan_video(void)
+{
+	return scan_ready && scan_video;
+}
 
 bool
 hakios_display_scan_start(void)
@@ -3889,7 +3947,7 @@ hakios_display_scan_start(void)
 		return true;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_DISPLAY_SCAN) || !display_layout_known()) {
-		return false;                   /* (a video panel has no readout to follow; or the board does not say where) */
+		return false;                   /* (the board does not say where) */
 	}
 	need(&gcc);
 	need(&dispcc);
@@ -3917,7 +3975,8 @@ hakios_display_scan_start(void)
 	}
 	disp_intf = (struct block){ "intf1", display->intf_page, 0x1000 };
 	need(&disp_intf);
-	scan_ready = disp_intf.base != 0 && rd(disp_intf.base + INTF_TIMING_ENGINE_EN) == 0;
+	scan_ready = disp_intf.base != 0;
+	scan_video = scan_ready && rd(disp_intf.base + INTF_TIMING_ENGINE_EN) != 0;   /* (its own timing: a video panel) */
 	return scan_ready;
 }
 

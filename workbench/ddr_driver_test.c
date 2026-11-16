@@ -39,6 +39,10 @@ ml_io_map_wcomb(vm_offset_t phys, vm_size_t size)
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_rpmh_lock(void) { locks++; }
 void hakios_rpmh_unlock(void) { unlocks++; }
+/* the CPU frequency driver's own quiet (board/cpufreq.c), asked for before DDR's */
+static unsigned cpufreq_quiesced;
+void hakios_cpufreq_quiesce(void);
+void hakios_cpufreq_quiesce(void) { cpufreq_quiesced++; }
 void hakios_ddr_init(bool with_cpufreq);
 void hakios_ddr_quiesce(void);
 

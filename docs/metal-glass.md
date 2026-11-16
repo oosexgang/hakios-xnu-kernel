@@ -8,9 +8,41 @@ things, all of them device-independent apart from the kernel's GPU profile:
 - a compiler from Apple's shader bitcode (AIR) to the Adreno;
 - a kernel path that runs the work.
 
-## What already exists in this repository
+With `gpu=1 metal=1` and the pieces below, backboardd takes a Metal device of ours, and CoreAnimation draws
+the screen on the Adreno.
 
-| Piece | Where | State |
+## State (redwood, iOS 27.2 24B119)
+
+Drawn by the GPU, as CoreAnimation means them to look:
+- the lock screen with its glass clock;
+- the home screen with its widgets and icons, the dock's and the search field's glass;
+- a system alert's blurred glass over the home screen.
+
+Four boots of 240–300 s ran with no crash of backboardd. The last one, with every fix below, had no refusal by
+the plug-in before the run's end, except an accounting setter it takes without keeping.
+
+Speed, measured with `rc.jobs.fps` and `darwin/tools/frames.py` (the 0.7 s after each gesture), with redwood's
+defaults (`fb_hz=120`, `atm_diagnostic_config`, `metal_gmem_binning=1` in its `board.toml`; `logs/080215-run.log`,
+`logs/081352-run.log`, `logs/082525-run.log`):
+
+| Scene | Frames a second | Within 18 ms | GPU per frame |
+| --- | --- | --- | --- |
+| The lock screen, its clock and glass | 60 | | |
+| The home screen's pages swiped | 66–70 | 87–89% | 10.1–10.6 ms |
+| Settings' list flung under the glass search field | 80–82 | 95–97% | 9.7–10.1 ms |
+| An app opening or closing (not measured again) | 12–20 | | up to 0.5 s |
+
+The day before, the same scenario gave 51 and 57. Each frame now starts while the GPU still has the one before:
+the window server's render thread used to wait for the GPU's end between frames on the plug-in's surface lock
+(next section, item 6). In a long burst a frame is made every 10.5 ms, its GPU work done 19 ms after it was made
+and on the panel at 30 ms; what paces that burst is the presenter's copy (What is next, 120 Hz).
+
+At rest the home screen's frame is 16–19 ms of GPU time, drawn when the clock icon's hand moves (10 a second). A
+week before these were 20 frames a second everywhere and 31–36 ms for the home screen's main pass alone.
+
+## The pieces
+
+| Piece | Where | What it does |
 | --- | --- | --- |
 | Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/board/adreno.c`; the profile is `gpu { }` of the renoir package's board file (`renoir/board.dts` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/BoardGPU.cpp` | Mesa's shim and the Metal device both use it |

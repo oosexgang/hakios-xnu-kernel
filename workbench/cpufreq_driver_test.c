@@ -81,6 +81,10 @@ void hakios_cpufreq_init(void);
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
+/* the kernel's log beside the console (board/input.c): what the parking of the small cores says there is not looked at */
+void hakios_tl(const char *format, ...) __printflike(1, 2);
+void hakios_tl(const char *format __unused, ...) {}
+
 #include "board/board.c"
 #include "board/cpufreq.c"
 

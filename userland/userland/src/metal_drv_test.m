@@ -5271,7 +5271,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  *
  * Two things this must never do, and both are why it is written this way:
  *
- *   - IT MUST BE OPTIONAL. An older kernel answers 0x7d with "request 0x7d is not known here"
+ *   - IT MUST BE OPTIONAL. An older kernel answers 0x7b with "request 0x7b is not known here"
  *     and kIOReturnUnsupported, and a zero from that is indistinguishable from a GPU that did
  *     no work. So the first failure disables it for the run and says so in words; it never
  *     prints a zero that could be read as a measurement.
@@ -5296,7 +5296,7 @@ tm_gpu_worked(struct tm_worked *out)
 	if (tm_worked_state < 0 || pic_connection == 0) {
 		return false;
 	}
-	kern_return_t kr = IOConnectCallStructMethod(pic_connection, 0x7d, &in, sizeof(in),
+	kern_return_t kr = IOConnectCallStructMethod(pic_connection, 0x7b, &in, sizeof(in),
 						     out, &size);
 
 	if (kr != KERN_SUCCESS || size < sizeof(*out)) {
@@ -5305,7 +5305,7 @@ tm_gpu_worked(struct tm_worked *out)
 		 * this request, kIOReturnNotReady (0xe00002d8) is this kernel with the Adreno
 		 * not started -- and in the second case nothing else here would be measuring
 		 * either. */
-		printf("drvtest: time: this kernel does not report GPU time: request 0x7d "
+		printf("drvtest: time: this kernel does not report GPU time: request 0x7b "
 		       "answered %#x and gave %zu of %zu bytes (0xe00002c7 is a kernel without "
 		       "the request, 0xe00002d8 is one whose GPU is not started). The GPU's own "
 		       "share is NOT measured in this run -- it is only in the kernel's own "
@@ -5316,7 +5316,7 @@ tm_gpu_worked(struct tm_worked *out)
 		return false;
 	}
 	if (tm_worked_state == 0) {
-		printf("drvtest: time: this kernel reports GPU time (request 0x7d), so each case "
+		printf("drvtest: time: this kernel reports GPU time (request 0x7b), so each case "
 		       "below is bracketed by a read of it. Reading RESETS the kernel's counters, "
 		       "which it shares with its own five-second \"the GPU worked N us\" report -- "
 		       "so that report will have gaps in this boot, and that is this mode's doing "
@@ -6733,7 +6733,7 @@ time_path(id<MTLDevice> dev, const char *metallib, unsigned repeats)
 	       "~0, the split in every line below is wrong\n");
 	printf("drvtest: time: the GPU's share is separated three ways, in order of how much "
 	       "they can be trusted: by ASKING THE KERNEL for the core's own time per case "
-	       "(request 0x7d, if this kernel has it -- the next line says whether it does), "
+	       "(request 0x7b, if this kernel has it -- the next line says whether it does), "
 	       "by subtracting the 4x4 case from the big ones, and by the kernel's own "
 	       "\"tl: q\" lines in this log with gpu_log=1\n");
 	fflush(stdout);

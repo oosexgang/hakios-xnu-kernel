@@ -3,7 +3,7 @@
  *
  * The driver of the phone's radio is Linux's ath11k, compiled unmodified outside this tree on a
  * layer that gives it the kernel interfaces it expects, and tied into one object that the
- * kernel links when it is there (tools/mk-ath11k.sh and wifi/lx in the repository; the kernel
+ * kernel links when it is there (kernel/lx/build.sh and kernel/lx in the repository; the kernel
  * is built with that object when xnu-build.sh finds it). The object shows one name, lx_start(),
  * and asks for the calls of sys/board/lx.h, which are here: memory, time, threads, one lock
  * to sleep under, the kernel's options. What it asks of the radio itself -- its firmware's
@@ -55,7 +55,7 @@ lx_os_free(void *memory, unsigned long size)
 	kfree_data(memory, size);
 }
 
-/* A radio whose driver wants a large pool in one piece (ath11k on PCIe: 80 MiB, wifi/lx/src/lx_base.c)
+/* A radio whose driver wants a large pool in one piece (ath11k on PCIe: 80 MiB, kernel/lx/src/lx_base.c)
  * has it kept from before userland fragments RAM: the board's wifi { } early_pool_mb says how much.
  * Only lx_os_radio_memory may map it to the radio, after PCIe and the SMMU have been initialized.
  * Boot lifetime, like the driver's pool itself. A failed reservation leaves the normal allocation
@@ -575,7 +575,7 @@ lx_os_station_lost(int error)
 __attribute__((weak)) int
 lx_start(void)
 {
-	say("lx: THE DRIVER IS NOT BUILT IN: its object was not there when this kernel was built (tools/mk-ath11k.sh, then "
+	say("lx: THE DRIVER IS NOT BUILT IN: its object was not there when this kernel was built (kernel/lx/build.sh, then "
 	    "build the kernel again)\n");
 	return ENXIO;
 }

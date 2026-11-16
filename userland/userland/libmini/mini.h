@@ -26,7 +26,7 @@ enum {
 	SYS_select = 93, SYS_fsync = 95, SYS_socket = 97, SYS_bind = 104, SYS_gettimeofday = 116, SYS_settimeofday = 122,
 	SYS_rename = 128, SYS_mkdir = 136, SYS_rmdir = 137, SYS_utimes = 138, SYS_pread = 153, SYS_pwrite = 154,
 	SYS_mount = 167, SYS_mmap = 197, SYS_lseek = 199, SYS_ftruncate = 201, SYS_getxattr = 234,
-	SYS_setxattr = 236, SYS_listxattr = 240, SYS_sysctlbyname = 274, SYS_stat64 = 338, SYS_fstat64 = 339,
+	SYS_setxattr = 236, SYS_listxattr = 240, SYS_lstat_extended = 280, SYS_chmod_extended = 282, SYS_sysctlbyname = 274, SYS_stat64 = 338, SYS_fstat64 = 339,
 	SYS_lstat64 = 340, SYS_getdirentries64 = 344, SYS_lchown = 364,
 };
 
@@ -162,6 +162,13 @@ int     lchown(const char *path, int uid, int gid);
 int     chflags(const char *path, int flags);
 int     utimes(const char *path, const struct timeval times[2]);
 ssize_t listxattr(const char *path, char *names, size_t size, int options);
+/* a file's access control list as the kernel keeps it (struct kauth_filesec, host order): lstat_extended fills SEC with up
+ * to *SIZE bytes and sets *SIZE to its size (0: none); chmod_extended sets it, owner and mode left as they are with
+ * KAUTH_UID_NONE, KAUTH_GID_NONE and -1 */
+#define KAUTH_UID_NONE  ((uint32_t)-1 - 100)
+#define KAUTH_GID_NONE  ((uint32_t)-1 - 100)
+int     lstat_extended(const char *path, struct stat *st, void *sec, size_t *size);
+int     chmod_extended(const char *path, uint32_t uid, uint32_t gid, int mode, const void *sec);
 ssize_t getxattr(const char *path, const char *name, void *value, size_t size, uint32_t position, int options);
 int     setxattr(const char *path, const char *name, const void *value, size_t size, uint32_t position, int options);
 int     ftruncate(int fd, off_t length);

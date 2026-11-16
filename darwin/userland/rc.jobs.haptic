@@ -1,0 +1,11 @@
+# iOS 26/27 (RC_JOBS=darwin/userland/rc.jobs.haptic root26-darwin.sh; haptic=5, aw8697_haptic.bin in firmware/BOARD/fw/):
+# gestures iOS answers with its haptics. The lock screen swiped away as rc.jobs.unlock does, then Settings' icon
+# (the third row's second, the default layout) held until its menu opens, twice, and an empty place of the home
+# screen held until the icons wiggle -- each a tap of the Taptic Engine on an iPhone. The audio plug-in says
+# "hakios: audio: the actuator plays" when iOS plays one, the motor's driver "haptic:" what it did with it.
+/hakios/bin/net_test wifi
+/hakios/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200 wait 25 tap 0.27 0.582 wait 3
+/hakios/bin/rwtouch hold 0.385 0.57 1500 wait 3 button home wait 3
+/hakios/bin/rwtouch hold 0.385 0.57 1500 wait 3 button home wait 3
+/hakios/bin/rwtouch hold 0.5 0.75 2500 wait 3 button home wait 3
+/bin/ps -A

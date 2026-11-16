@@ -245,6 +245,18 @@ listxattr(const char *path, char *names, size_t size, int options)
 	return SC(SYS_listxattr, path, names, size, options, 0, 0);
 }
 
+int
+lstat_extended(const char *path, struct stat *st, void *sec, size_t *size)
+{
+	return (int)SC(SYS_lstat_extended, path, st, sec, size, 0, 0);
+}
+
+int
+chmod_extended(const char *path, uint32_t uid, uint32_t gid, int mode, const void *sec)
+{
+	return (int)SC(SYS_chmod_extended, path, uid, gid, mode, sec, 0);
+}
+
 ssize_t
 getxattr(const char *path, const char *name, void *value, size_t size, uint32_t position, int options)
 {

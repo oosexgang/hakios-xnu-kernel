@@ -17,9 +17,17 @@
  *
  * At the run's end the rows are given back, so the loader is not left slow.
  *
+ * And every look a line, "tl: h at US hottest TENTHS sensor N limit MHz,... asked MHz,... gpu MHz": the
+ * hottest sensor; each group's frequency as the hardware allows it now (EPSS's DOMAIN_STATE: the limit its
+ * own LMh, the SoC's limits-management hardware, sets when hot -- below the row asked for when it throttles,
+ * whatever this driver does) and as asked (PERF_STATE's row); and the GPU's core clock as the SoC's frequency
+ * counter measures it (hakios_adreno_core_mhz(); 0 while the GPU is not up). A frame rate that drops as the
+ * phone warms is then told apart from one that is slow by itself (darwin/tools/frames.py shows them per gesture).
+ *
  * Boot-args:
- *   thermal=0          off (default): nothing read
- *   thermal=1          the hottest reading logged every ten seconds, nothing held back
+ *   thermal=0          off: nothing read
+ *   thermal=1          (the default) looking only: a "tl: h" line a look, the hottest reading logged every
+ *                      ten seconds, nothing written
  *   thermal=2          held back as above
  *   th_trip=N th_clear=N th_critical=N   in tenths of a degree (default 700, 620, 950)
  *   th_period_ms=N     how often it looks (default 1000)
@@ -51,6 +59,8 @@
 #include "log.h"
 
 extern void hakios_backlight_set_cap(uint32_t level);
+extern void hakios_tl(const char *format, ...) __printflike(1, 2);
+extern uint32_t hakios_adreno_core_mhz(void);
 extern int hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top);
 extern int hakios_scmi_perf_set(unsigned domain, uint32_t level);
 
@@ -63,6 +73,7 @@ extern int hakios_scmi_perf_set(unsigned domain, uint32_t level);
 #define TH_DOMAINS              HAKIOS_CPU_GROUPS       /* the groups of cores, at most (the board says how many) */
 
 #define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
+#define EPSS_DOMAIN_STATE       0x20            /* [7:0]: the frequency the hardware allows now, times 19.2 MHz (LMh) */
 #define EPSS_FREQ_TABLE         0x100
 #define EPSS_TABLE_ROWS         40
 #define EPSS_PERF_STATE         0x320
@@ -70,7 +81,7 @@ extern int hakios_scmi_perf_set(unsigned domain, uint32_t level);
 #define ALTERNATE_KHZ           300000
 
 static const struct hakios_board *this_board;      /* (hakios_board(), looked up once) */
-static uint32_t mode;
+static uint32_t mode = 1;
 static struct th_policy policy = { 700, 620, 950 };
 static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
 static uint32_t top_row[TH_DOMAINS], floor_row[TH_DOMAINS], row_now[TH_DOMAINS];
@@ -95,25 +106,59 @@ rows_text(const uint32_t *rows, char *text, size_t size)
 	return text;
 }
 
-/* the hottest reading of every sensor of every controller */
+/* the hottest reading of every sensor of every controller, and which it is (controller * 16 + sensor) */
 static int32_t
-read_hottest(void)
+read_hottest(unsigned *which)
 {
-	int32_t readings[TH_CONTROLLERS * TH_SENSORS];
+	int32_t readings[TH_CONTROLLERS * TH_SENSORS], hot;
 	unsigned n = 0;
 
 	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
-		for (unsigned s = 0; tsens[c] != 0 && s < TH_SENSORS; s++) {
+		for (unsigned s = 0; s < TH_SENSORS; s++) {
 			int32_t t = TH_NONE;
 
 			/* a sensor caught between two readings has none for a moment: asked again */
-			for (unsigned again = 0; again < 4 && t == TH_NONE; again++) {
+			for (unsigned again = 0; tsens[c] != 0 && again < 4 && t == TH_NONE; again++) {
 				t = th_tsens_tenths(rd(tsens[c] + TSENS_STATUS(s)));
 			}
 			readings[n++] = t;
 		}
 	}
-	return th_hottest(readings, n);
+	hot = th_hottest(readings, n);
+	*which = 0;
+	for (unsigned i = 0; i < n && hot != TH_NONE; i++) {
+		if (readings[i] == hot) {
+			*which = i;
+			break;
+		}
+	}
+	return hot;
+}
+
+/* a row's frequency in a group's table, in MHz */
+static uint32_t
+row_mhz(unsigned d, uint32_t row)
+{
+	uint32_t entry = rd(epss[d] + EPSS_FREQ_TABLE + 4 * (row < EPSS_TABLE_ROWS ? row : EPSS_TABLE_ROWS - 1));
+
+	return ((entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ) / 1000;
+}
+
+/* the line of this look: the hottest, each group's frequency allowed and asked, the GPU's */
+static void
+tell_look(int32_t t, unsigned which)
+{
+	char limits[48] = "", asked[48] = "";
+	size_t al = 0, aa = 0;
+	uint64_t now_ns;
+
+	for (unsigned d = 0; d < groups && epss[d] != 0; d++) {
+		al += (size_t)snprintf(limits + al, sizeof(limits) - al, "%s%u", d ? "," : "", XO_KHZ * (rd(epss[d] + EPSS_DOMAIN_STATE) & 0xff) / 1000);
+		aa += (size_t)snprintf(asked + aa, sizeof(asked) - aa, "%s%u", d ? "," : "", row_mhz(d, rd(epss[d] + EPSS_PERF_STATE)));
+	}
+	absolutetime_to_nanoseconds(mach_absolute_time(), &now_ns);
+	hakios_tl("tl: h at %llu hottest %d sensor %u limit %s asked %s gpu %u\n", now_ns / 1000, t, which,
+	    limits[0] ? limits : "-", asked[0] ? asked : "-", hakios_adreno_core_mhz());
 }
 
 /* a group's frequency table: its top row and the first row at or above its floor */
@@ -171,10 +216,12 @@ th_thread(__unused void *argument, __unused wait_result_t result)
 	uint32_t looks = 0, said_step = 0;
 
 	for (;;) {
-		int32_t t = read_hottest();
+		unsigned which = 0;
+		int32_t t = read_hottest(&which);
 		uint32_t next;
 
 		hottest = t;
+		tell_look(t, which);
 		if (mode >= 2) {
 			next = th_next_step(step, most, t, &policy);
 			if (next != step) {
@@ -230,7 +277,8 @@ hakios_thermal_init(void)
 	thread_t thread;
 	int32_t value;
 
-	if (!PE_parse_boot_argn("thermal", &mode, sizeof(mode)) || mode == 0) {
+	PE_parse_boot_argn("thermal", &mode, sizeof(mode));
+	if (mode == 0) {
 		return;
 	}
 	this_board = hakios_board();
@@ -281,10 +329,13 @@ hakios_thermal_init(void)
 	} else {
 		groups = hakios_board_cpu_groups();
 	}
-	for (unsigned d = 0; d < groups && mode >= 2 && !scmi; d++) {
+	/* (looking only, the groups' registers are read and never written: what the hardware allows, in tell_look) */
+	for (unsigned d = 0; d < groups && !scmi && this_board->cpufreq.epss != 0; d++) {
 		epss[d] = ml_io_map(this_board->cpufreq.epss + d * this_board->cpufreq.epss_domain_size, this_board->cpufreq.epss_domain_size);
 		read_table(d);
-		most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
+		if (mode >= 2) {
+			most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
+		}
 	}
 	{
 		char tops[48], floors[48];

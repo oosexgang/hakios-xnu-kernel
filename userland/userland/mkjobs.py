@@ -215,7 +215,7 @@ import sys
 # it is where VideoToolbox decodes for every other process, a HEIC picture included; see src/inject_media.c.)
 DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'locationd', 'softwareupdate',
         'datamigrator', 'backupd', 'thermalmonitord', 'keybagd', 'nfcd', 'biometrickitd', 'pearld',
-        'obliterat', 'storage_mounter', 'com.apple.fud', 'sepd', 'seputil', 'camera', 'ReportCrash',
+        'obliterat', 'storage_mounter', 'com.apple.fud', 'sepd', 'seputil', 'camerad', 'cameraispd', 'ReportCrash',
         'osanalytics', 'lockdown', 'audio', 'jetsamproperties',
         'purplebuddy', 'restore', 'usb', 'accessoryd',
         'mobileassetd', 'bird',
@@ -234,7 +234,9 @@ if os.path.basename(os.environ.get('DARWIN_FW', '').rstrip('/')).startswith('dar
     # syncdefaultsd and osanalyticshelper out again: 32 and 39 crashes in four minutes)
     DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'BTServer', 'softwareupdate', 'backupd',
             'nfcd', 'biometrickitd', 'pearld', 'obliterat', 'storage_mounter', 'com.apple.fud', 'sepd', 'seputil',
-            'camera', 'restore', 'jetsamproperties', 'usb', 'syncdefaultsd', 'osanalytics',
+            # (the cameras' hardware daemons; iOS 27's cameracaptured -- the capture stack and the flashlight's
+            # server, mediaserverd's part on 16.5 -- is let through: ios/userland/inject_capture.c)
+            'camerad', 'cameraispd', 'restore', 'jetsamproperties', 'usb', 'syncdefaultsd', 'osanalytics',
             # (com.apple.PerfPowerServices -- the power log -- spun one core at 100 % from boot to the end of
             # every run, saying nothing (cputop: 4.9 s of CPU in every 5 s), with the cores at 102-105 C; only Settings >
             # Battery's charts miss it. ALLOW=PerfPowerServices to have it back.)

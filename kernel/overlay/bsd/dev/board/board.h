@@ -57,6 +57,8 @@ enum {
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (board/wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (board/mic.c) */
 	HAKIOS_HAS_BLUETOOTH_WCN_UART = 1u << 17, /* Qualcomm Bluetooth over a GENI UART (board/bt_uart.c) */
+	HAKIOS_HAS_MODEM_SM7325    = 1u << 18,  /* an SM7325's modem, its packet engine and the SIM as this phone has them
+	                                         * (board/mpss.c, board/ipa.c, board/nas.c, board/cell.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 

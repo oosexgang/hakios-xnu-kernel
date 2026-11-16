@@ -3,7 +3,7 @@
 # under the address and undefined-behaviour sanitizers. workbench/run.sh runs this.
 #
 # With ath11k's sources at hand (ATH11K=<the directory with its qmi.c and qmi.h>;
-# base/tools/mk-ath11k.sh fetches them) its own message tables are tested too; without, only what
+# kernel/lx/build.sh fetches them) its own message tables are tested too; without, only what
 # needs none of them. Nothing of ath11k is kept: its tables are taken out of qmi.c into a
 # temporary directory each time.
 set -euo pipefail

@@ -134,6 +134,22 @@ make qemu        # the kernel built above, booted in QEMU to its own first proce
 QEMU's `virt` machine starts the loader under a real UEFI, which gives the kernel the emulator's board as
 a phone's firmware does; the kernel runs a root of nothing of Apple's, whose first process is a small
 shell. [qemu.md](qemu.md) says how to run it by hand, what the machine has and what is held.
+## Wi-Fi
+
+The radio's driver is Linux's ath11k, compiled unmodified on a layer of ours (`kernel/lx/`) into one
+object that `kernel/build.sh` links into the kernel when it is there. Without it the kernel has no
+radio, and `wifi=1` says so in its log.
+
+```sh
+kernel/build.sh             # once first: the tree and the kernel's headers the object is built against
+kernel/lx/build.sh          # fetches Linux 7.0.14's ath11k and FreeBSD 15.1's LinuxKPI (150 and 253 MB, kept)
+kernel/build.sh             # now with the Wi-Fi driver: "... bytes), with the Wi-Fi driver"
+```
+
+The object and the archives are in `$XNUDEPS/build/ath11k`, beside the kernel's tree. The phone's own
+firmware for the radio (its DSP's image, its board data, the regulatory database) goes into
+`firmware/NAME/fw/`, and the network to join, if any, into `firmware/NAME/fw/network` (its name, then its
+passphrase): neither is ever published.
 
 ## What has been verified, and where
 

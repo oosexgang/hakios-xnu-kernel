@@ -43,7 +43,7 @@
 #                      machine doing something else as well, and nothing says how much.
 #   XL_CMDLINE without -v, so the kernel's console does not write on the panel (the present
 #                      measurement copies a frame to it).
-#   the .gputime kernel armed, for THE SPLIT: it is the one that answers request 0x7d, so with
+#   the .gputime kernel armed, for THE SPLIT: it is the one that answers request 0x7b, so with
 #                      it each draw case prints the core's own time itself. Arm it with
 #                        cp BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.gputime \
 #                           BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
@@ -56,7 +56,7 @@
 #                      loader's log buffer with interrupts masked -- a few microseconds against
 #                      a quarter of a millisecond, measured not to move the numbers -- and
 #                      about 80 KB of log for this list's ~1300 submissions. Note that reading
-#                      0x7d takes the counters away from the kernel's own five-second report,
+#                      0x7b takes the counters away from the kernel's own five-second report,
 #                      so with both on, those lines will have gaps: expected, not a fault.
 #   XL_SECS=240        the boot, two processes of measurement and room for a slow boot. The
 #                      measuring process took 0.9 s of wall clock and the compute one 0.3 s in

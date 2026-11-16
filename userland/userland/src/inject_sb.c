@@ -23,7 +23,7 @@
  *   - A press of the side button that is long over is not taken for a long press (Siri) because
  *     SpringBoard was busy waking the display: see lock_long_press().
  *   - A long press on the lock screen's wallpaper does not open the poster switcher, which the
- *     window server here shows as a black screen: see poster_switcher_allowed().
+ *     window server here shows as a black screen (16.5; iOS 27 opens it): see poster_switcher_allowed().
  *   - Darwin notifications as a remote control, for scripts (rwtouch notify NAME):
  *       com.hakios.unlock      what the lock screen does after "swipe up to open"
  *       com.hakios.layers      write down the layers SpringBoard has on the screen: see layers()
@@ -530,10 +530,42 @@ unlock(void)
  * Until it is, the switcher is not offered, the way SpringBoard itself withholds it where it has
  * none (an iPad, Guided Access): its policy says the capability is not there, and the long press
  * does nothing.
+ *
+ * iOS 27 (HAKIOS_POSTER_SWITCHER=1, darwin/userland/inj26.sh): offered as iOS offers it. There the long
+ * press restarted SpringBoard ("process was nil" in -[SBApplicationSceneUpdateTransaction
+ * _notifyObserversOfClientConnection:]) as long as PosterBoard ran as a system daemon, a process
+ * FrontBoard did not know; it is a launch angel again (darwin/tools/mkimage26.py), started in the user's
+ * domain as on an iPhone, and the switcher opens: the row of posters with "Customize" and "+", and a
+ * swipe up takes it away. Boot-arg poster_switcher=0 withholds it, poster_switcher=1 offers it.
  */
+#ifndef HAKIOS_POSTER_SWITCHER
+#define HAKIOS_POSTER_SWITCHER  0
+#endif
+static BOOL (*original_poster_switcher_allowed)(id self, SEL selector, id *explanation);
+
 static BOOL
-poster_switcher_allowed(__unused id self, __unused SEL selector, id *explanation)
+poster_switcher_allowed(id self, SEL selector, id *explanation)
 {
+	static int wanted = -1;         /* offered as iOS offers it: HAKIOS_POSTER_SWITCHER, or boot-arg poster_switcher=0/1 */
+
+	if (wanted < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+		const char *at = NULL;
+
+		wanted = HAKIOS_POSTER_SWITCHER;
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+			for (at = strstr(args, "poster_switcher="); at != NULL && at != args && at[-1] != ' ';
+			    at = strstr(at + 1, "poster_switcher=")) {
+			}
+		}
+		if (at != NULL && (at[16] == '0' || at[16] == '1')) {
+			wanted = at[16] == '1';
+		}
+	}
+	if (wanted && original_poster_switcher_allowed != NULL) {
+		return original_poster_switcher_allowed(self, selector, explanation);
+	}
 	if (explanation != NULL) {
 		*explanation = (id)CFSTR("the poster switcher is not shown here (see inject_sb.c)");
 	}
@@ -896,9 +928,19 @@ layers(void)
 
 	say("hakios: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
 	if (authentication != NULL) {
-		say("hakios: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
-		    SEND(BOOL, authentication, "isAuthenticated") ? "" : "NOT ", SEND(BOOL, authentication, "hasPasscodeSet") ? "a" : "no",
-		    SEND(BOOL, authentication, "inSecureDisplayMode") ? "" : "not ");
+		/* (each asked only where the controller has it: Darwin 27's has no inSecureDisplayMode, and asking it ended
+		 * SpringBoard, an unrecognized selector, at every com.hakios.layers) */
+		Class controller = object_getClass(authentication);
+		int authenticated = class_respondsToSelector(controller, sel_registerName("isAuthenticated")) ?
+		    SEND(BOOL, authentication, "isAuthenticated") : -1;
+		int passcode = class_respondsToSelector(controller, sel_registerName("hasPasscodeSet")) ?
+		    SEND(BOOL, authentication, "hasPasscodeSet") : -1;
+		int secure = class_respondsToSelector(controller, sel_registerName("inSecureDisplayMode")) ?
+		    SEND(BOOL, authentication, "inSecureDisplayMode") : -1;
+
+		say("hakios: layers: the user is %s, %s passcode, the display %s\n",
+		    authenticated < 0 ? "?" : authenticated ? "authenticated" : "NOT authenticated",
+		    passcode < 0 ? "? a" : passcode ? "a" : "no", secure < 0 ? "? in secure mode" : secure ? "in secure mode" : "not in secure mode");
 	}
 	for (long i = 0; windows != NULL && i < SEND(long, windows, "count"); i++) {
 		id w = SEND1(id, windows, "objectAtIndex:", long, i);
@@ -1071,6 +1113,179 @@ load_tweaks(void)
 	}
 }
 
+/*
+ * The frame rates SpringBoard's display links ask for. After a page of the home screen settles, something of
+ * SpringBoard's goes on drawing at exactly 30 a second for most of a second (its run loop and the window server's
+ * frames 33.3 ms apart, tl: a and tl: g). It is UIKit's: the display link of UIViewInProcessAnimationManager, which
+ * runs the animations done in the application's own process, asks for 20..30. With dl_max=1 (the default) the rates
+ * asked of that one are dropped and it runs at the panel's rate; on an iPhone with ProMotion the lower rate saves
+ * power, here the panel refreshes at 120 whatever is drawn. The other display links keep what they ask (the clock's
+ * 10 and 60, the motion effects' 32): run at 120 they woke SpringBoard six times as often for nothing.
+ * With touch_lat=1 every display link made and every rate asked of one is said ("hakios: display link ...").
+ */
+typedef struct {
+	float minimum, maximum, preferred;
+} frame_rate_range;
+
+static id (*original_display_link_with)(id self, SEL selector, id target, SEL action);
+static void (*original_set_fps)(id self, SEL selector, long fps);
+static void (*original_set_range)(id self, SEL selector, frame_rate_range range);
+static bool dl_say, dl_max = true;
+static unsigned dl_said;
+#define DL_SAY_MAX 300
+#define DL_FULL_FOR "UIViewInProcessAnimationManager"
+static char dl_full;                    /* the key of the mark a display link made for DL_FULL_FOR carries */
+
+/* (a mark on the link itself: UIKit makes one of these for every animation, and a list of them filled up at once) */
+static bool
+full_rate(id link)
+{
+	return dl_max && objc_getAssociatedObject(link, &dl_full) != NULL;
+}
+
+static const char *
+caller(const void *address, char *buffer, size_t size)
+{
+	Dl_info info;
+	const char *image;
+
+	if (dladdr(address, &info) == 0 || info.dli_fname == NULL) {
+		snprintf(buffer, size, "%p", address);
+		return buffer;
+	}
+	image = strrchr(info.dli_fname, '/') ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname;
+	snprintf(buffer, size, "%s+%#lx", image, (unsigned long)((uintptr_t)address - (uintptr_t)info.dli_fbase));
+	return buffer;
+}
+
+static id
+display_link_with(id self, SEL selector, id target, SEL action)
+{
+	id link = original_display_link_with(self, selector, target, action);
+	char who[256];
+
+	if (link != NULL && target != NULL && strcmp(object_getClassName(target), DL_FULL_FOR) == 0) {
+		objc_setAssociatedObject(link, &dl_full, (id)kCFBooleanTrue, OBJC_ASSOCIATION_ASSIGN);
+	}
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p made for -[%s %s] by %s\n", (void *)link, target ? object_getClassName(target) : "nil",
+		    action ? sel_getName(action) : "", caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	return link;
+}
+
+static void
+set_fps(id self, SEL selector, long fps)
+{
+	char who[256];
+
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p asked for %ld a second%s by %s\n", (void *)self, fps, full_rate(self) ? " (dropped)" : "",
+		    caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	original_set_fps(self, selector, full_rate(self) ? 0 : fps);
+}
+
+static void
+set_range(id self, SEL selector, frame_rate_range range)
+{
+	char who[256];
+
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p asked for %.0f..%.0f, %.0f a second%s by %s\n", (void *)self, range.minimum,
+		    range.maximum, range.preferred, full_rate(self) ? " (dropped)" : "", caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	if (full_rate(self)) {
+		range = (frame_rate_range){ 0, 0, 0 };
+	}
+	original_set_range(self, selector, range);
+}
+
+static bool
+boot_arg(const char *arguments, const char *name)
+{
+	const char *at = strstr(arguments, name);
+
+	return at != NULL && (at == arguments || at[-1] == ' ');
+}
+
+/*
+ * The animations SpringBoard hands the window server (an application opening from its icon and closing to it, the
+ * home screen coming back, folders): the window server moves them at the rate each asks for (CAAnimation's
+ * preferredFrameRateRange). Through Metal (the plug-in) it keeps to that, and what asks for nothing went at 24 a
+ * second -- frames exactly 41.7 ms apart with the GPU 0.3 ms busy each; through OpenGL ES it did not. With anim_max=1
+ * every animation added to a layer of SpringBoard's asks for 80..120 (a copy of it: one already added is read-only,
+ * and setting it raised). touch_lat=1 says the first ones and what they asked.
+ */
+static void (*original_add_animation)(id self, SEL selector, id animation, id key);
+static unsigned anim_said;
+
+static void
+add_animation_full_rate(id self, SEL selector, id animation, id key)
+{
+	SEL range_of = sel_registerName("preferredFrameRateRange"), set_range_of = sel_registerName("setPreferredFrameRateRange:");
+
+	if (animation != NULL && class_respondsToSelector(object_getClass(animation), set_range_of)) {
+		frame_rate_range asked = ((frame_rate_range (*)(id, SEL))objc_msgSend)(animation, range_of);
+
+		if (dl_say && anim_said++ < 40) {
+			say("hakios: animation %s (%s) asked for %.0f..%.0f, %.0f a second\n", object_getClassName(animation),
+			    key != NULL ? text_of(key) : "", asked.minimum, asked.maximum, asked.preferred);
+		}
+		if (asked.maximum == 0 || asked.maximum < 120 || asked.minimum < 80) {
+			id copy = SEND(id, animation, "copy");
+
+			((void (*)(id, SEL, frame_rate_range))objc_msgSend)(copy, set_range_of, (frame_rate_range){ 80, 120, 120 });
+			original_add_animation(self, selector, copy, key);
+			SEND(void, copy, "release");
+			return;
+		}
+	}
+	original_add_animation(self, selector, animation, key);
+}
+
+static void
+animation_rates(const char *arguments)
+{
+	Method add = class_getInstanceMethod(objc_getClass("CALayer"), sel_registerName("addAnimation:forKey:"));
+
+	if (!boot_arg(arguments, "anim_max=1") || add == NULL) {
+		return;
+	}
+	original_add_animation = (void (*)(id, SEL, id, id))method_setImplementation(add, (IMP)add_animation_full_rate);
+	say("hakios: SpringBoard's animations ask for 80..120 a second (anim_max=1)\n");
+}
+
+static void
+display_link_rates(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	Class link = objc_getClass("CADisplayLink");
+	Method made, fps, range;
+
+	if (link == NULL || sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0) {
+		return;
+	}
+	dl_say = boot_arg(arguments, "touch_lat=1");
+	dl_max = !boot_arg(arguments, "dl_max=0");
+	animation_rates(arguments);
+	if (!dl_say && !dl_max) {
+		return;
+	}
+	if ((made = class_getClassMethod(link, sel_registerName("displayLinkWithTarget:selector:"))) != NULL) {
+		original_display_link_with = (id (*)(id, SEL, id, SEL))method_setImplementation(made, (IMP)display_link_with);
+	}
+	if ((fps = class_getInstanceMethod(link, sel_registerName("setPreferredFramesPerSecond:"))) != NULL) {
+		original_set_fps = (void (*)(id, SEL, long))method_setImplementation(fps, (IMP)set_fps);
+	}
+	if ((range = class_getInstanceMethod(link, sel_registerName("setPreferredFrameRateRange:"))) != NULL) {
+		original_set_range = (void (*)(id, SEL, frame_rate_range))method_setImplementation(range, (IMP)set_range);
+	}
+	say("hakios: display links: made %s, fps %s, range %s%s\n", made ? "ok" : "NO", fps ? "ok" : "NO", range ? "ok" : "NO",
+	    dl_max ? "; " DL_FULL_FOR "'s at the panel's rate (dl_max=1)" : "");
+}
+
 __attribute__((constructor))
 static void
 hakios_springboard_init(void)
@@ -1105,6 +1320,8 @@ hakios_springboard_init(void)
 	 * this one opens it, the way a jailbreak's own hook does.
 	 */
 	load_tweaks();
+	/* (the rates SpringBoard's display links and animations ask the window server for: dl_max, anim_max) */
+	display_link_rates();
 	/*
 	 * Everything the Metal driver says, it says with printf, and SpringBoard's standard output
 	 * goes nowhere -- so inside this process every refusal our driver prints has been invisible.
@@ -1136,6 +1353,7 @@ hakios_springboard_init(void)
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",
 	    0x1c507e0fcUL, (IMP)poster_switcher_allowed);
+	original_poster_switcher_allowed = (BOOL (*)(id, SEL, id *))poster_switcher;
 	original_switcher_wallpaper_overlay = (void (*)(id, SEL))replace_method("SBAppSwitcherPageView",
 	    "_createOrDestroyWallpaperOverlayView", 0x1c4af7860UL, (IMP)switcher_wallpaper_overlay);
 	/*

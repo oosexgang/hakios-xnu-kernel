@@ -46,6 +46,13 @@ static char out_buf[2 * 1024 * 1024];
 static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
+/*
+ * Where the last run's kernel log is in out_buf, from its separator to its end marker. It stays after the
+ * loader's own log until the next run begins: a log composed again ("oem log", a write of the partition)
+ * used to be the loader's alone, and a host that asked for the log just after the kernel came back got
+ * that and not what the kernel said.
+ */
+static uint64_t kernel_part_at, kernel_part_len;
 
 static void
 compose_logs(const char *klog, uint64_t klog_len)
@@ -54,18 +61,30 @@ compose_logs(const char *klog, uint64_t klog_len)
 	uint64_t n = log_len;
 
 	staged_data = out_buf;
+	if (klog == NULL && kernel_part_len != 0 && n + kernel_part_len <= sizeof(out_buf)) {
+		memmove(out_buf + n, out_buf + kernel_part_at, kernel_part_len);     /* (the loader's log may have grown) */
+		kernel_part_at = n;
+		memcpy(out_buf, log_buf, log_len);
+		n += kernel_part_len;
+		memset(out_buf + n, 0, sizeof(out_buf) - n);
+		staged_len = n;
+		return;
+	}
 	memset(out_buf, 0, sizeof(out_buf));
 	memcpy(out_buf, log_buf, log_len);
+	kernel_part_len = 0;
 	if (klog != NULL) {
 		if (klog_len > sizeof(out_buf) - n - 8192) {
 			klog_len = sizeof(out_buf) - n - 8192;
 		}
+		kernel_part_at = n;
 		memcpy(out_buf + n, sep, sizeof(sep) - 1);
 		n += sizeof(sep) - 1;
 		memcpy(out_buf + n, klog, klog_len);
 		n += klog_len;
 		memcpy(out_buf + n, end, sizeof(end) - 1);
 		n += sizeof(end) - 1;
+		kernel_part_len = n - kernel_part_at;
 	}
 	staged_len = n;
 }

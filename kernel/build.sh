@@ -142,12 +142,22 @@ chmod +x $SL/libexec/availability.pl
 	update $SL/include/kernel/os/firehose_buffer_private.h
 update $SL/include/kernel/os/firehose_types.defs < libdispatch/src/firehose/firehose_types.defs
 
-# make, with what the old workspace's xnu-build.sh passes, but without an external Wi-Fi object. DEFAULT_TARGET=build
+# make, with what the old workspace's xnu-build.sh passes. DEFAULT_TARGET=build
 # (as darwin-renoir/xnu-build.sh): the kernel, not the kext SDK's symbol sets (config/), whose
 # kextsymboltool check fails on the exports a BCM2837 kernel does not have. xnu-12377's MakeInc.cmd
 # names /usr/bin/plutil, so the no-op wrapper is passed as well.
+# The Wi-Fi driver (Linux's ath11k on kernel/lx), when kernel/lx/build.sh has made it: an object linked into
+# the kernel. Without it the kernel has no radio, and wifi=1 says so.
+WIFI_OBJECT=$XNUDEPS/build/ath11k/out/ath11k.o
+[ -f "$WIFI_OBJECT" ] || WIFI_OBJECT=
+# (make does not know the kernel depends on it: an ath11k.o newer than the linked kernel would not be in it, the old
+# driver linked again from the link's leftovers. Those go, and the kernel is linked anew with it.)
+LINKED=$XNU_SRC/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+if [ -n "$WIFI_OBJECT" ] && [ -e "$LINKED" ] && [ "$WIFI_OBJECT" -nt "$LINKED" ]; then
+	rm -rf "$LINKED"*
+fi
 xnumake() {
-	(cd "$XNU_SRC" && make DEFAULT_TARGET=build HAKIOS_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 \
+	(cd "$XNU_SRC" && make DEFAULT_TARGET=build HAKIOS_OBJECTS="$WIFI_OBJECT" SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 \
 		KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} \
 		BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 BUILD_DSYM=0 PLUTIL=plutil \
 		HOST_CC="clang -include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration" \
@@ -213,4 +223,4 @@ if [ "${XNU_WARNINGS:-0}" = 1 ]; then
 fi
 KF=$XNU_SRC/BUILD/obj/mach.development.bcm2837
 [ -f "$KF" ] || die "no $KF"
-log "kernel: $KF ($(stat -L -c %s "$KF") bytes), linked with $TOOLCHAIN's tools"
+log "kernel: $KF ($(stat -L -c %s "$KF") bytes)${WIFI_OBJECT:+, with the Wi-Fi driver}, linked with $TOOLCHAIN's tools"

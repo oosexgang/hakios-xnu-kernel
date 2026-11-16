@@ -374,7 +374,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * those of that phone. XNU itself does not care; the hardware is described further down.
 	 */
 	dt_identity(&w, identity_root, sizeof(identity_root) / sizeof(identity_root[0]), identity_root_data);
-	dt_prop_str(&w, "platform-name", "t8150");   /* the A19 Pro of the iPhone 17 Pro (identity.h, from its device tree) */
+	dt_prop_str(&w, "platform-name", IDENTITY_PLATFORM_NAME);  /* the iPhone's SoC (identity.h, from its /arm-io) */
 	/* what iBoot takes from the factory configuration of a real phone; fixed size fields */
 	dt_prop_padded(&w, "serial-number", unit.serial, 32);
 	dt_prop_padded(&w, "mlb-serial-number", unit.mlb, 32);
@@ -389,8 +389,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_prop_u64(&w, "dram-base", phys_base);
 	dt_prop_u64(&w, "dram-size", win_size);
 	dt_prop_u32(&w, "debug-enabled", 1);
-	/* what MobileGestalt answers "main screen scale" from: 3 device pixels per point */
-	dt_prop_u32(&w, "display-scale", 3);
+	/*
+	 * The iPhone's screen (identity.h, from its /product): what MobileGestalt answers "main screen scale" from,
+	 * and the size the kernel's display reports (MiniIOMobileFramebuffer), whatever the panel really is
+	 */
+	dt_prop_u32(&w, "display-scale", IDENTITY_SCREEN_SCALE);
+	{
+		uint32_t size[2] = { IDENTITY_SCREEN_WIDTH, IDENTITY_SCREEN_HEIGHT };
+		dt_prop(&w, "display-size", size, sizeof(size));
+	}
 	dt_prop_u32(&w, "display-rotation", 0);
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");

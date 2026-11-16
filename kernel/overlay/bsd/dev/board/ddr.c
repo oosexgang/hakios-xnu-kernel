@@ -35,6 +35,8 @@
  */
 #define tell hakios_say
 
+extern void hakios_cpufreq_quiesce(void);      /* board/cpufreq.c */
+
 /*
  * Boot-arg ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader
  * left, with what is needed to vote for bandwidth on them -- only read. (membench=2 says the cores
@@ -203,6 +205,7 @@ hakios_ddr_quiesce(void)
 	uint32_t rest = DDR_REST, data[2];
 	bool done;
 
+	hakios_cpufreq_quiesce();       /* the cores' groups at their top rows, the cache slices as they were (cpufreq.c) */
 	if (!ddr_voted) {
 		return;
 	}

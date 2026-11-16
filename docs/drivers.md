@@ -105,6 +105,7 @@ comments; hardware behavior and the controller's actual version-event variant re
 | `bsd/dev/board/lx.c`, `board/qmi.c`, `board/sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/board/apple80211.c` | Apple80211 requests of Darwin's Wi-Fi daemon, answered in the kernel. | — | any |
 | `bsd/dev/board/net.c` | `en0`, an Ethernet interface as far as Darwin can tell. | — | any |
+| `bsd/dev/board/mpss.c`, `board/ipa.c`, `board/nas.c`, `board/cell.c` | The modem: started through TrustZone, its file systems served from the flash, the SIM and the network's registration, the IPA's data path. | `modem-sm7325` / `modem=1` | part |
 | `bsd/dev/board/virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
 
 ## Storage, file systems

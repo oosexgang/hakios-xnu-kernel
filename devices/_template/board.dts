@@ -24,7 +24,7 @@
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (kernel/overlay/bsd/dev/board/board.h, docs/drivers.md):
 	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
-	// wifi-wcn6750, mic-wcd938x
+	// wifi-wcn6750, mic-wcd938x, modem-sm7325
 	features = <>;
 
 	// The panel's light (docs/backlight.md).
@@ -231,6 +231,14 @@
 		// log-other-cpu;               // keep notes in the log partition while a kernel starts on another core
 		// uefi-charger;                // the firmware has Qualcomm's charger protocols: the loader reads the battery
 		//                              // through them and hands it to the kernel (feature "battery-uefi")
+	// };
+
+	// Its UEFI, as loader/mkboot.py packs it for `fastboot boot`; the build itself is in firmware/NAME/uefi/.
+	// uefi {
+		// fd-base = <0x9FD00000>;      // where the UEFI runs: FD_BASE of its port's memory map (BootShim's header
+		//                              // says the same; mkboot.py compares them)
+		// fd-size = <0x200000>;        // the size of SILICIUM_UEFI.fd
+		// header-version = <1>;        // the Android boot image header its bootloader takes (default 1)
 	// };
 
 	// How darwin/tools/boot26.py starts this phone (--board NAME).

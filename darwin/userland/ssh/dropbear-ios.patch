@@ -1,0 +1,67 @@
+diff -ru a/src/common-session.c b/src/common-session.c
+--- a/src/common-session.c	2026-07-23 14:00:00.000000000 +0300
++++ b/src/common-session.c	2026-11-12 14:44:05.987336603 +0300
+@@ -68,9 +68,11 @@
+ 	/* Sets it to lowdelay */
+ 	update_channel_prio();
+ 
+-#if !DROPBEAR_SVR_MULTIUSER
++#if !DROPBEAR_SVR_MULTIUSER && !defined(HAKIOS_SHELL)
+ 	/* A sanity check to prevent an accidental configuration option
+ 	   leaving multiuser systems exposed */
++	/* (hakios: not built. iOS has groups, so the check always fails there, but the one account
++	 * that can log in is root, whose keys only this machine has: one user by design) */
+ 	{
+ 		int ret;
+ 		errno = 0;
+@@ -665,6 +667,21 @@
+ 		m_free(ses.authstate.pw_passwd);
+ 
+ 	pw = getpwnam(username);
++#ifdef HAKIOS_SHELL
++	/* hakios: root as iOS's /etc/passwd has it, should the lookup find nothing (it goes through the
++	 * directory service, which a port may not run) */
++	if (!pw && strcmp(username, "root") == 0) {
++		static struct passwd root;
++
++		root.pw_name = "root";
++		root.pw_passwd = "*";
++		root.pw_uid = 0;
++		root.pw_gid = 0;
++		root.pw_dir = "/var/root";
++		root.pw_shell = HAKIOS_SHELL;
++		pw = &root;
++	}
++#endif
+ 	if (!pw) {
+ 		return;
+ 	}
+@@ -672,7 +689,12 @@
+ 	ses.authstate.pw_gid = pw->pw_gid;
+ 	ses.authstate.pw_name = m_strdup(pw->pw_name);
+ 	ses.authstate.pw_dir = m_strdup(pw->pw_dir);
++#ifdef HAKIOS_SHELL
++	/* hakios: iOS has no /bin/sh; the shell is the small image's, whatever /etc/passwd says */
++	ses.authstate.pw_shell = m_strdup(HAKIOS_SHELL);
++#else
+ 	ses.authstate.pw_shell = m_strdup(pw->pw_shell);
++#endif
+ 	{
+ 		char *passwd_crypt = pw->pw_passwd;
+ #ifdef HAVE_SHADOW_H
+diff -ru a/src/svr-auth.c b/src/svr-auth.c
+--- a/src/svr-auth.c	2026-07-23 14:00:00.000000000 +0300
++++ b/src/svr-auth.c	2026-11-12 14:44:05.960041421 +0300
+@@ -312,6 +312,12 @@
+ 		usershell = "/bin/sh";
+ 	}
+ 
++#ifdef HAKIOS_SHELL
++	/* hakios: the shell is ours (fill_passwd), and iOS has no /etc/shells to find it in */
++	if (strcmp(usershell, HAKIOS_SHELL) == 0) {
++		return DROPBEAR_SUCCESS;
++	}
++#endif
+ 	/* check the shell is valid. If /etc/shells doesn't exist, getusershell()
+ 	 * should return some standard shells like "/bin/sh" and "/bin/csh" (this
+ 	 * is platform-specific) */

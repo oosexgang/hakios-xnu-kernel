@@ -29,6 +29,7 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `virtio` | `virtio { }` | nothing | `virtio_net=1, virtio_input=1` |
 | `cpufreq-scmi` | `scmi-perf { }` | nothing | `scmi_perf=1` |
 | `bluetooth-wcn-uart` | `pins { }`; `clocks { }`; `rpmh { }`; `spmi { }`: `channels` | `bluetooth { }`: `serial-engine`, `wrapper`, `clocks`, `clock-source`, `vote-register`, `votes`, `uart-pins`, `uart-function`, `enable-ppid`, `sw-ctrl`, `supplies`, `supply-mv`, `rf-clock` | `bt=-1 looks; bt=1 powers and identifies` |
+| `modem-sm7325` | nothing | nothing | `modem=1` |
 
 The brightness (`backlight { }`), the thermal floors (`thermal { }`) and the partition that may be
 written (`storage { }`) are not features: a board has them by giving the section. `display-scan`

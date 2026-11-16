@@ -6,10 +6,12 @@
 set -e
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-B=$ROOT/xnu-deps/build/wpa-test
-rm -rf "$B"
-mkdir -p "$B"
+B=$(mktemp -d)
+trap 'rm -rf "$B"' EXIT
+# (the handshake's source: kernel/lx/src of this repository, base/ beside it; wifi/lx/src where it was before)
+SRC=$ROOT/../kernel/lx/src
+[ -f "$SRC/lx_wpa.c" ] || SRC=$ROOT/wifi/lx/src
 "$HERE/reference.py" "${1:-1}" > "$B/cases.inc"
 ${CC:-cc} -std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
-	-I"$B" -I"$ROOT/wifi/lx/src" -o "$B/test" "$HERE/test_wpa.c"
+	-I"$B" -I"$SRC" -o "$B/test" "$HERE/test_wpa.c"
 "$B/test"

@@ -513,7 +513,7 @@ static struct replacement {
  * answers in every process, and in mediaserverd the first to ask is the capture stack: CMCapture's
  * FigPreloadShadersInternal reaches -[_MTLDevice newLibraryWithURL:error:] through three functions of
  * AppleCVAPhoto, asking for System/Library/PrivateFrameworks/AppleCVAPhoto.framework/Resources/
- * cvadepth-Darwin.metallib. That file is not in this image (darwin165/select-system.py drops .metallib under
+ * cvadepth-iOS.metallib. That file is not in this image (darwin165/select-system.py drops .metallib under
  * the framework directories), so the URL is nil and Metal aborts on `url must not be nil' -- twenty-eight
  * times in one boot, launchd restarting the daemon after each (logs/135751-run.log, docs/metal.md 10.38).
  * AppleCVAPhoto itself survives a library it cannot make: it checks the result and logs "Error creating
@@ -651,7 +651,7 @@ hakios_media_init(void)
 	metal_left_alone = boot_arg("mediamtl=1");
 	if (metal_left_alone) {
 		say("hakios: mediaserverd: mediamtl=1: the capture stack may have the Metal device (it "
-		    "needs AppleCVAPhoto's cvadepth-Darwin.metallib in the image)\n");
+		    "needs AppleCVAPhoto's cvadepth-iOS.metallib in the image)\n");
 	} else {
 		say("hakios: mediaserverd: the Metal device leaves this process as soon as Metal is in "
 		    "it (mediamtl=1 leaves it there)\n");

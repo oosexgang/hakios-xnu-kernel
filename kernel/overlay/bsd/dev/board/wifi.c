@@ -192,6 +192,8 @@ LCK_MTX_DECLARE(hakios_aop_mailbox_lock, &wifi_lock_group);
 LCK_MTX_DECLARE(hakios_smem_alloc_lock, &wifi_lock_group);
 /* ... and the sound's (board/sound.c): a free match register and context of the SMMU, found and taken */
 LCK_MTX_DECLARE(hakios_smmu_lock, &wifi_lock_group);
+/* ... and the modem's (board/mpss.c): RPMh's sequencer, one request at a time */
+LCK_MTX_DECLARE(hakios_rsc_lock, &wifi_lock_group);
 
 static uint32_t last_step, pause_ms = 2200, fine, watch_seconds = 3;
 static uint32_t step;                   /* the one being performed */
@@ -452,6 +454,10 @@ smem_area(void)
 static void
 smem_poke(uint32_t offset, uint32_t value)
 {
+	/* An offset that came from an item of another processor must not store outside the 2 MB mapping. */
+	if (smem == NULL || offset > SMEM_SIZE - 4) {
+		return;
+	}
 	wr((vm_offset_t)smem + offset, value);
 }
 
@@ -664,7 +670,8 @@ step_mailbox(void)
 		printf("wifi: %u: that is not the mailbox's description\n", step);
 		return false;
 	}
-	if (size >= QMP_MESSAGE + 4 && box >= 0x3c && box + size <= aoss.size) {
+	/* (box + size would wrap for a huge size: the check is made as a subtraction, after box is known to be inside) */
+	if (size >= QMP_MESSAGE + 4 && box >= 0x3c && box <= aoss.size && size <= aoss.size - box) {
 		get(&aoss, "the length of the message in our mailbox", box);
 	}
 
@@ -1585,12 +1592,19 @@ step_image(void)
 	 * is mapped for as long as this takes: 25 MB do not fit where ml_io_map() puts what stays.)
 	 */
 	dsp_memory = (volatile uint64_t *)ml_io_map_unmappable(WPSS_MEMORY, WPSS_MEMORY_SIZE, VM_WIMG_WCOMB);
+	/* A failed map must not be read or written through. */
+	if (dsp_memory == NULL) {
+		printf("wifi: %u: the DSP's memory could not be mapped\n", step);
+		return false;
+	}
 	printf("wifi: %u: the memory begins %#llx, the image %#llx\n", step, dsp_memory[0], segment_word(0, 0));
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *to = dsp_memory + image.segment[s].at / 8;
 
 		if ((image.segment[s].at | image.segment[s].memory_size) & 7) {
 			printf("wifi: %u: a segment that does not begin and end at a multiple of eight bytes: not written\n", step);
+			/* The 25 MB mapping is given back on this way out too, or every failed try would keep it. */
+			ml_io_unmap((vm_offset_t)dsp_memory, WPSS_MEMORY_SIZE);
 			return false;
 		}
 		printf("wifi: %u: about to write %#x bytes at %#x (%#x of them the file's)\n", step, image.segment[s].memory_size,
@@ -1982,6 +1996,10 @@ static struct {
 static uint32_t
 smem_word(uint32_t offset)
 {
+	/* An offset outside the 2 MB mapping reads as zero instead of loading from outside it. */
+	if (smem == NULL || offset > SMEM_SIZE - 4) {
+		return 0;
+	}
 	return rd((vm_offset_t)smem + offset);
 }
 
@@ -1997,7 +2015,10 @@ glink_find(void)
 	}
 	glink.ours = smem_item(ITEM_GLINK_OUR_QUEUE, &glink.ours_size);
 	glink.theirs = smem_item(ITEM_GLINK_THEIR_QUEUE, &glink.theirs_size);
-	return glink.ours != 0 && glink.theirs != 0 && glink_queues_usable(glink.ours_size, glink.theirs_size);
+	/* each item wholly inside the 2 MB mapping: the queues are indexed by remote-chosen head and tail words */
+	return glink.ours != 0 && glink.theirs != 0 && glink_queues_usable(glink.ours_size, glink.theirs_size) &&
+	       (uint64_t)glink.descriptor + 32 <= SMEM_SIZE && (uint64_t)glink.ours + glink.ours_size <= SMEM_SIZE &&
+	       (uint64_t)glink.theirs + glink.theirs_size <= SMEM_SIZE;
 }
 
 /* Our two marks to zero, if they are not: before the DSP starts (see above). */
@@ -2104,7 +2125,12 @@ glink_offer(uint32_t size)
 	if (i >= sizeof(glink.our_intents) / sizeof(glink.our_intents[0]) || size == 0 || size > 0x10000) {
 		return false;
 	}
-	if (glink.our_intents[i].data == NULL || glink.our_intents[i].size != size) {
+	/* A kept buffer of another size is given back before it is replaced: its pointer would be lost, and the memory with it. */
+	if (glink.our_intents[i].data != NULL && glink.our_intents[i].size != size) {
+		kfree_data(glink.our_intents[i].data, glink.our_intents[i].size);
+		glink.our_intents[i].data = NULL;
+	}
+	if (glink.our_intents[i].data == NULL) {
 		glink.our_intents[i].data = kalloc_data(size, Z_WAITOK | Z_ZERO);       /* (kept for good: a later link uses it again) */
 	}
 	if (glink.our_intents[i].data == NULL) {
@@ -2157,6 +2183,7 @@ glink_pump(void)
 			glink.broken = true;
 			return;
 		}
+		length = (uint32_t)whole;               /* (it fits the queue now, and is at least eight) */
 		if (waiting < length) {
 			return;                                 /* (the rest of it is on its way) */
 		}
@@ -2389,7 +2416,7 @@ glink_send(const void *data, uint32_t length)
  * ("new server": a service, an instance, a node, a port), and later their going. We are node 1
  * (Linux's default, and what this phone's Android is); the DSP says who it is in what it sends.
  * The interface for the rest of the kernel is sys/board/qrtr.h: the four calls at the end of
- * this section, handed to the QMI helpers (bsd/dev/board/qmi.c), which is what speaks to the
+ * this section, handed to the QMI helpers (drivers/modem/hakios_qmi.c), which is what speaks to the
  * services.
  */
 #define HAKIOS_QRTR_MAX        8192            /* the most a datagram holds, either way */
@@ -2752,6 +2779,8 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 		qrtr_fresh();
 		lck_mtx_unlock(&qrtr_calling);
 	}
+	/* This thread's handle is no longer one once it ends: a new thread at the same address must not be taken for it (qrtr_close()). */
+	link_thread_is = NULL;
 	link_runs = false;
 	thread_terminate(current_thread());
 }
@@ -2911,7 +2940,7 @@ static void radio_space_faults(void);
  * for mission mode with the configuration ce.c and hal.c work out (the shadow registers), has
  * them set the copy engines' rings up in the radio's registers and waits for the firmware's
  * first message over a copy engine; how far the parts built so far go from there, and what is
- * in their place meanwhile, is wifi/lx/src/lx_bus.c's to say. wifi_lx=2 IS WHERE THE RADIO'S
+ * in their place meanwhile, is kernel/lx/src/lx_bus.c's to say. wifi_lx=2 IS WHERE THE RADIO'S
  * REGISTERS ARE WRITTEN.
  *
  * What the phone said (13 October, ath11k of Linux 7.0.14: core.c, hal.c, qmi.c, ce.c, hw.c,
@@ -2936,7 +2965,7 @@ static void radio_space_faults(void);
  * give it one). Then the driver is taken down in order, mode "off" included.
  *
  * With mac.c, reg.c and peer.c built, and with wifi_scan=1 (the same day): the driver registers
- * its radio with what stands in for mac80211 (wifi/lx/src/lx_80211.c) -- 14 channels at
+ * its radio with what stands in for mac80211 (kernel/lx/src/lx_80211.c) -- 14 channels at
  * 2.4 GHz, 28 at 5, 60 at 6, of which the firmware's regulatory domain allows 13, 13 and none
  * --, takes the address it was given, starts the radio, makes an interface in station mode
  * and has the firmware scan those 26 channels, listening only. The scan takes 4.1 s (150 ms a
@@ -3076,7 +3105,12 @@ step_registers(void)
 	uint32_t size = 0, asked = 0;
 	bool mission = false;
 
-	if (!hakios_wlfw_registers(&address, &size, &mission) || address > 0xffffffffull || size < 3 * RADIO_WINDOW) {
+	/*
+	 * The firmware chooses the window: it must be inside the first 4 GB (radio.phys is 32 bits) and no larger than the
+	 * 2 MB it is said to be, or the map below would cover whatever lies there.
+	 */
+	if (!hakios_wlfw_registers(&address, &size, &mission) || address > 0xffffffffull || size < 3 * RADIO_WINDOW ||
+	    size > 4 * RADIO_WINDOW || address + size > 0x100000000ull) {
 		printf("wifi: %u: the firmware has not said where the radio's registers are (step 15)\n", step);
 		return false;
 	}
@@ -3094,6 +3128,11 @@ step_registers(void)
 	radio.phys = (uint32_t)address;
 	radio.size = size;
 	radio.base = ml_io_map_unmappable(radio.phys, radio.size, VM_WIMG_IO);
+	/* A failed map must not be read through. */
+	if (radio.base == 0) {
+		printf("wifi: %u: the radio's registers could not be mapped\n", step);
+		return false;
+	}
 	for (unsigned i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
 		uint32_t chip = words[i].chip, at;
 

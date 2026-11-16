@@ -1,0 +1,24 @@
+# iOS 27 (RC_JOBS=darwin/userland/rc.jobs.probe STOREFRONT=1 wifi=1): open the App Store and LEAVE it hung at
+# "Loading...", long enough that the store library's own minute-report (dump_threads) fires two or three
+# times while the stuck bootstrap thread is parked. No promise/os_log hooks this time -- just let it hang
+# and read which thread sits in mach_msg/semaphore_wait and what is under it. uiopen is fired several times
+# because a single open has missed before (adprivacyd=0: the app never launched); init runs lines, not a
+# shell, so this is repetition, not a retry loop.
+/hakios/bin/net_test wifi
+/hakios/bin/dropbear -F -E -s -p 22 -r /hakios/etc/ssh/dropbear_ed25519_host_key -D /hakios/etc/ssh &
+/hakios/bin/net_test announce en0 5 &
+/hakios/bin/rwtouch wait 55 swipe 0.5 0.985 0.5 0.3 200
+/hakios/bin/rwtouch wait 5 tap 0.32 0.582
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/hakios/bin/rwtouch wait 10 tap 0.32 0.582
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/bin/ps -A
+/hakios/bin/rwtouch wait 20 tap 0.32 0.582
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/hakios/bin/rwtouch wait 30 tap 0.32 0.582
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/bin/ps -A
+/hakios/bin/rwtouch wait 60
+/bin/ps -A
+/hakios/bin/rwtouch wait 60
+/bin/ps -A

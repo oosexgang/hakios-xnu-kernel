@@ -13,7 +13,22 @@
 #include <string.h>
 
 #include "efi.h"
-#include "identity.h"
+
+/* an identity of the test's own, as loader/mkidentity.py writes one (identity.h, made from an IPSW, is not kept
+ * here): a few properties of the shapes the loader is given, none of them a device's */
+struct identity_prop { const char *name; unsigned offset, length; };
+static const struct identity_prop identity_root[] = {
+	{ "target-type", 0, 4 },
+	{ "model", 4, 11 },
+};
+static const unsigned char identity_root_data[] = "T99\0TestPhone1";
+static const struct identity_prop identity_product[] = {
+	{ "ptp-large-files", 0, 4 },
+	{ "artwork-scale-factor", 4, 4 },
+	{ "artwork-display-gamut", 8, 3 },
+	{ "device-perf-memory-class", 11, 4 },
+};
+static const unsigned char identity_product_data[] = { 1, 0, 0, 0, 3, 0, 0, 0, 'P', '3', 0, 8, 0, 0, 0 };
 
 /* the loader has its own memset, memcpy and memcmp (it links no library): under other names here, beside the host's */
 #define memset loader_memset

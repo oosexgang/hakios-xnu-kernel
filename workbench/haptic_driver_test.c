@@ -86,6 +86,10 @@ hakios_test_rd(vm_offset_t address)
 }
 
 void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
+/* the IOKit service Darwin's haptic server waits for (iokit/Kernel/BoardHaptics.cpp): counted, not made */
+static unsigned haptics_published;
+void HakiosHapticsReady(void);
+void HakiosHapticsReady(void) { haptics_published++; }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 /*

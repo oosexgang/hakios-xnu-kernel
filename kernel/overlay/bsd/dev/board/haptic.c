@@ -65,6 +65,8 @@
 #include "board.h"
 #include "log.h"
 
+extern void HakiosHapticsReady(void);             /* iokit/Kernel/BoardHaptics.cpp */
+
 static vm_offset_t tlmm;
 static uint32_t level;
 static bool broken, released, leaving;
@@ -686,6 +688,7 @@ serve(void)
 		return;
 	}
 	say("haptic: THE MOTOR PLAYS WHAT DARWIN PLAYS ON ITS ACTUATOR (/dev/hakios-haptic) from here on, until the run ends\n");
+	HakiosHapticsReady();           /* the service Darwin's haptic server waits for (iokit/Kernel/BoardHaptics.cpp) */
 	while (!broken) {
 		uint64_t now = now_us();
 		bool active = heard_us != 0 && now - heard_us < ACTIVE_US;

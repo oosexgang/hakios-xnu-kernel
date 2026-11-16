@@ -23,7 +23,7 @@ if ! skip kernel; then
 		[ -d xnu-src ] || xnu/apply.sh
 		[ -x xnu-deps/host/bin/ld64 ] || xnu-deps/setup.sh
 		# Wi-Fi radio driver (phones with a WCN6750): fetched and built once
-		[ "$WIFI_ATH11K" = 1 ] && [ ! -f xnu-deps/build/ath11k/out/ath11k.o ] && { tools/mk-ath11k.sh && tools/mk-wlfw.sh; }
+		[ "$WIFI_ATH11K" = 1 ] && [ ! -f xnu-deps/build/ath11k/out/ath11k.o ] && { ../kernel/lx/build.sh && tools/mk-wlfw.sh; }
 		# the export check fails after the kernel is linked, on purpose (xnu/README.md): judge by the file
 		touch out/.kernel-start
 		./xnu-build.sh -j"$(nproc)" -k > out/kernel-build.log 2>&1 || true

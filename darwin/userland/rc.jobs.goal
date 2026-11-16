@@ -1,0 +1,25 @@
+# iOS 27 (RC_JOBS=darwin/userland/rc.jobs.goal root26-darwin.sh, with STOREFRONT=1 and wifi=1): both halves of
+# what was asked, driven by the phone itself so that a dropped Wi-Fi link cannot turn a measurement into
+# a photograph of a lock screen.
+#
+# First the lock screen is held down -- the gesture that used to respring the phone. SpringBoard's pid is
+# printed before and after: if it is the same number, nothing restarted, and that is the evidence, not
+# the absence of a complaint in the log.
+#
+# Then the phone unlocks itself and opens the App Store, and the run is left long enough for the store's
+# scheduled work (its JetPack fetch is a background task with TrySchedulingBefore 240 s).
+/hakios/bin/net_test wifi
+/hakios/bin/dropbear -F -E -s -p 22 -r /hakios/etc/ssh/dropbear_ed25519_host_key -D /hakios/etc/ssh &
+/hakios/bin/net_test announce en0 5 &
+/hakios/bin/rwtouch wait 95 tap 0.5 0.2
+/bin/ps -A
+/hakios/bin/rwtouch wait 3 hold 0.5 0.45 2500
+/hakios/bin/rwtouch wait 8 tap 0.5 0.2
+/bin/ps -A
+/hakios/bin/rwtouch wait 3 swipe 0.5 0.985 0.5 0.3 200
+/hakios/bin/rwtouch wait 5 tap 0.32 0.582
+/hakios/bin/rwtouch wait 3 tap 0.32 0.582
+/bin/ps -A
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/hakios/bin/rwtouch wait 30 tap 0.32 0.582
+/bin/ps -A

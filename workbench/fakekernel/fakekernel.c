@@ -497,6 +497,21 @@ lck_mtx_sleep(struct fake_lock *lock, int flags __unused, event_t event, int int
 	return THREAD_AWAKENED;
 }
 
+wait_result_t
+lck_mtx_sleep_deadline(struct fake_lock *lock, int flags __unused, event_t event, int interruptible __unused,
+    uint64_t deadline __unused)
+{
+	msleep(event, lock, 0, NULL, NULL);
+	return THREAD_TIMED_OUT;
+}
+
+/* the cores the scheduler is told to prefer (kern/sched_prim.c), as the CPU frequency driver parks the small ones */
+uint32_t fake_recommended_cores = ~0u;
+void sched_perfcontrol_update_recommended_cores(uint32_t recommended_cores) { fake_recommended_cores = recommended_cores; }
+
+/* how long a core has been idle (the kernel's own counter, patches/0002): not kept here, so no core is ever said to be */
+bool ml_cpu_idle_time(int cpu_id __unused, uint64_t *idle __unused) { return false; }
+
 void
 IOSleep(unsigned int milliseconds)
 {
@@ -610,6 +625,15 @@ kmem_alloc_contig(void *map __unused, vm_offset_t *address, vm_size_t size, vm_o
 	*address = (vm_offset_t)memory;
 	return KERN_SUCCESS;
 }
+
+/* (weak: a test that counts or refuses the allocations has its own) */
+__attribute__((weak)) int
+kmem_alloc(void *map, vm_offset_t *address, vm_size_t size, int flags, int tag)
+{
+	return kmem_alloc_contig(map, address, size, PAGE_MASK, 0, 0, flags, tag);
+}
+
+__attribute__((weak)) void kmem_free(void *map __unused, vm_offset_t address, vm_size_t size __unused) { free((void *)address); }
 
 thread_t current_thread(void) { return NULL; }
 

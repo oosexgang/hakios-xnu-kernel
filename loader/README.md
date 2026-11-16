@@ -11,8 +11,9 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | `src/` | The parts, by topic (below). `src/platform.h` has `struct platform`, which says what the loader needs to know of a machine. |
 | `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`loader { }` of `devices/NAME/board.dts`, `platform { }` of the `soc.dtsi` beside it). |
 | `efi.h` | The parts of UEFI it uses. |
-| `identity.h`, `mkidentity.py` | Which iPhone Darwin is told it runs on, taken from that iPhone's own device tree. |
+| `identity.h`, `mkidentity.py` | Which iPhone Darwin is told it runs on, taken from that iPhone's own device tree: `build.sh` makes `identity.h` from the `DeviceTree.bin` that `darwin/tools/unpack.sh` leaves beside the IPSW (`IDENTITY=FILE` for another). It is Apple's data and is never in the repository; without it the loader is built with a placeholder, and iOS does not start. |
 | `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
+| `mkboot.py` | Packs a phone's UEFI and a payload into the Android boot image `fastboot boot` takes. The board's `[uefi]` section says where the UEFI runs; its build (`SILICIUM_UEFI.fd`, `BootShim.bin`, `device-tree.dtb`) is in `firmware/NAME/uefi/`, which is never published. |
 | `build.sh` | Makes `platforms.h`, then builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
 
 ## The parts

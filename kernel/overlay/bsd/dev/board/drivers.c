@@ -70,6 +70,7 @@ hakios_drivers_init(void)
 	/* what talks to the other processors */
 	hakios_wifi_init();            /* boot-arg wifi=1 */
 	hakios_adsp_init();            /* boot-arg adsp=1: the audio DSP; sound, the microphones and the battery's details follow it */
+	hakios_mpss_init();            /* boot-arg modem=1: the modem started and linked (board feature "modem-sm7325") */
 
 	/* sound, and the parts that are looked at or switched by hand */
 	hakios_audio_init();           /* /dev/hakios-audio: what Darwin plays, to a sink */

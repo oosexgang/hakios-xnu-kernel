@@ -51,6 +51,7 @@ void hakios_buttons_init(void);        /* boot-arg buttons=1: the phone's power 
 void hakios_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */
 void hakios_ufs_report(const char *when); /* where reading the storage has spent its time so far */
 bool hakios_ufs_dev(dev_t dev);           /* one of the storage's devices */
+int hakios_ufs_read_partition(const char *name, uint64_t offset, uint8_t *dst, uint64_t len, uint64_t *bytes); /* for drivers */
 void hakios_battery_init(void);        /* boot-arg battery=1: Qualcomm UEFI charger state shared by xnuloader */
 int hakios_battery_temperature(void);  /* the battery's temperature in C, -273 while it is not known */
 /* one transfer at a time through the PMIC arbiter for this system (bsd/dev/board/buttons.c) */
@@ -88,6 +89,7 @@ void hakios_adreno_stop(void);         /* before that, where the ending is no pa
 void hakios_adreno_minute(void);       /* once a minute: a line about how warm the GPU is, if it is in use */
 void hakios_wifi_init(void);           /* boot-arg wifi=1: the phone's Wi-Fi; wifi_step=N: the first N steps of it */
 void hakios_adsp_init(void);           /* boot-arg adsp=1: the phone's audio DSP started and linked; adsp_step=N: the first N steps */
+void hakios_mpss_init(void);           /* boot-arg modem=1: the phone's modem started and linked; modem_step=N: the first N steps */
 void hakios_wifi_stop(void);           /* where a run ends in order: the Wi-Fi DSP, if it was started, shut down */
 int hakios_wifi_say(const char *format, ...) __printflike(1, 2);      /* a line of the Wi-Fi steps' log */
 int hakios_wifi_tell(const char *format, ...) __printflike(1, 2);     /* ... one that is said even with wifi=1 */

@@ -154,6 +154,7 @@ BOARD_SCHEMA = {
     'storage': {'type_guid': (str, True), 'unique_guid': (str, True), 'first_lba': (U64, True), 'last_lba': (U64, True),
                 'write_first': (U64, True)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
+    'uefi': {'fd_base': (U64, True), 'fd_size': (int, True), 'header_version': (int, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # every key and section name with an underscore, as a word: what as_written() writes with dashes
@@ -194,9 +195,10 @@ FEATURE_BOOTARGS = {
     'camera-sm7325': 'cam=N',
     'wifi-wcn6750': 'wifi=1',
     'mic-wcd938x': 'mic=N with adsp=1',
+    'modem-sm7325': 'modem=1',
 }
 # features that are a driver of one part as one phone has it wired, by the first word of their names
-PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
+PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic', 'modem')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'bluetooth-wcn-uart': 'bluetooth', 'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
                           'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',

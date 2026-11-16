@@ -30,6 +30,7 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -1210,6 +1211,767 @@ opengl_es(void)
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
+/* ---- boot-arg dyldcount=1: who asks dyld which image an address is in -------------------------------------------
+ *
+ * The window server spent about half of its processor time in dyld's search for the image that holds an address
+ * (APIs::findImageMappedAt: forEachImageTextSegment, forEachRegion and strncmp, a walk over the shared cache's images
+ * for every question; hakios_prof=backboardd, logs/203533-run.log), and none of it inside the Metal plug-in's draw
+ * calls (metal_fps=sample, logs/204443-run.log). These four are the ways in; each call is counted by the address it
+ * returns to, and every five seconds the call sites that asked most are said, unslid for `ipsw dyld a2s` when they are
+ * in the shared cache. Interposed for the life of the process (dyld applies an inserted library's __interpose to every
+ * image); counted only with the boot-arg, a load and a branch otherwise.
+ */
+#include <ptrauth.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+
+extern bool _dyld_is_memory_immutable(const void *addr, size_t length);
+extern const struct mach_header *dyld_image_header_containing_address(const void *addr);
+extern const char *dyld_image_path_containing_address(const void *addr);
+
+#define DC_SLOTS 512
+static const char *const dc_api[] = { "dladdr", "_dyld_is_memory_immutable", "dyld_image_header_containing_address",
+	"dyld_image_path_containing_address", "syslog", "vsyslog" };
+static struct {
+	_Atomic uintptr_t caller;
+	_Atomic uint32_t count;
+	uint32_t api;
+} dc_seen[DC_SLOTS];
+static int dc_on;
+static _Atomic uint32_t dc_lost;
+
+static void
+dc_count(void *returns_to, uint32_t api)
+{
+	uintptr_t caller = (uintptr_t)ptrauth_strip(returns_to, ptrauth_key_return_address);
+
+	if (!dc_on || caller == 0) {
+		return;
+	}
+	for (unsigned i = (unsigned)(((caller >> 2) * 2654435761u) % DC_SLOTS), n = 0; n < DC_SLOTS; i = (i + 1) % DC_SLOTS, n++) {
+		uintptr_t held = atomic_load_explicit(&dc_seen[i].caller, memory_order_relaxed);
+
+		if (held == 0) {
+			uintptr_t empty = 0;
+
+			if (atomic_compare_exchange_strong(&dc_seen[i].caller, &empty, caller)) {
+				dc_seen[i].api = api;
+				held = caller;
+			} else {
+				held = empty;
+			}
+		}
+		if (held == caller) {
+			atomic_fetch_add_explicit(&dc_seen[i].count, 1, memory_order_relaxed);
+			return;
+		}
+	}
+	atomic_fetch_add_explicit(&dc_lost, 1, memory_order_relaxed);
+}
+
+static int
+dc_dladdr(const void *addr, Dl_info *info)
+{
+	dc_count(__builtin_return_address(0), 0);
+	return dladdr(addr, info);
+}
+static bool
+dc_immutable(const void *addr, size_t length)
+{
+	dc_count(__builtin_return_address(0), 1);
+	return _dyld_is_memory_immutable(addr, length);
+}
+static const struct mach_header *
+dc_header(const void *addr)
+{
+	dc_count(__builtin_return_address(0), 2);
+	return dyld_image_header_containing_address(addr);
+}
+static const char *
+dc_path(const void *addr)
+{
+	dc_count(__builtin_return_address(0), 3);
+	return dyld_image_path_containing_address(addr);
+}
+
+/* (and syslog: the sampler below found dyld working for syslog's os_log shim, called by something deeper) */
+#include <syslog.h>
+static void
+dc_syslog(int priority, const char *format, ...)
+{
+	va_list ap;
+
+	dc_count(__builtin_return_address(0), 4);
+	va_start(ap, format);
+	vsyslog(priority, format, ap);
+	va_end(ap);
+}
+static void
+dc_vsyslog(int priority, const char *format, va_list ap)
+{
+	dc_count(__builtin_return_address(0), 5);
+	vsyslog(priority, format, ap);
+}
+
+#define DC_INTERPOSE(replacement, replacee)                                                                         \
+	__attribute__((used)) static const struct {                                                                   \
+		const void *with;                                                                                       \
+		const void *what;                                                                                       \
+	} dc_interpose_##replacee __attribute__((section("__DATA,__interpose"))) = { (const void *)&replacement,      \
+		(const void *)&replacee }
+DC_INTERPOSE(dc_dladdr, dladdr);
+DC_INTERPOSE(dc_immutable, _dyld_is_memory_immutable);
+DC_INTERPOSE(dc_header, dyld_image_header_containing_address);
+DC_INTERPOSE(dc_path, dyld_image_path_containing_address);
+DC_INTERPOSE(dc_syslog, syslog);
+DC_INTERPOSE(dc_vsyslog, vsyslog);
+
+static void *
+dc_report(void *unused)
+{
+	size_t cache_length = 0;
+	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&cache_length);
+
+	(void)unused;
+	for (;;) {
+		uint32_t total = 0, lost;
+
+		sleep(5);
+		lost = atomic_exchange(&dc_lost, 0);
+		/* the eight call sites asked most, each taken out of the running as it is said */
+		uint32_t counts[DC_SLOTS];
+
+		for (unsigned i = 0; i < DC_SLOTS; i++) {
+			counts[i] = atomic_exchange(&dc_seen[i].count, 0);
+			total += counts[i];
+		}
+		say("hakios: dyldcount: %u questions in 5 s (%u from call sites past the %u counted)\n", total + lost, lost,
+		    DC_SLOTS);
+		for (unsigned k = 0; k < 8 && total != 0; k++) {
+			unsigned best = DC_SLOTS;
+
+			for (unsigned i = 0; i < DC_SLOTS; i++) {
+				if (counts[i] != 0 && (best == DC_SLOTS || counts[i] > counts[best])) {
+					best = i;
+				}
+			}
+			if (best == DC_SLOTS) {
+				break;
+			}
+			uintptr_t caller = atomic_load(&dc_seen[best].caller);
+			Dl_info info = { 0 };
+			const char *image = dladdr((const void *)caller, &info) && info.dli_fname != NULL ? info.dli_fname : "?";
+			const char *base = strrchr(image, '/');
+
+			say("hakios: dyldcount: %u %s from %#lx (%s %#lx)\n", counts[best], dc_api[dc_seen[best].api % 6],
+			    (unsigned long)caller, base != NULL ? base + 1 : image,
+			    (unsigned long)(caller >= cache && caller < cache + cache_length ? caller - slide
+			    : caller - (uintptr_t)info.dli_fbase));
+			counts[best] = 0;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * The same question from the other end, because calls from the shared cache's own images to those four are not
+ * interposed (the first boot with dyldcount=1 counted only the Metal plug-in's few): every millisecond each other
+ * thread of the process is stopped, and when it stands inside dyld its frame chain is walked to the first return
+ * address outside dyld and libdyld -- the code that asked. The walk reads through vm_read_overwrite, which a
+ * frame pointer gone wrong cannot fault.
+ */
+#include <mach-o/dyld_images.h>
+#include <os/log.h>
+#include <mach-o/loader.h>
+
+#define DS_SLOTS 256
+static struct {
+	uintptr_t caller, caller2;
+	uint32_t count;
+} ds_seen[DS_SLOTS];
+static uint32_t ds_samples, ds_in_dyld, ds_lost;
+
+/* where an image's __TEXT lies, from its mach header in memory */
+static void
+text_range(const struct mach_header_64 *mh, uintptr_t *lo, uintptr_t *hi)
+{
+	const struct load_command *lc = (const struct load_command *)(mh + 1);
+
+	*lo = *hi = 0;
+	for (uint32_t i = 0; mh != NULL && i < mh->ncmds; i++) {
+		if (lc->cmd == LC_SEGMENT_64 && strcmp(((const struct segment_command_64 *)lc)->segname, "__TEXT") == 0) {
+			*lo = (uintptr_t)mh;
+			*hi = *lo + (uintptr_t)((const struct segment_command_64 *)lc)->vmsize;
+			return;
+		}
+		lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+	}
+}
+
+static void *
+ds_sampler(void *unused)
+{
+	struct task_dyld_info di;
+	mach_msg_type_number_t n = TASK_DYLD_INFO_COUNT;
+	uintptr_t dlo = 0, dhi = 0, llo = 0, lhi = 0, tlo = 0, thi = 0, alo = 0, ahi = 0;
+	Dl_info me = { 0 }, trace = { 0 }, asl = { 0 };
+	unsigned ticks = 0;
+
+	(void)unused;
+	if (task_info(mach_task_self(), TASK_DYLD_INFO, (task_info_t)&di, &n) == KERN_SUCCESS) {
+		const struct dyld_all_image_infos *all = (const struct dyld_all_image_infos *)(uintptr_t)di.all_image_info_addr;
+
+		text_range((const struct mach_header_64 *)all->dyldImageLoadAddress, &dlo, &dhi);
+	}
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&dladdr, ptrauth_key_function_pointer), &me) && me.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)me.dli_fbase, &llo, &lhi);
+	}
+	/* (libsystem_trace and libsystem_asl as well: dyld was found working for syslog's os_log shim, and the code that
+	 * asks is the caller of syslog, two libraries further out) */
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&os_log_type_enabled, ptrauth_key_function_pointer), &trace) &&
+	    trace.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)trace.dli_fbase, &tlo, &thi);
+	}
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&vsyslog, ptrauth_key_function_pointer), &asl) && asl.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)asl.dli_fbase, &alo, &ahi);
+	}
+	say("hakios: dyldcount: dyld's text %#lx-%#lx, libdyld's %#lx-%#lx, %s's %#lx-%#lx, %s's %#lx-%#lx\n", (unsigned long)dlo,
+	    (unsigned long)dhi, (unsigned long)llo, (unsigned long)lhi, trace.dli_fname ? trace.dli_fname : "?", (unsigned long)tlo,
+	    (unsigned long)thi, asl.dli_fname ? asl.dli_fname : "?", (unsigned long)alo, (unsigned long)ahi);
+	if (dlo == 0) {
+		return NULL;
+	}
+	for (;;) {
+		thread_act_array_t threads;
+		mach_msg_type_number_t count = 0;
+		const thread_t self = mach_thread_self();
+
+		usleep(1000);
+		if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+			for (mach_msg_type_number_t t = 0; t < count; t++) {
+				arm_thread_state64_t st;
+				mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
+
+				if (threads[t] == self || thread_suspend(threads[t]) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				if (thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) == KERN_SUCCESS) {
+					const uintptr_t pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(st);
+
+					ds_samples++;
+					if (pc >= dlo && pc < dhi) {
+						uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st), found[2] = { 0, 0 };
+						unsigned got = 0;
+						uintptr_t lr = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_lr(st),
+						    ptrauth_key_return_address);
+
+						ds_in_dyld++;
+						if (!((lr >= dlo && lr < dhi) || (lr >= llo && lr < lhi) || (lr >= tlo && lr < thi) || (lr >= alo && lr < ahi))) {
+							found[got++] = lr;
+						}
+						for (int d = 0; d < 40 && got < 2 && fp != 0 && (fp & 7) == 0; d++) {
+							uint64_t frame[2];
+							vm_size_t read = 0;
+
+							if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
+							    &read) != KERN_SUCCESS || read != sizeof(frame)) {
+								break;
+							}
+							const uintptr_t ret = (uintptr_t)ptrauth_strip((void *)(uintptr_t)frame[1],
+							    ptrauth_key_return_address);
+
+							if (ret != 0 && !((ret >= dlo && ret < dhi) || (ret >= llo && ret < lhi) || (ret >= tlo && ret < thi) ||
+							    (ret >= alo && ret < ahi))) {
+								found[got++] = ret;
+							}
+							fp = (uintptr_t)frame[0];
+						}
+						if (got != 0) {
+							unsigned i = (unsigned)(((found[0] >> 2) * 2654435761u) % DS_SLOTS), k = 0;
+
+							while (k < DS_SLOTS && ds_seen[i].caller != 0 && ds_seen[i].caller != found[0]) {
+								i = (i + 1) % DS_SLOTS;
+								k++;
+							}
+							if (k == DS_SLOTS) {
+								ds_lost++;
+							} else {
+								ds_seen[i].caller = found[0];
+								ds_seen[i].caller2 = found[1];
+								ds_seen[i].count++;
+							}
+						}
+					}
+				}
+				thread_resume(threads[t]);
+				mach_port_deallocate(mach_task_self(), threads[t]);
+			}
+			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
+		}
+		mach_port_deallocate(mach_task_self(), self);
+		if (++ticks % 5000 != 0) {
+			continue;
+		}
+		/* every five thousand looks (some five seconds and more): the callers dyld was found working for */
+		say("hakios: dyldcount: %u threads seen running or waiting, %u of them inside dyld (%u callers past %u)\n",
+		    ds_samples, ds_in_dyld, ds_lost, DS_SLOTS);
+		for (unsigned k = 0; k < 10; k++) {
+			unsigned best = DS_SLOTS;
+
+			for (unsigned i = 0; i < DS_SLOTS; i++) {
+				if (ds_seen[i].count != 0 && (best == DS_SLOTS || ds_seen[i].count > ds_seen[best].count)) {
+					best = i;
+				}
+			}
+			if (best == DS_SLOTS) {
+				break;
+			}
+			Dl_info a = { 0 }, b = { 0 };
+			const uintptr_t c1 = ds_seen[best].caller, c2 = ds_seen[best].caller2;
+			const bool n1 = dladdr((const void *)c1, &a) != 0, n2 = c2 != 0 && dladdr((const void *)c2, &b) != 0;
+			const char *i1 = n1 && a.dli_fname != NULL && strrchr(a.dli_fname, '/') ? strrchr(a.dli_fname, '/') + 1 : "?";
+			const char *i2 = n2 && b.dli_fname != NULL && strrchr(b.dli_fname, '/') ? strrchr(b.dli_fname, '/') + 1 : "?";
+
+			say("hakios: dyldcount: %u from %s %#lx (%s) <- %s %#lx (%s)\n", ds_seen[best].count, i1,
+			    (unsigned long)(c1 - slide), n1 && a.dli_sname ? a.dli_sname : "?", i2, (unsigned long)(c2 - slide),
+			    n2 && b.dli_sname ? b.dli_sname : "?");
+			ds_seen[best].count = 0;
+		}
+		memset(ds_seen, 0, sizeof(ds_seen));
+		ds_samples = ds_in_dyld = ds_lost = 0;
+	}
+	return NULL;
+}
+
+static void
+dyld_count_start(const char *arguments)
+{
+	pthread_t thread;
+
+	if (strstr(arguments, "dyldcount=1") == NULL) {
+		return;
+	}
+	dc_on = 1;
+	if (pthread_create(&thread, NULL, dc_report, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	if (pthread_create(&thread, NULL, ds_sampler, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	say("hakios: dyldcount=1: dyld's address-to-image questions counted by call site, and dyld's callers sampled\n");
+}
+
+/*
+ * Boot-arg waitstack=1: where the window server's busy threads stand, running or waiting. Every two milliseconds each
+ * other thread that has had processor time in the last 50 ms (one waiting for ever is left out) is stopped and its
+ * program counter and first frames taken; every five seconds the stacks seen most often are said, each frame an
+ * unslid address of the shared cache (ipsw dyld a2s on the host names it) or IMAGE+OFFSET for one outside it. What a
+ * thread that draws a frame waits on between frames is then a stack among the first. CoreAnimation's own threads
+ * (com.apple.coreanimation.*), whose stacks run deeper than the frames kept: waiting, the ten innermost frames, "|",
+ * then the outermost; running, "run |" and the outermost alone -- which of the run loop's callouts it is in. (iOS 27.2:
+ * the frame is drawn by IOMFBServer::thread_body's run loop on display_timer_callback; a frame_info thread beside it;
+ * the render thread found waiting on the Metal plug-in's surface lock inside MetalContext::get_surface.)
+ */
+#define WS_SLOTS 512
+#define WS_DEPTH 20
+#define WS_THREADS 96
+static struct {
+	uint64_t key;
+	uint32_t count;
+	char name[20];
+	uintptr_t frames[WS_DEPTH];
+} ws_seen[WS_SLOTS];
+static struct {
+	mach_port_name_t port;
+	uint64_t cpu;
+	unsigned changed, seen;         /* (seen: the last look that found it; a thread gone is let go, its slot reused) */
+} ws_threads[WS_THREADS];
+
+static void
+ws_frame(char *out, size_t size, uintptr_t address, uintptr_t cache, size_t cache_length)
+{
+	Dl_info info = { 0 };
+
+	if (address >= cache && address < cache + cache_length) {
+		snprintf(out, size, " %lx", (unsigned long)(address - slide));
+	} else if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+		const char *base = strrchr(info.dli_fname, '/');
+
+		snprintf(out, size, " %s+%lx", base != NULL ? base + 1 : info.dli_fname,
+		    (unsigned long)(address - (uintptr_t)info.dli_fbase));
+	} else {
+		snprintf(out, size, " ?%lx", (unsigned long)address);
+	}
+}
+
+static mach_port_t ws_main;            /* the process's main thread: its outer frames kept, as CoreAnimation's are */
+
+/*
+ * waitstack=sb: SpringBoard's main thread through each turn of its run loop that lasts over WS_TURN_MS -- what a tap
+ * on an icon is followed by before the animation's first frame (some 200 ms on the phone). Every sample's whole stack
+ * is counted, each return address once a sample; when the turn ends, "hakios: sbturn:" lines say how many samples it
+ * had, the path the samples share (every address in half of them or more, from the outermost in: DEPTH:ADDRESS:COUNT)
+ * and the addresses most often below it and the innermost frames -- where the time goes, as a call tree's hot path.
+ */
+#define WS_TURN_MS 30
+#define WS_TURN_SLOTS 2048
+static bool ws_turn_on;                         /* waitstack=sb */
+static uintptr_t ws_main_lo, ws_main_hi;        /* the main thread's stack */
+static volatile uint64_t ws_turn_woke;          /* mach time the main run loop woke; 0 while it waits */
+static volatile uint32_t ws_turns;              /* turns ended */
+static struct {
+	uintptr_t pc;
+	uint32_t count, depth;
+} ws_turn_pc[WS_TURN_SLOTS], ws_turn_leaf[WS_TURN_SLOTS];
+static uint32_t ws_turn_samples, ws_turn_of;    /* samples of the turn being profiled; ws_turns + 1 at its start */
+static uint64_t ws_turn_from;
+/* the main thread's processor time (us) and the time (mach) at the turn's first and last samples: busy, or waiting
+ * for a core, or for something else */
+static uint64_t ws_turn_cpu[2], ws_turn_at[2];
+/* waitstack=sbfull: every sample's whole stack of a long turn kept as well, and said after the aggregates
+ * ("hakios: sbstack TURN SAMPLE PART: innermost first ..."), for a call tree to be made of it on the host */
+#define WS_FULL_SAMPLES 96
+#define WS_FULL_DEPTH 160
+static bool ws_full_on;
+static uintptr_t ws_full[WS_FULL_SAMPLES][WS_FULL_DEPTH];
+static uint8_t ws_full_n[WS_FULL_SAMPLES];
+static unsigned ws_full_count, ws_full_turn;
+
+static void
+ws_turn_observer(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activity, __unused void *info)
+{
+	if (activity == kCFRunLoopAfterWaiting) {
+		ws_turn_woke = mach_absolute_time();
+	} else if (activity == kCFRunLoopBeforeWaiting) {
+		ws_turn_woke = 0;
+		ws_turns++;
+	}
+}
+
+static void
+ws_turn_count(uintptr_t pc, uint32_t depth, bool leaf)
+{
+	__typeof__(ws_turn_pc[0]) *table = leaf ? ws_turn_leaf : ws_turn_pc;
+	unsigned i = (unsigned)((pc >> 2) * 2654435761u % WS_TURN_SLOTS);
+
+	for (unsigned k = 0; k < WS_TURN_SLOTS; k++, i = (i + 1) % WS_TURN_SLOTS) {
+		if (table[i].count == 0 || table[i].pc == pc) {
+			table[i].pc = pc;
+			table[i].count++;
+			if (table[i].count == 1 || depth < table[i].depth) table[i].depth = depth;
+			return;
+		}
+	}
+}
+
+static void
+ws_turn_say(uintptr_t cache, size_t cache_length)
+{
+	static mach_timebase_info_data_t tb;
+	char line[960];
+	size_t used;
+	unsigned said = 0;
+
+	if (tb.denom == 0) mach_timebase_info(&tb);
+	say("hakios: sbturn: %u samples of the main thread, the turn %llu ms or more; from its first sample to its last %llu ms, "
+	    "the thread on a core %llu ms of them\n", ws_turn_samples,
+	    (unsigned long long)((mach_absolute_time() - ws_turn_from) * tb.numer / tb.denom / 1000000),
+	    (unsigned long long)((ws_turn_at[1] - ws_turn_at[0]) * tb.numer / tb.denom / 1000000),
+	    (unsigned long long)((ws_turn_cpu[1] - ws_turn_cpu[0]) / 1000));
+	/* the shared path, from the outermost in */
+	used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn path:");
+	for (uint32_t d = 0; d < 64; d++) {
+		for (unsigned i = 0; i < WS_TURN_SLOTS; i++) {
+			if (ws_turn_pc[i].count == 0 || ws_turn_pc[i].depth != d || ws_turn_pc[i].count * 2 < ws_turn_samples) continue;
+			if (used > sizeof(line) - 48) {
+				snprintf(line + used, sizeof(line) - used, "\n");
+				write(2, line, strlen(line));
+				used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn path:");
+			}
+			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", d);
+			ws_frame(line + used, sizeof(line) - used, ws_turn_pc[i].pc, cache, cache_length);
+			used += strlen(line + used);
+			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", ws_turn_pc[i].count);
+			ws_turn_pc[i].count = 0;   /* (said) */
+		}
+	}
+	snprintf(line + used, sizeof(line) - used, "\n");
+	write(2, line, strlen(line));
+	/* below it: the addresses seen most often, then the innermost frames */
+	for (int leaf = 0; leaf < 2; leaf++) {
+		__typeof__(ws_turn_pc[0]) *table = leaf ? ws_turn_leaf : ws_turn_pc;
+
+		used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn %s:", leaf ? "innermost" : "below");
+		for (said = 0; said < 24; said++) {
+			unsigned best = WS_TURN_SLOTS;
+
+			for (unsigned i = 0; i < WS_TURN_SLOTS; i++) {
+				if (table[i].count != 0 && (best == WS_TURN_SLOTS || table[i].count > table[best].count)) best = i;
+			}
+			if (best == WS_TURN_SLOTS || table[best].count * 20 < ws_turn_samples || used > sizeof(line) - 48) break;
+			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", table[best].depth);
+			ws_frame(line + used, sizeof(line) - used, table[best].pc, cache, cache_length);
+			used += strlen(line + used);
+			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", table[best].count);
+			table[best].count = 0;
+		}
+		snprintf(line + used, sizeof(line) - used, "\n");
+		write(2, line, strlen(line));
+	}
+	/* (waitstack=sbfull: each sample's stack, in parts of 60 frames: the console cuts a line at 1022 characters) */
+	ws_full_turn++;
+	for (unsigned k = 0; k < ws_full_count; k++) {
+		for (unsigned from = 0, part = 0; from < ws_full_n[k]; from += 60, part++) {
+			used = (size_t)snprintf(line, sizeof(line), "hakios: sbstack %u %u %u:", ws_full_turn, k, part);
+			for (unsigned i = from; i < ws_full_n[k] && i < from + 60 && used < sizeof(line) - 40; i++) {
+				ws_frame(line + used, sizeof(line) - used, ws_full[k][i], cache, cache_length);
+				used += strlen(line + used);
+			}
+			snprintf(line + used, sizeof(line) - used, "\n");
+			write(2, line, strlen(line));
+		}
+	}
+	ws_full_count = 0;
+	memset(ws_turn_pc, 0, sizeof(ws_turn_pc));
+	memset(ws_turn_leaf, 0, sizeof(ws_turn_leaf));
+	ws_turn_samples = 0;
+}
+
+static void *
+ws_sampler(void *unused)
+{
+	size_t cache_length = 0;
+	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&cache_length);
+	unsigned ticks = 0, samples = 0, lost = 0;
+
+	(void)unused;
+	pthread_setname_np("hakios.waitstack");
+	for (;;) {
+		thread_act_array_t threads;
+		mach_msg_type_number_t count = 0;
+		const thread_t self = mach_thread_self();
+
+		usleep(2000);
+		ticks++;
+		if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+			for (mach_msg_type_number_t t = 0; t < count; t++) {
+				thread_basic_info_data_t basic;
+				thread_extended_info_data_t ext;
+				mach_msg_type_number_t bn = THREAD_BASIC_INFO_COUNT, en = THREAD_EXTENDED_INFO_COUNT;
+				arm_thread_state64_t st;
+				mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
+				uint64_t cpu;
+				unsigned slot;
+				bool active;
+
+				if (threads[t] == self || thread_info(threads[t], THREAD_BASIC_INFO, (thread_info_t)&basic, &bn) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				cpu = (uint64_t)basic.user_time.seconds * 1000000 + basic.user_time.microseconds +
+				    (uint64_t)basic.system_time.seconds * 1000000 + basic.system_time.microseconds;
+				for (slot = 0; slot < WS_THREADS && ws_threads[slot].port != threads[t]; slot++) {
+				}
+				if (slot == WS_THREADS) {
+					for (slot = 0; slot < WS_THREADS && ws_threads[slot].port != 0 && ws_threads[slot].seen + 1 >= ticks; slot++) {
+					}
+					if (slot == WS_THREADS) {
+						mach_port_deallocate(mach_task_self(), threads[t]);
+						continue;
+					}
+					ws_threads[slot].port = 0;
+				}
+				ws_threads[slot].seen = ticks;
+				if (ws_threads[slot].port != threads[t]) {
+					ws_threads[slot].port = threads[t];
+					ws_threads[slot].cpu = cpu;
+					ws_threads[slot].changed = 0;
+				} else if (ws_threads[slot].cpu != cpu) {
+					ws_threads[slot].cpu = cpu;
+					ws_threads[slot].changed = ticks;
+				}
+				active = ws_threads[slot].changed != 0 && ticks - ws_threads[slot].changed <= 25;
+				if (!active || thread_suspend(threads[t]) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				if (thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) == KERN_SUCCESS) {
+					uintptr_t frames[WS_DEPTH] = { 0 }, all[160], fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st);
+					unsigned got = 0, n = 0;
+					uint64_t key = 1469598103934665603ull;
+					/* (the main thread's stack in waitstack=sb read where it lies, inside its bounds, and deeper: SpringBoard's
+					 * run past 64 frames, and a read through the kernel for each frame kept it stopped the longer) */
+					const bool direct = threads[t] == ws_main && ws_turn_on && ws_main_hi > ws_main_lo;
+					const unsigned most = direct ? 160 : 64;
+
+					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_pc(st), ptrauth_key_function_pointer);
+					all[n++] = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_lr(st), ptrauth_key_return_address);
+					for (int d = 0; d < 200 && n < most && fp != 0 && (fp & 7) == 0; d++) {
+						uint64_t frame[2];
+						vm_size_t read = 0;
+
+						if (direct) {
+							if (fp < ws_main_lo || fp + sizeof(frame) > ws_main_hi) break;
+							memcpy(frame, (const void *)fp, sizeof(frame));
+						} else if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
+						    &read) != KERN_SUCCESS || read != sizeof(frame)) {
+							break;
+						}
+						const uintptr_t ret = (uintptr_t)ptrauth_strip((void *)(uintptr_t)frame[1], ptrauth_key_return_address);
+
+						if (ret != 0 && ret != all[n - 1]) {
+							all[n++] = ret;
+						}
+						fp = (uintptr_t)frame[0];
+					}
+					/* (waitstack=sb: the main thread's whole stack in a long turn, ws_turn_say) */
+					if (threads[t] == ws_main && ws_turn_on) {
+						static mach_timebase_info_data_t tb;
+						const uint64_t woke = ws_turn_woke, now = mach_absolute_time();
+
+						if (tb.denom == 0) mach_timebase_info(&tb);
+						if (woke != 0 && (now - woke) * tb.numer / tb.denom > WS_TURN_MS * 1000000ull) {
+							if (ws_turn_of != ws_turns + 1) {
+								if (ws_turn_samples != 0) ws_turn_say(cache, cache_length);
+								ws_turn_of = ws_turns + 1;
+								ws_turn_from = woke;
+								ws_turn_cpu[0] = cpu;
+								ws_turn_at[0] = now;
+							}
+							ws_turn_cpu[1] = cpu;
+							ws_turn_at[1] = now;
+							ws_turn_samples++;
+							for (unsigned i = 0; i < n; i++) {
+								bool again = false;
+
+								for (unsigned j = 0; j < i && !again; j++) again = all[j] == all[i];
+								if (!again) ws_turn_count(all[i], n - 1 - i, false);
+							}
+							ws_turn_count(all[0], 0, true);
+							if (ws_full_on && ws_full_count < WS_FULL_SAMPLES) {
+								memcpy(ws_full[ws_full_count], all, n * sizeof(all[0]));
+								ws_full_n[ws_full_count++] = (uint8_t)n;
+							}
+						}
+					}
+					ext.pth_name[0] = 0;
+					thread_info(threads[t], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &en);
+					/* CoreAnimation's threads (waitstack=1): the two innermost frames, a 0, and the outermost ones -- which
+					 * of the run loop's callouts it is in; every other thread its innermost frames */
+					if ((strncmp(ext.pth_name, "com.apple.coreanim", 18) == 0 || threads[t] == ws_main) && n > WS_DEPTH) {
+						uint32_t before = 0;
+						vm_size_t read = 0;
+						/* in a system call (the instruction before the pc an svc): where it waits; running: anywhere, 2 */
+						const bool waiting = vm_read_overwrite(mach_task_self(), (vm_address_t)(all[0] - 4), 4,
+						    (vm_address_t)(uintptr_t)&before, &read) == KERN_SUCCESS && read == 4 && before == 0xd4001001u;
+
+						/* waiting: its ten innermost frames (who asked for the lock or the message), then the
+						 * outermost nine; running: only where in the run loop */
+						const unsigned inner = waiting ? 10 : 0;
+
+						if (!waiting) {
+							frames[got++] = 2;
+						}
+						for (unsigned i = 0; i < inner && i < n; i++) {
+							frames[got++] = all[i];
+						}
+						frames[got++] = 1;
+						for (unsigned i = n > WS_DEPTH - got ? n - (WS_DEPTH - got) : 0; i < n && got < WS_DEPTH; i++) {
+							frames[got++] = all[i];
+						}
+					} else {
+						for (unsigned i = 0; i < n && got < WS_DEPTH; i++) {
+							frames[got++] = all[i];
+						}
+					}
+					for (unsigned i = 0; i < WS_DEPTH; i++) {
+						key = (key ^ frames[i]) * 1099511628211ull;
+					}
+					for (const char *c = ext.pth_name; *c != 0 && c < ext.pth_name + 19; c++) {
+						key = (key ^ (uint8_t)*c) * 1099511628211ull;
+					}
+					samples++;
+					{
+						unsigned i = (unsigned)(key % WS_SLOTS), k = 0;
+
+						while (k < WS_SLOTS && ws_seen[i].count != 0 && ws_seen[i].key != key) {
+							i = (i + 1) % WS_SLOTS;
+							k++;
+						}
+						if (k == WS_SLOTS) {
+							lost++;
+						} else {
+							if (ws_seen[i].count == 0) {
+								ws_seen[i].key = key;
+								memcpy(ws_seen[i].frames, frames, sizeof(frames));
+								strlcpy(ws_seen[i].name, ext.pth_name, sizeof(ws_seen[i].name));
+							}
+							ws_seen[i].count++;
+						}
+					}
+				}
+				thread_resume(threads[t]);
+				mach_port_deallocate(mach_task_self(), threads[t]);
+			}
+			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
+		}
+		mach_port_deallocate(mach_task_self(), self);
+		if (ws_turn_samples != 0 && ws_turn_of != ws_turns + 1) {
+			ws_turn_say(cache, cache_length);   /* (the long turn is over) */
+		}
+		if (ticks % 2500 != 0) {
+			continue;
+		}
+		say("hakios: waitstack: %u samples of busy threads in 5 s (%u stacks past %u)\n", samples, lost, WS_SLOTS);
+		for (unsigned k = 0; k < 24; k++) {
+			unsigned best = WS_SLOTS;
+			char line[900];
+			size_t used;
+
+			for (unsigned i = 0; i < WS_SLOTS; i++) {
+				if (ws_seen[i].count != 0 && (best == WS_SLOTS || ws_seen[i].count > ws_seen[best].count)) {
+					best = i;
+				}
+			}
+			if (best == WS_SLOTS || ws_seen[best].count < 5) {
+				break;
+			}
+			used = (size_t)snprintf(line, sizeof(line), "hakios: waitstack: %u [%s]", ws_seen[best].count,
+			    ws_seen[best].name[0] != 0 ? ws_seen[best].name : "-");
+			for (unsigned i = 0; i < WS_DEPTH && ws_seen[best].frames[i] != 0 && used < sizeof(line) - 40; i++) {
+				if (ws_seen[best].frames[i] == 1 || ws_seen[best].frames[i] == 2) {
+					used += (size_t)snprintf(line + used, sizeof(line) - used, ws_seen[best].frames[i] == 1 ? " |" : " run");
+					continue;
+				}
+				ws_frame(line + used, sizeof(line) - used, ws_seen[best].frames[i], cache, cache_length);
+				used += strlen(line + used);
+			}
+			snprintf(line + used, sizeof(line) - used, "\n");
+			write(2, line, strlen(line));
+			ws_seen[best].count = 0;
+		}
+		memset(ws_seen, 0, sizeof(ws_seen));
+		samples = lost = 0;
+	}
+	return NULL;
+}
+
+static void
+wait_stack_start(const char *arguments)
+{
+	pthread_t thread;
+
+	if (strstr(arguments, "waitstack=1") == NULL) {
+		return;
+	}
+	ws_main = mach_thread_self();   /* (called from the constructor, on the main thread) */
+	if (pthread_create(&thread, NULL, ws_sampler, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	say("hakios: waitstack=1: the stacks of the busy threads sampled every 2 ms, said every 5 s\n");
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1222,6 +1984,27 @@ hakios_init(void)
 		return;
 	}
 	slide = (uintptr_t)cache - CACHE_BASE;
+	if (strcmp(name, "SpringBoard") == 0) {
+		char arguments[1024] = "";
+		size_t size = sizeof(arguments) - 1;
+
+		/* boot-arg waitstack=sb: the sampler in SpringBoard instead (its image made with WAITSTACK_SB=1, root26-darwin.sh),
+		 * and its main thread's long run loop turns profiled (ws_turn_say) */
+		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "waitstack=sb") != NULL) {
+			const pthread_t me = pthread_self();   /* (the constructor runs on the main thread) */
+
+			ws_main_hi = (uintptr_t)pthread_get_stackaddr_np(me);
+			ws_main_lo = ws_main_hi - pthread_get_stacksize_np(me);
+			ws_turn_on = true;
+			ws_full_on = strstr(arguments, "waitstack=sbfull") != NULL;
+			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopAfterWaiting, true, LONG_MIN,
+			    ws_turn_observer, NULL), kCFRunLoopCommonModes);
+			CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, LONG_MAX,
+			    ws_turn_observer, NULL), kCFRunLoopCommonModes);
+			wait_stack_start("waitstack=1");
+		}
+		return;
+	}
 	if (strcmp(name, "backboardd") == 0) {
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
@@ -1237,6 +2020,8 @@ hakios_init(void)
 			setenv("CA_FORCE_TIMER", "1", 1);
 			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
 		}
+		dyld_count_start(arguments);
+		wait_stack_start(arguments);
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for
 		 * CoreAnimation's own switches (CA_LOG_TRIPLE_BUFFERING=1, CA_FORCE_DOUBLE_BUFFERING=1 ...).

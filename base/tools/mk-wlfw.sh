@@ -11,7 +11,7 @@ set -e
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ROOT/xnu-env.sh"
 ATH=$ROOT/xnu-deps/build/ath11k/src/ath11k
-[ -f "$ATH/qmi.c" ] || "$ROOT/tools/mk-ath11k.sh"
+[ -f "$ATH/qmi.c" ] || "$ROOT/../kernel/lx/build.sh"
 OUT=$XNU_SRC/BUILD/obj/DEVELOPMENT_ARM64_${MACHINE:-BCM2837}/bsd/DEVELOPMENT
 [ -d "$OUT" ] || { echo "mk-wlfw.sh: no build directory $OUT: build the kernel once first" >&2; exit 1; }
 python3 - "$ATH" "$(cat "$ATH/../.release" | cut -d' ' -f1)" > "$OUT/wlfw_ath11k.h.new" <<'PY'

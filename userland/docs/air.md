@@ -1611,7 +1611,7 @@ guessing at them later would be the same mistake again.
 `air.convert.u.i1.f.f32` is in the vocabulary only as `convert`, and the two readings — round
 toward zero and keep a bit, or compare with zero — give different answers for every `|x| < 1`.
 What settles it is Apple's emitted code rather than Apple's strings: all four calls in the device
-image (two in QuartzCore's `default.metallib`, two in AppleCVAPhoto's `cvadepth-Darwin.metallib`)
+image (two in QuartzCore's `default.metallib`, two in AppleCVAPhoto's `cvadepth-iOS.metallib`)
 feed a `br i1` directly, which is an `if (x)` on a float, and under the truncating reading that
 branch is a branch on poison by LLVM's own rule for `fptoui float to i1`. So it is `x != 0`, C's
 rule, which MSL inherits — the lowering had it right and this check's own reference had it wrong
@@ -2045,7 +2045,7 @@ Three references, each independent of the translator:
      `x != 0`, and MSL inherits it through C++11, so the specification outside both Apple and Mesa
      that item 4 rests on says what the answer is. Apple's own compiler settles it without even
      that: all four calls in the device image — two in QuartzCore's `default.metallib`, two in
-     AppleCVAPhoto's `cvadepth-Darwin.metallib` — put the result straight into a branch,
+     AppleCVAPhoto's `cvadepth-iOS.metallib` — put the result straight into a branch,
 
      ```
      %590 = fpext half %336 to float

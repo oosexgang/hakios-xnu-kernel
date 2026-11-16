@@ -1,0 +1,16 @@
+# iOS 26/27 (RC_JOBS=darwin/userland/rc.jobs.ssh root26-darwin.sh, after darwin/userland/ssh.sh; wifi=1 and a long XL_SECS):
+# a shell over the network. The SSH server starts as soon as Wi-Fi is asked for (it listens before there is an
+# address), the lock screen is swiped away as rc.jobs.unlock does, and the address goes to the log ("net_test:
+# en0 ..."). Then, from this machine, with the key whose public half is in ../ssh/authorized_keys:
+#   ssh -i ../ssh/id_phone root@ADDRESS            a shell (mksh); /hakios/bin first in PATH
+#   scp -O -i ../ssh/id_phone FILE root@ADDRESS:/var/tmp/
+# The server stays after this list is done (the job abandons its process group), and so does "net_test announce": the
+# phone's address to everybody every 5 s, for a router that does not pass a computer's ARP request on to the phone (a
+# 2.4 GHz client asking for a 5 GHz one's address); the computer takes the answer from the announcement instead.
+/hakios/bin/net_test wifi
+/hakios/bin/dropbear -F -E -s -p 22 -r /hakios/etc/ssh/dropbear_ed25519_host_key -D /hakios/etc/ssh &
+/hakios/bin/net_test announce en0 5 &
+/hakios/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200
+/hakios/bin/net_test waitaddr en0 120
+/hakios/bin/net_test show
+/bin/ps -A

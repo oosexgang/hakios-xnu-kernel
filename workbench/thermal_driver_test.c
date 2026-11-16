@@ -21,6 +21,8 @@ extern char log_text[];
 
 static uint32_t sensor[2][16];          /* status words */
 static uint32_t perf[3];                /* each group's row */
+static uint32_t lmh[3];                 /* each group's DOMAIN_STATE: what the hardware allows, times 19.2 MHz */
+static char tl_lines[8192];             /* the "tl:" lines the driver wrote */
 static unsigned writes, foreign;
 static unsigned same_again;             /* writes of the row a group already had */
 static unsigned between[2][16];         /* a sensor caught between two readings: this many reads in a row give none */
@@ -67,6 +69,9 @@ hakios_test_rd(vm_offset_t a)
 		if (off == 0x320) {
 			return perf[d];
 		}
+		if (off == 0x20) {
+			return lmh[d];
+		}
 	}
 	foreign++;
 	return 0;
@@ -86,6 +91,20 @@ hakios_test_wr(vm_offset_t a, uint32_t v)
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_backlight_set_cap(uint32_t level) { cap = level; }
+uint32_t hakios_adreno_core_mhz(void) { return 550; }
+
+void
+hakios_tl(const char *format, ...)
+{
+	va_list list;
+	size_t at = strlen(tl_lines);
+
+	va_start(list, format);
+	if (at + 200 < sizeof(tl_lines)) {
+		vsnprintf(tl_lines + at, sizeof(tl_lines) - at, format, list);
+	}
+	va_end(list);
+}
 /*
  * The firmware's SCMI performance domains: none unless a scenario gives some (the EPSS boards never ask);
  * each with the level it was found at and its top, and the level last set. scmi_refusals: so many of the
@@ -140,16 +159,48 @@ phone(int tenths)
 	temperature(0, 3, tenths);
 	temperature(1, 1, tenths - 50);
 	perf[0] = perf[1] = perf[2] = ROWS - 1;      /* (cpufreq=1 has raised them) */
+	lmh[0] = lmh[1] = lmh[2] = 100;             /* the hardware allows the top row: cool */
 }
 
+/* with no boot-arg it looks: the hottest read, a line a look with what the hardware allows, nothing written */
 static void
-off_by_default(void)
+looks_by_default(void)
 {
 	phone(900);
-	boot_args = "";
+	boot_args = "th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(get("hottest") == 900, 1000);
+	CHECK((int32_t)get("hottest") == 900, "%d", (int32_t)get("hottest"));
+	usleep(300000);
+	CHECK(writes == 0 && foreign == 0 && perf[0] == ROWS - 1, "nothing written, nothing else read");
+	CHECK(strstr(tl_lines, "tl: h at ") != NULL && strstr(tl_lines, " hottest 900 sensor 3 limit 1920,1920,1920 asked 1920,1920,1920 gpu 550\n"),
+	    "the line: %.200s", tl_lines);
+}
+
+/* thermal=0: nothing read at all */
+static void
+off_when_asked(void)
+{
+	phone(900);
+	boot_args = "thermal=0";
 	hakios_thermal_init();
 	usleep(100000);
-	CHECK(writes == 0 && foreign == 0 && perf[0] == ROWS - 1, "nothing touched");
+	CHECK(writes == 0 && foreign == 0 && perf[0] == ROWS - 1 && tl_lines[0] == 0, "nothing touched");
+}
+
+/* the SoC's own limits hardware slowing a group: its line says so, below the row asked for; and the hottest is the
+ * second controller's sensor 5 (16 + 5) */
+static void
+throttled_by_the_hardware(void)
+{
+	phone(600);
+	temperature(1, 5, 820);
+	lmh[1] = 63;                            /* 1209.6 MHz */
+	boot_args = "thermal=1 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(strstr(tl_lines, "limit") != NULL, 1000);
+	CHECK(strstr(tl_lines, " hottest 820 sensor 21 limit 1920,1209,1920 asked 1920,1920,1920 ") != NULL, "the line: %.200s", tl_lines);
+	CHECK(writes == 0, "looking only: nothing written");
 }
 
 static void
@@ -410,7 +461,8 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
+		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
+		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "critical", critical }, { "never_raises", never_raises }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },

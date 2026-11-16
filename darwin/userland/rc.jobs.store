@@ -1,0 +1,15 @@
+# iOS 27 (RC_JOBS=darwin/userland/rc.jobs.store root26-darwin.sh, with STOREFRONT=1 and wifi=1): the App Store
+# opened by the phone itself. Three runs were lost to doing this from the computer instead: the router
+# throws this phone off Wi-Fi every five to eight minutes, so the unlock swipe and the open went into a
+# dead ssh and the screenshots were of a lock screen. Nothing here needs the network to be up at the
+# right second -- the phone unlocks itself and opens the store itself, and the log is read afterwards.
+/hakios/bin/net_test wifi
+/hakios/bin/dropbear -F -E -s -p 22 -r /hakios/etc/ssh/dropbear_ed25519_host_key -D /hakios/etc/ssh &
+/hakios/bin/net_test announce en0 5 &
+/hakios/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200
+/hakios/bin/rwtouch wait 5 tap 0.32 0.582
+/hakios/bin/rwtouch wait 3 tap 0.32 0.582
+/bin/ps -A
+/var/jb/usr/bin/uiopen --bundleid com.apple.AppStore
+/hakios/bin/rwtouch wait 25 tap 0.32 0.582
+/bin/ps -A

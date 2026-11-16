@@ -192,6 +192,25 @@ flash_root(const char *dev)
 	if (!ok) {
 		return;
 	}
+	/*
+	 * A system image of ours (darwin/tools/mkimage26.py: /sbin/launchd is stage0, Apple's is launchd.darwin) has in
+	 * it what is put in place below on Apple's own volume: our launchd jobs, which Darwin 26 and 27 take for
+	 * system services only from the system volume itself, the audio device, the applications in
+	 * /Applications, the dyld shared cache, a /hakios. It only becomes the root.
+	 */
+	if (stat("/flash/sbin/launchd.darwin", &fw_st) == 0) {
+		printf("  a system image of ours: its jobs, applications and shared cache are in it\n");
+		ok = sysctlbyname("kern.hakios_switch_root", NULL, NULL, "/flash private/preboot", 22) == 0;
+		if (!ok) {
+			printf("  switching the root: %s\n", strerror(errno));
+		}
+		check(ok, "the system image is the root, the RAM part of the boot on /private/preboot");
+		if (ok) {
+			chdir("/");
+			check(bind_dir("/private/preboot/hakios", "/hakios"), "this image back on /hakios");
+		}
+		return;
+	}
 	check(synthetic_dir("/flash/hakios"), "a synthetic /hakios on it, for this image");
 	check(bind_dir(in_image("/LaunchDaemons"), "/flash/System/Library/LaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/NanoLaunchDaemons") &&
@@ -1056,6 +1075,12 @@ restore_var(void)
 	int status = 0;
 	pid_t pid;
 
+	if (wanted != NULL && strcmp(wanted, "new") == 0) {
+		/* var_store=new: begun anew, the store not read -- what another system left in it (iOS 16.5's data
+		 * volume under iOS 27 has its data migrator run instead of SpringBoard) -- and saved at the end as with 1 */
+		printf("\n-- the data volume: a new one (var_store=new), the store not read --\n");
+		return;
+	}
 	if (wanted == NULL || strcmp(wanted, "1") != 0) {
 		return;
 	}

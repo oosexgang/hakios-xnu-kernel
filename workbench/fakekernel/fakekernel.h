@@ -22,6 +22,7 @@
 #define __unused                __attribute__((unused))
 #define __DEVOLATILE(type, var) ((type)(uintptr_t)(volatile void *)(var))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
+#define MAX(a, b)               ((a) > (b) ? (a) : (b))
 
 typedef uintptr_t vm_offset_t;
 typedef uintptr_t vm_size_t;
@@ -29,6 +30,7 @@ typedef int kern_return_t;
 typedef int wait_result_t;
 typedef void *event_t;
 #define THREAD_AWAKENED         0
+#define THREAD_TIMED_OUT        1
 typedef struct fake_thread *thread_t;
 typedef void (*thread_continue_t)(void *, wait_result_t);
 #define KERN_SUCCESS            0
@@ -65,6 +67,8 @@ int msleep(void *channel, struct fake_lock *lock, int priority, const char *why,
 /* the same, as kern/locks.h names it (every caller looks at its condition again when it returns) */
 #define LCK_SLEEP_DEFAULT               0
 wait_result_t lck_mtx_sleep(struct fake_lock *lock, int flags, event_t event, int interruptible);
+/* (a sleep with a deadline: no one is woken here, so it is a short sleep, as lck_mtx_sleep's) */
+wait_result_t lck_mtx_sleep_deadline(struct fake_lock *lock, int flags, event_t event, int interruptible, uint64_t deadline);
 void wakeup(void *channel);
 
 /*
@@ -105,9 +109,12 @@ typedef int boolean_t;
 #define KMA_KOBJECT                     0x2
 #define KMA_DATA                        0x4
 #define VM_KERN_MEMORY_IOKIT            1
+#define VM_KERN_MEMORY_DIAG             2
 extern void *kernel_map;
 int kmem_alloc_contig(void *map, vm_offset_t *address, vm_size_t size, vm_offset_t mask, int max_pnum, int pnum_mask,
     int flags, int tag);
+int kmem_alloc(void *map, vm_offset_t *address, vm_size_t size, int flags, int tag);
+void kmem_free(void *map, vm_offset_t address, vm_size_t size);
 #include <sched.h>
 #define __builtin_arm_yield()           sched_yield()
 void IOSleep(unsigned int milliseconds);
@@ -301,12 +308,14 @@ int SecureDTGetProperty(const DTEntry entry, const char *name, void const **valu
 #define MAX_CPUS                8
 typedef struct {
 	uint32_t phys_id;
+	uint32_t l2_access_penalty;     /* 0 on the big cores, as the kernel's own tables say of them */
 } ml_topology_cpu_t;
 typedef struct {
 	unsigned int num_cpus;
 	ml_topology_cpu_t cpus[MAX_CPUS];
 } ml_topology_info_t;
 const ml_topology_info_t *ml_get_topology_info(void);
+bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 extern unsigned fake_cores;             /* how many cores the kernel has (1) */
 extern unsigned fake_core;              /* the core "this" code runs on (0) */
 #define __builtin_arm_rsr64(name)       ((uint64_t)fake_core << 8)

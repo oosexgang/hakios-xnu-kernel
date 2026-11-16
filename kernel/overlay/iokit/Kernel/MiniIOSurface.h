@@ -126,6 +126,14 @@ public:
 	IOBufferMemoryDescriptor *      snapshot;
 	uint32_t                        snapshotSeed;
 	uint32_t                        drawn;          /* the GPU's last submission that names the pixels (0: none; BoardGPU.cpp) */
+	/*
+	 * The display's driver is copying the pixels to the panel (MiniIOMobileFramebuffer show()): a submission that has the
+	 * GPU draw into them waits until it is done (BoardGPU.cpp submit). The window server draws its next frame into the
+	 * page of its display it swapped two frames before; while it waited for the GPU between frames that page's copy was
+	 * long over, and once it drew a frame while the GPU had the one before, the GPU wrote the page under the copy -- rows
+	 * of two frames in one picture.
+	 */
+	volatile uint32_t               shownReading;
 	struct minisurf_result          info;           /* addresses not filled in */
 	struct minisurf_plane           planes[MINISURF_MAX_PLANES];
 	OSDictionary *                  values;

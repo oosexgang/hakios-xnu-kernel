@@ -193,7 +193,7 @@ nothing. That is deliberate: these drivers write to pins and PMIC registers.
 The user-space side is the same for every phone: the libraries in `darwin/userland/` and the images
 built by `darwin/tools/`. What depends on the device is small:
 
-- which iPhone Darwin is told it is (`loader/identity.h`), and through that the screen layout;
+- which iPhone Darwin is told it is (`identity.h`, which `loader/build.sh` makes from the IPSW's device tree), and through that the screen layout;
 - the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
   of `screen { }` in the board file, in points (`darwin/userland/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `boot { }` section.

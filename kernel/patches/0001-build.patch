@@ -82,10 +82,11 @@ diff --git a/bsd/conf/Makefile.arm64 b/bsd/conf/Makefile.arm64
 diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,47 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -108,6 +108,52 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c         optional config_cpu_counters
++bsd/dev/board/soc.c	standard
 +bsd/dev/board/input.c	standard
 +bsd/dev/board/drivers.c	standard
 +bsd/dev/board/virtio_input.c	standard
@@ -124,13 +125,17 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 +bsd/dev/board/sound.c	standard
 +bsd/dev/board/qmi.c	standard
 +bsd/dev/board/wlfw.c	standard
++bsd/dev/board/mpss.c	standard
++bsd/dev/board/ipa.c	standard
++bsd/dev/board/nas.c	standard
++bsd/dev/board/cell.c	standard
 +bsd/dev/board/lx.c	standard
 +bsd/dev/board/sta.c	standard
 +bsd/dev/board/apfs_check.c	optional apfs
  
  bsd/libkern/crc32.c			standard
  bsd/libkern/random.c			standard
-@@ -155,6 +196,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+@@ -155,6 +201,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
  bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
@@ -145,7 +150,7 @@ diff --git a/bsd/conf/files b/bsd/conf/files
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
-@@ -380,6 +429,7 @@ bsd/security/audit/audit_syscalls.c		standard
+@@ -380,6 +434,7 @@ bsd/security/audit/audit_syscalls.c		standard
  bsd/security/audit/audit_worker.c		optional config_audit
  
  bsd/pthread/pthread_shims.c		standard
@@ -153,7 +158,7 @@ diff --git a/bsd/conf/files b/bsd/conf/files
  bsd/pthread/pthread_priority.c		standard
  bsd/pthread/pthread_workqueue.c		standard
  
-@@ -403,6 +453,7 @@ bsd/kern/kern_debug.c			standard
+@@ -403,6 +458,7 @@ bsd/kern/kern_debug.c			standard
  bsd/kern/kern_symfile.c			standard
  bsd/kern/kern_descrip.c			standard
  bsd/kern/kern_guarded.c			standard
@@ -188,7 +193,7 @@ diff --git a/iokit/IOKit/IOCircularDataQueueImplementation.h b/iokit/IOKit/IOCir
 diff --git a/iokit/conf/files b/iokit/conf/files
 --- a/iokit/conf/files
 +++ b/iokit/conf/files
-@@ -80,6 +80,14 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+@@ -80,6 +80,15 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
  iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
  
  iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
@@ -198,12 +203,13 @@ diff --git a/iokit/conf/files b/iokit/conf/files
 +iokit/Kernel/BoardGPU.cpp				optional iokitcpp
 +iokit/Kernel/BoardWLAN.cpp			optional iokitcpp
 +iokit/Kernel/BoardBattery.cpp			optional iokitcpp
++iokit/Kernel/BoardHaptics.cpp			optional iokitcpp
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
  iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
  
  iokit/Kernel/IOCPU.cpp					optional iokitcpp
-@@ -111,8 +119,10 @@ iokit/Tests/TestServices/TestIODeviceMemoryRosetta.cpp optional iokitcpp
+@@ -111,8 +120,10 @@ iokit/Tests/TestServices/TestIODeviceMemoryRosetta.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIOUserClient2022Entitlements.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIOServiceUserNotification.cpp optional iokitcpp
  iokit/Tests/TestServices/TestIODataQueues.cpp optional iokitcpp

@@ -17,6 +17,7 @@ for every board it was built with. The board is identified at boot from `/chosen
 | `syntax-check.sh` | Compiles the files of `overlay/` for syntax, types and the formats of what they print with the machine's clang: no Darwin toolchain needed. `syntax-check.skip` lists the files only the real build can check. |
 | `build.sh`, `env.sh` | The build on Linux. `build.sh` also makes the board table from the device packages that are present (below). |
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
+| `lx/` | The Wi-Fi driver's other half: Linux's ath11k, compiled unmodified on FreeBSD's LinuxKPI headers and ours (`lx/include`, `lx/src`, `lx/patches`), into one object the kernel links when it is there. `lx/build.sh` fetches the pinned sources and makes it. |
 
 Where things are in `overlay/`:
 

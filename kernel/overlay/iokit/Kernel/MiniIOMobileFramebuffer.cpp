@@ -99,26 +99,26 @@ static uint64_t gFBLogged[2];           /* selectors already reported */
 static uint8_t  gFBCalls[128];          /* how many calls of each selector were traced */
 
 /*
- * The display user space is told about. The system carries the identity of the iPhone X
- * (see the loader), and Darwin knows what screen that phone has: with any other size
- * MobileGestalt reports an unknown screen class and the user interface has no layout for it.
- * So the display is always the iPhone's, and a swap scales the picture to the panel that is
- * really there (in QEMU the loader makes the panel exactly this size and nothing is scaled).
- * Boot-args fbwidth= and fbheight= change the size reported.
+ * The display user space is told about. The system carries the identity of an iPhone (the loader's
+ * identity.h, from the IPSW's device tree), and Darwin knows what screen that phone has: with any other
+ * size MobileGestalt reports an unknown screen class and the user interface has no layout for it.
+ * So the display is always the iPhone's -- the loader puts its pixels in /chosen/display-size and its
+ * scale in /chosen/display-scale -- and a swap scales the picture to the panel that is really there
+ * (in QEMU the loader makes the panel exactly this size and nothing is scaled). Without the loader's
+ * word it is the iPhone X's. Boot-args fbwidth= and fbheight= change the size reported (0: the panel's).
  */
 #define kFBDefaultWidth         1125
 #define kFBDefaultHeight        2436
-#define kFBDotsPerInch          458
+#define kFBDotsPerInch          458             /* the iPhone X's: other widths are given in proportion */
+#define kFBNotGiven             0xffffffffu
 
-static TUNABLE(uint32_t, gFBWidth, "fbwidth", kFBDefaultWidth);
-static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
+static TUNABLE(uint32_t, gFBWidth, "fbwidth", kFBNotGiven);
+static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBNotGiven);
 /*
- * Boot-arg fbscale=2: the same 375 x 812 points drawn at two pixels a point instead of three.
- * Everything that is drawn is drawn by the processor, and this is 2.25 times fewer pixels to
- * draw; the picture is then enlarged to the panel and is that much less sharp.
+ * Boot-arg fbscale=N: the same points drawn at N pixels a point instead of the iPhone's own scale (fbscale=2 on
+ * an iPhone X's 375 x 812 points). Everything that is drawn is drawn by the processor, and this is that many
+ * fewer pixels to draw; the picture is then enlarged to the panel and is that much less sharp.
  */
-#define kFBPointsWide           375
-#define kFBPointsHigh           812
 #define kFBDefaultScale         3
 static TUNABLE(uint32_t, gFBScale, "fbscale", 0);
 /* Boot-arg fbtrace=N: log the first N calls of every selector (default 3). */
@@ -177,6 +177,14 @@ static TUNABLE(uint32_t, gDoubleBuffer, "fb_double", 0);
  * to 10 (the phone, 15 October; fb_threads=1 is how it was).
  */
 static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
+/*
+ * Boot-arg fb_yuv=1: a swap layer of two planes ('420f', '420v': a video's frames, the camera's preview) is drawn as
+ * well, under the others, and the four-byte layers drawn after it in that swap are laid over it by their alpha
+ * (premultiplied, as CoreAnimation renders them). iOS hands a video to the display as a layer of its own and leaves a
+ * transparent hole for it in the layer of everything else; without, the hole is a black one (Camera.app's preview).
+ * On by default (fb_yuv=0: such a layer is left out, as before); a swap without one is drawn as before either way.
+ */
+static TUNABLE(uint32_t, gYUV, "fb_yuv", 1);
 /*
  * Boot-arg fb_small=0: the drawers anywhere, as before. By default, on a phone with slower cores
  * (three Cortex-A55 beside four A78 on a Snapdragon 780G), the presenter and its helpers are bound to those, one
@@ -245,7 +253,10 @@ recStep(void)
  * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/board/adreno.c says where it is
  * read from). A command-mode panel: at each of its refreshes the display controller
  * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
- * rest. Two things follow from knowing when:
+ * rest. Redwood's is a video one, read out all the time but its blanking (8.23 of 8.34 ms): a band then
+ * has a refresh's time between its two readouts, the next band a line later. Without this its frames
+ * were written whenever they came, and with frames coming faster than 60 a second the panel showed
+ * bands of the frame before. Two things follow from knowing when:
  *   - the refresh told to the window server (the "vsync" of the user client below) is the panel's,
  *     not a timer of ours that drifts against it: a frame now and then shown twice and the next not
  *     at all is what such a drift looks like;
@@ -257,6 +268,7 @@ recStep(void)
  */
 extern "C" bool hakios_display_scan_start(void);
 extern "C" bool hakios_display_scan(uint32_t * frame, uint32_t * line);
+extern "C" bool hakios_display_scan_video(void);
 static TUNABLE(uint32_t, gScan, "fb_scan", 1);
 /* fb_scan_lead=US: the first lead from a frame's start to its target, 1000 to 8000 microseconds (default 2000) */
 static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);
@@ -476,6 +488,7 @@ public:
 	uint64_t        fDiffPixels;
 	uint32_t        fDiffLeft, fDiffTop, fDiffRight, fDiffBottom;
 	/* the screen recording, if one was asked for */
+	bool            fOver;                  /* fb_yuv: the layer drawn now goes over what is there, by its alpha */
 	uint32_t *      fColumn;                /* drawLayer(): source column for every panel column */
 	uint16_t *      fColumnWeight;          /* ... with fb_filter: how much of the column after it, of 256 */
 	uint32_t *      fBlendRow;              /* ... and a row of the picture blended from two (fBlendRowSize pixels) */
@@ -496,6 +509,7 @@ public:
 	static void presenterMain(void * self, wait_result_t result);
 	void reportFrameTimes(void);
 	void drawLayer(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
+	bool drawYUV(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
 	void drawRows(const struct RowJob * job, int32_t y0, int32_t y1, uint32_t * blendRow);
 	void drawShare(const struct RowJob * job, unsigned share, uint32_t * blendRow);
 	static void helperMain(void * self, wait_result_t result);
@@ -715,14 +729,36 @@ IOMobileFramebuffer::start(IOService * provider)
 	fPanelWidth = vinfo.v_width;
 	fPanelHeight = vinfo.v_height;
 	fRowBytes = vinfo.v_rowbytes;
-	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
-	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
-	if (gFBScale != 0 && gFBScale != kFBDefaultScale) {
+	uint32_t width = kFBDefaultWidth, height = kFBDefaultHeight, ownScale = kFBDefaultScale;
+	{
+		IORegistryEntry * chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+		OSData * size = chosen ? OSDynamicCast(OSData, chosen->getProperty("display-size")) : NULL;
+		OSData * scale = chosen ? OSDynamicCast(OSData, chosen->getProperty("display-scale")) : NULL;
+
+		if (size != NULL && size->getLength() == 2 * sizeof(uint32_t)) {
+			const uint32_t * pixels = (const uint32_t *) size->getBytesNoCopy();
+			width = pixels[0];
+			height = pixels[1];
+		}
+		if (scale != NULL && scale->getLength() == sizeof(uint32_t) && *(const uint32_t *) scale->getBytesNoCopy() != 0) {
+			ownScale = *(const uint32_t *) scale->getBytesNoCopy();
+		}
+		OSSafeReleaseNULL(chosen);
+	}
+	if (gFBWidth != kFBNotGiven) {
+		width = gFBWidth;
+	}
+	if (gFBHeight != kFBNotGiven) {
+		height = gFBHeight;
+	}
+	fWidth = width ? width : fPanelWidth;
+	fHeight = height ? height : fPanelHeight;
+	if (gFBScale != 0 && gFBScale != ownScale) {
 		static const char * const places[][2] = { { "/chosen", "display-scale" }, { "/product", "artwork-scale-factor" } };
 		uint32_t scale = gFBScale;
 
-		fWidth = kFBPointsWide * scale;
-		fHeight = kFBPointsHigh * scale;
+		fWidth = fWidth / ownScale * scale;
+		fHeight = fHeight / ownScale * scale;
 		/* what the loader's device tree says about the scale is where MobileGestalt has it from */
 		for (unsigned i = 0; i < sizeof(places) / sizeof(places[0]); i++) {
 			IORegistryEntry * node = IORegistryEntry::fromPath(places[i][0], gIODTPlane);
@@ -901,6 +937,25 @@ blend(uint32_t a, uint32_t b, uint32_t w)
 	return rb | ga;
 }
 
+/* A premultiplied pixel `s` over `d` (fb_yuv). */
+static inline uint32_t
+over(uint32_t s, uint32_t d)
+{
+	uint32_t a = s >> 24, k = 255 - a;
+
+	if (a == 255) {
+		return s;
+	}
+	if (a == 0 && (s & 0xffffff) == 0) {
+		return d;
+	}
+	uint32_t rb = (s & 0xff00ff) + (((d & 0xff00ff) * k + 0x800080) >> 8 & 0xff00ff);
+	uint32_t ga = (s >> 8 & 0xff00ff) + (((d >> 8 & 0xff00ff) * k + 0x800080) >> 8 & 0xff00ff);
+
+	/* (premultiplied: a channel is at most the alpha, so each sum stays within its byte) */
+	return (rb & 0xff00ff) | (ga & 0xff00ff) << 8;
+}
+
 /*
  * Where the middle of the `i`th of `out` pixels falls among `in` of them, in 256ths of a pixel,
  * kept within the first and the last.
@@ -922,7 +977,7 @@ struct RowJob {
 	const uint8_t * pixels;
 	uint32_t        stride;
 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
-	bool            filter, unscaled;
+	bool            filter, unscaled, over;
 	uint64_t        target;                 /* the panel's readout it is for (scanWaitRows()) */
 };
 
@@ -946,6 +1001,14 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 		to = (uint32_t *) ((fBackBuffer ? fBackBuffer : fBase) + (size_t) y * fRowBytes);
 		if (job->unscaled) {
 			/* not scaled at all */
+			if (job->over) {
+				const uint32_t * row = (const uint32_t *) (pixels + (size_t) (sy + y - py0) * stride) + sx;
+
+				for (int32_t x = 0; x < sw; x++) {
+					to[px0 + x] = over(row[x], to[px0 + x]);
+				}
+				continue;
+			}
 			memcpy(to + px0, pixels + (size_t) (sy + y - py0) * stride + (size_t) sx * 4, (size_t) sw * 4);
 			continue;
 		}
@@ -993,8 +1056,13 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 
 			for (uint32_t i = 0, n = (uint32_t) (cx1 - cx0); i < n; i++) {
 				uint32_t c = column[i], w = weights[i], a = from[c];
+				uint32_t value = w == 0 || a == from[c + 1] ? a : blend(a, from[c + 1], w);
 
-				out[i] = w == 0 || a == from[c + 1] ? a : blend(a, from[c + 1], w);
+				out[i] = job->over ? over(value, out[i]) : value;
+			}
+		} else if (job->over) {
+			for (int32_t x = cx0; x < cx1; x++) {
+				to[x] = over(from[fColumn[x]], to[x]);
 			}
 		} else {
 			for (int32_t x = cx0; x < cx1; x++) {
@@ -1132,7 +1200,9 @@ IOMobileFramebuffer::scanCalibrate(void)
 			uint64_t ns;
 
 			absolutetime_to_nanoseconds(period, &ns);
-			if (ns < NSEC_PER_SEC / 130 || ns > NSEC_PER_SEC / 45 || gPanel.line_ticks * fPanelHeight >= period * 9 / 10) {
+			/* (a command-mode panel's readout takes half a refresh or so; a video panel's is the refresh but its blanking) */
+			if (ns < NSEC_PER_SEC / 130 || ns > NSEC_PER_SEC / 45 ||
+			    gPanel.line_ticks * fPanelHeight >= (hakios_display_scan_video() ? period : period * 9 / 10)) {
 				printf("MiniIOMobileFramebuffer: panel scan: implausible (%llu us a refresh, %llu us a readout): "
 				    "frames written at once\n", ns / 1000, micros(gPanel.line_ticks * fPanelHeight));
 				return;
@@ -1225,6 +1295,88 @@ IOMobileFramebuffer::copyBackBuffer(void)
 
 
 /*
+ * fb_yuv: a rectangle of a two-plane YCbCr surface ('420f' full range, '420v' video range: luma, then interleaved
+ * Cb Cr at half size each way) on the screen, by nearest neighbour, on this thread, BT.601 as CoreVideo's camera
+ * buffers say. Where the layer's numbers do not make sense nothing is drawn. Whether it drew anything.
+ */
+bool
+IOMobileFramebuffer::drawYUV(MiniIOSurface * s, const int32_t * src, const int32_t * dst)
+{
+	const struct minisurf_plane * luma = &s->planes[0], * chroma = &s->planes[1];
+	const uint8_t * base = s->pixels();
+	const bool video = s->info.pixelFormat == FOURCC('4', '2', '0', 'v');
+	int32_t sx = src[0], sy = src[1], sw = src[2], sh = src[3];
+	int32_t dx = dst[0], dy = dst[1], dw = dst[2], dh = dst[3];
+	int32_t px0, py0, px1, py1;
+
+	if (base == NULL || s->info.planeCount != 2 || luma->width == 0 || luma->height == 0 || chroma->width == 0 ||
+	    chroma->height == 0) {
+		return false;
+	}
+	if (sw <= 0 || sh <= 0) {
+		sx = sy = 0;
+		sw = (int32_t) luma->width;
+		sh = (int32_t) luma->height;
+	}
+	if (dw <= 0 || dh <= 0) {
+		dx = dy = 0;
+		dw = (int32_t) fWidth;
+		dh = (int32_t) fHeight;
+	}
+	{
+		static unsigned told;
+
+		if (told < 3) {
+			told++;
+			IOLog("MiniIOMobileFramebuffer: fb_yuv: surface %u '%c%c%c%c' %ux%u row %u, planes: %ux%u row %u at %u, %ux%u row %u at "
+			    "%u (%u bytes an element); from %d,%d %dx%d to %d,%d %dx%d\n", s->sid, (int) (s->info.pixelFormat >> 24 & 0xff),
+			    (int) (s->info.pixelFormat >> 16 & 0xff), (int) (s->info.pixelFormat >> 8 & 0xff), (int) (s->info.pixelFormat & 0xff),
+			    s->info.width, s->info.height, s->info.bytesPerRow, luma->width, luma->height, luma->bytesPerRow, luma->offset,
+			    chroma->width, chroma->height, chroma->bytesPerRow, chroma->offset, chroma->bytesPerElement, sx, sy, sw, sh, dx, dy,
+			    dw, dh);
+		}
+	}
+	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > luma->width || (uint32_t) (sy + sh) > luma->height) {
+		return false;
+	}
+	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
+	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
+	px1 = (int32_t) ((int64_t) (dx + dw) * fPanelWidth / fWidth);
+	py1 = (int32_t) ((int64_t) (dy + dh) * fPanelHeight / fHeight);
+	if (px1 <= px0 || py1 <= py0) {
+		return false;
+	}
+	for (int32_t y = py0 > 0 ? py0 : 0; y < py1 && (uint32_t) y < fPanelHeight; y++) {
+		const int32_t row = sy + (int32_t) ((int64_t) (y - py0) * sh / (py1 - py0));
+		const uint8_t * yl = base + luma->offset + (size_t) row * luma->bytesPerRow;
+		const uint8_t * cl = base + chroma->offset + (size_t) (row / 2 < (int32_t) chroma->height ? row / 2 :
+		    (int32_t) chroma->height - 1) * chroma->bytesPerRow;
+		uint32_t * to = (uint32_t *) ((fBackBuffer ? fBackBuffer : fBase) + (size_t) y * fRowBytes);
+
+		for (int32_t x = px0 > 0 ? px0 : 0; x < px1 && (uint32_t) x < fPanelWidth; x++) {
+			const int32_t column = sx + (int32_t) ((int64_t) (x - px0) * sw / (px1 - px0));
+			const int32_t c2 = (column / 2 < (int32_t) chroma->width ? column / 2 : (int32_t) chroma->width - 1) * 2;
+			int32_t yv = yl[column], cb = cl[c2] - 128, cr = cl[c2 + 1] - 128;
+			int32_t r, g, b;
+
+			if (video) {
+				yv = (yv - 16) * 298 >> 8;
+				cb = cb * 255 / 224;
+				cr = cr * 255 / 224;
+			}
+			r = yv + (359 * cr >> 8);
+			g = yv - ((88 * cb + 183 * cr) >> 8);
+			b = yv + (454 * cb >> 8);
+			r = r < 0 ? 0 : r > 255 ? 255 : r;
+			g = g < 0 ? 0 : g > 255 ? 255 : g;
+			b = b < 0 ? 0 : b > 255 ? 255 : b;
+			to[x] = 0xff000000u | (uint32_t) r << 16 | (uint32_t) g << 8 | (uint32_t) b;
+		}
+	}
+	return true;
+}
+
+/*
  * Put a rectangle of a 32-bit surface on the screen. `dst` is in display coordinates; the
  * panel may be of another size, and the layer itself may be scaled: both are done in one
  * step, bilinear (or nearest neighbour: fb_filter=0).
@@ -1311,6 +1463,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	job.filter = filter;
 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
 	job.target = fScanTarget;
+	job.over = fOver;
 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
 		drawRows(&job, py0, py1, fBlendRow);
 		return;
@@ -1538,7 +1691,10 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	/*
 	 * The panel's readout this frame is for: the first that begins a lead after now. The lead grows
 	 * by half a millisecond after a frame with a stripe written too late for it, and shrinks by a
-	 * tenth of one after 60 frames in a row in time: as little delay as there is room for.
+	 * tenth of one after 60 frames in a row in time (a video panel: after 10): as little delay as
+	 * there is room for. (A video panel's next readout begins as this one ends; a lead grown to 4.9 ms
+	 * by 4 late frames in 1591 had every other frame miss the readout after it: the home screen's pages
+	 * at 56 frames a second, logs/103400-run.log.)
 	 */
 	fScanTarget = 0;
 	fScanLate = 0;
@@ -1576,6 +1732,23 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		    swapWord(swap, SWAP_ID), fSwapsShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)),
 		    swapWord(swap, SWAP_SURFACE(2)), swapWord(swap, SWAP_SURFACE(3)), set, swapWord(swap, SWAP_LAYERS_CLEARED));
 	}
+	fOver = false;
+	/* fb_yuv: the video layers first, under the rest (see gYUV) */
+	for (unsigned layer = 0; gYUV != 0 && layer < SWAP_LAYERS; layer++) {
+		MiniIOSurface * s = surfaces[layer];
+		int32_t src[4], dst[4];
+
+		if (s == NULL || s->info.planeCount != 2) {
+			continue;
+		}
+		memcpy(src, swap + SWAP_SOURCE(layer), sizeof(src));
+		memcpy(dst, swap + SWAP_DEST(layer), sizeof(dst));
+		OSIncrementAtomic((volatile SInt32 *) &s->shownReading);
+		if (drawYUV(s, src, dst)) {
+			fOver = true;
+		}
+		OSDecrementAtomic((volatile SInt32 *) &s->shownReading);
+	}
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
 		int32_t src[4], dst[4];
@@ -1591,7 +1764,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		}
 		if (sid == 0) {
 			/* the bottom layer taken away: nothing is shown, the screen is black */
-			if (layer == 0 && (set & 1) && fGraphics) {
+			if (layer == 0 && (set & 1) && fGraphics && !fOver) {        /* (fb_yuv: not over the video drawn) */
 				/*
 				 * Plain aligned stores, not bzero: the panel's memory is device memory under the phone's
 				 * hypervisor, and bzero's DC ZVA and unaligned stores fault there ("Unaligned kernel data
@@ -1624,6 +1797,31 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		if (s == NULL) {
 			continue;
 		}
+		if (s->info.bytesPerElement == 4 && s->info.planeCount == 0 && fOver) {
+			/* fb_yuv: how much of this layer lets the video through, row by row, for the first swaps with one */
+			static unsigned profiled;
+
+			if (profiled < 3) {
+				char line[512];
+				size_t n = 0;
+				const uint8_t * px = s->pixels();
+
+				profiled++;
+				for (uint32_t y = 0; px != NULL && y < s->info.height && n + 16 < sizeof(line); y += s->info.height >= 24 ? s->info.height / 24 : 1) {
+					const uint32_t * row = (const uint32_t *) (px + (size_t) y * s->info.bytesPerRow);
+					uint32_t clear = 0, solid = 0;
+
+					for (uint32_t x = 0; x < s->info.width; x += 8) {
+						uint32_t a = row[x] >> 24;
+						clear += a == 0;
+						solid += a == 255;
+					}
+					n += (size_t) snprintf(line + n, sizeof(line) - n, " %u:%u/%u", y, clear, solid);
+				}
+				IOLog("MiniIOMobileFramebuffer: fb_yuv: layer %u over the video (%ux%u), row: clear/opaque of every 8th pixel:%s\n",
+				    layer, s->info.width, s->info.height, line);
+			}
+		}
 		if (s->info.bytesPerElement == 4 && s->info.planeCount == 0) {
 			if (!fGraphics) {
 				/* the first picture: the kernel's text console must stop drawing over it */
@@ -1631,7 +1829,9 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 				PE_initialize_console(NULL, kPEGraphicsMode);
 				PE_initialize_console(NULL, kPEReleaseScreen);
 			}
+			OSIncrementAtomic((volatile SInt32 *) &s->shownReading);
 			drawLayer(s, src, dst);
+			OSDecrementAtomic((volatile SInt32 *) &s->shownReading);
 			if (layer == 0) {
 				recorded = s;   /* (recorded once the frame is in the panel's memory: see below) */
 			}
@@ -1647,7 +1847,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			fStatScanLate++;
 			fScanCleanFrames = 0;
 			fScanLead = fScanLead + up < ceiling ? fScanLead + up : ceiling;
-		} else if (++fScanCleanFrames >= 60) {
+		} else if (++fScanCleanFrames >= (hakios_display_scan_video() ? 10u : 60u)) {
 			fScanCleanFrames = 0;
 			fScanLead = fScanLead > floor + down ? fScanLead - down : floor;
 		}
@@ -2180,10 +2380,13 @@ publishDisplayNode(void)
  * accelerator without the properties that name its Metal and OpenGL ES drivers is passed
  * over by both, which leaves CoreAnimation with its software renderer, as before.
  *
- * With boot-arg metal=1 a user process may put those two properties here, which is the whole
- * of what keeps Metal from finding a driver of ours (userland/src/metal_driver.m); see setProperties
- * below and docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
- * its software renderer, as in the RAM-only release.
+ * With boot-arg metal=1 the service names our Metal plug-in from the start: MetalPluginName
+ * "HakiosMetal", MetalPluginClassName "HakiosMetalDevice" (metal/plugin/HakiosMetalCA.m, installed as
+ * /System/Library/Extensions/HakiosMetal.bundle), and a program that asks Metal for a device gets
+ * ours -- CoreAnimation in backboardd among them, which then draws the screen with the GPU. A user
+ * process may also change or remove the two (setProperties below), which is the way back to the
+ * software renderer without a reboot. Without metal=1 (the default) nothing changes: CoreAnimation
+ * keeps its software renderer, as in the RAM-only release. See docs/metal-glass.md.
  */
 
 /* Metal's step 2 reads exactly these two, in this order, off this service (docs/metal.md 1). */
@@ -2304,12 +2507,15 @@ publishAccelerator(IOService * provider)
 	gAcceleratorTakesProperties = PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0;
 	if (accelerator != NULL && accelerator->init() && accelerator->attach(provider)) {
 		accelerator->setName("sgx");
-		accelerator->registerService();
-		/* the first line to look for in the log of such a boot: the gate is open, nothing is set yet */
+		/* (before registerService: whoever finds the service finds it with them) */
 		if (gAcceleratorTakesProperties) {
-			IOLog("IOAcceleratorES: metal=%u: this service takes " kAcceleratorPluginNameKey
-			    " and " kAcceleratorPluginClassNameKey " from user space\n", metal);
+			accelerator->setProperty(kAcceleratorPluginNameKey, "HakiosMetal");
+			accelerator->setProperty(kAcceleratorPluginClassNameKey, "HakiosMetalDevice");
+			/* the first line to look for in the log of such a boot */
+			IOLog("IOAcceleratorES: metal=%u: Metal's plug-in is HakiosMetal (HakiosMetalDevice); user space may "
+			    "change or remove " kAcceleratorPluginNameKey " and " kAcceleratorPluginClassNameKey "\n", metal);
 		}
+		accelerator->registerService();
 	}
 	OSSafeReleaseNULL(accelerator);
 }

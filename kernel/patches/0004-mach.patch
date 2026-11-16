@@ -24,6 +24,39 @@ diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
  	default:
  		return ENOTSUP;
  	}
+diff --git a/libkern/c++/OSKext.cpp b/libkern/c++/OSKext.cpp
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -1623,6 +1623,16 @@ OSKext::driverkitEnabled(void)
+ bool
+ OSKext::iokitDaemonAvailable(void)
+ {
++#if defined(ARM64_BOARD_CONFIG_BCM2837)
++	/*
++	 * hakios: no kext and no dext is ever loaded here, and iOS 27 has no kernelmanagerd: nothing would ever say
++	 * the IOKit daemon has launched (iokitDaemonLaunched), and the busy count IOKit's start adds for it
++	 * would keep the registry busy for good. iOS's configd waits for the registry to be quiet before it makes
++	 * the network's default configuration, and Wi-Fi had no service: no address from it, no internet for
++	 * Safari. As xnu-8796 had it for a restore environment: no daemon.
++	 */
++	return false;
++#endif
+ #if XNU_TARGET_OS_XR || XNU_TARGET_OS_BRIDGE
+ 	int notused;
+ 	if (PE_parse_boot_argn("-restore", &notused, sizeof(notused))) {
+@@ -15715,7 +15725,11 @@ OSKext::foreachKextInBacktrace(
+ 		IOLockLock(sKextSummariesLock);
+ 	}
+ 
+-	for (uint32_t i = 0; i < gLoadedKextSummaries->numSummaries; ++i) {
++	/*
++	 * hakios: no kext is ever loaded here, so there are no summaries at all, and trap telemetry's backtraces
++	 * (telemetry_backtrace_add_kexts, after a daemon's brk) found a NULL here: a kernel data abort.
++	 */
++	for (uint32_t i = 0; gLoadedKextSummaries != NULL && i < gLoadedKextSummaries->numSummaries; ++i) {
+ 		OSKextLoadedKextSummary * summary;
+ 
+ 		summary = gLoadedKextSummaries->summaries + i;
 diff --git a/osfmk/ipc/ipc_kmsg.c b/osfmk/ipc/ipc_kmsg.c
 --- a/osfmk/ipc/ipc_kmsg.c
 +++ b/osfmk/ipc/ipc_kmsg.c

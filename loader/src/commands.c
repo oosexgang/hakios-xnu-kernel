@@ -21,6 +21,9 @@ fb_command(char *cmd)
 			const char *var = cmd + 7;
 			if (str_eq(var, "product")) {
 				fb_reply("OKAY", "xnuloader");
+			} else if (str_eq(var, "board")) {
+				/* the board it took itself for (its framebuffer; /chosen/darwin-board), for the host to compare */
+				fb_reply("OKAY", PLAT ? PLAT->name : "");
 			} else if (str_eq(var, "version")) {
 				fb_reply("OKAY", "0.5");
 			} else if (str_eq(var, "max-download-size")) {
@@ -278,6 +281,7 @@ fb_command(char *cmd)
 			set_result("running", cp, 0);
 			fb_reply("OKAY", "");
 			log_len = 0;
+			kernel_part_len = 0;            /* the last run's kernel log is not this one's */
 			print("== XNULOADER run (usb) ==\n");
 			if (!run_kernel(have_cp, cp)) {
 				set_result("not-started", 0, 0);

@@ -15,8 +15,12 @@
  * The network the kernel was given in a file is a standing request: joined at the start, and
  * again whenever the radio is turned back on (Settings' switch), until somebody asks for
  * another network -- as Darwin itself rejoins the networks it knows. If that other network cannot
- * be joined (a wrong passphrase), the standing one is joined again.
+ * be joined (a wrong passphrase), the standing one is joined again. And when the access point sends
+ * the station away (a router restarting, or dropping a station it thinks idle: deauthentication),
+ * the standing network is joined again after a moment, then less and less often while that fails:
+ * wifid does not, since it never joined that network itself.
  */
+#include <kern/clock.h>
 #include <kern/kalloc.h>
 #include <kern/locks.h>
 #include <kern/sched_prim.h>
@@ -48,6 +52,9 @@ static struct hakios_sta_scan asked_scan_what;
 static struct hakios_sta_join asked_join_what;
 static struct hakios_sta_join standing;        /* the network joined whenever the radio comes on (ssid_length 0: none) */
 static struct hakios_sta_join fallback;        /* ... as it was before a join that has not come through yet */
+static uint64_t rejoin_at;                      /* when the standing network is joined again after it was lost (0: not) */
+static unsigned rejoin_tries;                   /* ... and how many times that has been tried since it was last joined */
+static bool rejoining;                          /* the join under way is such a one */
 
 static struct hakios_sta_bss *heard;           /* by the last scan that came to an end */
 static unsigned heard_count;
@@ -65,6 +72,23 @@ heard_one(const struct hakios_sta_bss *bss, __unused void *context)
 	}
 }
 
+/*
+ * The standing network to be joined again (sta_lock held): after 2 s, three times, then after 30 s, as long as it
+ * is the standing one and nobody asks for anything else.
+ */
+static void
+rejoin_later(void)
+{
+	uint64_t deadline;
+
+	if (standing.ssid_length == 0 || !sta_on || asked_join || asked_leave) {
+		return;
+	}
+	clock_interval_to_deadline(rejoin_tries < 3 ? 2000 : 30000, NSEC_PER_MSEC, &deadline);
+	rejoin_tries++;
+	rejoin_at = deadline;
+}
+
 static void
 sta_runs(__unused void *parameter, __unused wait_result_t result)
 {
@@ -73,12 +97,24 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 
 	for (;;) {
 		const struct hakios_sta_ops *ops;
-		bool power = false, power_on = false, leave = false, do_join = false, do_scan = false;
+		bool power = false, power_on = false, leave = false, do_join = false, do_rejoin = false, do_scan = false;
 		int error = 0;
 
 		lck_mtx_lock(&sta_lock);
 		while (sta_ops == NULL || !(asked_power || asked_leave || asked_join || asked_scan)) {
-			lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT);
+			if (rejoin_at != 0 && sta_ops != NULL && mach_absolute_time() >= rejoin_at) {
+				rejoin_at = 0;
+				if (standing.ssid_length != 0 && sta_on) {
+					asked_join_what = standing;
+					asked_join = rejoining = true;
+				}
+				continue;
+			}
+			if (rejoin_at != 0) {
+				lck_mtx_sleep_deadline(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT, rejoin_at);
+			} else {
+				lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT);
+			}
 		}
 		ops = sta_ops;
 		/* one thing at a time, in the order that makes sense when several wait */
@@ -91,6 +127,8 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			asked_leave = false;
 		} else if (asked_join) {
 			do_join = true;
+			do_rejoin = rejoining;
+			rejoining = false;
 			join = asked_join_what;
 			bzero(&asked_join_what, sizeof(asked_join_what));
 			asked_join = false;
@@ -139,7 +177,18 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 				asked_join = true;
 			}
 			bzero(&fallback, sizeof(fallback));
+			if (error == 0) {
+				rejoin_tries = 0;
+			} else if (do_rejoin) {
+				rejoin_later();
+			}
 			lck_mtx_unlock(&sta_lock);
+			if (do_rejoin && error == 0) {
+				hakios_wifi_tell("wifi: THE NETWORK OF THE FILE IS JOINED AGAIN after it was lost\n");
+			} else if (do_rejoin) {
+				hakios_wifi_tell("wifi: the network of the file was lost and is not joined again yet (%d): it is tried "
+				    "again later\n", error);
+			}
 		} else if (do_scan) {
 			error = ops->scan(&scan);
 			lck_mtx_lock(&sta_lock);
@@ -206,6 +255,12 @@ void
 hakios_sta_lost(int error)
 {
 	hakios_apple80211_event(HAKIOS_STA_LINK, error != 0 ? error : ECONNRESET);
+	lck_mtx_lock(&sta_lock);
+	if (sta_ops != NULL) {
+		rejoin_later();
+	}
+	lck_mtx_unlock(&sta_lock);
+	thread_wakeup((event_t)&sta_ops);
 }
 
 /* ---- who wants a network ------------------------------------------------------------------------------- */
@@ -246,6 +301,7 @@ hakios_sta_ask_power(bool on)
 	asked_power_on = on;
 	if (!on) {
 		asked_scan = asked_join = asked_leave = false;
+		rejoin_at = 0;
 	}
 	lck_mtx_unlock(&sta_lock);
 	thread_wakeup((event_t)&sta_ops);
@@ -292,6 +348,7 @@ hakios_sta_ask_join(const struct hakios_sta_join *what)
 		fallback = standing;
 	}
 	bzero(&standing, sizeof(standing));     /* (whoever asks for a network now has the say) */
+	rejoin_at = 0;
 	asked_join_what = *what;
 	asked_join = true;
 	asked_leave = false;
@@ -310,6 +367,7 @@ hakios_sta_ask_leave(void)
 	}
 	asked_leave = true;
 	asked_join = false;
+	rejoin_at = 0;
 	bzero(&asked_join_what, sizeof(asked_join_what));
 	bzero(&fallback, sizeof(fallback));
 	lck_mtx_unlock(&sta_lock);

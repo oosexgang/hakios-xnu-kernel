@@ -16,6 +16,7 @@
  *                         title if there is one, and the answer's own "x-" headers -- where Apple's
  *                         services say what they decided (X-Set-Apple-Store-Front; rc.jobs.store)
  *   reach NAME            what SCNetworkReachability says: the question applications ask first
+ *   nwpath SECONDS        what Network.framework says about the path, and again on every change
  *   wait SECONDS
  *   wifi                  what the job com.hakios.wifi runs in every image: if the kernel was
  *                         started with wifi=1, wait for the radio's interface (en0) to appear,
@@ -25,6 +26,15 @@
  *                         state: State:/Network/Service/.../IPv4, State:/Network/Interface/en0/...,
  *                         State:/Network/Global/IPv4 (the key, whether it is there, the names in it;
  *                         no addresses)
+ *   announce IF SECONDS   for ever: every SECONDS, an ARP announcement of IF's IPv4 address (a request
+ *                         for its own address, to everybody), through /dev/bpf. A computer that has
+ *                         asked for the phone's address and heard nothing takes the answer from it
+ *                         (Linux keeps what an ARP from an address says if it was asking for that
+ *                         address). For networks whose access point does not pass what others send to
+ *                         everybody on to the phone -- a router that keeps its 2.4 GHz clients'
+ *                         broadcasts from its 5 GHz ones -- where "ssh" from such a computer says "no
+ *                         route to host" although the phone is there. It is also something the phone
+ *                         sends now and then, for an access point that sends idle stations away.
  *   wrongjoin             ask the radio to join the network it is on with a passphrase that is
  *                         wrong on purpose, through the request wifid uses (Apple80211's
  *                         ASSOCIATE), and say what the kernel answers: Apple80211's result number
@@ -46,6 +56,7 @@
  */
 #import <Foundation/Foundation.h>
 #include <SystemConfiguration/SCNetworkReachability.h>
+#include <Network/Network.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
@@ -59,9 +70,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+/* not in the Darwin SDK's headers (net/bpf.h): two requests of the packet filter's */
+#define BIOCSETIF       _IOW('B', 108, struct ifreq)
+#define BIOCSHDRCMPLT   _IOW('B', 117, unsigned int)
 
 /* not in the Darwin SDK's headers, in the libraries all the same */
 extern mach_port_t bootstrap_port;
@@ -545,6 +561,109 @@ wrongjoin(void)
 	close(s);
 }
 
+/* IF's link address and IPv4 address; false if it has not both */
+static bool
+link_and_address(const char *interface, uint8_t mac[6], struct in_addr *address)
+{
+	struct ifaddrs *list, *a;
+	bool have_mac = false, have_address = false;
+
+	if (getifaddrs(&list) != 0) {
+		return false;
+	}
+	for (a = list; a != NULL; a = a->ifa_next) {
+		if (a->ifa_addr == NULL || strcmp(a->ifa_name, interface) != 0) {
+			continue;
+		}
+		if (a->ifa_addr->sa_family == AF_LINK && ((struct sockaddr_dl *)a->ifa_addr)->sdl_alen == 6) {
+			memcpy(mac, LLADDR((struct sockaddr_dl *)a->ifa_addr), 6);
+			have_mac = true;
+		} else if (a->ifa_addr->sa_family == AF_INET && !have_address) {
+			*address = ((struct sockaddr_in *)a->ifa_addr)->sin_addr;
+			have_address = true;
+		}
+	}
+	freeifaddrs(list);
+	return have_mac && have_address;
+}
+
+static void
+announce(const char *interface, double period)
+{
+	struct ifreq request;
+	unsigned int complete = 1;
+	unsigned sent = 0;
+	int bpf = -1;
+
+	for (int n = 0; n < 16 && bpf < 0; n++) {
+		char path[16];
+
+		snprintf(path, sizeof(path), "/dev/bpf%d", n);
+		bpf = open(path, O_WRONLY);
+	}
+	memset(&request, 0, sizeof(request));
+	strlcpy(request.ifr_name, interface, sizeof(request.ifr_name));
+	if (bpf < 0 || ioctl(bpf, BIOCSETIF, &request) != 0 || ioctl(bpf, BIOCSHDRCMPLT, &complete) != 0) {
+		printf("net_test: announce %s: no packet filter to send through (%s)\n", interface, strerror(errno));
+		return;
+	}
+	printf("net_test: announce %s: its address to everybody every %.0f s, from now on\n", interface, period);
+	for (;;) {
+		uint8_t frame[42], mac[6];
+		struct in_addr address;
+
+		if (link_and_address(interface, mac, &address)) {
+			memset(frame, 0xff, 6);                         /* to everybody ... */
+			memcpy(frame + 6, mac, 6);                      /* ... from us: an ARP */
+			frame[12] = 0x08, frame[13] = 0x06;
+			frame[14] = 0, frame[15] = 1;                   /* Ethernet's addresses ... */
+			frame[16] = 0x08, frame[17] = 0;                /* ... for IPv4's */
+			frame[18] = 6, frame[19] = 4;
+			frame[20] = 0, frame[21] = 1;                   /* a request, */
+			memcpy(frame + 22, mac, 6);                     /* from us, */
+			memcpy(frame + 28, &address, 4);
+			memset(frame + 32, 0, 6);
+			memcpy(frame + 38, &address, 4);                /* for our own address: an announcement */
+			if (write(bpf, frame, sizeof(frame)) == (ssize_t)sizeof(frame) && sent++ == 0) {
+				printf("net_test: announce %s: the first went out (%s)\n", interface, inet_ntoa(address));
+			}
+		}
+		usleep((useconds_t)(period * 1e6));
+	}
+}
+
+/*
+ * nwpath SECONDS: what Network.framework says about the path, which is a different question from
+ * SCNetworkReachability's and is the one some frameworks ask before they fetch anything. The App Store's
+ * page engine watches it (JetEngine.NWPathNetworkInquiry.didChangeNotification is posted in the App Store
+ * on this port), and an engine that believes there is no path asks for nothing and leaves "Loading..." on
+ * the screen -- which is the screen this port shows. Said once at the start and again on every change.
+ */
+static void
+nwpath(double seconds_to_watch)
+{
+	nw_path_monitor_t monitor = nw_path_monitor_create();
+	static const char *const status_names[] = { "invalid", "satisfied", "unsatisfied", "satisfiable" };
+
+	nw_path_monitor_set_queue(monitor, dispatch_get_main_queue());
+	nw_path_monitor_set_update_handler(monitor, ^(nw_path_t path) {
+		nw_path_status_t status = nw_path_get_status(path);
+		const char *name = (unsigned)status < 4 ? status_names[(unsigned)status] : "?";
+
+		printf("net_test: nwpath %s (%d): wifi %d, wired %d, cellular %d, loopback %d; "
+		    "IPv4 %d, IPv6 %d, DNS %d; expensive %d, constrained %d\n", name, (int)status,
+		    nw_path_uses_interface_type(path, nw_interface_type_wifi),
+		    nw_path_uses_interface_type(path, nw_interface_type_wired),
+		    nw_path_uses_interface_type(path, nw_interface_type_cellular),
+		    nw_path_uses_interface_type(path, nw_interface_type_loopback),
+		    nw_path_has_ipv4(path), nw_path_has_ipv6(path), nw_path_has_dns(path),
+		    nw_path_is_expensive(path), nw_path_is_constrained(path));
+	});
+	nw_path_monitor_start(monitor);
+	[[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:seconds_to_watch]];
+	nw_path_monitor_cancel(monitor);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -578,12 +697,17 @@ main(int argc, char **argv)
 				fetch(argv[++i]);
 			} else if (strcmp(step, "reach") == 0 && i + 1 < argc) {
 				reach(argv[++i]);
+			} else if (strcmp(step, "nwpath") == 0 && i + 1 < argc) {
+				nwpath(atof(argv[++i]));
 			} else if (strcmp(step, "wait") == 0 && i + 1 < argc) {
 				usleep((useconds_t)(atof(argv[++i]) * 1e6));
 			} else if (strcmp(step, "wifi") == 0) {
 				wifi();
 			} else if (strcmp(step, "watch") == 0 && i + 1 < argc) {
 				watch(atof(argv[++i]));
+			} else if (strcmp(step, "announce") == 0 && i + 2 < argc) {
+				announce(argv[i + 1], atof(argv[i + 2]));
+				i += 2;
 			} else if (strcmp(step, "wrongjoin") == 0) {
 				wrongjoin();
 			} else {

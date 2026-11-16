@@ -6,7 +6,7 @@
  * ioctls still: SIOCGA80211 and SIOCSA80211 on any socket, with a struct apple80211req that
  * names the interface, a request type, a value, and a buffer in the caller's memory
  * (IO80211.framework: Apple80211Get/Set and their kin all end there). XNU hands an interface
- * ioctl it does not know to the interface, so they arrive in bsd/dev/board/net.c, which
+ * ioctl it does not know to the interface, so they arrive in drivers/net/hakios_net.c, which
  * passes them here when its link is a radio.
  *
  * What is asked is answered from the station boundary (sys/board/sta.h): the radio's power,
@@ -195,7 +195,7 @@ _Static_assert(sizeof(struct apple80211_scan_result) == 1164 && offsetof(struct 
 enum { EVENT_POWER_CHANGED = 1, EVENT_SSID_CHANGED = 2, EVENT_BSSID_CHANGED = 3, EVENT_LINK_CHANGED = 4, EVENT_ASSOC_DONE = 9,
        EVENT_SCAN_DONE = 10 };
 
-static const char interface_name[16] = "en0";   /* (bsd/dev/board/net.c makes one interface, and that is its name) */
+static const char interface_name[16] = "en0";   /* (drivers/net/hakios_net.c makes one interface, and that is its name) */
 
 static LCK_GRP_DECLARE(apple80211_lock_group, "hakios-apple80211");
 static LCK_MTX_DECLARE(apple80211_lock, &apple80211_lock_group);
@@ -630,7 +630,7 @@ post(uint32_t code, const void *data, uint32_t length)
 	kev_post_msg(&message);
 }
 
-/* What the station side says has happened (bsd/dev/board/sta.c calls this, on its thread or the station's). */
+/* What the station side says has happened (drivers/wifi/hakios_sta.c calls this, on its thread or the station's). */
 void
 hakios_apple80211_event(enum hakios_sta_event event, int status)
 {

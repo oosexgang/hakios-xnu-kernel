@@ -5,6 +5,7 @@ alone. Run in a small repository of its own."""
 import contextlib
 import importlib.util
 import io
+import os
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# The tests describe packages of their own; those of the machine they run on (HAKIOS_DEVICES) are not theirs.
+os.environ.pop('HAKIOS_DEVICES', None)
 spec = importlib.util.spec_from_file_location('device', ROOT / 'tools/device.py')
 device = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(device)

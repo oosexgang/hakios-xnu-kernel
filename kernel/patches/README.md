@@ -51,6 +51,9 @@ a comment beside it in the code. This page is the map.
 - No trust-cache or Image4 runtime: the AMFI and Sandbox stand-ins register instead
   (`bsd/kern/kern_minimac.c` in the overlay).
 - Panics, fatal user exceptions and unrecoverable `brk` traps are written to the loader's log.
+- No kext and no dext is ever loaded (`libkern/c++/OSKext.cpp`): backtraces that name the kexts in them
+  (trap telemetry) work with no kext summaries, and there is no IOKit daemon to wait for, so the
+  registry becomes quiet once matching is done.
 
 ## 0005-vm: the shared region and the dyld pager
 
