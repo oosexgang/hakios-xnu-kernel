@@ -22,7 +22,7 @@ USRC=$(cd "$ROOT/../../userland/userland/src" && pwd)    # (drawable.m and board
 B=$ROOT/build/metal-linux
 LLVM=${LLVM:-/usr/lib/llvm-20/bin}
 THEOS=${THEOS:-$HOME/theos}
-SDK=${SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
+SDK=${SDK:-${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}}
 LDID=${LDID:-$(command -v ldid || echo "$THEOS/toolchain/linux/iphone/bin/ldid")}
 for need in "$LLVM/clang" "$LLVM/llvm-as" "$LLVM/ld64.lld" "$SDK/usr/lib/libSystem.tbd"; do
 	[ -e "$need" ] || { echo "mk-metal-linux.sh: $need is missing (LLVM=, THEOS=, SDK=)"; exit 1; }

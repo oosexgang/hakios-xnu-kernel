@@ -49,7 +49,7 @@ SHA256=592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ROOT/../../userland/xnu-env.sh"
 B=$ROOT/../../userland/xnu-deps/build/mesa
-SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: as kernel/build.sh takes it)
 CC=$ROOT/../../userland/xnu-deps/host/bin/xnu-clang
 mkdir -p "$B/out"
 cd "$B"

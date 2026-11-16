@@ -82,7 +82,7 @@ HAKIOS_METAL_IOS_MESA_LIBS = $(IOS_MESA_BUILD)/src/compiler/air/libair.a $(addpr
 HAKIOS    ?= ../workspace
 XNUDEPS   ?= $(abspath $(HAKIOS))/xnu-deps
 IOS_ARCH  ?= arm64
-SDK       ?= $(abspath $(firstword $(wildcard $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
+SDK       ?= $(abspath $(firstword $(wildcard $(DARWIN_SDK) $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
 IOS_CXX   ?= $(XNUDEPS)/host/bin/xnu-clang++ -arch $(IOS_ARCH) -isysroot $(SDK) -miphoneos-version-min=16.0
 
 # --- the smoke program ----------------------------------------------------------

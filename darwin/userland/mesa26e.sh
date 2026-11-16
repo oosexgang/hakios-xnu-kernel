@@ -7,7 +7,7 @@ DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository and
 DR=${DR:-$DK/darwin-renoir}
 source $DR/xnu-env.sh
 B=$DR/xnu-deps/build/mesa
-SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: as kernel/build.sh takes it)
 CC=$DR/xnu-deps/host/bin/xnu-clang
 cd $B
 [ -d mesa-26.2.5 ] || { echo "run darwin-renoir tools/mk-mesa.sh once first"; exit 1; }

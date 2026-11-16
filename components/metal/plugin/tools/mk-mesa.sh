@@ -25,7 +25,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 : "${THEOS:?set THEOS (source kernel/env.sh)}"
 IOS_ARCH=${IOS_ARCH:-arm64e}
 CC=$XNUDEPS/host/bin/xnu-clang
-SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: as kernel/build.sh takes it)
 [ -x "$CC" ] || { echo "mk-mesa.sh: no $CC: build the kernel first (kernel/build.sh)" >&2; exit 1; }
 [ -d "$SDK" ] || { echo "mk-mesa.sh: no $SDK" >&2; exit 1; }
 B=$XNUDEPS/build/mesa

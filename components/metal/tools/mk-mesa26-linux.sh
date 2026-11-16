@@ -24,7 +24,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 B=$ROOT/build/mesa26-linux
 LLVM=${LLVM:-/usr/lib/llvm-20/bin}
 THEOS=${THEOS:-$HOME/theos}
-SDK=${SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
+SDK=${SDK:-${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}}
 INSTALL_DIR=${INSTALL_DIR:-/hakios/lib}
 LDID=${LDID:-$(command -v ldid || echo "$THEOS/toolchain/linux/iphone/bin/ldid")}
 for need in "$LLVM/clang" "$LLVM/ld64.lld" "$SDK/usr/lib/libSystem.tbd"; do
