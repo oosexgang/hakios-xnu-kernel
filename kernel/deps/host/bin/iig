@@ -28,7 +28,7 @@ fi
 
 # 2. Fallback: a pre-generated header.
 src="$(find "$SDKH" -name "$name.h" -path '*DriverKit*' | head -1)"
-[ -z "$src" ] && src="$(find "$SDKH" -name "$name.h" | xargs grep -l 'iig(DriverKit' 2>/dev/null | head -1)"
+[ -z "$src" ] && src="$(find "$SDKH" -name "$name.h" -print0 | xargs -0 grep -l 'iig(DriverKit' 2>/dev/null | head -1)"
 if [ -z "$src" ]; then
   XC="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
   [ -n "$XC" ] && src="$(find "$XC/System/Library/Frameworks/Kernel.framework/Versions/A/Headers/DriverKit" "$XC/System/Library/Frameworks/DriverKit.framework/Versions/A/Headers" -name "$name.h" 2>/dev/null | head -1)"
