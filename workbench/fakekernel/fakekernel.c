@@ -509,8 +509,30 @@ lck_mtx_sleep_deadline(struct fake_lock *lock, int flags __unused, event_t event
 uint32_t fake_recommended_cores = ~0u;
 void sched_perfcontrol_update_recommended_cores(uint32_t recommended_cores) { fake_recommended_cores = recommended_cores; }
 
-/* how long a core has been idle (the kernel's own counter, patches/0002): not kept here, so no core is ever said to be */
-bool ml_cpu_idle_time(int cpu_id __unused, uint64_t *idle __unused) { return false; }
+/*
+ * How long a core has been idle (the kernel's own counter, patches/0002): not kept unless a test says
+ * (fake_idle_kept), and then each core is fake_busy_pct[] busy, its idle time growing by the rest of each
+ * moment since it was last asked.
+ */
+bool fake_idle_kept;
+volatile unsigned fake_busy_pct[MAX_CPUS];
+
+bool
+ml_cpu_idle_time(int cpu_id, uint64_t *idle)
+{
+	static uint64_t idle_of[MAX_CPUS], asked_at[MAX_CPUS];
+	uint64_t now = mach_absolute_time();
+
+	if (!fake_idle_kept || cpu_id < 0 || cpu_id >= MAX_CPUS) {
+		return false;
+	}
+	if (asked_at[cpu_id] != 0) {
+		idle_of[cpu_id] += (now - asked_at[cpu_id]) * (100 - (fake_busy_pct[cpu_id] > 100 ? 100 : fake_busy_pct[cpu_id])) / 100;
+	}
+	asked_at[cpu_id] = now;
+	*idle = idle_of[cpu_id];
+	return true;
+}
 
 void
 IOSleep(unsigned int milliseconds)
@@ -656,7 +678,7 @@ unsigned fake_delay_divisor = 1;
 
 /* ---- the cores ---------------------------------------------------------------------------------- */
 
-unsigned fake_cores = 1, fake_core;
+unsigned fake_cores = 1, fake_core, fake_small_cores;
 
 const ml_topology_info_t *
 ml_get_topology_info(void)
@@ -666,6 +688,7 @@ ml_get_topology_info(void)
 	topology.num_cpus = fake_cores > MAX_CPUS ? MAX_CPUS : fake_cores;
 	for (unsigned i = 0; i < topology.num_cpus; i++) {
 		topology.cpus[i].phys_id = i << 8;
+		topology.cpus[i].l2_access_penalty = (fake_small_cores >> i) & 1;
 	}
 	return &topology;
 }

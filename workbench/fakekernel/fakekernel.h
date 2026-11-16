@@ -318,6 +318,10 @@ const ml_topology_info_t *ml_get_topology_info(void);
 bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 extern unsigned fake_cores;             /* how many cores the kernel has (1) */
 extern unsigned fake_core;              /* the core "this" code runs on (0) */
+extern unsigned fake_small_cores;       /* the cores with an L2 access penalty, the small ones, by number (none) */
+extern bool fake_idle_kept;             /* ml_cpu_idle_time() answers (false: it does not, as no core is said idle) */
+extern volatile unsigned fake_busy_pct[MAX_CPUS];  /* ... and each core is that busy from the moment it is set */
+extern uint32_t fake_recommended_cores; /* the cores the scheduler was last told to prefer (all) */
 #define __builtin_arm_rsr64(name)       ((uint64_t)fake_core << 8)
 
 /*
