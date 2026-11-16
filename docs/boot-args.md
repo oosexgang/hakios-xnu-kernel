@@ -263,7 +263,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for Darwin until the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /… |
+| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for Darwin until the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's, components/audio/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written… |
 | `haptic_effect` | and one short effect played (haptic_effect=N, default 1: Android's effect 0) |
 
 ### `bsd/dev/board/mic.c`

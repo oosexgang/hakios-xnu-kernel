@@ -4,7 +4,7 @@
  *
  * On a phone whose haptics are "closed-loop" (MobileGestalt's DeviceSupportsClosedLoopHaptics, the
  * device tree's /product/haptics: what makes iOS play its haptics as waveforms on the audio device
- * "Actuator", which is ours: userland/src/audio_plugin.c), audiomxd starts its haptic server --
+ * "Actuator", which is ours: components/audio/audio_plugin.c), audiomxd starts its haptic server --
  * the listener of com.apple.audio.hapticd, AudioToolbox's -[AVHapticServer init] -- only once the
  * haptics' VAD is routed to the actuator and an IOKit service of the class AHSFirmwareReadyNotifier
  * is there (HapticServerManager::Initialize, inside _AudioToolboxServerInit: an

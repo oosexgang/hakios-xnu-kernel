@@ -226,14 +226,14 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -o obj/rwtouch src/rwtouch.c
 		# the kernel's thermal pressure passed on to Darwin (src/thermald.c)
 		$DYN -o obj/thermald src/thermald.c
-		$DYN -framework CoreFoundation -framework AudioToolbox -framework AVFoundation -lobjc -o obj/sound_test src/sound_test.c
+		$DYN -framework CoreFoundation -framework AudioToolbox -framework AVFoundation -lobjc -o obj/sound_test ../../components/audio/sound_test.c
 		$DYN -framework CoreFoundation -lMobileGestalt -o obj/mg_test src/mg_test.c
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/torch_test src/torch_test.c
 		$DYN -O2 -o obj/camera_test ../../components/camera/src/camera_test.c ../../components/camera/src/camera_isp.c
 		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest ../../components/camera/src/camera_avtest.m
 		# (the microphone as an application records: allowed to, by an entitlement, if ldid is there)
-		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/record_test src/record_test.c &&
-			{ ${LDID:-ldid} -Ssrc/record_test.entitlements obj/record_test 2>/dev/null ||
+		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/record_test ../../components/audio/record_test.c &&
+			{ ${LDID:-ldid} -S../../components/audio/record_test.entitlements obj/record_test 2>/dev/null ||
 			  echo "build.sh: no ldid: record_test is unsigned, and the system may not let it record"; }
 		$DYN -o obj/cpu_test src/cpu_test.c
 		$DYN -framework CoreFoundation -framework IOSurface -o obj/cow_test src/cow_test.c
@@ -352,7 +352,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			-framework IOKit -framework Security -lMobileGestalt \
 			-o obj/libhakios-fairplay.dylib ../../components/apple-id/first-generation/inject_fairplay.c
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
-		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
+		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio ../../components/audio/audio_plugin.c
 		# The same driver again as a loadable bundle, which is the form Metal's own
 		# discovery wants: step 3 builds the path /System/Library/Extensions/<name>.bundle
 		# and opens it with NSBundle, and -[NSBundle classNamed:] then tests that the class
@@ -513,7 +513,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 	if [ -f obj/HakiosAudio ]; then
 		mkdir -p root/lib/HakiosAudio.driver
 		cp obj/HakiosAudio root/lib/HakiosAudio.driver/
-		cp src/audio_plugin.plist root/lib/HakiosAudio.driver/Info.plist
+		cp ../../components/audio/audio_plugin.plist root/lib/HakiosAudio.driver/Info.plist
 	fi
 	# The Metal plug-in bundle, flat and unsigned -- which is enough here: AMFI in this
 	# kernel is a stand-in that accepts every signature (libkern/amfi/miniamfi.c), and

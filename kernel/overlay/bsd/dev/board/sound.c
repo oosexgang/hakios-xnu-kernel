@@ -33,7 +33,7 @@
  *            level is what is set on the plug-in's volume control (ioctl HAKIOS_AUDIO_SET_VOLUME):
  *            so far under sound_below, which stays the loudest, and at 0 they stay off. (Darwin sets
  *            that control only once, to the top, and applies its volume to the samples itself --
- *            see userland/src/audio_plugin.c --; at its volume 0 it writes silence, and the
+ *            see components/audio/audio_plugin.c --; at its volume 0 it writes silence, and the
  *            amplifiers stay off for that too.) On their way the samples go through the speakers'
  *            guard (board/guard.c), in place of the DSP's speaker protection that Android has:
  *            sound_gain eighths of a dB of gain (default and most 96, 12 dB: Darwin's own processing

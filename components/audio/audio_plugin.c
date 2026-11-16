@@ -65,7 +65,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "board/audio.h"
+#include "../../userland/userland/src/board/audio.h"
 
 /* ---- the AudioServerPlugIn interface (macOS: CoreAudio/AudioServerPlugIn.h, AudioHardwareBase.h) ---- */
 

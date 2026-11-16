@@ -57,7 +57,7 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios-layers.dylib -framework Cor
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/userland/inject_statusbar.c" "$RN/userland/uncaught.c"
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
-$DYN -DHAKIOS_IOS27 -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$US/src/audio_plugin.c"
+$DYN -DHAKIOS_IOS27 -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$RN/../components/audio/audio_plugin.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-app.dylib -lobjc -o "$O/libhakios-app.dylib" "$O/src/inject_app.c"
 # the tweak loader of the package manager's prefix (userland/src/inject_tweaks.c, as on 16.5): SpringBoard's library
 # opens it when there is a /var/jb (inject_sb.c, load_tweaks), and etc/inject.conf names it for Settings

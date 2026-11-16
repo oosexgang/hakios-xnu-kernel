@@ -1439,7 +1439,7 @@ dsp_off(void)
 
 /*
  * What the microphone hears goes into a ring, and /dev/hakios-mic gives it to Darwin's audio server
- * (HakiosAudio.driver's device "Codec", userland/src/audio_plugin.c): 16-bit samples, one channel,
+ * (HakiosAudio.driver's device "Codec", components/audio/audio_plugin.c): 16-bit samples, one channel,
  * 48 kHz. The path is up only while the device is open (the audio server opens it when its input
  * starts and closes it when it stops), and a read never waits: it gives what has come, keeping the
  * reader about 40 ms behind the DSP (it comes in 20 ms periods), and nothing until that much is

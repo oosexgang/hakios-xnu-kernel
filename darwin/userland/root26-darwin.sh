@@ -49,11 +49,11 @@ $DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
 # the flashlight as an application reaches it, through AVFlashlight (rc.jobs.torch; darwin/userland/torch_test.c)
 $DYN -framework CoreFoundation -lobjc -o "$OBJ/torch_test" "$RN/userland/torch_test.c"
 "$PACSTRIP" macho "$OBJ/torch_test" "$OBJ/torch_test.strip" > /dev/null && mv "$OBJ/torch_test.strip" "$OBJ/torch_test"
-# the microphone as an application records from it, through AVAudioRecorder (userland/src/record_test.c: SECONDS; no
+# the microphone as an application records from it, through AVAudioRecorder (components/audio/record_test.c: SECONDS; no
 # sound is played), with the entitlement TCC asks of a recorder
-$DYN -framework CoreFoundation -framework Foundation -framework AVFAudio -lobjc -o "$OBJ/record_test" "$US/src/record_test.c"
+$DYN -framework CoreFoundation -framework Foundation -framework AVFAudio -lobjc -o "$OBJ/record_test" "$RN/../components/audio/record_test.c"
 "$PACSTRIP" macho "$OBJ/record_test" "$OBJ/record_test.strip" > /dev/null && mv "$OBJ/record_test.strip" "$OBJ/record_test"
-"$LDID" -S"$US/src/record_test.entitlements" "$OBJ/record_test"
+"$LDID" -S"$RN/../components/audio/record_test.entitlements" "$OBJ/record_test"
 
 # --- the tree ----------------------------------------------------------------------------------------
 rm -rf "$T"
@@ -160,7 +160,7 @@ fi
 # the system image links /System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver to it (mkimage26.py)
 mkdir -p "$T/lib/HakiosAudio.driver"
 cp "$OBJ/HakiosAudio" "$T/lib/HakiosAudio.driver/HakiosAudio"
-cp "$US/src/audio_plugin.plist" "$T/lib/HakiosAudio.driver/Info.plist"
+cp "$RN/../components/audio/audio_plugin.plist" "$T/lib/HakiosAudio.driver/Info.plist"
 # the Metal plug-in (darwin/userland/metal.sh), when it has been built: Metal opens it with boot-arg metal=1 through the
 # system image's /System/Library/Extensions/HakiosMetal.bundle (mkimage26.py)
 if [ -f "$OBJ/HakiosMetal" ]; then

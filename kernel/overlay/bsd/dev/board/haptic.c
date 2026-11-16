@@ -31,7 +31,7 @@
  *   haptic=4   ... and one short effect played (haptic_effect=N, default 1: Android's effect 0)
  *   haptic=5   ... configured and loaded as for 3, and instead of the effect the motor for Darwin until
  *              the run ends: what Darwin plays on its "Actuator" device (the HAL plug-in's,
- *              userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics'
+ *              components/audio/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics'
  *              patterns, UIKit's feedbacks) is written to /dev/hakios-haptic as samples of one
  *              channel, and the motor plays Android's waveforms by it: each waveform of Darwin's (a
  *              stretch of samples after a pause) a short tap (waveform 1), and one that goes on for
