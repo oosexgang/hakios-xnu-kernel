@@ -1,6 +1,7 @@
 #!/bin/bash
 # The checks of form, for every file the repository tracks:
-#   - every shell script parses (bash -n), every Python script parses and passes pyflakes' checks (ruff or pyflakes)
+#   - every shell script parses (bash -n), every Python script parses and passes pyflakes' checks (ruff or pyflakes),
+#     and so does the Python in the shell scripts' quoted here-documents (tools/heredoc-python.py)
 #   - every shell script of the repository passes shellcheck (kernel/lx/build.sh apart)
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components pins what the fetching scripts pin (tools/components.py)
@@ -40,11 +41,17 @@ else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"
 fi
 
+# the Python the shell scripts carry in quoted here-documents (bench's, root26-darwin.sh's, ...): parsed, and
+# checked with the files below, each as a file of its own in a directory that goes away
+heredocs=$(mktemp -d)
+trap 'rm -rf "$heredocs"' EXIT
+mapfile -t shell_scripts < <(git ls-files '*.sh' bench)
+tools/heredoc-python.py --flakes "$heredocs" "${shell_scripts[@]}" || failed=1
 # pyflakes' checks (names undefined, imported or assigned and never used), by ruff or pyflakes where there is one
 if command -v ruff > /dev/null; then
-	git ls-files -z '*.py' | xargs -0 ruff check --select F --no-cache --quiet || failed=1
+	{ git ls-files -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 ruff check --select F --no-cache --quiet || failed=1
 elif python3 -m pyflakes --version > /dev/null 2>&1; then
-	git ls-files -z '*.py' | xargs -0 python3 -m pyflakes || failed=1
+	{ git ls-files -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 python3 -m pyflakes || failed=1
 else
 	echo "lint: no ruff or pyflakes on this machine: the Python scripts were only parsed"
 fi
