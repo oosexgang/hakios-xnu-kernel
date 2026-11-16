@@ -18,3 +18,7 @@ would otherwise stop, and nothing else.
 `darwin/userland/root26-darwin.sh` puts them into the daemons: STOREFRONT=1 the store's, SIGNIN=1 akd's.
 `darwin/userland/rc.jobs.store` is the job that starts the App Store and watches it.
 
+## The keychain under it
+
+The keychain itself works because the kernel answers for the Secure Enclave's keystore: see
+[`../sep`](../sep).

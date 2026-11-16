@@ -313,8 +313,8 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			{ ${LDID:-ldid} -Ssrc/battery_test.entitlements obj/battery_test 2>/dev/null ||
 			  echo "build.sh: no ldid: battery_test is unsigned, and SpringBoard will not open URLs for it"; }
 		# (the keychain answers only a program that has a keychain access group: signed with one, if ldid is there)
-		$DYN -framework CoreFoundation -framework Security -o obj/keychain_test src/keychain_test.c &&
-			{ ${LDID:-ldid} -Ssrc/keychain_test.entitlements obj/keychain_test 2>/dev/null ||
+		$DYN -framework CoreFoundation -framework Security -o obj/keychain_test ../../components/sep/keychain_test.c &&
+			{ ${LDID:-ldid} -S../../components/sep/keychain_test.entitlements obj/keychain_test 2>/dev/null ||
 			  echo "build.sh: no ldid: keychain_test is unsigned, and the keychain will refuse it (-34018)"; }
 		# (and wifid's way of keeping a network's password, by wifid's name: src/wifipw_test.c)
 		$DYN -framework CoreFoundation -framework Security -o obj/wifipw_test src/wifipw_test.c &&
