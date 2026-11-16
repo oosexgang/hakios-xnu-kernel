@@ -2,6 +2,7 @@
 
 | Document | What it answers |
 | --- | --- |
+| [layout.md](layout.md) | Where everything is: each directory, and which directory of the kernel's tree it is. |
 | [architecture.md](architecture.md) | How the boot chain, the kernel, the loader and Darwin user space fit together; what is data, what is a driver, what is the same for every device; what is not in the repository. |
 | [porting.md](porting.md) | How to bring the project up on another Qualcomm phone, step by step. |
 | [building.md](building.md) | What each build needs and produces; what has been verified and where. |
@@ -32,6 +33,6 @@ Next to the code:
 | [../arch/arm64/boot/README.md](../arch/arm64/boot/README.md) | The loader. |
 | [../darwin/README.md](../darwin/README.md) | What Darwin's user space needs: each library and tool, and what each needs. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
-| [../components](../components) | Everything taken from elsewhere, at the exact version, with its licence. |
+| [../components/upstream.dts](../components/upstream.dts) | Everything taken from elsewhere, at the exact version, with its licence. |
 
 `base/README.md` and `base/docs/` describe the first generation (Darwin 16.5 on the first phone and QEMU).
