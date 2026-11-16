@@ -1,3 +1,12 @@
+Valid-License-Identifier: MIT
+SPDX-URL: https://spdx.org/licenses/MIT.html
+Usage-Guide:
+  The licence of what this repository adds anew: the tools, the tests, the device packages' format,
+  the documentation, and the files that say so (NOTICE.md has the whole list). To use it, put the
+  following SPDX tag/value pair into a comment at the top of the file:
+    SPDX-License-Identifier: MIT
+License-Text:
+
 MIT License
 
 Copyright (c) 2026 the hakios-arm64e-renoir contributors

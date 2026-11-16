@@ -1,3 +1,12 @@
+Valid-License-Identifier: APSL-2.0
+SPDX-URL: https://spdx.org/licenses/APSL-2.0.html
+Usage-Guide:
+  Apple's licence: the kernel's release (kernel/UPSTREAM), with kernel/overlay and kernel/patches, which
+  extend and change it; and HakiOS's, whose files keep it where they went (base/, userland/, the loader
+  in arch/arm64/boot, kernel/deps, and the files of components/ that came from userland/). A file of
+  Apple's keeps Apple's licence header as Apple wrote it. NOTICE.md has the whole list.
+License-Text:
+
 APPLE PUBLIC SOURCE LICENSE
 Version 2.0 - August 6, 2003
 
