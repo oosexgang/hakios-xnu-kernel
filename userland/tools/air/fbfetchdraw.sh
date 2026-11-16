@@ -9,5 +9,9 @@ LLVM=${LLVM:-/usr/lib/llvm-20/bin}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 "$LLVM/llvm-as" -o "$WORK/fbfetch.bc" "$ROOT/tools/air/fbfetch.ll"
+# the library takes a module's first entry point: fbFetchHalf first, for the second case
+sed 's/^!air.fragment = !{!3, !8}/!air.fragment = !{!8, !3}/' "$ROOT/tools/air/fbfetch.ll" > "$WORK/fbfetch_half.ll"
+"$LLVM/llvm-as" -o "$WORK/fbfetch_half.bc" "$WORK/fbfetch_half.ll"
 cc -O1 -I"$ROOT/tools/mesa/air" -o "$WORK/fbfetchdraw" "$ROOT/tools/air/fbfetchdraw.c" -L"$LIB" -lhakios-air -Wl,-rpath,"$LIB"
 RWA_SOFTWARE=1 "$WORK/fbfetchdraw" "$WORK/fbfetch.bc"
+RWA_SOFTWARE=1 "$WORK/fbfetchdraw" "$WORK/fbfetch_half.bc" half
