@@ -13,6 +13,7 @@ trap 'rm -rf "$B"' EXIT
 # (the kernel's files at their paths in its tree: tools/kernel-view.sh)
 "$HERE/../../tools/kernel-view.sh" "$B/kernel"
 K=$B/kernel/bsd
+# shellcheck disable=SC2054  # (address,undefined is one argument)
 FLAGS=(-std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -pthread)
 if [ -n "${ATH11K:-}" ] && [ -f "$ATH11K/qmi.c" ]; then
 	"$HERE/extract.py" "$ATH11K" > "$B/tables.inc"
