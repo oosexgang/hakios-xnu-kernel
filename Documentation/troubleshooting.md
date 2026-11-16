@@ -77,9 +77,10 @@ the two ways of working on it.
 
 ## Building
 
-What each build needs is in [building.md](building.md). The full kernel build has not been repeated
-since the restructuring: if it fails, look first at steps 1 and 2 of `kernel/build.sh` and at the ten
-files `kernel/syntax-check.sh` cannot check ([building.md](building.md), "What has been verified, and where").
+What each build needs is in [building.md](building.md). The kernel, with LLVM 20's tools and the SDK outside
+theos, and the Darwin 27 libraries and small image were built from this layout (arch/, fs/, components/).
+If the kernel's build fails, look first at steps 1 and 2 of `kernel/build.sh` and at the ten files
+`kernel/syntax-check.sh` cannot check ([building.md](building.md), "What has been verified, and where").
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
