@@ -9,6 +9,8 @@ LLVM=${LLVM:-/usr/lib/llvm-20/bin}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 "$LLVM/llvm-as" -o "$WORK/rv.bc" "$ROOT/tools/air/clip_tri.ll"
+"$LLVM/llvm-as" -o "$WORK/r6.bc" "$ROOT/tools/air/clip_six.ll"
 "$LLVM/llvm-as" -o "$WORK/rf.bc" "$ROOT/tools/air/rast_frag.ll"
 cc -O1 -I"$ROOT/tools/mesa/air" -o "$WORK/clipcheck" "$ROOT/tools/air/clipcheck.c" -L"$LIB" -lhakios-air -lm -Wl,-rpath,"$LIB"
 RWA_SOFTWARE=1 "$WORK/clipcheck" "$WORK/rv.bc" "$WORK/rf.bc"
+RWA_SOFTWARE=1 "$WORK/clipcheck" "$WORK/r6.bc" "$WORK/rf.bc"

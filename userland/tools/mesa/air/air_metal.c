@@ -7557,6 +7557,10 @@ link_renumber(nir_shader *nir, nir_variable_mode mode)
       if (k == n && n < VARYING_SLOT_MAX)
          locations[n++] = v->data.location;
       v->data.driver_location = k;
+      /* a compact array of more than four clip distances is CLIP_DIST1 too, the next location */
+      if (v->data.compact && glsl_type_is_array(v->type) && glsl_get_length(v->type) > 4 &&
+          k == n - 1 && n < VARYING_SLOT_MAX)
+         locations[n++] = v->data.location + 1;
    }
    return n;
 }

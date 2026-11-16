@@ -3939,7 +3939,11 @@ translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
                                               name ? name : "clip_distance");
       var->data.location = VARYING_SLOT_CLIP_DIST0;
       var->data.compact = true;
-      var->data.driver_location = c->nir->num_outputs++;
+      /* (more than four take CLIP_DIST1 too, a vec4 slot each: ir3 sizes its outputs by
+       * num_outputs and asserted on the fifth, RealityKit's vsMRLighting and VectorKit's
+       * Flyover vertex shaders, six distances apiece) */
+      var->data.driver_location = c->nir->num_outputs;
+      c->nir->num_outputs += DIV_ROUND_UP(n, 4);
       c->nir->info.clip_distance_array_size = n;
       c->info->clip_distances = n;
       c->outputs[field].location = location;
