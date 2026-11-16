@@ -85,6 +85,11 @@ void hakios_cpufreq_init(void);
 void hakios_tl(const char *format, ...) __printflike(1, 2);
 void hakios_tl(const char *format __unused, ...) {}
 
+/*
+ * (cpu_gov=0 in every scenario that raises the clocks: the governor board/cpufreq.c starts after them looks at the
+ * cores' load in a thread of its own, and here, where no core is ever busy, would take the rows down while a
+ * scenario reads them. What is checked is what the driver sets at its start.)
+ */
 #include "board/board.c"
 #include "board/cpufreq.c"
 
@@ -132,7 +137,7 @@ static void
 every_group(void)
 {
 	phone("phone-cmd", 8);
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8 && epss.wanted[2] == 6, "rows %u %u %u", epss.wanted[0], epss.wanted[1],
 	    epss.wanted[2]);
@@ -151,7 +156,7 @@ static void
 one_core(void)
 {
 	phone("phone-cmd", 1);
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.writes[0] == 1, "the first group: row %u", epss.wanted[0]);
 	CHECK(epss.wanted[1] == 1 && epss.wanted[2] == 1 && epss.writes[1] + epss.writes[2] == 0, "the groups without a core of ours "
@@ -165,7 +170,7 @@ static void
 some_cores(void)
 {
 	phone("phone-cmd", 5);
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8 && epss.wanted[2] == 1, "rows %u %u %u", epss.wanted[0], epss.wanted[1],
 	    epss.wanted[2]);
@@ -177,7 +182,7 @@ static void
 another_soc(void)
 {
 	phone("phone-keys", 8);
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(epss.base == 0x05591000 && epss.size == 0x2000, "the block is where that SoC file has it: %#x, %#x", epss.base, epss.size);
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8, "rows %u %u", epss.wanted[0], epss.wanted[1]);
@@ -202,7 +207,7 @@ odd_tables(void)
 	for (unsigned row = 0; row < ROWS; row++) {
 		epss.table[2][row] = 0;         /* the third group has the fixed 300 MHz and nothing above it */
 	}
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 1, "a table of one row: row %u", epss.wanted[0]);
 	CHECK(logged("row 2 -> 1 of the frequency table, 960 MHz"), "... which is 50 x 19.2 MHz");
@@ -233,7 +238,7 @@ not_listed(void)
 	phone("qemu-virt", 8);
 	epss.base = 0x18591000;
 	epss.size = 0x1000;
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(logged("cpufreq: disabled: this board's board.dts lists no \"cpufreq-epss\""), "said: %s", log_text);
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
@@ -244,7 +249,7 @@ static void
 unknown_board(void)
 {
 	phone("nobody-described-this", 8);
-	boot_args = "cpufreq=1";
+	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
 	CHECK(logged("cpufreq: disabled"), "said: %s", log_text);
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
