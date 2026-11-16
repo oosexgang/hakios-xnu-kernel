@@ -255,13 +255,138 @@ unknown_board(void)
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
 }
 
+/*
+ * The governor (gov_start, gov_look), called here look by look rather than from its thread: the phone's eight
+ * cores raised with cpu_gov=0, then the governor started on them as cpufreq=1 starts it. BUSY gives the share
+ * of the last look of every core of the big group (cores 4 to 6), the others idle.
+ */
+static uint32_t busy_of[32];
+
+static void
+governed(void)
+{
+	phone("phone-cmd", 8);
+	boot_args = "cpufreq=1 cpu_gov=0";
+	hakios_cpufreq_init();
+	boot_args = "";
+	gov_start();
+}
+
+static void
+look(uint32_t big_busy)
+{
+	for (unsigned i = 4; i < 7; i++) {
+		busy_of[i] = big_busy;
+	}
+	gov_look(busy_of);
+}
+
+/* each group the kernel has all of is governed, said with its table */
+static void
+governor_starts(void)
+{
+	governed();
+	CHECK(gov_on && gov[0].base != 0 && gov[1].base != 0 && gov[2].base != 0 && gov[3].base == 0, "the three groups");
+	CHECK(gov[1].rows == 9 && gov[1].top == 8 && gov[1].row == 8 && gov[1].cores == 0x70, "the big group: %u rows, at %u, cores %#x",
+	    gov[1].rows, gov[1].row, gov[1].cores);
+	CHECK(gov[1].khz[0] == 300000 && gov[1].khz[8] == 2400000, "its table: %u to %u kHz", gov[1].khz[0], gov[1].khz[8]);
+}
+
+/* down only after four looks that want it, and then to the most any of them wanted */
+static void
+governor_goes_down_slowly(void)
+{
+	governed();
+	look(10);                               /* 2400 MHz * 10% * 1.25 = 300 MHz: row 0 */
+	look(27);                               /* 810 MHz: row 2 (940.8) */
+	look(23);                               /* 690 MHz: row 1 (710.4) */
+	CHECK(epss.wanted[1] == 8, "three looks: still at the top: %u", epss.wanted[1]);
+	look(10);
+	CHECK(epss.wanted[1] == 2, "the fourth: the most of the four, row 2: %u", epss.wanted[1]);
+	CHECK(epss.wanted[0] == 0 && epss.wanted[2] == 0, "the idle groups after the same four looks: rows %u %u", epss.wanted[0],
+	    epss.wanted[2]);
+	look(10);
+	look(10);
+	look(10);
+	CHECK(epss.wanted[1] == 2, "three more: %u", epss.wanted[1]);
+	look(10);
+	CHECK(epss.wanted[1] == 0, "and four: row 0: %u", epss.wanted[1]);
+}
+
+/* up at once: to the row that covers the load, or to the top from 90% */
+static void
+governor_goes_up_at_once(void)
+{
+	governed();
+	for (int i = 0; i < 8; i++) {
+		look(0);
+	}
+	CHECK(epss.wanted[1] == 0, "idle: row 0: %u", epss.wanted[1]);
+	look(89);                               /* 300 MHz * 89% * 1.25 = 333.75 MHz: row 1 */
+	CHECK(epss.wanted[1] == 1, "busy: the row that covers it, at once: %u", epss.wanted[1]);
+	look(0);
+	look(0);
+	look(0);
+	look(50);                               /* 710.4 MHz * 50% * 1.25 = 444 MHz, row 1 again: the looks down start again */
+	look(0);
+	look(0);
+	look(0);
+	CHECK(epss.wanted[1] == 1, "not down: a look at its row came between: %u", epss.wanted[1]);
+	look(90);
+	CHECK(epss.wanted[1] == 8, "90%%: the top: %u", epss.wanted[1]);
+}
+
+/* at the run's end the governed groups at their top rows, and no other written */
+static void
+governor_quiesced(void)
+{
+	governed();
+	for (int i = 0; i < 8; i++) {
+		look(0);
+	}
+	CHECK(epss.wanted[0] == 0 && epss.wanted[1] == 0 && epss.wanted[2] == 0, "low: %u %u %u", epss.wanted[0], epss.wanted[1],
+	    epss.wanted[2]);
+	hakios_cpufreq_quiesce();
+	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8 && epss.wanted[2] == 6 && !gov_on, "at the tops again: %u %u %u",
+	    epss.wanted[0], epss.wanted[1], epss.wanted[2]);
+	CHECK(epss.writes[3] == 0 && epss.elsewhere == 0, "the fourth group and nothing else: %u, %u", epss.writes[3], epss.elsewhere);
+}
+
+/* a group with a core the kernel has not got (the loader's) is not governed */
+static void
+governor_leaves_a_shared_group(void)
+{
+	phone("phone-cmd", 5);
+	boot_args = "cpufreq=1 cpu_gov=0";
+	hakios_cpufreq_init();
+	boot_args = "";
+	gov_start();
+	CHECK(gov[0].base != 0 && gov[1].base == 0 && gov[2].base == 0, "only the small group, all of whose cores are ours");
+	look(0);
+}
+
+/* thermal=2 holds the rows back itself, and cpu_gov=0 asks for none: no governor */
+static void
+governor_not_with_thermal(void)
+{
+	phone("phone-cmd", 8);
+	boot_args = "cpufreq=1 cpu_gov=0";
+	hakios_cpufreq_init();
+	boot_args = "thermal=2";
+	gov_start();
+	CHECK(!gov_on && gov[1].base == 0, "a group governed");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "every_group", every_group }, { "one_core", one_core }, { "some_cores", some_cores }, { "another_soc", another_soc },
 		{ "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
-		{ "unknown_board", unknown_board },
+		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts },
+		{ "governor_goes_down_slowly", governor_goes_down_slowly }, { "governor_goes_up_at_once", governor_goes_up_at_once },
+		{ "governor_quiesced", governor_quiesced }, { "governor_leaves_a_shared_group", governor_leaves_a_shared_group },
+		{ "governor_not_with_thermal", governor_not_with_thermal },
 	};
 
 	if (argc < 2) {
