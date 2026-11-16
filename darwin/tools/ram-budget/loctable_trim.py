@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """What keeping only English/Base in every chosen .loctable would save (mkapfs -z blocks before/after)."""
-import pickle, plistlib, os, sys, importlib.util
+import pickle, plistlib, os, importlib.util
 from multiprocessing import Pool
 spec = importlib.util.spec_from_file_location('r', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rootfs_select.py'))
 r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
