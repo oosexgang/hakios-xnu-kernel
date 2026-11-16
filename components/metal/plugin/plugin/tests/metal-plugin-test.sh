@@ -27,11 +27,12 @@ clang -O1 -g -fsanitize=address -Wall -Wno-unused-parameter -Iplugin -framework 
 files=
 if [ -n "$1" ]; then
 	# the MTLB ones (the GPU driver's own runtime libraries are another format: hakios-xnu-kernel's tools/metallib-test.sh)
-	for f in $(find "$1" -name '*.metallib' -type f); do
+	find "$1" -name '*.metallib' -type f > "$tmp/metallibs"
+	while IFS= read -r f; do
 		if [ ! -f "$HAKIOS/tools/metallib.py" ] || python3 "$HAKIOS/tools/metallib.py" list "$f" >/dev/null 2>&1; then
 			files="$files $f"
 		fi
-	done
+	done < "$tmp/metallibs"
 fi
 "$tmp/metal_test" $files 2>&1 | grep -v '^.*HakiosMetal: ' || true
 "$tmp/metal_test" $files >/dev/null 2>&1
