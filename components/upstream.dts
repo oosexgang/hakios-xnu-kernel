@@ -106,8 +106,8 @@
 		what = "the UEFI the loader runs under, ported per phone";
 		source = "https://github.com/Project-Silicium/Mu-Silicium";
 		pins = "e51cd877e31c8fbb322032dc4cb6715e83d25ad3";
-		pinned-in = "legacy/uefi/BASE";
-		used-for = "UEFI ports (legacy/uefi; a phone's platform is in its device package)";
+		pinned-in = "arch/arm64/boot/uefi/BASE";
+		used-for = "UEFI ports (arch/arm64/boot/uefi; a phone's platform is in its device package)";
 		licence = "BSD-2-Clause-Patent";
 	};
 
@@ -151,7 +151,7 @@
 		what = "DEFLATE decompression for APFS's compressed files (a copy is in kernel/overlay)";
 		source = "https://github.com/ebiggers/libdeflate";
 		pins = "1.24", "a0dda1c4b804742066db07b9510876edd09cc0ca06cdc32c5dfe1b2016a26463";
-		pinned-in = "legacy/tools/mk-libdeflate.sh";
+		pinned-in = "tools/mk-libdeflate.sh";
 		used-for = "kernel (APFS)";
 		licence = "MIT";
 	};

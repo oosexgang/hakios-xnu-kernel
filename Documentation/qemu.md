@@ -25,7 +25,7 @@ its screen in a window of QEMU's, whose keyboard and pointer are the machine's k
 the console (`--type`, a line once the shell's prompt is back), takes the screen as a PNG (`--screen`),
 attaches a disk image to the virtio block device (`--disk`), writes what the virtio sound device plays to
 a WAV file (`--audio`), forwards a TCP port of the machine to this one (`--forward H:G`), opens QEMU's QMP
-on a socket (`--qmp`, for `legacy/qemu/touch.py` to touch the screen and press the buttons), and runs a
+on a socket (`--qmp`, for `tools/qemu/touch.py` to touch the screen and press the buttons), and runs a
 command here while it types (`--then`). Its head lists every option.
 
 ## The machine
@@ -206,5 +206,5 @@ one, where nothing is sent to another processor: threads and the lock all the sa
 ## What it is not
 
 A Darwin user space: launchd, dyld and the rest are Apple's and are not here. With an IPSW and the
-team's tools the Darwin 16.5 generation ran in QEMU (`legacy/qemu/run-darwin.sh`); the current Darwin 26
+team's tools the Darwin 16.5 generation ran in QEMU; the current Darwin 26
 and 27 images are made for phones ([darwin27-ubuntu.ru.md](darwin27-ubuntu.ru.md)).

@@ -2,7 +2,7 @@
 """Every relative link in the repository's Markdown points at something that is there, and every
 `path` in backticks that looks like a file of this repository exists. Part of `make lint`.
 
-The first generation's documents (legacy/, userland/) describe a workspace that is not this
+The first generation's documents (userland/) describe a workspace that is not this
 repository's layout and are left out. A document that has to name paths that no longer exist puts them
 between `<!-- paths of the old layout -->` and `<!-- end -->`; links are checked there all the same.
 """
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = ('legacy/', 'userland/')
+LEGACY = ('userland/',)
 LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
 # a path in backticks: starts at one of the repository's top-level directories and names a file or a directory
 TOP = ('arch', 'devices', 'kernel', 'loader', 'darwin', 'workbench', 'tools', 'Documentation', 'components', 'docs')

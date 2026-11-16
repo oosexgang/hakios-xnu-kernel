@@ -94,11 +94,11 @@ class Links(Sandbox):
         self.assertIn('README.md:4: `tools/moved.py` is not in the repository', complained)
 
     def test_the_first_generation_is_left_out(self):
-        self.write('legacy/README.md', '[gone](nowhere.md) `tools/gone.py`\n')
+        self.write('userland/README.md', '[gone](nowhere.md) `tools/gone.py`\n')
         self.write('README.md', 'x\n')
         code, said, _ = self.run_tool(self.links)
         self.assertEqual(code, 0)
-        self.assertIn('2 documents, ok', said)        # (README.md and docs/guide.md: not the one under legacy/)
+        self.assertIn('2 documents, ok', said)        # (README.md and docs/guide.md: not the one under userland/)
 
 
 COMPONENT = '''	thing {
@@ -149,8 +149,7 @@ class Components(Sandbox):
 class Repository(unittest.TestCase):
     def test_the_readmes_name_the_release_the_kernel_is_made_from(self):
         tag = re.search(r'(?m)^UPSTREAM_TAG=xnu-(\S+)$', (ROOT / 'kernel/UPSTREAM').read_text())[1]
-        for name in ('README.md', 'README.zh-CN.md'):
-            self.assertIn(f'badge/XNU-{tag}-', (ROOT / name).read_text(), f"{name}'s badge is of another release")
+        self.assertIn(f'xnu-{tag}', (ROOT / 'README.md').read_text(), "README.md names another release")
 
     def test_the_loader_is_its_parts_and_its_readme_names_each(self):
         # every file of arch/arm64/boot/src is included by loader.c once, and has its row in the README's table

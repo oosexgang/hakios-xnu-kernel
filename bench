@@ -414,9 +414,9 @@ selftest) run "oem selftest" selftest ;;
 log) enter && fb oem log > /dev/null && fetch_log logs/loader.log && cat logs/loader.log ;;
 screenshot) screenshot "$2" ;;
 recording) fetch_staged "oem recording" logs/recording.raw "recording (rec_secs=N)" &&
-	legacy/tools/recording.py logs/recording.raw "${2:-logs/recording.mp4}" && rm -f logs/recording.raw ;;
+	tools/recording.py logs/recording.raw "${2:-logs/recording.mp4}" && rm -f logs/recording.raw ;;
 sound) fetch_staged "oem sound" logs/sound.raw "sound recording (rec_sound=N)" &&
-	legacy/tools/sound.py logs/sound.raw "${2:-logs/sound.wav}" && rm -f logs/sound.raw ;;
+	"devices/$BOARD/legacy/tools/sound.py" logs/sound.raw "${2:-logs/sound.wav}" && rm -f logs/sound.raw ;;
 stop) not_anothers_run stop && fb oem stop | grep -q OKAY && say "asked the kernel to come back" ;;
 memmap) enter && fb oem memmap > /dev/null && fb oem log > /dev/null && fetch_log logs/loader.log && sed -n '/^memory map/,$p' logs/loader.log ;;
 hang) enter && fb oem hang; say "waiting for the watchdog..."; t0=$(date +%s)

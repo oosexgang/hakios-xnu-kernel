@@ -14,7 +14,7 @@ set -e
 VERSION=1.24
 SHA256=a0dda1c4b804742066db07b9510876edd09cc0ca06cdc32c5dfe1b2016a26463
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-OUT=${XNU_SRC:-$ROOT/xnu-src/xnu-8796.121.2}/bsd/miscfs/apfs/libdeflate
+OUT=$ROOT/fs/apfs/libdeflate
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 curl -sL --fail -o "$TMP/l.tar.gz" \

@@ -54,7 +54,7 @@
  *   cam=2   ... and the sensor powered up as Android powers it, its chip ID read, and powered
  *           down again (every write read back)
  *   cam=3   the CSID's test pattern through RDI 0 and IFE-lite 0 into memory, which the loader hands
- *           to the host after the run (legacy/xl camera): the camera subsystem's rails, PLL, clocks, SMMU
+ *           to the host after the run (the first generation's xl camera): the camera subsystem's rails, PLL, clocks, SMMU
  *           and blocks without the sensor (capture_tpg() below)
  *   cam=4   the sensor's own frames that way, through its CSIPHY (capture_sensor() below)
  *
@@ -1510,7 +1510,7 @@ look_around(void)
  * cam_vfe_bus_ver2.c), whose write master 0 writes each frame as it comes (Android's RDI frame mode)
  * to memory through the SMMU, as stream 0x800 with the mask 0x4e0 (dt: msm_cam_smmu_ife), into a
  * context of ours. The memory is one physically contiguous piece that the loader hands to the host
- * after the run ("legacy/xl camera"; components/camera/tools/camraw.py makes pictures of it).
+ * after the run ("the first generation's xl camera"; components/camera/tools/camraw.py makes pictures of it).
  *
  * What it takes, in Android's order and with Android's numbers (camcc-yupik.c, gcc-yupik.c, the
  * device tree's clock rates at the "svs" level of csid-lite 0, the sensor's csiphy and cpas):
@@ -3064,7 +3064,7 @@ capture_sensor(void)
  * the address, in the sensor's group hold; it counts from the second frame after.
  *
  * A picture for the host (HAKIOS_CAMERA_KEEP: what the program made of a frame) goes into one
- * piece of memory the loader hands over after the run, as cam=3 and cam=4's frames do (legacy/xl camera).
+ * piece of memory the loader hands over after the run, as cam=3 and cam=4's frames do (the first generation's xl camera).
  */
 #define RING                    3
 #define PLACE_SPARE             (256u << 10)    /* room after each frame: some come longer than the mode's lines */

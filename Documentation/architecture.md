@@ -175,7 +175,7 @@ against the scripts that fetch).
 | Darwin itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
 | The phone's firmware (GPU, DSP, touch) | The vendor's; taken from the same phone it runs on. | `adb pull` from its Android. |
 | theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `darwin/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
-| The UEFI for a phone | A port of Mu-Silicium per device. | `legacy/uefi/` has the changes every port needs; a phone's own port is in its package. |
+| The UEFI for a phone | A port of Mu-Silicium per device. | `arch/arm64/boot/uefi/` has the changes every port needs; a phone's own port is in its package. |
 | **Renoir's resident loader, its recovery payload tool and the user-space root tree** | They live in the team's working tree (`darwin-renoir`), which has not been published. | Not available yet. `darwin/tools/boot26.py` and the `darwin/userland/*.sh` scripts need it. |
 
 The last row is the gap between this repository and booting Renoir from a clean checkout.
@@ -183,11 +183,3 @@ Everything under `make check` and the kernel build itself do not depend on it.
 
 A phone's device package is in the repository, but not on the main branch: `tools/device.py add NAME`
 brings it into a checkout from the `devices` branch ("Device data" above).
-
-## Legacy
-
-`legacy/` is the workspace of the first generation: Darwin 16.5 on the first phone and QEMU, with
-its own README, scripts and porting notes. Parts of it are still the only place for something (the
-UEFI port, the Wi-Fi compatibility layer, the QEMU scripts) and are waiting to be brought to the
-current kernel. What in it was one phone's own -- its xnu-8796 kernel, superseded by `kernel/`, its UEFI
-platform and device profile -- is in that phone's package on the `devices` branch, under `legacy/`.

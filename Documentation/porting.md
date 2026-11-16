@@ -87,9 +87,9 @@ Leave `features = <>;` (none) for now. Every key is explained in `devices/_templ
 
 The loader runs under a UEFI. Port Mu-Silicium for the phone: the platform package with the phone's
 memory map, the UEFI drivers extracted from the phone's own firmware -- the first phone's package has a
-whole port under `legacy/uefi/` on the `devices` branch, with its README -- and what every port needs,
-in `legacy/uefi/` (`apply.sh PHONE_FILES` puts both into a clone): the two changes in
-`legacy/uefi/mu-silicium.patch`:
+whole port under `arch/arm64/boot/uefi/` on the `devices` branch, with its README -- and what every port needs,
+in `arch/arm64/boot/uefi/` (`apply.sh PHONE_FILES` puts both into a clone): the two changes in
+`arch/arm64/boot/uefi/mu-silicium.patch`:
 
 - the boot shim copies the payload that follows the UEFI image to a reserved address;
 - the boot manager starts the loader from it instead of showing a menu.

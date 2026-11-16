@@ -345,7 +345,7 @@ Not yet verified ([docs/building.md](Documentation/building.md) has the table):
 ## Before the restructuring
 
 The first generation ran Darwin 16.5 on the first phone and in QEMU. Its workspace is kept in
-`base/`, and [base/README.md](legacy/README.md) describes it. Parts of it are still the only place for
+`base/`, whose README described it. Parts of it are still the only place for
 something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
 by `kernel/`. The notes on how Darwin 26 and 27 were brought to the home screen on Renoir, written before
 the restructuring, are in [docs/darwin26-boot.md](Documentation/darwin26-boot.md).
