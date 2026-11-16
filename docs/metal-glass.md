@@ -372,6 +372,15 @@ commit of its own:
   fetches made to read their own texture's unit (`texarraycheck.sh`); RGB9E5 unpack and pack
   (`rgb9e5check.sh`). The phone's path under valgrind's memcheck after all of it: QuartzCore 249, RenderBox
   109 and CMImaging 215 functions clean, none with an error.
+- **16 November, later**: a texture chosen between two members of an argument buffer and read through a
+  64-bit integer -- the handle a member is, not its bytes -- split where it is sampled (VFX's
+  particle_ribbon shaders, 580 -> 584 with the next; `tex_sel.ll`); an image read at the level a buffer
+  holds, bound at that level as a write already was (vfx_reprojection_map; CoreRE 410 -> 421, CMImaging
+  209 -> 212; `mip_read.ll`). That test found two older faults: a `read_write` texture was bound without
+  read access, and softpipe's image load with no format of its own unpacked nothing -- every `read()` of a
+  read_write texture on the QEMU bench returned zeros (the softpipe fix is in
+  `userland/tools/mesa26/darwin.patch`). QuartzCore, HDRProcessing, CoreImage and MPSImage swept again
+  with no function lost.
 
 ### Tessellation without a tessellator
 
