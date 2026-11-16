@@ -2879,8 +2879,24 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    }
 
    if (!strcmp(t.op, "read") && tex.is_image) {
-      uint64_t extra;
-      if (!tex_flag(c, in, arg, &extra))
+      uint64_t extra = 0;
+      /* A read at a level other than the base, or at one the shader takes out of a buffer
+       * (VFX's vfx_reprojection_map reads and writes its map at the level its uniforms say):
+       * the image is bound at that level, as a write to it is (image_at_level), and read at
+       * level 0 of that view -- a view has one level. */
+      struct air_level_place lp;
+      struct air_resource *lr = !t.is_ms && arg < in->num_operands ? image_resource(c, tex.binding)
+                                                                    : NULL;
+      if (lr && level_place(c, in->operands[arg], &lp) &&
+          (!lp.constant || lp.value || lr->level_written)) {
+         unsigned at = tex.binding;
+         if (!image_at_level(c, lr, &lp, n->part[0], &at))
+            return false;
+         if (at != tex.binding && tex.index)
+            return air_error(c, "intrinsic: air.%s at a second mip level of an image taken "
+                                "out of an array", n->part[0]);
+         tex.binding = at;
+      } else if (!tex_flag(c, in, arg, &extra))
          return false;
       nir_def *res = nir_image_load(&c->b, 4, dest_bits,
                                     tex.index ? nir_iadd_imm(&c->b, tex.index, tex.binding)

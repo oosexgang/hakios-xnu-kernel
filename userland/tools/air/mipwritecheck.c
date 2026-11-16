@@ -2,7 +2,8 @@
  * mipwritecheck: tools/air/mip_write.ll dispatched through libhakios-air (tools/air/mipwritecheck.sh): one
  * texture written at levels 0 and 1 by one kernel; both levels must hold what was written to them. With
  * `buffer`, tools/air/mip_buffer.ll: the same two levels, read out of a constant buffer that holds 1 (the
- * kernel writes at it and at it minus one).
+ * kernel writes at it and at it minus one). With `read`, tools/air/mip_read.ll: level 1 read and written
+ * back at the level the buffer holds, plus 10 in blue, over levels filled first; level 0 stays as filled.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,13 +18,32 @@ int main(int argc, char **argv) {
 	char why[512] = "";
 	struct rwa_device *d = rwa_device_open(why, sizeof(why));
 	struct rwa_compute_info info;
-	int from_buffer = argc > 2 && !strcmp(argv[2], "buffer");
-	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, from_buffer ? "mb" : "mw", &info, why, sizeof(why)) : NULL;
+	int read_back = argc > 2 && !strcmp(argv[2], "read");
+	int from_buffer = read_back || (argc > 2 && !strcmp(argv[2], "buffer"));
+	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, read_back ? "mr" : from_buffer ? "mb" : "mw", &info,
+						       why, sizeof(why)) : NULL;
 	if (!c) { printf("compute: %s\n", why); return 1; }
 	struct rwa_texture_shape ts = { RGBA32F, TEX2D, 4, 4, 1, 1, 2, 1, READ | WRITE };
 	struct rwa_texture *t = rwa_texture_create(d, &ts, why, sizeof(why));
 	if (!t) { printf("texture: %s\n", why); return 1; }
 	struct rwa_texture *texs[1] = { t };
+	if (read_back) {
+		/* what the kernel reads: level 0 as mw writes it, level 1 as its quarter does */
+		static float f0[4][4][4], f1[2][2][4];
+		for (int y = 0; y < 4; y++)
+			for (int x = 0; x < 4; x++) {
+				float v0[4] = { x, y, 0, 1 }, v1[4] = { x, y, 1, 1 };
+				memcpy(f0[y][x], v0, 16);
+				if (x < 2 && y < 2)
+					memcpy(f1[y][x], v1, 16);
+			}
+		unsigned fo[3] = { 0, 0, 0 }, fs0[3] = { 4, 4, 1 }, fs1[3] = { 2, 2, 1 };
+		if (rwa_texture_write(t, 0, 0, fo, fs0, f0, 64, why, sizeof(why)) ||
+		    rwa_texture_write(t, 1, 0, fo, fs1, f1, 32, why, sizeof(why))) {
+			printf("fill: %s\n", why);
+			return 1;
+		}
+	}
 	struct rwa_buffer *level = rwa_buffer_create(d, 16, why, sizeof(why));
 	if (!level) { printf("buffer: %s\n", why); return 1; }
 	*(unsigned short *)rwa_buffer_map(level) = 1;
@@ -40,15 +60,16 @@ int main(int argc, char **argv) {
 	for (int y = 0; y < 4; y++)
 		for (int x = 0; x < 4; x++) {
 			float w0[4] = { x, y, 0, 1 };
-			if (memcmp(l0[y][x], w0, 16) && bad++ < 4)
+			if (memcmp(l0[y][x], w0, 16) && bad++ < 8)
 				printf("level 0 (%d, %d): %g %g %g %g\n", x, y, l0[y][x][0], l0[y][x][1], l0[y][x][2], l0[y][x][3]);
 			if (x < 2 && y < 2) {
-				float w1[4] = { x, y, 1, 1 };
+				float w1[4] = { x, y, read_back ? 11 : 1, 1 };
 				if (memcmp(l1[y][x], w1, 16) && bad++ < 8)
 					printf("level 1 (%d, %d): %g %g %g %g\n", x, y, l1[y][x][0], l1[y][x][1], l1[y][x][2], l1[y][x][3]);
 			}
 		}
-	printf("one texture written at levels 0 and 1%s: %s\n", from_buffer ? ", read out of a buffer" : "",
-	       bad ? "WRONG" : "ok");
+	printf("%s: %s\n", read_back ? "one texture read and written at the level a buffer holds"
+	       : from_buffer ? "one texture written at levels 0 and 1, read out of a buffer"
+			     : "one texture written at levels 0 and 1", bad ? "WRONG" : "ok");
 	return bad != 0;
 }
