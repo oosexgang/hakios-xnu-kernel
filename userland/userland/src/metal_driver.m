@@ -3795,7 +3795,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 }
 
 /*
- * What the first few large surfaces were drawn as, written back, and what the first few taken in
+ * What the first forty large surfaces of each kind were drawn as, written back, and what the first few taken in
  * held (`in`): the mean of each byte of a 4-byte pixel over a grid of them, and how many are not
  * black. A display that shows black after a frame is a window server that drew black, a driver
  * that wrote nothing, or layers that came in black, and these lines tell the three apart without
@@ -3808,7 +3808,7 @@ rw_say_surface_colour(IOSurfaceRef surface, const uint8_t *base, size_t row, siz
 	static unsigned said[2];
 	uint64_t sum[4] = { 0, 0, 0, 0 }, n = 0, lit = 0;
 
-	if (said[in] >= 8 || width < 256 || height < 256 || IOSurfaceGetBytesPerElement(surface) != 4) {
+	if (said[in] >= 40 || width < 256 || height < 256 || IOSurfaceGetBytesPerElement(surface) != 4) {
 		return;
 	}
 	said[in]++;
