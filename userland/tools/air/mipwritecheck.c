@@ -4,6 +4,7 @@
  * `buffer`, tools/air/mip_buffer.ll: the same two levels, read out of a constant buffer that holds 1 (the
  * kernel writes at it and at it minus one). With `read`, tools/air/mip_read.ll: level 1 read and written
  * back at the level the buffer holds, plus 10 in blue, over levels filled first; level 0 stays as filled.
+ * With `float`, tools/air/mip_float.ll: level 1 as (ushort)(a float the buffer holds, 0.0, + 1.0).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,8 +20,9 @@ int main(int argc, char **argv) {
 	struct rwa_device *d = rwa_device_open(why, sizeof(why));
 	struct rwa_compute_info info;
 	int read_back = argc > 2 && !strcmp(argv[2], "read");
-	int from_buffer = read_back || (argc > 2 && !strcmp(argv[2], "buffer"));
-	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, read_back ? "mr" : from_buffer ? "mb" : "mw", &info,
+	int as_float = argc > 2 && !strcmp(argv[2], "float");
+	int from_buffer = read_back || as_float || (argc > 2 && !strcmp(argv[2], "buffer"));
+	struct rwa_compute *c = d ? rwa_compute_create(d, bc, n, as_float ? "mf" : read_back ? "mr" : from_buffer ? "mb" : "mw", &info,
 						       why, sizeof(why)) : NULL;
 	if (!c) { printf("compute: %s\n", why); return 1; }
 	struct rwa_texture_shape ts = { RGBA32F, TEX2D, 4, 4, 1, 1, 2, 1, READ | WRITE };
@@ -46,7 +48,10 @@ int main(int argc, char **argv) {
 	}
 	struct rwa_buffer *level = rwa_buffer_create(d, 16, why, sizeof(why));
 	if (!level) { printf("buffer: %s\n", why); return 1; }
-	*(unsigned short *)rwa_buffer_map(level) = 1;
+	if (as_float)
+		*(float *)rwa_buffer_map(level) = 0.0f;
+	else
+		*(unsigned short *)rwa_buffer_map(level) = 1;
 	struct rwa_buffer *bufs[1] = { level };
 	struct rwa_bindings bind = { .textures = texs, .texture_count = 1,
 				     .buffers = from_buffer ? bufs : NULL, .buffer_count = from_buffer ? 1 : 0 };
@@ -68,7 +73,8 @@ int main(int argc, char **argv) {
 					printf("level 1 (%d, %d): %g %g %g %g\n", x, y, l1[y][x][0], l1[y][x][1], l1[y][x][2], l1[y][x][3]);
 			}
 		}
-	printf("%s: %s\n", read_back ? "one texture read and written at the level a buffer holds"
+	printf("%s: %s\n", as_float ? "one texture written at level 0 and at a float from a buffer plus one"
+	       : read_back ? "one texture read and written at the level a buffer holds"
 	       : from_buffer ? "one texture written at levels 0 and 1, read out of a buffer"
 			     : "one texture written at levels 0 and 1", bad ? "WRONG" : "ok");
 	return bad != 0;

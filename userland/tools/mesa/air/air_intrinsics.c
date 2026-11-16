@@ -2308,6 +2308,26 @@ level_place(struct air_ctx *c, const struct air_value *v, struct air_level_place
                v = ((const struct air_inst *)v)->operands[1];
          }
          is_float = true;
+         /* ... of the float plus a whole number: (ushort)(f + 1.0) is (ushort)f + 1 for any f
+          * a level can be (VFX's compute_bloom_down_sample_lod writes at its uniform's level plus
+          * one) */
+         if (!have_bias && v->kind == AIR_VALUE_INSTRUCTION) {
+            const struct air_inst *add = (const struct air_inst *)v;
+            const struct air_constant *kc = add->num_operands == 2
+                                               ? air_value_as_constant(add->operands[1]) : NULL;
+            if (add->op == AIR_OP_BINOP && add->sub == AIR_BINOP_ADD && add->base.type &&
+                add->base.type->kind == AIR_TYPE_FLOAT && kc &&
+                kc->ckind == AIR_CONST_FLOAT) {
+               float f;
+               uint32_t fb = (uint32_t)kc->u;
+               memcpy(&f, &fb, 4);
+               if (f == (float)(int)f && f >= 0 && f < 16) {
+                  bias = (int)f;
+                  have_bias = true;
+                  v = add->operands[0];
+               }
+            }
+         }
          continue;
       }
       if (in->op == AIR_OP_CAST && (in->sub == AIR_CAST_TRUNC || in->sub == AIR_CAST_ZEXT ||
