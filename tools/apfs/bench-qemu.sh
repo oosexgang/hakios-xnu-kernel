@@ -24,7 +24,7 @@ touch "$IMAGE"          # run-darwin.sh rebuilds its RAM image only from a newer
 
 printf "%-7s %9s %11s %12s %12s %8s %s\n" readers wall_ms MB/s lock_wait_ms lock_held_ms "bad" sums
 for n in $COUNTS; do
-	for i in $(seq 1 60); do
+	for _ in $(seq 1 60); do
 		avail=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
 		ss -ltn 2>/dev/null | grep -q ":$PORT " || { [ "$avail" -ge 3300 ] && break; }
 		sleep 5
