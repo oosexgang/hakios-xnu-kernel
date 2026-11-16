@@ -14,6 +14,11 @@ HAKIOS=$(cd "$HAKIOS_KERNEL/.." && pwd)
 export HAKIOS_KERNEL HAKIOS
 # shellcheck source=UPSTREAM
 source "$HAKIOS_KERNEL/UPSTREAM"
+# the build's configuration: build.config.arm64 at the repository's top (with build.config.common), or the file
+# there that BUILD_CONFIG names; what the environment sets already is kept
+BUILD_CONFIG=${BUILD_CONFIG:-build.config.arm64}
+# shellcheck source=../build.config.arm64
+source "$HAKIOS/$BUILD_CONFIG"
 export DARWIN_RENOIR=${DARWIN_RENOIR:-$(cd "$HAKIOS/.." && pwd)/darwin-renoir}
 if [ -z "${THEOS:-}" ]; then
 	THEOS=$HOME/theos
@@ -25,7 +30,7 @@ export XNU_SRC=${XNU_SRC:-$(cd "$HAKIOS/.." && pwd)/${UPSTREAM_TAG%%.*}-hakios}
 export XNUDEPS=${XNUDEPS:-$XNU_SRC-deps}
 export PATH=$XNUDEPS/host/bin:$PATH
 export XNU_SDK_PATH=$XNUDEPS/sdk/iPhoneOS16.5.xnu.sdk
-export XNU_SDK_VERSION=16.5
+export XNU_SDK_VERSION
 export XNU_PLATFORM_PATH=$XNUDEPS/sdk/Platforms/iPhoneOS.platform
-# Qualcomm's cores up to ARMv8.2 (Cortex-A78/A55 and older) have no pointer authentication: plain arm64
-export XNU_ARCH=arm64
+# (XNU_ARCH: arm64, without pointer authentication, from the build's configuration)
+export XNU_ARCH

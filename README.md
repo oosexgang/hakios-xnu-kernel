@@ -115,11 +115,12 @@ Then build: [Documentation/building.md](Documentation/building.md). For a phone 
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
-| `components/metal/plugin/` | The Metal driver for the Adreno (hakios-metal, with its history): its core, the AIR compiler, the plug-in CoreAnimation draws through, its tests against a fake GPU. |
-| `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
+| `userland/` | Earlier user-space sources still in use or being ported: init, the libraries inserted into Darwin's programs, APFS image tools. |
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
-| `components` | The parts of the port that make a subsystem of Darwin work (Metal, Apple ID, the SEP's keystore, ...), each in a directory of its own; `components/upstream.dts`: everything taken from elsewhere, pinned to an exact version. |
+| `components/` | The parts of the port that make a subsystem of Darwin work, each in a directory of its own: Metal (with the second Metal device in `metal/plugin`), Apple ID and the App Store, the SEP's keystore, the camera, the sound, the brightness, the wallpaper; `components/upstream.dts`: everything taken from elsewhere, pinned to an exact version. |
+| `build.config.*` | What a build is: `build.config.common` for all, `build.config.arm64` the kernel (read by `kernel/env.sh`, or the file `BUILD_CONFIG` names), `build.config.darwin27` Darwin's images (`darwin/userland/env.sh`), `build.config.bench` a run on the phone. Values given in the environment win. |
+| `bench` | The phone on the bench: start the resident loader, send it the images, run a kernel, fetch its log, screenshots and recordings (`./bench state`, `./bench run`). |
 | `Documentation/` | Documentation. |
 | `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 

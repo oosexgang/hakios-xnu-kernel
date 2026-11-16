@@ -1,0 +1,14 @@
+# shellcheck shell=bash
+# build.config.arm64 -- the kernel, as kernel/build.sh builds it: one kernel for every board, which learns at boot
+# which one it is on (/chosen/darwin-board). kernel/env.sh reads this unless BUILD_CONFIG names another.
+# shellcheck source=build.config.common
+. "$HAKIOS/build.config.common"
+
+# Apple's architecture and machine configurations. BCM2837 (the Raspberry Pi 3's) is the plainest arm64 machine of
+# Apple's tree, and the one this port builds on: everything of a phone comes from its board file, not from a
+# machine configuration.
+export ARCH_CONFIG=${ARCH_CONFIG:-ARM64}
+export MACHINE_CONFIG=${MACHINE_CONFIG:-BCM2837}
+# Qualcomm's cores up to ARMv8.2 (Cortex-A78 and A55 and older) have no pointer authentication: plain arm64,
+# not arm64e
+export XNU_ARCH=${XNU_ARCH:-arm64}

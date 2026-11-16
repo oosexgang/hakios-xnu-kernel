@@ -1,0 +1,20 @@
+# shellcheck shell=bash
+# build.config.common -- what every build of this tree has in common. It is not read on its own: a target's
+# build.config (build.config.arm64 for the kernel, build.config.darwin27 for Darwin's images, build.config.bench
+# for a run on the phone) reads it first, as Android's kernel configs read theirs. Each value can be given in
+# the environment instead, and what is given there is kept.
+
+# Apple's kernel release the tree is made from is kernel/UPSTREAM's (the pin, with its commit); the name of the
+# assembled tree beside the repository comes from it (xnu-12377.121.6 -> ../xnu-12377-hakios).
+
+# Apple's kernel configuration: DEVELOPMENT is what every build here is (assertions on, the debugger's hooks
+# in); RELEASE and DEBUG are Apple's other two, never built here. The object is
+# BUILD/obj/mach.<config>.<machine>, in lower case.
+export KERNEL_CONFIG=${KERNEL_CONFIG:-DEVELOPMENT}
+# warnings are not errors (Apple's code has some under this compiler), no link-time optimisation, no dSYM
+export BUILD_WERROR=${BUILD_WERROR:-0}
+export BUILD_LTO=${BUILD_LTO:-0}
+# The Mach-O tools: unset, theos' cctools when they are there, else LLVM's (kernel/build.sh); cctools or llvm
+export TOOLCHAIN=${TOOLCHAIN:-}
+# the SDK the kernel and the user space are compiled against (theos' iPhoneOS16.5.sdk: Apple's own, not here)
+export XNU_SDK_VERSION=${XNU_SDK_VERSION:-16.5}

@@ -1,0 +1,14 @@
+# shellcheck shell=bash
+# build.config.darwin27 -- Darwin's images for the phone (darwin/userland/env.sh reads it, unless DARWIN_BUILD_CONFIG
+# names another): the IPSW they are made from and how the system image is made.
+# shellcheck source=build.config.common
+. "$HAKIOS/build.config.common"
+
+# the IPSW, unpacked (darwin/tools/unpack.sh): a directory beside the repository. Its BuildManifest.plist says
+# which build it is (24B119 is Darwin 27.2), and darwin/userland/inj26.sh takes SpringBoard's addresses for it.
+export IOS=${IOS:-$(cd "$HAKIOS/.." && pwd)/ios27}
+# the wallpaper a new device is given (darwin/tools/mkimage26.py, components/wallpaper): one of the Stripe
+# collection, which CoreAnimation draws without Metal -- green, yellow, orange, red, purple, blue or black
+export WALLPAPER=${WALLPAPER:-yellow}
+# METAL=1: the image has what the Metal device needs (components/metal); left unset, it has not
+export METAL=${METAL:-}

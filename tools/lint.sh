@@ -25,7 +25,7 @@ done < <(git ls-files '*.py')
 
 if command -v shellcheck > /dev/null; then
 	shellcheck -S warning kernel/*.sh kernel/deps/*.sh kernel/deps/build/*/*.sh loader/*.sh darwin/userland/*.sh \
-		workbench/*.sh tools/*.sh || failed=1
+		workbench/*.sh tools/*.sh bench build.config.* || failed=1
 else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"
 fi

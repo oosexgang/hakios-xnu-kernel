@@ -16,7 +16,11 @@ IOS_REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source "$IOS_REPO/kernel/env.sh"
 [ -x "$XNUDEPS/host/bin/xnu-clang" ] || { echo "the cross compiler is made by kernel/build.sh: build the kernel first" >&2; exit 1; }
 US=$IOS_REPO/userland/userland
-IOS=${IOS:-$(cd "$IOS_REPO/.." && pwd)/ios27}
+# the image's configuration: build.config.darwin27 at the repository's top (with build.config.common), or the file
+# there that DARWIN_BUILD_CONFIG names; what the environment sets already is kept
+HAKIOS=${HAKIOS:-$IOS_REPO}
+# shellcheck source=../../build.config.darwin27
+source "$IOS_REPO/${DARWIN_BUILD_CONFIG:-build.config.darwin27}"
 OBJ=${OBJ:-$IOS/obj}
 LDID=${LDID:-$(command -v ldid || echo "$THEOS/toolchain/linux/iphone/bin/ldid")}
 if [ -z "${BOARD+set}" ]; then

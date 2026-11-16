@@ -48,6 +48,8 @@ for v in BOARD CMDLINE PLAIN SECS FOLLOW FOLLOW_KEEP KERNEL RAMDISK HOME REBOOT_
 done
 TOP=$PWD
 source kernel/env.sh
+# shellcheck source=build.config.bench
+source "$HAKIOS/build.config.bench"
 IOS=${IOS:-$(cd .. && pwd)/ios27}
 K=${BENCH_KERNEL:-$XNU_SRC/BUILD/obj/mach.development.bcm2837}
 L=loader/loader.efi

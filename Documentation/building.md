@@ -35,6 +35,22 @@ the device packages that are present. Nothing is run by hand after changing a bo
 file. The loader knows the boards it was built with; with no package, only the emulator's.
 The link is reproducible: the same sources and the same packages give the same file.
 
+## The build's configuration
+
+What a build is, in files at the repository's top, as Android's kernels keep theirs: `build.config.common`
+(Apple's kernel configuration `DEVELOPMENT`, warnings not errors, no link-time optimisation, the SDK's
+version), read by each target's own:
+
+| File | Read by | What it sets |
+|---|---|---|
+| `build.config.arm64` | `kernel/env.sh` (`kernel/build.sh` and every kernel tool) | `ARCH_CONFIG=ARM64`, `MACHINE_CONFIG=BCM2837`, `XNU_ARCH=arm64` (no pointer authentication): the kernel is `BUILD/obj/mach.development.bcm2837` |
+| `build.config.darwin27` | `darwin/userland/env.sh` (the image scripts) | `IOS` (the unpacked IPSW, `../ios27`), `WALLPAPER=yellow`, `METAL` |
+| `build.config.bench` | `./bench` | `BENCH_BOARD`, `BENCH_SECS=180`, `BENCH_FOLLOW=10` |
+
+A value given in the environment is kept (`KERNEL_CONFIG=RELEASE kernel/build.sh`, `WALLPAPER=blue
+darwin/userland/root26-darwin.sh`), and `BUILD_CONFIG=FILE` or `DARWIN_BUILD_CONFIG=FILE` names another file
+of the top to read instead: a configuration of your own is a file there that reads `build.config.common` first.
+
 ## The kernel
 
 Requirements:

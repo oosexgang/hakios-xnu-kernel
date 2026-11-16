@@ -1,0 +1,12 @@
+# shellcheck shell=bash
+# build.config.bench -- a run on the phone (./bench reads it after kernel/env.sh's build.config): which board,
+# how long a run lasts, how often its log is fetched while it runs.
+# shellcheck source=build.config.arm64
+. "$HAKIOS/build.config.arm64"
+
+# the board: unset, the only device package here with a uefi { } node (tools/device.py add NAME)
+export BENCH_BOARD=${BENCH_BOARD:-}
+# seconds after which the kernel returns to the loader on its own (0: never)
+export BENCH_SECS=${BENCH_SECS:-180}
+# the kernel's log fetched every N seconds of a run, so that a kernel that hangs leaves what it said (empty: never)
+export BENCH_FOLLOW=${BENCH_FOLLOW-10}
