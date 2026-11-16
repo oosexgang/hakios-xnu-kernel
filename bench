@@ -19,9 +19,9 @@
 #   bench reboot           cold-reset the phone (back to Android)
 #   bench reload           restart into a freshly built loader (after arch/arm64/boot/build.sh)
 #
-# Which phone: BENCH_BOARD (or HAKIOS_BOARD), else the only device package here with a [uefi] section
+# Which phone: BENCH_BOARD (or HAKIOS_BOARD), else the only device package here with a uefi { } node
 # (tools/device.py add NAME; HAKIOS_DEVICES as for the builds). Its board file gives the boot arguments
-# of a plain run ([boot] bootargs, cpus) and what its own fastboot calls it ([boot] fastboot_product):
+# of a plain run (boot { }: bootargs, cpus) and what its own fastboot calls it (boot { }: fastboot-product):
 # bench starts nothing on a phone that answers another name. Its UEFI build is in firmware/NAME/uefi/.
 #
 # Environment:
@@ -76,10 +76,10 @@ found = {n: b for n, b in boards.load()[1].items() if 'uefi' in b}
 if name is None:
     if len(found) != 1:
         sys.exit('bench: which phone? BENCH_BOARD=NAME (here: ' + (', '.join(sorted(found)) or
-                 'no package with a [uefi] section; tools/device.py add NAME') + ')')
+                 'no package with a uefi { } node; tools/device.py add NAME') + ')')
     name = next(iter(found))
 if name not in found:
-    sys.exit(f'bench: no board "{name}" with a [uefi] section (tools/boards.py list)')
+    sys.exit(f'bench: no board "{name}" with a uefi {{ }} node (tools/boards.py list)')
 boot = found[name].get('boot', {})
 print(name)
 print('product=' + boot.get('fastboot_product', ''))

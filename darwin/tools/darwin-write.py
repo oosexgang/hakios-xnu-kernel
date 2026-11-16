@@ -12,7 +12,7 @@ usage:
 darwin is the port's own partition, made on the phone when the port was set up. Which one it is -- its
 logical unit, its number and LBAs, its type and unique GUIDs -- is that phone's and is kept beside its
 other files, never in the repository: firmware/BOARD/darwin.json (BOARD: HAKIOS_BOARD, or the only device
-package here with a [uefi] section). Blocks are darwin's own, 4096 bytes, counted from its start.
+package here with a uefi { } node). Blocks are darwin's own, 4096 bytes, counted from its start.
 
 darwin has two parts with one writer each. The system part, blocks 0 to SYSTEM_END - 1, is this tool's:
 the iOS system image the kernel mounts as its root, read only (darwin/tools/mkimage26.py). The rest is the

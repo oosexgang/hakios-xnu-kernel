@@ -5,7 +5,7 @@
 #           repository
 #   OBJ     our arm64e programs and libraries for that IPSW (inj26.sh, root26-darwin.sh); default: $IOS/obj
 #   BOARD   the phone the small image is for: its firmware/BOARD/fw/ goes in. Default: HAKIOS_BOARD, or the
-#           only device package here with a [uefi] section; none: an image without a phone's firmware
+#           only device package here with a uefi { } node; none: an image without a phone's firmware
 #   LDID    ldid (procursus' or theos'), for the signatures of what we build
 #   DARWIN_SDK, DARWIN_LD  the iPhoneOS 16.5 SDK and ld64, when they are not theos' (sdks/, toolchain/)
 #
