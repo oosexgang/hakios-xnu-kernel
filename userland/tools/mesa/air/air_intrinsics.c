@@ -3142,6 +3142,9 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
    if (!strncmp(name, "llvm.", 5))
       return llvm_op(c, in, name);
 
+   /* the function a [[stage_in]] patch's control points are read with, which Metal makes */
+   if (c->cp_fn && in->operands[0] == c->cp_fn)
+      return air_control_point_call(c, in);
    if (strncmp(name, "air.", 4))
       return air_call_in_module(c, in, name);
 

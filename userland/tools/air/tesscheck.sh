@@ -12,6 +12,8 @@ trap 'rm -rf "$WORK"' EXIT
 "$LLVM/llvm-as" -o "$WORK/tv.bc" "$ROOT/tools/air/tess_quad.ll"
 "$LLVM/llvm-as" -o "$WORK/tf.bc" "$ROOT/tools/air/tess_frag.ll"
 "$LLVM/llvm-as" -o "$WORK/tt.bc" "$ROOT/tools/air/tess_tri.ll"
+"$LLVM/llvm-as" -o "$WORK/tc.bc" "$ROOT/tools/air/tess_cp.ll"
 cc -O1 -I"$ROOT/tools/mesa/air" -o "$WORK/tesscheck" "$ROOT/tools/air/tesscheck.c" -L"$LIB" -lhakios-air -lm -Wl,-rpath,"$LIB"
 RWA_SOFTWARE=1 "$WORK/tesscheck" "$WORK/tv.bc" "$WORK/tf.bc"
 RWA_SOFTWARE=1 "$WORK/tesscheck" "$WORK/tt.bc" "$WORK/tf.bc" tri
+RWA_SOFTWARE=1 "$WORK/tesscheck" "$WORK/tc.bc" "$WORK/tf.bc" cp

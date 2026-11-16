@@ -1730,12 +1730,13 @@ stage_in_format(unsigned format, unsigned *comps, unsigned *bits, char *kind)
  * the attribute's buffer, which becomes a buffer the kernel reads like any other; the format turns them
  * into the attribute's type, its missing components (0, 0, 0, 1) as Metal fills them.
  */
+/* (and a post-tessellation vertex function's control points: cp_elem is then the control point's
+ * number in the draw and cp_patch the patch's, which a per-control-point and a per-patch step take
+ * in place of the thread's position) */
 static bool
-translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigned param,
-                           const struct air_type *t)
+stage_in_value(struct air_ctx *c, const struct air_md *node, unsigned param, uint64_t loc,
+               const struct air_type *t, nir_def *cp_elem, nir_def *cp_patch, nir_def **out)
 {
-   uint64_t loc = 0;
-   md_key_int(node, "air.location_index", &loc);
    if (loc >= 31)
       return air_error(c, "interface: a [[stage_in]] attribute %u", (unsigned)loc);
    const struct air_stage_in *si = c->options ? c->options->stage_in : NULL;
@@ -1759,7 +1760,7 @@ translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigne
       offset = 0;
       buffer = 30 - (unsigned)loc;
       stride = n * b / 8;
-      step = 5;
+      step = cp_elem ? 4 : 5;
       rate = 1;
    }
    unsigned comps = 0, bits = 0;
@@ -1774,8 +1775,14 @@ translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigne
                           "word, in a format of %u-bit components", (unsigned)loc, offset, stride, bits);
 
    /* the element */
-   nir_def *gid = nir_load_global_invocation_id(&c->b, 32);
    nir_def *elem;
+   if (cp_elem) {
+      if (step != 0 && step != 3 && step != 4)
+         return air_error(c, "interface: a control point's attribute %u stepped by MTLVertexStepFunction "
+                             "%u, which a patch has no meaning for", (unsigned)loc, step);
+      elem = step == 4 ? cp_elem : step == 3 ? cp_patch : nir_imm_int(&c->b, 0);
+   } else {
+   nir_def *gid = nir_load_global_invocation_id(&c->b, 32);
    switch (step) {
    case 0: elem = nir_imm_int(&c->b, 0); break;                    /* Constant */
    case 5: case 7: elem = nir_channel(&c->b, gid, 0); break;        /* ThreadPositionInGridX(Indexed) */
@@ -1801,9 +1808,8 @@ translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigne
       if (!have && !add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, ib, 0, true, false, param, node))
          return false;
    }
-   if (step == 0 && rate == 0)
-      rate = 1;
-   (void)rate;   /* (the rate divides a per-instance step, which a compute stage has not got) */
+   }
+   (void)rate;   /* (the rate divides a per-instance step, which neither stage here has got) */
 
    /* the words the element's bytes are in, loaded and taken apart */
    nir_def *addr = nir_iadd_imm(&c->b, nir_imul_imm(&c->b, elem, stride), offset);
@@ -1846,7 +1852,54 @@ translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigne
               c->info->resources[i].kind == AIR_RESOURCE_DEVICE_BUFFER;
    if (!have && !add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, buffer, 0, true, false, param, node))
       return false;
+   *out = val;
+   return true;
+}
+
+static bool
+translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigned param,
+                           const struct air_type *t)
+{
+   uint64_t loc = 0;
+   md_key_int(node, "air.location_index", &loc);
+   nir_def *val;
+   if (!stage_in_value(c, node, param, loc, t, NULL, NULL, &val))
+      return false;
    c->params[param] = air_val_ssa(c, val);
+   return true;
+}
+
+/* A call of the control-point function (above): control point k of this patch, its attributes read
+ * as a [[stage_in]] is -- the k-th of the draw's control points counted from the patch's first, the
+ * patch an instance (AIR_SV_PATCH_ID) -- and handed back as the struct the function returns. */
+bool
+air_control_point_call(struct air_ctx *c, const struct air_inst *in)
+{
+   const struct air_type *rt = in->base.type;
+   unsigned n = rt->kind == AIR_TYPE_STRUCT ? rt->num_members : 1;
+   if (in->num_operands < 2 || n > c->cp_num_attrs)
+      return air_error(c, "interface: a control point read for %u attributes, of %u described", n,
+                       c->cp_num_attrs);
+   nir_def *k = air_get_ssa(c, in->operands[1]);
+   if (!k)
+      return false;
+   nir_def *patch = nir_iadd(&c->b, nir_load_instance_id(&c->b), nir_load_base_instance(&c->b));
+   nir_def *elem = nir_iadd(&c->b, nir_imul_imm(&c->b, patch, MAX2(c->info->tess_control_points, 1)),
+                            nir_u2u32(&c->b, k));
+   struct air_val *v = rt->kind == AIR_TYPE_STRUCT ? air_val_agg(c, n) : NULL;
+   for (unsigned i = 0; i < n; i++) {
+      uint64_t loc = 0;
+      md_key_int(c->cp_attr[i], "air.location_index", &loc);
+      nir_def *val;
+      if (!stage_in_value(c, c->cp_attr[i], 0, loc, rt->kind == AIR_TYPE_STRUCT ? rt->members[i] : rt,
+                          elem, patch, &val))
+         return false;
+      if (v)
+         v->elems[i] = air_val_ssa(c, val);
+      else
+         v = air_val_ssa(c, val);
+   }
+   air_set(c, &in->base, v);
    return true;
 }
 
@@ -3684,6 +3737,29 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
                   "descriptor to reach");
 
       c->params[param] = air_val_ssa(c, fetched);
+      return true;
+   }
+
+   /* A post-tessellation vertex function's [[stage_in]] patch: `patch_control_point<T>`, an opaque
+    * handle the shader passes to a function Metal makes at pipeline time out of the vertex
+    * descriptor, once per control point (LocalAuthenticationPrivateUI's spline renderer, the Face
+    * ID animations). The handle reads nothing; the calls are made reads of the attributes
+    * (air_control_point_call). */
+   if (md_key(node, "air.patch_control_point_input") >= 0) {
+      const struct air_md *fnode = node->num_ops > 2 ? node->ops[2] : NULL;
+      int fk = fnode && fnode->kind == AIR_MD_NODE ? md_key(fnode, "air.patch_control_point_function") : -1;
+      if (fk < 0 || fk + 1 >= (int)fnode->num_ops || !fnode->ops[fk + 1] ||
+          fnode->ops[fk + 1]->kind != AIR_MD_VALUE)
+         return air_error(c, "interface: a patch's control points with no function to read them");
+      if (c->nir->info.stage != MESA_SHADER_VERTEX || c->info->tess_domain == AIR_TESS_NONE)
+         return air_error(c, "interface: control points outside a post-tessellation vertex function");
+      c->cp_fn = fnode->ops[fk + 1]->value;
+      c->cp_num_attrs = 0;
+      for (unsigned i = 3; i < node->num_ops && c->cp_num_attrs < ARRAY_SIZE(c->cp_attr); i++)
+         if (node->ops[i] && node->ops[i]->kind == AIR_MD_NODE)
+            c->cp_attr[c->cp_num_attrs++] = node->ops[i];
+      c->params[param] = air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE,
+                                                          .pointee = t ? t->elem : NULL });
       return true;
    }
 

@@ -163,6 +163,13 @@ struct air_ctx {
    nir_shader *nir;
    nir_builder b;
 
+   /* a post-tessellation vertex function's [[stage_in]] control points: the function Metal makes at
+    * pipeline time that reads one (air.patch_control_point_function), and the attributes it returns,
+    * in order */
+   const struct air_value *cp_fn;
+   const struct air_md *cp_attr[16];
+   unsigned cp_num_attrs;
+
    const struct air_to_nir_options *options;
    struct air_shader_info *info;
 
@@ -360,6 +367,7 @@ struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes
 bool air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *name);
 /* a call of a function defined in this module, folded in by nir_inline_functions */
 bool air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *name);
+bool air_control_point_call(struct air_ctx *c, const struct air_inst *in);
 /* a pointer chosen at run time: a when cond, else b */
 struct air_val *air_val_ptr_select(struct air_ctx *c, nir_def *cond, struct air_val *a,
                                    struct air_val *b);

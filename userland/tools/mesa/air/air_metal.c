@@ -8662,8 +8662,25 @@ rwa_render_create(struct rwa_device *device,
          module_constants(render->mem_ctx, vertex_bitcode, vertex_size, &vfc);
       struct air_linked_function *vlinked;
       unsigned num_vlinked = module_linked(render->mem_ctx, vertex_bitcode, &vlinked);
+      /* the vertex descriptor, which a post-tessellation vertex function's [[stage_in]] control
+       * points are read out of by the shader itself (air_control_point_call) */
+      struct air_stage_in *vsi = NULL;
+      for (unsigned a = 0; a < RWA_MAX_VERTEX_ATTRIBUTES && !vsi; a++)
+         if (shape->vertex_attribute[a].format)
+            vsi = rzalloc(render->mem_ctx, struct air_stage_in);
+      for (unsigned a = 0; vsi && a < RWA_MAX_VERTEX_ATTRIBUTES && a < ARRAY_SIZE(vsi->attribute); a++) {
+         vsi->attribute[a].format = shape->vertex_attribute[a].format;
+         vsi->attribute[a].offset = shape->vertex_attribute[a].offset;
+         vsi->attribute[a].buffer_index = shape->vertex_attribute[a].buffer_index;
+      }
+      for (unsigned l = 0; vsi && l < RWA_MAX_VERTEX_BUFFERS && l < ARRAY_SIZE(vsi->layout); l++) {
+         vsi->layout[l].stride = shape->vertex_layout[l].stride;
+         vsi->layout[l].step_function = shape->vertex_layout[l].step_function;
+         vsi->layout[l].step_rate = shape->vertex_layout[l].step_rate;
+      }
       const struct air_to_nir_options vopts = { .constants = vfc, .num_constants = num_vfc,
-                                                .linked = vlinked, .num_linked = num_vlinked };
+                                                .linked = vlinked, .num_linked = num_vlinked,
+                                                .stage_in = vsi };
       double t_vs = cost_now_ms();
       vs = air_to_nir_kept(render->mem_ctx, vertex_bitcode, vertex_size, vertex_entry, &vopts,
                            device->nir_options, &render->vinfo, &error);

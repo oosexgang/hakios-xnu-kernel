@@ -4,7 +4,9 @@
  * vertices an instance, an instance a patch. Patch 0 must cover the left half of a 32 x 16 target and
  * patch 1 the right, every pixel, each with its own (u, v) and patch number -- a grid with a hole, a
  * position_in_patch off by a cell or a patch_id that is not the instance all show here. With `tri`,
- * tools/air/tess_tri.ll: one triangle patch over the lower-left half, each pixel its own barycentric.
+ * tools/air/tess_tri.ll: one triangle patch over the lower-left half, each pixel its own barycentric. With
+ * `cp`, tools/air/tess_cp.ll: the two quad patches again, their corners [[stage_in]] control points out of
+ * a vertex buffer the vertex descriptor lays out, one float2 per control point.
  */
 #include <math.h>
 #include <stdio.h>
@@ -29,9 +31,14 @@ int main(int argc, char **argv) {
 	if (!vb || !fb || !d) { printf("setup: %s\n", why); return 1; }
 	struct rwa_render_shape shape = { .color_format = { RGBA32F }, .color_count = 1, .sample_count = 1 };
 	struct rwa_render_info info;
-	int tri = argc > 3;
-	struct rwa_render *r = rwa_render_create(d, vb, vn, tri ? "tt" : "tv", fb, fn, "tf", &shape, &info,
-						 why, sizeof(why));
+	int cp = argc > 3 && !strcmp(argv[3], "cp");
+	int tri = argc > 3 && !cp;
+	if (cp) {
+		shape.vertex_attribute[0] = (struct rwa_vertex_attribute){ .format = 29, .offset = 0, .buffer_index = 0 };
+		shape.vertex_layout[0] = (struct rwa_vertex_layout){ .stride = 8, .step_function = 4 };
+	}
+	struct rwa_render *r = rwa_render_create(d, vb, vn, tri ? "tt" : cp ? "tc" : "tv", fb, fn, "tf", &shape,
+						 &info, why, sizeof(why));
 	if (!r) { printf("pipeline: %s\n", why); return 1; }
 	unsigned per_patch = rwa_render_patch_vertices(r);
 	struct rwa_texture_shape ts = { RGBA32F, TEX2D, W, H, 1, 1, 1, 1, RT | READ };
@@ -47,6 +54,20 @@ int main(int argc, char **argv) {
 	dr.primitive = TRIANGLES;
 	dr.vertex_count = per_patch;
 	dr.instance_count = tri ? 1 : 2;
+	/* the control points: two patches' corners, bottom-left, bottom-right, top-left, top-right */
+	static const float corners[8][2] = { { -1, -1 }, { 0, -1 }, { -1, 1 }, { 0, 1 },
+					      { 0, -1 }, { 1, -1 }, { 0, 1 }, { 1, 1 } };
+	struct rwa_buffer *cb = NULL;
+	struct rwa_vertex_stream streams[1];
+	if (cp) {
+		cb = rwa_buffer_create(d, sizeof(corners), why, sizeof(why));
+		if (!cb) { printf("buffer: %s\n", why); return 1; }
+		memcpy(rwa_buffer_map(cb), corners, sizeof(corners));
+		streams[0] = (struct rwa_vertex_stream){ cb, 0 };
+		dr.vertex_streams = streams;
+		dr.vertex.buffers = &cb;
+		dr.vertex.buffer_count = 1;
+	}
 	if (rwa_render_draw(r, &dr, why, sizeof(why)) || rwa_finish(d, why, sizeof(why))) {
 		printf("draw: %s\n", why);
 		return 1;
@@ -85,7 +106,8 @@ int main(int argc, char **argv) {
 					       c[0], c[1], c[2], c[3], u, v, p);
 			}
 		}
-	printf("%s of %u vertices, %d x %d pixels: %s\n", tri ? "a triangle patch" : "two quad patches",
+	printf("%s of %u vertices, %d x %d pixels: %s\n", tri ? "a triangle patch" :
+	       cp ? "two quad patches of [[stage_in]] control points" : "two quad patches",
 	       per_patch, W, H, bad ? "WRONG" : "ok");
 	return bad != 0;
 }
