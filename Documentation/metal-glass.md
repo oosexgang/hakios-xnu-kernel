@@ -22,7 +22,7 @@ Four boots of 240–300 s ran with no crash of backboardd. The last one, with ev
 the plug-in before the run's end, except an accounting setter it takes without keeping.
 
 Speed, measured with `rc.jobs.fps` and `darwin/tools/frames.py` (the 0.7 s after each gesture), with redwood's
-defaults (`fb_hz=120`, `atm_diagnostic_config`, `metal_gmem_binning=1` in its `board.toml`; `logs/080215-run.log`,
+defaults (`fb_hz=120`, `atm_diagnostic_config`, `metal_gmem_binning=1` in its `board.dts`; `logs/080215-run.log`,
 `logs/081352-run.log`, `logs/082525-run.log`):
 
 | Scene | Frames a second | Within 18 ms | GPU per frame |
