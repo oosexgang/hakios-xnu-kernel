@@ -1404,7 +1404,7 @@ af_frame(int device, struct af *af, const struct hakios_camera_frame *f, const u
 	}
 }
 
-/* the sensor's colour tuning, when the image has one (fw/camera-<chip>.isp, tools/camtuning.py: the chip in lower case) */
+/* the sensor's colour tuning, when the image has one (fw/camera-<chip>.isp, components/camera/tools/camtuning.py: the chip in lower case) */
 static void
 load_tuning(struct isp *isp, const struct hakios_camera_frame *f)
 {

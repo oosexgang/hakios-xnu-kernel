@@ -36,8 +36,8 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios.dylib -framework CoreFounda
 # (what it knows of each board, user_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
 $DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
-# Camera.app's preview given a size where AVFoundation leaves it none (darwin/userland/inject_camera_app.c)
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/userland/inject_camera_app.c"
+# Camera.app's preview given a size where AVFoundation leaves it none (components/camera/src/inject_camera_app.c)
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/../components/camera/src/inject_camera_app.c"
 # (libhakios-statusbar.dylib, in every application, also names an uncaught exception on the console: darwin/userland/uncaught.c)
 # the App Store's SAP (Mescal) signature, made by the host's sapd, and the storefront it answers with
 # (components/apple-id/src/inject_mescal.m and inject_store.c; root26-darwin.sh STOREFRONT=1 injects them into the store daemons)
@@ -69,11 +69,11 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios-poster.dylib -framework Cor
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/../components/wallpaper/inject_wallpaper.m"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-backlight.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-backlight.dylib" "$RN/../components/brightness/inject_backlight.c"
 # the flashlight and the camera in cameracaptured, iOS 27's camera daemon: the kernel's /dev/hakios-torch and
-# /dev/hakios-camera (darwin/userland/inject_capture.c; the capture device and its picture processor are 16.5's,
-# userland/src/camera_device.c and camera_isp.c, with the iPhone 11's formats: HAKIOS_IOS27)
+# /dev/hakios-camera (components/camera/src/inject_capture.c; the capture device and its picture processor are 16.5's,
+# components/camera/src/camera_device.c and camera_isp.c, with the iPhone 11's formats: HAKIOS_IOS27)
 $DYN -O2 -DHAKIOS_IOS27 -dynamiclib -install_name /hakios/lib/libhakios-capture.dylib -framework CoreFoundation \
-	-framework CoreMedia -framework CoreVideo -framework IOSurface -lobjc -I"$O/src" -o "$O/libhakios-capture.dylib" \
-	"$RN/userland/inject_capture.c" "$O/src/camera_device.c" "$O/src/camera_isp.c"
+	-framework CoreMedia -framework CoreVideo -framework IOSurface -lobjc -o "$O/libhakios-capture.dylib" \
+	"$RN/../components/camera/src/inject_capture.c" "$RN/../components/camera/src/camera_device.c" "$RN/../components/camera/src/camera_isp.c"
 # the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: components/brightness/inject_brightness.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/../components/brightness/inject_brightness.c"
 for f in "$O"/*.dylib "$O/HakiosAudio"; do

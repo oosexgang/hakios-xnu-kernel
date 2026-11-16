@@ -137,7 +137,7 @@ enum {
 /* the sensor chips this driver knows (tools/boards.py's CAMERA_CHIPS is this list's names) */
 static const struct chip {
 	const char *    name;           /* as the board names it, and for the frames' header */
-	const char *    tab;            /* its module file, in fw/ of the small image (userland/tools/camsensor.py) */
+	const char *    tab;            /* its module file, in fw/ of the small image (components/camera/tools/camsensor.py) */
 	uint8_t         regs;           /* the exposure registers: REGS_OV_PAGED, REGS_SMIA or REGS_OV16 */
 	uint8_t         bayer;          /* the picture's order as it comes here (camraw.py's codes: 1 GRBG, 3 BGGR) */
 	uint8_t         pattern_bayer;  /* ... and its own colour bars' (its module file's "tpgon") */
@@ -949,7 +949,7 @@ mclk_off(void)
 
 /*
  * The sensor's tables are Android's, read at run time from fw/ of the small image, where
- * userland/build.sh puts what userland/tools/camsensor.py makes of the sensor's module file ("RWCTAB02"):
+ * userland/build.sh puts what components/camera/tools/camsensor.py makes of the sensor's module file ("RWCTAB02"):
  * the slave address and the chip ID's read, the lane assignment, the modes, the power sequences
  * (Android's cam_sensor kinds: 0 MCLK, 1 VANA, 2 VDIG, 3 VIO, 8 RESET, with their delays) and the
  * register tables (init, res0.., on, off, ...).
@@ -1510,7 +1510,7 @@ look_around(void)
  * cam_vfe_bus_ver2.c), whose write master 0 writes each frame as it comes (Android's RDI frame mode)
  * to memory through the SMMU, as stream 0x800 with the mask 0x4e0 (dt: msm_cam_smmu_ife), into a
  * context of ours. The memory is one physically contiguous piece that the loader hands to the host
- * after the run ("xl camera"; userland/tools/camraw.py makes pictures of it).
+ * after the run ("xl camera"; components/camera/tools/camraw.py makes pictures of it).
  *
  * What it takes, in Android's order and with Android's numbers (camcc-yupik.c, gcc-yupik.c, the
  * device tree's clock rates at the "svs" level of csid-lite 0, the sensor's csiphy and cpas):
@@ -1877,7 +1877,7 @@ clocks_down(void)
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 8 | 1u << 12)
 #define CAM_PTE                 (3ull | 1ull << 6 | 2ull << 8 | 1ull << 10 | 1ull << 11)       /* as board/sound.c's */
 
-/* What the loader hands to the host (userland/tools/camraw.py reads it). */
+/* What the loader hands to the host (components/camera/tools/camraw.py reads it). */
 struct cam_header {
 	char            magic[8];       /* "RWCAM001" */
 	uint32_t        width, height;  /* pixels */
@@ -2465,7 +2465,7 @@ capture_tpg(void)
 /* ---- cam=4: the sensor's own frames ------------------------------------------------------------------ */
 
 /*
- * The sensor's tables are Android's, read at run time: userland/tools/camsensor.py makes camera-ov02b10.tab
+ * The sensor's tables are Android's, read at run time: components/camera/tools/camsensor.py makes camera-ov02b10.tab
  * and camera-s5khm2sd.tab out of the module files (userland/build.sh puts them into fw/ of the small
  * image). The sequence is Android's: power up, the chip ID, the initialisation ("init": the macro's
  * 108 writes, a soft reset and then its registers page by page; the wide one's 1441), the mode's own
@@ -2991,7 +2991,7 @@ capture_sensor(void)
 	 * The picture's order is the one each sensor's module file gives its modes (resolutionData's
 	 * colorFilterArrangement, in CamX's order: 0 BGGR, 1 GBRG, 2 GRBG, 3 RGGB -- camera.qcom.so's
 	 * TranslateColorFilterArrangement turns it into Android's by the table 3, 2, 1, 0): the OV02B10's
-	 * and the OV16A1Q's BGGR, the S5KHM2SD's and the S5K4H7's GRBG (userland/tools/camsensor.py lists it).
+	 * and the OV16A1Q's BGGR, the S5KHM2SD's and the S5K4H7's GRBG (components/camera/tools/camsensor.py lists it).
 	 * Their greens are where a picture of a room has them (the sites of a cell that track each
 	 * other); red against blue had been guessed from raw levels under a warm light, the other way
 	 * round, and every picture had the two swapped. The OV02B10's own colour bars (cam_pattern=1)

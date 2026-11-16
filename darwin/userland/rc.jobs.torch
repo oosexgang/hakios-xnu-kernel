@@ -1,7 +1,7 @@
 # iOS 26/27 (RC_JOBS=darwin/userland/rc.jobs.torch EXTRA_BIN=$OBJ/torch_test root26-darwin.sh; torch=3): the flashlight
 # as an application reaches it -- AVFlashlight, through cameracaptured's flashlight server -- once the system is up:
 # full level for 3 s, a quarter for 3 s, off. torch_test says each step; libhakios-capture.dylib in cameracaptured
-# says "the flashlight at N of 1000" for each level the kernel is given (darwin/userland/inject_capture.c).
+# says "the flashlight at N of 1000" for each level the kernel is given (components/camera/src/inject_capture.c).
 /hakios/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200 wait 20
 /hakios/bin/torch_test 3
 /bin/ps -A

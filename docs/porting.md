@@ -257,12 +257,12 @@ Stated plainly, so nobody finds out the hard way:
   amplifiers that is all: a phone with one of those parts wired differently needs its section of the
   board file filled in and no change to the driver. [features.md](features.md) lists what each
   feature needs.
-- **Darwin's camera** (`userland/userland/src/camera_device.c`, of the Darwin 16.5 generation) presents two
+- **Darwin's camera** (`components/camera/src/camera_device.c`, of the Darwin 16.5 generation) presents two
   cameras the way an iPhone X has them (optics and formats, which Darwin's capture stack matches its
   presets to). Which of the phone's sensors is the back and which the front camera, and whether a
   sensor's pictures are upside down, is the board's (`camera { }` `darwin-sensor`, `darwin-front`, a sensor's
   `upside-down`); a sensor's colour tuning is found by its chip (`fw/camera-CHIP.isp`, made by
-  `userland/tools/camtuning.py` from the phone's tuning file).
+  `components/camera/tools/camtuning.py` from the phone's tuning file).
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
   GPT entry in the board file's `storage { }`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in

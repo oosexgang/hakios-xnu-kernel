@@ -6,7 +6,7 @@
  *                          full level for SECONDS (default 2), at a quarter for as long, then off
  *
  * Each step is said on standard error with what came back. The light itself is the kernel's
- * (boot-arg torch=3, /dev/hakios-torch; darwin/userland/inject_capture.c in cameracaptured).
+ * (boot-arg torch=3, /dev/hakios-torch; components/camera/src/inject_capture.c in cameracaptured).
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>

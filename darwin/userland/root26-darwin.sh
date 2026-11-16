@@ -322,9 +322,9 @@ echo "/hakios/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/hakios/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # cameracaptured, iOS 27's camera daemon: the flashlight's server given the kernel's flashlight (src:
-# darwin/userland/inject_capture.c). It does nothing where the kernel has none (boot-arg torch=3).
+# components/camera/src/inject_capture.c). It does nothing where the kernel has none (boot-arg torch=3).
 echo "/hakios/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
-# Camera.app: its preview's picture given a size where AVFoundation leaves it none (darwin/userland/inject_camera_app.c)
+# Camera.app: its preview's picture given a size where AVFoundation leaves it none (components/camera/src/inject_camera_app.c)
 echo "/hakios/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
 # STOREFRONT=1: the App Store's SAP (Mescal) signature from the host's sapd, and a storefront answered, so the
 # storefront-token request is signed and amp-api returns the catalog (components/apple-id/src/inject_store.c, inject_mescal.m).

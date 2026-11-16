@@ -22,7 +22,7 @@
  * sends our device or stream that they do not have are answered with 0 and named once in the log.
  *
  * The camera (only where the kernel has one: cam=5, /dev/hakios-camera): the capture stack's device vendor
- * is made with the create function of our capture device (userland/src/camera_device.c, its formats N104's
+ * is made with the create function of our capture device (components/camera/src/camera_device.c, its formats N104's
  * with HAKIOS_IOS27) in place of the one iOS looks for among the iPhones' ISP drivers in IOKit
  * (FigCaptureGetCaptureDeviceCreateFunction, which finds none here and fails after 8 s): the factory
  * +[BWFigCaptureDeviceVendor sharedCaptureDeviceVendorWithDefaultDeviceCreateFunction:] is given it when it
@@ -33,7 +33,7 @@
  * photographs.
  *
  * (iOS 16.5 did all this in mediaserverd, by the addresses of the code it replaced:
- * userland/src/inject_media.c.)
+ * userland/userland/src/inject_media.c.)
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>

@@ -14,7 +14,7 @@ finished photograph; PREFIX-N-raw.png is the frame's raw values as they are (gre
 Formats 2 and 3 are a picture Darwin made of a frame (cam=5): NV12 (full-range YCbCr 4:2:0, the chroma plane
 after the luma one, both of the stride) or BGRA, which becomes PREFIX.png as it is.
 --bayer N takes the frames for that order instead of the header's. The header's is the one each
-sensor's module file gives (tools/camsensor.py lists it): the OV02B10's and the OV16A1Q's picture is
+sensor's module file gives (components/camera/tools/camsensor.py lists it): the OV02B10's and the OV16A1Q's picture is
 BGGR, the S5KHM2SD's and the S5K4H7's GRBG. The OV02B10's own colour bars (cam_pattern=1) are taken
 for GBRG, and the header says so for them. (Frames taken before the kernel had this right say
 RGGB for BGGR and GBRG for GRBG: --bayer 3 and --bayer 1 for them.)

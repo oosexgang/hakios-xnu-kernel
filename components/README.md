@@ -10,6 +10,7 @@ and check it, and the notes of how it was found out. What runs in the kernel sta
 |---|---|
 | [`apple-id`](apple-id) | Signing in with an Apple ID and the App Store: code of ours inside akd, appstored and mobileactivationd where they would stop on a phone Apple did not make. |
 | [`brightness`](brightness) | The brightness slider, Auto-Brightness and the display modes, to the kernel's backlight driver. |
+| [`camera`](camera) | The cameras and the flashlight as Darwin's capture stack wants them, over the kernel's camera and flashlight drivers. |
 | [`metal`](metal) | Metal on the Adreno: the Metal device Darwin loads, and the shader compiler from Apple's AIR through Mesa to the GPU. |
 | [`metal-plugin`](metal-plugin) | A second Metal device, written apart: its own library for the Adreno's A6xx command stream and the plug-in that serves CoreAnimation over it ([`docs/metal-plugin.md`](../docs/metal-plugin.md)). |
 | [`sep`](sep) | The Secure Enclave's keystore, answered by the kernel for a phone that has none, so that the keychain works. |

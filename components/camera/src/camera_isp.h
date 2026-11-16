@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "board/camera.h"
+#include "../../../userland/userland/src/board/camera.h"
 
 struct isp_stats {
 	double          mean[3];        /* R, G, B above black, in 10-bit steps */
@@ -40,7 +40,7 @@ struct isp_lsc {
 };
 
 /*
- * A camera's colour tuning, as tools/camtuning.py makes it out of the camera's tuning file of Android's
+ * A camera's colour tuning, as components/camera/tools/camtuning.py makes it out of the camera's tuning file of Android's
  * camera stack: colour matrices and lens shading grids, each per range of the scene's light (a lux
  * index, Qualcomm's measure: higher is darker) and within that per range of the light's colour
  * temperature.
@@ -61,7 +61,7 @@ struct isp_tuning {
 	/*
 	 * The white balance's reference lights, from the bluest to the reddest: each as the sensor sees a
 	 * grey under it (red over green, blue over green), and the colour temperature its tables are
-	 * picked by (tools/camtuning.py). Between them, the line the white balance keeps to.
+	 * picked by (components/camera/tools/camtuning.py). Between them, the line the white balance keeps to.
 	 */
 	uint32_t        refs;
 	float           ref[16][3];
@@ -128,7 +128,7 @@ void isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_fram
  */
 bool isp_lsc_from_flat(struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, float *min_ratio);
 void isp_set_ccm(struct isp *isp, const float m[9]);
-/* the tuning in PATH (tools/camtuning.py's) in place of the one there was: false, and none, if it is not one */
+/* the tuning in PATH (components/camera/tools/camtuning.py's) in place of the one there was: false, and none, if it is not one */
 bool isp_load_tuning(struct isp *isp, const char *path);
 /* the colour matrix and lens shading for a scene of this lux index and colour temperature, from the tuning */
 void isp_tune(struct isp *isp, float lux_index, float cct);

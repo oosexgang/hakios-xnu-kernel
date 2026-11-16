@@ -229,8 +229,8 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -framework CoreFoundation -framework AudioToolbox -framework AVFoundation -lobjc -o obj/sound_test src/sound_test.c
 		$DYN -framework CoreFoundation -lMobileGestalt -o obj/mg_test src/mg_test.c
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/torch_test src/torch_test.c
-		$DYN -O2 -o obj/camera_test src/camera_test.c src/camera_isp.c
-		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest src/camera_avtest.m
+		$DYN -O2 -o obj/camera_test ../../components/camera/src/camera_test.c ../../components/camera/src/camera_isp.c
+		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest ../../components/camera/src/camera_avtest.m
 		# (the microphone as an application records: allowed to, by an entitlement, if ldid is there)
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/record_test src/record_test.c &&
 			{ ${LDID:-ldid} -Ssrc/record_test.entitlements obj/record_test 2>/dev/null ||
@@ -339,7 +339,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			-o obj/libhakios-app.dylib src/inject_app.c
 		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-media.dylib -framework CoreFoundation -framework CoreMedia \
 			-framework CoreVideo -framework IOSurface -lobjc \
-			-o obj/libhakios-media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
+			-o obj/libhakios-media.dylib src/inject_media.c ../../components/camera/src/camera_device.c ../../components/camera/src/camera_isp.c
 		# ... and inside appstored (STOREFRONT=1), which answers with a storefront and watches for a bag
 		# request being built (../../components/apple-id/first-generation/inject_store.c)
 		# (-lc++abi for __cxa_throw: every C++ exception thrown in the process is watched, which is how
@@ -666,7 +666,7 @@ if [ -f ../fw-haptic/aw8697_haptic.bin ]; then
 	mkdir -p root/fw
 	install -m 0644 ../fw-haptic/aw8697_haptic.bin root/fw/
 fi
-# ... and the cameras' register tables (bsd/dev/board/camera.c, cam=2 and up), made by tools/camsensor.py out of
+# ... and the cameras' register tables (bsd/dev/board/camera.c, cam=2 and up), made by ../components/camera/tools/camsensor.py out of
 # the sensors' module files of Android's camera stack, the phone's /vendor/lib64/camera/com.qti.sensormodule.
 # <phone>_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
 # repository): camera-<sensor>.tab
@@ -674,15 +674,15 @@ for module in ../fw-camera/com.qti.sensormodule.*.bin; do
 	[ -f "$module" ] || continue
 	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
-	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
+	../../components/camera/tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
 done
-# ... and their colour tuning (libhakios-media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
+# ... and their colour tuning (libhakios-media's processor, ../../components/camera/src/camera_isp.c), made by ../components/camera/tools/camtuning.py out of the
 # cameras' tuning files beside them, com.qti.tuned.<phone>_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
 for tuned in ../fw-camera/com.qti.tuned.*.bin; do
 	[ -f "$tuned" ] || continue
 	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
-	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
+	../../components/camera/tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
 done
 # ... and with ADSP=1 the image of the audio DSP, from the same place into ../fw-audio (bsd/dev/board/adsp.c):
 # adsp.mdt and adsp.b02 to adsp.b36, 20 MB. Only when asked for: beside GL=1 the payload would be more than the 64 MB
