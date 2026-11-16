@@ -20,6 +20,7 @@
  */
 
 #include "air_private.h"
+#include "nir_format_convert.h"
 
 #include <string.h>
 
@@ -762,6 +763,17 @@ math_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n, 
       r = nir_vec(&c->b, ch, 4);
       if (air_nir_bit_size(c, in->base.type) == 16)
          r = nir_f2f16(&c->b, r);
+   } else if (!strcmp(op, "unpack") && n->num >= 3 && !strcmp(n->part[1], "unorm") &&
+              !strcmp(n->part[2], "rgb9e5")) {
+      /* three 9-bit mantissas from the low end and a 5-bit exponent shared by them, biased
+       * by 15 (the copy kernels of MTLBVHBuilder, ComputeGraph): NIR's own reading of the
+       * RGB9E5 format, which is Metal's */
+      r = nir_format_unpack_r9g9b9e5(&c->b, nir_u2u32(&c->b, a[0]));
+      if (air_nir_bit_size(c, in->base.type) == 16)
+         r = nir_f2f16(&c->b, r);
+   } else if (!strcmp(op, "pack") && n->num >= 3 && !strcmp(n->part[1], "unorm") &&
+              !strcmp(n->part[2], "rgb9e5") && a[0]->num_components == 3) {
+      r = nir_format_pack_r9g9b9e5(&c->b, nir_f2f32(&c->b, a[0]));
    } else if (!strcmp(op, "pack") && n->num >= 3 && !strcmp(n->part[1], "unorm") &&
               !strcmp(n->part[2], "rgb10a2") && a[0]->num_components == 4) {
       nir_def *f = nir_fsat(&c->b, nir_f2f32(&c->b, a[0]));
