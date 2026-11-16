@@ -92,6 +92,9 @@ chmod +x "$K/host/xnu-clang" "$K/host/iig"
 link "$K/host/iig" host/bin/iig
 link "$K/host/xnu-clang" host/bin/xnu-clang
 link xnu-clang host/bin/xnu-clang++
+# the clang it runs, kept for what is built with it later (darwin/userland: the libraries need the same
+# clang, and a newer one than Ubuntu's /usr/bin/clang for <ptrauth.h>); XNU_CLANG_DIR then still wins
+echo "$XNU_CLANG_DIR" > host/clang-dir
 # the iig output of xnu-12377.121 (what Apple's closed iig would generate for the kernel), as the
 # macOS 26.5 SDK ships it: only Kernel.framework is kept, outside the repository
 MACOS26=MacOSX26.5.sdk
