@@ -414,7 +414,7 @@ snapshot_timeouts_longer(void)
  * The throttle policy above is made once, before this library can reach it, and the time that runs out
  * is not only its own: PosterUIFoundation asks its render sessions for -pui_renderSessionTimeoutInterval,
  * and its snapshot classes carry more. Every getter of a time-out (a selector with "TimeoutInterval" in
- * it, returning a double) of a PUI, PBF or PR class, and pui_renderSessionTimeoutInterval wherever it
+ * or "imeout" in it, returning a double) of a PUI, PBF or PR class, and pui_renderSessionTimeoutInterval wherever it
  * is, answers SNAPSHOT_STRETCH times what it would have. Each replaced method keeps its own original:
  * the table is looked up by class and selector.
  */
@@ -448,7 +448,8 @@ timeout_getter(const char *class_name, const char *selector)
 	if (strcmp(selector, "pui_renderSessionTimeoutInterval") == 0) {
 		return true;
 	}
-	return strstr(selector, "TimeoutInterval") != NULL && strchr(selector, ':') == NULL &&
+	return (strstr(selector, "imeout") != NULL || strstr(selector, "Timeout") != NULL) &&
+	    strchr(selector, ':') == NULL &&
 	    (strncmp(class_name, "PUI", 3) == 0 || strncmp(class_name, "PBF", 3) == 0 ||
 	     strncmp(class_name, "PR", 2) == 0);
 }
@@ -487,6 +488,43 @@ stretch_in(Class cls, bool meta)
 	free(methods);
 }
 
+/* once: every selector with "ime" in it of PosterUIFoundation's snapshot classes, for finding which time
+ * it is that runs out */
+static void
+say_snapshot_times(Class *classes, unsigned count)
+{
+	static bool said;
+	char line[200], types[48];
+
+	if (said) {
+		return;
+	}
+	for (unsigned i = 0; classes != NULL && i < count; i++) {
+		const char *name = class_getName(classes[i]);
+
+		if (strncmp(name, "PUIPoster", 9) != 0 || strstr(name, "Snapshot") == NULL) {
+			continue;
+		}
+		said = true;
+		for (int meta = 0; meta < 2; meta++) {
+			unsigned n = 0;
+			Method *methods = class_copyMethodList(meta ? object_getClass((id)classes[i]) : classes[i], &n);
+
+			for (unsigned k = 0; k < n; k++) {
+				const char *sel = sel_getName(method_getName(methods[k]));
+
+				if (strstr(sel, "ime") == NULL && strstr(sel, "Time") == NULL) {
+					continue;
+				}
+				types_of(methods[k], types, sizeof(types));
+				snprintf(line, sizeof(line), "hakios: PosterBoard: %c[%s %s] %s\n", meta ? '+' : '-', name, sel, types);
+				say(line);
+			}
+			free(methods);
+		}
+	}
+}
+
 static void
 render_timeouts_longer(void)
 {
@@ -497,6 +535,7 @@ render_timeouts_longer(void)
 		stretch_in(classes[i], false);
 		stretch_in(object_getClass((id)classes[i]), true);
 	}
+	say_snapshot_times(classes, count);
 	free(classes);
 }
 
