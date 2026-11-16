@@ -381,6 +381,15 @@ commit of its own:
   read_write texture on the QEMU bench returned zeros (the softpipe fix is in
   `userland/tools/mesa26/darwin.patch`). QuartzCore, HDRProcessing, CoreImage and MPSImage swept again
   with no function lost.
+- **16 November, evening**: simdgroup matrices. Metal's `simdgroup_matrix<T, 8, 8>` is a `<64 x T>` in AIR
+  of which a thread holds two elements, its `thread_elements()` in lanes 0 and 1 -- the only lanes MLX reads
+  or writes -- so such a vector is those two lanes here, and
+  `air.simdgroup_matrix_8x8_multiply_accumulate` reads row fm of A and column fn + j of B from the lanes
+  holding them by shuffles within the group of 32, in Apple's layout (fm = 4 l4 + 2 l2 + l1,
+  fn = 4 l3 + 2 l0). Softpipe has no shuffle, so `userland/tools/air/simdmatrixcheck.py` checks the lane
+  arithmetic on 32 simulated lanes against a plain product; ir3 compiles every one of 45 sampled from the
+  1,731 GESS MLX kernels refused for it. A pointer kept as numbers in a local is decoded only into the places of its
+  own address space (MLX's implicit_gemm_conv), and `air.quadgroups_per_threadgroup` is answered.
 
 ### Tessellation without a tessellator
 
