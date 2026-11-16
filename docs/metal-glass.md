@@ -230,6 +230,11 @@ each a line the driver or the kernel prints:
   `userland/tools/air/fbfetchdraw.sh` checks it through the library. The phone's freedreno fetches for itself
   and is not touched.
 
+With both, the boot after drew the lock screen's wallpaper through Metal: swap 3, surface 27, Stripe Yellow
+whole -- the yellow ground (251, 205, 103) and its six stripes, every one at its own place -- composited by
+backboardd's render server out of the collections poster's layer, every pixel of it through `HakiosMetal`,
+`libhakios-air` and softpipe. The first Metal frame on the screen, two hours into a boot under TCG.
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
