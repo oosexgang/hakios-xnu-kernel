@@ -706,3 +706,57 @@ diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_emit.cc b/src/gallium/driver
  
     return fd_crb(ctx->batch->submit, 1)
        .add(GRAS_SC_CNTL(CHIP,
+diff --git a/src/gallium/drivers/softpipe/sp_image.c b/src/gallium/drivers/softpipe/sp_image.c
+--- a/src/gallium/drivers/softpipe/sp_image.c
++++ b/src/gallium/drivers/softpipe/sp_image.c
+@@ -216,6 +216,7 @@
+    int c, j;
+    char *data_ptr;
+    unsigned offset = 0;
++   enum pipe_format pformat = params->format;
+ 
+    if (params->unit >= PIPE_MAX_SHADER_IMAGES)
+       goto fail_write_all_zero;
+@@ -227,11 +228,15 @@
+    if (!has_compat_target(spr->base.target, params->tgsi_tex_instr))
+       goto fail_write_all_zero;
+ 
++   /* a load without a format reads the image's own, as a store without one writes it */
++   if (pformat == PIPE_FORMAT_NONE)
++      pformat = spr->base.format;
++
+    if (!get_dimensions(iview, spr, params->tgsi_tex_instr,
+-                       params->format, &width, &height, &depth))
++                       pformat, &width, &height, &depth))
+       return;
+ 
+-   stride = util_format_get_stride(params->format, width);
++   stride = util_format_get_stride(pformat, width);
+ 
+    for (j = 0; j < TGSI_QUAD_SIZE; j++) {
+       int s_coord, t_coord, r_coord;
+@@ -246,8 +251,8 @@
+          fill_zero = true;
+ 
+       if (fill_zero) {
+-         int nc = util_format_get_nr_components(params->format);
+-         int ival = util_format_is_pure_integer(params->format);
++         int nc = util_format_get_nr_components(pformat);
++         int ival = util_format_is_pure_integer(pformat);
+          for (c = 0; c < 4; c++) {
+             rgba[c][j] = 0;
+             if (c == 3 && nc < 4) {
+@@ -259,11 +264,11 @@
+          }
+          continue;
+       }
+-      offset = get_image_offset(spr, iview, params->format, r_coord);
++      offset = get_image_offset(spr, iview, pformat, r_coord);
+       data_ptr = (char *)spr->data + offset;
+ 
+       uint32_t sdata[4];
+-      util_format_read_4(params->format,
++      util_format_read_4(pformat,
+                          sdata, 0,
+                          data_ptr, stride,
+                          s_coord, t_coord, 1, 1);
