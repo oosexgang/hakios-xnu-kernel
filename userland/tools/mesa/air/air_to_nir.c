@@ -384,10 +384,30 @@ air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
    return bits;
 }
 
+/* A simdgroup matrix: Metal's simdgroup_matrix<T, 8, 8> is a <64 x T> in AIR, of which a thread
+ * holds two elements -- its thread_elements(), lanes 0 and 1, which is all MLX ever reads or
+ * writes of one (a shufflevector of lanes 0 and 1 in and out) -- and the rest of the matrix is in
+ * the other threads of the simdgroup. Here it is those two lanes, and the other 62 are undefined;
+ * air.simdgroup_matrix_8x8_* reach the rest through the simdgroup (air_intrinsics.c). */
+bool
+air_is_simd_matrix(const struct air_type *t)
+{
+   return t && t->kind == AIR_TYPE_VECTOR && t->count == 64;
+}
+
 unsigned
 air_nir_components(const struct air_type *t)
 {
+   if (air_is_simd_matrix(t))
+      return 2;
    return t->kind == AIR_TYPE_VECTOR ? t->count : 1;
+}
+
+/* the lanes LLVM counts in a vector, which for a simdgroup matrix is more than NIR holds */
+static unsigned
+air_llvm_lanes(const struct air_type *t)
+{
+   return t->kind == AIR_TYPE_VECTOR ? (unsigned)t->count : 1;
 }
 
 /* The glsl type a NIR function parameter needs to carry a value of this AIR
@@ -774,12 +794,14 @@ air_constant_val(struct air_ctx *c, const struct air_constant *k)
    case AIR_CONST_AGGREGATE: {
       if (t->kind == AIR_TYPE_VECTOR) {
          nir_def *comps[NIR_MAX_VEC_COMPONENTS];
-         if (k->num_elems > NIR_MAX_VEC_COMPONENTS)
+         /* of a simdgroup matrix, the two elements a thread holds */
+         unsigned ne = air_is_simd_matrix(t) ? MIN2(k->num_elems, 2u) : k->num_elems;
+         if (ne > NIR_MAX_VEC_COMPONENTS)
             return air_error(c, "instruction: a vector constant of %u elements", k->num_elems), NULL;
-         for (unsigned i = 0; i < k->num_elems; i++)
+         for (unsigned i = 0; i < ne; i++)
             if (!(comps[i] = air_get_ssa(c, k->elems[i])))
                return NULL;
-         return air_val_ssa(c, nir_vec(&c->b, comps, k->num_elems));
+         return air_val_ssa(c, nir_vec(&c->b, comps, ne));
       }
       struct air_val *v = air_val_agg(c, k->num_elems);
       for (unsigned i = 0; i < k->num_elems; i++)
@@ -794,11 +816,12 @@ air_constant_val(struct air_ctx *c, const struct air_constant *k)
          return air_error(c, "instruction: a data constant of a struct type"), NULL;
       if (t->kind == AIR_TYPE_VECTOR) {
          nir_def *comps[NIR_MAX_VEC_COMPONENTS];
-         if (k->num_elems > NIR_MAX_VEC_COMPONENTS)
+         unsigned ne = air_is_simd_matrix(t) ? MIN2(k->num_elems, 2u) : k->num_elems;
+         if (ne > NIR_MAX_VEC_COMPONENTS)
             return air_error(c, "instruction: a vector constant of %u elements", k->num_elems), NULL;
-         for (unsigned i = 0; i < k->num_elems; i++)
+         for (unsigned i = 0; i < ne; i++)
             comps[i] = reinterpret_float(c, et, scalar_constant(c, et, k->data[i]));
-         return air_val_ssa(c, nir_vec(&c->b, comps, k->num_elems));
+         return air_val_ssa(c, nir_vec(&c->b, comps, ne));
       }
       struct air_val *v = air_val_agg(c, k->num_elems);
       for (unsigned i = 0; i < k->num_elems; i++)
@@ -4686,12 +4709,14 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
     * where it is still an instruction with a name, until a vector is padded to the next size
     * NIR has. (A call's operand 0 is the callee, which is no vector.) */
    const struct air_type *rt = in->base.type;
-   if (rt && rt->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(rt->count))
+   if (rt && rt->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(rt->count) &&
+       !air_is_simd_matrix(rt))
       return air_error(c, "instruction: a vector of %u elements, which NIR has no register "
                           "for", (unsigned)rt->count);
    for (unsigned i = 0; i < in->num_operands; i++) {
       const struct air_type *ot = in->operands[i] ? in->operands[i]->type : NULL;
-      if (ot && ot->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(ot->count))
+      if (ot && ot->kind == AIR_TYPE_VECTOR && !nir_num_components_valid(ot->count) &&
+          !air_is_simd_matrix(ot))
          return air_error(c, "instruction: a vector of %u elements, which NIR has no register "
                              "for", (unsigned)ot->count);
    }
@@ -4823,12 +4848,19 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
                              air_value_kind_name(in->operands[2]),
                              mk ? mk->num_elems : 0, n);
          }
+         /* the second input's lanes start after the first's as LLVM counts them; a lane of a
+          * simdgroup matrix past the two a thread holds is undefined */
+         unsigned xl = air_llvm_lanes(in->operands[0]->type);
+         unsigned yl = air_llvm_lanes(in->operands[1]->type);
+         if (!undef && ((sel < xl && sel >= x->num_components) ||
+                        (sel >= xl && sel - xl < yl && sel - xl >= y->num_components)))
+            undef = true;
          if (undef) {
             comps[i] = nir_undef(&c->b, 1, x->bit_size);
-         } else if (sel < x->num_components) {
+         } else if (sel < xl) {
             comps[i] = nir_channel(&c->b, x, sel);
-         } else if (sel - x->num_components < y->num_components) {
-            comps[i] = nir_channel(&c->b, y, sel - x->num_components);
+         } else if (sel - xl < yl) {
+            comps[i] = nir_channel(&c->b, y, sel - xl);
          } else {
             return air_error(c, "instruction: a shuffle index past its inputs");
          }

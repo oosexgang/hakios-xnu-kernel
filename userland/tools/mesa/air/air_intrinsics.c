@@ -1311,7 +1311,8 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
     * was briefly attributed to somebody else's commit.
     */
    if (strncmp(op, "simd_", 5) && strncmp(op, "quad_", 5) &&
-       strcmp(op, "get_sample_position")) {
+       strcmp(op, "get_sample_position") &&
+       strcmp(op, "simdgroup_matrix_8x8_multiply_accumulate")) {
       *handled = false;
       return true;
    }
@@ -1370,6 +1371,52 @@ simd_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n,
                   "the same one Metal would give wherever it is uniform across the "
                   "group, and another lane's where it is not", n->part[0]);
       air_set(c, &in->base, air_val_ssa(c, nir_read_first_invocation(&c->b, a0)));
+      return true;
+   }
+
+   /* D = A B + C for 8x8 simdgroup matrices (MLX's gemms and attention). A thread holds two
+    * elements of each (air_is_simd_matrix): with l its lane in a group of 32, row
+    * fm = 4 l4 + 2 l2 + l1 and columns fn, fn + 1 for fn = 4 l3 + 2 l0 -- Apple's layout, the
+    * one MLX's thread_elements() code computes the same way. Row fm of A and column fn + j of
+    * B come from the lanes holding them, a shuffle for each of A's eight and two for each of
+    * B's eight pairs; the group of 32 is the one this lane is in, of the hardware's 64 or 128.
+    * Done in 32-bit float, and given back in the type D is. */
+   if (!strcmp(op, "simdgroup_matrix_8x8_multiply_accumulate")) {
+      if (in->num_operands != 4 || !air_is_simd_matrix(in->base.type))
+         return air_error(c, "intrinsic: air.%s of %u operands", n->part[0],
+                          in->num_operands - 1);
+      nir_def *m[3];
+      for (unsigned k = 0; k < 3; k++) {
+         const struct air_type *t = in->operands[k + 1]->type;
+         if (!air_is_simd_matrix(t) || t->elem->kind != AIR_TYPE_FLOAT)
+            return air_error(c, "intrinsic: air.%s of a matrix that is not of floats",
+                             n->part[0]);
+         m[k] = air_get_ssa(c, in->operands[k + 1]);
+         if (!m[k])
+            return false;
+         m[k] = nir_f2f32(&c->b, m[k]);
+      }
+      const struct air_type *rt = in->base.type;
+      if (rt->elem->kind != AIR_TYPE_FLOAT)
+         return air_error(c, "intrinsic: air.%s to a matrix that is not of floats", n->part[0]);
+      nir_def *self = nir_load_subgroup_invocation(&c->b);
+      nir_def *a_lane = nir_iand_imm(&c->b, self, ~0x9u);  /* the group, l4 l2 l1: row fm */
+      nir_def *b_lane = nir_iand_imm(&c->b, self, ~0x16u); /* the group, l3 l0: column fn */
+      nir_def *acc[2] = { nir_channel(&c->b, m[2], 0), nir_channel(&c->b, m[2], 1) };
+      for (unsigned k = 0; k < 8; k++) {
+         /* A(fm, k) is element k & 1 of the lane at row fm, columns k & ~1 */
+         nir_def *from_a = nir_ior_imm(&c->b, a_lane, ((k >> 2) << 3) | ((k >> 1) & 1));
+         nir_def *av = nir_shuffle(&c->b, nir_channel(&c->b, m[0], k & 1), from_a);
+         /* B(k, fn + j) is element j of the lane at row k, columns fn */
+         nir_def *from_b = nir_ior_imm(&c->b, b_lane,
+                                       ((k >> 2) << 4) | (((k >> 1) & 1) << 2) | ((k & 1) << 1));
+         for (unsigned j = 0; j < 2; j++)
+            acc[j] = nir_fadd(&c->b, acc[j],
+                              nir_fmul(&c->b, av,
+                                       nir_shuffle(&c->b, nir_channel(&c->b, m[1], j), from_b)));
+      }
+      air_set(c, &in->base,
+              air_val_ssa(c, nir_f2fN(&c->b, nir_vec(&c->b, acc, 2), air_nir_bit_size(c, rt))));
       return true;
    }
 

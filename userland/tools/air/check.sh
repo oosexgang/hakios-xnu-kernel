@@ -225,6 +225,13 @@ python3 "$ROOT/tools/air/loweringcheck.py" 2>&1 | tail -4
 lowering_rc=${PIPESTATUS[0]}
 
 echo
+echo "== simdgroup matrices: the lanes a product reads its elements from"
+# softpipe has no shuffle, so the 8x8 product's lane arithmetic is checked on 32
+# lanes simulated in Python against a product done the plain way
+python3 "$ROOT/tools/air/simdmatrixcheck.py" 2>&1 | tail -4
+simd_rc=${PIPESTATUS[0]}
+
+echo
 echo "== framebuffer fetch: the shape, because no value can be compared here"
 # The one interface key with no oracle on this machine. cpuref runs the module
 # under LLVM, where there is no framebuffer; air_run draws it, but on softpipe,
@@ -328,4 +335,4 @@ metal_rc=${PIPESTATUS[0]}
 
 exit $((reader_rc | cpu_rc | intrin_rc | run_rc | atomic_rc | texop_rc | samp_rc \
 	| pixfmt_rc | blend_rc | lowering_rc | fbfetch_rc | vattr_rc | argbuf_rc \
-	| argbufrun_rc | lib_rc | metal_rc))
+	| argbufrun_rc | lib_rc | metal_rc | simd_rc))

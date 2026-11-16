@@ -346,6 +346,7 @@ nir_def *air_get_ssa(struct air_ctx *c, const struct air_value *v);
 /* the NIR type of an AIR type: bit size and components */
 unsigned air_narrow_bits(const struct air_type *t);
 unsigned air_nir_bit_size(struct air_ctx *c, const struct air_type *t);
+bool air_is_simd_matrix(const struct air_type *t);
 unsigned air_nir_components(const struct air_type *t);
 
 /* Records that the shader was translated with a caveat: what it asked for and
