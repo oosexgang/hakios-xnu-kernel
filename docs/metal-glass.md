@@ -452,9 +452,13 @@ milliseconds).
 - **Tessellation factors**: patches are drawn at one level (above), with no per-patch factors and no
   crack-free edges between patches of different levels.
 - **More than 16 textures in a stage**: freedreno binds 16 without bindless, and so does this library.
-- **Control points through `[[stage_in]]`** (BiometricKitUI's MTLSpline, LocalAuthentication's UI, RoomPlan,
-  ARKitUI): the grid draws the patch, but the vertex descriptor's control points would have to be fetched per
-  patch rather than per vertex.
+- **Simdgroup matrices on the hardware**: the 8x8 products, loads and stores compile and their lane arithmetic
+  is checked in Python, but softpipe has no shuffle, so no product has run on a GPU yet; the first MLX
+  kernel on the phone is the check. Asynchronous simdgroup copies (`air.simdgroup_async_copy_2d`, MPS's
+  convolutions and MatrixMultiplyA14X) are refused: what their offset and clamp arguments mean is not known
+  well enough to be guessed.
+- **Fragment barycentrics** (`air.barycentric_coord`, four debug and meshing shaders) and
+  Apple's GPU tracepoint runtime (`libtracepoint_rt_ios`, thread-local globals) are refused.
 - **Under QEMU** the driver runs on softpipe and the first frames wait on 30-second compiles; that is the
   emulator, not the phone, which compiles the same shaders in milliseconds (the costs above).
 
