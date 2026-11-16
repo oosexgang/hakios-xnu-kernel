@@ -697,7 +697,7 @@ fi
 # slot on 19 October 2026. It is the vendor's and never in the repository, so a copy made with bare
 # git worktree add has none of it, and neither has one whose tools/new-workspace.sh predates the fw-*
 # loop there. Say what went in and what was not there to go in; what each one is for is above.
-fwhave= fwnone=
+fwhave='' fwnone=''
 for d in gpu wifi haptic camera audio; do
 	if [ -d ../fw-$d ]; then fwhave="$fwhave $d"; else fwnone="$fwnone $d"; fi
 done
@@ -968,7 +968,7 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	done
 	# zlib where it saves room, as Apple keeps the root (a small file whole in its attribute): 5.4 GB of
 	# files in 2.5 GB, what fits into the phone's RAM beside Darwin
-	python3 ../../tools/apfs/mkapfs.py -z -o system.apfs System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest | tail -1
+	python3 ../../tools/apfs/mkapfs.py -z -o system.apfs "System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest" | tail -1
 	[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$DARWIN_FW/system.manifest
 	rm -rf sysroot
 fi
