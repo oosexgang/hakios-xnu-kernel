@@ -364,7 +364,7 @@ def status_text(name, board, soc):
                        'none': 'none'}.get(light.get('type'), 'no [backlight] section'))
     line('thermal', 'its floors are set (thermal=1 looks, thermal=2 limits)' if 'thermal' in board else
          'no [thermal] section' + ('' if 'thermal' in soc and ('cpufreq' in soc or 'scmi_perf' in soc) else
-                                   f': needs [thermal] and [cpufreq] or [scmi_perf] in soc.dtsi first'))
+                                   ': needs [thermal] and [cpufreq] or [scmi_perf] in soc.dtsi first'))
     out.append('')
     for _, feature in feature_bits():
         needs = feature_needs(feature, board, soc)
@@ -731,16 +731,16 @@ def load(problems=None):
             problems.add(f'{rel} [boot]', f'bootargs: "{argument}" is there twice')
         if 'loader' in data:
             if 'platform' not in soc:
-                problems.add(rel, f'[loader] needs [platform] in soc.dtsi')
+                problems.add(rel, '[loader] needs [platform] in soc.dtsi')
             elif 'io_base' not in soc['platform'] or 'io_size' not in soc['platform']:
                 # (no device tree has them, so they are asked for when the loader is to know the board)
-                problems.add(rel, f'[loader] needs io_base and io_size in [platform] of soc.dtsi')
+                problems.add(rel, '[loader] needs io_base and io_size in [platform] of soc.dtsi')
             elif soc['platform'].get('io_base') == 0:
-                problems.add(rel, f'soc.dtsi [platform]: io_base must not be 0 (XNU then takes the '
+                problems.add(rel, 'soc.dtsi [platform]: io_base must not be 0 (XNU then takes the '
                                   'machine for one without a SoC)')
         groups = soc.get('cpufreq', {}).get('domain_cores', [])
         if groups and (not 1 <= len(groups) <= 4 or any(not 1 <= n <= 255 for n in groups)):
-            problems.add(rel, f'soc.dtsi [cpufreq]: domain_cores is one to four groups of at least one core')
+            problems.add(rel, 'soc.dtsi [cpufreq]: domain_cores is one to four groups of at least one core')
         elif groups and 'platform' in soc and sum(groups) != soc['platform'].get('cores'):
             problems.add(rel, f'soc.dtsi: domain_cores adds up to {sum(groups)} cores, [platform] has '
                               f'{soc["platform"].get("cores")}')
@@ -752,9 +752,9 @@ def load(problems=None):
                 problems.add(f'{rel} [thermal]', f'floor_mhz: one value for each of the {len(groups)} groups of cores '
                                                  f'(soc.dtsi [cpufreq] domain_cores)')
             if 'thermal' not in soc:
-                problems.add(rel, f'[thermal] needs [thermal] in soc.dtsi')
+                problems.add(rel, '[thermal] needs [thermal] in soc.dtsi')
             if 'cpufreq' not in soc and 'scmi_perf' not in soc:
-                problems.add(rel, f'[thermal] needs [cpufreq] or [scmi_perf] in soc.dtsi')
+                problems.add(rel, '[thermal] needs [cpufreq] or [scmi_perf] in soc.dtsi')
             if len(soc.get('thermal', {}).get('tsens', [])) > TSENS_MAX:
                 problems.add(rel, f'soc.dtsi: at most {TSENS_MAX} TSENS controllers')
     fallbacks = [name for name, data in boards.items() if 'loader' in data and 'fb_base' not in data['loader']]
