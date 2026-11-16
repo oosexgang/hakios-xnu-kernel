@@ -150,6 +150,21 @@ make qemu        # the kernel built above, booted in QEMU to its own first proce
 QEMU's `virt` machine starts the loader under a real UEFI, which gives the kernel the emulator's board as
 a phone's firmware does; the kernel runs a root of nothing of Apple's, whose first process is a small
 shell. [qemu.md](qemu.md) says how to run it by hand, what the machine has and what is held.
+
+## Darwin's libraries
+
+`darwin/userland/inj26.sh` builds our libraries for iOS 26/27 into `$OBJ` with the kernel's cross compiler
+(`xnu-clang`, which runs the clang the kernel was built with), then takes their PAC instructions out (`pacstrip`)
+and signs them (`ldid`).
+
+| Variable | Default | |
+| --- | --- | --- |
+| `DARWIN_SDK` | `$THEOS/sdks/iPhoneOS16.5.sdk` | The SDK they are built against, as for the kernel. |
+| `DARWIN_LD` | `$THEOS/toolchain/linux/iphone/bin/ld` | cctools' ld64, which links them as arm64e. Without it LLVM's `ld64.lld` links them as arm64 with chained fixups, and their header is then named arm64e: dyld refuses what `ld64.lld` makes of arm64e code ([darwin26-boot.md](darwin26-boot.md)). |
+| `LDID` | `ldid` on the path, else theos' | For their signatures. |
+
+A file that `pacstrip` refuses stops the build (`pac_strip` in `darwin/userland/env.sh`).
+
 ## Wi-Fi
 
 The radio's driver is Linux's ath11k, compiled unmodified on a layer of ours (`kernel/lx/`) into one

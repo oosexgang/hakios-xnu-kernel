@@ -7,7 +7,7 @@
 #   BOARD   the phone the small image is for: its firmware/BOARD/fw/ goes in. Default: HAKIOS_BOARD, or the
 #           only device package here with a [uefi] section; none: an image without a phone's firmware
 #   LDID    ldid (procursus' or theos'), for the signatures of what we build
-#   DARWIN_SDK  the iPhoneOS 16.5 SDK, when it is not theos' (sdks/)
+#   DARWIN_SDK, DARWIN_LD  the iPhoneOS 16.5 SDK and ld64, when they are not theos' (sdks/, toolchain/)
 #
 # and they get US, the user-space sources of the first generation that iOS 26/27 still uses
 # (userland/userland: init, the injected libraries, mkjobs.py), and the cross compiler, xnu-clang, from
@@ -36,8 +36,21 @@ fi
 SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: another place of it, as kernel/build.sh takes)
 # our own arm64e code: built against the 16.5 SDK (theos), run on iOS 26/27 after pacstrip has taken its
 # pointer authentication out
+# Linked by ld64 (theos' cctools, or DARWIN_LD), as arm64e. Without it, by LLVM's ld64.lld, which writes arm64e
+# code into a plain arm64 file with classic binding opcodes that dyld refuses in an arm64e process ("bad bind
+# opcode 0x00"): then the code is built for arm64 with chained fixups and its header named arm64e afterwards
+# (pac_strip below), as Documentation/darwin26-boot.md found to load (there is no PAC to take out of arm64 code)
+DARWIN_LD=${DARWIN_LD:-$THEOS/toolchain/linux/iphone/bin/ld}
 # shellcheck disable=SC2034  # for the scripts that source this file
-DYN="xnu-clang -arch arm64e -isysroot $SDK -O1 -mios-version-min=16.0"
+if [ -x "$DARWIN_LD" ]; then
+	DYN="xnu-clang -arch arm64e -isysroot $SDK -O1 -mios-version-min=16.0 --ld-path=$DARWIN_LD"
+	DARWIN_LLD=0
+else
+	echo "no ld64 at $DARWIN_LD (theos' toolchain, or DARWIN_LD=FILE): ours are linked by ld64.lld, as arm64" >&2
+	# (+pauth: for the assembler, the PAC instructions some of ours write by hand, which pacstrip then rewrites)
+	DYN="xnu-clang -arch arm64 -Xclang -target-feature -Xclang +pauth -isysroot $SDK -O1 -mios-version-min=16.0 -Wl,-fixup_chains"
+	DARWIN_LLD=1
+fi
 export IOS OBJ BOARD LDID US SDK
 # pacstrip (arch/arm64/tools/pacstrip.c): made here when it is missing or older than its source
 PACSTRIP=$IOS_REPO/arch/arm64/tools/pacstrip
@@ -48,6 +61,12 @@ fi
 # refuses it (a file that is not arm64e), where "pacstrip ... && mv" let it through as it was
 pac_strip() {
 	local out=${2:-$1.strip}
+	# (linked by ld64.lld: the arm64 file's CPU subtype made arm64e with its pointer authentication ABI, 0x80000002)
+	[ "$DARWIN_LLD" = 0 ] || python3 -c '
+import struct, sys
+f = open(sys.argv[1], "r+b"); h = f.read(12)
+if struct.unpack("<III", h) == (0xfeedfacf, 0x0100000c, 0):
+	f.seek(8); f.write(struct.pack("<I", 0x80000002))' "$1"
 	"$PACSTRIP" macho "$1" "$out" > /dev/null || { echo "pacstrip refused $1: not an arm64e Mach-O" >&2; exit 1; }
 	[ -n "${2:-}" ] || mv "$out" "$1"
 }

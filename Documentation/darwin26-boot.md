@@ -243,6 +243,7 @@ jobs and three of our libraries; the system image `mkimage26.py --prune`'s. What
    set to arm64e (0x80000002) before `ldid -S`, all three load: `libhakios26.dylib` (from
    `userland/userland/src/inject26.c`: touch, buttons, framebuffer swaps) into backboardd, SpringBoard and
    PosterBoard, `libhakios-backlight.dylib` and the SpringBoard library with 24B119's activation hook.
+   `darwin/userland/env.sh` does this by itself when there is no ld64 (`DARWIN_LD`).
 5. **lsd.** On the first boot LaunchServices registers every application; under TCG this held SpringBoard's
    main thread for about ten minutes (its stacks, named from the cache's symbol tables, wait in
    `_LSSetSchemeHandler` on lsd). The lock screen came some twelve minutes after power-on.
