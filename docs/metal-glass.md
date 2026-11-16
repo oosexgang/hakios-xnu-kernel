@@ -200,6 +200,36 @@ termination request a line in the log instead (`-watchdog:requestsTerminationOf:
 not loaded when PosterBoard's libraries are, so it is looked for again 3 and 30 seconds in. On the phone,
 without that boot-arg, nothing changes: there the GPU draws the first frame in time.
 
+### The black lock screen, taken apart (16 November)
+
+The display driver's swap lines (now by `printf`, which QEMU's serial console shows) said backboardd did swap
+frames through Metal: surface 3, then 21 or 27, BGRA 1125 x 2436, each after a command buffer of 30 to 113
+draws taking 7 to 21 minutes under TCG. Every pixel of them was zero, alpha included. What it took to say why,
+each a line the driver or the kernel prints:
+
+- `metal_driver.m` says what colour the first forty large surfaces were written back as and taken in as (the
+  mean of each byte over a 32 x 32 grid), and `metal_sync=1` says, for each draw, its pipeline, attachments,
+  clear, viewport, scissor and depth, and for the first sixteen into a screen-sized target the first words of
+  every buffer bound and the pixel in the middle once the draw is done. The composite was CoreAnimation's own
+  uber shaders (`fixed_vert_lph_gen` specialised as `VfxXgh`, the fragment `A3Xghfc`) over an empty layer
+  tree: a lock screen with nothing in it.
+- **No wallpaper because its snapshots timed out.** PosterBoard asks the collections poster for snapshots and
+  ends the extension when they run out ("timeout hit", every 30 s, a new process each time). `inject_poster.c`
+  now, under `rwa_software=1`, makes them sixty times longer: every getter of a timeout in PosterBoard's PUI,
+  PBF and PR classes (`-[PBFPosterSnapshotThrottlePolicy captureTimeoutInterval]`,
+  `-[PUIPosterSnapshotRequest timeoutInterval]`, `pui_renderSessionTimeoutInterval` and the rest, each said by
+  name), and the timeout a request or a host configuration is handed when it is made. The collections poster
+  then opened Metal for the first time, and a layer of the wallpaper's colours was drawn.
+- **Every vector shape filled its whole layer.** That layer was one colour, (0, 157, 222) -- the blue stripe of
+  Stripe Yellow -- on every pixel. CoreAnimation draws a vector shape in three steps: `path_rect` and
+  `path_cubic` add up a coverage mask into an R32Float attachment with one-plus-one blending, and `path_blit`
+  reads it back with a framebuffer fetch (`[[color(2)]]`) and colours the shape by it. softpipe's TGSI
+  interpreter has no FBFETCH, so the mask read was whatever a register held, and the last shape covered
+  everything. `air_metal.c` now makes a software fragment stage's fetch a texel fetch from a copy of the
+  attachment taken before the draw (and again after its clear), bound past the shader's own textures;
+  `userland/tools/air/fbfetchdraw.sh` checks it through the library. The phone's freedreno fetches for itself
+  and is not touched.
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `userland/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
