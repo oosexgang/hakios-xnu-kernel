@@ -3094,6 +3094,12 @@ static uint32_t darwin_mode_n, darwin_line_ns;
 static volatile bool darwin_open, darwin_streaming, darwin_wanted;  /* open; frames coming; a read wants them */
 #define DARWIN_OPEN_CHANNEL        ((void *)(uintptr_t)&darwin_open)  /* what a wait on darwin_open sleeps on: its address */
 static uint64_t darwin_last_read, darwin_given, darwin_frames_done, darwin_writes_late;
+/*
+ * Reads copying out of the ring now (camdev_read, which copies with darwin_lock let go): the ring is not freed
+ * under them. Darwin 27's cameracaptured, asking for another sensor while a frame was being read, had the ring
+ * taken away mid-copy and the kernel stopped on the cache maintenance of a page no longer there.
+ */
+static uint32_t darwin_readers;
 static struct { uint32_t lines, gain, frame_lines; bool pending; uint32_t focus; bool focus_pending; } darwin_ask;
 static struct { uint32_t lines, gain, frame_lines; uint64_t from; } darwin_now, darwin_next;
 /*
@@ -3179,6 +3185,11 @@ exposure_write(uint32_t lines, uint32_t gain, uint32_t frame_lines)
 static void
 ring_free(void)
 {
+	lck_mtx_lock(&darwin_lock);
+	while (darwin_readers > 0) {
+		(void)msleep(&darwin_readers, &darwin_lock, PZERO, "hakios-camera-readers", NULL);
+	}
+	lck_mtx_unlock(&darwin_lock);
 	if (page_tables != 0) {
 		kmem_free(kernel_map, page_tables, ring_tables_bytes);
 		page_tables = 0;
@@ -3618,6 +3629,8 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	struct hakios_camera_frame f;
 	uint64_t since = darwin_ms();
 	int b = -1, error = 0;
+	vm_offset_t at;
+	uint32_t frame_bytes;
 
 	lck_mtx_lock(&darwin_lock);
 	darwin_last_read = darwin_ms();
@@ -3657,6 +3670,9 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	}
 	place[b].state = PLACE_READING;
 	darwin_given = place[b].sequence;
+	darwin_readers++;
+	at = ring + (uint64_t)b * ring_place_bytes;    /* (taken while the ring cannot change) */
+	frame_bytes = ring_frame_bytes;
 	bzero(&f, sizeof(f));
 	memcpy(f.magic, HAKIOS_CAMERA_MAGIC, 8);
 	f.header_bytes = sizeof(f);
@@ -3687,8 +3703,7 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 
 	error = uiomove((caddr_t)&f, (int)MIN(sizeof(f), (size_t)uio_resid(uio)), uio);
 	if (error == 0 && uio_resid(uio) > 0) {
-		vm_offset_t at = ring + (uint64_t)b * ring_place_bytes;
-		uint32_t n = (uint32_t)MIN((uint64_t)ring_frame_bytes, (uint64_t)uio_resid(uio));
+		uint32_t n = (uint32_t)MIN((uint64_t)frame_bytes, (uint64_t)uio_resid(uio));
 
 		uint64_t t0 = mach_absolute_time(), t1, t2;
 
@@ -3711,6 +3726,9 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		place[b].state = PLACE_READY;
 	}
 	darwin_last_read = darwin_ms();
+	if (--darwin_readers == 0) {
+		wakeup(&darwin_readers);
+	}
 	lck_mtx_unlock(&darwin_lock);
 	return error;
 }
