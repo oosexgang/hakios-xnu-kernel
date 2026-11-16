@@ -7,11 +7,11 @@
  * been measured and is well:
  *   - the bag itself is fetched from this phone by hand, 56 KB in half a second, and the server
  *     hands over a storefront in the bargain: "x-set-apple-store-front: 143469-2,8" from both
- *     bag.itunes.apple.com and init.itunes.apple.com (rc.jobs.store, src/net_test.m);
+ *     bag.itunes.apple.com and init.itunes.apple.com (rc.jobs.store, ../../userland/userland/src/net_test.m);
  *   - appstored opens no socket at all while the store spins, so nothing is failing on the network;
  *   - the storefront cannot be put on the device from another process: AMS's "local" account is not
  *     a row in accountsd at all -- a different identifier every boot -- so there is nothing to write
- *     to and nothing that would keep (src/store_test.m).
+ *     to and nothing that would keep (first-generation/store_test.m).
  *
  * So the storefront is not written anywhere here either. The account is made to ANSWER with one:
  * -[ACAccount ams_storefront] is the door every consumer in AMS goes through, and its neighbours are
@@ -425,7 +425,7 @@ dump_tasks(void)
  *     dylib=/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine
  * -- straight back into JetEngine, into Swift functions the cache carries no names for. That is
  * where the next session starts, and it is static work: the project's Ghidra path (see
- * src/inject_fairplay.c for the tools and their rules).
+ * first-generation/inject_fairplay.c for the tools and their rules).
  * AND THE APP'S OWN WAITS ARE GONE, which is what justifies going there. The graph had shown the app
  * NOT all finished: 192 promises, two threads each parked on two that nobody fulfils -- one in
  * -[ACAccountStore _updateStorefrontInLocalAccount:], one in
@@ -1492,7 +1492,7 @@ new_##name(id self, SEL cmd, void *a, void *b, void *c) \
 /*
  * IS FAIRPLAY LOAD-BEARING FOR BROWSING AT ALL? The root of the jam is outside this daemon --
  * fairplayd.H2 starts, leaves at once and is restarted every ten seconds, and an AMS thread waits
- * for a reply that never comes (src/inject_fairplay.c). Before reading an obfuscated daemon to find
+ * for a reply that never comes (first-generation/inject_fairplay.c). Before reading an obfuscated daemon to find
  * out why it quits, it is worth knowing whether the store needs its answer in the first place. The
  * top of that stack is an Objective-C method -- -[AMSUserAgent _sharedComponentFairPlayDeviceType],
  * a dispatch_once-memoised lookup that goes down to AMS::FairPlayProvider::getDeviceType() and
@@ -1519,7 +1519,7 @@ new_fpDeviceType(id self, SEL _cmd)
 	entered[COUNT_fpDeviceType]++;
 	returned[COUNT_fpDeviceType]++;
 	say("hakios: store: FairPlay device type answered INJECTED \"" FAIRPLAY_DEVICE_TYPE "\" "
-	    "(not measured; the real one blocks for ever, see src/inject_fairplay.c)\n");
+	    "(not measured; the real one blocks for ever, see first-generation/inject_fairplay.c)\n");
 	return (id)fairplay_device_type;
 }
 

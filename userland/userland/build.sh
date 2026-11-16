@@ -17,7 +17,7 @@
 #                                   (default: src/inject.c in backboardd, src/inject_sb.c in SpringBoard,
 #                                   src/inject_media.c in mediaserverd);
 #                                   init hands the list to the kernel (etc/inject.conf -> sysctl kern.exec_inject)
-#                      STOREFRONT=1 ... and src/inject_store.c inside appstored: the storefront answered,
+#                      STOREFRONT=1 ... and ../../components/apple-id/first-generation/inject_store.c inside appstored: the storefront answered,
 #                                   and a bag request watched for (an experiment; see that file)
 #                      EXTRA="..."  more programs for /hakios/bin (files on this machine): one-off
 #                                   diagnostics, which a file given as RC_JOBS can then run
@@ -155,7 +155,7 @@ INJECT=${INJECT-"/hakios/lib/libhakios.dylib backboardd containermanagerd contai
 /hakios/lib/libhakios-media.dylib mediaserverd
 /hakios/lib/libhakios-app.dylib Sileo
 /hakios/lib/libhakios-tweaks.dylib Preferences"}
-# STOREFRONT=1: and a library of ours inside appstored as well (src/inject_store.c). It is not in the
+# STOREFRONT=1: and a library of ours inside appstored as well (../../components/apple-id/first-generation/inject_store.c). It is not in the
 # list above because it changes what the daemon believes: AMS's account is made to answer with the
 # storefront Apple's bag server returned for this device, which is how the App Store is asked whether
 # a storefront is the only thing it is missing. It also writes down whether a bag request is ever
@@ -304,9 +304,9 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -framework CoreFoundation -framework CoreGraphics -framework ImageIO -o obj/snap_test src/snap_test.c
 		$DYN -framework CoreFoundation -framework CoreGraphics -framework CoreText -o obj/font_test src/font_test.c
 		$DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o obj/net_test src/net_test.m
-		# (the account database answers only a client with the entitlements its own daemons hold: src/store_test.m)
-		$DYN -fobjc-arc -framework Foundation -framework Accounts -o obj/store_test src/store_test.m &&
-			{ ${LDID:-ldid} -Ssrc/store_test.entitlements obj/store_test 2>/dev/null ||
+		# (the account database answers only a client with the entitlements its own daemons hold: ../../components/apple-id/first-generation/store_test.m)
+		$DYN -fobjc-arc -framework Foundation -framework Accounts -o obj/store_test ../../components/apple-id/first-generation/store_test.m &&
+			{ ${LDID:-ldid} -S../../components/apple-id/first-generation/store_test.entitlements obj/store_test 2>/dev/null ||
 			  echo "build.sh: no ldid: store_test is unsigned, and accountsd will not show it the accounts"; }
 		# (with an entitlement for "battery_test open URL", if ldid is there: src/battery_test.c)
 		$DYN -framework CoreFoundation -framework IOKit -lsqlite3 -o obj/battery_test src/battery_test.c &&
@@ -341,16 +341,16 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			-framework CoreVideo -framework IOSurface -lobjc \
 			-o obj/libhakios-media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
 		# ... and inside appstored (STOREFRONT=1), which answers with a storefront and watches for a bag
-		# request being built (src/inject_store.c)
+		# request being built (../../components/apple-id/first-generation/inject_store.c)
 		# (-lc++abi for __cxa_throw: every C++ exception thrown in the process is watched, which is how
 		#  the jetpack parser's rejections are seen -- a throw somebody catches logs nothing of itself)
 		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-store.dylib -framework CoreFoundation -lobjc \
-			-lc++abi -o obj/libhakios-store.dylib src/inject_store.c
+			-lc++abi -o obj/libhakios-store.dylib ../../components/apple-id/first-generation/inject_store.c
 		# ... and inside fairplayd.H2, which starts and leaves at once: what it looks for, and where it
-		# gives up (src/inject_fairplay.c; watches only, replaces nothing)
+		# gives up (../../components/apple-id/first-generation/inject_fairplay.c; watches only, replaces nothing)
 		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-fairplay.dylib -framework CoreFoundation \
 			-framework IOKit -framework Security -lMobileGestalt \
-			-o obj/libhakios-fairplay.dylib src/inject_fairplay.c
+			-o obj/libhakios-fairplay.dylib ../../components/apple-id/first-generation/inject_fairplay.c
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# The same driver again as a loadable bundle, which is the form Metal's own

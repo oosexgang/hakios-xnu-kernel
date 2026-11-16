@@ -45,8 +45,8 @@
 /hakios/bin/net_test fetch https://bag.itunes.apple.com/bag.xml
 # the account as it stands (setting it from here was tried and cannot work: the value does not keep,
 # AMS's local account being made fresh every boot and accountsd holding no iTunes account at all --
-# see src/store_test.m). The storefront is answered inside appstored instead, by the library
-# src/inject_store.c, which a build with STOREFRONT=1 puts there.
+# see ../../components/apple-id/first-generation/store_test.m). The storefront is answered inside appstored instead, by the library
+# ../../components/apple-id/first-generation/inject_store.c, which a build with STOREFRONT=1 puts there.
 /hakios/bin/store_test user 501 show
 # and only then the store, open long enough to time out (30 s) and try again
 # twice, because one tap at a fixed moment lands on an undrawn home screen often enough to void a

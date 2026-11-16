@@ -327,7 +327,7 @@ echo "/hakios/lib/libhakios-capture.dylib cameracaptured" >> $T/etc/inject.conf
 # Camera.app: its preview's picture given a size where AVFoundation leaves it none (darwin/userland/inject_camera_app.c)
 echo "/hakios/lib/libhakios-camapp.dylib Camera" >> $T/etc/inject.conf
 # STOREFRONT=1: the App Store's SAP (Mescal) signature from the host's sapd, and a storefront answered, so the
-# storefront-token request is signed and amp-api returns the catalog (darwin/userland/inject_store.c, inject_mescal.m).
+# storefront-token request is signed and amp-api returns the catalog (components/apple-id/src/inject_store.c, inject_mescal.m).
 # STORE_FROM_VAR=1 puts the store library in /var instead, with a copy of it in var.skel so it is always
 # there at the first exec. /var is writable and kept across runs, so the library can be replaced over SSH
 # between two launches of the App Store -- a change to it then costs a rebuild of one dylib and a kill, not
@@ -354,7 +354,7 @@ if [ -n "${STOREFRONT:-}" ]; then
 		printf 'f\t644\t0\t0\t/private/var/hakios-store.conf\t/var/hakios-store.conf\n' >> $T/etc/var.skel
 	fi
 fi
-# SIGNIN=1: and the keychain class that Apple ID sign-in cannot store here (darwin/userland/inject_kc.c). Apart
+# SIGNIN=1: and the keychain class that Apple ID sign-in cannot store here (components/apple-id/src/inject_kc.c). Apart
 # from a sign-in it changes nothing, so it is its own knob.
 if [ -n "${SIGNIN:-}" ]; then
 	echo "/hakios/lib/libhakios-kc.dylib akd accountsd" >> $T/etc/inject.conf

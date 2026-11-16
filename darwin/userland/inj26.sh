@@ -40,17 +40,17 @@ $DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/userland/inject_camera_app.c"
 # (libhakios-statusbar.dylib, in every application, also names an uncaught exception on the console: darwin/userland/uncaught.c)
 # the App Store's SAP (Mescal) signature, made by the host's sapd, and the storefront it answers with
-# (darwin/userland/inject_mescal.m and inject_store.c; root26-darwin.sh STOREFRONT=1 injects them into the store daemons)
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-mescal.dylib -framework Foundation -lobjc -fobjc-arc -o "$O/libhakios-mescal.dylib" "$RN/userland/inject_mescal.m"
+# (components/apple-id/src/inject_mescal.m and inject_store.c; root26-darwin.sh STOREFRONT=1 injects them into the store daemons)
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-mescal.dylib -framework Foundation -lobjc -fobjc-arc -o "$O/libhakios-mescal.dylib" "$RN/../components/apple-id/src/inject_mescal.m"
 # ... and the one keychain class Apple ID sign-in cannot store on a phone with no passcode
-# (darwin/userland/inject_kc.c, 16.5's: it needs the prefix's MSHookFunction; root26-darwin.sh SIGNIN=1)
+# (components/apple-id/src/inject_kc.c, 16.5's: it needs the prefix's MSHookFunction; root26-darwin.sh SIGNIN=1)
 $DYN -O2 -fblocks -dynamiclib -install_name /hakios/lib/libhakios-kc.dylib -framework CoreFoundation \
-	-framework Security -lobjc -o "$O/libhakios-kc.dylib" "$RN/userland/inject_kc.c"
-$DYN -fblocks -dynamiclib -install_name /hakios/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -framework Foundation -o "$O/libhakios-store.dylib" "$RN/userland/inject_store.c"
+	-framework Security -lobjc -o "$O/libhakios-kc.dylib" "$RN/../components/apple-id/src/inject_kc.c"
+$DYN -fblocks -dynamiclib -install_name /hakios/lib/libhakios-store.dylib -framework CoreFoundation -lobjc -lc++abi -framework Foundation -o "$O/libhakios-store.dylib" "$RN/../components/apple-id/src/inject_store.c"
 # hactivation: inside mobileactivationd, make MobileGestalt read as a development-fused part so the daemon
 # short-circuits activation state to "Activated" (ported from 16.5; unblocked the App Store there). The
 # never-set-up device is otherwise Unactivated, which a real browsing iPhone never is. (root26 INJECT_MORE)
-$DYN -fblocks -dynamiclib -install_name /hakios/lib/libhakios-mad.dylib -framework CoreFoundation -lobjc -Wl,-undefined,dynamic_lookup -o "$O/libhakios-mad.dylib" "$RN/userland/inject_mad.c"
+$DYN -fblocks -dynamiclib -install_name /hakios/lib/libhakios-mad.dylib -framework CoreFoundation -lobjc -Wl,-undefined,dynamic_lookup -o "$O/libhakios-mad.dylib" "$RN/../components/apple-id/src/inject_mad.c"
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-darwin.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"

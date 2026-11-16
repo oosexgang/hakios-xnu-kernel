@@ -48,7 +48,7 @@
  * the fetch that never happens.
  * So a storefront cannot be put on this device from another process, and the next place to try is
  * inside appstored -- the port already puts a library of ours into stock programs (INJECT in
- * build.sh, src/inject_sb.c and its kin), which would both set the storefront on the account AMS is
+ * build.sh, ../../userland/userland/src/inject_sb.c and its kin), which would both set the storefront on the account AMS is
  * really using and show whether a bag request is ever built at all.
  * This tool stays because the three facts it establishes are worth keeping: AMS's local account is
  * per boot, accountsd holds no iTunes account, and ams_setStorefront: does not persist.

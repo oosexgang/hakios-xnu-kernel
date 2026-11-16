@@ -3,14 +3,14 @@
  *
  * Why. The App Store's front page never loads, and the root of that is not in the store: an
  * AppleMediaServices thread inside appstored sits in a Mach call in _AMSFairPlayGetDeviceType
- * waiting for a reply, and seventeen promises queue behind that one wait (src/inject_store.c). The
+ * waiting for a reply, and seventeen promises queue behind that one wait (first-generation/inject_store.c). The
  * reply never comes because com.apple.fairplayd.H2 starts, exits 0 at once and is restarted by
  * launchd every ten seconds -- 34 times in a six-minute session, each "Service only ran for 0
  * seconds". It does not crash; it declines to work. A daemon in that state leaves no failed lookup
  * at all, which is why the shape was invisible to the method that found apsd.
  *
  * What this does. Nothing is replaced: it only watches, through dyld's interposing (__DATA,__interpose,
- * as src/inject_app.c does), the four calls that decide whether fairplayd has anything to work with:
+ * as ../../userland/userland/src/inject_app.c does), the four calls that decide whether fairplayd has anything to work with:
  *   IOServiceMatching            -- THE NAME IT LOOKS FOR, which is the one thing a driver of ours
  *                                   has to answer to; the binary is obfuscated and does not carry it
  *                                   as a plain string, so it is asked for at run time instead of guessed

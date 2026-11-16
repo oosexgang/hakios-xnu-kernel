@@ -8,6 +8,7 @@ and check it, and the notes of how it was found out. What runs in the kernel sta
 
 | Directory | What it is |
 |---|---|
+| [`apple-id`](apple-id) | Signing in with an Apple ID and the App Store: code of ours inside akd, appstored and mobileactivationd where they would stop on a phone Apple did not make. |
 | [`metal`](metal) | Metal on the Adreno: the Metal device Darwin loads, and the shader compiler from Apple's AIR through Mesa to the GPU. |
 | [`metal-plugin`](metal-plugin) | A second Metal device, written apart: its own library for the Adreno's A6xx command stream and the plug-in that serves CoreAnimation over it ([`docs/metal-plugin.md`](../docs/metal-plugin.md)). |
 | [`upstream.dts`](upstream.dts) | Everything taken from elsewhere, at the exact version it is taken (`tools/components.py`). |

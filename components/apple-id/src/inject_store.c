@@ -2386,7 +2386,7 @@ new_session_from_connection(void *connection, void *a, void *b, void *c)
  * not a contradiction: the first call happens before a method of ours exists, and that one thread stays
  * in there for the life of the process while everything the store wants to ask queues behind it. (16.5
  * found the same wall from the other side: fairplayd.H2 starts, decides there is nothing here and leaves
- * at once, 34 times in six minutes -- userland/src/inject_fairplay.c, which is worth reading before
+ * at once, 34 times in six minutes -- components/apple-id/first-generation/inject_fairplay.c, which is worth reading before
  * anyone writes a kernel driver for this. It never opens an IOKit user client at all.)
  *
  * So the C function is replaced as well, from the constructor, before a line is said or a method is
