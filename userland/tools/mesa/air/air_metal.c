@@ -5787,6 +5787,10 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
                                 ? variable_shared : 0,
    };
    pipe->launch_grid(pipe, &grid);
+   /* (softpipe: a later draw sampling what this wrote reads its texture tile cache, flushed
+    * here as after a draw) */
+   if (device->software)
+      pipe->flush(pipe, NULL, 0);
 
    /* Waited for here, and not left to rwa_finish, because this is the call that can
     * say which dispatch did not come back -- and because the buffers are mapped the
@@ -9697,6 +9701,13 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
          .index_bias = index_size ? draw->base_vertex : 0,
       };
       pipe->draw_vbo(pipe, &info, 0, NULL, &sc, 1);
+      /* softpipe keeps what a draw wrote in its render tile cache, and what a sampler read in its
+       * texture tile cache, until a flush: a pass that samples a texture an earlier pass drew,
+       * with no flush between, reads the texture as it was. Flushed after each draw, as the
+       * finish metal_sync=1 waits for did -- the boot that drew Stripe Yellow's ground had it,
+       * the one without drew the stripes over black. (The phone's GPU is not touched.) */
+      if (device->software)
+         pipe->flush(pipe, NULL, 0);
    }
 
    /* Waited for here, on the same grounds as a dispatch: a picture that was never drawn
