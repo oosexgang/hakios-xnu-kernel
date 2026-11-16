@@ -65,17 +65,17 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios-tweaks.dylib -framework Cor
 # ... and a tweak to check that path with (darwin/userland/tweak_test.c: Settings, hooked through ElleKit)
 $DYN -dynamiclib -install_name /var/jb/usr/lib/TweakInject/hakios-tweaktest.dylib -lobjc -o "$O/hakios-tweaktest.dylib" "$RN/userland/tweak_test.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-console.dylib -o "$O/libhakios-console.dylib" "$RN/userland/console_log.c"
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/userland/inject_poster.c"
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/userland/inject_wallpaper.m"
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-backlight.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-backlight.dylib" "$RN/userland/inject_backlight.c"
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/../components/wallpaper/inject_poster.c"
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/../components/wallpaper/inject_wallpaper.m"
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-backlight.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-backlight.dylib" "$RN/../components/brightness/inject_backlight.c"
 # the flashlight and the camera in cameracaptured, iOS 27's camera daemon: the kernel's /dev/hakios-torch and
 # /dev/hakios-camera (darwin/userland/inject_capture.c; the capture device and its picture processor are 16.5's,
 # userland/src/camera_device.c and camera_isp.c, with the iPhone 11's formats: HAKIOS_IOS27)
 $DYN -O2 -DHAKIOS_IOS27 -dynamiclib -install_name /hakios/lib/libhakios-capture.dylib -framework CoreFoundation \
 	-framework CoreMedia -framework CoreVideo -framework IOSurface -lobjc -I"$O/src" -o "$O/libhakios-capture.dylib" \
 	"$RN/userland/inject_capture.c" "$O/src/camera_device.c" "$O/src/camera_isp.c"
-# the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: darwin/userland/inject_brightness.c)
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/userland/inject_brightness.c"
+# the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: components/brightness/inject_brightness.c)
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/../components/brightness/inject_brightness.c"
 for f in "$O"/*.dylib "$O/HakiosAudio"; do
 	"$PACSTRIP" macho "$f" "$f.strip" > /dev/null && mv "$f.strip" "$f"
 	"$LDID" -S "$f"

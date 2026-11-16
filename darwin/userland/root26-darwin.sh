@@ -310,15 +310,15 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 	printf 'f\t644\t0\t0\t/private/var/preferences/FeatureFlags/Domain/%s\t/var/preferences/FeatureFlags/Domain/%s\n' \
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
-# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: darwin/userland/inject_poster.c)
+# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: components/wallpaper/inject_poster.c)
 echo "/hakios/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
-# CollectionsPoster, the WallpaperKit extension that draws the collections poster (src: darwin/userland/inject_wallpaper.m)
+# CollectionsPoster, the WallpaperKit extension that draws the collections poster (src: components/wallpaper/inject_wallpaper.m)
 echo "/hakios/lib/libhakios-wallpaper.dylib CollectionsPoster" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
-# darwin/userland/inject_backlight.c)
+# components/brightness/inject_backlight.c)
 echo "/hakios/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
-# hw.backlight; backboardd for CoreBrightness's own side (src: darwin/userland/inject_brightness.c). It does
+# hw.backlight; backboardd for CoreBrightness's own side (src: components/brightness/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/hakios/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # cameracaptured, iOS 27's camera daemon: the flashlight's server given the kernel's flashlight (src:

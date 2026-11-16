@@ -2,7 +2,7 @@
 
 The panel's brightness and automatic brightness, for any device. Kernel: `kernel/overlay/bsd/dev/board/backlight.c`
 (`bsd/dev/board/backlight.c`, the arithmetic in `bsd/dev/board/backlight_core.h`). Darwin side:
-`darwin/userland/inject_brightness.c` (`libhakios-brightness.dylib`).
+`components/brightness/inject_brightness.c` (`libhakios-brightness.dylib`).
 
 ## How it fits together
 

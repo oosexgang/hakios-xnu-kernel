@@ -123,7 +123,7 @@ What made the frames faster, in the order it was found (each commit has its meas
 1. **The path renderer** (iOS 27's, not in 16.5): its coverage mask blitted and cleared over whole bands of the
    screen for every path. `ca_paths.c` keeps a map of where the mask can be non-zero and cuts `path_blit` and
    `path_clear` to it. The default wallpaper's six stripes are rasterized once
-   (`darwin/userland/inject_wallpaper.m`) rather than drawn by the path renderer every frame.
+   (`components/wallpaper/inject_wallpaper.m`) rather than drawn by the path renderer every frame.
 2. **The driver's per-draw cost**: small bytes in an arena of the command buffer, CoreAnimation's buffers read
    with `memcpy` from write-combined memory, each thread its own compiler.
 3. **GMEM**: a fetch barrier as turnip's; fetching passes weigh toward GMEM; an attachment the draws do not touch

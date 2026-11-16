@@ -1,7 +1,7 @@
 /*
  * libhakios-wallpaper.dylib: inside CollectionsPoster, the WallpaperKit extension that draws the collections poster.
  *
- * The default wallpaper here (darwin/tools/mkimage26.py default_wallpaper(): Stripe Blue) is SwiftUI's: a layer of six
+ * The default wallpaper here (darwin/tools/mkimage26.py default_wallpaper(): Stripe Yellow, or the colour WALLPAPER= names) is SwiftUI's: a layer of six
  * CAShapeLayers (SwiftUI's ColorShapeLayer), a stripe each. The window server draws a shape layer by CoreAnimation's
  * path renderer, every frame, though the stripes never change: on the home screen's main pass 6.8 of its 12.3 ms on
  * the GPU (metal_gmem_off=2048, logs/090904-run.log), and while a page moved the pass went past a frame's time, so that

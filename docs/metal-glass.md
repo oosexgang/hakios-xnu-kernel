@@ -226,7 +226,7 @@ With the render server no longer dying, the console showed why no wallpaper had 
 the collections poster (Stripe Yellow, the image builder's default) in an extension process and gives its
 scene a few seconds to be made -- "Provision violated for watchdog scene-create" -- and with Metal on the
 emulated processor it never made it in time: 84 terminations in one boot, each followed by another process
-that met the same end. `darwin/userland/inject_poster.c` now, under `rwa_software=1` only, makes FrontBoard's
+that met the same end. `components/wallpaper/inject_poster.c` now, under `rwa_software=1` only, makes FrontBoard's
 watchdog providers answer no policy (`-watchdogPolicyForProcess:eventContext:`) and a watchdog delegate's
 termination request a line in the log instead (`-watchdog:requestsTerminationOf:forReason:`). FrontBoard is
 not loaded when PosterBoard's libraries are, so it is looked for again 3 and 30 seconds in. On the phone,
