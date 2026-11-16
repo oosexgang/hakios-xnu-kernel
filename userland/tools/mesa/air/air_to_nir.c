@@ -209,15 +209,31 @@ ptr_decode(struct air_ctx *c, nir_def *words)
  * none is, which a table read in bounds never needs -- and a call through it is a call of each
  * behind that choice (the AIR_OP_CALL case). NULL where no function was stored at all.
  */
+/* ... and the same for a texture or a sampler out of a local array of them (CMImaging's srlApply and
+ * StyleEngine kernels loop over a `metal::array<texture2d<half>, N>`): when no function was stored, the
+ * choice is among the textures and samplers that were -- handles with no bits, as functions have none,
+ * so they cannot be kept as numbers (air_ptr_numeric) either. */
+static bool
+handle_slot(const struct air_val *v, bool functions)
+{
+   if (!v || v->kind != AIR_VAL_PTR)
+      return false;
+   return functions ? v->fn != NULL
+                    : !v->fn && (v->ptr.class == AIR_PTR_TEXTURE || v->ptr.class == AIR_PTR_SAMPLER);
+}
+
 static struct air_val *
 fn_table_load(struct air_ctx *c, nir_def *offset)
 {
    uint64_t keys[64];
    struct air_val *vals[64];
    unsigned n = 0;
+   bool functions = false;
+   hash_table_u64_foreach(c->ptr_slots, e)
+      functions |= handle_slot(e.data, true);
    hash_table_u64_foreach(c->ptr_slots, e) {
       struct air_val *v = e.data;
-      if (n < ARRAY_SIZE(keys) && v && v->kind == AIR_VAL_PTR && v->fn) {
+      if (n < ARRAY_SIZE(keys) && handle_slot(v, functions)) {
          /* in order of place, so the choice is the same every time */
          unsigned at = n++;
          while (at && keys[at - 1] > e.key) {
