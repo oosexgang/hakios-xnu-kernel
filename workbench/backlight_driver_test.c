@@ -288,6 +288,7 @@ command_panel(void)
 	hakios_backlight_init();
 	CHECK(strcmp(get_string("backend"), "dcs") == 0, "%s", get_string("backend"));
 	CHECK(logged("version 2.5"), "the controller's version logged");
+	CHECK(logged(": 1 to 2047, 2 bytes MSB first, command mode"), "the profile said: %s", log_text);
 	CHECK(c.gcc_disp_ahb & 1, "the clock controller's bus clock asked for");
 	CHECK(!(c.ahb & 0x80000000u), "the display registers' clock running");
 	WAIT_FOR(m.sent_n >= 1, 1000);
@@ -659,6 +660,46 @@ soft_power(void)
 	CHECK(m.accesses == 0, "no hardware");
 }
 
+/* the thermal limiter's cap: the panel no brighter than it while the phone is hot, back when it is lifted */
+static void
+held_by_the_thermal_cap(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_level=1000";
+	hakios_backlight_init();
+	WAIT_FOR(get("shown") == 1000, 2000);
+	hakios_backlight_set_cap(600);
+	WAIT_FOR(get("shown") == 600, 3000);
+	CHECK(get("cap") == 600 && get("shown") == 600, "held at the cap: cap %u, shown %u", get("cap"), get("shown"));
+	CHECK(last_sent() == bl_level_to_raw(600, 1, 2047), "and sent: %u", last_sent());
+	hakios_backlight_set_cap(5000);         /* (more than the most: the most) */
+	WAIT_FOR(get("shown") == 1000, 3000);
+	CHECK(get("cap") == 1000 && get("shown") == 1000, "lifted: cap %u, shown %u", get("cap"), get("shown"));
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
+/* bl_auto=1: automatic brightness from the start, and said */
+static void
+automatic_from_boot_arg(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_level=500 bl_auto=1";
+	hakios_backlight_init();
+	CHECK(get("auto") == 1 && logged(", automatic"), "auto %u: %s", get("auto"), log_text);
+}
+
+/* the soft backend on a board whose DCS profile has a level to restore: nothing is sent at the run's end */
+static void
+soft_quiesce(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_backend=soft";
+	hakios_backlight_init();
+	usleep(100000);
+	hakios_backlight_quiesce();
+	CHECK(m.sent_n == 0 && m.accesses == 0 && !logged("at the run's end"), "%u sent, %u accesses", m.sent_n, m.accesses);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -670,7 +711,8 @@ main(int argc, char **argv)
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
 		{ "backend_from_boot_arg", backend_from_boot_arg }, { "incomplete_profile", incomplete_profile }, { "no_range", no_range },
-		{ "least_significant_first", least_significant_first },
+		{ "least_significant_first", least_significant_first }, { "held_by_the_thermal_cap", held_by_the_thermal_cap },
+		{ "automatic_from_boot_arg", automatic_from_boot_arg }, { "soft_quiesce", soft_quiesce },
 	};
 
 	if (argc < 2) {
