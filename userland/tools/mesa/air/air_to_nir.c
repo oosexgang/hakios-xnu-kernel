@@ -3348,6 +3348,14 @@ air_eval(struct air_ctx *c, struct air_eval_env *env, const struct air_value *v,
          /* the constant's index as plan_globals finds it (function_constant_index): this can run
           * before the globals are planned (gated_off, from the interface) */
          const struct air_value *gv = in->operands[1];
+         /* (the global itself, through a cast LLVM keeps as a constant expression where the
+          * text shows none: RealityKit's fsLinearizedDepthAsColor picks its render target so) */
+         while (gv && gv->kind == AIR_VALUE_CONSTANT) {
+            const struct air_constant *k = air_value_as_constant(gv);
+            if (k->ckind != AIR_CONST_EXPR || k->expr_op != AIR_OP_CAST || !k->num_operands)
+               break;
+            gv = k->operands[0];
+         }
          int index = -1;
          for (unsigned i = 0; gv && i < c->m->num_globals; i++)
             if (&c->m->globals[i]->base == gv && c->m->globals[i]->externally_initialized)
