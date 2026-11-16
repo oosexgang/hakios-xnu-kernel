@@ -375,8 +375,12 @@ vertices. N is 8 (`RWA_TESS_LEVEL`, 1 to 64), the same for every patch: the fact
 wrote are not read, so a patch the application wanted finer is as fine as the others and one it wanted
 coarser costs as much. `userland/tools/air/tesscheck.sh` draws two quad patches and a triangle one on softpipe and
 checks every pixel's coordinates. AvatarKit's Memoji shaders read their control points out of buffers
-(OpenSubdiv) and compile; a patch index buffer, several instances of the patches and control points through
-`[[stage_in]]` are refused by name.
+(OpenSubdiv) and compile. Control points through `[[stage_in]]` (`patch_control_point<T>`, read through a
+function Metal makes out of the vertex descriptor) are read since 16 November as a kernel's `[[stage_in]]` is,
+by the render pipeline's vertex descriptor: the k-th control point of the patch, the patch an instance
+(`tess_cp.ll`, drawn by `tesscheck.sh`). LocalAuthenticationPrivateUI's spline renderer -- the Face ID
+animations -- compiles 12 of 12 (from 5), BiometricKitUI's MTLSpline 3 of 3. A patch index buffer and several
+instances of the patches are refused by name.
 
 ### What the driver threw away
 
