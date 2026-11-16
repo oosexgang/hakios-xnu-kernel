@@ -30,7 +30,7 @@
 #                       is printed): e.g. curl to a --forward port
 #     --monitor PATH    QEMU's monitor as a socket at PATH, for another program to ask it while it runs
 #     --qmp PATH        QEMU's QMP as a socket at PATH: what touches the screen and presses the buttons
-#                       (QEMU_QMP=PATH base/qemu/touch.py tap 0.5 0.5)
+#                       (QEMU_QMP=PATH legacy/qemu/touch.py tap 0.5 0.5)
 #     --no-devices      without the machine's virtio devices: by default it has a network card (QEMU's own
 #                       network behind it), a keyboard and a tablet, and the kernel is told to take them
 #     --interactive     the console on this terminal, to type on (the shell of tools/qemu-root.sh's root);

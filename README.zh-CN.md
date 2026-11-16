@@ -111,7 +111,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `build.config.*` | 构建是什么：`build.config.common` 为全部共用，`build.config.arm64` 为内核（由 `kernel/env.sh` 读取，或读取 `BUILD_CONFIG` 指定的文件），`build.config.darwin27` 为 Darwin 镜像，`build.config.bench` 为在手机上的一次运行。环境变量中的值优先。 |
 | `bench` | 工作台上的手机：启动常驻加载器、发送镜像、运行内核、取回日志、截图和录屏（`./bench state`、`./bench run`）。 |
 | `Documentation/` | 文档。 |
-| `base/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
+| `legacy/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
 
 ## 一段话说明移植
 

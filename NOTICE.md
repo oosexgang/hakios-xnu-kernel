@@ -4,9 +4,9 @@
 
 - `kernel/overlay/`, `kernel/patches/` and the parts of the kernel's tree kept at the top (`arch/arm64/kernel/`, `arch/arm64/include/`, `arch/arm64/configs/xnu/`, `crypto/`, `fs/`, `security/`; `kernel/lib.sh` lists them) modify and extend Apple's xnu, published under the Apple Public Source
   License 2.0, and are distributed under the same licence (`LICENSES/other/APSL-2.0`).
-- `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
-  HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `arch/arm64/boot/` and `kernel/deps/`, which were `base/xnuloader/` and
-  `base/xnu-deps/`.
+- `legacy/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
+  HakiOS's licence (`legacy/LICENSE`, APSL 2.0). So do `arch/arm64/boot/` and `kernel/deps/`, which were `legacy/xnuloader/` and
+  `legacy/xnu-deps/`.
 - `components/`: each file keeps the licence of where it came from. What came from `userland/` and `darwin/`
   (the Metal device and its compiler's tests, the camera's capture device, the audio plug-in, the libraries put
   into Darwin's programs) keeps HakiOS's, as above; `components/metal/plugin/` (hakios-metal) and the files with an

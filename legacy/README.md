@@ -10,7 +10,7 @@
 > configuration, its device profile, the build scripts and tools that serve only that kernel and that UEFI
 > (`xnu-build.sh`, `mkxnuimg.py`, `tools/guard_test.c` and the like, the UEFI port's README) -- is in the
 > phone's package on the `devices` branch, under `legacy/`, at the same paths: copy that back here
-> (`cp -R PACKAGE/legacy/. base/`) to build this generation. What is still only here: the common part of the UEFI
+> (`cp -R PACKAGE/legacy/. legacy/`) to build this generation. What is still only here: the common part of the UEFI
 > port (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
 
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of Darwin 16.5) on Android phone

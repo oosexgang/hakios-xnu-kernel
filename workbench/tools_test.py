@@ -94,11 +94,11 @@ class Links(Sandbox):
         self.assertIn('README.md:4: `tools/moved.py` is not in the repository', complained)
 
     def test_the_first_generation_is_left_out(self):
-        self.write('base/README.md', '[gone](nowhere.md) `tools/gone.py`\n')
+        self.write('legacy/README.md', '[gone](nowhere.md) `tools/gone.py`\n')
         self.write('README.md', 'x\n')
         code, said, _ = self.run_tool(self.links)
         self.assertEqual(code, 0)
-        self.assertIn('2 documents, ok', said)        # (README.md and docs/guide.md: not the one under base/)
+        self.assertIn('2 documents, ok', said)        # (README.md and docs/guide.md: not the one under legacy/)
 
 
 COMPONENT = '''	thing {

@@ -8,7 +8,7 @@ HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 B=$(mktemp -d)
 trap 'rm -rf "$B"' EXIT
-# (the handshake's source: kernel/lx/src of this repository, base/ beside it; wifi/lx/src where it was before)
+# (the handshake's source: kernel/lx/src of this repository, legacy/ beside it; wifi/lx/src where it was before)
 SRC=$ROOT/../kernel/lx/src
 [ -f "$SRC/lx_wpa.c" ] || SRC=$ROOT/wifi/lx/src
 "$HERE/reference.py" "${1:-1}" > "$B/cases.inc"

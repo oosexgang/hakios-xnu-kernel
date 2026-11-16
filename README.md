@@ -129,7 +129,7 @@ Then build: [Documentation/building.md](Documentation/building.md). For a phone 
 | `build.config.*` | What a build is: `build.config.common` for all, `build.config.arm64` the kernel (read by `kernel/env.sh`, or the file `BUILD_CONFIG` names), `build.config.darwin27` Darwin's images (`darwin/userland/env.sh`), `build.config.bench` a run on the phone. Values given in the environment win. |
 | `bench` | The phone on the bench: start the resident loader, send it the images, run a kernel, fetch its log, screenshots and recordings (`./bench state`, `./bench run`). |
 | `Documentation/` | Documentation. |
-| `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
+| `legacy/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 
 ## Porting in one paragraph
 

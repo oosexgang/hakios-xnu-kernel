@@ -184,7 +184,7 @@ What stood between Darwin 27 and its home screen, in order:
     The static collections wallpaper and display-completion hooks remain. The software-only RAM boot
     reached the home screen; old hardware-GPU frame-time measurements do not describe this configuration.
     Checked again under QEMU on 15 November (`gpu=0`, no `metal=1`): the lock screen comes up with the
-    Stripe Yellow wallpaper 12 minutes after the kernel starts. `base/qemu/screendump.sh` takes the
+    Stripe Yellow wallpaper 12 minutes after the kernel starts. `legacy/qemu/screendump.sh` takes the
     picture; QEMU pads each row of its PPM to four bytes, and a reader that does not drop the padding sees
     the picture slanted, with its colours turning from row to row.
 11. **Library insertion and the clock.** Patch 0022 raises `kern.exec_inject` from 512 to 4096 bytes,
