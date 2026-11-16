@@ -6380,7 +6380,7 @@ hakios_mpss_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_MODEM_SM7325)) {
-		printf("mpss: modem=1 and modem_step=N are for a phone whose board.toml lists \"modem-sm7325\", and this is not one\n");
+		printf("mpss: modem=1 and modem_step=N are for a phone whose board.dts lists \"modem-sm7325\", and this is not one\n");
 		return;
 	}
 	soc_override();
