@@ -1,0 +1,4 @@
+# What a bring-up wants to see: the console on the screen, and every fatal-looking exception of a user thread
+# described before it is delivered (arch/arm64/kernel/user_exception_trace.c).
+-v
+systrace=1

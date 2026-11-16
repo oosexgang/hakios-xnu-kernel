@@ -1,0 +1,6 @@
+# Darwin 27 in QEMU, drawn through our Metal on the processor (softpipe): what showed Stripe Yellow
+# (Documentation/metal-glass.md). Each frame takes minutes under TCG: give the run hours.
+metal=1                 # the Metal device for Darwin from the start (components/metal)
+rwa_software=1          # no GPU here: the library draws on the processor
+metal_profile=1         # each command buffer's draws and time, said
+swaplog=1               # each frame the display driver swaps, said

@@ -15,6 +15,8 @@
 #     --log FILE        the serial log (default: qemu-kernel.log in the working directory)
 #     --boot-args ARGS  added to the kernel's boot arguments (-v, the verbose console on the screen, is
 #                       there unless --quiet)
+#     --defconfig NAME  the boot arguments of arch/arm64/configs/NAME_defconfig (tools/defconfig.py --list), before
+#                       --boot-args', which replace one of the same name
 #     --ramdisk FILE    a disk image the kernel gets as /dev/md0 (its root: --boot-args rd=md0)
 #     --audio FILE      a virtio sound device, whose output QEMU writes into FILE (a WAV file); the kernel
 #                       plays /dev/hakios-audio through it
@@ -42,7 +44,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
-until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio='' interactive='' display=none
+until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' defconfig='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio='' interactive='' display=none
 with_devices=1
 while [ $# -gt 1 ]; do
 	case $1 in
@@ -53,6 +55,7 @@ while [ $# -gt 1 ]; do
 	--after) after=$2; shift 2 ;;
 	--log) log=$(realpath -m "$2"); shift 2 ;;
 	--boot-args) args=$2; shift 2 ;;
+	--defconfig) defconfig=$("$HERE/tools/defconfig.py" "$2") || exit 1; shift 2 ;;
 	--ramdisk) ramdisk=$(realpath "$2"); shift 2 ;;
 	--disk) disk=$(realpath "$2"); shift 2 ;;
 	--audio) audio=$(realpath -m "$2"); shift 2 ;;
@@ -97,7 +100,7 @@ trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
 mkdir -p "$W/esp/EFI/BOOT"
 cp "$HERE/arch/arm64/boot/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
 # the console on the screen too only for a picture of it: in QEMU each line scrolls the whole framebuffer
-cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${with_devices:+ virtio_net=1 virtio_input=1}${disk:+ virtio_blk=1}${audio:+ virtio_sound=1} $args"
+cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${with_devices:+ virtio_net=1 virtio_input=1}${disk:+ virtio_blk=1}${audio:+ virtio_sound=1}${defconfig:+ $defconfig} $args"
 python3 "$HERE/arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
 	"--cmdline=${cmdline# }" > /dev/null || die "no payload"
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"

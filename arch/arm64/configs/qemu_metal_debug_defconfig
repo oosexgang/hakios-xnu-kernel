@@ -1,0 +1,4 @@
+# qemu_metal, each draw said before it goes and waited for after: the draw a hang or a wrong pixel starts at is the
+# last one said, with its pipeline, attachments and the pixel it left.
+include qemu_metal
+metal_sync=1

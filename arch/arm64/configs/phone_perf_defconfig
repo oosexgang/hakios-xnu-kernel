@@ -1,0 +1,4 @@
+# phone_metal with the cores' clocks raised and then governed by their load (board/cpufreq.c, board/thermal.c
+# holding them back when the SoC is hot).
+include phone_metal
+cpufreq=1

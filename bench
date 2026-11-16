@@ -25,6 +25,8 @@
 # bench starts nothing on a phone that answers another name. Its UEFI build is in firmware/NAME/uefi/.
 #
 # Environment:
+#   BENCH_DEFCONFIG  the boot arguments of arch/arm64/configs/NAME_defconfig (tools/defconfig.py --list), after the
+#                board's and before BENCH_CMDLINE's, each replacing one of the same name
 #   BENCH_CMDLINE   boot arguments of this run, NAME or NAME=VALUE: each replaces the board's argument of
 #                that name or is added (BENCH_CMDLINE="gpu=1 -v"); one of NAME=KEY=VALUE by NAME=KEY, so that
 #                several stay (caenv=CA_A=1 caenv=CA_B=1); BENCH_PLAIN=1: these alone, without the board's
@@ -42,7 +44,7 @@
 # The resident system image outlives runs and copies: `ramdisk` notes who sent what, `run` says so.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 # (this was ./xl: what was set for it under its former names still counts, unless the new name is set)
-for v in BOARD CMDLINE PLAIN SECS FOLLOW FOLLOW_KEEP KERNEL RAMDISK HOME REBOOT_AFTER FORCE; do
+for v in BOARD DEFCONFIG CMDLINE PLAIN SECS FOLLOW FOLLOW_KEEP KERNEL RAMDISK HOME REBOOT_AFTER FORCE; do
 	o=XL_$v n=BENCH_$v
 	[ -z "${!n+x}" ] && [ -n "${!o+x}" ] && export "$n=${!o}"
 done
@@ -240,7 +242,11 @@ fetch_log() { # fetch_log FILE
 
 # The boot arguments of the run: the board's, with BENCH_CMDLINE's in place of those of the same name
 run_args() {
-	python3 - "$BOARD_ARGS" "${BENCH_CMDLINE:-}" "${BENCH_PLAIN:-}" "$CPUS" <<'PY'
+	local preset=
+	if [ -n "${BENCH_DEFCONFIG:-}" ]; then
+		preset=$(tools/defconfig.py "$BENCH_DEFCONFIG") || return 1
+	fi
+	python3 - "$BOARD_ARGS" "$preset ${BENCH_CMDLINE:-}" "${BENCH_PLAIN:-}" "$CPUS" <<'PY'
 import sys
 board, run, plain, cpus = sys.argv[1].split(), sys.argv[2].split(), sys.argv[3], sys.argv[4]
 arguments = {}

@@ -1,0 +1,5 @@
+# Darwin 27 on the phone with its own GPU: the window server and Metal draw on the Adreno, and the Wi-Fi comes up
+# (Documentation/metal-plugin.md). The board's own arguments come first (its boot { } node); these are added.
+gpu=1                   # the GPU started while the system starts, kept for the window server (HakiosGPU)
+metal=1                 # the Metal device for Darwin from the start
+wifi=1                  # the Wi-Fi radio, and a network joined from the file given
