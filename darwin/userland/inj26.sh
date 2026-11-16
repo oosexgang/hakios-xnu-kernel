@@ -78,7 +78,7 @@ $DYN -O2 -DHAKIOS_IOS27 -dynamiclib -install_name /hakios/lib/libhakios-capture.
 # the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: components/brightness/inject_brightness.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/../components/brightness/inject_brightness.c"
 for f in "$O"/*.dylib "$O/HakiosAudio"; do
-	"$PACSTRIP" macho "$f" "$f.strip" > /dev/null && mv "$f.strip" "$f"
+	pac_strip "$f"
 	"$LDID" -S "$f"
 	echo "  $(basename "$f"): $(file -b "$f" | cut -c1-60)"
 done

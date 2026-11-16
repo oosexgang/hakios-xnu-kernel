@@ -44,3 +44,10 @@ PACSTRIP=$IOS_REPO/arch/arm64/tools/pacstrip
 if [ ! -x "$PACSTRIP" ] || [ "$IOS_REPO/arch/arm64/tools/pacstrip.c" -nt "$PACSTRIP" ]; then
 	cc -O2 -o "$PACSTRIP" "$IOS_REPO/arch/arm64/tools/pacstrip.c" -lcrypto || { echo "pacstrip did not build (it needs libcrypto)" >&2; exit 1; }
 fi
+# pac_strip IN [OUT]: IN with its PAC instructions rewritten, into OUT or in place; the build stops when pacstrip
+# refuses it (a file that is not arm64e), where "pacstrip ... && mv" let it through as it was
+pac_strip() {
+	local out=${2:-$1.strip}
+	"$PACSTRIP" macho "$1" "$out" > /dev/null || { echo "pacstrip refused $1: not an arm64e Mach-O" >&2; exit 1; }
+	[ -n "${2:-}" ] || mv "$out" "$1"
+}

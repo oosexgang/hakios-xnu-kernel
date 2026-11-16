@@ -35,6 +35,6 @@ done
 $DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
 	-I"$M/include" -I"$M/plugin" -o "$OBJ/HakiosMetal" "$M/plugin/HakiosMetalCA.m" "$M/plugin/ca_paths.c" "$M/out/ios/libhakios-metal.a" $MESA_LIBS -lc++ \
 	$M2V_LEFT
-"$PACSTRIP" macho "$OBJ/HakiosMetal" "$OBJ/HakiosMetal.strip" > /dev/null && mv "$OBJ/HakiosMetal.strip" "$OBJ/HakiosMetal"
+pac_strip "$OBJ/HakiosMetal"
 "$LDID" -S "$OBJ/HakiosMetal"
 echo "  HakiosMetal: $(file -b "$OBJ/HakiosMetal" | cut -c1-60), $(stat -c %s "$OBJ/HakiosMetal") bytes"

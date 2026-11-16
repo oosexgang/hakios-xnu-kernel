@@ -42,17 +42,17 @@ for prog in init stage0 child var_store; do
 done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
 $DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -framework Network -o "$OBJ/net_test" "$US/src/net_test.m"
-"$PACSTRIP" macho "$OBJ/net_test" "$OBJ/net_test.strip" > /dev/null && mv "$OBJ/net_test.strip" "$OBJ/net_test"
+pac_strip "$OBJ/net_test"
 # touches, buttons and notifications for job lists (RC_JOBS=...; usage in its source): a swipe up unlocks, as a finger does
 $DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
-"$PACSTRIP" macho "$OBJ/rwtouch" "$OBJ/rwtouch.strip" > /dev/null && mv "$OBJ/rwtouch.strip" "$OBJ/rwtouch"
+pac_strip "$OBJ/rwtouch"
 # the flashlight as an application reaches it, through AVFlashlight (rc.jobs.torch; darwin/userland/torch_test.c)
 $DYN -framework CoreFoundation -lobjc -o "$OBJ/torch_test" "$RN/userland/torch_test.c"
-"$PACSTRIP" macho "$OBJ/torch_test" "$OBJ/torch_test.strip" > /dev/null && mv "$OBJ/torch_test.strip" "$OBJ/torch_test"
+pac_strip "$OBJ/torch_test"
 # the microphone as an application records from it, through AVAudioRecorder (components/audio/record_test.c: SECONDS; no
 # sound is played), with the entitlement TCC asks of a recorder
 $DYN -framework CoreFoundation -framework Foundation -framework AVFAudio -lobjc -o "$OBJ/record_test" "$RN/../components/audio/record_test.c"
-"$PACSTRIP" macho "$OBJ/record_test" "$OBJ/record_test.strip" > /dev/null && mv "$OBJ/record_test.strip" "$OBJ/record_test"
+pac_strip "$OBJ/record_test"
 "$LDID" -S"$RN/../components/audio/record_test.entitlements" "$OBJ/record_test"
 
 # --- the tree ----------------------------------------------------------------------------------------
@@ -66,7 +66,8 @@ cp "$OBJ/var_store" "$T/bin/var_store"
 cp "$OBJ/net_test" "$T/bin/net_test"
 # EXTRA_BIN="FILE ...": more programs of ours for a job list (a probe), into /hakios/bin, through pacstrip as the others
 for f in ${EXTRA_BIN:-}; do
-	"$PACSTRIP" macho "$f" "$T/bin/$(basename "$f")" > /dev/null && chmod 755 "$T/bin/$(basename "$f")"
+	pac_strip "$f" "$T/bin/$(basename "$f")"
+	chmod 755 "$T/bin/$(basename "$f")"
 done
 cp "$OBJ/rwtouch" "$T/bin/rwtouch"
 cp "$OBJ/torch_test" "$T/bin/torch_test"
