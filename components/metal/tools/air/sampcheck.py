@@ -60,7 +60,6 @@ device cannot be made to agree by reading the answer.
 
 import os
 import re
-import struct
 import subprocess
 import sys
 import tempfile

@@ -178,16 +178,16 @@ def load_names(path):
     contain; its listing is in method-list order, so names join to the metadata parsed here
     by position. The join is checked rather than trusted: a selector's colon count must
     equal the number of arguments in its type encoding, and a mismatch is reported."""
-    names, kind, name = {}, None, None
+    names, name = {}, None
     with open(path, errors="replace") as f:
         for line in f:
             m = re.match(r"^@(protocol|interface) (\w+)", line)
             if m:
-                kind, name = m.group(1), m.group(2)
+                name = m.group(2)
                 names.setdefault(name, [])
                 continue
             if line.startswith("@end"):
-                kind, name = None, None
+                name = None
                 continue
             m = re.match(r"^-\[(\w+) (.+)\];$", line.rstrip("\n"))
             if m and name is not None and m.group(1) == name:

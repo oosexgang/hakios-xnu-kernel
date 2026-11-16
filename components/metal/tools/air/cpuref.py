@@ -27,7 +27,6 @@ usage: cpuref.py FILE[.metallib] [FUNCTION]      run and print LLVM's result
 import argparse
 import os
 import re
-import struct
 import subprocess
 import sys
 import tempfile

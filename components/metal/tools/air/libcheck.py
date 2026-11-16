@@ -209,7 +209,6 @@ def from_log(path, names):
         if b is None:
             out[n] = (None, "no block in the log at all")
             continue
-        text = "".join(b)
         crash = next((l.strip() for l in b if "signal " in l and " at 0x" in l), None)
         if crash:
             out[n] = (None, "CRASHED: " + crash[:90])
