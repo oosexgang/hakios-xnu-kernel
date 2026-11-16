@@ -7,7 +7,6 @@ what only dyld reads is gone; and what cannot be made into a kernel is refused w
 --program, a static user program: the same without moving it."""
 import importlib.util
 import struct
-import sys
 import unittest
 from pathlib import Path
 
