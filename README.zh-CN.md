@@ -102,13 +102,14 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | --- | --- |
 | `devices/` | 模板、模拟器的设备包，以及你带入的设备包：每个包含一个板型文件和其芯片的 SoC 文件。 |
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
-| `arch/arm64/boot/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
+| `arch/arm64/boot/` | 启动 arm64 内核的部分，放在 Linux 源码树放它的位置：UEFI 应用（加载器），生成 Apple 设备树并常驻以接收内核日志，以及打包载荷和手机启动镜像的工具。 |
 | `darwin/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
-| `components/metal/plugin/` | Adreno 的 Metal 驱动（hakios-metal，保留历史）：核心、AIR 编译器、CoreAnimation 通过它绘制的插件，以及针对模拟 GPU 的测试。 |
-| `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
+| `userland/` | 仍在使用或正在移植的早期用户态源码：init、注入 Darwin 程序的库、APFS 镜像工具。 |
 | `workbench/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
-| `components` | 让 Darwin 某个子系统工作的移植部分（Metal、Apple ID、SEP 的密钥库……），各占一个目录；`components/upstream.dts`：从外部获取的所有内容及其固定版本。 |
+| `components/` | 让 Darwin 某个子系统工作的移植部分，各占一个目录：Metal（第二个 Metal 设备在 `metal/plugin`）、Apple ID 与 App Store、SEP 的密钥库、相机、声音、亮度、壁纸、状态栏、插件（tweaks）；`components/upstream.dts`：从外部获取的所有内容及其固定版本。 |
+| `build.config.*` | 构建是什么：`build.config.common` 为全部共用，`build.config.arm64` 为内核（由 `kernel/env.sh` 读取，或读取 `BUILD_CONFIG` 指定的文件），`build.config.darwin27` 为 Darwin 镜像，`build.config.bench` 为在手机上的一次运行。环境变量中的值优先。 |
+| `bench` | 工作台上的手机：启动常驻加载器、发送镜像、运行内核、取回日志、截图和录屏（`./bench state`、`./bench run`）。 |
 | `Documentation/` | 文档。 |
 | `base/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
 
