@@ -488,6 +488,56 @@ stretch_in(Class cls, bool meta)
 	free(methods);
 }
 
+/*
+ * The time a snapshot request runs out after is also handed to it whole -- -[PUIPosterSnapshotRequest
+ * initWithPath:sceneSettingsApplicator:priority:snapshotDescriptor:retryCount:timeout:] and
+ * -[PUIPosterSnapshotHostConfigurationDescriptor copyWithCaptureTimeoutInterval:] -- and kept where a
+ * getter of ours does not see it read (-[PUIPosterSceneSnapshotter _activateTimeoutTimer]): those
+ * arguments are stretched too.
+ */
+typedef id (*request_init_fn)(id, SEL, id, id, long, id, unsigned long, double);
+typedef id (*copy_with_time_fn)(id, SEL, double);
+static request_init_fn original_request_init;
+static copy_with_time_fn original_copy_with_time;
+
+static id
+request_init_longer(id self, SEL selector, id path, id applicator, long priority, id descriptor,
+    unsigned long retries, double timeout)
+{
+	return original_request_init(self, selector, path, applicator, priority, descriptor, retries,
+	    timeout * SNAPSHOT_STRETCH);
+}
+
+static id
+copy_with_time_longer(id self, SEL selector, double timeout)
+{
+	return original_copy_with_time(self, selector, timeout * SNAPSHOT_STRETCH);
+}
+
+static void
+stretch_arguments(void)
+{
+	Method m;
+	char types[48];
+
+	if (original_request_init == NULL) {
+		m = class_getInstanceMethod(objc_getClass("PUIPosterSnapshotRequest"),
+		    sel_registerName("initWithPath:sceneSettingsApplicator:priority:snapshotDescriptor:retryCount:timeout:"));
+		if (m != NULL && types_of(m, types, sizeof(types)) && strcmp(types, "@@:@@?q@Qd") == 0) {
+			original_request_init = (request_init_fn)method_setImplementation(m, (IMP)request_init_longer);
+			say("hakios: PosterBoard: a snapshot request's timeout argument is stretched (rwa_software=1)\n");
+		}
+	}
+	if (original_copy_with_time == NULL) {
+		m = class_getInstanceMethod(objc_getClass("PUIPosterSnapshotHostConfigurationDescriptor"),
+		    sel_registerName("copyWithCaptureTimeoutInterval:"));
+		if (m != NULL && types_of(m, types, sizeof(types)) && strcmp(types, "@@:d") == 0) {
+			original_copy_with_time = (copy_with_time_fn)method_setImplementation(m, (IMP)copy_with_time_longer);
+			say("hakios: PosterBoard: a capture timeout handed to a copy is stretched (rwa_software=1)\n");
+		}
+	}
+}
+
 /* once: every selector with "ime" in it of PosterUIFoundation's snapshot classes, for finding which time
  * it is that runs out */
 static void
@@ -537,6 +587,7 @@ render_timeouts_longer(void)
 	}
 	say_snapshot_times(classes, count);
 	free(classes);
+	stretch_arguments();
 }
 
 /* FrontBoard's classes are not all there when this library is loaded: looked for again once
