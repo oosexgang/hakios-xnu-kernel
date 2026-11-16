@@ -16,7 +16,8 @@ first lines; `make` lists the common ones.
 | `components.py` | Checks that `components` pins what the fetching scripts pin. |
 | `check-links.py` | Checks that every link and every repository path in the documentation points at something. |
 | `check-publishable.sh` | Looks for what must never be published: binaries, firmware, Apple's shader code, home directories, keys. |
-| `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, the three checks above. `make lint`. |
+| `heredoc-python.py` | Takes the Python out of the shell scripts' quoted here-documents (`python3 - <<'PY'`), parses it, and writes it out for pyflakes' checks. |
+| `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, pyflakes' checks (ruff or pyflakes) of every Python script and here-document, the checks above. `make lint`. |
 | `mk-focaltech-fw.py` | Makes the header one touch driver includes from a firmware file of your own phone. The firmware is not in the repository. |
 
 The tools need Python 3.11 or newer and git, nothing else. They are tested in `workbench/`
