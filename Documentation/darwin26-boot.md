@@ -10,7 +10,7 @@
 > - Renoir's default boot arguments are in `boot { }` of its board file, not in `boot26.py`.
 > - The main branch no longer describes Renoir. Its board file is in the renoir package
 >   (`renoir/board.dts` on the `devices` branch); `tools/device.py add renoir` copies the package into
->   `devices/` of a checkout. The kernel build, `inj26.sh` and `boot26.py` take the board from there, so
+>   `arch/arm64/boot/dts/` of a checkout. The kernel build, `inj26.sh` and `boot26.py` take the board from there, so
 >   bring it in first.
 >
 > The scripts under `darwin/` expect the team's working tree (`darwin-renoir`) and an extracted IPSW beside

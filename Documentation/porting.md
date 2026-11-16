@@ -31,9 +31,9 @@ the log line to look for at each step.
 tools/boards.py new mido --soc sm7325 --dts phone.dts --description "Maker Model"
 ```
 
-This writes the board file (`devices/NAME/board.dts`, here with `mido` for NAME) and the SoC file beside
-it (`devices/NAME/soc.dtsi`): a copy of another package's when one that is present has that SoC, else a
-new one from the tree. The directory `devices/NAME/` is your phone's device package. Git ignores it in a
+This writes the board file (`arch/arm64/boot/dts/NAME/board.dts`, here with `mido` for NAME) and the SoC file beside
+it (`arch/arm64/boot/dts/NAME/soc.dtsi`): a copy of another package's when one that is present has that SoC, else a
+new one from the tree. The directory `arch/arm64/boot/dts/NAME/` is your phone's device package. Git ignores it in a
 checkout of the main branch, because packages are kept on the `devices` branch (step 8). From the tree it
 reads:
 
@@ -79,9 +79,9 @@ tools/boards.py compare mido --dts phone.dts     # each value: as in the tree, d
 There are no tables to regenerate by hand: every build makes them itself from the packages that are
 present (`make boards` validates and writes them into `build/boards/` if you want to look at them).
 
-Leave `features = <>;` (none) for now. Every key is explained in `devices/_template/board.dts` and
-`devices/_template/soc.dtsi`. To see how an existing phone is described, bring its package in:
-`tools/device.py available` lists them, `tools/device.py add renoir` copies one into `devices/`.
+Leave `features = <>;` (none) for now. Every key is explained in `arch/arm64/boot/dts/_template/board.dts` and
+`arch/arm64/boot/dts/_template/soc.dtsi`. To see how an existing phone is described, bring its package in:
+`tools/device.py available` lists them, `tools/device.py add renoir` copies one into `arch/arm64/boot/dts/`.
 
 ## 2. The UEFI
 
@@ -163,7 +163,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
-  engine or other pins: fill in `touch { }` of the board file. `devices/_template/board.dts` says
+  engine or other pins: fill in `touch { }` of the board file. `arch/arm64/boot/dts/_template/board.dts` says
   where each value is in the device tree and in the SoC's clock driver;
   `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
   that driver for you.
@@ -171,7 +171,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   the constants into the board file and `board/board.h`, as the buttons' driver has its peripherals
   in `buttons { }`, the flashlight's in `torch { }`, the vibration motor's pins in `haptic { }` and the
   speaker amplifiers' bus and addresses in `speaker { }`:
-  [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. Those
+  [arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md#adding-a-kind-of-data) goes through the steps. Those
   drivers are the example of how that is kept safe: the test of each runs it on a second phone
   with the part elsewhere (`workbench/torch_driver_test.c`, `haptic_driver_test.c`,
   `speaker_driver_test.c`), so a value of the first phone left in the code shows as a part that
@@ -210,7 +210,7 @@ A port goes to two places:
 
 | What | Where it goes |
 | --- | --- |
-| The device package: the `devices/NAME/` directory with `board.dts` and `soc.dtsi`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
+| The device package: the `arch/arm64/boot/dts/NAME/` directory with `board.dts` and `soc.dtsi`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
 | Any new driver with its feature, a new key of the board or SoC file | The main branch. |
 
 No generated table is sent: none is in the repository. For the package:

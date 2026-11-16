@@ -58,7 +58,7 @@ needs it.
    data; one of a single part is named after the part.
 2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `board/board.h` and its name in
    `tools/boards.py`. An address the driver needs that no section has yet becomes a key:
-   [devices/README.md](../devices/README.md), "Adding a kind of data", has the seven places.
+   [arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md), "Adding a kind of data", has the seven places.
 3. **Compile it** against an assembled tree, in a second, without the kernel toolchain:
 
    ```sh

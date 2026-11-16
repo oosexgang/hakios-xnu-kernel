@@ -29,7 +29,7 @@ extern kern_return_t thread_terminate(thread_t thread);
 /*
  * Where the SoC's pins are is the chip's and comes from the SoC file (pins { }). Which pin the
  * light is on is this part's wiring: a constant here while one phone has the part, a key of the
- * board file once a second phone has it on another pin (devices/README.md, "Adding a kind of data").
+ * board file once a second phone has it on another pin (arch/arm64/boot/dts/README.md, "Adding a kind of data").
  */
 #define LED_PIN                 42
 #define BLINKS                  3

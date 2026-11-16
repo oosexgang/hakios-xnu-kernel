@@ -30,7 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]         # (the repository: this is arch/arm64/boot)
 sys.path.insert(0, str(REPO / 'tools'))
-import boards  # noqa: E402  (devices/NAME/board.toml)
+import boards  # noqa: E402  (arch/arm64/boot/dts/NAME/board.toml)
 
 PAYLOAD_MAGIC = b'XNUP'
 PAYLOAD_MAX = 0x04000000         # what the payload reservation of the UEFI's memory map holds (loader.c PAYLOAD_MAX_SIZE)

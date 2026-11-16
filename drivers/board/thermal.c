@@ -1,6 +1,6 @@
 /*
  * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver; what differs
- * between devices is the board's data (board/board.h: thermal { } of devices/NAME/board.dts, thermal { } and
+ * between devices is the board's data (board/board.h: thermal { } of arch/arm64/boot/dts/NAME/board.dts, thermal { } and
  * cpufreq { } of its SoC's file), and the arithmetic is board/thermal_core.h (tested on the host:
  * workbench/thermal_test.c, and the driver itself: workbench/thermal_driver_test.c).
  *
@@ -283,7 +283,7 @@ hakios_thermal_init(void)
 	}
 	this_board = hakios_board();
 	if (this_board == NULL || this_board->thermal.tsens[0] == 0) {
-		say("thermal: this board's file has no thermal { } (devices/NAME/board.dts): nothing read\n");
+		say("thermal: this board's file has no thermal { } (arch/arm64/boot/dts/NAME/board.dts): nothing read\n");
 		mode = 0;
 		return;
 	}

@@ -23,9 +23,10 @@ darwin/userland/obj27/
 # Metal's builds (components/metal/tools/air/mk-host.sh: Mesa for this machine; mk-mesa26-linux.sh, mk-metal-linux.sh)
 /components/metal/build
 # device packages brought in with tools/device.py: they are kept on the devices branch, not here
-/devices/*/
-!/devices/_template/
-!/devices/qemu-virt/
+/arch/arm64/boot/dts/*/
+!/arch/arm64/boot/dts/_template/
+!/arch/arm64/boot/dts/qemu-virt/
+/devices/
 qemu-kernel.log
 
 # the package manager's prefix components/tweaks/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages

@@ -30,6 +30,7 @@ behaviour on the first phone changed, and one thing changed on Renoir (below).
 | `docs/` | `Documentation/`, as in Linux's tree. |
 | `base/` (the first generation's workspace) | Gone. What was still used of it: `base/uefi/` is `arch/arm64/boot/uefi/`, `base/tools/mk-libdeflate.sh` and `recording.py` are in `tools/`, `base/qemu/touch.py` and `screendump.sh` in `tools/qemu/`. |
 | `userland/tools/apfs/` | `tools/apfs/`. |
+| `devices/NAME/` (the board files and the packages brought in) | `arch/arm64/boot/dts/NAME/`, as Android's kernels keep their device trees. `tools/boards.py` still finds packages left in `devices/`; move them with `git mv`, or bring them in again with `tools/device.py add NAME`. |
 | `loader/` | `arch/arm64/boot/`, where Linux's tree keeps what starts an arm64 kernel: the UEFI application, its `build.sh`, `mkboot.py`, `mkpayload.py`, `mkidentity.py` and `src/`. Its scripts find the repository three levels up. |
 | `kernel/overlay/osfmk/arm64/`, `osfmk/minicrypto/`, `bsd/miscfs/apfs/`, `bsd/miscfs/ramfs/` | `arch/arm64/kernel/`, `crypto/`, `fs/apfs/`, `fs/ramfs/`: still those directories of the kernel's tree, where `kernel/assemble.sh` puts them (`kernel/lib.sh`, `OVERLAY_PLACES`). |
 | `kernel/overlay/pexpert/pexpert/arm64/`, `kernel/overlay/config/`, `kernel/overlay/libkern/amfi/`; `darwin/tools/pacstrip.c`, `a64census.c` (and the built `darwin/tools/pacstrip`) | `arch/arm64/include/pexpert/`, `arch/arm64/configs/xnu/`, `security/amfi/` (still those directories of the kernel's tree); `arch/arm64/tools/`. |
@@ -46,7 +47,7 @@ behaviour on the first phone changed, and one thing changed on Renoir (below).
 | `userland/userland/src/inject_tweaks.c`, `darwin/userland/tweak_test.c`, `tweak_test.plist`; `userland/tools/mk-jb.sh`, `jb-preinstall.py`, and the prefix they fetch, `userland/jb/` | `components/tweaks/`, `components/tweaks/tools/`; the prefix is fetched into `components/tweaks/jb/`. |
 | `base/tools/camsensor.py`, `camtuning.py`, `camraw.py` | `userland/tools/`, where `userland/userland/build.sh` runs them from |
 | A driver's own copies of `rd()`/`wr()`, of the waits, of the lookup in RPMh's command database, of a request to RPMh, of a pin's registers | The headers `board/mmio.h`, `board/time.h`, `board/cmd_db.h`, `board/rpmh.h`, `board/tlmm.h` in `bsd/dev/` ([writing-a-driver.md](writing-a-driver.md)). A patch that touches such a copy has nothing to apply to; what it changed belongs in the header, or in the driver's call of it. |
-| `devices/NAME/board.toml`, `soc/SOC.toml` | `devices/NAME/board.dts`, and the SoC file as `devices/NAME/soc.dtsi` (above): the same keys, in the syntax of a device tree source (`key-name = <0x10>;`, `name = "text";`, a section is a node `speaker { ... };`, a camera sensor a node `sensor@0 { ... };`; [devices/README.md](../devices/README.md) has the format). `tools/boards.py convert board.toml` writes the new file beside the old one, comments kept. |
+| `devices/NAME/board.toml`, `soc/SOC.toml` | `devices/NAME/board.dts`, and the SoC file as `devices/NAME/soc.dtsi` (above): the same keys, in the syntax of a device tree source (`key-name = <0x10>;`, `name = "text";`, a section is a node `speaker { ... };`, a camera sensor a node `sensor@0 { ... };`; [devices/README.md](../arch/arm64/boot/dts/README.md) has the format). `tools/boards.py convert board.toml` writes the new file beside the old one, comments kept. |
 | Boot argument `renoir_display_clocks=1` | `display_clocks=1`: it reads the display clocks of any board whose SoC file has them. |
 | Default boot arguments in `boot26.py` | `[boot]` of the phone's board file. It was `devices/renoir/board.dts`; the phones' packages have since moved to the `devices` branch (last section). |
 
@@ -95,7 +96,7 @@ Edit a driver in `kernel/overlay/` and run `kernel/build.sh`, or edit in the tre
   the partition the kernel may write (`[storage]`) were numbers in the drivers and in the loader.
   The packages on the `devices` branch have them now. A package of your own made before this is
   refused by `tools/boards.py check`, which names each section that is missing; the values are the
-  ones the code had, and `devices/_template/board.dts` says where each comes from. Without
+  ones the code had, and `arch/arm64/boot/dts/_template/board.dts` says where each comes from. Without
   `[storage]` nothing is refused: the kernel just never writes to the phone's storage.
 - **`kernel/build.sh` no longer needs a darwin-renoir checkout** for the host tools. It still uses one
   if it is there.
@@ -114,7 +115,7 @@ no phone. What works on which phone did not change.
 
 | Before | Now |
 | --- | --- |
-| The phones' `devices/NAME/` on the main branch | Device packages on the `devices` branch, one directory per phone at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
+| The phones' `devices/NAME/` on the main branch | Device packages on the `devices` branch, one directory per phone at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `arch/arm64/boot/dts/` of a checkout, where git ignores it. |
 | `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `darwin/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `darwin/userland/inj26.sh`, `kernel/syntax-check.sh`, `workbench/run.sh`. |
 | `tools/boards.py gen` before committing, `tools/boards.py gen --check` in `make check` | Gone: there is no committed table to compare. `make boards` validates and writes the tables if you want to look at them. |
 | Host tests against the phones' own boards | Against stand-ins in `workbench/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, `phone-keys`, with its parts wired otherwise, and `phone-scmi`, its speeds over SCMI. |

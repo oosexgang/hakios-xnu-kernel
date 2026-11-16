@@ -26,7 +26,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   it, says where the blocks of its chip are: each package carries its chip's file, so a package is
   complete on its own, and `tools/boards.py new` copies the file from a package with that SoC. Before, each driver carried its own list
   of phones and addresses, and the loader described each machine in C. Every key is explained in
-  `devices/_template/board.dts` and `devices/_template/soc.dtsi`; [devices/README.md](devices/README.md)
+  `arch/arm64/boot/dts/_template/board.dts` and `arch/arm64/boot/dts/_template/soc.dtsi`; [devices/README.md](arch/arm64/boot/dts/README.md)
   has every section, and the steps for making one more constant data.
 - **A tool starts both files from the phone's Android device tree.** `tools/boards.py new NAME --soc SOC
   --dts FILE` reads the DSI controller, the temperature sensors, the CPU frequency block and its groups
@@ -65,7 +65,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     the MCLKs and the CSI receivers' clocks one each, as many as the SoC has; how the PLLs are configured,
     and which RCG source each output is: the driver works the dividers out of them).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
-  the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
+  the emulator's board (`arch/arm64/boot/dts/qemu-virt/`) and the template. A phone is a directory with its
   `board.dts`, `soc.dtsi` and README on the `devices` branch. `tools/device.py`
   brings one into a checkout and takes it out again: `available`, `add`, `list`, `remove`, `export`
   (`make device DEVICE=NAME` is `add`). Packages elsewhere are found through `HAKIOS_DEVICES`.
@@ -249,7 +249,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | `renoir/docs/`, `renoir/workbench/` | `docs/`, `workbench/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `arch/arm64/boot/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, each with its `soc.dtsi` |
-| Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `devices/*/soc.dtsi`; the first phone's package lists every former name |
+| Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `arch/arm64/boot/dts/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `arch/arm64/boot/dts/*/soc.dtsi`; the first phone's package lists every former name |
 | The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, the build and tools of that kernel) | `legacy/` of its package on the `devices` branch |
 
 The full table is in [docs/migrating.md](Documentation/migrating.md). [docs/architecture.md](Documentation/architecture.md)

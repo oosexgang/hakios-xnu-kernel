@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The boards this project knows, as data: devices/NAME/board.dts and the soc.dtsi beside it.
+"""The boards this project knows, as data: arch/arm64/boot/dts/NAME/board.dts and the soc.dtsi beside it.
 
   tools/boards.py list                 the boards, one a line
   tools/boards.py show BOARD           one board with its SoC's values filled in
@@ -13,7 +13,7 @@
                                        a board and its SoC file against an Android device tree: each value as
                                        in the tree, different, or not in a tree at all; non-zero if one differs
   tools/boards.py new NAME --soc SOC [--dts FILE [--panel NODE]]
-                                       start devices/NAME/board.dts and its soc.dtsi (a copy of another
+                                       start arch/arm64/boot/dts/NAME/board.dts and its soc.dtsi (a copy of another
                                        package's when one has that SoC);
                                        with --dts, fill in what an Android device tree source says
   tools/boards.py convert FILE.toml...  a board.toml or SOC.toml of before as board.dts or SOC.dtsi, beside it,
@@ -26,7 +26,7 @@ The files are written as a device tree source is, the syntax a porter reads in t
 (tools/boardfile.py says what of it they take).
 
 A board is a device package: a directory NAME with board.dts and soc.dtsi in it. Packages are looked
-for in devices/ and in the directories of --devices DIR and of HAKIOS_DEVICES.
+for in arch/arm64/boot/dts/ and in the directories of --devices DIR and of HAKIOS_DEVICES.
 The repository itself has the emulator's board and a template; phones are packages kept apart from it
 (tools/device.py brings one in).
 """
@@ -41,7 +41,9 @@ import boardfile  # noqa: E402
 from devicetree import from_dts  # noqa: E402  (what a device tree says of a board: tools/devicetree.py)
 
 ROOT = Path(__file__).resolve().parents[1]
-DEVICES = ROOT / 'devices'
+DEVICES = ROOT / 'arch/arm64/boot/dts'
+# where packages were before (devices/ at the top): still looked in, after DEVICES, for a checkout that has some there
+OLD_DEVICES = 'devices'
 BOARD_HEADER = ROOT / 'drivers/board/board.h'
 # What `gen` writes, into one directory (--out; build/boards unless told otherwise). None of it is kept
 # in the repository: it is made from whichever device packages are there when something is built.
@@ -49,7 +51,7 @@ OUT = ROOT / 'build/boards'
 KERNEL_TABLE = 'board_table.h'   # the kernel's table (bsd/dev/board/board.c includes it)
 LOADER_TABLE = 'platforms.h'            # the loader's (arch/arm64/boot/src/platform.h includes it)
 USER_TABLE = 'user_boards.h'          # user space's (darwin/userland/)
-# Where else device packages are looked for, besides devices/: the directories of --devices and of
+# Where else device packages are looked for, besides arch/arm64/boot/dts/: the directories of --devices and of
 # HAKIOS_DEVICES (as PATH is written). A package is DIR/NAME/board.dts with DIR/NAME/soc.dtsi.
 MORE_DEVICES = []
 
@@ -217,9 +219,10 @@ def shown(path):
 
 
 def board_files():
-    """Every device package's board file, devices/'s first (the template is not a board)."""
+    """Every device package's board file, arch/arm64/boot/dts/'s first (the template is not a board)."""
     seen = {}
-    for directory in [DEVICES] + MORE_DEVICES:
+    old = ROOT / OLD_DEVICES
+    for directory in [DEVICES] + ([old] if old.is_dir() and old != DEVICES else []) + MORE_DEVICES:
         for path in sorted(Path(directory).glob('*/board.dts')):
             if not path.parent.name.startswith('_'):
                 seen.setdefault(path.parent.name, path)
@@ -326,8 +329,8 @@ def features_text():
            'a feature without them, and `tools/boards.py status NAME` says the same for one phone.',
            '',
            'This page is written by `tools/boards.py features` from the tables the checker uses; a test keeps',
-           'the two the same. What each key means is in `devices/_template/soc.dtsi` and',
-           '`devices/_template/board.dts`.',
+           'the two the same. What each key means is in `arch/arm64/boot/dts/_template/soc.dtsi` and',
+           '`arch/arm64/boot/dts/_template/board.dts`.',
            '',
            '| Feature | SoC file | Board file | Started with |',
            '|---|---|---|---|']
@@ -499,7 +502,7 @@ def bluetooth_problems(where, bt, problems):
 def load_soc(path, problems):
     """A package's soc.dtsi, checked; None when it cannot be read."""
     if not path.exists():
-        problems.add(shown(path.parent / 'board.dts'), 'there is no soc.dtsi beside it (devices/_template/soc.dtsi is one to start from)')
+        problems.add(shown(path.parent / 'board.dts'), 'there is no soc.dtsi beside it (arch/arm64/boot/dts/_template/soc.dtsi is one to start from)')
         return None
     try:
         data = boardfile.parse(path.read_text(), SOC_SCHEMA)
@@ -560,7 +563,7 @@ def load(problems=None):
         check_file(path, data, BOARD_SCHEMA, problems)
         well_formed = len(problems) == before   # (what follows compares values: only if they are of the right kind)
         if data.get('name') != name:
-            problems.add(rel, f'name = {data.get("name")!r}: the directory is devices/{name}')
+            problems.add(rel, f'name = {data.get("name")!r}: the directory is {shown(path.parent.parent)}/{name}')
         if not NAME.match(name):
             problems.add(rel, 'a board is named in lower-case letters, digits and dashes')
         soc = load_soc(path.parent / 'soc.dtsi', problems) or {}
@@ -762,7 +765,7 @@ def load(problems=None):
     for name, data in boards.items():
         base = data.get('loader', {}).get('fb_base')
         if base is not None and seen.setdefault(base, name) != name:
-            problems.add(f'devices/{name}/board.dts [loader]', f'fb_base {base:#x} is also that of {seen[base]}')
+            problems.add(f'{shown(DEVICES / name / "board.dts")} [loader]', f'fb_base {base:#x} is also that of {seen[base]}')
     if own and problems:
         raise SystemExit('\n'.join(problems))
     return socs, boards
@@ -785,7 +788,7 @@ def c_string(text):
 def table_text(socs, boards):
     known = features_of_header()
     out = ['/*',
-           ' * GENERATED by tools/boards.py gen from devices/NAME/board.dts and soc.dtsi: do not edit.',
+           ' * GENERATED by tools/boards.py gen from arch/arm64/boot/dts/NAME/board.dts and soc.dtsi: do not edit.',
            ' * It has a row for every device package that was there when it was made (the build makes it',
            ' * anew each time); to change a board, change its file.',
            ' */',
@@ -1035,7 +1038,7 @@ def table_text(socs, boards):
 def platforms_text(socs, boards):
     """platforms.h: the loader's description of every board with a [loader] section."""
     out = ['/*',
-           ' * GENERATED by tools/boards.py gen from devices/NAME/board.dts ([loader]) and soc.dtsi',
+           ' * GENERATED by tools/boards.py gen from arch/arm64/boot/dts/NAME/board.dts ([loader]) and soc.dtsi',
            ' * ([platform]): do not edit. Included by src/platform.h of the loader, which has struct platform',
            ' * and says what each field is for.',
            ' */',
@@ -1081,7 +1084,7 @@ def platforms_text(socs, boards):
 def user_boards_text(socs, boards):
     """user_boards.h: what the libraries injected into Darwin's processes know of each board."""
     out = ['/*',
-           ' * GENERATED by tools/boards.py gen from devices/NAME/board.dts ([screen]): do not edit.',
+           ' * GENERATED by tools/boards.py gen from arch/arm64/boot/dts/NAME/board.dts ([screen]): do not edit.',
            ' * What user space is told of a board. The libraries of darwin/userland/ read the board\'s name from',
            ' * IODeviceTree:/chosen/darwin-board, as the loader set it, and look it up here.',
            ' */',
@@ -1336,7 +1339,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     bt = board.get('bluetooth', {})
     if bt:
         section(('Bluetooth H4, feature "bluetooth-wcn-uart": only values the tree associates explicitly.',
-                 'Fill the remaining bluetooth keys from devices/_template/board.dts; clock votes and',
+                 'Fill the remaining bluetooth keys from arch/arm64/boot/dts/_template/board.dts; clock votes and',
                  'VRM resource names need the clock/power drivers. Inspect with bt=-1 first.'),
                 'bluetooth', list(bt.items()), commented=True)
     wired = board.get('touch', {})
@@ -1344,18 +1347,18 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         section(('The touch controller\'s wiring, for a feature "touch-...": its reset and its interrupt are from the tree'
                  + (', and the serial engine it is on' if 'serial_engine' in wired else '') + ';',
                  "the engine's clocks and votes, the bus's pins and the supplies are yours to fill in",
-                 '(devices/_template/board.dts says where each is).'), 'touch',
+                 '(arch/arm64/boot/dts/_template/board.dts says where each is).'), 'touch',
                 [(key, wired[key]) for key in ('serial_engine', 'interrupt', 'reset', 'coordinates') if key in wired], commented=True)
     dsp = board.get('adsp', {})
     if 'memory' in dsp:
         section(('The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
-                 "this phone's adsp.mdt and its parts is yours to name (devices/_template/board.dts)."), 'adsp',
+                 "this phone's adsp.mdt and its parts is yours to name (arch/arm64/boot/dts/_template/board.dts)."), 'adsp',
                 [('firmware', f'fw-audio-{name}'), ('memory', dsp['memory']), ('memory_size', dsp['memory_size'])], commented=True)
     amplifiers = board.get('speaker', {})
     if 'sound_pins' in amplifiers:
         section(('The speaker\'s amplifiers, for the feature "speaker-aw88261": the sound\'s four pins are from the tree',
                  '(bit clock, frame sync, data in, data out); the bus, the addresses, the interrupts and the pins\'',
-                 'function are yours to fill in (devices/_template/board.dts says where each is).'), 'speaker',
+                 'function are yours to fill in (arch/arm64/boot/dts/_template/board.dts says where each is).'), 'speaker',
                 [('sound_pins', amplifiers['sound_pins'])], commented=True)
     codec = board.get('mic', {})
     if 'codec_reset' in codec:
@@ -1364,7 +1367,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     radio = board.get('wifi', {})
     if 'dsp_memory' in radio:
         section(('The Wi-Fi radio on the SoC\'s own DSP, for the feature "wifi-wcn6750": the DSP\'s reserved memory is',
-                 'from the tree,', 'with the radio\'s pins where the Bluetooth node names them (devices/_template/board.dts has the rest).'),
+                 'from the tree,', 'with the radio\'s pins where the Bluetooth node names them (arch/arm64/boot/dts/_template/board.dts has the rest).'),
                 'wifi', [('radio_model', 0), ('dsp_memory', radio['dsp_memory']), ('dsp_memory_size', radio['dsp_memory_size'])] +
                 ([('pins', radio['pins'])] if 'pins' in radio else []), commented=True)
     out.end()
@@ -1392,7 +1395,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         # each value with what the template says of its key: the file explains itself
         template = DEVICES / '_template' / 'soc.dtsi'
         above, after = template_says(template if template.exists() else
-                                     Path(__file__).resolve().parent.parent / 'devices' / '_template' / 'soc.dtsi')
+                                     Path(__file__).resolve().parent.parent / 'arch/arm64/boot/dts' / '_template' / 'soc.dtsi')
         clocks = soc.get('clocks', {})
         if light.get('type') == 'dcs' or clocks:
             soc_section(out, 'clocks', clocks, above, after,
@@ -1472,7 +1475,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
                              ', '.join(f'{key} = {key_value(key, values[key])}' for key in missing))
         return [f'  {title}'] + (lines or ['    nothing a device tree says']) + ['']
 
-    out += side(f'devices/{name}/soc.dtsi', soc, tree_soc, SOC_SCHEMA, lambda key, value: dts_value(key, value, soc_number))
+    out += side(f'arch/arm64/boot/dts/{name}/soc.dtsi', soc, tree_soc, SOC_SCHEMA, lambda key, value: dts_value(key, value, soc_number))
     out += side(f'{name}/board.dts', board, tree_board, BOARD_SCHEMA,
                 lambda key, value: f'<{value:#05x}>' if key in ('pon', 'volume_up', 'flash', 'alarm') else dts_value(key, value))
     out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +
@@ -1484,7 +1487,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--devices', action='append', default=[], type=Path, metavar='DIR',
-                        help='a directory of device packages (DIR/NAME/board.dts) to take as well as devices/')
+                        help='a directory of device packages (DIR/NAME/board.dts) to take as well as arch/arm64/boot/dts/')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list')
     commands.add_parser('show').add_argument('board')
@@ -1551,7 +1554,7 @@ def main():
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
         board = boards[options.board]
-        for title, data in ((f'devices/{options.board}/board.dts', board), (f'devices/{options.board}/soc.dtsi', socs[options.board])):
+        for title, data in ((f'arch/arm64/boot/dts/{options.board}/board.dts', board), (f'arch/arm64/boot/dts/{options.board}/soc.dtsi', socs[options.board])):
             print(f'// {title}')
             print(show_text(data), end='')
     elif options.command == 'gen':

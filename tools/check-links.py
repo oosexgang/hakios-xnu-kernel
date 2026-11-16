@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY = ('userland/',)
 LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
 # a path in backticks: starts at one of the repository's top-level directories and names a file or a directory
-TOP = ('arch', 'devices', 'kernel', 'loader', 'darwin', 'workbench', 'tools', 'Documentation', 'components', 'docs')
+TOP = ('arch', 'devices', 'drivers', 'fs', 'include', 'init', 'lib', 'crypto', 'security', 'kernel', 'loader', 'darwin', 'workbench', 'tools', 'Documentation', 'components', 'docs')
 PATH = re.compile(r'`((?:' + '|'.join(TOP) + r')/[A-Za-z0-9_./-]+)`')
 
 

@@ -388,7 +388,7 @@ def from_dts(text, panel=None):
     elif ipc:
         notes.append('the way to the other processors was not all found (missing: ' +
                      ', '.join(k for k in wanted if k not in ipc) + '): [ipc] is left out; fill it in from '
-                     'devices/_template/soc.dtsi for the features "adsp" and "wifi-wcn6750"')
+                     'arch/arm64/boot/dts/_template/soc.dtsi for the features "adsp" and "wifi-wcn6750"')
     if all(key in rpmh for key in ('cmd_db', 'cmd_db_size', 'rsc', 'tcs_offset')):
         soc['rpmh'] = rpmh
     wanted = ('gpu', 'gmu', 'gpucc', 'cx_misc', 'rscc', 'smmu', 'pdc', 'qfprom')
@@ -396,7 +396,7 @@ def from_dts(text, panel=None):
         soc['adreno'] = {key: adreno[key] for key in wanted}
     elif any(key in adreno for key in ('gpu', 'gmu', 'smmu')):
         notes.append("the GPU's blocks were not all found (missing: " + ', '.join(k for k in wanted if k not in adreno) +
-                     '): [adreno] is left out; fill it in from devices/_template/soc.dtsi for the feature "gpu-a660"')
+                     '): [adreno] is left out; fill it in from arch/arm64/boot/dts/_template/soc.dtsi for the feature "gpu-a660"')
     if lpass:
         soc['lpass'] = lpass
     if len(radio_pins) == 3 and len(set(radio_pins.values())) == 3:

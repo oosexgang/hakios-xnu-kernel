@@ -2,13 +2,13 @@
 """Device packages: bring a phone's description into this checkout, or take it out again.
 
   tools/device.py available [--from SOURCE]     the packages a source has
-  tools/device.py add NAME... [--from SOURCE]   copy packages into devices/ and check them
+  tools/device.py add NAME... [--from SOURCE]   copy packages into arch/arm64/boot/dts/ and check them
   tools/device.py remove NAME...                take them out again
-  tools/device.py export NAME DIR               copy the package devices/NAME to DIR/NAME: into a checkout of
+  tools/device.py export NAME DIR               copy the package arch/arm64/boot/dts/NAME to DIR/NAME: into a checkout of
                                                 the devices branch, to send it there
   tools/device.py list                          the packages that are here, and where each is from
 
-A device package is a directory NAME with board.dts in it (devices/_template/board.dts explains the
+A device package is a directory NAME with board.dts in it (arch/arm64/boot/dts/_template/board.dts explains the
 file) and whatever else belongs to the phone: its README, its notes. The repository itself describes no
 phone: packages are kept on its `devices` branch, one directory each, and whoever builds for a phone
 brings its package in. What is built -- the kernel, the loader, the libraries -- then knows the boards
@@ -19,7 +19,7 @@ SOURCE is where packages are taken from:
   a branch or commit     of this repository, with the packages at its top; `devices` unless told
                          otherwise, fetched from origin first when there is an origin to ask
 
-devices/NAME is not tracked here (.gitignore): a package is changed where it is kept, not in a checkout
+arch/arm64/boot/dts/NAME is not tracked here (.gitignore): a package is changed where it is kept, not in a checkout
 of the code. A new phone is made here (tools/boards.py new), and sent with `export`:
   git worktree add ../hakios-devices devices
   tools/device.py export NAME ../hakios-devices
@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boards  # noqa: E402  (what a board file is, and whether one is right)
 
 BRANCH = 'devices'              # where packages are kept when nothing else is said
-NOTE = '.from'                  # devices/NAME/.from: where a package that was brought in is from
-# a line of devices/_template/README.md that a README somebody has written no longer has
+NOTE = '.from'                  # arch/arm64/boot/dts/NAME/.from: where a package that was brought in is from
+# a line of arch/arm64/boot/dts/_template/README.md that a README somebody has written no longer has
 TEMPLATE_LINE = 'One sentence: how far it boots'
 
 
@@ -93,8 +93,8 @@ class Source:
 
 
 def tracked(name):
-    """Is devices/NAME part of the repository itself (the emulator's board, the templates)?"""
-    return bool(git('ls-files', '--', f'devices/{name}', check=False).stdout.strip())
+    """Is arch/arm64/boot/dts/NAME part of the repository itself (the emulator's board, the templates)?"""
+    return bool(git('ls-files', '--', f'arch/arm64/boot/dts/{name}', check=False).stdout.strip())
 
 
 def described(directory, name):
@@ -115,23 +115,23 @@ def add(names, source):
             raise SystemExit(f'{source.name} has no package "{name}" (it has: {", ".join(there) or "none"})')
         target = boards.DEVICES / name
         if tracked(name):
-            raise SystemExit(f'devices/{name} is part of the repository itself: not replaced')
+            raise SystemExit(f'arch/arm64/boot/dts/{name} is part of the repository itself: not replaced')
         if target.exists():
             if not (target / NOTE).exists():
-                raise SystemExit(f'devices/{name} is there and was not brought in by this tool: it may be work of '
+                raise SystemExit(f'arch/arm64/boot/dts/{name} is there and was not brought in by this tool: it may be work of '
                                  f'yours. Move it away first (or tools/device.py remove {name})')
             shutil.rmtree(target)
         source.copy(name, target)
         (target / NOTE).write_text(f'{source.name}\n')
-        print(f'devices/{name}: from {source.name}')
+        print(f'arch/arm64/boot/dts/{name}: from {source.name}')
     problems = boards.Problems()
     boards.load(problems)
-    mine = [problem for problem in problems if any(f'devices/{name}/' in problem for name in names)]
+    mine = [problem for problem in problems if any(f'arch/arm64/boot/dts/{name}/' in problem for name in names)]
     for problem in mine:
         print(problem, file=sys.stderr)
     if mine:
         print('the package does not fit this checkout: a package and the code change together when a key is added '
-              '(devices/_template/board.dts has every key of this checkout)', file=sys.stderr)
+              '(arch/arm64/boot/dts/_template/board.dts has every key of this checkout)', file=sys.stderr)
         return 1
     for name in names:
         print(f'next: tools/boards.py status {name}; the builds make their tables themselves')
@@ -142,11 +142,11 @@ def remove(names):
     for name in names:
         target = boards.DEVICES / name
         if not boards.NAME.match(name) or not (target / 'board.dts').exists():
-            raise SystemExit(f'there is no package devices/{name}')
+            raise SystemExit(f'there is no package arch/arm64/boot/dts/{name}')
         if tracked(name):
-            raise SystemExit(f'devices/{name} is part of the repository itself: not removed')
+            raise SystemExit(f'arch/arm64/boot/dts/{name} is part of the repository itself: not removed')
         shutil.rmtree(target)
-        print(f'devices/{name}: removed')
+        print(f'arch/arm64/boot/dts/{name}: removed')
     return 0
 
 
@@ -154,17 +154,17 @@ def export(name, directory):
     """The package as it is here to DIR/NAME, checked first: what is sent is what was validated."""
     source = boards.DEVICES / name
     if not boards.NAME.match(name) or not (source / 'board.dts').exists():
-        raise SystemExit(f'there is no package devices/{name}')
+        raise SystemExit(f'there is no package arch/arm64/boot/dts/{name}')
     directory = Path(directory)
     if not directory.is_dir():
         raise SystemExit(f'{directory} is not a directory (a checkout of the devices branch: git worktree add DIR {BRANCH})')
     problems = boards.Problems()
     boards.load(problems)
-    mine = [problem for problem in problems if f'devices/{name}/' in problem]
+    mine = [problem for problem in problems if f'arch/arm64/boot/dts/{name}/' in problem]
     for problem in mine:
         print(problem, file=sys.stderr)
     if mine:
-        print(f'devices/{name} is not right yet: not exported', file=sys.stderr)
+        print(f'arch/arm64/boot/dts/{name} is not right yet: not exported', file=sys.stderr)
         return 1
     target = directory / name
     if target.exists():

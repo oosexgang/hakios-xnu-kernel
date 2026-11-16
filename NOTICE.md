@@ -11,7 +11,7 @@
   (the Metal device and its compiler's tests, the camera's capture device, the audio plug-in, the libraries put
   into Darwin's programs) keeps HakiOS's, as above; `components/metal/plugin/` (hakios-metal) and the files with an
   `SPDX-License-Identifier` say their own.
-- `tools/`, `workbench/`, `devices/`, `bench`, `build.config.*` of this repository and the documentation written
+- `tools/`, `workbench/`, `arch/arm64/boot/dts/`, `bench`, `build.config.*` of this repository and the documentation written
   for it: MIT (`LICENSES/preferred/MIT`).
 
 ## Files inside the kernel overlay that keep their own licence

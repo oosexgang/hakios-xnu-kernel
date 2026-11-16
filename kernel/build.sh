@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the kernel on Linux: Apple's release (kernel/UPSTREAM) with kernel/overlay and kernel/patches,
 # as plain arm64 (no PAC), MACHINE=BCM2837, DEVELOPMENT. One kernel serves every board: which one it runs
-# on it learns at boot (/chosen/darwin-board; devices/).
+# on it learns at boot (/chosen/darwin-board; arch/arm64/boot/dts/).
 #
 #   kernel/build.sh [make args]      e.g. build.sh -j12 (default -j$(nproc))
 #
@@ -41,7 +41,7 @@ if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
 	focaltech_stub > "$FW"
 fi
-# the board table: a row for every device package that is there now (devices/ of the repository and
+# the board table: a row for every device package that is there now (arch/arm64/boot/dts/ of the repository and
 # HAKIOS_DEVICES). Made anew each build and put in the tree only when it differs, so that a build with
 # the same boards recompiles nothing for it.
 mkdir -p "$XNUDEPS/boards"

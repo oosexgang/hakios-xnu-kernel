@@ -225,7 +225,7 @@ ml_io_map(vm_offset_t phys, vm_size_t size __unused)
 	return phys;            /* (an address of the model's: hakios_test_rd/wr tell them apart) */
 }
 
-/* ---- the driver, and the board table it reads (devices/, through tools/boards.py) -------------- */
+/* ---- the driver, and the board table it reads (arch/arm64/boot/dts/, through tools/boards.py) -------------- */
 
 #include "board/board.c"
 #define HAKIOS_MMIO_TEST 1

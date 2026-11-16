@@ -7,8 +7,8 @@ A device is described by data, in two files of its package:
 | The **board file** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what Darwin's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), where its UEFI runs (`uefi { }`), its default boot arguments (`boot { }`). |
 | The **SoC file** | `NAME/soc.dtsi` | Where the blocks of its chip are: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), its SCMI performance mailbox (`scmi-perf { }`), and an emulator's virtio transports (`virtio { }`). |
 
-`devices/_template/board.dts` and `devices/_template/soc.dtsi` explain every key;
-`devices/_template/README.md` is the form of a package's README, which `tools/boards.py new` copies
+`arch/arm64/boot/dts/_template/board.dts` and `arch/arm64/boot/dts/_template/soc.dtsi` explain every key;
+`arch/arm64/boot/dts/_template/README.md` is the form of a package's README, which `tools/boards.py new` copies
 into a new package.
 
 ## The format
@@ -58,7 +58,7 @@ not right):
 
 ## Where packages are kept
 
-This branch describes no phone. It has the emulator's package (`devices/qemu-virt`) and the templates.
+This branch describes no phone. It has the emulator's package (`arch/arm64/boot/dts/qemu-virt`) and the templates.
 Phones are packages on the repository's
 [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices): one directory each, with
 nothing of the code. They change at their own pace, and a phone can be added there without touching
@@ -66,14 +66,14 @@ the kernel.
 
 ```sh
 tools/device.py available               # the packages the devices branch has
-tools/device.py add renoir              # bring one into this checkout: devices/renoir
+tools/device.py add renoir              # bring one into this checkout: arch/arm64/boot/dts/renoir
 tools/device.py list                    # what is here, and where each is from
 tools/device.py remove renoir           # take it out again
 tools/device.py add mido --from ../my-packages      # from a directory, or another branch or commit
 tools/device.py export mido ../hakios-devices       # a package made here, to a checkout of the devices branch
 ```
 
-A package that was brought in lies in `devices/NAME/`, which git ignores here: it is changed where it
+A package that was brought in lies in `arch/arm64/boot/dts/NAME/`, which git ignores here: it is changed where it
 is kept, not in a checkout of the code. Packages are also found in any directory named by
 `tools/boards.py --devices DIR` or the environment variable `HAKIOS_DEVICES` (written as `PATH` is),
 so a checkout of the `devices` branch beside this one works without copying anything:
@@ -85,7 +85,7 @@ export HAKIOS_DEVICES=$PWD/../hakios-devices
 
 ## What is made of them
 
-![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](../Documentation/assets/device-data.svg)
+![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](../../../../Documentation/assets/device-data.svg)
 
 ```sh
 tools/boards.py list                    # the boards that are here
@@ -128,7 +128,7 @@ chip each have a copy: `tools/boards.py new NAME --soc SOC` copies one from a pa
 SoC, and otherwise writes a new one with what the phone's device tree says, every value with what
 the template says of its key. Two things are never in a device tree and are filled in by hand: the
 display clocks' register offsets (from Linux's clock drivers for the chip) and the window over the
-peripherals ([Documentation/porting.md](../Documentation/porting.md), step 1). `camera { }` and `lpass { }` are not read
+peripherals ([Documentation/porting.md](../../../../Documentation/porting.md), step 1). `camera { }` and `lpass { }` are not read
 from a tree yet; the template says where in the vendor's trees their values are.
 
 A board needs only the sections of what it turns on: one with `features = <>;` (none) and a software
@@ -139,13 +139,13 @@ A SoC file names where each value is from, in a comment: the device tree node, t
 ## Adding a phone
 
 The whole procedure, with what to take from the device tree and in which order to try the drivers, is
-[Documentation/porting.md](../Documentation/porting.md). In short:
+[Documentation/porting.md](../../../../Documentation/porting.md). In short:
 
 1. `tools/boards.py new NAME --soc SOC --dts your.dts` and fill in what it could not read.
 2. `tools/boards.py check`, then `tools/boards.py status NAME`.
 3. Make the loader pass `darwin-board = "NAME"`.
 4. Boot with features off, then enable them one at a time.
-5. Send the package (`devices/NAME/`, with a README that says what works) to the `devices` branch:
+5. Send the package (`arch/arm64/boot/dts/NAME/`, with a README that says what works) to the `devices` branch:
    `git worktree add ../hakios-devices devices`, then `tools/device.py export NAME ../hakios-devices`
    and commit it there, its `soc.dtsi` with it.
 
@@ -165,7 +165,7 @@ small example to copy; each step is one place:
    If a feature cannot work without the section, say so in `FEATURE_NEEDS` or
    `FEATURE_NEEDS_OF_BOARD`; values that can be wrong in a way worth catching get a check in `load()`.
 3. **The table.** A line in `table_text()` that writes the field.
-4. **The files.** The key explained in `devices/_template/`, the values in the tests' phones
+4. **The files.** The key explained in `arch/arm64/boot/dts/_template/`, the values in the tests' phones
    (`workbench/devices`) where a test needs them, and in the packages that have them, on the `devices`
    branch, each with a comment naming where in the device tree or in Linux it is from.
 5. **The device tree**, if the value is in one: `from_dts()` in `tools/devicetree.py`, so that

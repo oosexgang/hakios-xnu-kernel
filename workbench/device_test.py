@@ -38,18 +38,18 @@ class Sandbox(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         self.saved = (boards.ROOT, boards.DEVICES)
-        boards.ROOT, boards.DEVICES = self.dir, self.dir / 'devices'
+        boards.ROOT, boards.DEVICES = self.dir, self.dir / 'arch/arm64/boot/dts'
         self.git('init', '-q', '-b', 'code')
-        (self.dir / 'devices/emulator').mkdir(parents=True)
-        (self.dir / 'devices/emulator/board.dts').write_text(board('emulator', 'An emulator'))
-        (self.dir / 'devices/emulator/soc.dtsi').write_text(SOC)
-        (self.dir / '.gitignore').write_text('/devices/*/\n!/devices/emulator/\n')
+        (self.dir / 'arch/arm64/boot/dts/emulator').mkdir(parents=True)
+        (self.dir / 'arch/arm64/boot/dts/emulator/board.dts').write_text(board('emulator', 'An emulator'))
+        (self.dir / 'arch/arm64/boot/dts/emulator/soc.dtsi').write_text(SOC)
+        (self.dir / '.gitignore').write_text('/arch/arm64/boot/dts/*/\n!/arch/arm64/boot/dts/emulator/\n')
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'the code')
         # the packages, on a branch that has nothing of the code
         self.git('checkout', '-q', '--orphan', 'devices')
         self.git('rm', '-rq', '--cached', '.')
-        shutil.rmtree(self.dir / 'devices')
+        shutil.rmtree(self.dir / 'arch')
         (self.dir / '.gitignore').unlink()
         for name in ('alpha', 'beta'):
             (self.dir / name / 'notes').mkdir(parents=True)
@@ -89,9 +89,9 @@ class Packages(Sandbox):
     def test_a_package_is_brought_in_whole_and_checked(self):
         code, said, complained = self.run_tool('add', 'alpha')
         self.assertEqual((code, complained), (0, ''))
-        self.assertIn('devices/alpha: from devices (', said)
+        self.assertIn('arch/arm64/boot/dts/alpha: from devices (', said)
         for name in ('board.dts', 'README.md', 'notes/pins.md'):
-            self.assertTrue((self.dir / 'devices/alpha' / name).is_file(), name)
+            self.assertTrue((self.dir / 'arch/arm64/boot/dts/alpha' / name).is_file(), name)
         self.assertEqual(sorted(boards.load()[1]), ['alpha', 'emulator'])
         # the checkout of the code has nothing new to commit: a package is changed where it is kept
         status = subprocess.run(['git', '-C', str(self.dir), 'status', '--porcelain'], capture_output=True, text=True).stdout
@@ -114,9 +114,9 @@ class Packages(Sandbox):
 
     def test_the_list_says_where_each_is_from(self):
         self.run_tool('add', 'alpha')
-        (self.dir / 'devices/mine').mkdir()
-        (self.dir / 'devices/mine/board.dts').write_text(board('mine', 'My phone'))
-        (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
+        (self.dir / 'arch/arm64/boot/dts/mine').mkdir()
+        (self.dir / 'arch/arm64/boot/dts/mine/board.dts').write_text(board('mine', 'My phone'))
+        (self.dir / 'arch/arm64/boot/dts/mine/soc.dtsi').write_text(SOC)
         code, said, _ = self.run_tool('list')
         self.assertEqual(code, 0)
         self.assertRegex(said, r"emulator .*\[the repository's own\]")
@@ -125,14 +125,14 @@ class Packages(Sandbox):
 
     def test_bringing_one_in_again_takes_the_new_one(self):
         self.run_tool('add', 'alpha')
-        (self.dir / 'devices/alpha/board.dts').write_text(board('alpha', 'Changed here'))
+        (self.dir / 'arch/arm64/boot/dts/alpha/board.dts').write_text(board('alpha', 'Changed here'))
         self.assertEqual(self.run_tool('add', 'alpha')[0], 0)
         self.assertEqual(boards.load()[1]['alpha']['description'], 'Phone alpha')
 
     def test_work_that_this_tool_did_not_bring_in_is_not_run_over(self):
-        (self.dir / 'devices/alpha').mkdir()
-        (self.dir / 'devices/alpha/board.dts').write_text(board('alpha', 'My own alpha'))
-        (self.dir / 'devices/alpha/soc.dtsi').write_text(SOC)
+        (self.dir / 'arch/arm64/boot/dts/alpha').mkdir()
+        (self.dir / 'arch/arm64/boot/dts/alpha/board.dts').write_text(board('alpha', 'My own alpha'))
+        (self.dir / 'arch/arm64/boot/dts/alpha/soc.dtsi').write_text(SOC)
         code, _, _ = self.run_tool('add', 'alpha')
         self.assertIn('was not brought in by this tool', str(code))
         self.assertEqual(boards.load()[1]['alpha']['description'], 'My own alpha')
@@ -153,43 +153,43 @@ class Packages(Sandbox):
         self.run_tool('add', 'alpha', 'beta')
         code, said, _ = self.run_tool('remove', 'alpha')
         self.assertEqual(code, 0)
-        self.assertFalse((self.dir / 'devices/alpha').exists())
+        self.assertFalse((self.dir / 'arch/arm64/boot/dts/alpha').exists())
         self.assertEqual(sorted(boards.load()[1]), ['beta', 'emulator'])
-        self.assertIn('there is no package devices/alpha', str(self.run_tool('remove', 'alpha')[0]))
+        self.assertIn('there is no package arch/arm64/boot/dts/alpha', str(self.run_tool('remove', 'alpha')[0]))
 
     def test_a_package_made_here_is_exported_to_where_packages_are_kept(self):
-        (self.dir / 'devices/mine/notes').mkdir(parents=True)
-        (self.dir / 'devices/mine/board.dts').write_text(board('mine', 'My phone'))
-        (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
-        (self.dir / 'devices/mine/notes/pins.md').write_text('pins\n')
-        (self.dir / 'devices/mine/.from').write_text('somewhere\n')
+        (self.dir / 'arch/arm64/boot/dts/mine/notes').mkdir(parents=True)
+        (self.dir / 'arch/arm64/boot/dts/mine/board.dts').write_text(board('mine', 'My phone'))
+        (self.dir / 'arch/arm64/boot/dts/mine/soc.dtsi').write_text(SOC)
+        (self.dir / 'arch/arm64/boot/dts/mine/notes/pins.md').write_text('pins\n')
+        (self.dir / 'arch/arm64/boot/dts/mine/.from').write_text('somewhere\n')
         out = Path(tempfile.mkdtemp())
         try:
             code, said, _ = self.run_tool('export', 'mine', str(out))
             self.assertEqual(code, 0)
             self.assertIn('it has no README.md yet', said)
-            template = (ROOT / 'devices/_template/README.md').read_text()
+            template = (ROOT / 'arch/arm64/boot/dts/_template/README.md').read_text()
             self.assertIn(device.TEMPLATE_LINE, template)
-            (self.dir / 'devices/mine/README.md').write_text(template)
+            (self.dir / 'arch/arm64/boot/dts/mine/README.md').write_text(template)
             self.assertIn('its README.md is still the template', self.run_tool('export', 'mine', str(out))[1])
-            (self.dir / 'devices/mine/README.md').write_text('# My phone\n\nBoots to the home screen.\n')
+            (self.dir / 'arch/arm64/boot/dts/mine/README.md').write_text('# My phone\n\nBoots to the home screen.\n')
             self.assertEqual(self.run_tool('export', 'mine', str(out))[1].strip(), f'{out}/mine: the package mine')
-            (self.dir / 'devices/mine/README.md').unlink()
+            (self.dir / 'arch/arm64/boot/dts/mine/README.md').unlink()
             shutil.rmtree(out / 'mine')
             self.run_tool('export', 'mine', str(out))
             self.assertEqual(sorted(str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()),
                              ['mine/board.dts', 'mine/notes/pins.md', 'mine/soc.dtsi'])    # (not the note of where it came from)
             # ... and can be brought in from there again
-            shutil.rmtree(self.dir / 'devices/mine')
+            shutil.rmtree(self.dir / 'arch/arm64/boot/dts/mine')
             self.assertEqual(self.run_tool('add', 'mine', '--from', str(out))[0], 0)
             # one that is not right is not sent
-            (self.dir / 'devices/mine/board.dts').write_text(board('mine', more='\twarp {\n\t\tfactor = <9>;\n\t};\n'))
-            (self.dir / 'devices/mine/soc.dtsi').write_text(SOC)
+            (self.dir / 'arch/arm64/boot/dts/mine/board.dts').write_text(board('mine', more='\twarp {\n\t\tfactor = <9>;\n\t};\n'))
+            (self.dir / 'arch/arm64/boot/dts/mine/soc.dtsi').write_text(SOC)
             code, _, complained = self.run_tool('export', 'mine', str(out))
             self.assertEqual(code, 1)
             self.assertIn('not exported', complained)
             self.assertNotIn('warp', (out / 'mine/board.dts').read_text())
-            self.assertIn('there is no package devices/none', str(self.run_tool('export', 'none', str(out))[0]))
+            self.assertIn('there is no package arch/arm64/boot/dts/none', str(self.run_tool('export', 'none', str(out))[0]))
             self.assertIn('is not a directory', str(self.run_tool('export', 'mine', str(out / 'nowhere'))[0]))
         finally:
             shutil.rmtree(out)
@@ -208,7 +208,7 @@ class Packages(Sandbox):
             (elsewhere / 'odd/soc.dtsi').write_text(SOC)
             code, _, complained = self.run_tool('add', 'odd', '--from', str(elsewhere))
             self.assertEqual(code, 1)
-            self.assertIn('devices/odd/board.dts: unknown section warp { }', complained)
+            self.assertIn('arch/arm64/boot/dts/odd/board.dts: unknown section warp { }', complained)
             self.assertIn('does not fit this checkout', complained)
         finally:
             shutil.rmtree(elsewhere)

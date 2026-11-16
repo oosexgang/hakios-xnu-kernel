@@ -55,16 +55,16 @@ device packages                     tools/boards.py gen        build/boards/boar
   directory on the search path
 ```
 
-- The repository describes no phone. `devices/` on the main branch has the emulator's board
-  (`devices/qemu-virt/`) and a template (`devices/_template/`).
+- The repository describes no phone. `arch/arm64/boot/dts/` on the main branch has the emulator's board
+  (`arch/arm64/boot/dts/qemu-virt/`) and a template (`arch/arm64/boot/dts/_template/`).
 - A phone is a **device package**: a directory `NAME/` with its `board.dts`, its `soc.dtsi`, its README
   and its notes.
   Packages are kept on the `devices` branch, one directory per phone.
-  `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/NAME/` of a
+  `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `arch/arm64/boot/dts/NAME/` of a
   checkout, which git ignores there: a package is changed where it is kept. `tools/device.py available`
   lists what the branch has, `list` what is here, `remove` takes one out, and `--from SOURCE` takes
   packages from a directory or another branch or commit.
-- `tools/boards.py` looks for packages in `devices/`, in `--devices DIR` and in the directories of the
+- `tools/boards.py` looks for packages in `arch/arm64/boot/dts/`, in `--devices DIR` and in the directories of the
   environment variable `HAKIOS_DEVICES` (written like `PATH`).
 - A **board file** says what the device has: its SoC, the drivers it may start (`features`), how its
   panel's brightness is set, thermal floors, how the loader recognises it, its default boot arguments.
@@ -93,8 +93,8 @@ device packages                     tools/boards.py gen        build/boards/boar
   A board that is not in the table has no feature: nothing of a phone is touched on a machine nobody
   described.
 
-Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.dts` and
-`devices/_template/soc.dtsi`.
+Details and every key: [arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md), `arch/arm64/boot/dts/_template/board.dts` and
+`arch/arm64/boot/dts/_template/soc.dtsi`.
 
 ## The kernel
 

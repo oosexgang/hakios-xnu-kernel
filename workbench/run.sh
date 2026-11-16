@@ -31,7 +31,7 @@ run() {
 echo "== the repository's own checks (tools/check-links.py, tools/components.py)"
 python3 "$HERE/tools_test.py" 2>&1 | tail -3 || failed=1
 
-echo "== boards (devices/, tools/boards.py)"
+echo "== boards (arch/arm64/boot/dts/, tools/boards.py)"
 python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 echo "== device packages (tools/device.py)"

@@ -8,7 +8,7 @@
 //
 // Not listed, because they are yours and stay on your machine: Apple's IPSW, the phone's firmware.
 //
-// The syntax is that of the board files (devices/README.md, "The format"): one node a component, by its name.
+// The syntax is that of the board files (arch/arm64/boot/dts/README.md, "The format"): one node a component, by its name.
 
 / {
 	xnu {

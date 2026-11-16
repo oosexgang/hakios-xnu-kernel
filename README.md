@@ -10,7 +10,7 @@ on your machine from files you have.
 
 | Directory | What |
 | --- | --- |
-| `arch/arm64/` | The machine: `boot/` (the loader and the UEFI port), `kernel/`, `include/`, `configs/` (defconfigs), `tools/` |
+| `arch/arm64/` | The machine: `boot/` (the loader and the UEFI port), `boot/dts/` (the boards), `kernel/`, `include/`, `configs/` (defconfigs), `tools/` |
 | `drivers/` | The drivers (`board/`) and the IOKit stand-ins (`iokit/`) |
 | `include/` | The headers the drivers share with user space |
 | `fs/` | Our APFS, read and written, and the file system in memory |
@@ -19,7 +19,6 @@ on your machine from files you have.
 | `components/` | What makes a part of Darwin work: Metal, Apple ID, the keystore, camera, sound, brightness, wallpaper, status bar, tweaks |
 | `kernel/` | Apple's release, the patches to it, and the tools that assemble, check and build the kernel |
 | `darwin/` | Darwin 26/27 user space: the image and library builders |
-| `devices/` | Board files; a phone's package comes from the `devices` branch (`tools/device.py add NAME`) |
 | `tools/`, `workbench/` | The tools; the tests that need no phone |
 | `Documentation/` | Everything else ([layout.md](Documentation/layout.md) has the whole map) |
 

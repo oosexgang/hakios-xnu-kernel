@@ -111,4 +111,4 @@ generated"). The phone's own steps, and what it runs, are in its package's READM
 - [Documentation/ram-budget.md](../Documentation/ram-budget.md): does the image fit in 6 GB of RAM.
 - [Documentation/backlight.md](../Documentation/backlight.md): what `inject_backlight.c` and `inject_brightness.c` talk to.
 - [Documentation/porting.md](../Documentation/porting.md), step 7: the user-space side of a new phone.
-- [devices/README.md](../devices/README.md): the board file, and the tables made of it.
+- [arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md): the board file, and the tables made of it.

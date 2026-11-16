@@ -8,6 +8,7 @@ at their paths in the tree for the host's tests.
 | Directory | In the kernel's tree | What |
 | --- | --- | --- |
 | `arch/arm64/boot/` | | The loader: the UEFI application that starts the kernel, and the tools that pack its payload and the phone's boot image; `uefi/`, the changes every UEFI port needs. |
+| `arch/arm64/boot/dts/` | | The boards: a `board.dts` and its `soc.dtsi` each, the emulator's and the template here, a phone's brought in from the `devices` branch (`tools/device.py add NAME`). `devices/` at the top, where they were, is still looked in. |
 | `arch/arm64/kernel/` | `osfmk/arm64/` | The other processors through PSCI, the GICv3, idle times, the arm64e instructions an ARMv8.2 core lacks, the way back to the loader, the profiler. |
 | `arch/arm64/include/pexpert/` | `pexpert/pexpert/arm64/` | The machine's header (`BCM2837.h`). |
 | `arch/arm64/configs/` | `xnu/`: `config/` | `*_defconfig`: the boot arguments of each kind of run (`tools/defconfig.py`; `./bench` with `BENCH_DEFCONFIG`, `tools/qemu-kernel.sh --defconfig`). `xnu/`: the kernel's build configuration. |

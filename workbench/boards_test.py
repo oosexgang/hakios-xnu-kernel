@@ -890,7 +890,7 @@ class Generate(Sandbox):
         self.assertIn('feature "camera-sm7325" needs smmu { } in soc.dtsi', self.problems())
         self.assertIn('feature "camera-sm7325" needs camera { } in soc.dtsi', self.problems())
         # (the template's camera { }: the blocks, and where camcc has its clocks)
-        blocks = re.search(r'\tcamera \{\n.*?\n\t\};\n', (ROOT / 'devices/_template/soc.dtsi').read_text(), re.S)[0]
+        blocks = re.search(r'\tcamera \{\n.*?\n\t\};\n', (ROOT / 'arch/arm64/boot/dts/_template/soc.dtsi').read_text(), re.S)[0]
         self.soc('\tthermal {', blocks + '\tthermal {')
         self.board('"cpufreq-epss", "camera-sm7325"', '"cpufreq-epss"')
         self.soc('\tthermal {', '\tsmmu {\n\t\tapps = <0x15000000>;\n\t};\n\tthermal {')
@@ -1299,7 +1299,7 @@ class DeviceTree(Sandbox):
         self.assertIn('wrote devices/phone2/board.dts', said.getvalue())
         self.assertFalse((self.dir / 'devices/phone2/README.md').exists())      # (this repository of the test has no template)
         (self.dir / 'devices/_template').mkdir()
-        (self.dir / 'devices/_template/README.md').write_text((ROOT / 'devices/_template/README.md').read_text())
+        (self.dir / 'devices/_template/README.md').write_text((ROOT / 'arch/arm64/boot/dts/_template/README.md').read_text())
         with contextlib.redirect_stdout(io.StringIO()) as again:
             boards.new_board('phone3', 'sm0002', dts, 'qcom,mdss_dsi_first_cmd', 'A third phone')
         readme = (self.dir / 'devices/phone3/README.md').read_text()
@@ -1521,9 +1521,9 @@ class Repository(unittest.TestCase):
 
     def test_the_repository_names_no_phone(self):
         # phones are device packages, kept on the devices branch: what the repository tracks under
-        # devices/ is the emulator's board and the templates
-        tracked = subprocess.run(['git', 'ls-files', 'devices'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-        self.assertEqual(sorted({name.split('/')[1] for name in tracked}), ['README.md', '_template', 'qemu-virt'])
+        # arch/arm64/boot/dts/ is the emulator's board and the templates
+        tracked = subprocess.run(['git', 'ls-files', 'arch/arm64/boot/dts'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(sorted({name.split('/')[4] for name in tracked}), ['README.md', '_template', 'qemu-virt'])
 
     def test_the_tests_phones_are_valid_packages(self):
         boards.MORE_DEVICES.append(ROOT / 'workbench/devices')
@@ -1574,8 +1574,8 @@ class Repository(unittest.TestCase):
 
     def test_what_the_tool_takes_is_explained_where_a_porter_looks(self):
         root = boards.ROOT
-        template = (root / 'devices/_template/board.dts').read_text()
-        readme = (root / 'devices/README.md').read_text()
+        template = (root / 'arch/arm64/boot/dts/_template/board.dts').read_text()
+        readme = (root / 'arch/arm64/boot/dts/README.md').read_text()
         drivers = (root / 'Documentation/drivers.md').read_text()
         for _, feature in boards.feature_bits():
             self.assertTrue(feature in template, f'the template does not list the feature {feature}')
@@ -1599,7 +1599,7 @@ class Repository(unittest.TestCase):
             if section:
                 self.assertTrue(f'`{boards.boardfile.name_of(section)} {{ }}`' in readme,
                                 f'devices/README.md does not name the SoC section {section} {{ }}')
-        soc_template = (root / 'devices/_template/soc.dtsi').read_text()
+        soc_template = (root / 'arch/arm64/boot/dts/_template/soc.dtsi').read_text()
         for section, keys in boards.SOC_SCHEMA.items():
             if section:
                 self.assertTrue(re.search(rf'(?m)^\t{boards.boardfile.name_of(section)} {{', soc_template),
@@ -1609,7 +1609,7 @@ class Repository(unittest.TestCase):
                                 f'[{section}] {key} is not explained in the SoC template')
         # the template is a SoC file the tool takes as it is
         problems = boards.Problems()
-        boards.check_file(root / 'devices/_template/soc.dtsi', boards.boardfile.parse(soc_template, boards.SOC_SCHEMA),
+        boards.check_file(root / 'arch/arm64/boot/dts/_template/soc.dtsi', boards.boardfile.parse(soc_template, boards.SOC_SCHEMA),
                           boards.SOC_SCHEMA, problems)
         self.assertEqual(list(problems), [])
 

@@ -6,8 +6,8 @@ part on the board, a section of the board file. `tools/boards.py check` refuses 
 a feature without them, and `tools/boards.py status NAME` says the same for one phone.
 
 This page is written by `tools/boards.py features` from the tables the checker uses; a test keeps
-the two the same. What each key means is in `devices/_template/soc.dtsi` and
-`devices/_template/board.dts`.
+the two the same. What each key means is in `arch/arm64/boot/dts/_template/soc.dtsi` and
+`arch/arm64/boot/dts/_template/board.dts`.
 
 | Feature | SoC file | Board file | Started with |
 |---|---|---|---|

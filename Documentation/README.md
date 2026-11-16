@@ -25,7 +25,7 @@ Next to the code:
 
 | Document | |
 | --- | --- |
-| [../devices/README.md](../devices/README.md) | Device packages, the board and SoC files. |
+| [../arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md) | Device packages, the board and SoC files. |
 | [../workbench/README.md](../workbench/README.md) | What is tested without a phone, and how a driver runs without a kernel. |
 | [../tools/README.md](../tools/README.md) | The tools, one line each. |
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |

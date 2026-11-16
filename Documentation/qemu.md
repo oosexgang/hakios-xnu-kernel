@@ -2,7 +2,7 @@
 
 QEMU's `virt` machine runs the kernel of this repository on any Linux computer, booted the way a phone
 boots it: a real UEFI starts the loader, the loader takes the kernel from a payload, gives it the
-emulator's board (`devices/qemu-virt`) and jumps to it. Nothing of Apple's is needed beyond the kernel's
+emulator's board (`arch/arm64/boot/dts/qemu-virt`) and jumps to it. Nothing of Apple's is needed beyond the kernel's
 own sources: the kernel can be linked by LLVM's tools ([building.md](building.md)), and the root it runs
 is made of this repository's programs.
 

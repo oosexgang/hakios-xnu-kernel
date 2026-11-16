@@ -51,7 +51,7 @@ tree up to date with the repository and recompile only what changed. Requirement
 [Documentation/building.md](../Documentation/building.md).
 
 The board table is not a file of `overlay/`. On every run `build.sh` makes it with `tools/boards.py gen`
-from the device packages that are present (`devices/` and the directories of `HAKIOS_DEVICES`) and puts it
+from the device packages that are present (`arch/arm64/boot/dts/` and the directories of `HAKIOS_DEVICES`) and puts it
 in the tree as `bsd/dev/board/board_table.h`, only when it changed. So the kernel knows the boards it
 was built with. The repository describes no phone: bring a phone's package in first, with
 `tools/device.py add NAME`. With none, the kernel knows only the emulator's board.

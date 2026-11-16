@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the XNU loader as a freestanding AArch64 UEFI application: clang and lld, no EDK2.
 # platforms.h (the boards it knows) is made here, by tools/boards.py gen, from the device packages that
-# are there (devices/, HAKIOS_DEVICES): the loader knows the boards it was built with.
+# are there (arch/arm64/boot/dts/, HAKIOS_DEVICES): the loader knows the boards it was built with.
 #
 # LOADER_IDENTITY=FILE: the identity Darwin is told (a header mkidentity.py made from another iPhone's device tree) in
 # place of identity.h -- the one of the iPhone whose files the system image holds. Darwin 27.2's 24B119 for iPhone12,1
