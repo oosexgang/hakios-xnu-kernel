@@ -669,11 +669,12 @@ held_by_the_thermal_cap(void)
 	hakios_backlight_init();
 	WAIT_FOR(get("shown") == 1000, 2000);
 	hakios_backlight_set_cap(600);
-	WAIT_FOR(get("shown") == 600, 3000);
+	/* (shown moves first, the command follows: both waited for) */
+	WAIT_FOR(get("shown") == 600 && last_sent() == bl_level_to_raw(600, 1, 2047), 3000);
 	CHECK(get("cap") == 600 && get("shown") == 600, "held at the cap: cap %u, shown %u", get("cap"), get("shown"));
 	CHECK(last_sent() == bl_level_to_raw(600, 1, 2047), "and sent: %u", last_sent());
 	hakios_backlight_set_cap(5000);         /* (more than the most: the most) */
-	WAIT_FOR(get("shown") == 1000, 3000);
+	WAIT_FOR(get("shown") == 1000 && last_sent() == 2047, 3000);
 	CHECK(get("cap") == 1000 && get("shown") == 1000, "lifted: cap %u, shown %u", get("cap"), get("shown"));
 	CHECK(m.errors == 0, "%s", m.error);
 }
