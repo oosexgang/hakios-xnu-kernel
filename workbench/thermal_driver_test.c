@@ -457,6 +457,64 @@ too_short_a_period(void)
 	CHECK(get("hottest") == 950, "read again within the second after: %d", (int32_t)get("hottest"));
 }
 
+/* the hottest said in the log at the first look and every tenth after, not at every one */
+static void
+said_every_tenth_look(void)
+{
+	phone(900);
+	boot_args = "thermal=1 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(logged("thermal: hottest sensor 90.0 C (thermal=1: looking only)"), 1000);
+	CHECK(logged("thermal: hottest sensor 90.0 C (thermal=1: looking only)"), "the first look said: %s", log_text);
+	temperature(0, 3, 910);
+	usleep(450000);                         /* four or five looks more: none of them the tenth */
+	CHECK(!logged("hottest sensor 91.0 C"), "not every look is said: %s", log_text);
+	WAIT_FOR(logged("hottest sensor 91.0 C"), 1500);
+	CHECK(logged("hottest sensor 91.0 C"), "the tenth is: %s", log_text);
+}
+
+/* what the GPU's driver asks: how far the processors are held back, and of how many steps */
+static void
+step_for_the_gpu(void)
+{
+	uint32_t of = 99;
+
+	phone(500);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(hakios_thermal_step(&of) == 0 && of == 5, "cool: 0 of 5, not %u of %u", hakios_thermal_step(NULL), of);
+	CHECK(!logged("looking only"), "thermal=2 does not say it only looks: %s", log_text);
+	phone(960);
+	WAIT_FOR(hakios_thermal_step(NULL) == 5, 1000);
+	CHECK(hakios_thermal_step(&of) == 5 && of == 5, "hot: 5 of 5, not %u of %u", hakios_thermal_step(NULL), of);
+}
+
+/* thermal=2 on a chip without EPSS whose firmware gives no SCMI levels: looking only, and said */
+static void
+scmi_without_levels(void)
+{
+	scmi_phone(900);
+	scmi_domains = 0;
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(logged("SCMI gave no levels") && logged("(thermal=1: looking only)"), "said: %s", log_text);
+	usleep(300000);
+	CHECK(get("step") == 0 && scmi_asked == 0 && writes == 0, "90 C, and nothing held back or asked: step %u, %u asked",
+	    get("step"), scmi_asked);
+}
+
+/* at the run's end on a phone that never got hot: nothing written, nothing said */
+static void
+quiesce_when_cool(void)
+{
+	phone(500);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	usleep(300000);
+	hakios_thermal_quiesce();
+	CHECK(writes == 0 && !logged("at the run's end"), "%u writes: %s", writes, log_text);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -467,6 +525,8 @@ main(int argc, char **argv)
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
 		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
+		{ "said_every_tenth_look", said_every_tenth_look }, { "step_for_the_gpu", step_for_the_gpu },
+		{ "scmi_without_levels", scmi_without_levels }, { "quiesce_when_cool", quiesce_when_cool },
 	};
 
 	if (argc < 2) {
