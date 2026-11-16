@@ -202,7 +202,7 @@ class Repository(unittest.TestCase):
 
         loader = sources('arch/arm64/boot/src/*.c', 'arch/arm64/boot/src/*.h')
         kernel = sources('kernel/overlay/bsd/dev/board/*.c', 'kernel/overlay/bsd/dev/board/*.h', 'kernel/overlay/bsd/sys/board/*.h',
-                         'kernel/overlay/osfmk/arm64/*.c', 'kernel/overlay/osfmk/arm64/*.h')
+                         'arch/arm64/kernel/*.c', 'arch/arm64/kernel/*.h')
         ours, theirs = defines(loader), defines(kernel)
         both = sorted(set(ours) & set(theirs))
         self.assertGreater(len(both), 15)                               # (the two pages' and the firmware calls')
@@ -253,7 +253,8 @@ class Repository(unittest.TestCase):
         # barrier or a cache instruction without one may end up on the wrong side of what it was to separate
         barrier = re.compile(r'__asm__\s+(?:__volatile__|volatile)\s*\(\s*"\s*(dsb|dmb|isb|dc\s)[^;]*?\)\s*;', re.S)
         wrong = []
-        for path in sorted(list((ROOT / 'kernel/overlay').rglob('*.[ch]')) + list((ROOT / 'kernel/overlay').rglob('*.cpp')) +
+        kernel_dirs = [ROOT / d for d in ('kernel/overlay', 'arch/arm64/kernel', 'crypto', 'fs')]
+        for path in sorted([p for d in kernel_dirs for p in d.rglob('*.[ch]')] + [p for d in kernel_dirs for p in d.rglob('*.cpp')] +
                            list((ROOT / 'arch/arm64/boot').rglob('*.[ch]'))):
             text = path.read_text(errors='replace')
             for found in barrier.finditer(text):
@@ -279,6 +280,25 @@ class Repository(unittest.TestCase):
         self.assertEqual(len(loader), 1, 'arch/arm64/boot/src/xnu.h defines BOOT_LINE_LENGTH once')
         self.assertEqual(len(kernel), 1, 'the patch sets boot.h BOOT_LINE_LENGTH once')
         self.assertEqual(loader, kernel, 'the loader and the kernel disagree on the length of the boot line')
+
+    def test_every_defconfig_reads_and_names_arguments_that_are_read(self):
+        # arch/arm64/configs: each defconfig gives a line of arguments, its includes found, and each argument is one
+        # the kernel reads (Documentation/boot-args.md) or Darwin's side of ours does (its sources say "NAME=")
+        defconfig = tool('defconfig')
+        documented = set(re.findall(r'(?m)^\| `([^`]+)` \|', (ROOT / 'Documentation/boot-args.md').read_text()))
+        darwin_side = '\n'.join(p.read_text(errors='replace') for d in ('components', 'userland/userland/src', 'darwin')
+                                for p in (ROOT / d).rglob('*') if p.suffix in ('.c', '.m', '.h') and p.is_file())
+        configs = sorted((ROOT / 'arch/arm64/configs').glob('*_defconfig'))
+        self.assertGreater(len(configs), 3)
+        for path in configs:
+            arguments = defconfig.arguments(path.name[:-len('_defconfig')])
+            self.assertTrue(arguments, path.name)
+            for argument in arguments.values():
+                name = argument.split('=', 1)[0]
+                if name == '-v':
+                    continue
+                self.assertTrue(name in documented or f'{name}=' in darwin_side,
+                                f'{path.name}: {name} is read by nothing here')
 
     def test_this_repository_passes_both(self):
         for name, arguments in (('check-links', []), ('components', ['check'])):

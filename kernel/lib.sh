@@ -4,6 +4,8 @@
 # The kernel is kept as three things:
 #   UPSTREAM          which Apple release it is made from
 #   overlay/          the files HakiOS adds, at their place in the XNU tree
+#   OVERLAY_PLACES    ... and the directories of the repository's top that hold one directory of the tree each, as
+#                     Linux's tree keeps its architecture, crypto and file systems (arch/arm64/kernel, crypto, fs/)
 #   patches/          the changes to Apple's own files, one patch a topic (patches/series)
 # and an "assembled tree" is a checkout of the release with the overlay copied in and the patches
 # applied: what is compiled, and where the kernel is worked on. It is a git repository of its own:
@@ -12,6 +14,38 @@
 #   branch hakios     the working branch
 KERNEL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OVERLAY=$KERNEL_DIR/overlay
+REPO_DIR=$(cd "$KERNEL_DIR/.." && pwd)
+# A directory of the repository and the directory of the tree its files are, each "REPOSITORY:TREE". Everything in
+# it is the tree's but its README.md, which is the repository's (tools/bootargs.py reads this list as well).
+OVERLAY_PLACES=(
+	"arch/arm64/kernel:osfmk/arm64"
+	"crypto:osfmk/minicrypto"
+	"fs/apfs:bsd/miscfs/apfs"
+	"fs/ramfs:bsd/miscfs/ramfs"
+)
+
+# overlay_files: every file the overlay adds to the tree, one a line, "REPOSITORY-PATH<tab>TREE-PATH" (the first
+# relative to the repository's top), kernel/overlay's first, then each place's
+overlay_files() {
+	local place dir prefix
+	(cd "$OVERLAY" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) | awk '{ printf "kernel/overlay/%s\t%s\n", $0, $0 }'
+	for place in "${OVERLAY_PLACES[@]}"; do
+		dir=${place%%:*} prefix=${place#*:}
+		[ -d "$REPO_DIR/$dir" ] || continue
+		(cd "$REPO_DIR/$dir" && find . -type f ! -name README.md | sed 's|^\./||' | LC_ALL=C sort) |
+			awk -v d="$dir" -v p="$prefix" '{ printf "%s/%s\t%s/%s\n", d, $0, p, $0 }'
+	done
+}
+
+# place_of TREE-PATH: the place of OVERLAY_PLACES a file of the tree belongs to, as "REPOSITORY:TREE"; nothing for
+# a file that is kernel/overlay's
+place_of() {
+	local place
+	for place in "${OVERLAY_PLACES[@]}"; do
+		case "$1" in "${place#*:}"/*) echo "$place"; return 0 ;; esac
+	done
+	return 1
+}
 PATCHES=$KERNEL_DIR/patches
 SERIES=$PATCHES/series
 # shellcheck source=UPSTREAM
@@ -81,7 +115,16 @@ assembled_tree() {
 	export GIT_INDEX_FILE=$D/.git/hakios-assemble-index
 	rm -f "$GIT_INDEX_FILE"
 	tree_git "$D" read-tree upstream
-	(cd "$OVERLAY" && git --git-dir="$D/.git" --work-tree=. -c core.autocrlf=false add -f --no-all .)
+	# (every file of the overlay at its place in the tree: hashed into the tree's objects, then put in the index)
+	local list=$D/.git/hakios-overlay-list
+	overlay_files > "$list"
+	cut -f1 "$list" | sed "s|^|$REPO_DIR/|" | git --git-dir="$D/.git" hash-object -w --stdin-paths > "$list.hashes"
+	cut -f1 "$list" | while IFS= read -r file; do
+		if [ -x "$REPO_DIR/$file" ]; then echo 100755; else echo 100644; fi
+	done > "$list.modes"
+	paste -d ' ' "$list.modes" "$list.hashes" | paste - <(cut -f2 "$list") |
+		git --git-dir="$D/.git" update-index --add --index-info
+	rm -f "$list" "$list.hashes" "$list.modes"
 	for patch in $(series_patches); do
 		[ -f "$PATCHES/$patch" ] || continue            # (a topic nothing has changed in yet)
 		tree_git "$D" apply --cached --whitespace=nowarn "$PATCHES/$patch" ||

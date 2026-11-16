@@ -109,11 +109,11 @@ skipped() {
 if [ $# -gt 0 ]; then
 	files=("$@")
 else
-	mapfile -t files < <(cd "$OVERLAY" && find . \( -name '*.c' -o -name '*.cpp' \) | sed 's|^\./||' | sort)
+	mapfile -t files < <(overlay_files | cut -f2 | grep -E '\.(c|cpp)$' | sort)
 fi
 
 # the files of the overlay, as paths in the tree followed by a colon: what --analyze keeps of what it says
-(cd "$OVERLAY" && find . -type f | sed 's|^\./||; s|$|:|') > "$work/ours"
+overlay_files | cut -f2 | sed 's|$|:|' > "$work/ours"
 
 # every file at once, as many as there are processors; the answers are read in order afterwards
 mkdir "$work/out"

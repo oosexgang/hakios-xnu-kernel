@@ -18,6 +18,12 @@ trap 'rm -rf "$work"' EXIT
 "$KERNEL_DIR/export.sh" --to "$work/out" "$work/xnu" > /dev/null
 diff -r "$OVERLAY" "$work/out/overlay" ||
 	die "kernel/overlay is not what an export of the assembled tree gives (above)"
+for place in "${OVERLAY_PLACES[@]}"; do
+	dir=${place%%:*}
+	[ -d "$REPO_DIR/$dir" ] || [ -d "$work/out/places/$dir" ] || continue
+	diff -r -x README.md "$REPO_DIR/$dir" "$work/out/places/$dir" ||
+		die "$dir is not what an export of the assembled tree gives (above)"
+done
 for patch in "$PATCHES"/*.patch "$work"/out/patches/*.patch; do
 	name=${patch##*/}
 	cmp -s "$PATCHES/$name" "$work/out/patches/$name" || {
@@ -25,4 +31,4 @@ for patch in "$PATCHES"/*.patch "$work"/out/patches/*.patch; do
 		die "kernel/patches/$name is not what an export of the assembled tree gives (above): assemble, then export"
 	}
 done
-log "ok: $UPSTREAM_TAG + $(find "$OVERLAY" -type f | wc -l) overlay files + $(series_patches | wc -l) patches assemble and export back unchanged"
+log "ok: $UPSTREAM_TAG + $(overlay_files | wc -l) overlay files + $(series_patches | wc -l) patches assemble and export back unchanged"

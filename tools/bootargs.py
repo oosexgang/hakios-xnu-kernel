@@ -16,6 +16,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / 'kernel/overlay'
+
+
+def overlay_files():
+    """(file in the repository, its path in the kernel's tree) for every file the kernel's overlay adds: kernel/overlay,
+    and the directories of the top kernel/lib.sh's OVERLAY_PLACES maps into the tree (arch/arm64/kernel, crypto, fs/)"""
+    places = [(OVERLAY, '')]
+    for repo, tree in re.findall(r'^\s*"([^":]+):([^"]+)"\s*$', (ROOT / 'kernel/lib.sh').read_text(), re.M):
+        places.append((ROOT / repo, tree + '/'))
+    for base, prefix in places:
+        for path in sorted(base.rglob('*')):
+            if path.is_file() and not (prefix and path.name == 'README.md'):
+                yield path, prefix + str(path.relative_to(base))
 PATCHES = ROOT / 'kernel/patches'
 OUT = ROOT / 'Documentation/boot-args.md'
 
@@ -91,14 +103,14 @@ def describe(name, lines):
 def collect():
     """{file: {name: description}} over the overlay and the patches' added lines."""
     found = {}
-    for path in sorted(OVERLAY.rglob('*')):
-        if path.suffix not in SOURCES or not path.is_file():
+    for path, tree_path in sorted(overlay_files(), key=lambda pair: pair[1]):
+        if path.suffix not in SOURCES:
             continue
         text = path.read_text(errors='replace')
         names = [a or b for a, b in READ.findall(text)]
         if names:
             lines = comment_lines(text)
-            found[str(path.relative_to(OVERLAY))] = {name: describe(name, lines) for name in sorted(set(names))}
+            found[tree_path] = {name: describe(name, lines) for name in sorted(set(names))}
     for patch in sorted(PATCHES.glob('*.patch')):
         file, added = None, {}
         for line in patch.read_text(errors='replace').split('\n'):

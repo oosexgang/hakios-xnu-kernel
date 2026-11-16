@@ -62,9 +62,12 @@ check "$WORK/md1.img" "$in/sys" "$in/data" || failed=1
 check "$WORK/md0.img" "$in/md0" || failed=1
 
 SRC=$HERE/../kernel/overlay/bsd
-A=$SRC/miscfs/apfs
+A=$(cd "$HERE/../fs/apfs" && pwd)
+# (the reader includes <miscfs/apfs/apfs.h>, its place in the kernel's tree: fs/apfs is that directory)
+mkdir -p "$WORK/inc/miscfs"
+ln -sfn "$A" "$WORK/inc/miscfs/apfs"
 cc -std=c11 -O2 -w -I"$APFS/host-shim" -c -o "$WORK/deflate.o" "$A/apfs_deflate.c"
-if cc -std=gnu11 -D_DEFAULT_SOURCE -O1 -Wall -Wextra -Wno-unused-parameter -pthread -I"$HERE/fakekernel" -I"$SRC/dev" -I"$SRC" \
+if cc -std=gnu11 -D_DEFAULT_SOURCE -O1 -Wall -Wextra -Wno-unused-parameter -pthread -I"$HERE/fakekernel" -I"$SRC/dev" -I"$SRC" -I"$WORK/inc" \
 	"$HERE/fakekernel/fakekernel.c" "$HERE/image_file_test.c" "$A/apfs_lib.c" "$A/apfs_zbitmap.c" "$WORK/deflate.o" \
 	-lz -lcrypto -o "$WORK/image_file_test"; then
 	"$WORK/image_file_test" "$WORK/md1.img" "$WORK/md0.img" "$in/sys" || failed=1

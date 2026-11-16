@@ -2,7 +2,7 @@
 
 ## Our work
 
-- `kernel/overlay/` and `kernel/patches/` modify and extend Apple's xnu, published under the Apple Public Source
+- `kernel/overlay/`, `kernel/patches/` and the parts of the kernel's tree kept at the top (`arch/arm64/kernel/`, `crypto/`, `fs/`) modify and extend Apple's xnu, published under the Apple Public Source
   License 2.0, and are distributed under the same licence (`LICENSES/other/APSL-2.0`).
 - `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
   HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `arch/arm64/boot/` and `kernel/deps/`, which were `base/xnuloader/` and
@@ -16,8 +16,8 @@
 
 ## Files inside the kernel overlay that keep their own licence
 
-- `bsd/miscfs/apfs/libdeflate/`, `apfs_deflate.c`: libdeflate, MIT (Eric Biggers; Google LLC)
-- `bsd/miscfs/apfs/libzbitmap/`, `apfs_zbitmap.c`: libzbitmap, GPL-2.0+ OR MIT, taken under MIT (Corellium LLC)
+- `fs/apfs/libdeflate/` (the tree's `bsd/miscfs/apfs/libdeflate/`), `apfs_deflate.c`: libdeflate, MIT (Eric Biggers; Google LLC)
+- `fs/apfs/libzbitmap/`, `apfs_zbitmap.c`: libzbitmap, GPL-2.0+ OR MIT, taken under MIT (Corellium LLC)
 
 ## Linux
 
