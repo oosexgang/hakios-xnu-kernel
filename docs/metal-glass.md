@@ -297,7 +297,7 @@ argument-buffer and dispatch work below and before tessellation:
 | --- | --- |
 | compiled by ir3 for the Adreno 642L | **24,369** on 16 November (24,244 on the 15th; 22,972 before tessellation; 22,572 at the first sweep of the 300) |
 | not entry points | 13,313 |
-| refused | 3,122 on the 16th (3,246; 4,518; 4,659): 1,770 of them MLX's and Morpheus' simdgroup matrices (`<64 x float>`), 505 ray tracing, 90 CoreImage's visible function tables that only a pipeline's linked functions fill |
+| refused | 3,122 on the 16th (3,246; 4,518; 4,659): 1,770 of them MLX's and Morpheus' simdgroup matrices (`<64 x float>`; GESS's 1,731 compile since the evening of the 16th), 505 ray tracing, 90 CoreImage's visible function tables that only a pipeline's linked functions fill |
 | crashed the compiler | 15 on the 16th, 16 on the 15th (275): 14 of the ray-tracing BVH builder's kernels, where ir3 finds no end instruction -- a sweep's artefact: their loops count by `threadsPerThreadgroup`, a function constant the sweep gives no value, and a pipeline must; `NRFV1`'s BlinkDetection, since compiled (a predicated branch on a compare from another block, which ir3's predicate allocation reloads into only one way in; such an `if` now takes an ordinary branch, `userland/tools/mesa26/darwin.patch`); MPS's MPSLSTMMultiInputKernelFloat5, whose register allocation ir3's own validation rejects (it was refused before pointers in a local were kept as numbers) |
 
 What the refusals are, the MLX libraries set apart (they are machine learning, not drawing, and most of what
@@ -387,8 +387,8 @@ commit of its own:
   `air.simdgroup_matrix_8x8_multiply_accumulate` reads row fm of A and column fn + j of B from the lanes
   holding them by shuffles within the group of 32, in Apple's layout (fm = 4 l4 + 2 l2 + l1,
   fn = 4 l3 + 2 l0). Softpipe has no shuffle, so `userland/tools/air/simdmatrixcheck.py` checks the lane
-  arithmetic on 32 simulated lanes against a plain product; ir3 compiles every one of 45 sampled from the
-  1,731 GESS MLX kernels refused for it. A pointer kept as numbers in a local is decoded only into the places of its
+  arithmetic on 32 simulated lanes against a plain product; ir3 compiles all 1,731 of GESS's MLX kernels that
+  were refused for it. A pointer kept as numbers in a local is decoded only into the places of its
   own address space (MLX's implicit_gemm_conv), and `air.quadgroups_per_threadgroup` is answered.
 
 ### Tessellation without a tessellator
