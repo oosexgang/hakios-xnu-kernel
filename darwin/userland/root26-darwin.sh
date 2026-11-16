@@ -437,7 +437,7 @@ EOF
 fi
 # (first: /private/var saved as the run ends, with boot-arg var_store=1; without it var_store ends at once)
 { echo "/hakios/bin/var_store watch &"; cat $T/etc/rc.jobs; } > $T/etc/rc.jobs.new && mv $T/etc/rc.jobs.new $T/etc/rc.jobs
-python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-darwin.apfs" hakios="$T" | tail -1
+python3 "$IOS_REPO/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-darwin.apfs" hakios="$T" | tail -1
 ls -la "$IOS/root26-darwin.apfs"
 
 # The RAM part of a boot whose system image is on the phone's flash (boot-arg root_apfs=DEV): the kernel's first
@@ -448,7 +448,7 @@ F=$IOS/flashboot-tree
 rm -rf "$F"
 mkdir -p "$F/sbin" "$F/hakios" "$F/dev" "$F/flash"
 cp "$OBJ/stage0" "$F/sbin/launchd"
-python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -o "$IOS/flashboot.apfs" Boot="$F" | tail -1
+python3 "$IOS_REPO/tools/apfs/mkapfs.py" -o "$IOS/flashboot.apfs" Boot="$F" | tail -1
 # (said again last: the warning above scrolls by in the middle of the build, and an image without the GPU's firmware
 # boots to the software renderer, a run's worth of measurements of nothing)
 if [ ${#PLAIN[@]} = 0 ]; then

@@ -37,7 +37,7 @@
 
 #include "kernel.h"
 
-#define SPARSE_MAGIC   "HAKIOSSPARSE1\0\0\0"     /* (userland/tools/apfs/mksparse.py writes it) */
+#define SPARSE_MAGIC   "HAKIOSSPARSE1\0\0\0"     /* (tools/apfs/mksparse.py writes it) */
 #define SPARSE_SECTOR  512
 
 struct sparse_header {

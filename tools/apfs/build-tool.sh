@@ -8,10 +8,10 @@
 # usage: tools/apfs/build-tool.sh [OUT]       (default: apfs-work/apfs-tool)
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../userland" && pwd)   # the first generation's workspace: apfs-work/, xnu-deps/, darwin165/
 OUT=${1:-$ROOT/apfs-work/apfs-tool}
 
-# shellcheck source=userland/tools/apfs/apfs-src.sh
+# shellcheck source=tools/apfs/apfs-src.sh
 . "$HERE/apfs-src.sh"
 SRC=$(apfs_src_find "$ROOT")
 

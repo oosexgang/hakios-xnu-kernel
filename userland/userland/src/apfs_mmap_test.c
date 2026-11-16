@@ -1,6 +1,6 @@
 /*
  * Read files off the APFS mount and hash them, two ways, so that what the driver hands
- * back can be compared with what tools/apfs/apfs.py reads from the same image on the
+ * back can be compared with what ../tools/apfs/apfs.py reads from the same image on the
  * build machine.
  *
  *   mmap   map the file and read it through the mapping.  This is the only way to make

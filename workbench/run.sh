@@ -93,7 +93,7 @@ echo "== kernel_tools_test"
 echo "== place_kernel_test (kernel/host/llvm/place-kernel.py: the kernel ld64.lld links, laid out to boot)"
 python3 "$HERE/place_kernel_test.py" 2>&1 | tail -3 || failed=1
 
-echo "== APFS images (userland/tools/apfs/mkapfs.py) read back by the kernel's reader, and the drivers' firmware lookup in them"
+echo "== APFS images (tools/apfs/mkapfs.py) read back by the kernel's reader, and the drivers' firmware lookup in them"
 "$HERE/apfs_image_test.sh" || failed=1
 
 echo "== qmi (drivers/board/qmi.c under the sanitizers)"

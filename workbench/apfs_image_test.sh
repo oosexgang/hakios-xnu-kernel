@@ -4,13 +4,13 @@
 # --plain left as it is), and the kernel's own reader (bsd/miscfs/apfs/apfs_lib.c, as apfs-tool) has to read
 # every entry back as it was (tools/apfs/check-image.py); then the drivers' lookup of firmware in the RAM
 # disks (board/image.c) runs on them (workbench/image_file_test.c). Before that, the steps of the APFS suite
-# (userland/tools/apfs/run-tests.sh) that need no image of Darwin. apfsck, the third reader check-image.sh
+# (tools/apfs/run-tests.sh) that need no image of Darwin. apfsck, the third reader check-image.sh
 # adds, is not built here: it is fetched from elsewhere.
 #
 #   workbench/apfs_image_test.sh
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-APFS=$HERE/../userland/tools/apfs
+APFS=$HERE/../tools/apfs
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 

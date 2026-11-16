@@ -19,7 +19,7 @@
 
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../userland" && pwd)   # the first generation's workspace: apfs-work/, xnu-deps/, darwin165/
 IMAGE=${1:-${APFS_IMAGE:-}}
 APFS_SUBTREE=${APFS_SUBTREE:-}
 TMP=$(mktemp -d)
@@ -27,7 +27,7 @@ trap 'rm -rf "$TMP"' EXIT
 fail=0
 
 # the header lives with the kernel's sources (apfs-src.sh says where)
-# shellcheck source=userland/tools/apfs/apfs-src.sh
+# shellcheck source=tools/apfs/apfs-src.sh
 . "$HERE/apfs-src.sh"
 HDR_DIR=$(apfs_src_find "$ROOT") || exit 1
 

@@ -41,7 +41,7 @@ command here while it types (`--then`). Its head lists every option.
 
 ## The root and its shell
 
-`tools/qemu-root.sh` makes an APFS image (`userland/tools/apfs/mkapfs.py`) with `/dev`, `/etc/motd`,
+`tools/qemu-root.sh` makes an APFS image (`tools/apfs/mkapfs.py`) with `/dev`, `/etc/motd`,
 `/mnt` and `/sbin/launchd`, which is `tools/qemu-init/`: a static program that makes its system calls
 itself. As the kernel's first process it says what the kernel says of itself, then reads the console a
 line at a time:

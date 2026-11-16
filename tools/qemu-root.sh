@@ -1,5 +1,5 @@
 #!/bin/bash
-# A root for the kernel in QEMU, made of nothing of Apple's: an APFS image (userland/tools/apfs/mkapfs.py)
+# A root for the kernel in QEMU, made of nothing of Apple's: an APFS image (tools/apfs/mkapfs.py)
 # with /dev, where the kernel mounts devfs, /etc/motd, and /sbin/launchd, tools/qemu-init/ built as a static arm64
 # program with clang and ld64.lld (kernel/host/llvm/place-kernel.py --program makes it one a kernel runs
 # without dyld).
@@ -29,4 +29,4 @@ printf '%s\n' "This root was made by tools/qemu-root.sh: an APFS image of nothin
 	"/sbin/launchd, which is tools/qemu-init/, and /dev, where the kernel mounts devfs." > "$W/root/etc/motd"
 python3 "$HERE/kernel/host/llvm/place-kernel.py" --program "$W/init.lld" "$W/root/sbin/launchd" > /dev/null
 chmod 755 "$W/root/sbin/launchd"
-python3 "$HERE/userland/tools/apfs/mkapfs.py" -o "$out" Root="$W/root" | tail -1
+python3 "$HERE/tools/apfs/mkapfs.py" -o "$out" Root="$W/root" | tail -1

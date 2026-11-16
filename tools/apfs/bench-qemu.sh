@@ -11,7 +11,7 @@
 # Runs only this working copy's QEMU instance (qemu/instance), and waits for its ports.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../userland" && pwd)   # the first generation's workspace: apfs-work/, xnu-deps/, darwin165/
 IMAGE=$1
 COUNTS=${2:-"1 2 4 8"}
 EXTRA=${3:-}

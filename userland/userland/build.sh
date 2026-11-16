@@ -3,7 +3,7 @@
 #
 #   hello            one raw-syscall program; as a RAM disk on its own it boots through mockfs
 #   root.apfs        the small image: our init and test programs, etc/rc, and the launchd jobs
-#                    (LaunchDaemons/), an APFS container (../tools/apfs/mkapfs.py). It travels in
+#                    (LaunchDaemons/), an APFS container (../../tools/apfs/mkapfs.py). It travels in
 #                    the payload next to the kernel (the second RAM disk, /dev/md1) and is mounted
 #                    on /hakios. Rebuilt every time.
 #                      RC=<file>    etc/rc: rc.launchd (default) hands process 1 to the Darwin launchd
@@ -73,7 +73,7 @@
 #                    the images are then made of them and of the Darwin files alone (python3)
 #   CHECK=1          check every image (every container) as it is made: apfsck has to find it clean and
 #                    the kernel's apfs_lib has to read every volume back as the directory it was made of
-#                    (../tools/apfs/check-image.sh; the system image takes a few minutes more)
+#                    (../../tools/apfs/check-image.sh; the system image takes a few minutes more)
 set -e
 cd "$(dirname "$(readlink -f "$0")")"
 source ../xnu-env.sh
@@ -748,8 +748,8 @@ if [ "$ARCH" = arm64e ]; then
 fi
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (bsd/dev/board/image.c)
-python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
-[ -z "$CHECK" ] || ../tools/apfs/check-image.sh root.apfs hakios=root
+python3 ../../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
+[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh root.apfs hakios=root
 
 # --- the RAM part of a boot off the flash: FLASHBOOT=1 -> flashboot.apfs --------------------------------
 # With the Darwin volume on the phone's flash as the root, all that has to come from RAM is what is not
@@ -809,8 +809,8 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 		done
 		echo "  the package manager's prefix: $(du -sh flashboot/jb | cut -f1) as /jb of the boot volume"
 	fi
-	python3 ../tools/apfs/mkapfs.py -z --plain fw -o flashboot.boot.apfs Boot=flashboot | tail -1
-	[ -z "$CHECK" ] || ../tools/apfs/check-image.sh flashboot.boot.apfs Boot=flashboot
+	python3 ../../tools/apfs/mkapfs.py -z --plain fw -o flashboot.boot.apfs Boot=flashboot | tail -1
+	[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh flashboot.boot.apfs Boot=flashboot
 	# the third container: Apple's App cryptex as it is (10 MB; fetch.sh), for the boot volume's Cryptexes/App
 	APP=""
 	[ -f $DARWIN_FW/cryptex-app.dmg ] && APP=$DARWIN_FW/cryptex-app.dmg
@@ -819,8 +819,8 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	elif [ -n "$CRYPTEX_IMAGE" ]; then
 		cat flashboot.boot.apfs "$CRYPTEX_IMAGE" $APP > flashboot.apfs
 	else
-		python3 ../tools/apfs/mkapfs.py -z -o flashboot.os.apfs OS=flashboot.os | tail -1
-		[ -z "$CHECK" ] || ../tools/apfs/check-image.sh flashboot.os.apfs OS=flashboot.os
+		python3 ../../tools/apfs/mkapfs.py -z -o flashboot.os.apfs OS=flashboot.os | tail -1
+		[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh flashboot.os.apfs OS=flashboot.os
 		cat flashboot.boot.apfs flashboot.os.apfs $APP > flashboot.apfs
 		rm -f flashboot.os.apfs
 	fi
@@ -968,7 +968,7 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	done
 	# zlib where it saves room, as Apple keeps the root (a small file whole in its attribute): 5.4 GB of
 	# files in 2.5 GB, what fits into the phone's RAM beside Darwin
-	python3 ../tools/apfs/mkapfs.py -z -o system.apfs System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest | tail -1
-	[ -z "$CHECK" ] || ../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$DARWIN_FW/system.manifest
+	python3 ../../tools/apfs/mkapfs.py -z -o system.apfs System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest | tail -1
+	[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$DARWIN_FW/system.manifest
 	rm -rf sysroot
 fi

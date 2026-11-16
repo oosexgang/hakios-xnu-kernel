@@ -8,7 +8,7 @@
  *                                    group, size, name (and where a symbolic link points)
  *        vol_ls cat FILE [BYTES]     the file's first BYTES (default 4096), as they are
  *        vol_ls hash FILE...         FNV-1a of the whole file through read(2) and through a
- *                                    mapping, and its size: the hash tools/apfs prints on the
+ *                                    mapping, and its size: the hash ../tools/apfs prints on the
  *                                    build machine for the same file
  *        vol_ls sysctl NAME...       a string the kernel keeps (kern.apfs_stats: where the APFS
  *                                    driver's time went -- reads, page-ins, the lock)

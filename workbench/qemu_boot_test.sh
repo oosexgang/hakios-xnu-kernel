@@ -51,7 +51,7 @@ print("%016x" % h)' "$1"
 mkdir -p "$W/data"
 echo "a second disk, on QEMU's virtio block device" > "$W/data/hello.txt"
 head -c 3000000 /dev/urandom > "$W/data/big.bin"
-python3 "$HERE/../userland/tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
+python3 "$HERE/../tools/apfs/mkapfs.py" -o "$W/data.img" Data="$W/data" > /dev/null
 disk_hash=$(fnv1a "$W/data.img")
 file_hash=$(fnv1a "$W/data/big.bin")
 # what it asks this computer for (workbench/qemu_host.py serves it)

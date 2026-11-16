@@ -12,7 +12,7 @@
 #                      the afternoon before.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../userland" && pwd)   # the first generation's workspace: apfs-work/, xnu-deps/, darwin165/
 COUNTS=${1:-"1 2 4 8"}
 EXTRA=${2:-}
 CPUS=${BENCH_CPUS:-8}

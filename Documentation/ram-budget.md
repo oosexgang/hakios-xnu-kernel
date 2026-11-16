@@ -49,7 +49,7 @@ SpringBoard working set of the dyld cache.
 ## 1. How the Darwin 16.5 image is chosen (darwin-renoir)
 
 `darwin165/select-system.py` reads `7z l -slt rootfs.dmg` and writes `system.files` (what to extract)
-and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapfs.py`). Rules (`wanted_file`):
+and `system.manifest` (mode/uid/gid/symlinks, used by `tools/apfs/mkapfs.py`). Rules (`wanted_file`):
 
 - Taken whole: `usr/{libexec,sbin,bin,lib,share}`, `sbin`, `bin`, `private/etc`, `System/Library`,
   `Applications`, `Library`.

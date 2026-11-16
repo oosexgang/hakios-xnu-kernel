@@ -2,7 +2,7 @@
 
 > **Earlier generation.** These are the user-space sources of the Darwin 16.5 port, with its own layout and
 > build scripts. Parts are still used or being ported to Darwin 26/27: `userland/src/` (init, the injected
-> libraries, the audio plug-in), `tools/apfs/` (image tools). The Metal driver and its shader compiler for Mesa
+> libraries, the audio plug-in), `../tools/apfs/` (image tools). The Metal driver and its shader compiler for Mesa
 > were here and are [`../components/metal`](../components/metal) now. The current project starts at the
 > [top-level README](../README.md); the Darwin 26/27 side is `../darwin/`.
 

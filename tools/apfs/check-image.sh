@@ -11,10 +11,10 @@
 # usage: tools/apfs/check-image.sh IMAGE [VOLUME=]DIR[,manifest=FILE] ...   (the volumes as mkapfs.py had them)
 #
 # One container: the first one in IMAGE. Containers back to back (flashboot.apfs) are checked one by
-# one before they are put together (userland/build.sh, CHECK=1).
+# one before they are put together (userland/userland/build.sh, CHECK=1).
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../userland" && pwd)   # the first generation's workspace: apfs-work/, xnu-deps/, darwin165/
 APFSPROGS=$ROOT/xnu-deps/build/apfsprogs
 APFSPROGS_URL=https://github.com/linux-apfs/apfsprogs.git
 APFSPROGS_COMMIT=1bd1c1c2140d13d1b6d2e03379316572bee70aa3   # "mkapfs: set INODE_NO_RSRC_FORK on the directories"
@@ -33,7 +33,7 @@ fi
 TOOL=$ROOT/apfs-work/apfs-tool
 stale=""
 [ -x "$TOOL" ] || stale=1
-# shellcheck source=userland/tools/apfs/apfs-src.sh
+# shellcheck source=tools/apfs/apfs-src.sh
 . "$HERE/apfs-src.sh"
 SRC=$(apfs_src_find "$ROOT")
 for f in "$HERE/apfs-tool.c" "$HERE/build-tool.sh" "$SRC"/*.[ch] "$SRC"/libzbitmap/*.[ch]; do
