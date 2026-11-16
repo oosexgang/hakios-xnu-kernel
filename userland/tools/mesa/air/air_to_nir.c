@@ -3541,7 +3541,9 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       if (span < 1 || span > 128)
          return air_error(c, "interface: a texture array of %u", (unsigned)span);
       bool sample = md_key(node, "air.sample") >= 0;
-      bool read = md_key(node, "air.read") >= 0;
+      /* a read_write texture is read too: an image view without READ access reads zeros
+       * (softpipe), which is what every texture<..., access::read_write> read() returned */
+      bool read = md_key(node, "air.read") >= 0 || md_key(node, "air.read_write") >= 0;
       bool write = md_key(node, "air.write") >= 0 || md_key(node, "air.read_write") >= 0;
       /* A texture the shader writes is an image to Gallium, with its own
        * binding space; one it only samples or reads is a sampler view.
