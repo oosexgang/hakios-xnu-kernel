@@ -410,6 +410,96 @@ snapshot_timeouts_longer(void)
 	}
 }
 
+/*
+ * The throttle policy above is made once, before this library can reach it, and the time that runs out
+ * is not only its own: PosterUIFoundation asks its render sessions for -pui_renderSessionTimeoutInterval,
+ * and its snapshot classes carry more. Every getter of a time-out (a selector with "TimeoutInterval" in
+ * it, returning a double) of a PUI, PBF or PR class, and pui_renderSessionTimeoutInterval wherever it
+ * is, answers SNAPSHOT_STRETCH times what it would have. Each replaced method keeps its own original:
+ * the table is looked up by class and selector.
+ */
+#define STRETCHED_MAX 48
+
+static struct {
+	Class cls;
+	SEL sel;
+	double (*original)(id, SEL);
+} stretched[STRETCHED_MAX];
+static unsigned stretched_count;
+
+static double
+timeout_longer(id self, SEL selector)
+{
+	Class c = object_getClass(self);
+
+	for (; c != Nil; c = class_getSuperclass(c)) {
+		for (unsigned i = 0; i < stretched_count; i++) {
+			if (stretched[i].cls == c && stretched[i].sel == selector) {
+				return stretched[i].original(self, selector) * SNAPSHOT_STRETCH;
+			}
+		}
+	}
+	return 0;
+}
+
+static bool
+timeout_getter(const char *class_name, const char *selector)
+{
+	if (strcmp(selector, "pui_renderSessionTimeoutInterval") == 0) {
+		return true;
+	}
+	return strstr(selector, "TimeoutInterval") != NULL && strchr(selector, ':') == NULL &&
+	    (strncmp(class_name, "PUI", 3) == 0 || strncmp(class_name, "PBF", 3) == 0 ||
+	     strncmp(class_name, "PR", 2) == 0);
+}
+
+static void
+stretch_in(Class cls, bool meta)
+{
+	unsigned n = 0;
+	Method *methods = class_copyMethodList(cls, &n);
+	const char *name = class_getName(cls);
+	char line[200], types[48];
+
+	for (unsigned k = 0; k < n && stretched_count < STRETCHED_MAX; k++) {
+		SEL sel = method_getName(methods[k]);
+		bool done = false;
+
+		if (!timeout_getter(name, sel_getName(sel)) || !types_of(methods[k], types, sizeof(types)) ||
+		    strcmp(types, "d@:") != 0) {
+			continue;
+		}
+		for (unsigned i = 0; i < stretched_count; i++) {
+			done |= stretched[i].cls == cls && stretched[i].sel == sel;
+		}
+		if (done) {
+			continue;
+		}
+		stretched[stretched_count].cls = cls;
+		stretched[stretched_count].sel = sel;
+		stretched[stretched_count].original = (double (*)(id, SEL))method_setImplementation(methods[k],
+		    (IMP)timeout_longer);
+		stretched_count++;
+		snprintf(line, sizeof(line), "hakios: PosterBoard: %c[%s %s] answers %.0f times longer (rwa_software=1)\n",
+		    meta ? '+' : '-', name, sel_getName(sel), SNAPSHOT_STRETCH);
+		say(line);
+	}
+	free(methods);
+}
+
+static void
+render_timeouts_longer(void)
+{
+	unsigned count = 0;
+	Class *classes = objc_copyClassList(&count);
+
+	for (unsigned i = 0; classes != NULL && i < count; i++) {
+		stretch_in(classes[i], false);
+		stretch_in(object_getClass((id)classes[i]), true);
+	}
+	free(classes);
+}
+
 /* FrontBoard's classes are not all there when this library is loaded: looked for again once
  * PosterBoard is running, and once more later, off its main thread (realizing every class is slow under
  * the emulator; each method found again is replaced with the same) */
@@ -419,6 +509,7 @@ watchdogs_off_later(void *context)
 	(void)context;
 	watchdogs_off();
 	snapshot_timeouts_longer();
+	render_timeouts_longer();
 }
 
 __attribute__((constructor)) static void
@@ -427,6 +518,7 @@ poster_init(void)
 	if (software_metal()) {
 		watchdogs_off();
 		snapshot_timeouts_longer();
+		render_timeouts_longer();
 		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
 		    watchdogs_off_later);
 		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
