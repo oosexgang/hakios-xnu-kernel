@@ -56,7 +56,7 @@ class Image(unittest.TestCase):
         self.assertEqual(mkboot.pack(SHIM, IMAGE, DTB, PAYLOAD, UEFI), mkboot.pack(SHIM, IMAGE, DTB, PAYLOAD, UEFI))
 
     def test_a_uefi_of_another_size_is_refused(self):
-        with self.assertRaisesRegex(SystemExit, 'fd_size'):
+        with self.assertRaisesRegex(SystemExit, 'fd-size'):
             mkboot.pack(SHIM, IMAGE[:-1], DTB, b'', UEFI)
 
     def test_a_shim_for_another_memory_map_is_refused(self):

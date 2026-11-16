@@ -4,13 +4,13 @@
 usage: arch/arm64/boot/mkboot.py [--board NAME] [--uefi DIR] [-p PAYLOAD] -o OUT.img
 
   kernel  = gzip(BootShim + UEFI image + [payload]) + the phone's device tree
-  OUT.img = an Android boot image (header version from [uefi]) with that kernel
+  OUT.img = an Android boot image (header version from uefi { }) with that kernel
 
 The phone's bootloader starts the "kernel": the boot shim copies the UEFI image to its base and the
 payload (an "XNUP" container, arch/arm64/boot/mkpayload.py) to the address the loader finds it at. The UEFI
 then starts loader.efi from the payload. Nothing is written to the phone's storage.
 
-What is the board's: the [uefi] section of its board.toml (fd_base, fd_size, header_version), and three
+What is the board's: the uefi { } node of its board.dts (fd-base, fd-size, header-version), and three
 files of its own UEFI build, which carry the vendor's drivers and the phone's device tree and so are
 never in the repository:
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]         # (the repository: this is arch/arm64/boot)
 sys.path.insert(0, str(REPO / 'tools'))
-import boards  # noqa: E402  (arch/arm64/boot/dts/NAME/board.toml)
+import boards  # noqa: E402  (arch/arm64/boot/dts/NAME/board.dts)
 
 PAYLOAD_MAGIC = b'XNUP'
 PAYLOAD_MAX = 0x04000000         # what the payload reservation of the UEFI's memory map holds (loader.c PAYLOAD_MAX_SIZE)
@@ -43,15 +43,15 @@ UEFI_FILES = ('SILICIUM_UEFI.fd', 'BootShim.bin', 'device-tree.dtb')
 
 
 def uefi_board(name):
-    """(name, [uefi] of its board): the board named, or the only one here that has a [uefi] section."""
+    """(name, uefi { } of its board): the board named, or the only one here that has a uefi { } node."""
     found = {n: board['uefi'] for n, board in boards.load()[1].items() if 'uefi' in board}
     if name is None:
         if len(found) != 1:
             raise SystemExit('mkboot.py: which phone? --board NAME (here: ' +
-                             (', '.join(sorted(found)) or 'no package with a [uefi] section') + ')')
+                             (', '.join(sorted(found)) or 'no package with a uefi { } node') + ')')
         name = next(iter(found))
     if name not in found:
-        raise SystemExit(f'mkboot.py: no board "{name}" with a [uefi] section (tools/boards.py list)')
+        raise SystemExit(f'mkboot.py: no board "{name}" with a uefi {{ }} node (tools/boards.py list)')
     return name, found[name]
 
 
@@ -83,16 +83,16 @@ def boot_image(kernel, header_version):
 
 def pack(shim, image, dtb, payload, uefi):
     """The boot image of a UEFI (its shim, image and device tree, as bytes) and a payload (b'' for none), checked
-    against the board's [uefi]."""
+    against the board's uefi { }."""
     if len(image) != uefi['fd_size']:
-        raise SystemExit(f'mkboot.py: the UEFI image is {len(image):#x} bytes, [uefi] fd_size says {uefi["fd_size"]:#x}')
+        raise SystemExit(f'mkboot.py: the UEFI image is {len(image):#x} bytes, uefi {{ }} fd-size says {uefi["fd_size"]:#x}')
     # The shim is an arm64 Linux image whose header says where the UEFI goes and how big it is (text_offset,
     # image_size): built for another memory map, it would copy this one where the phone's UEFI does not run.
     if len(shim) < 64 or shim[56:60] != b'ARMd':
         raise SystemExit('mkboot.py: the shim is not an arm64 image (no ARMd at 56)')
     at, size = struct.unpack_from('<QQ', shim, 8)
     if (at, size) != (uefi['fd_base'], uefi['fd_size']):
-        raise SystemExit(f'mkboot.py: the shim puts the UEFI at {at:#x}, {size:#x} bytes; [uefi] says '
+        raise SystemExit(f'mkboot.py: the shim puts the UEFI at {at:#x}, {size:#x} bytes; uefi {{ }} says '
                          f'{uefi["fd_base"]:#x}, {uefi["fd_size"]:#x}')
     if payload and payload[:4] != PAYLOAD_MAGIC:
         raise SystemExit('mkboot.py: the payload is not an XNUP container (arch/arm64/boot/mkpayload.py)')
@@ -108,7 +108,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--board', default=os.environ.get('HAKIOS_BOARD'),
                         help='the phone, by its package\'s name (default: $HAKIOS_BOARD, or the only package '
-                             'with a [uefi] section)')
+                             'with a uefi { } node)')
     parser.add_argument('--uefi', type=Path, metavar='DIR', help='its UEFI build (default firmware/NAME/uefi)')
     parser.add_argument('-p', '--payload', type=Path, help='an XNUP container for the loader')
     parser.add_argument('-o', '--output', type=Path, required=True)
