@@ -105,6 +105,11 @@ struct rwa_device {
    struct pipe_screen *screen;
    struct pipe_context *pipe;
 
+   /* SOFTPIPE ONLY: for the draw being bound, the copies of the attachments its fragment stage
+    * reads with a framebuffer fetch (rwa_render_draw), which bind_stage binds past the
+    * shader's own textures; NULL outside it */
+   struct pipe_sampler_view *sw_fetch[8];
+
    /* The compiled stages, shared by every pipeline whose stage is the same NIR
     * (make_stage_cso). Under stage_cache_lock.
     */
@@ -1084,6 +1089,73 @@ fold_buffer_ids(nir_shader *nir, const unsigned *ids)
             (void *)ids);
 }
 
+/*
+ * SOFTPIPE ONLY: a framebuffer fetch (`[[color(n)]]`, load_output with fb_fetch_output) as a texel
+ * fetch from a copy of the attachment taken before the draw (rwa_render_draw), at the fragment's own
+ * pixel, from unit RWA_FBFETCH_UNIT + n. TGSI's interpreter has no FBFETCH -- an assertion in the
+ * host's tgsi_exec, and on the phone's build of softpipe a read of whatever its register held --
+ * and CoreAnimation draws its vector shapes through one: path_rect and path_cubic add up a coverage
+ * mask in an R32Float attachment, and path_blit reads it back to colour the shape. Read as garbage,
+ * every shape filled the whole layer, and the wallpaper was the colour of its last stripe. A copy
+ * before the draw is what one draw sees of the draws before it, which is all CoreAnimation asks:
+ * the mask is written by other draws than the one that reads it.
+ */
+#define RWA_FBFETCH_UNIT 16
+
+static bool
+sw_fbfetch_instr(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   if (intr->intrinsic != nir_intrinsic_load_output || !nir_intrinsic_io_semantics(intr).fb_fetch_output)
+      return false;
+   unsigned rt = nir_intrinsic_io_semantics(intr).location - FRAG_RESULT_DATA0;
+   if (rt >= 8)
+      return false;
+   b->cursor = nir_before_instr(&intr->instr);
+   nir_def *pos = nir_f2i32(b, nir_trim_vector(b, nir_load_frag_coord(b), 2));
+   nir_tex_instr *tex = nir_tex_instr_create(b->shader, 2);
+   tex->op = nir_texop_txf;
+   tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
+   tex->dest_type = nir_type_float32;
+   tex->texture_index = RWA_FBFETCH_UNIT + rt;
+   tex->sampler_index = RWA_FBFETCH_UNIT + rt;
+   tex->coord_components = 2;
+   tex->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, pos);
+   tex->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(b, 0));
+   nir_def_init(&tex->instr, &tex->def, 4, 32);
+   nir_builder_instr_insert(b, &tex->instr);
+   BITSET_SET(b->shader->info.textures_used, RWA_FBFETCH_UNIT + rt);
+   BITSET_SET(b->shader->info.textures_used_by_txf, RWA_FBFETCH_UNIT + rt);
+   nir_def *v = nir_channels(b, &tex->def,
+                             BITFIELD_MASK(intr->def.num_components) << nir_intrinsic_component(intr));
+   if (intr->def.bit_size != 32)
+      v = nir_f2fN(b, v, intr->def.bit_size);
+   nir_def_replace(&intr->def, v);
+   return true;
+}
+
+/* which attachments a fragment stage reads with a framebuffer fetch, one bit each */
+static unsigned
+fbfetch_mask(nir_shader *nir)
+{
+   unsigned mask = 0;
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic == nir_intrinsic_load_output &&
+                nir_intrinsic_io_semantics(intr).fb_fetch_output) {
+               unsigned rt = nir_intrinsic_io_semantics(intr).location - FRAG_RESULT_DATA0;
+               if (rt < 8)
+                  mask |= 1u << rt;
+            }
+         }
+      }
+   }
+   return mask;
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
@@ -1113,6 +1185,14 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
        * luma_boost discard). A discarded fragment that keeps running only matters to the derivatives
        * of its quad after the discard; softpipe's KILL ends it, which is what it can do */
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, demote_to_terminate, nir_metadata_control_flow, NULL);
+      if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+         bool fetched = false;
+         NIR_PASS(fetched, nir, nir_shader_intrinsics_pass, sw_fbfetch_instr, nir_metadata_control_flow, NULL);
+         if (fetched) {
+            nir->info.fs.uses_fbfetch_output = false;
+            nir->info.outputs_read = 0;
+         }
+      }
       NIR_PASS(_, nir, scratch_to_temp_array);
       NIR_PASS(_, nir, nir_opt_dce);
    }
@@ -4879,9 +4959,10 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
     * an image view (air_to_nir.c, air_run.c's texture_shapes). BlitKernel_Unorm has
     * one of each, and binding only the image left its fetch reading nothing.
     */
-   struct pipe_sampler_view *views[RWA_MAX_TEXTURES] = { 0 };
+   /* (and past them, on softpipe, the copies a framebuffer fetch reads: device->sw_fetch) */
+   struct pipe_sampler_view *views[RWA_MAX_TEXTURES + 8] = { 0 };
    struct pipe_image_view images[RWA_MAX_TEXTURES] = { 0 };
-   void *samplers[RWA_MAX_TEXTURES] = { 0 };
+   void *samplers[RWA_MAX_TEXTURES + 8] = { 0 };
    unsigned num_views = 0, num_images = 0, num_samplers = 0;
 
    /* the module's constant tables, where softpipe reads them (constant_data_to_ubo); ir3 takes
@@ -5184,6 +5265,16 @@ bind_stage(struct rwa_device *device, mesa_shader_stage stage,
          if (views[t] && sw_pair[t] && as_declared[sw_pair[t] - 1]) {
             samplers[t] = as_declared[sw_pair[t] - 1];
             num_samplers = MAX2(num_samplers, t + 1);
+         }
+      }
+   }
+
+   /* softpipe's framebuffer fetch: the copies rwa_render_draw made, at the units the fetch reads */
+   if (device->software && stage == MESA_SHADER_FRAGMENT) {
+      for (unsigned i = 0; i < 8; i++) {
+         if (device->sw_fetch[i]) {
+            views[RWA_FBFETCH_UNIT + i] = device->sw_fetch[i];
+            num_views = MAX2(num_views, RWA_FBFETCH_UNIT + i + 1);
          }
       }
    }
@@ -7076,6 +7167,9 @@ struct rwa_render {
     */
    uint8_t frag_sw_pair[RWA_MAX_TEXTURES];
    uint8_t vert_sw_pair[RWA_MAX_TEXTURES];
+   /* SOFTPIPE ONLY: the attachments the fragment stage reads with a framebuffer fetch, copied
+    * before each draw for it to read (sw_fbfetch_instr) */
+   unsigned sw_fbfetch;
 
    /* the compiled state, made once: a render pipeline has a fixed shape, so unlike a
     * compute state there is no threadgroup size to recompile for
@@ -8646,6 +8740,8 @@ rwa_render_create(struct rwa_device *device,
    lib_pipe_enter();
    locked = true;
    double t_cso = cost_now_ms();
+   if (device->software)
+      render->sw_fbfetch = fbfetch_mask(fs);
    render->fs_cso = make_stage_cso(device, fs, render->frag_sw_pair, why, why_size);
    render->times_ms[3] = cost_now_ms() - t_cso;
    if (!render->fs_cso)
@@ -9404,11 +9500,48 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
    pipe->set_vertex_buffers(pipe, nvb, vbs);
 
    struct rwa_bound fbound = { 0 }, vbound = { 0 };
+   struct pipe_sampler_view *fetch_views[8] = { 0 };   /* (softpipe's framebuffer fetch, below) */
+   struct pipe_box fetch_boxes[8];
    int rc = -1;
-   if (bind_stage(device, MESA_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-                  render->frag_compare_sampler, render->frag_sw_pair,
-                  &draw->fragment, draw->fragment_buffer_table, draw->fragment_buffer_table_count,
-                  fname, &fbound, why, why_size) != 0)
+   /* softpipe's framebuffer fetch: each attachment the stage reads, copied as it is now and
+    * bound where the fetch was made a texel fetch (sw_fbfetch_instr) */
+   for (unsigned i = 0; i < 8 && i < draw->color_count && render->sw_fbfetch; i++) {
+      if (!(render->sw_fbfetch & (1u << i)) || !draw->color[i])
+         continue;
+      struct pipe_resource *src = draw->color[i]->res;
+      unsigned level = draw->color_level ? draw->color_level[i] : 0;
+      unsigned layer = draw->color_layer ? draw->color_layer[i] : 0;
+      struct pipe_resource tmpl = {
+         .target = PIPE_TEXTURE_2D, .format = src->format,
+         .width0 = u_minify(src->width0, level), .height0 = u_minify(src->height0, level),
+         .depth0 = 1, .array_size = 1, .bind = PIPE_BIND_SAMPLER_VIEW,
+      };
+      struct pipe_resource *copy = device->screen->resource_create(device->screen, &tmpl);
+      if (!copy) {
+         say(why, why_size, "no copy of colour attachment %u to read its framebuffer fetch from", i);
+         goto unbind;
+      }
+      struct pipe_box box;
+      u_box_3d(0, 0, layer, tmpl.width0, tmpl.height0, 1, &box);
+      pipe->resource_copy_region(pipe, copy, 0, 0, 0, 0, src, level, &box);
+      struct pipe_sampler_view vt;
+      u_sampler_view_default_template(&vt, copy, copy->format);
+      fetch_views[i] = pipe->create_sampler_view(pipe, copy, &vt);
+      fetch_boxes[i] = box;
+      pipe_resource_reference(&copy, NULL);
+      if (!fetch_views[i]) {
+         say(why, why_size, "no view of colour attachment %u's copy for its framebuffer fetch", i);
+         goto unbind;
+      }
+   }
+
+   memcpy(device->sw_fetch, fetch_views, sizeof(fetch_views));
+   int bound_fragment = bind_stage(device, MESA_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
+                                   render->frag_compare_sampler, render->frag_sw_pair,
+                                   &draw->fragment, draw->fragment_buffer_table,
+                                   draw->fragment_buffer_table_count, fname, &fbound, why, why_size);
+   memset(device->sw_fetch, 0, sizeof(device->sw_fetch));
+   if (bound_fragment != 0)
       goto unbind;
    if (!render->generated_vertex &&
        bind_stage(device, MESA_SHADER_VERTEX, &render->vinfo, render->vert_own_sampler,
@@ -9463,6 +9596,15 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
                      draw->clear_depth ? (double)*draw->clear_depth : 0.0,
                      draw->clear_stencil ? *draw->clear_stencil & 0xff : 0);
    }
+   /* and what a framebuffer fetch reads of an attachment this draw cleared is the clear: its
+    * copy, taken before the clear for binding, taken again now */
+   for (unsigned i = 0; i < 8 && i < draw->color_count; i++) {
+      if (!fetch_views[i] || !((draw->clear_colors ? draw->clear_mask : draw->clear_color ? ~0u : 0) & (1u << i)))
+         continue;
+      unsigned level = draw->color_level ? draw->color_level[i] : 0;
+      pipe->resource_copy_region(pipe, fetch_views[i]->texture, 0, 0, 0, 0, draw->color[i]->res, level,
+                                 &fetch_boxes[i]);
+   }
 
    {
       /*
@@ -9505,6 +9647,8 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
 
 unbind:
    unbind_stage(device, MESA_SHADER_FRAGMENT, &fbound);
+   for (unsigned i = 0; i < 8; i++)
+      pipe_sampler_view_reference(&fetch_views[i], NULL);
    if (!render->generated_vertex)
       unbind_stage(device, MESA_SHADER_VERTEX, &vbound);
    /* The framebuffer is released before the surfaces are destroyed, and both before the
