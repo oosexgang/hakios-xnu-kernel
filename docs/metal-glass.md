@@ -364,6 +364,14 @@ commit of its own:
   thirty-one bits that NIR has no width for, kept zero-extended in 32 bits -- masked after arithmetic,
   their sign extended where it is read as signed (Vista's two-bit enum switch, 62 -> 73 with the atomic;
   `userland/tools/air/loweringcheck.py` against LLVM, 25 of 25). ImageIO, swept again, compiles all 27.
+- **16 November**: arrays in argument buffers -- Metal gives an array member one element's size and its
+  count in the field after it; a value array is checked at its whole size and an array of up to 32
+  descriptors is a member per element, each at its own place and `[[id]]` (ClothPhysics, ComputeGraph, MXI;
+  `argbufcheck.py`'s new case); a texture or sampler out of a local array at a computed index, chosen as a
+  function out of a local table already was (CMImaging's srlApply and StyleEngine), with softpipe's compute
+  fetches made to read their own texture's unit (`texarraycheck.sh`); RGB9E5 unpack and pack
+  (`rgb9e5check.sh`). The phone's path under valgrind's memcheck after all of it: QuartzCore 249, RenderBox
+  109 and CMImaging 215 functions clean, none with an error.
 
 ### Tessellation without a tessellator
 
