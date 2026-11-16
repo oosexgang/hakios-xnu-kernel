@@ -26,7 +26,9 @@ mkdir -p "$NEW" "$OUT"
 for dir in /private/var/db/hakios-metal-cache /private/var/tmp/hakios-metal-cache; do
 	scp -O -q -i "$KEY" -o StrictHostKeyChecking=accept-new "root@$1:$dir/*.stage" "$NEW/" 2> /dev/null && break
 done
-n=$(ls "$NEW" | grep -c '\.stage$' || true)
+stages=("$NEW"/*.stage)
+n=0
+[ -e "${stages[0]}" ] && n=${#stages[@]}
 cp "$NEW"/*.stage "$OUT/" 2> /dev/null || true
 rm -rf "$NEW"
 echo "metal-cache-pull: $n stages from the phone; $(ls "$OUT" | wc -l) in $OUT ($(du -sh "$OUT" | cut -f1)); root26-darwin.sh carries them"
