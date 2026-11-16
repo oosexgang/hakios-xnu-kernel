@@ -101,6 +101,8 @@
  * makes several at launch can miss its check-in (glass19: MercuryPoster's extension,
  * XPC_EXIT_REASON_EXTENSION_CHECK_IN_TIMEOUT, its wallpaper never shown). */
 static void rw_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+@class HakiosMetalWork;
+static void rw_say_sync_inputs(HakiosMetalWork *work);
 static void rw_say_surface_colour(IOSurfaceRef surface, const uint8_t *base, size_t row, size_t width,
 				  size_t height, bool in);
 
@@ -5725,7 +5727,54 @@ rw_bisect_skipped_group(void)
 	if (sync && mesa.finish != NULL && MESA(finish, [[_queue device] mesaDevice], why, size) != 0) {
 		rw_print("sync: the draw did not finish: %s\n", why);
 	}
+	if (sync) {
+		rw_say_sync_inputs(work);
+	}
 	return YES;
+}
+
+/*
+ * metal_sync=1, for the first draws into a screen-sized attachment: the first words of the buffers
+ * each stage was given and, the draw finished, the pixel at the middle of where it may land. A frame
+ * that comes out all zero is a vertex stage that put everything nowhere, a fragment stage that
+ * wrote zero or a target nothing reached, and these numbers tell which.
+ */
+static void
+rw_say_sync_inputs(HakiosMetalWork *work)
+{
+	static unsigned said;
+
+	if (work->colorCount == 0 || [work->color[0] width] < 1000 || said >= 16) {
+		return;
+	}
+	said++;
+	for (int stage = 0; stage < 2; stage++) {
+		unsigned n = stage == 0 ? work->vertexBufferCount : work->count;
+
+		for (unsigned i = 0; i < n && i < 6; i++) {
+			id b = stage == 0 ? work->vertexBuffers[i] : work->buffers[i];
+			size_t off = stage == 0 ? work->vertexBufferOffsets[i] : work->bufferOffsets[i];
+			const float *f;
+
+			if (b == nil || ![b respondsToSelector:@selector(contents)] ||
+			    (f = (const float *)((const uint8_t *)[b contents] + off)) == NULL ||
+			    [b length] < off + 32) {
+				continue;
+			}
+			rw_print("sync   %s buffer %u (%lu bytes at %zu): %g %g %g %g %g %g %g %g\n",
+			         stage == 0 ? "vertex" : "fragment", i, (unsigned long)[b length], off,
+			         f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+		}
+	}
+	unsigned x = work->hasScissor ? work->scissor[0] + work->scissor[2] / 2 : (unsigned)[work->color[0] width] / 2;
+	unsigned y = work->hasScissor ? work->scissor[1] + work->scissor[3] / 2 : (unsigned)[work->color[0] height] / 2;
+	uint8_t px[16] = { 0 };
+
+	if ([work->color[0] respondsToSelector:@selector(getBytes:bytesPerRow:fromRegion:mipmapLevel:)]) {
+		[work->color[0] getBytes:px bytesPerRow:16 fromRegion:MTLRegionMake2D(x, y, 1, 1)
+			     mipmapLevel:work->colorLevel[0]];
+	}
+	rw_print("sync   after it, attachment 0 at %u,%u: %02x %02x %02x %02x\n", x, y, px[0], px[1], px[2], px[3]);
 }
 
 /*
