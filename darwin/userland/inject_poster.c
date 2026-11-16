@@ -336,6 +336,80 @@ watchdogs_off(void)
 	}
 }
 
+/*
+ * The snapshots PosterBoard asks of a poster extension -- the lock screen's own among them -- are
+ * given a capture time and a request time (-initWithMaximumConcurrentSnapshotters:captureTimeoutInterval:
+ * requestTimeoutInterval:), and the extension is ended when they run out ("timeout hit"). With Metal on
+ * the processor under the emulator the collections poster draws a frame in minutes, so every snapshot
+ * timed out, the extension was ended and started again, and backboardd composited a lock screen with no
+ * wallpaper in it: all black. Under rwa_software=1 both times are made SNAPSHOT_STRETCH times longer.
+ */
+#define SNAPSHOT_STRETCH 60.0
+
+typedef id (*snapshotters_init_fn)(id, SEL, unsigned long, double, double);
+static snapshotters_init_fn original_snapshotters_init;
+static Class snapshotters_class;
+
+static id
+snapshotters_init_longer(id self, SEL selector, unsigned long most, double capture, double request)
+{
+	char line[200];
+
+	snprintf(line, sizeof(line), "hakios: PosterBoard: snapshotters (%lu at a time) given %.0f s to capture "
+	    "and %.0f s a request instead of %.1f and %.1f (rwa_software=1)\n", most, capture * SNAPSHOT_STRETCH,
+	    request * SNAPSHOT_STRETCH, capture, request);
+	say(line);
+	return original_snapshotters_init(self, selector, most, capture * SNAPSHOT_STRETCH, request * SNAPSHOT_STRETCH);
+}
+
+static void
+snapshot_timeouts_longer(void)
+{
+	SEL sel = sel_registerName("initWithMaximumConcurrentSnapshotters:captureTimeoutInterval:requestTimeoutInterval:");
+	unsigned count = 0;
+	Class *classes;
+	char line[200], types[48];
+
+	if (original_snapshotters_init != NULL) {
+		return;
+	}
+	classes = objc_copyClassList(&count);
+	for (unsigned i = 0; classes != NULL && i < count; i++) {
+		unsigned n = 0;
+		Method *methods = class_copyMethodList(classes[i], &n);
+
+		for (unsigned k = 0; k < n; k++) {
+			if (method_getName(methods[k]) != sel) {
+				continue;
+			}
+			if (!types_of(methods[k], types, sizeof(types)) ||
+			    (strcmp(types, "@@:Qdd") != 0 && strcmp(types, "@@:qdd") != 0)) {
+				snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s %s] is %s, left alone\n",
+				    class_getName(classes[i]), sel_getName(sel), types);
+				say(line);
+				continue;
+			}
+			if (original_snapshotters_init != NULL) {
+				snprintf(line, sizeof(line), "hakios: PosterBoard: a second class with snapshot timeouts, %s, "
+				    "left alone (%s has them longer)\n", class_getName(classes[i]), class_getName(snapshotters_class));
+				say(line);
+				continue;
+			}
+			snapshotters_class = classes[i];
+			original_snapshotters_init = (snapshotters_init_fn)method_setImplementation(methods[k],
+			    (IMP)snapshotters_init_longer);
+			snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s %s] stretches its timeouts (rwa_software=1)\n",
+			    class_getName(classes[i]), sel_getName(sel));
+			say(line);
+		}
+		free(methods);
+	}
+	free(classes);
+	if (original_snapshotters_init == NULL) {
+		say("hakios: PosterBoard: no class takes snapshot timeouts yet\n");
+	}
+}
+
 /* FrontBoard's classes are not all there when this library is loaded: looked for again once
  * PosterBoard is running, and once more later, off its main thread (realizing every class is slow under
  * the emulator; each method found again is replaced with the same) */
@@ -344,6 +418,7 @@ watchdogs_off_later(void *context)
 {
 	(void)context;
 	watchdogs_off();
+	snapshot_timeouts_longer();
 }
 
 __attribute__((constructor)) static void
@@ -351,6 +426,7 @@ poster_init(void)
 {
 	if (software_metal()) {
 		watchdogs_off();
+		snapshot_timeouts_longer();
 		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
 		    watchdogs_off_later);
 		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
