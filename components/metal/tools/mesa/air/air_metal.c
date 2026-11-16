@@ -9704,8 +9704,9 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
       /* softpipe keeps what a draw wrote in its render tile cache, and what a sampler read in its
        * texture tile cache, until a flush: a pass that samples a texture an earlier pass drew,
        * with no flush between, reads the texture as it was. Flushed after each draw, as the
-       * finish metal_sync=1 waits for did -- the boot that drew Stripe Yellow's ground had it,
-       * the one without drew the stripes over black. (The phone's GPU is not touched.) */
+       * finish metal_sync=1 waits for does. (The black ground once laid to its absence was a run
+       * too short to reach the fourth frame: Documentation/metal-glass.md. The phone's GPU is not
+       * touched.) */
       if (device->software)
          pipe->flush(pipe, NULL, 0);
    }

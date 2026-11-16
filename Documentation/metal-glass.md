@@ -267,6 +267,16 @@ whole -- the yellow ground (251, 205, 103) and its six stripes, every one at its
 backboardd's render server out of the collections poster's layer, every pixel of it through `HakiosMetal`,
 `libhakios-air` and softpipe. The first Metal frame on the screen, two hours into a boot under TCG.
 
+### The black ground that was a short run (16 November, afternoon)
+
+After that boot, every run without `metal_sync=1` showed the stripes over black, and three changes made for it
+(the library's flush after each software draw, the samplerless units for compute only, a no-copy buffer that
+follows its caller's pages) did not bring the ground back. It was not the asynchronous path. The frames under TCG
+take 8 to 27 minutes each, and the yellow ground first comes with the fourth: the one boot that showed it had four
+swaps, every black one three (the earliest ended by a 30-minute limit on the shell around QEMU, the next ones by
+the 6900 seconds `run27.sh` was given). A run given the time, with the kernel of the appstore-ios27-wip merge and
+draws waited for once a command buffer (no `metal_sync`), drew Stripe Yellow whole at swap 4, surface 65.
+
 ### The phone's GPU compiler over Darwin 27's shaders
 
 `components/metal/tools/air/ir3sweep.sh` runs the phone's own path -- translate, finalise as for freedreno, compile with
