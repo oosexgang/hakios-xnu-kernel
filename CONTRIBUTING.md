@@ -22,7 +22,7 @@ HakiOS' files. There are none now: keep it so.
 | A driver, or anything else HakiOS adds to the kernel | `kernel/overlay/` | — |
 | A change to one of Apple's files | An assembled tree, then `kernel/export.sh` | Never edit `kernel/patches/*.patch` by hand: `kernel/verify.sh` rejects it. |
 | A boot argument | A comment naming it as `name=…` beside its read | `make docs` |
-| The loader | `loader/loader.c`, `loader/src/` | `loader/build.sh`; boards come from the board files, not from code. |
+| The loader | `arch/arm64/boot/loader.c`, `arch/arm64/boot/src/` | `arch/arm64/boot/build.sh`; boards come from the board files, not from code. |
 | A library inserted into a Darwin process | `darwin/userland/` | — |
 
 [Documentation/architecture.md](Documentation/architecture.md) explains the split; [kernel/README.md](kernel/README.md)

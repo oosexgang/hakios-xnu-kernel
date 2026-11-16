@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Pack a phone's UEFI and a payload into an Android boot image, for `fastboot boot`.
 
-usage: loader/mkboot.py [--board NAME] [--uefi DIR] [-p PAYLOAD] -o OUT.img
+usage: arch/arm64/boot/mkboot.py [--board NAME] [--uefi DIR] [-p PAYLOAD] -o OUT.img
 
   kernel  = gzip(BootShim + UEFI image + [payload]) + the phone's device tree
   OUT.img = an Android boot image (header version from [uefi]) with that kernel
 
 The phone's bootloader starts the "kernel": the boot shim copies the UEFI image to its base and the
-payload (an "XNUP" container, loader/mkpayload.py) to the address the loader finds it at. The UEFI
+payload (an "XNUP" container, arch/arm64/boot/mkpayload.py) to the address the loader finds it at. The UEFI
 then starts loader.efi from the payload. Nothing is written to the phone's storage.
 
 What is the board's: the [uefi] section of its board.toml (fd_base, fd_size, header_version), and three
@@ -28,7 +28,7 @@ import struct
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[3]         # (the repository: this is arch/arm64/boot)
 sys.path.insert(0, str(REPO / 'tools'))
 import boards  # noqa: E402  (devices/NAME/board.toml)
 
@@ -95,7 +95,7 @@ def pack(shim, image, dtb, payload, uefi):
         raise SystemExit(f'mkboot.py: the shim puts the UEFI at {at:#x}, {size:#x} bytes; [uefi] says '
                          f'{uefi["fd_base"]:#x}, {uefi["fd_size"]:#x}')
     if payload and payload[:4] != PAYLOAD_MAGIC:
-        raise SystemExit('mkboot.py: the payload is not an XNUP container (loader/mkpayload.py)')
+        raise SystemExit('mkboot.py: the payload is not an XNUP container (arch/arm64/boot/mkpayload.py)')
     if len(payload) > PAYLOAD_MAX - 0x1000:
         raise SystemExit(f'mkboot.py: the payload is {len(payload)} bytes; the UEFI reserves {PAYLOAD_MAX:#x} for '
                          f'it. Send big images over USB instead (bench ramdisk)')

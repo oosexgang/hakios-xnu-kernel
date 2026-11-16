@@ -5,7 +5,7 @@
 - `kernel/overlay/` and `kernel/patches/` modify and extend Apple's xnu, published under the Apple Public Source
   License 2.0, and are distributed under the same licence (`LICENSES/APSL-2.0.txt`).
 - `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
-  HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `loader/` and `kernel/deps/`, which were `base/xnuloader/` and
+  HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `arch/arm64/boot/` and `kernel/deps/`, which were `base/xnuloader/` and
   `base/xnu-deps/`.
 - `tools/`, `workbench/`, `devices/` of this repository and the documentation written for it: MIT (`LICENSES/MIT.txt`).
 

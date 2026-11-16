@@ -1,9 +1,9 @@
 /*
- * Where the loader finds the Darwin system image on the phone (loader/src/dsu_extents.c, dsu_place.c),
+ * Where the loader finds the Darwin system image on the phone (arch/arm64/boot/src/dsu_extents.c, dsu_place.c),
  * compiled as it is into a host program. The image is stored the way Android stores a "DSU" system:
  * as a partition, system_gsi, described by Android's lp_metadata in the metadata partition and lying
  * in pieces (extents) inside userdata. The loader reads that description from the phone -- and with
- * "oem dsu patch" writes into the image through it (loader/src/dsu_write.c). So what it takes from the
+ * "oem dsu patch" writes into the image through it (arch/arm64/boot/src/dsu_write.c). So what it takes from the
  * description has to lie inside userdata whatever the description says, and what it writes inside the
  * image's extents whatever it is asked; this is where both are tried.
  *

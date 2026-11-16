@@ -153,16 +153,16 @@ class Repository(unittest.TestCase):
             self.assertIn(f'badge/XNU-{tag}-', (ROOT / name).read_text(), f"{name}'s badge is of another release")
 
     def test_the_loader_is_its_parts_and_its_readme_names_each(self):
-        # every file of loader/src is included by loader.c once, and has its row in the README's table
-        unit = (ROOT / 'loader/loader.c').read_text()
-        readme = (ROOT / 'loader/README.md').read_text()
+        # every file of arch/arm64/boot/src is included by loader.c once, and has its row in the README's table
+        unit = (ROOT / 'arch/arm64/boot/loader.c').read_text()
+        readme = (ROOT / 'arch/arm64/boot/README.md').read_text()
         included = re.findall(r'(?m)^#include "src/([\w.]+)"', unit)
-        there = sorted(path.name for path in (ROOT / 'loader/src').iterdir())
+        there = sorted(path.name for path in (ROOT / 'arch/arm64/boot/src').iterdir())
         self.assertEqual(sorted(included), there)
         self.assertEqual(len(included), len(set(included)))
         for name in included:
-            self.assertIn(f'| `src/{name}` |', readme, f'loader/README.md has no row for src/{name}')
-            first = (ROOT / 'loader/src' / name).read_text().split('\n')[0]
+            self.assertIn(f'| `src/{name}` |', readme, f'arch/arm64/boot/README.md has no row for src/{name}')
+            first = (ROOT / 'arch/arm64/boot/src' / name).read_text().split('\n')[0]
             self.assertTrue(first.startswith('/* Part of the loader (included by loader.c, not compiled alone): '), name)
         self.assertEqual(len(re.findall(r'(?m)^\| `src/', readme)), len(included) + 1)     # (and the row of src/ itself)
         # the drivers' list: every start function it calls is called once
@@ -200,7 +200,7 @@ class Repository(unittest.TestCase):
                     found.setdefault(name, fields)
             return found
 
-        loader = sources('loader/src/*.c', 'loader/src/*.h')
+        loader = sources('arch/arm64/boot/src/*.c', 'arch/arm64/boot/src/*.h')
         kernel = sources('kernel/overlay/bsd/dev/board/*.c', 'kernel/overlay/bsd/dev/board/*.h', 'kernel/overlay/bsd/sys/board/*.h',
                          'kernel/overlay/osfmk/arm64/*.c', 'kernel/overlay/osfmk/arm64/*.h')
         ours, theirs = defines(loader), defines(kernel)
@@ -228,14 +228,14 @@ class Repository(unittest.TestCase):
 
     def test_the_loader_writes_to_storage_where_its_readme_says_and_nowhere_else(self):
         places = {}
-        for path in sorted((ROOT / 'loader').rglob('*.[ch]')):
+        for path in sorted((ROOT / 'arch/arm64/boot').rglob('*.[ch]')):
             count = len(re.findall(r'->write_blocks\(', path.read_text()))
             if count:
-                places[path.relative_to(ROOT / 'loader').as_posix()] = count
+                places[path.relative_to(ROOT / 'arch/arm64/boot').as_posix()] = count
         self.assertEqual(places, {'src/logstore.c': 1, 'src/dsu_write.c': 1, 'src/ufs_service.c': 1})
-        section = (ROOT / 'loader/README.md').read_text().split('## What it writes to the phone\'s storage')[1]
+        section = (ROOT / 'arch/arm64/boot/README.md').read_text().split('## What it writes to the phone\'s storage')[1]
         for place in places:
-            self.assertIn(f'`{place}`', section, f'loader/README.md does not say that {place} writes to the storage')
+            self.assertIn(f'`{place}`', section, f'arch/arm64/boot/README.md does not say that {place} writes to the storage')
 
     def test_no_driver_has_an_address_of_a_chip(self):
         # Where a block of the SoC is comes from the board's data: a driver that names an address is one
@@ -254,7 +254,7 @@ class Repository(unittest.TestCase):
         barrier = re.compile(r'__asm__\s+(?:__volatile__|volatile)\s*\(\s*"\s*(dsb|dmb|isb|dc\s)[^;]*?\)\s*;', re.S)
         wrong = []
         for path in sorted(list((ROOT / 'kernel/overlay').rglob('*.[ch]')) + list((ROOT / 'kernel/overlay').rglob('*.cpp')) +
-                           list((ROOT / 'loader').rglob('*.[ch]'))):
+                           list((ROOT / 'arch/arm64/boot').rglob('*.[ch]'))):
             text = path.read_text(errors='replace')
             for found in barrier.finditer(text):
                 if '"memory"' not in found.group(0):
@@ -273,10 +273,10 @@ class Repository(unittest.TestCase):
         # boot_args is written by the loader (src/xnu.h) and read by the kernel through boot.h (kernel/patches/0002). The
         # line's length moves bootFlags and memSizeActual: when the two disagree the kernel sizes its memory
         # from whatever lies past what the loader wrote, and panics in its first second.
-        loader = re.findall(r'(?m)^#define BOOT_LINE_LENGTH (\d+)$', (ROOT / 'loader/src/xnu.h').read_text())
+        loader = re.findall(r'(?m)^#define BOOT_LINE_LENGTH (\d+)$', (ROOT / 'arch/arm64/boot/src/xnu.h').read_text())
         kernel = re.findall(r'(?m)^\+#define BOOT_LINE_LENGTH (\d+)$',
                             (ROOT / 'kernel/patches/0002-platform-arm64.patch').read_text())
-        self.assertEqual(len(loader), 1, 'loader/src/xnu.h defines BOOT_LINE_LENGTH once')
+        self.assertEqual(len(loader), 1, 'arch/arm64/boot/src/xnu.h defines BOOT_LINE_LENGTH once')
         self.assertEqual(len(kernel), 1, 'the patch sets boot.h BOOT_LINE_LENGTH once')
         self.assertEqual(loader, kernel, 'the loader and the kernel disagree on the length of the boot line')
 

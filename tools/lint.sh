@@ -1,7 +1,7 @@
 #!/bin/bash
 # The checks of form, for every file the repository tracks:
 #   - every shell script parses (bash -n), every Python script parses
-#   - the scripts of the current workflow (kernel/, loader/, darwin/, workbench/, tools/) pass shellcheck
+#   - the scripts of the current workflow (kernel/, arch/arm64/boot/, darwin/, workbench/, tools/) pass shellcheck
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
@@ -24,7 +24,7 @@ while IFS= read -r script; do
 done < <(git ls-files '*.py')
 
 if command -v shellcheck > /dev/null; then
-	shellcheck -S warning kernel/*.sh kernel/deps/*.sh kernel/deps/build/*/*.sh loader/*.sh darwin/userland/*.sh \
+	shellcheck -S warning kernel/*.sh kernel/deps/*.sh kernel/deps/build/*/*.sh arch/arm64/boot/*.sh darwin/userland/*.sh \
 		workbench/*.sh tools/*.sh bench build.config.* || failed=1
 else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"

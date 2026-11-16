@@ -31,7 +31,7 @@ qemu-kernel.log
 # the package manager's prefix userland/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages
 /userland/jb/
 
-# a phone's own files, taken from it or built from its firmware (loader/mkboot.py, Documentation/porting.md): never published
+# a phone's own files, taken from it or built from its firmware (arch/arm64/boot/mkboot.py, Documentation/porting.md): never published
 /firmware/
 
 # what bench makes and fetches: its logs, the images it sends
@@ -40,5 +40,5 @@ qemu-kernel.log
 /usb-payload.bin
 /run-payload.bin
 
-# made by loader/build.sh from the device tree of your own IPSW (loader/mkidentity.py): Apple's data
-/loader/identity.h
+# made by arch/arm64/boot/build.sh from the device tree of your own IPSW (arch/arm64/boot/mkidentity.py): Apple's data
+/arch/arm64/boot/identity.h

@@ -223,7 +223,7 @@
 		// statusbar-leading-shift = <24>; // points (not pixels) the status bar's leading items move right
 	// };
 
-	// The loader (loader/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
+	// The loader (arch/arm64/boot/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
 	// reports. Needs platform { } in the SoC file. Leave the section out while the phone is started another way.
 	// loader {
 		// fb-base = <0xE1000000>;      // what the loader prints at start: "display W x H at ..." (Documentation/porting.md,
@@ -233,7 +233,7 @@
 		//                              // through them and hands it to the kernel (feature "battery-uefi")
 	// };
 
-	// Its UEFI, as loader/mkboot.py packs it for `fastboot boot`; the build itself is in firmware/NAME/uefi/.
+	// Its UEFI, as arch/arm64/boot/mkboot.py packs it for `fastboot boot`; the build itself is in firmware/NAME/uefi/.
 	// uefi {
 		// fd-base = <0x9FD00000>;      // where the UEFI runs: FD_BASE of its port's memory map (BootShim's header
 		//                              // says the same; mkboot.py compares them)

@@ -77,8 +77,8 @@ The libraries and the images are the same for every phone. These things are not:
   when it was built; on a board that is not in the table, or gives no shift, it does nothing.
 - **The phone's firmware** (GPU, Wi-Fi DSP), from `firmware/BOARD/fw/` into the small image.
 - **The boot arguments:** `[boot]` of the board file, which `bench run` reads (`BENCH_CMDLINE` adds or replaces one).
-- **Which iPhone Darwin is told it is,** and through that the screen layout: `identity.h`, which `loader/build.sh`
-  makes from the IPSW's device tree (`loader/mkidentity.py`).
+- **Which iPhone Darwin is told it is,** and through that the screen layout: `identity.h`, which `arch/arm64/boot/build.sh`
+  makes from the IPSW's device tree (`arch/arm64/boot/mkidentity.py`).
 
 The SpringBoard addresses in `inj26.sh` and the values in `fips26.py` belong to a Darwin build, not to a phone.
 

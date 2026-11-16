@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""loader/mkboot.py: the boot image a phone's bootloader is given, made of a UEFI that is not a real one."""
+"""arch/arm64/boot/mkboot.py: the boot image a phone's bootloader is given, made of a UEFI that is not a real one."""
 import hashlib
 import importlib.util
 import struct
@@ -8,7 +8,7 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('mkboot', ROOT / 'loader/mkboot.py')
+spec = importlib.util.spec_from_file_location('mkboot', ROOT / 'arch/arm64/boot/mkboot.py')
 mkboot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mkboot)
 

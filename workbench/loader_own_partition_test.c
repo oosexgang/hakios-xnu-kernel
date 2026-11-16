@@ -1,5 +1,5 @@
 /*
- * The loader's answer to "is this the one partition a write may reach?" (loader/src/own_partition.c),
+ * The loader's answer to "is this the one partition a write may reach?" (arch/arm64/boot/src/own_partition.c),
  * compiled as it is into a host program, with the boards the tests' tables describe. A wrong yes here is
  * a write into somebody's partition; so every field of the answer has a scenario in which it alone is
  * off, and so has a board that names no such partition at all.

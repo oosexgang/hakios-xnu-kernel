@@ -1,5 +1,5 @@
 """tools/identity.py: a phone's seed is made once and kept, outside any checkout, and gives what the loader
-(loader/src/unit.c) makes of it -- workbench/loader_test.c holds the loader to the same values.
+(arch/arm64/boot/src/unit.c) makes of it -- workbench/loader_test.c holds the loader to the same values.
 
     python3 workbench/identity_test.py
 """

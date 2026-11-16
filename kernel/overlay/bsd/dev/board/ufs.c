@@ -73,7 +73,7 @@
  * and the cryptexes behind it. Which partition that is on a phone, and from which block, is the
  * board file's storage { } (board/board.h); a board that names none takes no write at all. The loader
  * keeps the same bounds from the same file, and the GUIDs of the partition besides
- * (loader/src/own_partition.c).
+ * (arch/arm64/boot/src/own_partition.c).
  */
 #define UFS_OWN            (hakios_board() != NULL && hakios_board()->storage.blocks != 0)
 #define UFS_WRITE_FIRST    (UFS_OWN ? hakios_board()->storage.write_first : UINT64_MAX)        /* darwin's blocks of 4096 */

@@ -1,5 +1,5 @@
 /*
- * Where the loader puts a download over USB, and how much it lets come (loader/src/download.c), compiled
+ * Where the loader puts a download over USB, and how much it lets come (arch/arm64/boot/src/download.c), compiled
  * as it is into a host program. The host says the size; the loader writes it into its own memory as it
  * arrives. So every combination of the commands before it has to come out inside the place it names --
  * above all after "oem ramdisk patch", whose image may have gone in the meantime.

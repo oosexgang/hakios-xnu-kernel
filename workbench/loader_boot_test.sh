@@ -49,7 +49,7 @@ cp "$LOADER" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
 # boot: until the loader says it jumps to the kernel (or a minute), what it said
 boot() {
 	local args=$1 log=$2
-	python3 "$HERE/../loader/mkpayload.py" -o "$W/payload.bin" kernel="$W/kernel" ${args:+--cmdline "$args"} > /dev/null
+	python3 "$HERE/../arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$W/kernel" ${args:+--cmdline "$args"} > /dev/null
 	cp "${FIRMWARE%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 	timeout 120 qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -m 4G \
 		-drive if=pflash,format=raw,readonly=on,file="$FIRMWARE" -drive if=pflash,format=raw,file="$W/vars.fd" \

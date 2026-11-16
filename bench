@@ -17,7 +17,7 @@
 #   bench hang             make the loader hang on purpose: tests the watchdog
 #   bench memmap           the phone's memory map as its firmware reports it
 #   bench reboot           cold-reset the phone (back to Android)
-#   bench reload           restart into a freshly built loader (after loader/build.sh)
+#   bench reload           restart into a freshly built loader (after arch/arm64/boot/build.sh)
 #
 # Which phone: BENCH_BOARD (or HAKIOS_BOARD), else the only device package here with a [uefi] section
 # (tools/device.py add NAME; HAKIOS_DEVICES as for the builds). Its board file gives the boot arguments
@@ -200,9 +200,9 @@ enter() {
 		return 0
 	fi
 	check_product
-	[ -f $L ] || die "no $L: loader/build.sh"
-	loader/mkpayload.py -o usb-payload.bin loader.efi=$L --usb > /dev/null || die "the payload was not made"
-	loader/mkboot.py --board "$BOARD" -p usb-payload.bin -o resident.img > /dev/null || exit 1
+	[ -f $L ] || die "no $L: arch/arm64/boot/build.sh"
+	arch/arm64/boot/mkpayload.py -o usb-payload.bin loader.efi=$L --usb > /dev/null || die "the payload was not made"
+	arch/arm64/boot/mkboot.py --board "$BOARD" -p usb-payload.bin -o resident.img > /dev/null || exit 1
 	# Right after the phone enters its bootloader the first "boot" is sometimes not taken: twice.
 	for _ in 1 2; do
 		FB_TIMEOUT=40 fb boot resident.img | grep -q OKAY || { sleep 3; continue; }
@@ -285,7 +285,7 @@ run() { # run OEM-COMMAND LABEL
 		*" wifi="*) [ -s "firmware/$BOARD/wifi-mac" ] && args="$args wifi_mac=$(tr -d ' \n\r' < "firmware/$BOARD/wifi-mac")" ;;
 		esac
 		say "$BOARD: $args"
-		loader/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} \
+		arch/arm64/boot/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} \
 			--cmdline "loader_return_after=${BENCH_SECS:-180} epoch=$(date +%s) $args" > /dev/null || return 1
 		FB_TIMEOUT=60 fb stage run-payload.bin | grep -q OKAY || { say "the upload failed"; return 1; }
 	fi

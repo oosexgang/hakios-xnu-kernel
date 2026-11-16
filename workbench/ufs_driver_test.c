@@ -4,7 +4,7 @@
  * core 0 with UEFI's driver, through a page of memory and a buffer. So the model here is that loader: a
  * thread that answers what the page asks, over a made-up disk, and that notes every request -- above all
  * every write, with whether it is one the port may make: into its own partition, past what the build
- * puts there. The loader on a phone refuses the others of its own accord (loader/src/own_partition.c,
+ * puts there. The loader on a phone refuses the others of its own accord (arch/arm64/boot/src/own_partition.c,
  * workbench/loader_own_partition_test.c); this test is that the kernel never asks for one.
  *
  *   ufs_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics

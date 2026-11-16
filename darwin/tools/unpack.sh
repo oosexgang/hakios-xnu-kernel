@@ -6,7 +6,7 @@
 #   DIR/cryptex/app/     the App cryptex (Cryptex1,AppOS)
 #   DIR/dyld             a link to the shared cache's directory in cryptex/os
 #   DIR/var.skel         the template of /private/var, with owners and modes (mkvarskel.py)
-#   DIR/DeviceTree.bin   the iPhone's device tree, decoded: loader/build.sh takes its identity from it
+#   DIR/DeviceTree.bin   the iPhone's device tree, decoded: arch/arm64/boot/build.sh takes its identity from it
 #   DIR/BuildManifest.plist
 #
 #   darwin/tools/unpack.sh IPSW [DIR]       DIR: the directory of the IPSW

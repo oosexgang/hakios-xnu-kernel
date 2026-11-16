@@ -47,7 +47,7 @@ BOARD_HEADER = ROOT / 'kernel/overlay/bsd/dev/board/board.h'
 # in the repository: it is made from whichever device packages are there when something is built.
 OUT = ROOT / 'build/boards'
 KERNEL_TABLE = 'board_table.h'   # the kernel's table (bsd/dev/board/board.c includes it)
-LOADER_TABLE = 'platforms.h'            # the loader's (loader/src/platform.h includes it)
+LOADER_TABLE = 'platforms.h'            # the loader's (arch/arm64/boot/src/platform.h includes it)
 USER_TABLE = 'user_boards.h'          # user space's (darwin/userland/)
 # Where else device packages are looked for, besides devices/: the directories of --devices and of
 # HAKIOS_DEVICES (as PATH is written). A package is DIR/NAME/board.dts with DIR/NAME/soc.dtsi.

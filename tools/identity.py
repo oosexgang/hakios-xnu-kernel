@@ -5,7 +5,7 @@
                                   argument identity=SEED, and what the loader makes of it
   tools/identity.py --seed SEED   what a seed gives
 
-The loader (loader/src/unit.c) takes all of a unit's identity from one 64-bit seed: the serial number (10
+The loader (arch/arm64/boot/src/unit.c) takes all of a unit's identity from one 64-bit seed: the serial number (10
 characters, digits and capitals without I and O, as Apple's randomised ones), the logic board's serial (17),
 the ECID (52 bits), the Wi-Fi and Bluetooth addresses (unicast, locally administered) and the boot manifest's
 hash. Given the same seed at every boot, the phone stays the same device to Darwin; without one it is another at

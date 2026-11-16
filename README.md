@@ -113,7 +113,7 @@ Then build: [Documentation/building.md](Documentation/building.md). For a phone 
 | --- | --- |
 | `devices/` | The templates, the emulator's package, and the packages you bring in: each a board file and its chip's SoC file. |
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
-| `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
+| `arch/arm64/boot/` | What starts the arm64 kernel, where Linux's tree keeps it: the UEFI application (the loader) that makes Apple's device tree and stays resident for the kernel's log, and the tools that pack its payload and the phone's boot image. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
 | `userland/` | Earlier user-space sources still in use or being ported: init, the libraries inserted into Darwin's programs, APFS image tools. |
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |

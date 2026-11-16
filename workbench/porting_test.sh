@@ -51,10 +51,11 @@ says() {
 
 # --- a copy of what a port touches ----------------------------------------------------------------
 R=$W/repo
-mkdir -p "$R/kernel/overlay/bsd/dev" "$R/workbench"
-cp -r "$REPO/devices" "$REPO/tools" "$REPO/loader" "$R/"
+mkdir -p "$R/kernel/overlay/bsd/dev" "$R/workbench" "$R/arch/arm64"
+cp -r "$REPO/devices" "$REPO/tools" "$R/"
+cp -r "$REPO/arch/arm64/boot" "$R/arch/arm64/"
 # (the iPhone identity with nothing of Apple's in it: the one made from an IPSW is somebody's own)
-python3 "$R/loader/mkidentity.py" --placeholder > "$R/loader/identity.h"
+python3 "$R/arch/arm64/boot/mkidentity.py" --placeholder > "$R/arch/arm64/boot/identity.h"
 cp -r "$REPO"/kernel/overlay/bsd/dev/board "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/workbench/fakekernel" "$R/workbench/"
 B="$R/tools/boards.py"
@@ -138,7 +139,7 @@ check "... with the machine as the SoC file has it" \
 	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
 	check "the loader builds with the new board" \
-		sh -c "clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar -mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I\"$R/build/boards\" -c \"$R/loader/loader.c\" -o \"$W/loader.obj\" && lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \"/out:$W/loader.efi\" \"$W/loader.obj\""
+		sh -c "clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar -mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I\"$R/build/boards\" -c \"$R/arch/arm64/boot/loader.c\" -o \"$W/loader.obj\" && lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \"/out:$W/loader.efi\" \"$W/loader.obj\""
 	check "... and carries the board's name for the kernel" grep -q testphone "$W/loader.efi"
 fi
 

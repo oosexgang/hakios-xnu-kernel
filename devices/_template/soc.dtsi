@@ -170,7 +170,7 @@
 		                                // qcom,freq-domain); one to four groups, together platform { } cores
 	};
 
-	// What the loader (loader/) tells the kernel of the machine, for boards with a loader { } section.
+	// What the loader (arch/arm64/boot/) tells the kernel of the machine, for boards with a loader { } section.
 	platform {
 		io-base = <0x00400000>;         // one window over the SoC's peripherals; never 0. Not in a device tree;
 		                                // needed once a board has a loader { } section

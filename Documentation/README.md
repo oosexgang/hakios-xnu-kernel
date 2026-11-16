@@ -29,7 +29,7 @@ Next to the code:
 | [../tools/README.md](../tools/README.md) | The tools, one line each. |
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
-| [../loader/README.md](../loader/README.md) | The loader. |
+| [../arch/arm64/boot/README.md](../arch/arm64/boot/README.md) | The loader. |
 | [../darwin/README.md](../darwin/README.md) | What Darwin's user space needs: each library and tool, and what each needs. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
 | [../components](../components) | Everything taken from elsewhere, at the exact version, with its licence. |

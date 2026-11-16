@@ -13,7 +13,7 @@ In more detail:
 stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the phone; nothing is flashed)
                                       │
                                       ▼
-                         loader (loader/, a UEFI application)
+                         loader (arch/arm64/boot/, a UEFI application)
                            - finds its board by the framebuffer the UEFI reports
                            - builds the Apple-format device tree and boot_args
                            - passes the board's name in /chosen/darwin-board
@@ -40,7 +40,7 @@ A reboot brings Android back.
 | --- | --- | --- |
 | **Device data** | A device package per phone (`NAME/board.dts` and `NAME/soc.dtsi`, kept on the `devices` branch) | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
-| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `darwin/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
+| **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `arch/arm64/boot/`, `darwin/` | Apple's kernel or Darwin changes, or the port learns something new. Same for every device. |
 
 The aim is that a new phone, on a known SoC or a new one, is a change to the first row only. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
 
@@ -79,7 +79,7 @@ device packages                     tools/boards.py gen        build/boards/boar
 - The generated files are not committed. `tools/boards.py gen` writes them into `build/boards/`
   (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
   a directory of their own: `kernel/build.sh` (which puts the kernel's table
-  into the assembled tree as `bsd/dev/board/board_table.h`, only when it changed), `loader/build.sh`,
+  into the assembled tree as `bsd/dev/board/board_table.h`, only when it changed), `arch/arm64/boot/build.sh`,
   `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `workbench/run.sh`. So the kernel, the loader and
   the libraries know the boards whose packages were present when they were built, and the data and the
   code cannot drift apart. Built with no package, they know only the emulator's board.
@@ -138,14 +138,14 @@ More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../ker
 
 ## The loader
 
-The loader is one compilation unit, `loader/loader.c`, made of parts by topic in `loader/src/`: UEFI
+The loader is one compilation unit, `arch/arm64/boot/loader.c`, made of parts by topic in `arch/arm64/boot/src/`: UEFI
 glue, the payload format ("XNUP": kernel + images + boot arguments), the device tree it builds for
 XNU, the kernel's memory, the USB link, the phone's storage. It needs nothing of EDK2 to build.
-Its knowledge of machines is `platforms.h`, which `loader/build.sh` generates from the device packages
+Its knowledge of machines is `platforms.h`, which `arch/arm64/boot/build.sh` generates from the device packages
 that are present. No phone is named in its code: what differs between boards, down to whether the battery
 is read through the firmware's Qualcomm charger protocols (`uefi-charger`), is in the board file's
 `loader { }` section.
-More: [loader/README.md](../loader/README.md).
+More: [arch/arm64/boot/README.md](../arch/arm64/boot/README.md).
 
 ## Darwin user space
 

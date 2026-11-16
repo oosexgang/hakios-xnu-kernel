@@ -97,15 +97,15 @@ in `base/uefi/` (`apply.sh PHONE_FILES` puts both into a clone): the two changes
 The reserved address is a convention between the shim and the loader: 0xF0000000, 64 MB, on the
 first phones. It has to be RAM in your phone's memory map that the firmware does not use for
 anything else. If it cannot be there, change it in the shim and build the loader to match
-(`LOADER_CFLAGS="-DPAYLOAD_BASE=... -DPAYLOAD_MAX_SIZE=..." loader/build.sh`;
-`loader/src/conventions.h` has both). The loader keeps the kernel's memory clear of that range.
+(`LOADER_CFLAGS="-DPAYLOAD_BASE=... -DPAYLOAD_MAX_SIZE=..." arch/arm64/boot/build.sh`;
+`arch/arm64/boot/src/conventions.h` has both). The loader keeps the kernel's memory clear of that range.
 
 ## 3. The loader
 
 Build it and start it once without a kernel:
 
 ```sh
-loader/build.sh
+arch/arm64/boot/build.sh
 ```
 
 At start it prints `display W x H at ADDRESS`. Put that address in the board file:
@@ -116,7 +116,7 @@ At start it prints `display W x H at ADDRESS`. Put that address in the board fil
 	};
 ```
 
-and run `loader/build.sh` again (it makes its table of boards itself). From now on the loader
+and run `arch/arm64/boot/build.sh` again (it makes its table of boards itself). From now on the loader
 recognises the phone, prints `platform mido`, and passes `darwin-board = "mido"` to the kernel.
 
 ## 4. First boot: nothing but the display
@@ -193,7 +193,7 @@ nothing. That is deliberate: these drivers write to pins and PMIC registers.
 The user-space side is the same for every phone: the libraries in `darwin/userland/` and the images
 built by `darwin/tools/`. What depends on the device is small:
 
-- which iPhone Darwin is told it is (`identity.h`, which `loader/build.sh` makes from the IPSW's device tree), and through that the screen layout;
+- which iPhone Darwin is told it is (`identity.h`, which `arch/arm64/boot/build.sh` makes from the IPSW's device tree), and through that the screen layout;
 - the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
   of `screen { }` in the board file, in points (`darwin/userland/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `boot { }` section.
@@ -266,7 +266,7 @@ Stated plainly, so nobody finds out the hard way:
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
   GPT entry in the board file's `storage { }`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
-  every field (`loader/src/own_partition.c`), the kernel asks for one only there
+  every field (`arch/arm64/boot/src/own_partition.c`), the kernel asks for one only there
   (`bsd/dev/board/ufs.c`), and the firmware bounds it to the partition. A board without
   `storage { }` is never written; reading works, the data volume lives in RAM.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet

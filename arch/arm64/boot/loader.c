@@ -21,7 +21,7 @@
 
 /*
  * The loader is one compilation unit: the parts below are included here, in this order, and are not
- * compiled alone. Each is a topic; a part may use what the parts before it define. loader/README.md
+ * compiled alone. Each is a topic; a part may use what the parts before it define. arch/arm64/boot/README.md
  * says what each is for.
  */
 #include "src/conventions.h"      /* what the boot shim, the packer and the kernel agree on with the loader */

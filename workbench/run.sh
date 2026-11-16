@@ -11,7 +11,7 @@ WORK=$(mktemp -d)
 # the iPhone identity with nothing of Apple's in it, for everything here that builds the loader or its parts:
 # identity.h is made from an IPSW, and one made on this machine must not decide what the tests see
 mkdir -p "$WORK/identity"
-python3 "$HERE/../loader/mkidentity.py" --placeholder > "$WORK/identity/identity.h"
+python3 "$HERE/../arch/arm64/boot/mkidentity.py" --placeholder > "$WORK/identity/identity.h"
 trap 'rm -rf "$WORK"' EXIT
 
 failed=0
@@ -33,7 +33,7 @@ python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 echo "== device packages (tools/device.py)"
 python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
-echo "== the boot image a phone is started with (loader/mkboot.py)"
+echo "== the boot image a phone is started with (arch/arm64/boot/mkboot.py)"
 python3 "$HERE/mkboot_test.py" 2>&1 | tail -3 || failed=1
 # The tables the code under test is built with: the repository's own boards and the tests' phones
 # (workbench/devices), which stand in for real ones -- device
@@ -45,13 +45,13 @@ BOARDS=$WORK/boards
 (source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/focaltech_fw.h") || failed=1
 
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
-# loader/build.sh; left out where they are not installed)
+# arch/arm64/boot/build.sh; left out where they are not installed)
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
-	echo "== loader (loader/loader.c and its parts in loader/src, with the generated platforms.h)"
+	echo "== loader (arch/arm64/boot/loader.c and its parts in arch/arm64/boot/src, with the generated platforms.h)"
 	# (in a directory of its own, with the identity that has nothing of Apple's: identity.h is made from an IPSW,
 	# and one made here must not decide whether this compiles)
 	mkdir -p "$WORK/loader"
-	cp -r "$HERE/../loader/loader.c" "$HERE/../loader/efi.h" "$HERE/../loader/src" "$WORK/loader/"
+	cp -r "$HERE/../arch/arm64/boot/loader.c" "$HERE/../arch/arm64/boot/efi.h" "$HERE/../arch/arm64/boot/src" "$WORK/loader/"
 	cp "$WORK/identity/identity.h" "$WORK/loader/"
 	if clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
 		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I"$BOARDS" -c "$WORK/loader/loader.c" -o "$WORK/loader.obj" &&
@@ -103,7 +103,7 @@ run synaptics_report_test -I"$SRC" "$HERE/synaptics_report_test.c"
 # the loader's parts that are plain C, and the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" -I"$WORK/identity" -I"$HERE/../loader" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" -I"$WORK/identity" -I"$HERE/../arch/arm64/boot" "$HERE/fakekernel/fakekernel.c")
 # (the last is the example driver of Documentation/writing-a-driver.md, which lives beside the guide)
 EXAMPLES=$HERE/../Documentation/examples
 # On the host, under the address and undefined-behaviour sanitizers where the compiler has them: a read or

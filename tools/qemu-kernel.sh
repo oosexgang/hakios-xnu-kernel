@@ -37,7 +37,7 @@
 #                       virtio keyboard and tablet (the kernel's buttons and touch screen)
 #
 # Needs qemu-system-aarch64 and an aarch64 UEFI (Debian/Ubuntu: qemu-system-arm qemu-efi-aarch64).
-# The kernel: kernel/build.sh (with LLVM's tools or theos'); the loader: loader/build.sh, made here if
+# The kernel: kernel/build.sh (with LLVM's tools or theos'); the loader: arch/arm64/boot/build.sh, made here if
 # it is not there.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -90,15 +90,15 @@ for code in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.
 	[ -f "$code" ] && firmware=$code && break
 done
 [ -n "$firmware" ] || die "no aarch64 UEFI firmware (apt: qemu-efi-aarch64)"
-[ -f "$HERE/loader/loader.efi" ] || "$HERE/loader/build.sh" > /dev/null || die "the loader does not build"
+[ -f "$HERE/arch/arm64/boot/loader.efi" ] || "$HERE/arch/arm64/boot/build.sh" > /dev/null || die "the loader does not build"
 
 W=$(mktemp -d)
 trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
 mkdir -p "$W/esp/EFI/BOOT"
-cp "$HERE/loader/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
+cp "$HERE/arch/arm64/boot/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
 # the console on the screen too only for a picture of it: in QEMU each line scrolls the whole framebuffer
 cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${with_devices:+ virtio_net=1 virtio_input=1}${disk:+ virtio_blk=1}${audio:+ virtio_sound=1} $args"
-python3 "$HERE/loader/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
+python3 "$HERE/arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
 	"--cmdline=${cmdline# }" > /dev/null || die "no payload"
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 [ -n "$monitor" ] || monitor=$W/monitor

@@ -127,8 +127,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   (`board/qrtr_frame.h`), the checks of a DSP's firmware image (`board/mdt.h`), the mailbox's and the
   doorbells' registers and whether the mailbox is usable (`board/ipc.h`). Each that has logic has a test
   of its own; the four checks that wrapped in both drivers were the first to move there.
-- **The loader is parts by topic.** `loader/loader.c` was one file of 5100 lines; it is the entry
-  point and a list of 24 parts in `loader/src/` now (the device tree's writer, the kernel's memory,
+- **The loader is parts by topic.** `arch/arm64/boot/loader.c` was one file of 5100 lines; it is the entry
+  point and a list of 24 parts in `arch/arm64/boot/src/` now (the device tree's writer, the kernel's memory,
   the USB commands, the storage, ...), still one compilation unit. The built `loader.efi` is the
   same byte for byte.
 - **The loader's plain-C parts run on the host**: its memory functions, the device tree's writer, the
@@ -247,7 +247,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | `renoir/kernel/build.sh` and its environment script | `kernel/build.sh`, `kernel/env.sh` |
 | `renoir/userland/`, `renoir/tools/` | `darwin/userland/`, `darwin/tools/` |
 | `renoir/docs/`, `renoir/workbench/` | `docs/`, `workbench/` |
-| `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
+| `base/xnuloader/`, `base/xnu-deps/` | `arch/arm64/boot/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, each with its `soc.dtsi` |
 | Files, functions, `/dev` nodes, the small image's libraries and mount point named after the first phone, `renoir_fts*`, `devices/*.toml` | `hakios_*`, `libhakios*`, `/hakios`, `board.dts` and `devices/*/soc.dtsi`; the first phone's package lists every former name |
 | The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, the build and tools of that kernel) | `legacy/` of its package on the `devices` branch |
@@ -283,7 +283,7 @@ says how the parts fit together, and [docs/README.md](Documentation/README.md) i
 
 - **Each phone has an identity of its own, of the real forms.** The loader gave every phone the same
   serial number (`HAKIOS000000`), ECID and addresses, some of them spelling the first phone's name. It now
-  makes them from one 64-bit seed (`loader/src/unit.c`): a serial number of 10 and an MLB serial of 17
+  makes them from one 64-bit seed (`arch/arm64/boot/src/unit.c`): a serial number of 10 and an MLB serial of 17
   characters (digits and capitals without I and O, as Apple's randomised ones), a 52-bit ECID, unicast,
   locally administered Wi-Fi and Bluetooth addresses, a 48-byte manifest hash. `tools/identity.py NAME`
   makes a phone's seed once and keeps it outside the checkout; `darwin/tools/boot26.py` passes it

@@ -85,7 +85,7 @@
 		domain-cores = <4 3 1>;         // the cores of each group, in the cores' order (qcom,freq-domain): small, big, prime
 	};
 
-	// What the loader tells the kernel of the machine (loader/src/platform.h, struct platform).
+	// What the loader tells the kernel of the machine (arch/arm64/boot/src/platform.h, struct platform).
 	platform {
 		io-base = <0x00400000>;         // one window over the SoC's peripherals; never 0
 		io-size = <0x3FC00000>;

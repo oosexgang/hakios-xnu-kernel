@@ -1,9 +1,9 @@
 /*
- * Parts of the loader (loader/src) that are plain C with nothing of a machine in them, compiled as
+ * Parts of the loader (arch/arm64/boot/src) that are plain C with nothing of a machine in them, compiled as
  * they are into a host program: its own memory and string functions, the writer of the device tree
  * the kernel is given, the NVRAM image, the payload's directory, the firmware's clock read as
  * seconds. What they write is read back here by code written from the formats' descriptions, not by
- * the loader's own; and what the packer writes (loader/mkpayload.py) is read by the loader's reader.
+ * the loader's own; and what the packer writes (arch/arm64/boot/mkpayload.py) is read by the loader's reader.
  *
  *   loader_test SCENARIO
  */
@@ -14,7 +14,7 @@
 
 #include "efi.h"
 
-/* an identity of the test's own, as loader/mkidentity.py writes one (identity.h, made from an IPSW, is not kept
+/* an identity of the test's own, as arch/arm64/boot/mkidentity.py writes one (identity.h, made from an IPSW, is not kept
  * here): a few properties of the shapes the loader is given, none of them a device's */
 struct identity_prop { const char *name; unsigned offset, length; };
 static const struct identity_prop identity_root[] = {
@@ -351,7 +351,7 @@ payload_begin(void)
 	said[0] = 0;
 }
 
-/* an entry as loader/mkpayload.py writes one: name, size, the bytes, padded to 16 */
+/* an entry as arch/arm64/boot/mkpayload.py writes one: name, size, the bytes, padded to 16 */
 static const uint8_t *
 entry(const char *name, const void *bytes, uint32_t size)
 {
@@ -415,7 +415,7 @@ payload(void)
 	CHECK(parse_payload(&info, 0) == 1 && info.kernel != NULL && info.usb_mode == 0, "nor past the size the header gives");
 }
 
-/* what the packer writes (loader/mkpayload.py), the loader reads: the two are run against each other */
+/* what the packer writes (arch/arm64/boot/mkpayload.py), the loader reads: the two are run against each other */
 static int
 packed(const char *directory, const char *arguments)
 {
@@ -427,7 +427,7 @@ packed(const char *directory, const char *arguments)
 	snprintf(tools, sizeof(tools), "%s", __FILE__);
 	*strrchr(tools, '/') = 0;
 	snprintf(path, sizeof(path), "%s/payload.bin", directory);
-	snprintf(command, sizeof(command), "cd '%s' && python3 '%s/../loader/mkpayload.py' -o payload.bin %s > /dev/null", directory, tools,
+	snprintf(command, sizeof(command), "cd '%s' && python3 '%s/../arch/arm64/boot/mkpayload.py' -o payload.bin %s > /dev/null", directory, tools,
 	    arguments);
 	if (system(command) != 0 || (file = fopen(path, "rb")) == NULL) {
 		return 0;

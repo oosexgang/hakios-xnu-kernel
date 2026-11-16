@@ -76,7 +76,7 @@ export HAKIOS_DEVICES=$PWD/../hakios-devices           # (или: tools/device.p
 
 make check                                             # всё, что не требует телефона
 tools/boards.py status renoir                          # что у телефона включено и чего не хватает
-loader/build.sh                                        # loader/loader.efi
+arch/arm64/boot/build.sh                                        # loader/loader.efi
 workbench/loader_boot_test.sh                          # загрузчик под настоящим UEFI в QEMU
 ```
 
@@ -199,7 +199,7 @@ python3 darwin/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
 - Каждая загрузка — первая (`/var` в ОЗУ): первые минуты системные демоны грузят процессор.
 - Нагрев не решён: ограничителя температуры для renoir в этой конфигурации нет.
 - Зерно серийных номеров (`identity=`) резидентный загрузчик `darwin-renoir` пока не читает: это
-  делает загрузчик этого репозитория (`loader/`).
+  делает загрузчик этого репозитория (`arch/arm64/boot/`).
 
 ## Если что-то не так
 

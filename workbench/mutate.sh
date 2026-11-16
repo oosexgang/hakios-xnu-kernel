@@ -33,7 +33,7 @@ test=$HERE/$name.c
 [ -f "$test" ] || die "no test $name (workbench/$name.c, Documentation/examples/$name.c)"
 # where the test finds the file: beside itself, among the kernel's drivers, in the loader
 original=
-for directory in "$(dirname "$test")" "$SRC" "$SRC/.." "$HERE/../loader"; do
+for directory in "$(dirname "$test")" "$SRC" "$SRC/.." "$HERE/../arch/arm64/boot"; do
 	if [ -f "$directory/$source" ]; then
 		original=$directory/$source
 		break
@@ -61,7 +61,7 @@ fi
 
 # (the flags of workbench/run.sh, the copy's directory first; under the sanitizers as there, where the
 # compiler has them: a change that reads or writes past a buffer is caught by them)
-flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -iquote "$SRC/board" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")
+flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -iquote "$SRC/board" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../arch/arm64/boot")
 if echo 'int main(void) { return 0; }' | "$CC" -fsanitize=address,undefined -x c - -o "$W/sanitizers" 2> /dev/null; then
 	flags+=(-O1 '-fsanitize=address,undefined' -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
 	export ASAN_OPTIONS=detect_leaks=0

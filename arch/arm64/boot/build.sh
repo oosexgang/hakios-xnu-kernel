@@ -10,15 +10,16 @@
 #
 # LOADER_CFLAGS adds to the compiler's flags: where the boot shim of a phone's UEFI puts the payload
 # elsewhere than at 0xF0000000, or reserves more than 64 MB for it, say so here, e.g.
-#   LOADER_CFLAGS="-DPAYLOAD_BASE=0xE8000000ULL -DPAYLOAD_MAX_SIZE=0x08000000ULL" loader/build.sh
-# (loader/src/conventions.h has both).
+#   LOADER_CFLAGS="-DPAYLOAD_BASE=0xE8000000ULL -DPAYLOAD_MAX_SIZE=0x08000000ULL" arch/arm64/boot/build.sh
+# (arch/arm64/boot/src/conventions.h has both).
 #
 # Which iPhone Darwin is told it runs on is identity.h, made here from the device tree of your own IPSW: the one
 # darwin/tools/unpack.sh leaves as $IOS/DeviceTree.bin (IOS: ios27 beside the repository), or IDENTITY=FILE.
 # Without one the loader gets a placeholder with nothing of Apple's in it: the open kernel starts, Darwin does not.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-DT=${IDENTITY:-${IOS:-$HERE/../../ios27}/DeviceTree.bin}
+TOP=$(cd "$HERE/../../.." && pwd)     # (the repository: this is arch/arm64/boot)
+DT=${IDENTITY:-${IOS:-$TOP/../ios27}/DeviceTree.bin}
 cd "$HERE"
 if [ -s "$DT" ]; then
 	python3 mkidentity.py "$DT" > identity.h.new
@@ -29,9 +30,9 @@ fi
 if [ -f identity.h.new ]; then
 	if cmp -s identity.h.new identity.h; then rm identity.h.new; else mv identity.h.new identity.h; fi
 fi
-../tools/boards.py gen
+"$TOP/tools/boards.py" gen
 clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
-  -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I../build/boards ${LOADER_CFLAGS:-} \
+  -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I"$TOP/build/boards" ${LOADER_CFLAGS:-} \
   ${LOADER_IDENTITY:+-DLOADER_IDENTITY="\"$(realpath "$LOADER_IDENTITY")\""} -c loader.c -o loader.obj
 # /base: UEFI loads an image at its preferred address when that is free. The PE default (0x140000000)
 # is in the middle of the phone's largest block of RAM, which XNU needs in one piece.

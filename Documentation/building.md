@@ -5,7 +5,7 @@ What can be built, from the least setup to the most.
 | What | Command | Needs |
 | --- | --- | --- |
 | The checks | `make check` | A C compiler, Python 3.11+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
-| The loader | `loader/build.sh` | `clang`, `lld`. |
+| The loader | `arch/arm64/boot/build.sh` | `clang`, `lld`. |
 | The kernel | `kernel/build.sh` | Linux, the system packages below with clang 19 or newer, theos or LLVM's Mach-O tools, and the device package of the phone it is for. |
 | Darwin images, and a boot | [darwin26-boot.md](darwin26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
 
@@ -27,7 +27,7 @@ sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g
 ## The loader
 
 ```sh
-loader/build.sh             # loader/loader.efi
+arch/arm64/boot/build.sh             # loader/loader.efi
 ```
 
 It includes `platforms.h`, the boards it knows, which the script first makes into `build/boards/` from

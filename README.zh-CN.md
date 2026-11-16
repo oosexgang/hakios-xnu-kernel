@@ -102,7 +102,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | --- | --- |
 | `devices/` | 模板、模拟器的设备包，以及你带入的设备包：每个包含一个板型文件和其芯片的 SoC 文件。 |
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
-| `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
+| `arch/arm64/boot/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
 | `darwin/` | Darwin 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
 | `components/metal/plugin/` | Adreno 的 Metal 驱动（hakios-metal，保留历史）：核心、AIR 编译器、CoreAnimation 通过它绘制的插件，以及针对模拟 GPU 的测试。 |
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |

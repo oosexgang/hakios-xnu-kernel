@@ -1,5 +1,5 @@
 /*
- * The loader's choice of the kernel's memory (loader/src/window.c), compiled as it is into a host
+ * The loader's choice of the kernel's memory (arch/arm64/boot/src/window.c), compiled as it is into a host
  * program and given memory maps a firmware might report. The kernel gets one block of RAM, the
  * largest free one, clear of the payload that sits in memory the firmware calls free; the loader
  * claims it from the firmware, which stays resident. A phone with another memory map is the first
