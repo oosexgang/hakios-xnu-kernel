@@ -1156,6 +1156,26 @@ fbfetch_mask(nir_shader *nir)
    return mask;
 }
 
+/* SOFTPIPE ONLY: a texture instruction that takes no sampler -- a fetch, a size or level query -- finds
+ * its view by the unit TGSI names for the sampler, and that number was 0 for every one of them: a kernel
+ * reading two textures read the first twice (tools/air/texarraycheck.sh). Its unit is its texture's. (A
+ * render stage's samples are renumbered so already, software_pair_samplers; a compute stage's were not.) */
+static void
+sw_samplerless_units(nir_shader *nir)
+{
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_tex)
+               continue;
+            nir_tex_instr *tex = nir_instr_as_tex(instr);
+            if (!nir_tex_instr_need_sampler(tex))
+               tex->sampler_index = tex->texture_index;
+         }
+      }
+   }
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
@@ -1166,6 +1186,7 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
    NIR_PASS(_, nir, nir_shader_intrinsics_pass, fold_tess_level_instr,
             nir_metadata_control_flow, NULL);
    if (!strcmp(screen->get_name(screen), "softpipe")) {
+      sw_samplerless_units(nir);
       NIR_PASS(_, nir, constant_data_to_ubo);
       NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes,
                &(nir_lower_mem_access_bit_sizes_options){
