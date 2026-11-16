@@ -302,6 +302,30 @@ def cases():
                 [slot_base(1 + (i & 1)) + i for i in range(THREADS)],
                 [(1, 0, 0, 0), (1, 1, 0, 1), (1, 2, 0, 2)], False, []))
 
+    # -- an ARRAY of descriptors in one member --------------------------------
+    # `device uint *in[2] [[id(1)]]`: Metal describes it as one member of 8 bytes and
+    # counts 2 in the field after the size, and the struct type has [2 x ptr] (ClothPhysics'
+    # restValues, ComputeGraph's constantBuffers). Each element is a member at its own
+    # place and [[id]]; read at the index the thread computes, as the case above.
+    sti = ('i32 0, i32 8, i32 0, !"ty_devrw_0", !"devrw0", !"air.indirect_argument", !10, '
+           'i32 8, i32 8, i32 2, !"ty_devro_1", !"arr", !"air.indirect_argument", !11')
+    nodes = ('!10 = !{i32 0, !"air.buffer", !"air.location_index", i32 0, i32 1, !"air.read_write", '
+             '!"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", '
+             '!"ty_devrw_0", !"air.arg_name", !"devrw0"}\n'
+             '!11 = !{i32 1, !"air.buffer", !"air.location_index", i32 1, i32 1, !"air.read", '
+             '!"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", '
+             '!"ty_devro_1", !"air.arg_name", !"arr"}')
+    src = (HEAD % ("argbuf_array", "ptr addrspace(1), [2 x ptr addrspace(1)]")
+           + "\ndefine void @argbuf_array(ptr addrspace(2) %0, i32 %1) local_unnamed_addr {\n"
+           + body.replace("ptr addrspace(1), ptr addrspace(2) %0, i64 %mi",
+                          "ptr addrspace(1), ptr addrspace(2) %0, i64 %mi")
+           + "\n  ret void\n}\n"
+           + TAIL % ("argbuf_array", 24, 24, sti, nodes))
+    out.append(("an array of descriptors in one member, chosen at run time",
+                ["devrw", "devro", "devro"], src,
+                [slot_base(1 + (i & 1)) + i for i in range(THREADS)],
+                [(1, 0, 0, 0), (1, 1, 0, 1), (1, 2, 0, 2)], False, []))
+
     # -- a phi of two copies of ONE getelementptr --------------------------
     # LLVM duplicates a getelementptr onto two paths and phis the copies back;
     # 207 of Resident Evil 4's pointer phis are that and none is anything else.

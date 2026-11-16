@@ -2138,6 +2138,10 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
                                 "is %u bytes at byte %u, and the module's struct type has "
                                 "only %u members", mname, ab->name ? ab->name : "unnamed",
                              (unsigned)msize, (unsigned)off, st->num_members);
+         /* (the third field is an array's element count: Metal describes `uchar swizzle[4]`
+          * as 1 byte, 4 of them -- MXI's comp_pbr_atlas_swizzle) */
+         if (flag > 1)
+            msize *= flag;
          if (air_struct_member_offset(c->m, st, n) != off ||
              air_type_alloc_size(c->m, st->members[n]) != msize)
             return air_error(c, "interface: the value member %s of the argument buffer %s "
@@ -2220,6 +2224,29 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
       const struct air_type *mt = st->members[n];
       uint64_t tyoff = air_struct_member_offset(c->m, st, n);
       uint64_t tysize = air_type_alloc_size(c->m, mt);
+      /* An ARRAY of descriptors: the third field counts them, the size is one element's, and
+       * the struct type has the array (ClothPhysics' six restValues buffers, ComputeGraph's two
+       * constantBuffers and 32 lists). Each element is a member of its own, at its own place
+       * and [[id]], which is what a shader indexing it at run time chooses among (argbuf_load,
+       * up to 32). A larger one -- MXI's 512 textures, VectorKit's 16 384 bindless buffers -- is
+       * a descriptor heap this frontend has no binding for. */
+      unsigned elements = 1;
+      if (flag > 1) {
+         if (flag > 32)
+            return air_error(c, "interface: member %s of the argument buffer %s is an array of "
+                                "%u descriptors, past the 32 this frontend can choose among",
+                             mname, ab->name ? ab->name : "unnamed", (unsigned)flag);
+         if (mt->kind != AIR_TYPE_ARRAY || mt->count != flag || tyoff != off ||
+             tysize != msize * flag)
+            return air_error(c, "interface: member %s of the argument buffer %s is %u "
+                                "descriptors of %u bytes at byte %u, and the module's struct "
+                                "type puts %u bytes there at %u", mname,
+                             ab->name ? ab->name : "unnamed", (unsigned)flag, (unsigned)msize,
+                             (unsigned)off, (unsigned)tysize, (unsigned)tyoff);
+         elements = (unsigned)flag;
+         mt = mt->elem;
+         tysize = msize;
+      }
       if (tyoff != off || tysize != msize)
          return air_error(c, "interface: member %s of the argument buffer %s is %u bytes "
                              "at byte %u, and the module's struct type puts %u bytes "
@@ -2267,14 +2294,17 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
                          : write ? AIR_RESOURCE_IMAGE : AIR_RESOURCE_TEXTURE;
       }
 
-      unsigned k = ab->num_members;
-      ab->members = reralloc(c->mem_ctx, ab->members, struct air_argbuf_member, k + 1);
-      ab->members[k] = (struct air_argbuf_member) {
-         .offset = base + off, .kind = rk, .metal_id = id_base + (unsigned)mid, .index = ~0u,
-         .addrspace = addrspace, .read = read, .write = write,
-         .name = mname, .type_name = mtype, .node = desc,
-      };
-      ab->num_members = k + 1;
+      for (unsigned e = 0; e < elements; e++) {
+         unsigned k = ab->num_members;
+         ab->members = reralloc(c->mem_ctx, ab->members, struct air_argbuf_member, k + 1);
+         ab->members[k] = (struct air_argbuf_member) {
+            .offset = base + off + e * msize, .kind = rk,
+            .metal_id = id_base + (unsigned)mid + e, .index = ~0u,
+            .addrspace = addrspace, .read = read, .write = write,
+            .name = mname, .type_name = mtype, .node = desc,
+         };
+         ab->num_members = k + 1;
+      }
    }
 
    /* padding the compiler put at the end of the struct (`[8 x i8]`) is no member */
