@@ -166,6 +166,9 @@ struct air_ctx {
    /* a post-tessellation vertex function's [[stage_in]] control points: the function Metal makes at
     * pipeline time that reads one (air.patch_control_point_function), and the attributes it returns,
     * in order */
+   /* the module reads a pointer of the device or constant space out of private memory somewhere
+    * (air_to_nir_attempt): a texture handle turned into an integer is then kept a pointer */
+   bool reads_ptr_from_local;
    const struct air_value *cp_fn;
    const struct air_md *cp_attr[16];
    unsigned cp_num_attrs;

@@ -1869,6 +1869,24 @@ translate_compute_stage_in(struct air_ctx *c, const struct air_md *node, unsigne
    return true;
 }
 
+/* Whether any function of the module loads a device or constant pointer out of private memory. */
+static bool
+module_reads_ptr_from_local(const struct air_module *m)
+{
+   for (unsigned f = 0; f < m->num_functions; f++) {
+      const struct air_function *fn = m->functions[f];
+      for (unsigned b = 0; fn && b < fn->num_blocks; b++)
+         for (unsigned i = 0; i < fn->blocks[b].num_insts; i++) {
+            const struct air_inst *in = fn->blocks[b].insts[i];
+            if (in->op == AIR_OP_LOAD && in->base.type && in->base.type->kind == AIR_TYPE_POINTER &&
+                in->num_operands > 0 && in->operands[0]->type &&
+                in->operands[0]->type->kind == AIR_TYPE_POINTER && in->operands[0]->type->addrspace == 0)
+               return true;
+         }
+   }
+   return false;
+}
+
 /* A call of the control-point function (above): control point k of this patch, its attributes read
  * as a [[stage_in]] is -- the k-th of the draw's control points counted from the patch's first, the
  * patch an instance (AIR_SV_PATCH_ID) -- and handed back as the struct the function returns. */
@@ -4198,6 +4216,17 @@ translate_cast(struct air_ctx *c, const struct air_inst *in)
     * field of a local struct and never reads it back -- is a token naming its binding, the
     * class in the high word: a handle has no address here, and a shader that did arithmetic
     * on it would be the first. Read back as a pointer it is refused, as any inttoptr is. */
+   /* (in a function that reads one back from a local as a pointer, the handle stays one: NRFV1's
+    * fuse kernels store `ptrtoint` of a texture into an SLImage on their stack and sample through
+    * the field in a callee. Kept so, the store puts the texture in the local's slot.) */
+   if (in->sub == AIR_CAST_PTRTOINT && c->reads_ptr_from_local) {
+      struct air_val *v = air_get(c, in->operands[0]);
+      if (v && v->kind == AIR_VAL_PTR &&
+          (v->ptr.class == AIR_PTR_TEXTURE || v->ptr.class == AIR_PTR_SAMPLER)) {
+         air_set(c, &in->base, v);
+         return true;
+      }
+   }
    if (in->sub == AIR_CAST_PTRTOINT) {
       struct air_val *v = air_get(c, in->operands[0]);
       if (v && v->kind == AIR_VAL_PTR &&
@@ -7888,6 +7917,8 @@ air_to_nir_attempt(void *mem_ctx, const void *bitcode, size_t size, const char *
       ralloc_free(ctx);
       return NULL;
    }
+
+   c.reads_ptr_from_local = module_reads_ptr_from_local(c.m);
 
    const struct air_md *entry = NULL;
    int stage = module_stage(c.m, &entry);

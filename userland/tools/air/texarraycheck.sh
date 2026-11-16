@@ -9,5 +9,7 @@ LLVM=${LLVM:-/usr/lib/llvm-20/bin}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 "$LLVM/llvm-as" -o "$WORK/ta.bc" "$ROOT/tools/air/tex_array.ll"
+"$LLVM/llvm-as" -o "$WORK/ti.bc" "$ROOT/tools/air/tex_int.ll"
 cc -O1 -I"$ROOT/tools/mesa/air" -o "$WORK/texarraycheck" "$ROOT/tools/air/texarraycheck.c" -L"$LIB" -lhakios-air -Wl,-rpath,"$LIB"
 RWA_SOFTWARE=1 "$WORK/texarraycheck" "$WORK/ta.bc"
+RWA_SOFTWARE=1 "$WORK/texarraycheck" "$WORK/ti.bc" int
