@@ -7071,6 +7071,12 @@ translation_key(const void *bitcode, size_t size, const char *entry,
          _mesa_blake3_update(&h, &l->constants[k], sizeof(l->constants[k]));
    }
    _mesa_blake3_update(&h, &opts->library_wrapper, sizeof(opts->library_wrapper));
+   /* and the layout a [[stage_in]] is read out of: one kernel or post-tessellation vertex function
+    * under two layouts is two translations */
+   bool has_stage_in = opts->stage_in != NULL;
+   _mesa_blake3_update(&h, &has_stage_in, sizeof(has_stage_in));
+   if (opts->stage_in)
+      _mesa_blake3_update(&h, opts->stage_in, sizeof(*opts->stage_in));
    _mesa_blake3_final(&h, key);
 }
 
