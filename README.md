@@ -52,7 +52,7 @@ brings it into a checkout.
   network, disks, files, sound, input, processes, threads, memory, IOKit and screen are tried there, with
   what BSD has a kernel refuse a user, a program and a file system; it runs its own tests there too, and
   boots on four processors and on one ([docs/qemu.md](docs/qemu.md), `make qemu`).
-- **Pinned inputs.** Everything taken from elsewhere is in [`components`](components), at an
+- **Pinned inputs.** Everything taken from elsewhere is in [`components/upstream.dts`](components/upstream.dts), at an
   exact version.
 
 ## How it boots
@@ -119,7 +119,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
 | `workbench/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree) and `qupclocks.py` (a serial engine's clocks, out of Linux's clock driver), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
-| `components` | Everything taken from elsewhere, pinned to an exact version. |
+| `components` | The parts of the port that make a subsystem of Darwin work (Metal, Apple ID, the SEP's keystore, ...), each in a directory of its own; `components/upstream.dts`: everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |
 | `base/` | The first generation's workspace (Darwin 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
 

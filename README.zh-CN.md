@@ -47,7 +47,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 - **QEMU 中的内核。** 内核像在手机上一样在模拟器中启动，进入它自己的 shell，并在那里检查网络、磁盘、
   文件、声音、输入、进程、线程、内存、IOKit 和屏幕，以及 BSD 要求内核对用户、程序和文件系统拒绝的操作；
   它在那里也运行内核自身的测试，并在四个和一个处理器上启动（[docs/qemu.md](docs/qemu.md)，`make qemu`）。
-- **固定版本的输入。** 从外部获取的所有内容都在 [`components`](components) 中，精确到版本。
+- **固定版本的输入。** 从外部获取的所有内容都在 [`components/upstream.dts`](components/upstream.dts) 中，精确到版本。
 
 ## 启动过程
 
@@ -108,7 +108,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
 | `workbench/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）和 `qupclocks.py`（从 Linux 时钟驱动中读取串行引擎的时钟）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
-| `components` | 从外部获取的所有内容及其固定版本。 |
+| `components` | 让 Darwin 某个子系统工作的移植部分（Metal、Apple ID、SEP 的密钥库……），各占一个目录；`components/upstream.dts`：从外部获取的所有内容及其固定版本。 |
 | `docs/` | 文档。 |
 | `base/` | 第一代工作区（Darwin 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
 

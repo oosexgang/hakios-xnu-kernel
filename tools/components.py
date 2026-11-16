@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boardfile  # noqa: E402  (the board files' syntax, which this file is in)
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / 'components'
+MANIFEST = ROOT / 'components/upstream.dts'
 KEYS = ('id', 'what', 'source', 'pins', 'pinned_in', 'used_for', 'licence')
 
 
