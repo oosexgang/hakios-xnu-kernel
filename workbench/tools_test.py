@@ -294,7 +294,7 @@ class Repository(unittest.TestCase):
             self.assertTrue(arguments, path.name)
             for argument in arguments.values():
                 name = argument.split('=', 1)[0]
-                if name == '-v':
+                if name in ('-v', 'cpus'):      # (XNU's own: the console on the screen, how many cores it starts)
                     continue
                 self.assertTrue(name in documented or f'{name}=' in darwin_side,
                                 f'{path.name}: {name} is read by nothing here')
