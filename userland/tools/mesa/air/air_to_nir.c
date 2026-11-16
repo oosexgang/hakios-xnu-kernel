@@ -177,16 +177,38 @@ ptr_encode(struct air_ctx *c, const struct air_val *v)
 }
 
 /* and back: the choice among the places by the second word, at the first word's offset */
+/* Whether a place can be what a pointer of this type points at: threadgroup memory is address
+ * space 3 and nothing else is. A pointer read back as `ptr addrspace(3)` is one of the
+ * threadgroup places -- MLX's implicit_gemm_conv keeps its tile's threadgroup pointer beside two
+ * constant ones in a local struct, and the choice among all three split the store through it
+ * into a store into constant memory, refused, though no thread could take that side. */
+static bool
+place_fits(const struct air_ptr *p, const struct air_type *pt)
+{
+   if (!pt || pt->kind != AIR_TYPE_POINTER)
+      return true;
+   bool shared = p->class == AIR_PTR_SHARED;
+   return pt->addrspace == 3 ? shared : !shared;
+}
+
 static struct air_val *
-ptr_decode(struct air_ctx *c, nir_def *words)
+ptr_decode(struct air_ctx *c, nir_def *words, const struct air_type *pt)
 {
    struct air_ptr_numeric *num = c->num;
    num->read = true;
    if (!num->num_places)
       return air_val_ptr(c, (struct air_ptr){ .class = AIR_PTR_NONE });
    nir_def *off = nir_channel(&c->b, words, 0), *which = nir_channel(&c->b, words, 1);
+   /* the places a pointer of its type can be, or all of them where none can */
+   bool any = false;
+   for (unsigned i = 0; i < num->num_places; i++)
+      any |= place_fits(&num->places[i], pt);
+   if (!any)
+      pt = NULL;
    struct air_val *chosen = NULL;
    for (int i = (int)num->num_places - 1; i >= 0; i--) {
+      if (!place_fits(&num->places[i], pt))
+         continue;
       struct air_ptr p = num->places[i];
       p.offset = off;
       struct air_val *v = air_val_ptr(c, p);
@@ -1301,7 +1323,7 @@ enum air_sysval {
    AIR_SV_THREADS_PER_TG, AIR_SV_TGS_PER_GRID, AIR_SV_THREAD_INDEX_TG,
    AIR_SV_THREADS_PER_GRID, AIR_SV_SIMD_LANE, AIR_SV_SIMD_INDEX, AIR_SV_SIMD_WIDTH, AIR_SV_QUAD_LANE, AIR_SV_QUAD_INDEX,
    AIR_SV_PRIMITIVE_ID,
-   AIR_SV_SIMDS_PER_TG,
+   AIR_SV_SIMDS_PER_TG, AIR_SV_QUADS_PER_TG,
    AIR_SV_AMPLIFICATION_ID, AIR_SV_AMPLIFICATION_COUNT, AIR_SV_VIEWPORT_INDEX,
    AIR_SV_DISPATCH_THREADS_PER_TG,
    AIR_SV_PATCH_ID, AIR_SV_POSITION_IN_PATCH,
@@ -1327,6 +1349,7 @@ static const struct { const char *key; enum air_sysval sv; } sysvals[] = {
    { "air.simdgroup_index_in_threadgroup", AIR_SV_SIMD_INDEX },
    { "air.threads_per_simdgroup", AIR_SV_SIMD_WIDTH },
    { "air.simdgroups_per_threadgroup", AIR_SV_SIMDS_PER_TG },
+   { "air.quadgroups_per_threadgroup", AIR_SV_QUADS_PER_TG },
    { "air.thread_index_in_quadgroup", AIR_SV_QUAD_LANE },
    { "air.quadgroup_index_in_threadgroup", AIR_SV_QUAD_INDEX },
    { "air.primitive_id", AIR_SV_PRIMITIVE_ID },
@@ -1455,6 +1478,15 @@ load_sysval(struct air_ctx *c, enum air_sysval sv)
     * to a constant whenever the workgroup size is one (ir3_nir.c).
     */
    case AIR_SV_SIMDS_PER_TG: return nir_load_num_subgroups(&c->b);
+   /* the quads of the threadgroup, four threads a quad as AIR_SV_QUAD_INDEX counts them:
+    * the threads rounded up to a whole quad */
+   case AIR_SV_QUADS_PER_TG: {
+      nir_def *size = nir_load_workgroup_size(&c->b);
+      nir_def *threads = nir_imul(&c->b, nir_imul(&c->b, nir_channel(&c->b, size, 0),
+                                                  nir_channel(&c->b, size, 1)),
+                                  nir_channel(&c->b, size, 2));
+      return nir_ushr_imm(&c->b, nir_iadd_imm(&c->b, threads, 3), 2);
+   }
    /* Which of the amplified views this vertex is, and which viewport a fragment was
     * rasterised for: the device answers 1 to -supportsVertexAmplificationCount: and draws
     * through one viewport (metal_driver.m -setViewports:count: takes the first), so both are
@@ -4947,7 +4979,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          nir_def *words = load_through_choice(c, p, &num_word_pair, MAX2(in->align, 4));
          if (!words)
             return false;
-         air_set(c, &in->base, ptr_decode(c, words));
+         air_set(c, &in->base, ptr_decode(c, words, in->base.type));
          return true;
       }
       if (p->kind == AIR_VAL_PTR_SELECT && choice_has_argbuf(p))
@@ -4980,7 +5012,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
             nir_def *words = air_load_ptr(c, p->ptr, &num_word_pair, MAX2(in->align, 4));
             if (!words)
                return false;
-            air_set(c, &in->base, ptr_decode(c, words));
+            air_set(c, &in->base, ptr_decode(c, words, in->base.type));
             return true;
          }
          if (!had) {
@@ -6310,7 +6342,7 @@ air_call_function(struct air_ctx *c, const struct air_inst *in, const struct air
       air_set(c, &in->base, load_ret_leaves(c, rt, fields, &at));
    } else if (has_ret) {
       air_set(c, &in->base, rt->kind == AIR_TYPE_POINTER
-                               ? ptr_decode(c, nir_load_var(&c->b, tmp))
+                               ? ptr_decode(c, nir_load_var(&c->b, tmp), rt)
                                : air_val_ssa(c, nir_load_var(&c->b, tmp)));
    }
    return true;
@@ -6746,7 +6778,7 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *re
       r->words_reg = nir_decl_reg(&entry, 2, 32, 0);
       nir_store_reg(&entry, nir_imm_ivec2(&entry, 0, 0), r->words_reg);
       _mesa_hash_table_insert(c->phi_regs, in, r);
-      air_set(c, &in->base, ptr_decode(c, nir_load_reg(&c->b, r->words_reg)));
+      air_set(c, &in->base, ptr_decode(c, nir_load_reg(&c->b, r->words_reg), in->base.type));
       return true;
    }
    struct air_val *first = NULL, *null_texture = NULL;
