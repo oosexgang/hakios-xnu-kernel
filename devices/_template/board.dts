@@ -217,7 +217,7 @@
 		// regdb = "regdb_oem.bin";    // optional: its regulatory database, likewise; regdb.bin if not said
 	// };
 
-	// What Darwin's interface is told of the screen (darwin/userland/inject_statusbar.c). Only for a phone whose
+	// What Darwin's interface is told of the screen (components/statusbar/inject_statusbar.c). Only for a phone whose
 	// front camera is a hole at the top left, where the status bar's clock would be drawn.
 	// screen {
 		// statusbar-leading-shift = <24>; // points (not pixels) the status bar's leading items move right

@@ -340,14 +340,14 @@ def default_wallpaper():
     print(f'mkimage26: the default wallpaper is Stripe {identifier}')
 
 
-JB = os.environ.get('JB') or REPO + '/userland/jb/root/var/jb'
+JB = os.environ.get('JB') or REPO + '/components/tweaks/jb/root/var/jb'
 # what Sileo moves, copies and removes files with as root, from /bin (userland/build.sh's SILEO_BIN)
 SILEO_BIN = ('chmod', 'cp', 'mkdir', 'mv', 'rm')
 
 
 def package_prefix():
     """
-    The package manager's prefix, when userland/tools/mk-jb.sh has fetched one (JB=DIR for another, JB=0 for none):
+    The package manager's prefix, when components/tweaks/tools/mk-jb.sh has fetched one (JB=DIR for another, JB=0 for none):
     the Procursus bootstrap with Sileo and ElleKit in it, as /jb, which init grafts onto /private/var/jb at every
     boot (userland/userland/src/init.c; var_store leaves it out). Its applications are system applications here, in
     /Applications, where LaunchServices finds them by itself; and /bin gets the five programs Sileo runs from

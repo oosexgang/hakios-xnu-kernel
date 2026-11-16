@@ -12,7 +12,8 @@
  * and that is the engine that replaces functions and methods. Only the finding and opening is ours.
  *
  * It goes into a program either as the one library the kernel inserts (etc/inject.conf, see
- * src/init.c) or because a library of ours that is already there opens it (src/inject_sb.c does,
+ * userland/userland/src/init.c) or because a library of ours that is already there opens it
+ * (userland/userland/src/inject_sb.c does,
  * for SpringBoard). Loading it twice is harmless: the second time does nothing.
  *
  * A Filter says any of:

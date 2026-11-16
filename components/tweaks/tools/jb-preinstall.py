@@ -2,7 +2,7 @@
 """Put packages of the repository into the prefix as installed, newest version first.
 
 usage: jb-preinstall.py PREFIX PACKAGES-INDEX DEBS-DIR NAME...
-  PREFIX          the prefix tree, the directory that holds var/jb (jb/root of tools/mk-jb.sh)
+  PREFIX          the prefix tree, the directory that holds var/jb (jb/root of components/tweaks/tools/mk-jb.sh)
   PACKAGES-INDEX  the repository's Packages file, already fetched
   DEBS-DIR        where the .deb files are kept (they are fetched into it when missing)
   NAME...         the packages to put in
@@ -125,7 +125,7 @@ def main():
         deb = os.path.join(debs, os.path.basename(filename))
         if not os.path.exists(deb):
             url = os.environ.get('MIRROR', 'https://apt.procurs.us').rstrip('/') + '/' + filename
-            # curl, as the rest of tools/mk-jb.sh fetches: the repository turns away urllib
+            # curl, as the rest of components/tweaks/tools/mk-jb.sh fetches: the repository turns away urllib
             if subprocess.run(['curl', '-sL', '--fail', '-o', deb, url]).returncode != 0:
                 sys.exit('jb-preinstall.py: cannot fetch %s' % url)
         # a .deb is an ar archive; its data holds the tree, under ./var/jb for a rootless package.

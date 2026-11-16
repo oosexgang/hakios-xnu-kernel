@@ -32,10 +32,10 @@ esac
 [ -z "$SB_LONG_PRESS" ] || sed -i -e "s/0x1c4f6ab44UL/${SB_LONG_PRESS}UL/" "$O/src/inject_sb.c"
 [ -z "$SB_POSTER" ] || sed -i -e "s/0x1c507e0fcUL/${SB_POSTER}UL/" -e 's/"SBMainDisplayPolicyAggregator"/"SBPolicyAggregator"/' "$O/src/inject_sb.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios.dylib" "$O/src/inject.c"
-# the status bar's clock past the hole punch: darwin/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
+# the status bar's clock past the hole punch: components/statusbar/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
 # (what it knows of each board, user_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
-$DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/userland/inject_statusbar.c"
+$DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/../components/statusbar/inject_statusbar.c"
 # Camera.app's preview given a size where AVFoundation leaves it none (components/camera/src/inject_camera_app.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/../components/camera/src/inject_camera_app.c"
 # (libhakios-statusbar.dylib, in every application, also names an uncaught exception on the console: darwin/userland/uncaught.c)
@@ -54,16 +54,16 @@ $DYN -fblocks -dynamiclib -install_name /hakios/lib/libhakios-mad.dylib -framewo
 # the layer tree of any application on the notification com.hakios.layers (rwtouch notify): inject_sb.c alone, which in a
 # program that is not SpringBoard does only that (root26-darwin.sh LAYERS="NAME ...")
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-layers.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-layers.dylib" "$O/src/inject_sb.c"
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/userland/inject_statusbar.c" "$RN/userland/uncaught.c"
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-statusbar.dylib" -I"$O/boards" "$RN/../components/statusbar/inject_statusbar.c" "$RN/userland/uncaught.c"
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
 $DYN -DHAKIOS_IOS27 -bundle -framework CoreFoundation -o "$O/HakiosAudio" "$RN/../components/audio/audio_plugin.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-app.dylib -lobjc -o "$O/libhakios-app.dylib" "$O/src/inject_app.c"
-# the tweak loader of the package manager's prefix (userland/src/inject_tweaks.c, as on 16.5): SpringBoard's library
+# the tweak loader of the package manager's prefix (components/tweaks/inject_tweaks.c, as on 16.5): SpringBoard's library
 # opens it when there is a /var/jb (inject_sb.c, load_tweaks), and etc/inject.conf names it for Settings
-$DYN -dynamiclib -install_name /hakios/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-tweaks.dylib" "$O/src/inject_tweaks.c"
-# ... and a tweak to check that path with (darwin/userland/tweak_test.c: Settings, hooked through ElleKit)
-$DYN -dynamiclib -install_name /var/jb/usr/lib/TweakInject/hakios-tweaktest.dylib -lobjc -o "$O/hakios-tweaktest.dylib" "$RN/userland/tweak_test.c"
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-tweaks.dylib" "$RN/../components/tweaks/inject_tweaks.c"
+# ... and a tweak to check that path with (components/tweaks/tweak_test.c: Settings, hooked through ElleKit)
+$DYN -dynamiclib -install_name /var/jb/usr/lib/TweakInject/hakios-tweaktest.dylib -lobjc -o "$O/hakios-tweaktest.dylib" "$RN/../components/tweaks/tweak_test.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-console.dylib -o "$O/libhakios-console.dylib" "$RN/userland/console_log.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-poster.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-poster.dylib" "$RN/../components/wallpaper/inject_poster.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-wallpaper.dylib -framework Foundation -framework QuartzCore -framework CoreGraphics -lobjc -o "$O/libhakios-wallpaper.dylib" "$RN/../components/wallpaper/inject_wallpaper.m"

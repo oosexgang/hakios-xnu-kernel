@@ -28,8 +28,8 @@ darwin/userland/obj27/
 !/devices/qemu-virt/
 qemu-kernel.log
 
-# the package manager's prefix userland/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages
-/userland/jb/
+# the package manager's prefix components/tweaks/tools/mk-jb.sh fetches (Procursus, Sileo, ElleKit): somebody else's packages
+/components/tweaks/jb/
 
 # a phone's own files, taken from it or built from its firmware (arch/arm64/boot/mkboot.py, Documentation/porting.md): never published
 /firmware/

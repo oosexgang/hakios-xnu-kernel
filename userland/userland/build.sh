@@ -141,7 +141,7 @@ DARWIN_JOBS=${JOBS-"
 # What Sileo runs from /bin (see the package manager's prefix below): the system image's /bin, or the
 # boot volume's bin, bound over the Darwin volume's /bin when that is the root (src/init.c, flash_root).
 SILEO_BIN="chmod cp mkdir mv rm"
-# (libhakios-tweaks is the tweak loader of the package manager's prefix, src/inject_tweaks.c: in
+# (libhakios-tweaks is the tweak loader of the package manager's prefix, ../../components/tweaks/inject_tweaks.c: in
 # SpringBoard the library above opens it, here it is named for the programs that have no library of
 # ours -- Settings, where a tweak's own pane belongs. Add a program's name to have tweaks in it.)
 # Darwin 26: only src/inject26.c, in backboardd (the touch screen and the buttons); the Darwin 16.5 libraries
@@ -330,10 +330,10 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 			-Wl,-U,_IOMobileFramebufferSwapSetEventWait -Wl,-U,_IOMobileFramebufferSwapSetEventSignal \
 			-o obj/libhakios26.dylib src/inject26.c &&   # (the framework's five calls: dyld finds them in backboardd, which has it)
 			/usr/bin/codesign -f -s - obj/libhakios26.dylib   # Darwin 26's dyld: "missing code signature" otherwise
-		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
+		# ... the tweak loader of the package manager's prefix (../../components/tweaks/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc \
-			-o obj/libhakios-tweaks.dylib src/inject_tweaks.c
+			-o obj/libhakios-tweaks.dylib ../../components/tweaks/inject_tweaks.c
 		# ... and inside an application, to say what killed it (src/inject_app.c)
 		$DYN -dynamiclib -install_name /hakios/lib/libhakios-app.dylib -lobjc \
 			-o obj/libhakios-app.dylib src/inject_app.c
@@ -795,11 +795,11 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 		mkdir -p flashboot/fw
 		cp ../fw-audio/aw882xx_acf.bin flashboot/fw/
 	fi
-	# the package manager's prefix, when tools/mk-jb.sh has fetched one: /jb of the boot volume, which is
+	# the package manager's prefix, when ../components/tweaks/tools/mk-jb.sh has fetched one: /jb of the boot volume, which is
 	# /private/preboot/jb once the Darwin volume is the root -- the volume where a rootless jailbreak keeps its
 	# Procursus on an iPhone as well; init grafts it onto /var/jb (src/init.c, mount_writable)
-	if [ -d ../jb/root/var/jb ]; then
-		cp -a ../jb/root/var/jb flashboot/jb
+	if [ -d ../../components/tweaks/jb/root/var/jb ]; then
+		cp -a ../../components/tweaks/jb/root/var/jb flashboot/jb
 		mkdir -p flashboot/jb-rw        # where init mounts the prefix's writable copy (src/init.c)
 		# and what Sileo runs from /bin, for init to put over the Darwin volume's /bin (see the system image below)
 		mkdir -p flashboot/jb-bin
@@ -885,12 +885,12 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 		mkdir -p sysroot/fw
 		cp ../fw-audio/aw882xx_acf.bin sysroot/fw/
 	fi
-	# the package manager's prefix, when tools/mk-jb.sh has fetched one: the Procursus bootstrap with
+	# the package manager's prefix, when ../components/tweaks/tools/mk-jb.sh has fetched one: the Procursus bootstrap with
 	# Sileo in it, as /jb. It cannot live at /var/jb in the image -- /private/var is a memory
 	# filesystem made afresh at every boot -- so init copies it there (src/init.c, copy_tree).
-	if [ -d ../jb/root/var/jb ]; then
+	if [ -d ../../components/tweaks/jb/root/var/jb ]; then
 		rm -rf sysroot/jb
-		cp -a ../jb/root/var/jb sysroot/jb
+		cp -a ../../components/tweaks/jb/root/var/jb sysroot/jb
 		# the applications of the prefix are system applications here: LaunchServices builds its
 		# database afresh at every boot by walking /Applications, which is how their icons appear
 		for app in sysroot/jb/Applications/*.app; do

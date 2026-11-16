@@ -195,7 +195,7 @@ built by `darwin/tools/`. What depends on the device is small:
 
 - which iPhone Darwin is told it is (`identity.h`, which `arch/arm64/boot/build.sh` makes from the IPSW's device tree), and through that the screen layout;
 - the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
-  of `screen { }` in the board file, in points (`darwin/userland/inject_statusbar.c` applies it);
+  of `screen { }` in the board file, in points (`components/statusbar/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `boot { }` section.
 
 How the images are built and what Darwin needed on the way to the home screen: [darwin26-boot.md](darwin26-boot.md).

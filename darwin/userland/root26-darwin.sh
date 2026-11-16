@@ -96,8 +96,8 @@ if [ -d "$SEED" ] && [ -n "$(ls "$SEED"/*.stage 2> /dev/null)" ]; then
 	echo "  Metal: $(ls "$SEED"/*.stage | wc -l) compiled stages from an earlier boot ($(du -sh "$SEED" | cut -f1))"
 fi
 cp "$OBJ"/*.dylib "$T/lib/"
-# (the test tweak's filter beside it: a scenario copies both into /var/jb/usr/lib/TweakInject, darwin/userland/tweak_test.c)
-cp "$RN/userland/tweak_test.plist" "$T/lib/hakios-tweaktest.plist"
+# (the test tweak's filter beside it: a scenario copies both into /var/jb/usr/lib/TweakInject, components/tweaks/tweak_test.c)
+cp "$RN/../components/tweaks/tweak_test.plist" "$T/lib/hakios-tweaktest.plist"
 cp "$US/rc.launchd" "$T/etc/rc"
 # (init reads it back and looks for "Darwin" at its start: one of its checks)
 python3 -c "import plistlib, sys; m = plistlib.load(open(sys.argv[1], 'rb')); print('Darwin with iOS', m['ProductVersion'], m['ProductBuildVersion'], 'user space, HakiOS')" \

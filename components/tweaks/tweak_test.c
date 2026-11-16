@@ -1,6 +1,6 @@
 /*
  * hakios-tweaktest.dylib: a tweak as a package would install it, to check the tweak path on iOS 26/27 end to
- * end: the tweak loader (userland/src/inject_tweaks.c, in Settings through etc/inject.conf) finds it in
+ * end: the tweak loader (components/tweaks/inject_tweaks.c, in Settings through etc/inject.conf) finds it in
  * /var/jb/usr/lib/TweakInject by its property list (Filter: Settings), opens it, and it hooks a method through
  * ElleKit (MSHookMessageEx of the prefix's libsubstrate) the way tweaks do. What it says goes to the console:
  *

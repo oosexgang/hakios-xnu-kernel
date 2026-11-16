@@ -11,7 +11,7 @@
 # What is left behind in jb/:
 #   root/var/jb/...      the bootstrap with Sileo unpacked into it, as the phone will have it
 #   debs/                the packages it was made of, for a look
-# userland/build.sh puts root/var/jb into the system image (as /jb, read only) and init copies it
+# userland/userland/build.sh puts root/var/jb into the system image (as /jb, read only) and init copies it
 # to /private/var/jb at every boot.
 set -e
 SUITE=1800                                              # the rootless distribution of Procursus
@@ -105,7 +105,7 @@ ln -s /var/jb/usr/lib/TweakInject "$OUT/root/var/jb/Library/MobileSubstrate/Dyna
 # because there is no such package -- ElleKit above Provides it.
 # OpenSSH among them: with the phone's radio up (wifi=1) a shell on the running system costs
 # seconds instead of a rebuilt image and a six-minute boot, which changes how the rest of this
-# port can be worked on. Nothing starts it -- a scenario does (userland/rc.jobs.ssh) -- and the
+# port can be worked on. Nothing starts it -- a scenario does (userland/userland/rc.jobs.ssh) -- and the
 # key that lets anyone in is not in the repository. dropbear would have been smaller, but its
 # package here depends on libtomcrypt1 and libtommath1, which are in no suite of this repository.
 PREINSTALL=${PREINSTALL-"debianutils launchctl preferenceloader openssh-server openssh-client openssh-sftp-server libssl3 libmd0"}
@@ -197,7 +197,7 @@ cat > "$OUT/root/var/jb/prep.sh" <<'PREP'
 #!/var/jb/bin/sh
 # Run once per boot, after the prefix has been grafted onto /var/jb (rc.jobs.sileo does it).
 /var/jb/usr/libexec/firmware
-# The prefix's applications: in the system image they are in /Applications already (userland/build.sh),
+# The prefix's applications: in the system image they are in /Applications already (userland/userland/build.sh),
 # where LaunchServices finds them by itself; with the Darwin volume on the flash as the root they are not,
 # and are registered from the prefix as a rootless jailbreak does it (uikittools' uicache) -- by where the
 # bundle really is, as there: in /var/jb, grafted, its files are links into the boot volume

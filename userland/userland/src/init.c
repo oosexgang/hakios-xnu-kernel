@@ -661,7 +661,7 @@ own_tree(const char *path, int uid)
 
 /*
  * The rootless prefix of a package manager, /var/jb: the Procursus bootstrap with Sileo in it
- * (tools/mk-jb.sh) rides in the system image as /jb (or in the boot volume, /private/preboot/jb,
+ * (../components/tweaks/tools/mk-jb.sh) rides in the system image as /jb (or in the boot volume, /private/preboot/jb,
  * with the root on the flash), an APFS image that cannot be written to, while dpkg and apt must be
  * able to write anywhere in their own prefix.
  *
@@ -976,7 +976,7 @@ mount_writable(void)
 	}
 
 	/*
-	 * and the package manager's prefix, when the image was built with one (tools/mk-jb.sh): /jb of
+	 * and the package manager's prefix, when the image was built with one (../components/tweaks/tools/mk-jb.sh): /jb of
 	 * the system image in RAM, or, with the Darwin volume on the flash as the root, /private/preboot/jb
 	 * -- the boot volume, where a rootless jailbreak on an iPhone keeps its Procursus too
 	 * (/var/jb leads into /private/preboot there)

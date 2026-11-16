@@ -15,4 +15,6 @@ and check it, and the notes of how it was found out. What runs in the kernel sta
 | [`metal`](metal) | Metal on the Adreno: the Metal device Darwin loads, the shader compiler from Apple's AIR through Mesa to the GPU, and in `metal/plugin` a second device with its own A6xx library and CoreAnimation's plug-in. |
 | [`sep`](sep) | The Secure Enclave's keystore, answered by the kernel for a phone that has none, so that the keychain works. |
 | [`wallpaper`](wallpaper) | A wallpaper Darwin 27 can draw here (Stripe Yellow), instead of the Metal poster that would be black. |
+| [`statusbar`](statusbar) | The status bar's leading items moved past a hole-punch camera, by the points the board file gives. |
+| [`tweaks`](tweaks) | The package manager's rootless prefix (Sileo, Procursus) and our tweak loader. |
 | [`upstream.dts`](upstream.dts) | Everything taken from elsewhere, at the exact version it is taken (`tools/components.py`). |
