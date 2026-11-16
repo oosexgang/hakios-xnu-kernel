@@ -116,6 +116,8 @@ Then build: [Documentation/building.md](Documentation/building.md). For a phone 
 | `arch/arm64/kernel/` | The kernel's arm64 code of ours (`osfmk/arm64` of its tree): the other processors through PSCI, the GICv3, idle times, the arm64e instructions an ARMv8.2 core lacks, the way back to the loader. |
 | `fs/` | The kernel's file systems of ours: `apfs/` (Darwin's, read and written) and `ramfs/`. |
 | `crypto/` | The kernel's cryptography provider (minicrypto: AES, digests), in place of Apple's corecrypto kext. |
+| `init/` | The first programs Darwin runs here: `stage0` (the kernel's first), `init` (process 1 until Apple's launchd), `var_store` (`/private/var` kept between boots). |
+| `lib/` | `libmini`, the small C library those programs are linked with. |
 | `arch/arm64/boot/` | What starts the arm64 kernel, where Linux's tree keeps it: the UEFI application (the loader) that makes Apple's device tree and stays resident for the kernel's log, and the tools that pack its payload and the phone's boot image. |
 | `darwin/` | What Darwin 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
 | `userland/` | Earlier user-space sources still in use or being ported: init, the libraries inserted into Darwin's programs, APFS image tools. |

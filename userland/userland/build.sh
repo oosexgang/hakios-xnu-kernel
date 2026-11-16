@@ -35,7 +35,7 @@
 #                                   fails with "No such file or directory" and status 127 on a flash-root
 #                                   boot. The /var/jb/bin/sh that rc.jobs.jb and rc.jobs.sileo run is the
 #                                   package manager's prefix, which only a JB=1 image carries. And init
-#                                   runs these lines itself (src/init.c, run_command): words split on
+#                                   runs these lines itself (init/init.c, run_command): words split on
 #                                   blanks, no quoting, no variable assignment, no redirection beyond a
 #                                   trailing ">> FILE" and "&". So a program that needs a value passed to
 #                                   it needs an option for it, not an environment variable -- which is why
@@ -55,7 +55,7 @@
 #                                   the kernel. adsp=1 needs none of it: the system image has the firmware in /fw.
 #   system.apfs      the system image, the root filesystem (the resident RAM disk, /dev/md0), an
 #                    APFS container: the part of Darwin 16.5 chosen by ../darwin165/select-system.py at
-#                    its real paths, the dyld shared cache, and src/stage0.c as /sbin/launchd (the
+#                    its real paths, the dyld shared cache, and init/stage0.c as /sbin/launchd (the
 #                    real one is /sbin/launchd.darwin). 2.5 GB; upload once per loader session with
 #                    `xl ramdisk userland/system.apfs`. Rebuilt when missing, when its inputs
 #                    (stage0, the manifest, the cryptex files) are newer, or with SYSTEM=1 (after
@@ -139,7 +139,7 @@ DARWIN_JOBS=${JOBS-"
 # (src/inject.c is libhakios.dylib, src/inject_sb.c is libhakios-sb.dylib, src/inject_media.c is
 # libhakios-media.dylib).
 # What Sileo runs from /bin (see the package manager's prefix below): the system image's /bin, or the
-# boot volume's bin, bound over the Darwin volume's /bin when that is the root (src/init.c, flash_root).
+# boot volume's bin, bound over the Darwin volume's /bin when that is the root (init/init.c, flash_root).
 SILEO_BIN="chmod cp mkdir mv rm"
 # (libhakios-tweaks is the tweak loader of the package manager's prefix, ../../components/tweaks/inject_tweaks.c: in
 # SpringBoard the library above opens it, here it is named for the programs that have no library of
@@ -175,10 +175,11 @@ if [ -n "$PREBUILT" ]; then
 	cp obj/hello hello
 else
 	$CC $LD -o hello src/hello.c
-	$CC -Ilibmini -c libmini/mini.c -o obj/mini.o
-	$CC -c libmini/start.S -o obj/start.o
+	# (process 1 and the first programs: init/ at the top of the repository; their libc: lib/libmini)
+	$CC -I../../lib/libmini -c ../../lib/libmini/mini.c -o obj/mini.o
+	$CC -c ../../lib/libmini/start.S -o obj/start.o
 	for prog in init child stage0 stage0dsu var_store; do
-		$CC -Ilibmini $LD -o obj/$prog.new src/$prog.c obj/mini.o obj/start.o
+		$CC -I../../lib/libmini $LD -o obj/$prog.new ../../init/$prog.c obj/mini.o obj/start.o
 		# keep the old file (and its time stamp) when nothing changed: system.apfs depends on stage0
 		cmp -s obj/$prog.new obj/$prog && rm obj/$prog.new || mv obj/$prog.new obj/$prog
 	done
@@ -193,7 +194,7 @@ cp obj/init root/sbin/init
 [ -f obj/stage0dsu ] && cp obj/stage0dsu root/sbin/launchd
 mkdir -p root/flash
 cp obj/child root/bin/child
-# The data volume into the flash and back (src/var_store.c), and the job that saves it when a run
+# The data volume into the flash and back (init/var_store.c), and the job that saves it when a run
 # ends: the program and its job together, away from the Darwin job list below, which several working
 # copies are editing at once.
 [ -f obj/var_store ] && cp obj/var_store root/bin/
@@ -622,7 +623,7 @@ PY
 	fi
 	cp ${RC:-rc.launchd} root/etc/rc
 	cp ${RC_JOBS:-rc.jobs} root/etc/rc.jobs
-	# QUIET=1: launchd's own standard error goes nowhere (src/init.c). It says a few thousand
+	# QUIET=1: launchd's own standard error goes nowhere (init/init.c). It says a few thousand
 	# lines about its own business in the first minutes and pushes everything else out of the
 	# kernel's log; the daemons keep their own standard error on the console all the same.
 	rm -f root/etc/quiet
@@ -713,7 +714,7 @@ if [ -n "$secrets" ]; then
 	echo "build.sh: do not pass it on as it is; SHARE=1 builds the same image without them."
 fi
 # When the Darwin volume on the phone's flash is to become the root (boot-arg root_apfs=ufs_darwin,
-# with flashboot.apfs resident; src/init.c, flash_root): an empty directory to hide Darwin's
+# with flashboot.apfs resident; ../../init/init.c, flash_root): an empty directory to hide Darwin's
 # NanoLaunchDaemons and LaunchAngels with,
 # xpc without launchd.plist (launchd would read that list of all of Darwin's jobs instead of
 # LaunchDaemons) and the audio server's plug-in directory with only our device in it.
@@ -759,7 +760,7 @@ python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
 # boot volume to the volume's /private/preboot, then mounts the second container -- the OS cryptex -- on
 # the boot volume's empty Cryptexes/OS and the third -- Apple's App cryptex as it is -- on Cryptexes/App:
 # /private/preboot/Cryptexes/OS and App, where the volume's own /System/Cryptexes/OS and App point and
-# where Darwin grafts the cryptexes (src/init.c, flash_root; the kernel's apfs takes "/dev/md0,c=1" and
+# where Darwin grafts the cryptexes (init/init.c, flash_root; the kernel's apfs takes "/dev/md0,c=1" and
 # "c=2", and bsd/vm/vm_unix.c takes a shared cache from Cryptexes/OS). CRYPTEX_IMAGE=FILE:
 # Apple's own image of the cryptex as it is instead of this one remade (2.6 GB against 1 GB: too much
 # for the phone's memory beside Darwin, not for QEMU's). Upload it with `xl ramdisk userland/flashboot.apfs`.
@@ -786,7 +787,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	fi
 	# the audio DSP's firmware and the speaker amplifiers' configuration, as in the system image's /fw: the kernel
 	# reads the firmware as soon as there is a root (this image, adsp=1), the configuration maybe later -- by then
-	# from the Darwin volume's /fw, which src/init.c (flash_root) binds to this
+	# from the Darwin volume's /fw, which ../../init/init.c (flash_root) binds to this
 	if [ -f ../fw-audio/adsp.mdt ]; then
 		mkdir -p flashboot/fw
 		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] flashboot/fw/
@@ -797,10 +798,10 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	fi
 	# the package manager's prefix, when ../components/tweaks/tools/mk-jb.sh has fetched one: /jb of the boot volume, which is
 	# /private/preboot/jb once the Darwin volume is the root -- the volume where a rootless jailbreak keeps its
-	# Procursus on an iPhone as well; init grafts it onto /var/jb (src/init.c, mount_writable)
+	# Procursus on an iPhone as well; init grafts it onto /var/jb (init/init.c, mount_writable)
 	if [ -d ../../components/tweaks/jb/root/var/jb ]; then
 		cp -a ../../components/tweaks/jb/root/var/jb flashboot/jb
-		mkdir -p flashboot/jb-rw        # where init mounts the prefix's writable copy (src/init.c)
+		mkdir -p flashboot/jb-rw        # where init mounts the prefix's writable copy (init/init.c)
 		# and what Sileo runs from /bin, for init to put over the Darwin volume's /bin (see the system image below)
 		mkdir -p flashboot/jb-bin
 		for c in $SILEO_BIN; do
@@ -887,7 +888,7 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	fi
 	# the package manager's prefix, when ../components/tweaks/tools/mk-jb.sh has fetched one: the Procursus bootstrap with
 	# Sileo in it, as /jb. It cannot live at /var/jb in the image -- /private/var is a memory
-	# filesystem made afresh at every boot -- so init copies it there (src/init.c, copy_tree).
+	# filesystem made afresh at every boot -- so init copies it there (init/init.c, copy_tree).
 	if [ -d ../../components/tweaks/jb/root/var/jb ]; then
 		rm -rf sysroot/jb
 		cp -a ../../components/tweaks/jb/root/var/jb sysroot/jb

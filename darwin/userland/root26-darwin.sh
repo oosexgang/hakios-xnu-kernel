@@ -35,10 +35,10 @@ JOBS=${JOBS-"
 # image on /hakios and starts init): static, without libc or dyld (libmini)
 CC="xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra"
 LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
-$CC -I"$US/libmini" -c "$US/libmini/mini.c" -o "$OBJ/mini.o"
-$CC -c "$US/libmini/start.S" -o "$OBJ/start.o"
+$CC -I"$RN/../lib/libmini" -c "$RN/../lib/libmini/mini.c" -o "$OBJ/mini.o"
+$CC -c "$RN/../lib/libmini/start.S" -o "$OBJ/start.o"
 for prog in init stage0 child var_store; do
-	$CC -I"$US/libmini" $LD -o "$OBJ/$prog" "$US/src/$prog.c" "$OBJ/mini.o" "$OBJ/start.o"
+	$CC -I"$RN/../lib/libmini" $LD -o "$OBJ/$prog" "$RN/../init/$prog.c" "$OBJ/mini.o" "$OBJ/start.o"
 done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
 $DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -framework Network -o "$OBJ/net_test" "$US/src/net_test.m"
@@ -60,7 +60,7 @@ rm -rf "$T"
 mkdir -p "$T/sbin" "$T/bin" "$T/etc" "$T/lib" "$T/share" "$T/LaunchDaemons"
 cp "$OBJ/init" "$T/sbin/init"
 cp "$OBJ/child" "$T/bin/child"           # (init execs it and collects its exit status: one of its checks)
-# /private/var between boots (userland/src/var_store.c): init unpacks the last one with boot-arg var_store=1, and the
+# /private/var between boots (init/var_store.c): init unpacks the last one with boot-arg var_store=1, and the
 # job list's first line saves it when the run ends (ufs_write=1 lets it write darwin past the system's volumes)
 cp "$OBJ/var_store" "$T/bin/var_store"
 cp "$OBJ/net_test" "$T/bin/net_test"
@@ -442,7 +442,7 @@ ls -la "$IOS/root26-darwin.apfs"
 
 # The RAM part of a boot whose system image is on the phone's flash (boot-arg root_apfs=DEV): the kernel's first
 # root, the resident RAM disk md0 -- stage0 as /sbin/launchd, which mounts this small image on /hakios, and the
-# mount points it and init use. init gives it up for the system image on the flash (userland/src/init.c,
+# mount points it and init use. init gives it up for the system image on the flash (init/init.c,
 # flash_root), and it stays under that one's /private/preboot.
 F=$IOS/flashboot-tree
 rm -rf "$F"

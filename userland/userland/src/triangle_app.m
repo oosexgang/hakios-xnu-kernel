@@ -160,7 +160,7 @@ enum { RWT_FRAMES = 600, RWT_COUNTED_FRAMES = 3 };
  *
  * An application is spawned for SpringBoard and nothing promises it the descriptors init
  * gave launchd; src/inject_app.c already opens /dev/console for exactly this reason, and
- * init makes the device world-writable (src/init.c) so that a process of mobile's can.
+ * init makes the device world-writable (../../init/init.c) so that a process of mobile's can.
  * Both are done here: our own lines go to the console directly, AND the console is put on
  * fd 1 and 2, because the driver underneath says everything it refuses with printf and
  * those lines are half the evidence.

@@ -8,7 +8,7 @@
  * bsd/dev/board/ufs.c): only what is read comes off the storage, so the system can be as big as
  * the DSU slot (15 GiB) instead of what fits in the kernel's memory window. This program mounts that
  * volume read only on /flash, makes it the root -- this image goes to /hakios, where the system
- * volume has the directory stage0 mounts it on otherwise (src/stage0.c) -- and runs init from there,
+ * volume has the directory stage0 mounts it on otherwise (init/stage0.c) -- and runs init from there,
  * as stage0 does: from then on all is as in a boot from the system image in memory.
  */
 #include "mini.h"

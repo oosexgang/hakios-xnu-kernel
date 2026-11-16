@@ -5,7 +5,7 @@
 	<key>Label</key>
 	<string>com.hakios.varstore</string>
 	<!-- with var_store=1 among the kernel's arguments: stays for the run and writes /private/var into
-	     the flash when the kernel says the run is ending (src/var_store.c, watch); without, it ends at
+	     the flash when the kernel says the run is ending (../../init/var_store.c, watch); without, it ends at
 	     once. An argument after "watch" is seconds between saves of its own accord as well; there is
 	     none by default, because each one costs seconds of the run and a hundred-odd megabytes. -->
 	<key>ProgramArguments</key>

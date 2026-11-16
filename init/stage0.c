@@ -5,7 +5,7 @@
  * and a half to upload to the phone, so nothing that changes often lives in
  * it. All of that - the real init, its tests, the list of launchd jobs - is
  * in the small image that travels with the kernel (the second RAM disk,
- * /dev/md1), an APFS container (tools/apfs/mkapfs.py). This program
+ * /dev/md1), an APFS container (userland/tools/apfs/mkapfs.py). This program
  * mounts it on /hakios and hands over.
  */
 #include "mini.h"

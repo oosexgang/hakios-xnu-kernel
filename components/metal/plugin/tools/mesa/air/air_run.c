@@ -1665,7 +1665,7 @@ main(int argc, char **argv)
     * device has no shell to set one with. iOS 16.5's own root carries no sh at
     * all -- /bin holds df and ps -- and the job list that runs this is read by
     * our init, which splits a line on blanks and has no notion of a variable
-    * (userland/userland/src/init.c, run_command). So a generated suite whose every
+    * (init/init.c, run_command). So a generated suite whose every
     * module reads its own bytes could not be run on the phone until this
     * option existed: with it each module is one ordinary job line.
     */
