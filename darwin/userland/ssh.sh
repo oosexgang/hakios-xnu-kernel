@@ -40,7 +40,8 @@ fetch "$DROPBEAR_URL" "$DROPBEAR_SHA256" "$DROPBEAR.tar.bz2"
 fetch "$MKSH_URL" "$MKSH_SHA256" "$MKSH.tgz"
 
 # the cross compiler as configure wants it: one command, the flags with it
-CROSS="xnu-clang -arch arm64e -isysroot $SDK -mios-version-min=16.0"
+# (the libraries' compiler and linker, env.sh: arm64e through ld64, or arm64 named arm64e by pac_strip)
+CROSS=$DYN
 
 # ---- dropbear: the server and scp for the phone, dropbearconvert for this machine ----------------------
 rm -rf "$W/dropbear"
@@ -75,7 +76,7 @@ EOF
 		make -s PROGRAMS="dropbear scp" -j"$(nproc)" >> ../phone.log 2>&1) || { tail -20 phone.log >&2; exit 1; }
 )
 for p in dropbear scp; do
-	"$PACSTRIP" macho "$W/dropbear/phone/$p" "$OBJ/$p" > /dev/null
+	pac_strip "$W/dropbear/phone/$p" "$OBJ/$p"
 done
 
 # ---- mksh: /hakios/bin/sh -----------------------------------------------------------------------------
@@ -83,7 +84,7 @@ rm -rf "$W/mksh"
 mkdir -p "$W/mksh"
 tar -xzf "$W/$MKSH.tgz" -C "$W/mksh" --strip-components=1
 (cd "$W/mksh" && CC="$CROSS" CFLAGS=-O2 TARGET_OS=Darwin sh Build.sh -r > build.log 2>&1) || { tail -20 "$W/mksh/build.log" >&2; exit 1; }
-"$PACSTRIP" macho "$W/mksh/mksh" "$OBJ/sh" > /dev/null
+pac_strip "$W/mksh/mksh" "$OBJ/sh"
 
 # ---- the keys, when this machine has them ----------------------------------------------------------------
 rm -rf "$OBJ/ssh-keys"
