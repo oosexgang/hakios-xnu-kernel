@@ -25,6 +25,7 @@
 
 #include "kernel.h"
 #include "board.h"
+#include "kconfig.h"
 #include "log.h"
 #include "mmio.h"
 #include "time.h"
@@ -666,7 +667,9 @@ hakios_cpufreq_init(void)
 
 	hakios_cpuload_start();
 	PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled));
-	hakios_ddr_init(enabled != 0);          /* (the memory first, as before: bsd/dev/board/ddr.c) */
+	if (CONFIG_QCOM_DDR_VOTE) {
+		hakios_ddr_init(enabled != 0);  /* (the memory first, as before: bsd/dev/board/ddr.c) */
+	}
 	if (!enabled) {
 		park_start();           /* (the small cores parked all the same: no clocks are touched for that) */
 		return;
