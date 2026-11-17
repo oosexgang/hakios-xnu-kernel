@@ -58,6 +58,25 @@ bt_h4_length(const uint8_t *b, unsigned have)
 	}
 }
 
+/*
+ * What a host wrote, a run of bytes in a queue of ROOM: the length of the whole packet at its head; 0 while it is not
+ * all there yet; -1 when the run cannot be a host's packets (an event, which only a controller sends; a type there is
+ * not; a packet longer than the queue, which would never be whole there) and is to be thrown away.
+ */
+static inline int
+bt_h4_from_host(const uint8_t *q, unsigned have, unsigned room)
+{
+	unsigned n = bt_h4_length(q, have);
+
+	if (have == 0) {
+		return 0;
+	}
+	if (q[0] == BT_H4_EVENT || (have >= 5 && n == 0) || n > room) {
+		return -1;
+	}
+	return n <= have ? (int)n : 0;           /* (n is 0 while its header is not all there) */
+}
+
 /* a command's opcode (H4 type 1), 0 for anything else */
 static inline uint16_t
 bt_opcode(const uint8_t *c, unsigned n)

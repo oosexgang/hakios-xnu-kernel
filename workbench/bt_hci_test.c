@@ -59,6 +59,27 @@ lengths(void)
 	CHECK(bt_h4_length((const uint8_t[]){ 5, 0, 0, 0xff, 0xff }, 5) <= BT_H4_MOST, "nothing is longer than the longest");
 }
 
+/* what a host wrote, as a run of bytes: the whole packet at its head, nothing until it is all there, and a run that is
+ * no host's thrown away */
+static void
+from_host(void)
+{
+	static const uint8_t reset[] = { 1, 0x03, 0x0c, 0, 2, 0x01, 0x20, 3, 0, 7, 8, 9 };
+	uint8_t big[] = { 2, 0x01, 0x20, 0xff, 0x3f };
+
+	CHECK(bt_h4_from_host(reset, 0, 100) == 0, "nothing: nothing yet");
+	CHECK(bt_h4_from_host((const uint8_t[]){ 4 }, 0, 100) == 0, "nothing, whatever is in the queue past it");
+	CHECK(bt_h4_from_host(reset, 3, 100) == 0, "a header not all there: nothing yet");
+	CHECK(bt_h4_from_host(reset, 4, 100) == 4 && bt_h4_from_host(reset, 12, 100) == 4, "HCI_Reset, whatever comes after it");
+	CHECK(bt_h4_from_host(reset + 4, 7, 100) == 0 && bt_h4_from_host(reset + 4, 8, 100) == 8, "an ACL packet once it is whole");
+	CHECK(bt_h4_from_host((const uint8_t[]){ 4, 0x0e, 0 }, 3, 100) == -1, "an event: no host's");
+	CHECK(bt_h4_from_host((const uint8_t[]){ 4 }, 1, 100) == -1, "the start of one, already");
+	CHECK(bt_h4_from_host((const uint8_t[]){ 9, 0, 0, 0 }, 4, 100) == 0, "a type there is not, too few bytes to say");
+	CHECK(bt_h4_from_host((const uint8_t[]){ 9, 0, 0, 0, 0 }, 5, 100) == -1, "a type there is not");
+	CHECK(bt_h4_from_host(big, 5, 0x3fff + 5) == 0, "longest ACL, room for it: waited for");
+	CHECK(bt_h4_from_host(big, 5, 0x3fff + 4) == -1, "no room for it: never whole");
+}
+
 /* the commands that go to the controller as they are */
 static void
 to_the_controller(void)
@@ -167,7 +188,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "lengths", lengths }, { "to_the_controller", to_the_controller }, { "erroneous_data_reporting", erroneous_data_reporting },
+		{ "lengths", lengths }, { "from_host", from_host }, { "to_the_controller", to_the_controller }, { "erroneous_data_reporting", erroneous_data_reporting },
 		{ "legacy_le", legacy_le }, { "vendor_commands", vendor_commands }, { "vendor_events", vendor_events },
 		{ "supported_commands", supported_commands },
 	};
