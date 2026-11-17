@@ -2751,6 +2751,11 @@ step_link(void)
 	if (!dsp_started || glink.descriptor == 0) {
 		return false;
 	}
+	if (link_runs) {
+		/* (link_stop() went on after two seconds without it: a second thread would read the same queue as the first) */
+		printf("adsp: %u: the link's thread from before has not ended: GLINK is not taken up again\n", step);
+		return false;
+	}
 	announce("take up GLINK with the audio DSP: our version, then whatever its messages call for; a thread of ours listens "
 	    "from here on, every millisecond");
 	snprintf(last_write, sizeof(last_write), "step %u took up GLINK", step);
