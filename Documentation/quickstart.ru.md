@@ -58,6 +58,16 @@ fastboot boot build/images/mido/boot.img
 загружается так же, как на телефоне: `tools/qemu-kernel.sh --image build/images/qemu-virt/qemu-virt.payload`
 ([images.md](images.md)).
 
+Для прогонов с журналом и сводкой по частям есть `./bench`: он запускает наш загрузчик по USB и тоже ничего не
+пишет в память телефона.
+
+```sh
+BENCH_BOARD=mido make ready     # всё ли на месте: ядро и загрузчик знают телефон и не старше исходников, «личность», малый образ
+BENCH_BOARD=mido make day       # прогоны по порядку; журналы и summary.md в logs/day-ВРЕМЯ/
+```
+
+План дня и что должен сказать каждый прогон: [phone-test.ru.md](phone-test.ru.md).
+
 ## 5. Какой это iPhone для Darwin
 
 Darwin определяет, на каком устройстве работает, по свойствам из дерева устройства iPhone: модель, экран,
