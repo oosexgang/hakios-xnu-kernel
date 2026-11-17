@@ -2452,18 +2452,29 @@ step_core_space(void)
 {
 	const uint8_t *microcode;
 	uint64_t size = 0;
-	uint32_t stream1 = 1;
+	uint32_t stream1 = 1, private = 0;
+	uint64_t kernels;
 
 	if (!cx_ready() || !core_is_on) {
 		return false;
 	}
 	PE_parse_boot_argn("adreno_stream1", &stream1, sizeof(stream1));
+	/*
+	 * gpu_private=1: the ring and the page of fences for the core's privileged accesses alone, as Linux maps them
+	 * (MSM_BO_MAP_PRIV): CP_APRIV_CNTL makes the ring's own fetches and writes privileged, and a program's command buffer,
+	 * run unprivileged, then cannot write into the ring or forge a fence. Off by default until a phone has run with it.
+	 */
+	PE_parse_boot_argn("gpu_private", &private, sizeof(private));
+	kernels = private ? PTE_GMU : PTE_CORE;
+	if (private) {
+		printf("adreno: gpu_private=1: the ring and the fences are the core's privileged accesses' alone\n");
+	}
 	announce("make the 3D core's memory: its ring, its microcode (fw/a660_sqe.fw), a page to try writing to");
 	microcode = image_file(gpu_profile ? gpu_profile->firmware_directory : "fw", "a660_sqe.fw", &size);
 	if (microcode == NULL || size < 8 || size > 0x40000 ||
-	    !block_new(&core_space, &core_ring, CORE_RING_ADDRESS, CORE_RING_SIZE, PTE_CORE) ||
+	    !block_new(&core_space, &core_ring, CORE_RING_ADDRESS, CORE_RING_SIZE, kernels) ||
 	    !block_new(&core_space, &core_sqe, CORE_SQE_ADDRESS, (uint32_t)size - 4, PTE_CORE | PTE_READ_ONLY) ||
-	    !block_new(&core_space, &core_scratch, CORE_SCRATCH_ADDRESS, 4096, PTE_CORE)) {
+	    !block_new(&core_space, &core_scratch, CORE_SCRATCH_ADDRESS, 4096, kernels)) {
 		return false;
 	}
 	memcpy((void *)core_sqe.memory, microcode + 4, size - 4);       /* the file's first word is not microcode */
