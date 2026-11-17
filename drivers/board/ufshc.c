@@ -66,6 +66,7 @@
 #include <vm/memory_types.h>
 #include "kernel.h"
 #include "cache.h"
+#include "mmio.h"
 #include "ufshc.h"
 #include "log.h"
 
@@ -219,17 +220,18 @@ hc_say_late(const char *format, ...)
 	va_end(list);
 }
 
+/* (through mmio.h: a test of the driver puts a model of the controller behind them, which sees a doorbell's write as one) */
 static inline uint32_t
 hc_read(uint32_t reg)
 {
-	return *(volatile uint32_t *)(hc + reg);
+	return rd(hc + reg);
 }
 
 static inline void
 hc_write(uint32_t reg, uint32_t value)
 {
 	hakios_barrier();
-	*(volatile uint32_t *)(hc + reg) = value;
+	wr(hc + reg, value);
 	hakios_barrier();
 }
 
