@@ -65,14 +65,15 @@ fb_command(char *cmd)
 			}
 			bio = partition_named(name);
 			/* (inside the partition without adding the two: an offset near 2^64 would make the sum small) */
-			if (bio == NULL || len == 0 || len > sizeof(out_buf) || off % bio->media->block_size ||
+			/* (into the block buffer: out_buf holds the last run's kernel log, which "oem log" puts after the loader's) */
+			if (bio == NULL || len == 0 || len > 2 * 1024 * 1024 || off % bio->media->block_size ||
 			    len % bio->media->block_size || off > (bio->media->last_block + 1) * bio->media->block_size ||
 			    len > (bio->media->last_block + 1) * bio->media->block_size - off ||
-			    EFI_ERROR(bio->read_blocks(bio, bio->media->media_id, off / bio->media->block_size, len, out_buf))) {
+			    EFI_ERROR(bio->read_blocks(bio, bio->media->media_id, off / bio->media->block_size, len, block_buffer))) {
 				fb_reply("FAIL", "no such partition, or out of it");
 				return;
 			}
-			staged_data = out_buf;
+			staged_data = (const char *)block_buffer;
 			staged_len = len;
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "oem dsu") && !busy) {
