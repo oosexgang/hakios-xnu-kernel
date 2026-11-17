@@ -2,7 +2,7 @@
 """Before a day with the phone: is everything here that its runs need? What ./bench and the runs of
 Documentation/phone-test.ru.md take from this machine, looked at before the phone is connected rather than found
 missing in the middle of the day: the phone's package, adb and fastboot, the kernel and the loader (built, and not older
-than what they are built from), the loader knowing the phone, which iPhone Darwin is told it is, the small image, and
+than what they are built from), both knowing the phone, which iPhone Darwin is told it is, the small image, and
 what a run asks for beyond them (the Bluetooth controller's firmware at bt=2, the radio's address at wifi=).
 
   scripts/phone-ready.py [--board NAME] [RUN...]
@@ -125,6 +125,10 @@ def check(name, board, runs, env):
         report.add('MISSING', 'kernel', f'no {kernel}: kernel/build.sh (make kernel)')
     elif kernel.read_bytes()[:4] != b'\xcf\xfa\xed\xfe':
         report.add('MISSING', 'kernel', f'{kernel} is not a 64-bit Mach-O kernel')
+    elif b'\0' + name.encode() + b'\0' not in kernel.read_bytes():
+        # (the board table is built into the kernel: one that does not know the phone finds no board, every driver off)
+        report.add('MISSING', 'kernel', f'{kernel} does not know {name}: it was built before the package was here. '
+                   'kernel/build.sh (make kernel)')
     elif env.get('BENCH_KERNEL'):
         report.add('ok', 'kernel', f'{kernel} (BENCH_KERNEL: whether it is current is yours to know)')
     else:

@@ -30,7 +30,7 @@ BOARD = ('/ {{\n\tname = "{name}";\n\tdescription = "Phone {name}";\n\tsoc = "sm
          '\t\tsw-ctrl = <18>;\n\t\tsupplies = "L2D_E0";\n\t\tsupply-mv = <1800>;\n\t\trf-clock = "C1A_E0";\n'
          '\t\trampatch = "patch.tlv";\n\t\tnvm = "conf.bin";\n\t}};\n'
          '\tuefi {{\n\t\tfd-base = <0x9FD00000>;\n\t\tfd-size = <0x1000>;\n\t}};\n}};\n')
-KERNEL = b'\xcf\xfa\xed\xfe' + bytes(range(64))
+KERNEL = b'\xcf\xfa\xed\xfe' + bytes(range(64)) + b'\0zeta\0'
 LOADER = b'MZ' + b'\0' * 62 + b'hakios-placeholder\0zeta\0' + b'\x90' * 64
 DEFCONFIGS = {'phone_first': '# the first run\nbacklight=1\n', 'phone_bt': '# Bluetooth\ninclude phone_first\nbt=2\n',
               'phone_rom': '# the controller on its ROM\ninclude phone_bt\nbt_fw=0\n', 'phone_air': '# Wi-Fi\nwifi=1\n'}
@@ -134,6 +134,14 @@ class Checkout(unittest.TestCase):
     def test_not_a_kernel(self):
         self.kernel.write_bytes(b'\x7fELF' + bytes(64))
         self.assertEqual(self.lines()['kernel'], ('MISSING', f'{self.kernel} is not a 64-bit Mach-O kernel'))
+
+    def test_a_kernel_built_before_the_phone_was_here(self):
+        self.kernel.write_bytes(KERNEL.replace(b'\0zeta\0', b'\0qemu-virt\0'))
+        state, text = self.lines()['kernel']
+        self.assertEqual(state, 'MISSING')
+        self.assertIn('does not know zeta: it was built before the package was here. kernel/build.sh', text)
+        self.env['BENCH_KERNEL'] = str(self.kernel)
+        self.assertEqual(self.lines()['kernel'][0], 'MISSING', 'one named by BENCH_KERNEL as well')
 
     def test_a_loader_built_before_the_phone_was_here(self):
         self.loader.write_bytes(LOADER.replace(b'\0zeta\0', b'\0qemu-virt\0'))
