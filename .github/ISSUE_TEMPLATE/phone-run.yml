@@ -1,0 +1,47 @@
+name: A run on a phone
+description: What a run said, part by part -- one that went well is worth reporting too.
+labels: ["phone run"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `./bench run` ends with what each part said; `tools/logcheck.py --all logs/last.log` gives every line of each.
+        Documentation/phone-test.ru.md has the runs in order and what each must say.
+
+        Do not attach Apple's files, the phone maker's firmware or device trees, or a log that has your Wi-Fi's name
+        and passphrase in it: look before you paste.
+  - type: input
+    id: board
+    attributes:
+      label: Board and SoC
+      description: "The package's name and its SoC, and where the package is from (`tools/device.py list`)."
+      placeholder: "renoir, SM7350, from the devices branch"
+    validations:
+      required: true
+  - type: input
+    id: run
+    attributes:
+      label: The run
+      description: "The defconfig and anything added (BENCH_DEFCONFIG, BENCH_CMDLINE), and the commit (`git log -1 --oneline`)."
+      placeholder: "BENCH_DEFCONFIG=phone_bt, 1a2b3c4 bt_uart: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: logcheck
+    attributes:
+      label: What tools/logcheck.py says
+      description: "Its whole output for the run's log; with --all for the parts that stopped."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What was seen on the phone
+      description: "The screen, a switch in Settings, a sound, a light: what a person saw, beside what the log says."
+  - type: textarea
+    id: lines
+    attributes:
+      label: More of the log
+      description: "The lines around what stopped, if logcheck's are not enough."
+      render: text
