@@ -4,7 +4,7 @@ Apple's XNU kernel (`xnu-12377.121.6`, the kernel of Darwin 26 and 27) with what
 Qualcomm phones and in QEMU: our loader, our drivers, and stand-ins for Apple's closed parts.
 
 Nothing of Apple's is in this repository: no firmware, no IPSW, no system images, no screenshots. They are made
-on your machine from files you have.
+on your machine from files you have. По-русски: [README.ru.md](README.ru.md).
 
 ## Where things are
 
