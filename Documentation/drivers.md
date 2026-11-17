@@ -77,8 +77,10 @@ The frequency table of a group is read as Linux's `qcom-cpufreq-hw.c` reads it f
 to the row it repeats, in either of its layouts (`drivers/board/cpufreq_hw.h`: EPSS's, and the OSM's with its rows 32
 bytes apart, its row register at 0x920 and its limit at 0x704); the row register is held inside the table, whatever it
 reads, and a group whose enable register (0x0) says the hardware is not in charge of its clock is left alone, as
-Linux leaves it. **Not done yet**, for want of a phone to see them on: the table's core-count field (Linux leaves rows
-marked as turbo out, and keeps the last one as a boost it does not use by default) and per-core DCVS (0xb0: a group
+Linux leaves it. **Not done yet**, for want of a phone to see them on: leaving out the rows the table's core-count field
+marks as turbo (Linux does, and keeps the last one as a boost it does not use by default) -- the log says each
+group's counts (`cpufreq: group N: the rows' core counts ...`), so that a phone's run tells whether its top rows are
+such -- and per-core DCVS (0xb0: a group
 whose cores each vote, where only the first is written here). `cpufreq=1` raises every group to its top row and
 leaves it there for the loader; `scmi_perf=2` asks its domains back to the levels they were found at, and `ddr=` gives
 its vote back, at the run's end.
