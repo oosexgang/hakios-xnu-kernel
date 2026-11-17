@@ -2575,7 +2575,8 @@ step_zap_load(void)
 	/* (the memory is looked at only now: TrustZone has just said that it is not its own) */
 	memory = (volatile uint8_t *)ml_io_map_wcomb(ZAP_MEMORY, ZAP_MEMORY_SIZE);
 	printf("adreno: %u: the reserved memory begins %02x %02x %02x %02x, the zap shader %02x %02x %02x %02x\n", step,
-	    memory[0], memory[1], memory[2], memory[3], segment[0], segment[1], segment[2], segment[3]);
+	    memory[0], memory[1], memory[2], memory[3], size > 0 ? segment[0] : 0, size > 1 ? segment[1] : 0,
+	    size > 2 ? segment[2] : 0, size > 3 ? segment[3] : 0);     /* (a file of fewer than four bytes: not read past) */
 	printf("adreno: %u: about to write %llu bytes at %#llx\n", step, size, ZAP_MEMORY);
 	snprintf(last_write, sizeof(last_write), "step %u wrote the zap shader into memory at %#llx", step, ZAP_MEMORY);
 	hold(true);
@@ -3375,6 +3376,14 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 uint64_t
 hakios_gpu_address(uint64_t size)
 {
+	/*
+	 * (a size of 0, or one within a granule of 2^64, made a span of 0: an address given and not taken from the free
+	 * list, given again to the next buffer, and its free later a hole of nothing that made the real one's look freed twice)
+	 */
+	if (size == 0 || size > UINT64_MAX - 2 * GPU_ADDRESS_GRANULE) {
+		gpu_va_refused++;
+		return 0;
+	}
 	size = gpu_address_span(size);
 	for (unsigned i = 0; i < gpu_free_count; i++) {
 		if (gpu_free[i].size >= size) {
@@ -3596,7 +3605,12 @@ hakios_gpu_worked(uint64_t *microseconds, uint32_t *submissions, uint32_t by[7])
 uint32_t
 hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count)
 {
-	uint32_t wanted = 26 + 4 * count, room = 0;
+	uint32_t wanted, room = 0;
+
+	if (count > RING_WORDS / 4) {
+		return 0;               /* (more than the ring holds: and 26 + 4 x count wraps from 2^30 on) */
+	}
+	wanted = 26 + 4 * count;
 
 	/*
 	 * (the run is ending, or has given the GPU back: its core has no power, and a register of it would hang the bus. The
