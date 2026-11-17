@@ -165,6 +165,18 @@ tags yet, so the current work is one section.
 - The display's and the key store's user clients kept the wake port of every asynchronous call for good; the display's
   refreshes stopped for good when their port came after they were asked for; Wi-Fi's services were never made when a
   first attempt failed.
+- Wi-Fi on a second kernel in one session of the phone: the DSP the first kernel left was shut down through this
+  kernel's driver stop, which closed the radio's registers for good before the driver was started -- every start after
+  the first could not bring the radio up. The station's thread spun on its lock once the station was gone with a rejoin
+  pending; memory the radio could not be shown was kept, and the SMMU's addresses with it, so a second try failed too;
+  a vector being let go of could be unmasked again by its handler finishing. The modem's GLINK control answers that
+  found the queue full were dropped (the modem then waited for an intent back for good); they wait for room and go
+  first.
+- The loader, after a run: the screen and sound recordings and the kernel's log are believed only inside the RAM the
+  kernel was given (a kernel that scribbled over its data had the loader read UEFI's memory, or fault, and lose the
+  log); the kernel's part of a staged log was lost for good once the loader's own log had grown by 8 KB. A free block
+  that ends inside the payload's place keeps what is below it, an unaligned physbase= is refused, and the memory for
+  32-bit devices is not put over the payload.
 
 ### For whoever works on the project
 
