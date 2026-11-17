@@ -5150,6 +5150,7 @@ static uint32_t dms_node, dms_port_number;      /* where DMS is; 0: not seen */
 static volatile uint32_t dms_answers;
 static volatile uint32_t dms_result, dms_error;
 static uint16_t dms_transaction;
+static uint32_t dms_waited_message;      /* the message whose answer dms_set_mode() waits for */
 static int cellular_up, cellular_registered, cellular_bars, cellular_dbm, cellular_radio;
 static char cellular_operator[40];               /* "MCC MNC name" of the serving network; "" when none */
 static char cellular_ip[20], cellular_gateway[20], cellular_dns[44];  /* the data session's addresses; "" until it is up */
@@ -5245,6 +5246,13 @@ dms_receive(__unused void *context, __unused uint32_t node, __unused uint32_t po
 		tell("mpss: dms: THE MODEM'S OPERATING MODE IS %u (%s); offline reason %#x%s; hardware restricted %u\n", mode,
 		    mode < sizeof(modes) / sizeof(modes[0]) ? modes[mode] : "?", reason, reason == ~0u ? " (not told)" : "", restricted);
 	}
+	/*
+	 * Counted as the answer waited for only when it is that one -- its transaction and its message: a late answer to the
+	 * question of the mode (or to a request that timed out) is not to be taken for the answer to the request to go online.
+	 */
+	if ((uint16_t)(m[1] | m[2] << 8) != dms_transaction || (m[3] | m[4] << 8) != dms_waited_message) {
+		return;
+	}
 	dms_result = result;
 	dms_error = error;
 	dms_answers++;
@@ -5283,6 +5291,7 @@ dms_set_mode(uint32_t mode)
 		dms_transaction = (uint16_t)(dms_transaction + 1 == 0 ? 1 : dms_transaction + 1);
 		question[1] = (uint8_t)dms_transaction;
 		question[2] = (uint8_t)(dms_transaction >> 8);
+		dms_waited_message = DMS_GET_OPERATING_MODE;
 		before = dms_answers;
 		if (qrtr_send(dms_port, dms_node, dms_port_number, question, sizeof(question)) == 0) {
 			for (unsigned ms = 0; ms < 3000 && dms_answers == before; ms++) {
@@ -5293,6 +5302,7 @@ dms_set_mode(uint32_t mode)
 	dms_transaction = (uint16_t)(dms_transaction + 1 == 0 ? 1 : dms_transaction + 1);
 	request[1] = (uint8_t)dms_transaction;
 	request[2] = (uint8_t)(dms_transaction >> 8);
+	dms_waited_message = DMS_SET_OPERATING_MODE;
 	before = dms_answers;
 	printf("mpss: %u: about to ask DMS (node %u port %u) for operating mode %u (0 online, 1 low power): message %#x\n", step, dms_node,
 	    dms_port_number, mode, DMS_SET_OPERATING_MODE);
