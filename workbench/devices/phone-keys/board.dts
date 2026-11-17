@@ -16,6 +16,10 @@
 		type = "soft";
 	};
 
+	thermal {
+		floor-mhz = <1000 1100>;
+	};
+
 	haptic {
 		sda = <110>;
 		scl = <111>;

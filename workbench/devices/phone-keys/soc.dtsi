@@ -1,18 +1,26 @@
 /dts-v1/;
 
 // A chip that is nobody's: the PMIC arbiter and the CPU frequency block at addresses unlike any real
-// SoC's, this system as the arbiter's third (ee = 2), two groups of cores. For the tests of what must
-// come from the SoC file and not from the code (workbench/buttons_driver_test.c, cpufreq_driver_test.c,
-// mic_driver_test.c).
+// SoC's, this system as the arbiter's third (ee = 2), two groups of cores in the OSM's frequency layout.
+// For the tests of what must come from the SoC file and not from the code (workbench/buttons_driver_test.c,
+// cpufreq_driver_test.c, thermal_driver_test.c, mic_driver_test.c).
 / {
 	name = "soc-test";
 	description = "A made-up chip for the tests";
 
-	// (two groups of cores, and the frequency block where no real chip has it, in larger steps)
+	// (two groups of cores, and the frequency block where no real chip has it: the OSM's layout of before EPSS, its
+	// groups' blocks not one size apart, as an SM8150's are not)
 	cpufreq {
+		block = "osm";
 		epss = <0x05591000>;
-		epss-domain-size = <0x2000>;
+		epss-domain-size = <0x1400>;
+		domains = <0x05591000 0x05593800>;
 		domain-cores = <6 2>;
+	};
+
+	// (one temperature controller, where no real chip has it)
+	thermal {
+		tsens = <0x0d263000>;
 	};
 
 	// (the CPU performance protocol's channel over SCMI, where no real chip has it)

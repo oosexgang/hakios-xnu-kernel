@@ -1,7 +1,8 @@
 /*
  * The CPU frequency driver itself (drivers/board/cpufreq.c), run as a host program
- * against a model of the EPSS block: a frequency table and a "row wanted" register for each group of
- * cores, where the board's SoC file says they are. What is tested: every group that has a core of the
+ * against a model of the frequency block, EPSS's or the OSM's (board/cpufreq_hw.h): a frequency table, a
+ * "row wanted" register and an enable bit for each group of cores, where the board's SoC file says they are
+ * and laid out as it says. What is tested: every group that has a core of the
  * kernel's is asked for the top row of its own table, a group without one is left alone, and nothing
  * is written on a board that does not list the feature or without the boot argument.
  *
@@ -19,11 +20,26 @@ extern char log_text[];
 #define ROWS            40
 
 static struct {
-	uint32_t base, size;            /* where the test put the block: from the board the driver reads */
+	uint32_t base[GROUPS], size;    /* where the test put each group's block: from the board the driver reads */
+	uint32_t table_at, row_size, perf_at;   /* the layout: EPSS's 0x100, 4, 0x320; the OSM's 0x110, 32, 0x920 */
 	uint32_t table[GROUPS][ROWS];   /* [31:30] the clock source, [7:0] the multiple of 19.2 MHz */
 	uint32_t wanted[GROUPS];
+	uint32_t enable[GROUPS];        /* [0]: the hardware is in charge of the group's clock */
 	unsigned writes[GROUPS], elsewhere;
 } epss;
+
+/* the group whose block ADDRESS is in, and where in it; GROUPS for none */
+static unsigned
+group_at(vm_offset_t address, uint32_t *offset)
+{
+	for (unsigned g = 0; g < GROUPS; g++) {
+		if (epss.size != 0 && epss.base[g] != 0 && address >= epss.base[g] && address < epss.base[g] + epss.size) {
+			*offset = (uint32_t)(address - epss.base[g]);
+			return g;
+		}
+	}
+	return GROUPS;
+}
 
 /* a group's table: 300 MHz from the fixed source, then the multiples given, then the last repeated to the end */
 static void
@@ -38,15 +54,18 @@ table(unsigned group, unsigned count, const uint8_t *multiples)
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
-	unsigned group = epss.size ? (unsigned)((address - epss.base) / epss.size) : GROUPS;
-	uint32_t offset = epss.size ? (uint32_t)((address - epss.base) % epss.size) : 0;
+	uint32_t offset = 0;
+	unsigned group = group_at(address, &offset);
 
-	if (address >= epss.base && group < GROUPS) {
-		if (offset >= 0x100 && offset < 0x100 + 4 * ROWS) {
-			return epss.table[group][(offset - 0x100) / 4];
+	if (group < GROUPS) {
+		if (offset >= epss.table_at && offset < epss.table_at + epss.row_size * ROWS && (offset - epss.table_at) % epss.row_size == 0) {
+			return epss.table[group][(offset - epss.table_at) / epss.row_size];
 		}
-		if (offset == 0x320) {
+		if (offset == epss.perf_at) {
 			return epss.wanted[group];
+		}
+		if (offset == 0) {
+			return epss.enable[group];
 		}
 	}
 	epss.elsewhere++;
@@ -57,9 +76,10 @@ hakios_test_rd(vm_offset_t address)
 void
 hakios_test_wr(vm_offset_t address, uint32_t value)
 {
-	unsigned group = epss.size ? (unsigned)((address - epss.base) / epss.size) : GROUPS;
+	uint32_t offset = 0;
+	unsigned group = group_at(address, &offset);
 
-	if (address >= epss.base && group < GROUPS && (address - epss.base) % epss.size == 0x320) {
+	if (group < GROUPS && offset == epss.perf_at) {
 		epss.wanted[group] = value;
 		epss.writes[group]++;
 		return;
@@ -116,9 +136,19 @@ phone(const char *name, unsigned cores)
 	fake_cores = cores;
 	fake_delay_divisor = 20;
 	b = hakios_board();
+	/* (the model's layout and places from the board, but written out here: not the driver's own arithmetic) */
+	epss.table_at = 0x100, epss.row_size = 4, epss.perf_at = 0x320;
+	if (b != NULL && b->cpufreq.block == HAKIOS_CPUFREQ_OSM) {
+		epss.table_at = 0x110, epss.row_size = 32, epss.perf_at = 0x920;
+	}
 	if (b != NULL) {
-		epss.base = b->cpufreq.epss;
 		epss.size = b->cpufreq.epss_domain_size;
+		for (unsigned g = 0; g < GROUPS && b->cpufreq.domain_cores[g] != 0; g++) {
+			epss.base[g] = b->cpufreq.domains[g] ? b->cpufreq.domains[g] : b->cpufreq.epss + g * epss.size;
+		}
+	}
+	for (unsigned g = 0; g < GROUPS; g++) {
+		epss.enable[g] = 1;
 	}
 	table(0, sizeof(small), small);
 	table(1, sizeof(big), big);
@@ -177,17 +207,35 @@ some_cores(void)
 	CHECK(logged("group 1 (1 of our cores)"), "the big group with the one core the kernel has of it");
 }
 
-/* a chip with two groups, six and two cores, its block elsewhere and its groups further apart */
+/* a chip of before EPSS with two groups, six and two cores: the OSM's layout, its blocks elsewhere and not one size apart */
 static void
 another_soc(void)
 {
 	phone("phone-keys", 8);
 	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
-	CHECK(epss.base == 0x05591000 && epss.size == 0x2000, "the block is where that SoC file has it: %#x, %#x", epss.base, epss.size);
+	CHECK(epss.base[0] == 0x05591000 && epss.base[1] == 0x05593800 && epss.size == 0x1400 && epss.perf_at == 0x920,
+	    "the blocks are where that SoC file has them: %#x %#x, %#x", epss.base[0], epss.base[1], epss.size);
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8, "rows %u %u", epss.wanted[0], epss.wanted[1]);
 	CHECK(epss.writes[2] + epss.writes[3] == 0, "it has no third group");
 	CHECK(logged("group 0 (6 of our cores)") && logged("group 1 (2 of our cores)"), "six and two: %s", log_text);
+	CHECK(epss.elsewhere == 0, "%u accesses where nothing of the block is", epss.elsewhere);
+}
+
+/* a group whose hardware is not in charge of its clock (its enable bit clear) is left alone and said, as Linux leaves it */
+static void
+not_in_charge(void)
+{
+	phone("phone-cmd", 8);
+	epss.enable[1] = 0;
+	boot_args = "cpufreq=1 cpu_gov=0 park_small=0";
+	hakios_cpufreq_init();
+	CHECK(epss.wanted[1] == 1 && epss.writes[1] == 0, "the big group untouched: row %u, %u writes", epss.wanted[1], epss.writes[1]);
+	CHECK(logged("cpufreq: group 1 (3 of our cores): the hardware is not in charge of its clock: left alone"), "said: %s", log_text);
+	CHECK(epss.wanted[0] == 7 && epss.wanted[2] == 6, "the others raised: %u %u", epss.wanted[0], epss.wanted[2]);
+	boot_args = "";
+	gov_start();
+	CHECK(gov[1].base == 0 && gov[0].base != 0, "and not governed");
 	CHECK(epss.elsewhere == 0, "%u accesses where nothing of the block is", epss.elsewhere);
 }
 
@@ -236,7 +284,9 @@ static void
 not_listed(void)
 {
 	phone("qemu-virt", 8);
-	epss.base = 0x18591000;
+	for (unsigned g = 0; g < 3; g++) {
+		epss.base[g] = 0x18591000 + g * 0x1000;
+	}
 	epss.size = 0x1000;
 	boot_args = "cpufreq=1 cpu_gov=0";
 	hakios_cpufreq_init();
@@ -481,7 +531,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "every_group", every_group }, { "one_core", one_core }, { "some_cores", some_cores }, { "another_soc", another_soc },
-		{ "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
+		{ "not_in_charge", not_in_charge }, { "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
 		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts }, { "governor_row_past_the_table", governor_row_past_the_table },
 		{ "governor_goes_down_slowly", governor_goes_down_slowly }, { "governor_goes_up_at_once", governor_goes_up_at_once },
 		{ "governor_quiesced", governor_quiesced }, { "governor_leaves_a_shared_group", governor_leaves_a_shared_group },

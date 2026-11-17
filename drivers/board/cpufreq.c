@@ -1,16 +1,19 @@
 /*
- * The clock speed of the processor cores the kernel runs on: the feature "cpufreq-epss".
+ * The clock speed of the processor cores the kernel runs on: the feature "cpufreq-epss", on every Snapdragon since
+ * the SDM845.
  *
  *   cpufreq=1      every group of cores that has a core of ours is asked for the top row of its table
  *
  * The boot loader leaves each group of cores at a modest frequency and expects the operating
- * system to ask for more. On this SoC that is one register write: the hardware ("EPSS") has
- * a table of frequencies per group and switches the clock source and the supply voltage by
- * itself when told which row is wanted. There is no reason for us ever to want less than the
+ * system to ask for more. That is one register write: the hardware (EPSS on the SM8350 and every
+ * chip after it, the OSM's firmware on the SDM845 to the SM8250) has a table of frequencies per
+ * group and switches the clock source and the supply voltage by itself when told which row is
+ * wanted. There is no reason for us ever to want less than the
  * top row, for every group that has a core of ours in it (one core, unless boot-arg cpus=N
  * says more).
  *
- * Register layout: Linux drivers/cpufreq/qcom-cpufreq-hw.c ("epss" variant).
+ * Register layouts: board/cpufreq_hw.h (Linux drivers/cpufreq/qcom-cpufreq-hw.c, both of its variants). A group
+ * whose hardware is not in charge of its clock (the block's enable bit clear) is left alone, as Linux leaves it.
  */
 #include <kern/clock.h>
 #include <kern/thread.h>
@@ -25,6 +28,7 @@
 
 #include "kernel.h"
 #include "board.h"
+#include "cpufreq_hw.h"
 #include "kconfig.h"
 #include "log.h"
 #include "mmio.h"
@@ -36,16 +40,42 @@ extern void hakios_tl(const char *format, ...) __printflike(1, 2);   /* the kern
 #define tell hakios_say
 
 /*
- * Where the EPSS block is and which cores each of its groups ("domains") has is the board's data
- * (board/board.h; soc.dtsi, cpufreq { }): on the two phones this was written for, three groups of
+ * Where the block is, which layout it has and which cores each of its groups ("domains") has is the board's
+ * data (board/board.h; soc.dtsi, cpufreq { }): on the two phones this was written for, three EPSS groups of
  * 0x1000 at 0x18591000 -- four small cores, three big, one biggest.
  */
-#define EPSS_DOMAINS            HAKIOS_CPU_GROUPS
-#define EPSS_FREQ_TABLE         0x100           /* a word per row: [31:30] clock source, [7:0] multiple of 19.2 MHz */
-#define EPSS_TABLE_ROWS         40
-#define EPSS_PERF_STATE         0x320           /* the row that is wanted */
-#define XO_KHZ                  19200
-#define ALTERNATE_KHZ           300000          /* source 0: a fixed 300 MHz */
+#define CPUFREQ_GROUPS          HAKIOS_CPU_GROUPS
+
+static const struct cpufreq_hw_layout *layout = &cpufreq_hw_layouts[HAKIOS_CPUFREQ_EPSS];  /* (the board's, at the start) */
+
+/* a group's block mapped, or 0 when the hardware is not in charge of the group's clock (Linux refuses such a group too) */
+static vm_offset_t
+domain_map(uint32_t domain)
+{
+	const struct hakios_board *board = hakios_board();
+	vm_offset_t base = ml_io_map(cpufreq_hw_domain(board, domain), cpufreq_hw_map_size(board));
+
+	return (rd(base + layout->enable) & 1) ? base : 0;
+}
+
+/* the top row of a group's table (it ends by repeating its last row), and its frequency */
+static uint32_t
+table_top(vm_offset_t base, uint32_t *top_khz)
+{
+	uint32_t top = 0;
+
+	*top_khz = 0;
+	for (uint32_t row = 0; row < CPUFREQ_HW_ROWS; row++) {
+		uint32_t khz = cpufreq_hw_khz(rd(base + cpufreq_hw_row(layout, row)));
+
+		if (row > 0 && khz <= *top_khz) {
+			break;
+		}
+		top = row;
+		*top_khz = khz;
+	}
+	return top;
+}
 
 /* How fast a simple loop runs, in thousands of iterations per millisecond. */
 static uint32_t
@@ -77,20 +107,14 @@ raise_domain(uint32_t domain, uint32_t cores)
 	uint32_t top = 0, top_khz = 0, was;
 	vm_offset_t base;
 
-	base = ml_io_map(hakios_board()->cpufreq.epss + domain * hakios_board()->cpufreq.epss_domain_size,
-	    hakios_board()->cpufreq.epss_domain_size);
-	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
-		uint32_t entry = rd(base + EPSS_FREQ_TABLE + 4 * row);
-		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
-
-		if (row > 0 && khz <= top_khz) {
-			break;                  /* the table ends by repeating its last row */
-		}
-		top = row;
-		top_khz = khz;
+	base = domain_map(domain);
+	if (base == 0) {
+		tell("cpufreq: group %u (%u of our cores): the hardware is not in charge of its clock: left alone\n", domain, cores);
+		return;
 	}
-	was = rd(base + EPSS_PERF_STATE);
-	wr(base + EPSS_PERF_STATE, top);
+	top = table_top(base, &top_khz);
+	was = rd(base + layout->perf_state);
+	wr(base + layout->perf_state, top);
 	sleep_ms(20);
 	tell("cpufreq: group %u (%u of our cores): row %u -> %u of the frequency table, %u MHz\n", domain, cores, was, top,
 	    top_khz / 1000);
@@ -130,6 +154,7 @@ l3_chase_ns(vm_offset_t buffer)
 static void
 l3_raise(void)
 {
+	const struct cpufreq_hw_layout *l3 = &cpufreq_hw_layouts[HAKIOS_CPUFREQ_EPSS];  /* (EPSS's, on either kind of chip) */
 	uint32_t enabled = 0, probe = 0, top = 0, top_khz = 0, was, lines = L3_CHASE_BYTES / 64, seed = 12345;
 	vm_offset_t base, buffer = 0;
 	char line[600];
@@ -145,9 +170,8 @@ l3_raise(void)
 		return;
 	}
 	base = ml_io_map(L3_EPSS, 0x1000);
-	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
-		uint32_t entry = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + 4 * row);
-		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
+	for (uint32_t row = 0; row < CPUFREQ_HW_ROWS; row++) {
+		uint32_t khz = cpufreq_hw_khz(*(volatile uint32_t *)(base + cpufreq_hw_row(l3, row)));
 
 		if (row > 0 && khz <= top_khz) {
 			break;
@@ -189,9 +213,9 @@ l3_raise(void)
 			tell("l3: a load through 2 MB: %llu/100 ns\n", l3_chase_ns(buffer));
 		}
 	}
-	was = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
+	was = *(volatile uint32_t *)(base + l3->perf_state);
 	if (enabled != 0) {
-		*(volatile uint32_t *)(base + EPSS_PERF_STATE) = top;
+		*(volatile uint32_t *)(base + l3->perf_state) = top;
 		delay_for_interval(20, NSEC_PER_MSEC);
 		tell("l3: row %u -> %u of its frequency table, %u MHz\n", was, top, top_khz / 1000);
 	}
@@ -304,8 +328,9 @@ llcc_setup(void)
 	if (mode == 0) {
 		return;
 	}
-	if (hakios_board()->cpufreq.epss != L3_EPSS + 0x1000) {
-		tell("llcc: not this SoC (the cores' EPSS at %#x): left alone\n", hakios_board()->cpufreq.epss);
+	/* (an SM8250's OSM is where an SM7325's EPSS is, and its slices are not these) */
+	if (hakios_board()->cpufreq.epss != L3_EPSS + 0x1000 || hakios_board()->cpufreq.block != HAKIOS_CPUFREQ_EPSS) {
+		tell("llcc: not this SoC (the cores' %s at %#x): left alone\n", layout->name, hakios_board()->cpufreq.epss);
 		return;
 	}
 	llcc_bcast = ml_io_map(LLCC_BCAST, LLCC_SIZE);
@@ -434,14 +459,14 @@ static struct gov_group {
 	uint32_t rows, khz[GOV_ROWS], top, row, down_looks, down_most;
 	uint32_t cores;                 /* the kernel's cores in it, by cpu number */
 	uint64_t looks_at[GOV_ROWS];    /* (for the log: how many looks at each row) */
-} gov[EPSS_DOMAINS];
+} gov[CPUFREQ_GROUPS];
 static bool gov_on;
 
 static void
 gov_set(struct gov_group *g, uint32_t row)
 {
 	if (row != g->row) {
-		wr(g->base + EPSS_PERF_STATE, row);
+		wr(g->base + layout->perf_state, row);
 		g->row = row;
 	}
 }
@@ -452,7 +477,7 @@ gov_start(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	const struct hakios_board *board = hakios_board();
-	uint32_t on = 1, thermal = 1, had[EPSS_DOMAINS] = { 0 };
+	uint32_t on = 1, thermal = 1, had[CPUFREQ_GROUPS] = { 0 };
 
 	PE_parse_boot_argn("cpu_gov", &on, sizeof(on));
 	PE_parse_boot_argn("thermal", &thermal, sizeof(thermal));
@@ -468,17 +493,19 @@ gov_start(void)
 			had[d]++;
 		}
 	}
-	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+	for (uint32_t d = 0; d < CPUFREQ_GROUPS; d++) {
 		struct gov_group *g = &gov[d];
 		uint32_t top_khz = 0;
 
 		if (had[d] == 0 || had[d] != board->cpufreq.domain_cores[d]) {
 			continue;               /* (none of ours, or a core of the loader's in it) */
 		}
-		g->base = ml_io_map(board->cpufreq.epss + d * board->cpufreq.epss_domain_size, board->cpufreq.epss_domain_size);
-		for (uint32_t row = 0; row < GOV_ROWS && row < EPSS_TABLE_ROWS; row++) {
-			uint32_t entry = rd(g->base + EPSS_FREQ_TABLE + 4 * row);
-			uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
+		g->base = domain_map(d);
+		if (g->base == 0) {
+			continue;               /* (not the hardware's: raise_domain() has said so) */
+		}
+		for (uint32_t row = 0; row < GOV_ROWS && row < CPUFREQ_HW_ROWS; row++) {
+			uint32_t khz = cpufreq_hw_khz(rd(g->base + cpufreq_hw_row(layout, row)));
 
 			if (row > 0 && khz <= top_khz) {
 				break;
@@ -488,7 +515,7 @@ gov_start(void)
 		}
 		g->top = g->rows - 1;
 		/* (an index into khz[] and looks_at[]: never past the table, whatever the register reads; Linux bounds it too) */
-		g->row = MIN(rd(g->base + EPSS_PERF_STATE), g->top);
+		g->row = MIN(rd(g->base + layout->perf_state), g->top);
 		gov_on = true;
 		printf("cpufreq: group %u (cores %#x) by its load: %u rows, %u to %u MHz\n", d, g->cores, g->rows, g->khz[0] / 1000,
 		    g->khz[g->top] / 1000);
@@ -499,7 +526,7 @@ gov_start(void)
 static void
 gov_look(const uint32_t *busy)
 {
-	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+	for (uint32_t d = 0; d < CPUFREQ_GROUPS; d++) {
 		struct gov_group *g = &gov[d];
 		uint32_t most = 0, want, need;
 
@@ -538,9 +565,9 @@ gov_look(const uint32_t *busy)
 static void
 gov_quiesce(void)
 {
-	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+	for (uint32_t d = 0; d < CPUFREQ_GROUPS; d++) {
 		if (gov[d].base != 0) {
-			wr(gov[d].base + EPSS_PERF_STATE, gov[d].top);
+			wr(gov[d].base + layout->perf_state, gov[d].top);
 		}
 	}
 	gov_on = false;
@@ -616,7 +643,7 @@ park_thread(void *arg __unused, wait_result_t wr __unused)
 			size_t at = 0;
 
 			/* (and how many looks each governed group spent at each row, its top last: "g1 0:12 7:30 ...") */
-			for (uint32_t d = 0; gov_on && d < EPSS_DOMAINS && at < sizeof(rows) - 16; d++) {
+			for (uint32_t d = 0; gov_on && d < CPUFREQ_GROUPS && at < sizeof(rows) - 16; d++) {
 				if (gov[d].base == 0) {
 					continue;
 				}
@@ -663,7 +690,7 @@ void
 hakios_cpufreq_init(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
-	uint32_t enabled = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
+	uint32_t enabled = 0, cores[CPUFREQ_GROUPS] = { 0 }, before, here;
 
 	hakios_cpuload_start();
 	PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled));
@@ -679,6 +706,7 @@ hakios_cpufreq_init(void)
 		park_start();
 		return;
 	}
+	layout = cpufreq_hw_layout(hakios_board());
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
 		int domain = domain_of(topology->cpus[i].phys_id);
 
@@ -689,7 +717,7 @@ hakios_cpufreq_init(void)
 	/* (whichever core this thread happens to be on, and stays on or not: it only goes to the log) */
 	here = (uint32_t)(__builtin_arm_rsr64("MPIDR_EL1") >> 8) & 0xff;
 	before = loop_speed();
-	for (uint32_t domain = 0; domain < EPSS_DOMAINS; domain++) {
+	for (uint32_t domain = 0; domain < CPUFREQ_GROUPS; domain++) {
 		if (cores[domain] != 0) {
 			raise_domain(domain, cores[domain]);
 		}
