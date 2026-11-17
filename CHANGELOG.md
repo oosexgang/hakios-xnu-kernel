@@ -47,6 +47,12 @@ tags yet, so the current work is one section.
   bluetoothd's commands waiting without end; a write to the kernel control could leave half a packet in the line; a
   packet without room was dropped instead of waiting; a new bluetoothd got the last one's packets; a failed start left
   the service and the rest behind. ([bluetooth.md](Documentation/bluetooth.md))
+- The Bluetooth UART driver read the serial engine's registers before looking whether its clocks ran (at `bt=-1` too),
+  left a transmit that failed part way running, waited half a second where it meant two, and took a Command Complete
+  of another request for a firmware segment's answer. The kernel's own UFS driver, when the controller would not take
+  UEFI's list back, went on to ask the loader -- for writes too -- with its own list perhaps still in; took a short
+  read for a whole one; used again slots it had cleared without an abort; and read a GPT header's size off the disk
+  unchecked. All found in reviews, before a phone has run them.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
