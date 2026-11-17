@@ -45,8 +45,10 @@ fi
 # HAKIOS_DEVICES). Made anew each build and put in the tree only when it differs, so that a build with
 # the same boards recompiles nothing for it.
 mkdir -p "$XNUDEPS/boards"
-"$HAKIOS/tools/boards.py" gen --out "$XNUDEPS/boards" | sed 's/^/build.sh: boards: /'
+"$HAKIOS/tools/gen_headers.py" --out "$XNUDEPS/boards" | sed 's/^/build.sh: /'
 update "$XNU_SRC/bsd/dev/board/board_table.h" < "$XNUDEPS/boards/board_table.h"
+# ... and the kernel's configuration, of KCONFIG_FRAGMENTS (build.config.arm64): which drivers are started
+update "$XNU_SRC/bsd/dev/board/kconfig.h" < "$XNUDEPS/boards/kconfig.h"
 
 # --- 2. the dependency directory --------------------------------------------------------------
 # Apple's open sources and the host tools (mig, tcsh, unifdef): a darwin-renoir checkout has them

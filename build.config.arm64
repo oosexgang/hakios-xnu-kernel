@@ -12,3 +12,8 @@ export MACHINE_CONFIG=${MACHINE_CONFIG:-BCM2837}
 # Qualcomm's cores up to ARMv8.2 (Cortex-A78 and A55 and older) have no pointer authentication: plain arm64,
 # not arm64e
 export XNU_ARCH=${XNU_ARCH:-arm64}
+
+# The kernel's configuration (Kconfig, tools/kconfig.py): the fragments of arch/arm64/configs/kconfig/ it is made of, in
+# order, the later winning -- hakios (every driver), phone (none of the emulator's), qemu (only the emulator's), bringup
+# (only those common to every Snapdragon) -- or files of your own. tools/gen_headers.py makes kconfig.h of them.
+export KCONFIG_FRAGMENTS=${KCONFIG_FRAGMENTS:-hakios}

@@ -37,7 +37,7 @@ help:
 	@echo "make qemu           boot the built kernel in QEMU, try it from its shell and run its own tests (KERNEL=FILE)"
 
 .PHONY: check
-check: lint boards-check docs-check test
+check: lint boards-check kconfig-check docs-check test
 
 .PHONY: test
 test:
@@ -51,6 +51,24 @@ lint:
 boards:
 	tools/boards.py check
 	tools/boards.py gen
+
+# the kernel's configuration (Documentation/kconfig.md): every Kconfig file and fragment checked, and what the
+# configuration of KCONFIG_FRAGMENTS (or of FRAGMENTS=...) has on and off
+.PHONY: kconfig
+kconfig:
+	tools/kconfig.py check
+	tools/kconfig.py list $(FRAGMENTS)
+
+# every header the build makes (build/boards), and the ones user space shares with the kernel (build/headers)
+.PHONY: headers
+headers:
+	tools/gen_headers.py $(FRAGMENTS)
+	tools/gen_headers.py --user
+
+.PHONY: kconfig-check
+kconfig-check:
+	tools/kconfig.py check
+	tools/gen_headers.py --user --out build/headers
 
 .PHONY: boards-check
 boards-check:

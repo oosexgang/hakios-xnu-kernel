@@ -21,7 +21,7 @@ diff -r "$OVERLAY" "$work/out/overlay" ||
 for place in "${OVERLAY_PLACES[@]}"; do
 	dir=${place%%:*}
 	[ -d "$REPO_DIR/$dir" ] || [ -d "$work/out/places/$dir" ] || continue
-	diff -r -x README.md "$REPO_DIR/$dir" "$work/out/places/$dir" ||
+	diff -r -x README.md -x Kconfig "$REPO_DIR/$dir" "$work/out/places/$dir" ||
 		die "$dir is not what an export of the assembled tree gives (above)"
 done
 for patch in "$PATCHES"/*.patch "$work"/out/patches/*.patch; do

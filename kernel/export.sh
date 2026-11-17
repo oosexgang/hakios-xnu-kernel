@@ -87,14 +87,14 @@ done
 exported=$(tree_git "$D" write-tree)
 unset GIT_INDEX_FILE
 
-# In place of what was there; the series is the repository's and stays, and so does each place's README.md.
+# In place of what was there; the series is the repository's and stays, and so do each place's README.md and Kconfig.
 rm -rf "$out/overlay"
 mv "$work/overlay" "$out/overlay"
 for place in "${OVERLAY_PLACES[@]}"; do
 	dir=${place%%:*}
 	if [ "$out" = "$KERNEL_DIR" ]; then
 		to=$REPO_DIR/$dir
-		[ -d "$to" ] && find "$to" -type f ! -name README.md -delete
+		[ -d "$to" ] && find "$to" -type f ! -name README.md ! -name Kconfig -delete
 	else
 		to=$out/places/$dir
 		rm -rf "$to"

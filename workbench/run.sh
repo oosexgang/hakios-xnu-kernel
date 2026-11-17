@@ -50,7 +50,7 @@ python3 "$HERE/image_test.py" 2>&1 | tail -3 || failed=1
 # packages are not part of this repository.
 BOARDS=$WORK/boards
 "$HERE/../tools/boards.py" --devices "$HERE/devices" check || failed=1
-"$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$BOARDS" || failed=1
+"$HERE/../tools/gen_headers.py" --devices "$HERE/devices" --out "$BOARDS" hakios || failed=1
 # (one touch driver includes a controller's firmware, which is not ours to publish: the stub the kernel's build has without it)
 (source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/focaltech_fw.h") || failed=1
 

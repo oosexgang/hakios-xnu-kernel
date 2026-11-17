@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the XNU loader as a freestanding AArch64 UEFI application: clang and lld, no EDK2.
-# platforms.h (the boards it knows) is made here, by tools/boards.py gen, from the device packages that
+# platforms.h (the boards it knows) is made here, by tools/gen_headers.py, from the device packages that
 # are there (arch/arm64/boot/dts/, HAKIOS_DEVICES): the loader knows the boards it was built with.
 #
 # LOADER_IDENTITY=FILE: the identity Darwin is told (a header mkidentity.py made from another iPhone's device tree) in
@@ -35,7 +35,7 @@ fi
 if [ -f identity.h.new ]; then
 	if cmp -s identity.h.new identity.h; then rm identity.h.new; else mv identity.h.new identity.h; fi
 fi
-"$TOP/tools/boards.py" gen
+"$TOP/tools/gen_headers.py" > /dev/null
 # shellcheck disable=SC2086  # (LOADER_CFLAGS: flags, one a word)
 "$LOADER_CC" --target="$LOADER_TARGET" -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
   -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I"$TOP/build/boards" $LOADER_CFLAGS \

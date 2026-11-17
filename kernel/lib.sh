@@ -16,7 +16,7 @@ KERNEL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OVERLAY=$KERNEL_DIR/overlay
 REPO_DIR=$(cd "$KERNEL_DIR/.." && pwd)
 # A directory of the repository and the directory of the tree its files are, each "REPOSITORY:TREE". Everything in
-# it is the tree's but its README.md, which is the repository's (tools/bootargs.py reads this list as well).
+# it is the tree's but its README.md and its Kconfig, which are the repository's (tools/bootargs.py reads this list as well).
 OVERLAY_PLACES=(
 	"arch/arm64/kernel:osfmk/arm64"
 	"crypto:osfmk/minicrypto"
@@ -51,7 +51,7 @@ overlay_files() {
 	for place in "${OVERLAY_PLACES[@]}"; do
 		dir=${place%%:*} prefix=${place#*:}
 		[ -d "$REPO_DIR/$dir" ] || continue
-		(cd "$REPO_DIR/$dir" && find . -type f ! -name README.md | sed 's|^\./||' | LC_ALL=C sort) |
+		(cd "$REPO_DIR/$dir" && find . -type f ! -name README.md ! -name Kconfig | sed 's|^\./||' | LC_ALL=C sort) |
 			awk -v d="$dir" -v p="$prefix" '{ printf "%s/%s\t%s/%s\n", d, $0, p, $0 }'
 	done
 }
@@ -74,10 +74,11 @@ log() { echo "${0##*/}: $*"; }
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 
 # Files the build makes inside the tree: never part of the kernel's sources. (The board table is made
-# from the device packages that are there when the kernel is built: tools/boards.py gen. The touch
+# from the device packages that are there when the kernel is built, the configuration's kconfig.h from Kconfig and
+# KCONFIG_FRAGMENTS: tools/gen_headers.py. The touch
 # firmware's header is matched by a pattern: a tree made before the drivers' files were renamed has it
 # under its older name, and it is still the build's, not a change of someone's.)
-TREE_EXCLUDES=(/BUILD/ /bsd/dev/board/focaltech_fw.h /bsd/dev/board/board_table.h '*.orig' '*.rej')
+TREE_EXCLUDES=(/BUILD/ /bsd/dev/board/focaltech_fw.h /bsd/dev/board/board_table.h /bsd/dev/board/kconfig.h '*.orig' '*.rej')
 
 # tree_excludes DIR: tell the tree's git which files are the build's. Written anew each time, so that
 # a tree made before the list grew learns of what was added.
