@@ -29,8 +29,12 @@ hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 	posts++;
 }
 
+/* the FocalTech scenarios' chip follows its reset line: where the driver writes the line's level, and the level */
+static vm_offset_t reset_io = ~(vm_offset_t)0;
+static int reset_high = 1;
+
 uint32_t hakios_test_rd(vm_offset_t address __unused) { return 0; }
-void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { }
+void hakios_test_wr(vm_offset_t address, uint32_t value) { if (address == reset_io) { reset_high = (value >> 1) & 1; } }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_tl(const char *format __unused, ...) { }
@@ -418,6 +422,84 @@ lifted(void)
 	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 0, "up: %u posts", posts);
 }
 
+/* ---- FocalTech's FT3680: no firmware of its own; the boot ROM, or the application the driver sent ---------------- */
+
+static struct {
+	bool running;                   /* the application runs (a warm start: the run before this one sent it) */
+	unsigned started, pram_writes;  /* start-application commands, PRAM writes */
+} ft;
+
+/* an answer of the chip's framing: status 0, then the data and their CRC-16/Kermit, from byte 7 */
+static void
+ft_answer(uint8_t *rx, const uint8_t *data, uint32_t length)
+{
+	uint16_t crc = focaltech_crc(data, length);
+
+	memcpy(rx + 7, data, length);
+	rx[7 + length] = (uint8_t)crc;
+	rx[8 + length] = (uint8_t)(crc >> 8);
+}
+
+static bool
+ft_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	memset(rx, 0, length);
+	if (!reset_high) {
+		return true;                    /* in reset: nothing drives the line, and no answer's sum is right */
+	}
+	if (tx[1] == FOCALTECH_READ_CTRL) {
+		static const uint8_t app_high = 0x56, app_low = 0x62, boot[2] = { 0x56, 0x62 };
+
+		if (ft.running && tx[0] == FOCALTECH_CHIP_ID_H) {
+			ft_answer(rx, &app_high, 1);
+		} else if (ft.running && tx[0] == FOCALTECH_CHIP_ID_L) {
+			ft_answer(rx, &app_low, 1);
+		} else if (!ft.running && tx[0] == FTS_CMD_READ_BOOT_ID) {
+			ft_answer(rx, boot, 2);
+		}
+		return true;
+	}
+	if (tx[0] == FTS_ROMBOOT_CMD_START_APP) {
+		ft.started++;
+	} else if (tx[0] == FTS_ROMBOOT_CMD_WRITE) {
+		ft.pram_writes++;
+	}
+	return true;
+}
+
+static void
+focaltech_phone(bool running)
+{
+	board = "phone-video";
+	fake_delay_divisor = 100;
+	spi_transfer = ft_transfer;
+	reset_io = (vm_offset_t)GPIO_IO(PIN_RESET);
+	memset(&ft, 0, sizeof(ft));
+	ft.running = running;
+	gpio_set(PIN_RESET, false);             /* as power_on() leaves it: the chip held in reset */
+}
+
+/* a warm start: the application the last run sent still runs, and is found -- once the chip is out of reset */
+static void
+focaltech_already_running(void)
+{
+	focaltech_phone(true);
+	CHECK(focaltech_probe(true), "found: %s", log_text);
+	CHECK(reset_high, "the reset line let go");
+	CHECK(ft.started == 0 && ft.pram_writes == 0, "nothing sent again: %u starts, %u writes", ft.started, ft.pram_writes);
+}
+
+/* a kernel built without the firmware (the stand-in focaltech_fw.h): said, and the boot ROM is not told to start nothing */
+static void
+focaltech_without_firmware(void)
+{
+	focaltech_phone(false);
+	CHECK(FOCALTECH_FW_LENGTH == 0, "(the build's stand-in header)");
+	CHECK(!focaltech_probe(true), "not started");
+	CHECK(strstr(log_text, "no firmware built in") != NULL, "said: %s", log_text);
+	CHECK(ft.started == 0 && ft.pram_writes == 0, "no start command, no write into its memory: %u, %u", ft.started, ft.pram_writes);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -428,6 +510,7 @@ main(int argc, char **argv)
 		{ "lifted", lifted }, { "asks_to_be_reset_with_more_bits", asks_to_be_reset_with_more_bits },
 		{ "the_chips_description", the_chips_description }, { "coordinates_not_described", coordinates_not_described },
 		{ "descriptions_not_believed", descriptions_not_believed }, { "a_command", a_command },
+		{ "focaltech_already_running", focaltech_already_running }, { "focaltech_without_firmware", focaltech_without_firmware },
 	};
 
 	if (argc < 2) {
