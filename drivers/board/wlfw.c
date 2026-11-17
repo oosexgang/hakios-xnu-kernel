@@ -79,6 +79,7 @@ hakios_wlfw_exchange(uint32_t step)
 
 static struct qmi_handle handle;
 static bool handle_open, in_mission;
+static bool mission_asked;              /* the mode "mission" sent: the firmware may have taken it, answered or not */
 static uint64_t registers_at;           /* where the firmware said the radio's registers are, and ... */
 static uint32_t registers_size;         /* ... how many bytes of them; 0: it has not said */
 static struct {
@@ -294,14 +295,14 @@ hakios_wlfw_stop(uint32_t step)
 		return;
 	}
 	wlfw.step = step;
-	if (in_mission) {
+	if (in_mission || mission_asked) {
 		bzero(&mode, sizeof(mode));
 		bzero(&mode_reply, sizeof(mode_reply));
 		mode.mode = ATH11K_FIRMWARE_MODE_OFF;
 		mode.hw_debug_valid = 1;
 		ask("the mode: off", QMI_WLANFW_WLAN_MODE_REQ_V01, QMI_WLANFW_WLAN_MODE_REQ_MSG_V01_MAX_LEN,
 		    qmi_wlanfw_wlan_mode_req_msg_v01_ei, &mode, qmi_wlanfw_wlan_mode_resp_msg_v01_ei, &mode_reply, false);
-		in_mission = false;
+		in_mission = mission_asked = false;
 	}
 	qmi_handle_release(&handle);
 	handle_open = false;
@@ -364,6 +365,8 @@ mission(void)
 	mode.mode = ATH11K_FIRMWARE_MODE_NORMAL;
 	mode.hw_debug_valid = 1;
 	mode.hw_debug = 0;
+	/* (from here the firmware may be in mission mode though no answer says so: hakios_wlfw_stop() sends "off" all the same) */
+	mission_asked = true;
 	if (!ask("the mode: mission", QMI_WLANFW_WLAN_MODE_REQ_V01, QMI_WLANFW_WLAN_MODE_REQ_MSG_V01_MAX_LEN,
 	    qmi_wlanfw_wlan_mode_req_msg_v01_ei, &mode, qmi_wlanfw_wlan_mode_resp_msg_v01_ei, &mode_reply, false)) {
 		return false;
@@ -395,6 +398,10 @@ hakios_wlfw_exchange(uint32_t step)
 	bzero(&wlfw, sizeof(wlfw));
 	wlfw.step = step;
 	wlfw.began = now_ms();
+	/* (nothing the last exchange was told stands for this one: no registers until the firmware says where they are) */
+	registers_at = 0;
+	registers_size = 0;
+	in_mission = mission_asked = false;
 	PE_parse_boot_argn("wifi_cal", &calibrate, sizeof(calibrate));
 	/* boot-arg wifi_ready=N: how many seconds to wait for the firmware's "ready" (default 5) */
 	PE_parse_boot_argn("wifi_ready", &seconds, sizeof(seconds));
@@ -473,7 +480,7 @@ hakios_wlfw_exchange(uint32_t step)
 	    qmi_wlanfw_device_info_req_msg_v01_ei, &where, qmi_wlfw_device_info_resp_msg_v01_ei, &device, false)) {
 		goto out;
 	}
-	if (device.bar_addr_valid && device.bar_size_valid) {
+	if (device.bar_addr_valid && device.bar_size_valid && device.bar_addr != 0 && device.bar_size != 0) {
 		registers_at = device.bar_addr;
 		registers_size = device.bar_size;
 	}
@@ -545,7 +552,7 @@ out:
 	say("wifi: %u: the exchange ends %llu ms after it began: \"init done\" %s, \"ready\" %s, \"calibration done\" %s, mission "
 	    "mode %s\n", step, now_ms() - wlfw.began, wlfw.init_done ? "yes" : "no", wlfw.ready ? "yes" : "no", wlfw.cal_done ? "yes" :
 	    "no", in_mission ? "YES" : "no");
-	if (!in_mission) {
+	if (!in_mission && !mission_asked) {
 		qmi_handle_release(&handle);
 		handle_open = false;
 	}
