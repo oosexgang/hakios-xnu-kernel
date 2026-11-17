@@ -766,16 +766,20 @@ def load(problems=None):
                               f'{soc["platform"].get("cores")}')
         cpufreq = soc.get('cpufreq', {})
         if cpufreq:
-            block = cpufreq.get('block', 'epss')
-            if block in CPUFREQ_EXTENT and cpufreq.get('epss_domain_size', 0) < CPUFREQ_EXTENT[block]:
-                problems.add(rel, f'soc.dtsi [cpufreq]: epss_domain_size {cpufreq["epss_domain_size"]:#x} is smaller than '
+            # (what the schema has refused already -- a key missing, a value of another type -- is not looked at again)
+            block, size = cpufreq.get('block', 'epss'), cpufreq.get('epss_domain_size')
+            if block in CPUFREQ_EXTENT and isinstance(size, int) and size < CPUFREQ_EXTENT[block]:
+                problems.add(rel, f'soc.dtsi [cpufreq]: epss_domain_size {size:#x} is smaller than '
                                   f'a group\'s registers of the {block.upper()} layout reach ({CPUFREQ_EXTENT[block]:#x})')
             domains = cpufreq.get('domains')
+            if not isinstance(domains, list) or not all(isinstance(a, int) for a in domains) or \
+                    not isinstance(cpufreq.get('epss'), int):
+                domains = None
             if domains is not None and (len(domains) != len(groups) or 0 in domains):
                 problems.add(rel, f'soc.dtsi [cpufreq]: domains gives each group\'s block: {len(groups)} addresses, none 0 '
                                   f'(it has {len(domains)})')
             elif domains is not None and domains[0] != cpufreq.get('epss'):
-                problems.add(rel, f'soc.dtsi [cpufreq]: domains begins at {domains[0]:#x}, epss is {cpufreq.get("epss", 0):#x}: '
+                problems.add(rel, f'soc.dtsi [cpufreq]: domains begins at {domains[0]:#x}, epss is {cpufreq["epss"]:#x}: '
                                   f'the same, the first group\'s block')
         thermal = data.get('thermal')
         if thermal is not None:

@@ -337,6 +337,11 @@ class Check(Sandbox):
         self.assertEqual(self.problems(), '')
         self.soc('block = "osm";', 'block = "osm2";')
         self.assertIn('osm2', self.problems())
+        # what the schema refuses is said, not a crash of the checks after it
+        self.soc('\t\tepss-domain-size = <0x1400>;\n', '')
+        self.assertIn('epss-domain-size', self.problems())
+        self.soc('domains = <0x18591000 0x18593800 0x18595800>;', 'domains = "here";')
+        self.assertIn('domains', self.problems())
 
     def test_bluetooth_dt_references_are_not_guessed(self):
         tree = '''/ {
