@@ -180,6 +180,7 @@ F:	arch/arm64/tools/
 F:	include/external/
 T:	workbench/kernel_tools_test.sh
 T:	workbench/place_kernel_test.py
+T:	workbench/memory_floor_test.c
 T:	kernel/verify.sh (make verify-kernel; network)
 T:	kernel/syntax-check.sh (make syntax-kernel; network)
 D:	kernel/README.md
