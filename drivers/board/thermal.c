@@ -165,7 +165,7 @@ tell_look(int32_t t, unsigned which)
 static void
 read_table(unsigned d)
 {
-	uint32_t top_khz = 0;
+	uint32_t top_khz = 0, last = 0;
 
 	floor_row[d] = UINT32_MAX;
 	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
@@ -176,12 +176,17 @@ read_table(unsigned d)
 			break;                  /* the table ends by repeating its last row */
 		}
 		top_khz = khz;
+		last = row;
 		if (floor_row[d] == UINT32_MAX && khz >= this_board->thermal.floor_mhz[d] * 1000) {
 			floor_row[d] = row;
 		}
 	}
-	/* never above where the group is now: this only holds back, it does not raise */
-	top_row[d] = row_now[d] = rd(epss[d] + EPSS_PERF_STATE);
+	/*
+	 * never above where the group is now: this only holds back, it does not raise -- nor past the table's last row,
+	 * whatever the register reads (Linux's qcom_cpufreq_get_freq() bounds it the same way); the rows written are between
+	 * the floor and this one
+	 */
+	top_row[d] = row_now[d] = MIN(rd(epss[d] + EPSS_PERF_STATE), last);
 	if (floor_row[d] == UINT32_MAX || floor_row[d] > top_row[d]) {
 		floor_row[d] = top_row[d];
 	}

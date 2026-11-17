@@ -325,6 +325,22 @@ never_raises(void)
 	CHECK(get("most") == 0, "nothing to hold back: %u", get("most"));
 }
 
+/* a row register that reads past the table: the group's top is the table's last row, and no row past it is ever written */
+static void
+row_past_the_table(void)
+{
+	phone(500);
+	perf[0] = 0x80000037;
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(get("most") == 5, "held back from the table's last row, 8, to the floor, 3: %u", get("most"));
+	phone(800);
+	perf[0] = 0x80000037;
+	WAIT_FOR(get("step") >= 1, 2000);
+	usleep(200000);
+	CHECK(perf[0] < ROWS, "the rows written are the table's: %#x", perf[0]);
+}
+
 /* a sensor caught between two readings has none for a moment: it is asked again, not taken for absent */
 static void
 sensor_between_readings(void)
@@ -521,7 +537,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
-		{ "critical", critical }, { "never_raises", never_raises }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
+		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
 		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
