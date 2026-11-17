@@ -1,14 +1,15 @@
 /*
  * Calls to TrustZone ("SCM", Qualcomm's secure channel manager), as Linux's qcom_scm makes them: an SMC
  * of the SMC Calling Convention's SiP range, with the arguments' kinds in x1. A call that TrustZone
- * preempts says so, and is made again with the session it gave back until it is answered. The calls
- * the drivers make are the peripheral authentication service's (PAS: an image of a DSP or the GPU's
- * zap shader, authenticated and started by TrustZone).
+ * preempts says so, and is made again with the session it gave back until it is answered; one it is too
+ * busy for is made again a little later. The calls the drivers make are the peripheral authentication
+ * service's (PAS: an image of a DSP or the GPU's zap shader, authenticated and started by TrustZone).
  */
 #ifndef _HAKIOS_SCM_H
 #define _HAKIOS_SCM_H
 
 #include <stdint.h>
+#include <kern/clock.h>
 
 #define SCM_FAST                (1ull << 31)            /* answered at once; without it a call may be preempted */
 #define SCM_64                  (1ull << 30)
@@ -24,16 +25,24 @@
 #define SCM_THREE_VALUES        3
 #define SCM_VALUE_AND_BUFFER    (2 | 2 << 6)            /* two: a number, and the address of memory it may read and write */
 #define SCM_INTERRUPTED         1                       /* a call that was preempted says so, and is made again so */
-#define SCM_GAVE_UP             (-1000)                 /* hakios_scm_call(): preempted a hundred times over */
+#define SCM_GAVE_UP             (-1000)                 /* hakios_scm_call(): never answered (see below) */
+#define SCM_BUSY                (-12)                   /* TrustZone busy with another caller's call: asked again later */
+#define SCM_RESUMES_MOST        (1u << 20)              /* resumes of one call: a long hash is preempted by every interrupt */
+#define SCM_BUSY_TRIES          20                      /* as Linux's qcom_scm: 20 tries ... */
+#define SCM_BUSY_WAIT_MS        30                      /* ... 30 ms apart */
 
-/* One call: TrustZone's status (0: done), its answer in *answer; SCM_GAVE_UP when it never answered. */
+/* One SMC, made again with the session TrustZone gave back for as long as it says it was preempted. */
 static inline int
-hakios_scm_call(uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
+hakios_scm_once(uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
 {
 #if defined(__arm64__) || defined(__aarch64__)
 	uint64_t session = 0;
 
-	for (int i = 0; i < 100; i++) {
+	/*
+	 * (Linux resumes for as long as it takes: a session left half done would be TrustZone's for the next call. The
+	 * bound is only against a TrustZone that never finishes.)
+	 */
+	for (uint32_t i = 0; i < SCM_RESUMES_MOST; i++) {
 		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
 		register uint64_t x1 __asm__("x1") = arguments;
 		register uint64_t x2 __asm__("x2") = first;
@@ -55,6 +64,24 @@ hakios_scm_call(uint64_t function, uint64_t arguments, uint64_t first, uint64_t 
 	(void)function, (void)arguments, (void)first, (void)second, (void)third, (void)answer;
 #endif
 	return SCM_GAVE_UP;
+}
+
+/*
+ * One call: TrustZone's status (0: done), its answer in *answer; SCM_GAVE_UP when it never answered. A call TrustZone
+ * says it is too busy for is made again, as Linux makes it, SCM_BUSY_TRIES times SCM_BUSY_WAIT_MS apart.
+ */
+static inline int
+hakios_scm_call(uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
+{
+	int status = SCM_BUSY;
+
+	for (int tries = 0; tries < SCM_BUSY_TRIES && status == SCM_BUSY; tries++) {
+		if (tries != 0) {
+			delay_for_interval(SCM_BUSY_WAIT_MS, NSEC_PER_MSEC);
+		}
+		status = hakios_scm_once(function, arguments, first, second, third, answer);
+	}
+	return status;
 }
 
 #endif /* _HAKIOS_SCM_H */
