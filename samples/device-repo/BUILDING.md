@@ -12,7 +12,8 @@ make image DEVICE=NAME DEFCONFIG=phone_look       # again, for another kind of r
 make publish DEVICE=NAME REPO=PATH-OF-A-CHECKOUT-OF-THIS-REPOSITORY   # the image into images/ here
 ```
 
-`tools/device.py add --from URL#v1` takes this repository at a tag or a commit; `tools/boards.py status NAME` says what
+`tools/device.py add --from URL#v1` takes this repository at a tag or a commit, `tools/device.py update NAME` takes
+it again as it is now; `tools/boards.py status NAME` says what
 the phone can turn on next. The kernel's Documentation/porting.md goes through a port step by step, and
 Documentation/images.md through images.
 
