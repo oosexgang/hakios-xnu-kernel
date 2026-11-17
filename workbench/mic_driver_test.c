@@ -486,6 +486,26 @@ the_codec_not_there(void)
 	    strstr(log_text, "device 4: ID 0xd01170223") != NULL && strstr(log_text, "device 2:") == NULL, "said: %s", log_text);
 }
 
+/* the run ended (hakios_mic_dsp_down()) before the driver's thread took its lock: nothing is brought up after it */
+static void
+nothing_after_the_run_ends(void)
+{
+	thread_t thread;
+
+	blocks_from_board();
+	level = 2;
+	running = true;
+	hakios_mic_dsp_down();
+	CHECK(kernel_thread_start(mic_thread, NULL, &thread) == KERN_SUCCESS, "started");
+	for (int waited = 0; running && waited < 2000; waited += 5) {
+		usleep(5000);
+	}
+	CHECK(!running, "the thread is done");
+	CHECK(logged("mic: the run has ended: nothing brought up"), "said: %s", log_text);
+	CHECK(write_count == 0, "nothing written: %u writes, the first at %#llx", write_count,
+	    write_count ? (unsigned long long)writes[0] : 0ull);
+}
+
 /* a codec whose registers hold something else than what is wanted, set up as wcd938x_init_reg() sets one up */
 static void
 codec(void)
@@ -853,6 +873,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
+		{ "nothing_after_the_run_ends", nothing_after_the_run_ends },
 		{ "the_socs_pins", the_socs_pins }, { "the_socs_hctl", the_socs_hctl },
 		{ "nothing_to_say_again", nothing_to_say_again }, { "the_run_said_again", the_run_said_again },
 		{ "the_latest_lines_said_again", the_latest_lines_said_again }, { "the_dsps_answers", the_dsps_answers },

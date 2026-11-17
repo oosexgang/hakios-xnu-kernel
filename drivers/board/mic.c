@@ -1582,7 +1582,8 @@ listen(bool for_darwin)
 			hakios_haptic_pretend(0);
 			tap = 2;
 		}
-		if ((for_darwin ? (!darwin_wants || stopping) : elapsed_ms >= mic_secs * 1000ull) || broken) {
+		/* (and the run's end, at every level: hakios_mic_dsp_down() waits for this under mic_lock) */
+		if ((for_darwin ? !darwin_wants : elapsed_ms >= mic_secs * 1000ull) || stopping || broken) {
 			break;
 		}
 		if (!(read_ready & (1u << next))) {
@@ -1626,7 +1627,12 @@ listen(bool for_darwin)
 			}
 		}
 		periods++;
-		(void)mic_read(next);
+		if (!mic_read(next)) {
+			/* (that period would never come back, and this would wait on it for good, saying nothing) */
+			say("mic: period %u could not be asked for again: STOPPED\n", next);
+			broken = true;
+			break;
+		}
 		next = (next + 1) % MIC_PERIODS;
 		if (frames >= MIC_RATE) {
 			uint64_t mean_square = squares / frames;
@@ -1775,7 +1781,10 @@ mic_thread(__unused void *parameter, __unused wait_result_t result)
 		for_darwin();
 	} else {
 		lck_mtx_lock(&mic_lock);
-		if (level == 1) {
+		if (stopping) {
+			/* (the run ended before this began: nothing is brought up after hakios_mic_dsp_down() has undone it) */
+			say("mic: the run has ended: nothing brought up\n");
+		} else if (level == 1) {
 			if (clocks_on()) {
 				sleep_ms(10);
 				look();
