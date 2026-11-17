@@ -2175,7 +2175,7 @@ struct apr_header {
 static struct {
 	uint32_t opcode, token, length;
 	uint32_t words[64];
-	volatile bool there;
+	bool there;                     /* (written and read with __atomic_*: set after the rest) */
 } apr_answer;
 static uint32_t apr_in, apr_out, apr_next_token = 1;
 static bool audio_up;                   /* the core service has said that the audio services are up (step 11) */
@@ -2228,12 +2228,20 @@ apr_input(const uint8_t *data, uint32_t length)
 		    "%#x %#x\n", header.from_service, header.from_domain, header.from_port, header.to_service, header.to_domain,
 		    header.to_port, header.opcode, header.token, payload, w[0], w[1], w[2], w[3]);
 	}
+	/*
+	 * Kept only as the answer to the question waited for: a packet nobody took that came while a question waited (or
+	 * after its asker had let go of apr_lock and went on reading apr_answer) is not to stand in for its answer.
+	 */
+	if (header.token == 0 || header.token != __atomic_load_n(&apr_waited_for, __ATOMIC_ACQUIRE)) {
+		return;
+	}
 	bzero(apr_answer.words, sizeof(apr_answer.words));
 	memcpy(apr_answer.words, data + header_length, payload < sizeof(apr_answer.words) ? payload : sizeof(apr_answer.words));
 	apr_answer.length = payload;
 	apr_answer.opcode = header.opcode;
 	apr_answer.token = header.token;
-	apr_answer.there = true;
+	/* (the words before the flag, for the waiter on another core: released, and acquired there) */
+	__atomic_store_n(&apr_answer.there, true, __ATOMIC_RELEASE);
 }
 
 /*
@@ -2282,14 +2290,14 @@ hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode,
 	}
 	header->token = token;
 	apr_answer.there = false;
-	apr_waited_for = token;
+	__atomic_store_n(&apr_waited_for, token, __ATOMIC_RELEASE);
 	error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
 	if (error != 0) {
 		printf("adsp: apr: > opcode %#x to service %u: NOT SENT (%d)\n", opcode, service, error);
 	} else {
 		apr_out++;
 		for (uint32_t waited = 0; waited < ms && !answered; waited++) {
-			if (apr_answer.there && apr_answer.token == token) {
+			if (__atomic_load_n(&apr_answer.there, __ATOMIC_ACQUIRE) && apr_answer.token == token) {
 				answered = true;
 				if (answer != NULL) {
 					answer->opcode = apr_answer.opcode;
@@ -2302,7 +2310,7 @@ hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode,
 			sleep_ms(1);
 		}
 	}
-	apr_waited_for = 0;
+	__atomic_store_n(&apr_waited_for, 0, __ATOMIC_RELEASE);
 	lck_mtx_unlock(&apr_lock);
 	return answered;
 }
