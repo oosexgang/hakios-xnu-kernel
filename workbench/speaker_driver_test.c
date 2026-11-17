@@ -46,6 +46,8 @@ static int loudest[2] = { -1, -1 }, last_volume[2] = { -1, -1 };       /* the at
 static int biggest_step;                        /* ... and the largest change from one write to the next */
 static unsigned amplifier_on[2];                /* writes of 0x04 with both power-down bits clear: the power stage runs */
 static int deaf_register = -1;                  /* a register of the first amplifier that does not take what is written */
+static unsigned volumes_into_second;            /* volumes written into the second amplifier */
+static unsigned fault_at_volume;                /* the second reports an over-current from that volume on (0: never) */
 
 static void
 amplifier_written(uint8_t index, uint8_t value)
@@ -83,6 +85,9 @@ amplifier_written(uint8_t index, uint8_t value)
 			loudest[which] = attenuation;
 		}
 		last_volume[which] = attenuation;
+		if (which == 1 && ++volumes_into_second == fault_at_volume) {
+			device.bank[0x01 * 2 + 1] |= 1u << 3;   /* (its status: over-current) */
+		}
 	}
 	amplifier_on[which] += reg == 0x04 && (index & 1) && !(value & 3);
 }
@@ -733,6 +738,24 @@ volume_and_stop(void)
 	never();
 }
 
+/* a slow fade, as sound.c asks for one at level 3 (a step every 50 ms): the status looked at after every step, and a
+ * fault in the middle of it ends it there, both powered down */
+static void
+slow_fade(void)
+{
+	running();
+	CHECK(hakios_speaker_volume(100, 10) && hakios_speaker_healthy(), "a slow fade, healthy all through: %s", log_text);
+	CHECK(reads(device.reg, 0x05) == 0x1487 && reads(device.reg_b, 0x05) == 0x1487, "there: %#x", reads(device.reg, 0x05));
+	CHECK(biggest_step == 48 && !logged("reports a fault"), "in steps of 6 dB: %d", biggest_step);
+	fault_at_volume = volumes_into_second + 2;      /* the second step of the next one */
+	CHECK(!hakios_speaker_volume(0, 10), "the fault ends it: %s", log_text);
+	CHECK(logged("the amplifier 0x34, slot 1: status 0x0319") && logged("an amplifier reports a fault: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"),
+	    "said: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both are down");
+	CHECK(loudest[0] > 3 && loudest[1] > 3, "and never at Android's level: the fade went no further: %d, %d", loudest[0], loudest[1]);
+	never();
+}
+
 /* the second one's PLL does not lock (no bit clock at it): its power stage stays off, the first, which ran, is powered down */
 static void
 no_clock(void)
@@ -836,6 +859,26 @@ monitor(void)
 	CHECK(writes_into[0] == before[0] && writes_into[1] == before[1], "the monitor wrote into an amplifier");
 	hakios_speaker_stop();
 	CHECK(hakios_speaker_monitor(false) == 0, "amplifiers that are stopped are not asked");
+	never();
+}
+
+/* a row of the monitor's table holds from its lowest to its highest, both included */
+static void
+monitor_row_edges(void)
+{
+	static const struct { int degrees; uint32_t less; const char *what; } looks[] = {
+		{ 2, 24, "2 degrees, the lowest of a row: in it" }, { 7, 0, "7, the lowest of the warm row" },
+		{ 5, 24, "5, the highest of a row" }, { 0, 36, "0, the highest of the next" }, { -50, 64, "-50, the coldest there is" },
+	};
+
+	running();
+	measures(device.reg_b, 25, 4000);
+	for (unsigned i = 0; i < sizeof(looks) / sizeof(looks[0]); i++) {
+		measures(device.reg, looks[i].degrees, 4000);
+		hakios_speaker_monitor(false);
+		hakios_speaker_monitor(false);
+		CHECK(hakios_speaker_monitor(false) == looks[i].less, "%s", looks[i].what);
+	}
 	never();
 }
 
@@ -973,6 +1016,7 @@ main(int argc, char **argv)
 		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
+		{ "slow_fade", slow_fade }, { "monitor_row_edges", monitor_row_edges },
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "profiles_not_usable", profiles_not_usable }, { "monitor_tables_at_the_edge", monitor_tables_at_the_edge },
 		{ "started_unprepared", started_unprepared }, { "board_without_the_part", board_without_the_part },
