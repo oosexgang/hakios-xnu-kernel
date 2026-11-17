@@ -106,7 +106,12 @@ rpmh_address(const char *name)
 static bool
 rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	const char *problem = hakios_rpmh_send(TCS(0), address, data, count);
+	const char *problem;
+
+	/* (the slots are shared: the memory's vote, Bluetooth's supplies, the audio DSP's may be sent at the same time) */
+	hakios_rpmh_lock();
+	problem = hakios_rpmh_send(TCS(0), address, data, count);
+	hakios_rpmh_unlock();
 
 	if (problem != NULL) {
 		printf("goodix: RPMh: %s\n", problem);
