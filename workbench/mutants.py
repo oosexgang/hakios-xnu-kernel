@@ -30,9 +30,14 @@ SWAPS = [(' <= ', ' < '), (' >= ', ' > '), (' < ', ' <= '), (' > ', ' >= '), (' 
 
 def code_lines(text):
     """The lines of code: not comments, not what only says something (printf and the like)."""
-    in_comment = False
+    in_comment = in_assert = False
     for line in text.split('\n'):
         stripped = line.strip()
+        # (a layout asserted when the file is compiled, over as many lines as it takes: a change to it is a build that
+        # fails, or one that does not, never a run)
+        if in_assert or stripped.startswith(('_Static_assert', 'static_assert')):
+            in_assert = not stripped.endswith(';')
+            continue
         if '/*' in stripped and '*/' not in stripped:
             in_comment = True
         if in_comment:
