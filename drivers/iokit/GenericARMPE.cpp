@@ -303,6 +303,14 @@ GenericARMPE::start(IOService * provider)
 		if (count > 1) {
 			IOLog("GenericARMPE: %u of %u processors are running\n", processor_avail_count, count);
 		}
+	} else {
+		/*
+		 * The boot core's own node gave no CPU (no state or reg, or its start refused): nothing would ever say how many
+		 * there are, and whatever waits in ml_wait_max_cpus() would wait for good, without a word. Said, and the count
+		 * set all the same (the boot core runs whatever this says: it is the one running this).
+		 */
+		IOLog("GenericARMPE: THE BOOT PROCESSOR (%d) HAS NO CPU OBJECT: %u others made, none started\n", master_cpu, count);
+		ml_set_max_cpus(count ? count : 1);
 	}
 
 	/* BSD looks the platform expert up by class (IOSecureBSDRoot). */
