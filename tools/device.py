@@ -3,6 +3,7 @@
 
   tools/device.py available [--from SOURCE]     the packages a source has
   tools/device.py add NAME... [--from SOURCE]   copy packages into arch/arm64/boot/dts/ and check them
+  tools/device.py add --from SOURCE             all the packages SOURCE has: a phone's own repository, its one
   tools/device.py remove NAME...                take them out again
   tools/device.py export NAME DIR               copy the package arch/arm64/boot/dts/NAME to DIR/NAME: into a checkout of
                                                 the devices branch, to send it there
@@ -16,8 +17,13 @@ that are there (tools/boards.py gen).
 
 SOURCE is where packages are taken from:
   a directory            SOURCE/NAME/board.dts: a checkout of the devices branch, a package of your own
+  a repository's URL     URL[#REF] (https://..., ssh://..., git@host:..., file://..., or a path ending in .git):
+                         somebody's own repository for their phone, cloned (shallow) into build/device-sources/;
+                         REF a branch, tag or commit, its default branch unless told
   a branch or commit     of this repository, with the packages at its top; `devices` unless told
                          otherwise, fetched from origin first when there is an origin to ask
+A directory or repository with board.dts at its very top is one package, named as its board.dts names it: a phone's
+repository needs nothing else, and may be called anything.
 
 arch/arm64/boot/dts/NAME is not tracked here (.gitignore): a package is changed where it is kept, not in a checkout
 of the code. A new phone is made here (tools/boards.py new), and sent with `export`:
@@ -25,6 +31,7 @@ of the code. A new phone is made here (tools/boards.py new), and sent with `expo
   tools/device.py export NAME ../hakios-devices
 """
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -47,14 +54,62 @@ def git(*arguments, check=True):
     return done
 
 
+def is_url(given):
+    """Is SOURCE another repository's address rather than a directory, branch or commit?"""
+    where = given.split('#', 1)[0]
+    return '://' in where or re.match(r'^[\w.-]+@[\w.-]+:', where) is not None or where.endswith('.git')
+
+
+def package_name(directory, text):
+    """The name of the one package DIRECTORY is (board.dts at its top): the board's own name, or else the last part
+    of TEXT (a repository's address, a directory), without .git, in lower case."""
+    try:
+        name = boards.boardfile.parse((directory / 'board.dts').read_text(), boards.BOARD_SCHEMA).get('name')
+    except (OSError, boards.boardfile.FileError):
+        name = None
+    if isinstance(name, str) and boards.NAME.match(name):
+        return name
+    last = re.sub(r'\.git$', '', re.split(r'[/:]', text.rstrip('/'))[-1]).lower()
+    return re.sub(r'[^a-z0-9-]+', '-', last).strip('-')
+
+
+def clone(given):
+    """URL[#REF] cloned, shallow, into build/device-sources/: its directory and the commit it is at."""
+    url, _, ref = given.partition('#')
+    cache = boards.ROOT / 'build/device-sources' / (re.sub(r'[^A-Za-z0-9.-]+', '_', url).strip('_') + (f'@{ref}' if ref else ''))
+    if cache.exists():
+        shutil.rmtree(cache)            # (taken again whole: what is brought in is what the repository has now)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    command = ['git', 'clone', '-q', '--depth', '1'] + (['--branch', ref] if ref else []) + [url, str(cache)]
+    done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode != 0 and ref:
+        # a commit, which --branch does not take: the whole history, then that commit
+        shutil.rmtree(cache, ignore_errors=True)
+        done = subprocess.run(['git', 'clone', '-q', url, str(cache)], capture_output=True, text=True)
+        if done.returncode == 0:
+            done = subprocess.run(['git', '-C', str(cache), 'checkout', '-q', ref], capture_output=True, text=True)
+    if done.returncode != 0:
+        shutil.rmtree(cache, ignore_errors=True)
+        raise SystemExit(f'{given}: the repository cannot be cloned: {done.stderr.strip()}')
+    commit = subprocess.run(['git', '-C', str(cache), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+    return cache, commit
+
+
 class Source:
-    """Where packages are taken from: a directory, or a commit of this repository."""
+    """Where packages are taken from: a directory, another repository, or a commit of this repository."""
 
     def __init__(self, given):
-        self.directory = self.commit = None
+        self.directory = self.commit = self.single = None
+        # (a repository's address; a bare repository on this machine is one too, a checkout is a directory)
+        if given is not None and is_url(given) and (not Path(given).is_dir() or (Path(given) / 'HEAD').is_file()):
+            self.directory, commit = clone(given)
+            self.name = f'{given} ({commit[:12]})'
+            self.single = package_name(self.directory, given.split('#', 1)[0]) if (self.directory / 'board.dts').exists() else None
+            return
         if given is not None and Path(given).is_dir():
             self.directory = Path(given).resolve()
             self.name = str(given)
+            self.single = package_name(self.directory, str(self.directory)) if (self.directory / 'board.dts').exists() else None
             return
         ref = given or BRANCH
         if given is None or '/' not in ref:
@@ -69,6 +124,8 @@ class Source:
         self.name = f'{given or BRANCH} ({self.commit[:12]})'
 
     def packages(self):
+        if self.single is not None:
+            return [self.single]
         if self.directory is not None:
             return sorted(path.parent.name for path in self.directory.glob('*/board.dts')
                           if not path.parent.name.startswith('_'))
@@ -79,7 +136,8 @@ class Source:
     def copy(self, name, to):
         """The package's files into the directory `to`, which is not there yet."""
         if self.directory is not None:
-            shutil.copytree(self.directory / name, to, ignore=shutil.ignore_patterns('.git', NOTE))
+            shutil.copytree(self.directory if self.single is not None else self.directory / name, to,
+                            ignore=shutil.ignore_patterns('.git', NOTE))
             return
         to.mkdir(parents=True)
         for path in git('ls-tree', '-r', '--name-only', self.commit, '--', f'{name}/').stdout.split('\n'):
@@ -97,10 +155,10 @@ def tracked(name):
     return bool(git('ls-files', '--', f'arch/arm64/boot/dts/{name}', check=False).stdout.strip())
 
 
-def described(directory, name):
-    """A package's one line: its name, SoC and description, as its board file has them."""
+def described(directory, name, board=None):
+    """A package's one line: its name, SoC and description, as its board file (DIRECTORY/NAME/board.dts) has them."""
     try:
-        data = boards.boardfile.parse((directory / name / 'board.dts').read_text(), boards.BOARD_SCHEMA)
+        data = boards.boardfile.parse((board or directory / name / 'board.dts').read_text(), boards.BOARD_SCHEMA)
     except (OSError, boards.boardfile.FileError):
         return f'{name:14} (its board.dts cannot be read)'
     return f'{name:14} {data.get("soc", "?"):10} {data.get("description", "")}'
@@ -185,7 +243,7 @@ def main(arguments=None):
         command = commands.add_parser(name)
         command.add_argument('--from', dest='source', metavar='SOURCE')
         if name == 'add':
-            command.add_argument('names', nargs='+', metavar='NAME')
+            command.add_argument('names', nargs='*', metavar='NAME')
     commands.add_parser('remove').add_argument('names', nargs='+', metavar='NAME')
     command = commands.add_parser('export')
     command.add_argument('name', metavar='NAME')
@@ -198,7 +256,9 @@ def main(arguments=None):
         names = source.packages()
         print(f'{source.name}: {len(names)} packages')
         for name in names:
-            if source.directory is not None:
+            if source.single is not None:
+                print('  ' + described(None, name, source.directory / 'board.dts'))
+            elif source.directory is not None:
                 print('  ' + described(source.directory, name))
             else:
                 text = git('show', f'{source.commit}:{name}/board.dts').stdout
@@ -209,7 +269,11 @@ def main(arguments=None):
                     print(f'  {name:14} (its board.dts cannot be read)')
         return 0
     if options.command == 'add':
-        return add(options.names, Source(options.source))
+        source = Source(options.source)
+        if not options.names and options.source is None:
+            raise SystemExit('which phone? tools/device.py add NAME (tools/device.py available lists them)')
+        # (no NAME with a source of its own -- somebody's phone repository, a directory -- takes all it has)
+        return add(options.names or source.packages(), source)
     if options.command == 'remove':
         return remove(options.names)
     if options.command == 'export':

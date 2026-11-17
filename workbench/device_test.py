@@ -194,6 +194,76 @@ class Packages(Sandbox):
         finally:
             shutil.rmtree(out)
 
+    def phone_repository(self, name, packages=None, phone='zeta'):
+        """Somebody's own repository NAME.git: one phone (PHONE) at its top, or (PACKAGES) a directory each."""
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        source = work / 'work'
+        for package in packages or [None]:
+            at = source / package if package else source
+            at.mkdir(parents=True)
+            (at / 'board.dts').write_text(board(package or phone, f'Phone {package or phone}'))
+            (at / 'soc.dtsi').write_text(SOC)
+            (at / 'README.md').write_text('mine\n')
+        run = ['git', '-C', str(source), '-c', 'user.name=t', '-c', 'user.email=t@localhost']
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(source)], check=True)
+        subprocess.run(run + ['add', '-A'], check=True)
+        subprocess.run(run + ['commit', '-q', '-m', 'my phone'], check=True)
+        subprocess.run(run + ['tag', 'v1'], check=True)
+        bare = work / f'{name}.git'
+        subprocess.run(['git', 'clone', '-q', '--bare', str(source), str(bare)], check=True)
+        return bare, source
+
+    def test_a_phone_in_a_repository_of_its_own(self):
+        bare, source = self.phone_repository('My_Phone-port')         # (called anything: the board names the package)
+        url = f'file://{bare}'
+        code, said, _ = self.run_tool('available', '--from', url)
+        self.assertEqual(code, 0, said)
+        self.assertRegex(said, r'1 packages\n  zeta +sm0001 +Phone zeta')
+        code, said, complained = self.run_tool('add', 'zeta', '--from', url)
+        self.assertEqual((code, complained), (0, ''))
+        self.assertRegex(said, r'arch/arm64/boot/dts/zeta: from file://.*My_Phone-port\.git \([0-9a-f]{12}\)')
+        for name in ('board.dts', 'soc.dtsi', 'README.md'):
+            self.assertTrue((self.dir / 'arch/arm64/boot/dts/zeta' / name).is_file(), name)
+        self.assertFalse((self.dir / 'arch/arm64/boot/dts/zeta/.git').exists(), 'the repository itself is not copied')
+        self.assertEqual(sorted(boards.load()[1]), ['emulator', 'zeta'])
+        self.assertRegex(self.run_tool('list')[1], r'zeta .*\[from file://')
+        # taken again, as the repository has it now
+        (source / 'board.dts').write_text(board('zeta', 'Phone zeta, later'))
+        subprocess.run(['git', '-C', str(source), '-c', 'user.name=t', '-c', 'user.email=t@localhost', 'commit', '-qam', 'later'],
+                       check=True)
+        subprocess.run(['git', '-C', str(source), 'push', '-q', str(bare), 'main'], check=True)
+        self.assertEqual(self.run_tool('add', 'zeta', '--from', url)[0], 0)
+        self.assertEqual(boards.load()[1]['zeta']['description'], 'Phone zeta, later')
+        # or as it was at a tag
+        self.assertEqual(self.run_tool('add', 'zeta', '--from', url + '#v1')[0], 0)
+        self.assertEqual(boards.load()[1]['zeta']['description'], 'Phone zeta')
+
+    def test_a_repository_of_several_phones_and_one_at_a_commit(self):
+        bare, source = self.phone_repository('phones', ['eta', 'theta'])
+        commit = subprocess.run(['git', '-C', str(source), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+        code, said, _ = self.run_tool('add', 'eta', '--from', f'{bare}#{commit}')
+        self.assertEqual(code, 0, said)
+        self.assertEqual(sorted(boards.load()[1]), ['emulator', 'eta'])
+        code, said, _ = self.run_tool('add', '--from', str(bare))     # (no name: all it has)
+        self.assertEqual(code, 0, said)
+        self.assertEqual(sorted(boards.load()[1]), ['emulator', 'eta', 'theta'])
+        self.assertIn('which phone?', str(self.run_tool('add')[0]))
+
+    def test_a_repository_that_is_not_there_is_said_to_be(self):
+        code = self.run_tool('add', 'zeta', '--from', f'file://{self.dir}/nothing.git')[0]
+        self.assertIn('the repository cannot be cloned', str(code))
+
+    def test_a_directory_with_one_phone_at_its_top(self):
+        elsewhere = Path(tempfile.mkdtemp()) / 'Iota_Phone'
+        self.addCleanup(shutil.rmtree, elsewhere.parent)
+        elsewhere.mkdir()
+        (elsewhere / 'board.dts').write_text(board('iota-phone', 'Phone iota'))
+        (elsewhere / 'soc.dtsi').write_text(SOC)
+        code, said, _ = self.run_tool('add', 'iota-phone', '--from', str(elsewhere))
+        self.assertEqual(code, 0, said)
+        self.assertEqual(sorted(boards.load()[1]), ['emulator', 'iota-phone'])
+
     def test_what_is_not_there_is_said_with_what_is(self):
         code, _, _ = self.run_tool('add', 'delta')
         self.assertIn('has no package "delta" (it has: alpha, beta)', str(code))
