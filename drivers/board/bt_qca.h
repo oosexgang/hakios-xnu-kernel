@@ -153,7 +153,12 @@ bt_qca_segment_answer(const uint8_t *event, unsigned n)
 	}
 	if (n >= 7 && event[0] == 4 && event[1] == 0x0e && event[2] >= 4 && event[4] == (uint8_t)BT_QCA_OPCODE &&
 	    event[5] == (uint8_t)(BT_QCA_OPCODE >> 8)) {
-		return event[6] == 0 ? 1 : -1;          /* a Command Complete of 0xfc00 */
+		/* a Command Complete of 0xfc00: its status, then (as Linux's btqca reads it) the request it answers -- one of
+		 * another request (the version's, 0x19) is not a segment's, nor taken for one */
+		if (event[2] >= 5 && n >= 8 && event[7] != BT_QCA_TLV_REQUEST) {
+			return 0;
+		}
+		return event[6] == 0 ? 1 : -1;
 	}
 	return 0;
 }

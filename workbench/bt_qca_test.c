@@ -130,6 +130,12 @@ answers(void)
 	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 4, 1, 0x03, 0x0c, 0x00 }, 7) == 0, "HCI_Reset's Command Complete");
 	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 4, 1, 0x00, 0xfc }, 6) == 0, "one cut short");
 	CHECK(bt_qca_segment_answer((const uint8_t[]){ 2, 0xff, 3, 0x00, 0x1e, 0x00 }, 6) == 0, "data, not an event");
+	/* a Command Complete of 0xfc00 that says which request it answers (status, then the request): the TLV request's is a
+	 * segment's; another's (the version's, 0x19) is not, whatever its status */
+	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 5, 1, 0x00, 0xfc, 0x00, 0x1e }, 8) == 1, "of the TLV request, status 0");
+	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 5, 1, 0x00, 0xfc, 0x02, 0x1e }, 8) == -1, "of the TLV request, an error");
+	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 5, 1, 0x00, 0xfc, 0x00, 0x19 }, 8) == 0, "of the version's request");
+	CHECK(bt_qca_segment_answer((const uint8_t[]){ 4, 0x0e, 5, 1, 0x00, 0xfc, 0x00 }, 7) == 1, "one that says more than came: status");
 }
 
 int
