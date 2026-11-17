@@ -61,7 +61,10 @@ tools/components.py check || failed=1
 
 tools/check-publishable.sh > /dev/null || { tools/check-publishable.sh; failed=1; }
 
-if git grep -nE '%#0[0-9]+(l|ll)?x' -- '*.c' '*.cpp' '*.h' '*.m'; then
+# (of every C, C++ and Objective-C file tools/files.py lists; grep's own status is not the answer when xargs splits the list)
+zero=$(tools/files.py -z '*.c' '*.cpp' '*.h' '*.m' | xargs -0 -r grep -nE '%#0[0-9]+(l|ll)?x' -- || true)
+if [ -n "$zero" ]; then
+	echo "$zero"
 	echo "lint: %#0Nx says a zero without its 0x: write 0x%0Mx (two digits fewer)"
 	failed=1
 fi
