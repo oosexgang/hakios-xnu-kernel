@@ -1,0 +1,11 @@
+# What stands in for Darwin's security policies (security/amfi/, bsd/kern/kern_minimac.c): not choices.
+
+config AMFI_STANDIN
+	def_bool y
+	help
+	  The code-signing policy: AMFI's interfaces, answered (security/amfi/).
+
+config MAC_POLICY
+	def_bool y
+	help
+	  The MAC policy of this tree: the Sandbox's requests and the entitlements' checks answered (kern_minimac.c).

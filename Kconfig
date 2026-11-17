@@ -1,0 +1,15 @@
+# The kernel's configuration: which of this repository's drivers the kernel starts, described one by one, as Linux
+# describes its own. tools/kconfig.py reads it (the part of Linux's language this tree uses: its head says which), makes
+# a configuration of it and of the fragments in arch/arm64/configs/kconfig/, and tools/gen_headers.py the header the
+# code is built with (kconfig.h: CONFIG_NAME 1 or 0). Documentation/kconfig.md says how a choice is made.
+#
+# Every driver is compiled, whatever is chosen: a choice decides which are started (drivers/board/drivers.c), and so
+# what a kernel built for a phone can and cannot do. The default is every driver: a phone's own needs choose among
+# them at boot, by its board file and its boot arguments.
+
+mainmenu "HakiOS kernel configuration"
+
+source "arch/arm64/Kconfig"
+source "drivers/Kconfig"
+source "fs/Kconfig"
+source "security/Kconfig"

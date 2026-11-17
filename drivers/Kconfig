@@ -1,0 +1,5 @@
+# The drivers: the phone's hardware (drivers/board/, bsd/dev/board/ in the kernel's tree) and the stand-ins for Apple's
+# closed kernel extensions Darwin's programs talk to (drivers/iokit/, iokit/Kernel/).
+
+source "drivers/board/Kconfig"
+source "drivers/iokit/Kconfig"

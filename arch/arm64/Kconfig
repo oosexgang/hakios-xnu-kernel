@@ -1,0 +1,23 @@
+# The processor and the platform: what every kernel of this tree has, not a choice (arch/arm64/kernel/): described
+# so that the drivers can depend on it.
+
+menu "Platform"
+
+config ARM64_PSCI_SMP
+	def_bool y
+	help
+	  The other cores are started through the firmware's PSCI (CPU_ON) and, on the way back to the loader, stop
+	  themselves (CPU_OFF): arch/arm64/kernel/psci_smp.c. How many is a boot argument (cpus=), not a choice here.
+
+config ARM64_GIC_V3
+	def_bool y
+	help
+	  The interrupt controller every Snapdragon this tree knows has, and QEMU's virt machine with gic-version=3.
+
+config LOADER_RETURN
+	def_bool y
+	help
+	  The way back to the resident loader: the drivers quiesced, the log handed over (arch/arm64/kernel/loader_return.c).
+	  Not a choice: every run on the bench ends there.
+
+endmenu

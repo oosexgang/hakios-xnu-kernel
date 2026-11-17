@@ -1,0 +1,28 @@
+# The stand-ins for Apple's closed kernel extensions (drivers/iokit/, iokit/Kernel/): not choices -- Darwin's programs
+# look for them whatever the phone -- but described, with what they follow.
+
+config IOKIT_FRAMEBUFFER
+	def_bool y
+	help
+	  IOMobileFramebuffer: the display, swaps, refreshes, scaling to the panel (MiniIOMobileFramebuffer.cpp).
+
+config IOKIT_SURFACE
+	def_bool y
+	help
+	  IOSurface (MiniIOSurface.cpp).
+
+config IOKIT_GPU
+	def_bool ADRENO_A6XX
+	help
+	  The GPU for user space, as Mesa's freedreno speaks to Linux's msm driver (BoardGPU.cpp): there when the GPU's
+	  driver is.
+
+config IOKIT_BLUETOOTH
+	def_bool BT_WCN_UART
+	help
+	  The registry entry bluetoothd looks for (BoardBluetooth.cpp): there when the Bluetooth driver is.
+
+config IOKIT_KEYSTORE
+	def_bool y
+	help
+	  AppleKeyStore for a device without a passcode (MiniAppleKeyStore.cpp).

@@ -1,0 +1,11 @@
+# The file systems of ours (fs/): not choices, Darwin's root and /private/var are on them.
+
+config FS_APFS
+	def_bool y
+	help
+	  A read/write APFS (fs/apfs/, bsd/miscfs/apfs/): the root image and the system image.
+
+config FS_RAMFS
+	def_bool y
+	help
+	  The RAM file system /private/var lives in (fs/ramfs/).

@@ -1,0 +1,309 @@
+# The phone's drivers, as drivers/board/drivers.c starts them. A driver chosen here is started; whether it then does
+# anything is still the board's (its features, its SoC file) and the boot arguments' to say (Documentation/drivers.md).
+#
+# Two kinds. The common ones work on every Snapdragon: what they need of a chip is its SoC file's addresses and the
+# versions its blocks report, nothing of one chip's in their code. The others are drivers of particular parts -- a GPU
+# generation, a radio, a codec, a camera block -- that a chip or a phone may or may not have.
+
+config BOARD
+	def_bool y
+	help
+	  Which board this is and what it has (board/board.c): every other driver asks it. Not a choice.
+
+config INPUT_QUEUE
+	def_bool y
+	help
+	  /dev/hakios-touch, the queue every source of touches and keys feeds (board/input.c). Not a choice.
+
+config AUDIO_QUEUE
+	def_bool y
+	help
+	  /dev/hakios-audio, what Darwin plays, handed to a sink (board/audio.c). Not a choice.
+
+config NET_EN0
+	def_bool y
+	help
+	  en0, an Ethernet interface as far as Darwin can tell, for whatever carries frames (board/net.c). Not a choice.
+
+# ---- the shared helpers: no choice of their own, on when a driver that uses them is ----------------------------
+
+config QCOM_TLMM
+	bool
+	help
+	  The pin controller: a pin's function, pull, drive and level (board/tlmm.h).
+
+config QCOM_GCC
+	bool
+	help
+	  The global clock controller: votes, branch clocks, a rate generator (each driver's own few registers).
+
+config QCOM_RPMH
+	bool
+	select QCOM_CMD_DB
+	help
+	  Requests to the resource power manager through a command slot set, of either sequencer version (board/rpmh.h).
+
+config QCOM_CMD_DB
+	bool
+	help
+	  The command database: which RPMh address a resource's name has (board/cmd_db.h).
+
+config QCOM_SPMI
+	bool
+	help
+	  The PMICs through the SPMI arbiter, versions 5 and 6 (board/spmi.h).
+
+config QCOM_GENI
+	bool
+	select QCOM_GCC
+	help
+	  A serial engine (GENI/QUP) as SPI or UART: its firmware's registers, a transfer, a recovery (board/geni_spi.h).
+
+config QCOM_SMEM
+	bool
+	help
+	  Shared memory with the other processors (board/smem.h).
+
+config QCOM_GLINK
+	bool
+	select QCOM_SMEM
+	help
+	  The message rings to the DSPs over shared memory (board/glink_queue.h, board/ipc.h).
+
+config QCOM_QRTR
+	bool
+	select QCOM_GLINK
+	help
+	  QRTR and QMI over GLINK: the services of the DSPs and the modem (board/qmi.c, board/qrtr_frame.h).
+
+config QCOM_SCM
+	bool
+	help
+	  Calls to TrustZone: a DSP's image authenticated and started, shut down (board/scm.h, board/mdt.h).
+
+config QCOM_SMMU
+	bool
+	help
+	  The application processors' SMMU: a stream's match, its context, faults (board/smmu.h).
+
+menu "Common to every Snapdragon"
+
+config QCOM_UFS
+	bool "The phone's storage (UFS): through the loader, or the kernel's own transfer list"
+	default y
+	select QCOM_GCC
+	help
+	  The storage's partitions as block and character devices (board/ufs.c), read through the loader while UEFI's
+	  driver has the controller, or through this kernel's own UFS host controller driver (board/ufshc.c, ufs_native=1):
+	  UFS 2.x and 3.x hosts as JEDEC lays them out.
+
+config QCOM_BUTTONS
+	bool "The power and volume keys on the PMIC"
+	default y
+	select QCOM_SPMI
+	help
+	  The keys of the main PMIC's PON block and GPIOs, read through the SPMI arbiter (board/buttons.c, buttons=1).
+
+config BATTERY_FROM_LOADER
+	bool "The battery and the charger, as the loader reads them from UEFI's charger drivers"
+	default y
+	help
+	  What Qualcomm's UEFI reports of the battery, read by the loader and given to Darwin's power source
+	  (board/battery.c, battery=1). Any phone whose UEFI has those protocols.
+
+config QCOM_THERMAL
+	bool "Temperatures (TSENS) and holding the processors and the panel back when hot"
+	default y
+	help
+	  The TSENS sensors' readings, and with thermal=2 the CPU groups' rows and the panel's level held back by
+	  policy (board/thermal.c). Its rows are EPSS's, or SCMI's where the firmware sets them.
+
+config QCOM_CPUFREQ
+	bool "CPU frequency through EPSS, the cores' load, the small cores parked"
+	default y
+	help
+	  The cores' groups raised to their top rows and governed by their load (board/cpufreq.c, cpufreq=1), the load
+	  measured (cpuload=), the small cores parked (park_small=), the L3 and the last-level cache looked at.
+
+config QCOM_DDR_VOTE
+	bool "A vote for the memory's bandwidth through RPMh"
+	default y
+	depends on QCOM_CPUFREQ
+	select QCOM_RPMH
+	help
+	  MC0 and SH0 voted to their top while the cores run at theirs, and given back at the run's end (board/ddr.c,
+	  ddr=). Started by the CPU frequency driver.
+
+config QCOM_SCMI_PERF
+	bool "CPU performance levels through SCMI"
+	default y
+	help
+	  Where the firmware sets the cores' frequency itself: its domains, levels and limits over SCMI's shared memory
+	  and doorbell (board/scmi_perf.c, scmi_perf=), given back at the run's end.
+
+config BACKLIGHT
+	bool "The panel's light: DCS through the DSI controller, or in software"
+	default y
+	select QCOM_GCC
+	help
+	  The brightness Darwin asks for, sent to the panel as its 0x51 through the DSI controller the firmware left
+	  running (MDSS DSI 2.2 and later), or darkened in software (board/backlight.c, backlight=). Automatic brightness
+	  and the thermal cap on it too.
+
+config TORCH
+	bool "The flashlight on the PMIC's flash LED"
+	default y
+	select QCOM_SPMI
+	help
+	  The PMIC's flash LED module as a torch Darwin switches (board/torch.c, torch=).
+
+endmenu
+
+menu "Parts of particular chips and phones"
+
+config TOUCH_GOODIX
+	bool "Goodix GT9916 and FocalTech FT3680 touch screens on SPI"
+	default y
+	select QCOM_GENI
+	select QCOM_TLMM
+	select QCOM_RPMH
+	help
+	  A touch screen on a serial engine as SPI (board/goodix.c, the board's "touch-goodix"): the Berlin-D protocol, or
+	  FocalTech's FTS 5.x for the variant the straps name.
+
+config TOUCH_FTS
+	bool "FocalTech FT3658U touch screen on SPI"
+	default y
+	select QCOM_GENI
+	select QCOM_TLMM
+	select QCOM_RPMH
+	help
+	  A FocalTech FT3658U on a serial engine as SPI (board/fts.c, the board's "touch-ft3658u").
+
+config ADRENO_A6XX
+	bool "Adreno 6xx GPU (A660 family): started, and Metal's device for Darwin"
+	default y
+	select QCOM_GCC
+	select QCOM_RPMH
+	select QCOM_SMMU
+	select QCOM_SCM
+	help
+	  The GPU's clocks, GMU, zap shader and rings, and the service Darwin's Metal stand-in draws through
+	  (board/adreno.c, the board's "gpu-a660", gpu=1).
+
+config WIFI_WCN6750
+	bool "WCN6750 Wi-Fi on the SoC's Wi-Fi DSP"
+	default y
+	select QCOM_SCM
+	select QCOM_SMMU
+	select QCOM_QRTR
+	select QCOM_RPMH
+	select QCOM_SPMI
+	select QCOM_TLMM
+	help
+	  The Wi-Fi DSP started through TrustZone, the radio's firmware and calibration given through QMI, Linux's ath11k
+	  driver (kernel/lx) behind a station boundary, Apple80211's requests answered (board/wifi.c, the board's
+	  "wifi-wcn6750", wifi=1).
+
+config AUDIO_DSP
+	bool "The audio DSP: sound, the microphones, the battery's details"
+	default y
+	select QCOM_SCM
+	select QCOM_SMMU
+	select QCOM_QRTR
+	help
+	  The audio DSP started, its APR/GPR services, the WCD938x codec and the speakers' path, the microphones, the
+	  battery manager's details (board/adsp.c with board/sound.c and board/mic.c, adsp=1).
+
+config MODEM_SM7325
+	bool "SM7325's modem: started, its file systems, the SIM, data through the IPA"
+	default y
+	select QCOM_SCM
+	select QCOM_QRTR
+	help
+	  The modem started through TrustZone, its remote file system served from the storage, the SIM and the network's
+	  registration, the IPA's data path behind en1 (board/mpss.c, board/ipa.c, board/nas.c, board/cell.c, the board's
+	  "modem-sm7325", modem=1).
+
+config SPEAKER_AMPS
+	bool "A look at the speaker amplifiers on I2C"
+	default y
+	select QCOM_TLMM
+	help
+	  The amplifiers found on their bus and their state said (board/speaker.c, speaker_probe=).
+
+config HAPTIC
+	bool "The vibration motor's driver chip"
+	default y
+	select QCOM_TLMM
+	help
+	  The haptic driver chip on I2C and the motor Darwin plays (board/haptic.c, haptic=).
+
+config CAMERA_SM7325
+	bool "The cameras on SM7325's camera blocks"
+	default y
+	select QCOM_GCC
+	select QCOM_SMMU
+	select QCOM_TLMM
+	help
+	  The camera clock controller, CSIPHY, CSID and IFE, the sensors the board's camera { } wires, frames for Darwin
+	  (board/camera.c, the board's "camera-sm7325", cam=).
+
+config BT_WCN_UART
+	bool "Qualcomm Bluetooth on a UART, and Darwin's side of it"
+	default y
+	select QCOM_GENI
+	select QCOM_SPMI
+	select QCOM_RPMH
+	select QCOM_TLMM
+	help
+	  The controller powered, identified and given its firmware over the serial engine as a UART, then handed to
+	  bluetoothd through the registry, nodes, a Skywalk channel and a kernel control (board/bt_uart.c,
+	  board/bt_host.c, the board's "bluetooth-wcn-uart", bt=).
+
+endmenu
+
+menu "The emulator (QEMU)"
+
+config VIRTIO_INPUT
+	bool "QEMU's keyboard and pointer"
+	default y
+	help
+	  virtio input devices as the touch screen and the keys (board/virtio_input.c, virtio_input=1).
+
+config VIRTIO_SOUND
+	bool "QEMU's sound device"
+	default y
+	help
+	  A virtio sound device as the sink of what Darwin plays (board/virtio_sound.c, virtio_sound=1).
+
+config VIRTIO_BLK
+	bool "A disk image of the host"
+	default y
+	help
+	  A virtio block device as /dev/rvblk0 (board/virtio_blk.c).
+
+config SPARSE_IMAGE
+	bool "Part of an image too big to hold, as a device"
+	default y
+	help
+	  /dev/rsp0: the blocks of a sparse image the loader holds (board/sparse.c).
+
+config APFS_CHECK
+	bool "A walk of the disk image's APFS once user space is up"
+	default y
+	depends on VIRTIO_BLK
+	help
+	  /dev/rvblk0 mounted and walked once, with what was found said (board/apfs_check.c).
+
+endmenu
+
+menu "Debugging"
+
+config PROFILER
+	bool "A sampling profiler of a process"
+	default y
+	help
+	  Where the threads of the process hakios_prof=NAME are, sampled (board/cputop.c and the profiler it starts).
+
+endmenu
