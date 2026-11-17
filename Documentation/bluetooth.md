@@ -115,4 +115,5 @@ kernel's build only (`kernel/syntax-check.skip`).
 - Seen on a phone.
 - A faster UART (Qualcomm's baud rate command) and the controller's in-band sleep: 115200 baud carries keyboards, mice and
   LE; audio would want more.
-- /dev/btwake and its fellows do nothing: bluetoothd opens and writes to them, and nothing is behind them.
+- /dev/btwake and its fellows do nothing: bluetoothd opens and writes to them, and nothing is behind them. What it
+  writes is said in the log (`bt: bluetoothd wrote N bytes to /dev/btreset, the first ..`), the first forty times.
