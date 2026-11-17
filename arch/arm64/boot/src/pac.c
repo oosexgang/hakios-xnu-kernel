@@ -152,6 +152,12 @@ pac_sign_chain(const struct segment_command_64 *sg, uint64_t off, uint64_t imgba
     uint32_t *signed_count, uint32_t *rebased_count, uint32_t *skipped)
 {
 	for (;;) {
+		if (off > sg->vmsize || sg->vmsize - off < 8) {
+			/* (a chain that leaves its segment: nothing written past it) */
+			print("pac: a chain goes past its segment (%x of %x): the rest of it not signed\n", off, sg->vmsize);
+			(*skipped)++;
+			break;
+		}
 		uint64_t va = sg->vmaddr + off;
 		uint64_t *slot = (uint64_t *)(uintptr_t)(va + slide);
 		uint64_t raw = *slot;
@@ -207,7 +213,8 @@ pac_sign_chain(const struct segment_command_64 *sg, uint64_t off, uint64_t imgba
  * one that does not authenticate pointers -- is left alone.
  */
 static void
-kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t slide)
+kernel_pac_setup(const uint8_t *file, uint32_t file_size, const struct mach_header_64 *mh, uint64_t slide, uint64_t kern_lo,
+    uint64_t kern_hi)
 {
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
 	const struct linkedit_data_command *fixups = NULL;
@@ -224,7 +231,9 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 		if (lc->cmd == LC_SEGMENT_64) {
 			const struct segment_command_64 *sg = (const void *)lc;
 			const struct section_64 *sc = (const void *)(sg + 1);
-			for (uint32_t s = 0; s < sg->nsects; s++, sc++) {
+			/* (only the sections the command has room for: kernel_layout() checked the commands, not their sections) */
+			uint32_t room = (uint32_t)((lc->cmdsize - sizeof(*sg)) / sizeof(*sc));
+			for (uint32_t s = 0; s < sg->nsects && s < room; s++, sc++) {
 				if (sc->sectname[0] == '_' && sc->sectname[1] == '_' &&
 				    sc->sectname[2] == 'p' && sc->sectname[3] == 'a' &&
 				    sc->sectname[4] == 'c' && sc->sectname[5] == '_' &&
@@ -232,6 +241,10 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 				    sc->sectname[8] == 'y' && sc->sectname[9] == 's' &&
 				    sc->sectname[10] == 0) {
 					keys_pa = sc->addr + slide;
+					if (sc->size < 10 * sizeof(uint64_t) || keys_pa < kern_lo || keys_pa > kern_hi - 10 * sizeof(uint64_t)) {
+						print("pac: __pac_keys (%x, %x bytes) is not inside the kernel: no keys\n", sc->addr, sc->size);
+						keys_pa = 0;
+					}
 				}
 			}
 		} else if (lc->cmd == LC_DYLD_CHAINED_FIXUPS) {
@@ -278,11 +291,30 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 	__asm__ volatile("mrs %0, TCR_EL1" : "=r"(tcr_after));
 
 	uint32_t signed_count = 0, rebased_count = 0, skipped = 0;
+	if (fixups != NULL && (fixups->dataoff > file_size || fixups->datasize > file_size - fixups->dataoff ||
+	    fixups->datasize < sizeof(struct chained_fixups_header) + 4)) {
+		print("pac: the chained fixups (%x+%x) are not inside the kernel's %x bytes: not signing\n", fixups->dataoff,
+		    fixups->datasize, file_size);
+		fixups = NULL;
+	}
 	if (fixups != NULL) {
-		const struct chained_fixups_header *hdr = (const void *)(file + fixups->dataoff);
-		const uint8_t *starts = (const uint8_t *)hdr + hdr->starts_offset;
-		uint32_t seg_count = *(const uint32_t *)starts;
-		const uint32_t *seg_info = (const uint32_t *)(starts + 4);
+		/* (every offset inside the fixups' own bytes, each read checked against their end) */
+		const uint8_t *data = file + fixups->dataoff, *data_end = data + fixups->datasize;
+		const struct chained_fixups_header *hdr = (const void *)data;
+		const uint8_t *starts = data + hdr->starts_offset;
+		uint32_t seg_count;
+		const uint32_t *seg_info;
+
+		if (hdr->starts_offset > fixups->datasize - 4) {
+			print("pac: the fixups' starts are past their end: not signing\n");
+			return;
+		}
+		seg_count = *(const uint32_t *)starts;
+		seg_info = (const uint32_t *)(starts + 4);
+		if (seg_count > (uint32_t)(data_end - (starts + 4)) / 4) {
+			print("pac: %u segments of fixups do not fit their data: not signing\n", seg_count);
+			return;
+		}
 
 		if (hdr->imports_count != 0) {
 			print("pac: %u imported symbols in the kernel image: unsupported, not signing\n",
@@ -295,6 +327,11 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 			}
 			const struct chained_starts_in_segment *cs =
 			    (const void *)(starts + seg_info[si]);
+			if (seg_info[si] > (uint32_t)(data_end - starts) || (uint64_t)(data_end - (const uint8_t *)cs) < sizeof(*cs) ||
+			    (uint64_t)cs->page_count * 2 > (uint64_t)(data_end - (const uint8_t *)cs->page_start)) {
+				print("pac: segment %u's fixups are not inside their data: not signed\n", si);
+				continue;
+			}
 			if (cs->pointer_format != CHAINED_PTR_ARM64E_KERNEL) {
 				print("pac: pointer format %u in segment %u: unsupported\n",
 				    cs->pointer_format, si);
@@ -326,6 +363,12 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 					 * starts, the last one flagged CHAINED_PTR_START_LAST */
 					uint32_t idx = start & (uint16_t)~CHAINED_PTR_START_MULTI;
 					for (;;) {
+						/* (the list of starts follows the pages' in the segment's own cs->size: not read past it, nor past the
+						 * fixups' data, for a list with no last) */
+						uint64_t entry_end = (uint64_t)((const uint8_t *)&cs->page_start[idx] - (const uint8_t *)cs) + 2;
+						if (entry_end > cs->size || (const uint8_t *)&cs->page_start[idx] + 2 > data_end) {
+							break;
+						}
 						uint16_t e = cs->page_start[idx];
 						pac_sign_chain(sg, base + (e & (uint16_t)~CHAINED_PTR_START_LAST),
 						    imgbase, slide, &signed_count, &rebased_count, &skipped);

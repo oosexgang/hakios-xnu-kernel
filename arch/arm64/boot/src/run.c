@@ -134,7 +134,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		memcpy((void *)(sg->vmaddr + slide), kernel + sg->fileoff, sg->filesize);
 	}
 	print("kernel loaded at pa %x..%x\n", kern_lo, kern_hi);
-	kernel_pac_setup(kernel, mh, slide);
+	kernel_pac_setup(kernel, pi.kernel_size, mh, slide, kern_lo, kern_hi);
 	if (rd_resident) {
 		print("resident ramdisk at pa %x size %x\n", rd_pa, rd_size);
 	} else if (rd_size != 0) {
