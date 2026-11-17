@@ -101,6 +101,7 @@ adb pull /vendor/firmware/a660_{gmu.bin,sqe.fw,zap.mdt,zap.b00,zap.b01,zap.b02} 
 adb pull /vendor/firmware_mnt/image/wpss.{mdt,b02,b03,b04,b05,b06,b07} fw-wifi/              # Wi-Fi (wifi=1)
 adb pull /vendor/firmware_mnt/image/adsp.{mdt,b02,...,b36} fw-audio/                         # sound (adsp=1)
 adb pull /vendor/firmware/aw8697_haptic.bin fw-haptic/                                       # haptics
+adb pull /vendor/bt_firmware/image/ fw-bt/                                                    # Bluetooth (bt=2)
 ```
 
 (Put the `fw-*` directories next to the workspace. Wi-Fi also needs `fw-wifi/mac` — the radio's address on one

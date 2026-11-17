@@ -667,6 +667,14 @@ if [ -f ../fw-haptic/aw8697_haptic.bin ]; then
 	mkdir -p root/fw
 	install -m 0644 ../fw-haptic/aw8697_haptic.bin root/fw/
 fi
+# ... and the Bluetooth controller's patch and configuration (bsd/dev/board/bt_uart.c, bt=2: the files bluetooth { }
+# names, rampatch and nvm, msbtfw*.mbn or .tlv and msnv*.bin on a WCN6750), the phone's /vendor/bt_firmware/image, from
+# ../fw-bt (the vendor's, not in the repository): all of what is there, the board says which it sends
+for f in ../fw-bt/*; do
+	[ -f "$f" ] || continue
+	mkdir -p root/fw
+	install -m 0644 "$f" root/fw/
+done
 # ... and the cameras' register tables (bsd/dev/board/camera.c, cam=2 and up), made by ../components/camera/tools/camsensor.py out of
 # the sensors' module files of Android's camera stack, the phone's /vendor/lib64/camera/com.qti.sensormodule.
 # <phone>_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
@@ -698,7 +706,7 @@ fi
 # git worktree add has none of it, and neither has one whose tools/new-workspace.sh predates the fw-*
 # loop there. Say what went in and what was not there to go in; what each one is for is above.
 fwhave='' fwnone=''
-for d in gpu wifi haptic camera audio; do
+for d in gpu wifi haptic camera audio bt; do
 	if [ -d ../fw-$d ]; then fwhave="$fwhave $d"; else fwnone="$fwnone $d"; fi
 done
 echo "build.sh: fw/: $(ls -1 root/fw 2>/dev/null | wc -l) files from ../fw-*:${fwhave:- none present}${fwnone:+, absent:$fwnone}"
