@@ -1207,6 +1207,62 @@ class Generate(Sandbox):
 
 
 class DeviceTree(Sandbox):
+    def test_the_frequency_blocks_layout_is_read(self):
+        def found(node):
+            soc, _, _ = devicetree.from_dts('/ {\n' + node + '\n};\n')
+            return soc.get('cpufreq')
+        # Linux's, an SM8250's kind: qcom,cpufreq-hw, the OSM's layout, one size apart
+        self.assertEqual(found('cpufreq@18591000 { compatible = "qcom,cpufreq-hw"; '
+                               'reg = <0 0x18591000 0 0x1000>, <0 0x18592000 0 0x1000>, <0 0x18593000 0 0x1000>; '
+                               'reg-names = "freq-domain0", "freq-domain1", "freq-domain2"; };'),
+                         {'block': 'osm', 'epss': 0x18591000, 'epss_domain_size': 0x1000})
+        # not one size apart, with the chip's name before, and without reg-names: each group's address
+        self.assertEqual(found('cpufreq@5591000 { compatible = "qcom,sm0000-cpufreq-hw", "qcom,cpufreq-hw"; '
+                               'reg = <0 0x05591000 0 0x1400>, <0 0x05593800 0 0x1400>, <0 0x05595800 0 0x1400>; };'),
+                         {'block': 'osm', 'epss': 0x05591000, 'epss_domain_size': 0x1400,
+                          'domains': [0x05591000, 0x05593800, 0x05595800]})
+        # EPSS, Linux's name and the vendor's
+        for compatible in ('"qcom,sm0000-cpufreq-epss", "qcom,cpufreq-epss"', '"qcom,cpufreq-hw-epss"'):
+            self.assertEqual(found(f'cpufreq@18591000 {{ compatible = {compatible}; reg = <0x18591000 0x1000>, '
+                                   '<0x18592000 0x1000>; reg-names = "freq-domain0", "freq-domain1"; };'),
+                             {'epss': 0x18591000, 'epss_domain_size': 0x1000})
+        # the vendor's debug node beside it is not the block
+        self.assertIsNone(found('debug@18591000 { compatible = "qcom,cpufreq-hw-epss-debug"; reg = <0x18591000 0x800>; '
+                                'reg-names = "domain-top"; };'))
+
+    def test_linuxs_own_trees_are_read(self):
+        # Linux's trees name the TSENS controllers' and the UFS host's regs less often than the vendor's: their first
+        soc, _, _ = devicetree.from_dts('''/ { soc@0 { #address-cells = <2>; #size-cells = <2>;
+            thermal-sensor@c263000 { compatible = "qcom,sm0000-tsens", "qcom,tsens-v2";
+                reg = <0 0x0c263000 0 0x1ff>, <0 0x0c222000 0 0x1ff>; };
+            thermal-sensor@c265000 { compatible = "qcom,sm0000-tsens", "qcom,tsens-v2";
+                reg = <0 0x0c265000 0 0x1ff>, <0 0x0c223000 0 0x1ff>; };
+            ufshc@1d84000 { compatible = "qcom,sm0000-ufshc", "qcom,ufshc", "jedec,ufs-2.0";
+                reg = <0 0x01d84000 0 0x3000>, <0 0x01d88000 0 0x8000>; reg-names = "std", "ice"; };
+        }; };''')
+        self.assertEqual(soc['thermal'], {'tsens': [0xc263000, 0xc265000]})
+        self.assertEqual(soc['platform']['ufs'], 0x1d84000)
+        # the power-on block of a PMIC of Linux's tree, named by its compatible
+        _, board, _ = devicetree.from_dts('''/ { spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            pmic@0 { compatible = "qcom,pm8998", "qcom,spmi-pmic"; reg = <0x0 0>;
+                pon@800 { compatible = "qcom,pm8998-pon"; reg = <0x800>; }; }; }; };''')
+        self.assertEqual(board['buttons'], {'pon': 0x008, 'pon_name': "the PM8998's power-on block"})
+        # an RPMh sequencer whose first slot set is not an active one is said
+        rsc = '''/ {{ rsc@18200000 {{ compatible = "qcom,rpmh-rsc"; reg = <0x18200000 0x10000>, <0x18210000 0x10000>,
+            <0x18220000 0x10000>; reg-names = "drv-0", "drv-1", "drv-2"; qcom,drv-id = <2>; qcom,tcs-offset = <0xd00>;
+            qcom,tcs-config = {}; }}; }};'''
+        _, _, notes = devicetree.from_dts(rsc.format('<ACTIVE_TCS 2>, <SLEEP_TCS 3>, <WAKE_TCS 3>, <CONTROL_TCS 0>'))
+        self.assertFalse([n for n in notes if 'tcs-config' in n], notes)
+        _, _, notes = devicetree.from_dts(rsc.format('<0x02 0x02>, <0x00 0x03>, <0x01 0x03>, <0x03 0x00>'))
+        self.assertFalse([n for n in notes if 'tcs-config' in n], 'compiled: ACTIVE_TCS is 2')
+        for config in ('<SLEEP_TCS 3>, <WAKE_TCS 3>, <ACTIVE_TCS 2>', '<ACTIVE_TCS 0>, <SLEEP_TCS 3>, <WAKE_TCS 3>'):
+            _, _, notes = devicetree.from_dts(rsc.format(config))
+            self.assertTrue([n for n in notes if 'qcom,tcs-config, not active slots' in n], (config, notes))
+        # one cell an address, and no reg-names at all
+        soc, _, _ = devicetree.from_dts('''/ { soc { #address-cells = <1>; #size-cells = <1>;
+            ufshc@1d84000 { compatible = "qcom,ufshc"; reg = <0x01d84000 0x3000>; }; }; };''')
+        self.assertEqual(soc['platform']['ufs'], 0x1d84000)
+
     def test_nodes_and_properties_are_read(self):
         tree = devicetree.parse_dts(DTS)
         names = [node.name for node in tree.walk()]

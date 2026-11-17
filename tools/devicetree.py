@@ -11,6 +11,8 @@ has trees of each kind.
 """
 import re
 
+TSENS_MAX = 8   # a SoC's TSENS controllers, at most (HAKIOS_TSENS_MAX in drivers/board/board.h; tools/boards.py)
+
 KEY_VOLUMEUP = 0x73     # Linux's input-event-codes.h: what gpio-keys calls the key in linux,code
 
 
@@ -81,6 +83,43 @@ def reg_named(node, name):
     return address or None
 
 
+def cpufreq_block(node, compatible):
+    """[cpufreq] of a cpufreq-hw node, but its groups' cores: the layout (EPSS, or the OSM's before it), the first
+    group's block and the blocks' size, and each group's address where they are not one size apart (an SM8150's)"""
+    reg = cells(node.props.get('reg'))
+    names = strings(node.props.get('reg-names'))
+    count = len(names) or len(reg) // 4             # (without reg-names: two cells an address and two a size)
+    if not count or not reg or len(reg) % (2 * count):
+        return None
+    width = len(reg) // count // 2
+
+    def number(words):
+        value = 0
+        for word in words:
+            value = value << 32 | word
+        return value
+    blocks = [(number(reg[i * 2 * width:i * 2 * width + width]), number(reg[i * 2 * width + width:(i + 1) * 2 * width]))
+              for i in range(count)]
+    bases, size = [base for base, _ in blocks], min(size for _, size in blocks)
+    entry = {'epss': bases[0], 'epss_domain_size': size}
+    if not any('epss' in c for c in compatible):
+        entry = {'block': 'osm', **entry}
+    if any(base != bases[0] + i * size for i, base in enumerate(bases)):
+        entry['domains'] = bases
+    return entry
+
+
+def first_reg(node):
+    """The address of a node's first reg entry, by its parent's #address-cells (2 unless said, as a SoC node of an arm64
+    tree has it): for Linux's trees, whose nodes name their regs less often than the vendor's do."""
+    reg = cells(node.props.get('reg'))
+    parent = node.parent
+    width = (cells(parent.props.get('#address-cells')) or [2])[0] if parent is not None else 2
+    if width not in (1, 2) or len(reg) < width:
+        return None
+    return reg[0] << 32 | reg[1] if width == 2 else reg[0]
+
+
 def unit_address(node):
     return int(node.name.split('@', 1)[1], 16) if '@' in node.name and re.fullmatch(r'[0-9a-fA-F]+', node.name.split('@', 1)[1]) else None
 
@@ -133,7 +172,11 @@ def pmic_of(node):
         return None, None
     reg = cells(pmic.props.get('reg'))
     slave = reg[0] if reg else unit_address(pmic)
-    return slave, pmic.name.split('@')[0].split(',')[-1].upper()
+    name = pmic.name.split('@')[0].split(',')[-1]
+    if name == 'pmic':
+        # Linux's trees call every one pmic@N: its name is in its first compatible ("qcom,pm8998")
+        name = next((c.split(',')[-1] for c in strings(pmic.props.get('compatible')) if c != 'qcom,spmi-pmic'), name)
+    return slave, name.upper()
 
 
 def first_stream(node):
@@ -169,6 +212,9 @@ def from_dts(text, panel=None):
             cpus.append((reg[-1] if reg else int(node.name.split('@')[1], 16), capacity[0] if capacity else 0, group))
         if re.fullmatch(r'ufshc@[0-9a-fA-F]+', node.name) and reg_named(node, 'ufs_mem'):
             platform['ufs'] = reg_named(node, 'ufs_mem')
+        elif 'qcom,ufshc' in compatible and 'ufs' not in platform:
+            # Linux's: the host controller's registers are its first reg ("std" where they are named)
+            platform['ufs'] = reg_named(node, 'std') or first_reg(node)
         if node.name == 'psci' and strings(node.props.get('method')):
             platform['psci'] = strings(node.props['method'])[0]
         if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
@@ -177,14 +223,15 @@ def from_dts(text, panel=None):
             soc.setdefault('display', {})['intf1'] = reg_named(node, 'mdp_intf_base')
         if reg_named(node, 'tsens_tm_physical'):
             tsens.append(reg_named(node, 'tsens_tm_physical'))
-        if any(c.startswith('qcom,cpufreq-hw') or c == 'qcom,cpufreq-epss' for c in compatible):
-            reg = cells(node.props.get('reg'))
-            names = strings(node.props.get('reg-names'))
-            if names and reg and len(reg) % len(names) == 0:
-                width = len(reg) // len(names) // 2 or 1
-                first = reg[width - 1] if width else reg[0]
-                second = reg[2 * width + width - 1] if len(names) > 1 else None
-                soc['cpufreq'] = {'epss': first, 'epss_domain_size': (second - first) if second and second > first else 0x1000}
+        elif 'qcom,tsens-v2' in compatible and first_reg(node):
+            # Linux's: the readings ("TM") are the first reg, the settings ("SROT") the second
+            tsens.append(first_reg(node))
+        # the cores' frequency block: Linux's "qcom,cpufreq-epss" and "qcom,cpufreq-hw" (with or without the chip's name
+        # before), the vendor's "qcom,cpufreq-hw-epss" and "qcom,cpufreq-hw"; not the vendor's "...-debug" beside it
+        if any(re.fullmatch(r'qcom,([a-z0-9]+-)?cpufreq-(epss|hw|hw-epss)', c) for c in compatible):
+            entry = cpufreq_block(node, compatible)
+            if entry:
+                soc['cpufreq'] = entry
         if any(re.fullmatch(r'qcom,.*-dispcc(-.*)?|qcom,dispcc-.*', c) for c in compatible) and unit_address(node):
             soc.setdefault('clocks', {})['dispcc'] = unit_address(node)
         if any(re.fullmatch(r'qcom,.*-gcc(-.*)?|qcom,gcc-.*', c) for c in compatible) and unit_address(node):
@@ -349,6 +396,15 @@ def from_dts(text, panel=None):
                 offset = cells(node.props.get('qcom,tcs-offset'))
                 if offset:
                     rpmh['tcs_offset'] = offset[0]
+                # The drivers send through the sequencer's first slot set and take it for an active one: so it is
+                # on every chip seen, where qcom,tcs-config lists ACTIVE_TCS first, with slots (Linux's rpmh-rsc.c lays
+                # the sets out in that order). Said where a tree has it otherwise.
+                config = node.props.get('qcom,tcs-config', '')
+                first = re.match(r'\s*<\s*(\w+)\s+(\w+)\s*>', config)
+                if first and not (first[1] in ('ACTIVE_TCS', '2', '0x2', '0x02') and first[2] not in ('0', '0x0', '0x00')):
+                    notes.append(f'the application processor\'s RPMh sequencer lists {first[1]} {first[2]} first in its '
+                                 'qcom,tcs-config, not active slots: what sends through RPMh (ddr-rpmh, the supplies of '
+                                 'the part drivers) takes the first set for an active one, and would not work here')
         # the Adreno's blocks, by the names their reg entries have (qcom,kgsl-3d0 and qcom,gmu), and the
         # three that are nodes of their own
         for key, name in (('gpu', 'kgsl_3d0_reg_memory'), ('cx_misc', 'cx_misc'), ('rscc', 'rscc'),
@@ -361,8 +417,10 @@ def from_dts(text, panel=None):
             adreno['smmu'] = unit_address(node)
         if 'qcom,qfprom' in compatible and unit_address(node):
             adreno.setdefault('qfprom', unit_address(node))
-        if 'qcom,qpnp-power-on' in compatible and unit_address(node):
-            # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N
+        if ('qcom,qpnp-power-on' in compatible or any(re.fullmatch(r'qcom,pm[a-z0-9]+-pon', c) for c in compatible)) \
+                and unit_address(node):
+            # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N. The vendor's
+            # qcom,qpnp-power-on, Linux's qcom,pm8998-pon and the like (a PMK8350's at its HLOS half, its unit address)
             slave, pmic = pmic_of(node)
             if slave is not None:
                 keys.update(pon=slave << 8 | unit_address(node) >> 8, pon_name=f"the {pmic}'s power-on block")
@@ -406,7 +464,7 @@ def from_dts(text, panel=None):
     if 'smmu' in soc:
         soc['smmu'].update(streams)
     if tsens:
-        soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
+        soc['thermal'] = {'tsens': sorted(set(tsens))[:TSENS_MAX]}
     if cpus:
         # Qualcomm numbers its cores 0x000, 0x100 ...: in MPIDR's second affinity field
         shift = 8 if any(number >= 0x100 for number, _, _ in cpus) else 0
