@@ -66,6 +66,7 @@ dsu_parse(const uint8_t *p, uint64_t room, uint64_t userdata_sectors)
 		if (n == 0 || n > DSU_MAX_EXTENTS || (uint64_t)first + n > en) {
 			return 0;
 		}
+		/* every extent looked at before one is taken: a copy refused half way leaves the table of the one before it whole */
 		for (uint32_t x = 0; x < n; x++) {
 			const uint8_t *ex = t + eo + (uint64_t)(first + x) * es;
 			uint64_t count = dsu_u64(ex), sector = dsu_u64(ex + 12);
@@ -74,9 +75,13 @@ dsu_parse(const uint8_t *p, uint64_t room, uint64_t userdata_sectors)
 			if (*(const uint32_t *)(ex + 8) != 0 /* linear */ || count > userdata_sectors || sector > userdata_sectors - count) {
 				return 0;
 			}
-			dsu_extent[x].sector = sector;
-			dsu_extent[x].count = count;
-			bytes += count * 512;
+		}
+		for (uint32_t x = 0; x < n; x++) {
+			const uint8_t *ex = t + eo + (uint64_t)(first + x) * es;
+
+			dsu_extent[x].sector = dsu_u64(ex + 12);
+			dsu_extent[x].count = dsu_u64(ex);
+			bytes += dsu_extent[x].count * 512;
 		}
 		dsu_extents = n;
 		dsu_bytes = bytes;

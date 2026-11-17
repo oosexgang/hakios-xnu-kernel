@@ -1,11 +1,12 @@
 /* Part of the loader (included by loader.c, not compiled alone): the DSU image found on the phone, and read through its extents. */
-/* Find system_gsi's extents; 1 if there is exactly one plausible copy of the metadata (older ones a rename left are ignored when they agree). */
+/* Find system_gsi's extents; 1 if there is exactly one plausible copy of the metadata (older ones a rename left are ignored when they agree, extent by extent). */
 static int
 dsu_find(efi_block_io **userdata_out)
 {
 	efi_block_io *meta = partition_named("metadata"), *data = partition_named("userdata");
 	uint64_t bs, meta_bytes, chunk = sizeof(ufs_buffer), found = 0;
-	uint64_t first_bytes = 0, first_extents = 0, first_sector = 0;
+	uint64_t first_bytes = 0, first_extents = 0;
+	static uint8_t first_table[sizeof(dsu_extent)];         /* (the first copy's extents, each later one compared with them) */
 
 	if (meta == NULL || data == NULL) {
 		print("dsu: no %s partition\n", meta == NULL ? "metadata" : "userdata");
@@ -30,8 +31,10 @@ dsu_find(efi_block_io **userdata_out)
 			print("dsu: lp_metadata at %x of metadata: system_gsi %d bytes in %d extents, the first at sector %x\n",
 			    at + b, dsu_bytes, (uint64_t)dsu_extents, dsu_extent[0].sector);
 			if (found++ == 0) {
-				first_bytes = dsu_bytes, first_extents = dsu_extents, first_sector = dsu_extent[0].sector;
-			} else if (dsu_bytes != first_bytes || dsu_extents != first_extents || dsu_extent[0].sector != first_sector) {
+				first_bytes = dsu_bytes, first_extents = dsu_extents;
+				memcpy(first_table, dsu_extent, dsu_extents * sizeof(dsu_extent[0]));
+			} else if (dsu_bytes != first_bytes || dsu_extents != first_extents ||
+			    memcmp(first_table, dsu_extent, dsu_extents * sizeof(dsu_extent[0])) != 0) {
 				print("dsu: two different copies of the metadata: not choosing\n");
 				return 0;
 			}

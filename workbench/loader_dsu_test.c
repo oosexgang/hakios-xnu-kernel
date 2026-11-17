@@ -368,6 +368,26 @@ copies(void)
 		metadata(metadata_bytes + 0x80000, "system_gsi", one, 1);
 		CHECK(dsu_find(&data) == 0 && strstr(said, "two different copies") != NULL, "the same size, other extents: %s", said);
 	}
+	{
+		/* the same size, the same first extent, the same number of them: the second elsewhere -- they differ */
+		static const struct piece moved[] = { { 0x100000, 0x4000, 0 }, { 0xa00000, 0x1000, 0 } };
+
+		phone();
+		metadata(metadata_bytes + 0x3000, "system_gsi", two, 2);
+		metadata(metadata_bytes + 0x80000, "system_gsi", moved, 2);
+		CHECK(dsu_find(&data) == 0 && strstr(said, "two different copies") != NULL, "only the second extent elsewhere: %s", said);
+	}
+	{
+		/* a good copy, then one refused at its second extent (outside userdata): the first's table, whole */
+		static const struct piece bad[] = { { 0x300000, 0x4000, 0 }, { ~0ULL - 8, 0x1000, 0 } };
+
+		phone();
+		metadata(metadata_bytes + 0x3000, "system_gsi", two, 2);
+		metadata(metadata_bytes + 0x80000, "system_gsi", bad, 2);
+		CHECK(dsu_find(&data) == 1, "a copy that is none does not count: %s", said);
+		CHECK(dsu_extents == 2 && dsu_extent[0].sector == 0x100000 && dsu_extent[0].count == 0x4000 && dsu_extent[1].sector == 0x900000,
+		    "and leaves the good one's extents as they were: %#llx", (unsigned long long)dsu_extent[0].sector);
+	}
 	phone();
 	metadata(metadata_bytes + 0x3000, "system_gsi_b", two, 2);
 	CHECK(dsu_find(&data) == 0 && strstr(said, "no lp_metadata with a system_gsi") != NULL, "none: %s", said);
