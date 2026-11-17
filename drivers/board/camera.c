@@ -4123,5 +4123,6 @@ hakios_camera_quiesce(void)
 	broken = false;                 /* (one last time, whatever went before) */
 	csiphy_down();
 	titan_down();
+	af_down();                      /* (the lens motor's supply vote too: it stayed on after the kernel had left) */
 	power_down();
 }
