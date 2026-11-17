@@ -7,7 +7,9 @@
 #   1. the checkout has nothing uncommitted (what is released is a commit, not a working copy)
 #   2. tools/check-publishable.sh finds nothing (no binaries, firmware, Apple's files, home paths, keys)
 #   3. make check passes (--no-check leaves it out, when it has just been run)
-#   4. build/release/hakios-kernel-VERSION.tar.gz: `git archive` of HEAD, everything under hakios-kernel-VERSION/
+#   4. build/release/hakios-kernel-VERSION.tar.gz: `git archive` of HEAD, everything under hakios-kernel-VERSION/,
+#      with .tracked-files beside it: the list of its files, which the checks of a tree that has no git go over
+#      (tools/files.py), so that make check runs in the unpacked tarball as it does in a checkout
 #   5. build/release/SHA256SUMS, and build/release/NOTES.md: the CHANGELOG's sections that are not released yet
 #   6. --tag: the annotated tag vVERSION here (pushing it is yours to do: git push origin vVERSION)
 #
@@ -43,8 +45,13 @@ out=$TOP/build/release
 mkdir -p "$out"
 rm -f "$out/$name.tar.gz"
 commit=$(git rev-parse HEAD)
+# the list of the files, in git's order (bytes), the list itself among them; of the commit's time, as is the rest
+listing=$(mktemp -d)
+trap 'rm -rf "$listing"' EXIT
+{ git ls-tree -r --name-only HEAD; echo .tracked-files; } | LC_ALL=C sort > "$listing/.tracked-files"
+touch -d "@$(git log -1 --format=%ct)" "$listing/.tracked-files"
 # (the commit's time in the tarball, not now: the same commit gives the same file)
-git archive --format=tar --prefix="$name/" HEAD | gzip -n -9 > "$out/$name.tar.gz"
+git archive --format=tar --prefix="$name/" --add-file="$listing/.tracked-files" HEAD | gzip -n -9 > "$out/$name.tar.gz"
 (cd "$out" && sha256sum "$name.tar.gz" > SHA256SUMS)
 {
 	echo "# HakiOS kernel $version"
