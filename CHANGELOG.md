@@ -155,6 +155,16 @@ tags yet, so the current work is one section.
 - A firmware's performance level that was sent but whose answer could not be read was taken as never set, and left at
   its top for the next kernel. QEMU's virtio devices are reset on the way back to the loader, so they write no more
   into memory that is UEFI's or the next kernel's.
+- The modem's file service (TFTP): a transfer the modem gave up on kept its slot for the whole run (four of them and
+  every later file was refused "busy"); a file of whole blocks never ended, the empty block TFTP ends it with never
+  sent; a write anywhere stood in front of the firmware of that name for the rest of the run, and a long name was kept
+  cut. Writes are taken under /readwrite/ only, transfers silent for 10 s are taken back. When the modem closed its
+  GLINK channel and opened it again, the old session's intents and our open's state were kept, and the open was never
+  sent again; the data session's bind and start could be sent twice by two threads. On the way back to the loader the
+  modem's rails are not given back through a lock someone else may hold.
+- The display's and the key store's user clients kept the wake port of every asynchronous call for good; the display's
+  refreshes stopped for good when their port came after they were asked for; Wi-Fi's services were never made when a
+  first attempt failed.
 
 ### For whoever works on the project
 
