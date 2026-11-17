@@ -88,7 +88,7 @@ to_the_controller(void)
 	static const uint16_t ops[] = { 0x0c03, 0x1001, 0x1002, 0x0c13, 0x200b, 0x200c, 0x0405, 0x0c5c, 0x2049, 0x204b };
 
 	for (unsigned i = 0; i < sizeof(ops) / sizeof(ops[0]); i++) {
-		CHECK(bt_answer_here(c, command(c, ops[i], NULL, 0), BT_Q_DEFAULT, event, sizeof(event)) == 0, "%#06x: sent", ops[i]);
+		CHECK(bt_answer_here(c, command(c, ops[i], NULL, 0), BT_Q_DEFAULT, event, sizeof(event)) == 0, "0x%04x: sent", ops[i]);
 	}
 	CHECK(bt_answer_here((const uint8_t[]){ 2, 1, 0, 0, 0 }, 5, BT_Q_DEFAULT, event, sizeof(event)) == 0, "data: sent");
 	CHECK(bt_answer_here((const uint8_t[]){ 1, 0x01, 0xfc }, 3, BT_Q_DEFAULT, event, sizeof(event)) == 0, "a command cut short: not ours");
@@ -136,7 +136,7 @@ vendor_commands(void)
 		for (unsigned k = 0; k < cases[i].data; k++) {
 			zeros &= event[7 + k] == (k == 0 ? (uint8_t)cases[i].first : 0);
 		}
-		CHECK(completes(n, cases[i].op, cases[i].data) && zeros, "%#06x sub %#04x: %u bytes", cases[i].op, cases[i].sub, n);
+		CHECK(completes(n, cases[i].op, cases[i].data) && zeros, "0x%04x sub 0x%02x: %u bytes", cases[i].op, cases[i].sub, n);
 	}
 	CHECK(bt_answer_here(c, command(c, 0xfce2, NULL, 0), BT_Q_DEFAULT, event, sizeof(event)) == 7, "no sub-command: none");
 	CHECK(bt_answer_here(c, command(c, 0xfd1b, NULL, 0), BT_Q_DEFAULT & ~BT_Q_VENDOR, event, sizeof(event)) == 0, "without it: sent");
