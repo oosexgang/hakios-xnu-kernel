@@ -521,9 +521,15 @@ lx_os_irq_attach(unsigned vector, void (*function)(void *), void *argument)
 void
 lx_os_irq_enable(unsigned vector)
 {
-	if (vector < LX_VECTORS && lx_vector[vector].attached) {
+	if (vector >= LX_VECTORS) {
+		return;
+	}
+	/* (looked at under the lock: a vector being let go of is not unmasked again by a function that finishes meanwhile) */
+	lck_mtx_lock(&lx_irq_lock);
+	if (lx_vector[vector].attached) {
 		gic_v3_spi_unmask(lx_irq_first + vector);
 	}
+	lck_mtx_unlock(&lx_irq_lock);
 }
 
 void
@@ -546,19 +552,27 @@ lx_os_irq_disable(unsigned vector)
 void
 lx_os_irq_detach_all(void)
 {
-	for (unsigned v = 0; v < LX_VECTORS; v++) {
-		if (lx_vector[v].attached) {
-			gic_v3_spi_detach(lx_irq_first + v);
-		}
-	}
+	bool was[LX_VECTORS];
+
+	/*
+	 * Not attached any more first, and the functions running finished: only then are the lines let go of, so that none
+	 * finishing in between unmasks a line that has no handler left (lx_os_irq_enable())
+	 */
 	lck_mtx_lock(&lx_irq_lock);
 	for (unsigned v = 0; v < LX_VECTORS; v++) {
+		was[v] = lx_vector[v].attached;
 		lx_vector[v].attached = false;
 	}
 	while (lx_irq_running != 0 && current_thread() != lx_irq_thread) {
 		lck_mtx_sleep(&lx_irq_lock, LCK_SLEEP_DEFAULT, (event_t)&lx_irq_running, THREAD_UNINT);
 	}
 	lck_mtx_unlock(&lx_irq_lock);
+	for (unsigned v = 0; v < LX_VECTORS; v++) {
+		if (was[v]) {
+			gic_v3_spi_mask(lx_irq_first + v);
+			gic_v3_spi_detach(lx_irq_first + v);
+		}
+	}
 	os_atomic_store(&lx_irq_pending, 0, relaxed);
 }
 
