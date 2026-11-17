@@ -53,7 +53,9 @@ boards:
 	tools/boards.py gen
 
 # the kernel's configuration (Documentation/kconfig.md): every Kconfig file and fragment checked, and what the
-# configuration of KCONFIG_FRAGMENTS (or of FRAGMENTS=...) has on and off
+# configuration of KCONFIG_FRAGMENTS (or of FRAGMENTS=...) has on and off -- build.config.arm64's, as the kernel's build
+# takes it, unless the environment says otherwise
+FRAGMENTS ?= $(shell HAKIOS=$(CURDIR) bash -c '. ./build.config.arm64 >/dev/null 2>&1; echo $$KCONFIG_FRAGMENTS')
 .PHONY: kconfig
 kconfig:
 	tools/kconfig.py check

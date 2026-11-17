@@ -74,13 +74,17 @@ focaltech_stub > "$gen/focaltech_fw.h"  # (found only where the tree has none: k
 if [ -x "$KERNEL_DIR/../tools/gen_headers.py" ]; then
 	"$KERNEL_DIR/../tools/gen_headers.py" --out "$gen" > /dev/null
 fi
+# (included first: a tree built before keeps the kconfig.h of its last build beside drivers.c, which "kconfig.h" would find
+# before this one; every symbol in it is under #ifndef, so the fresh one's values are the ones taken)
+fresh=()
+[ ! -f "$gen/kconfig.h" ] || fresh=(-include "$gen/kconfig.h")
 
 export IPHONEOS_DEPLOYMENT_TARGET=16.5   # (the generic Darwin target, for this version of the SDK)
 flags=(--target=arm64-apple-darwin -fsyntax-only -ferror-limit=5 -nostdinc
 	-isystem "$(clang -print-resource-dir)/include"
 	-include "$KERNEL_DIR/deps/hostinc/xnu_clang_compat.h" -mkernel
 	-DKERNEL -DKERNEL_PRIVATE -DXNU_KERNEL_PRIVATE -DBSD_KERNEL_PRIVATE -DPRIVATE -D__arm64__
-	-DARM64_BOARD_CONFIG_BCM2837 -DAPPLE -DNeXT -DCONFIG_DTRACE=0
+	-DARM64_BOARD_CONFIG_BCM2837 -DAPPLE -DNeXT -DCONFIG_DTRACE=0 "${fresh[@]}"
 	-I"$gen" -I"$X/bsd" -I"$X/osfmk" -I"$X/osfmk/libsa" -I"$X/libkern" -I"$X/iokit" -I"$X/pexpert"
 	-I"$X/EXTERNAL_HEADERS" -I"$X/security" -I"$X/san/memory")
 

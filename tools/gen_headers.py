@@ -99,8 +99,9 @@ def user_headers(out, compiler='cc'):
     problems = []
     written = 0
     for source in sorted(USER_SOURCES.glob('*.h')):
-        text = without_kernel(source.read_text(), source.relative_to(ROOT))
-        note = f'/* {source.relative_to(ROOT)}, as user space sees it (tools/gen_headers.py --user): do not edit */\n'
+        name = source.relative_to(ROOT) if source.is_relative_to(ROOT) else source
+        text = without_kernel(source.read_text(), name)
+        note = f'/* {name}, as user space sees it (tools/gen_headers.py --user): do not edit */\n'
         written += write(out / 'sys/board' / source.name, note + text)
         if re.search(r'\bKERNEL\b', re.sub(r'/\*.*?\*/', '', text, flags=re.S)):
             problems.append(f'{source.name}: still names KERNEL after what is the kernel\'s was left out')
@@ -109,11 +110,18 @@ def user_headers(out, compiler='cc'):
             for name, text in SHIMS.items():
                 write(Path(shim) / name, text)
             for header in sorted((out / 'sys/board').glob('*.h')):
+                # (nothing included for it: a header that uses uint32_t is to include <stdint.h> itself)
                 done = subprocess.run([compiler, '-fsyntax-only', '-x', 'c', '-std=gnu11', '-I', str(out), '-I',
-                                       str(out / 'sys/board'), '-idirafter', shim, '-include', 'stdint.h', '-'],
+                                       str(out / 'sys/board'), '-idirafter', shim, '-'],
                                       input=f'#include <sys/board/{header.name}>\n', capture_output=True, text=True)
                 if done.returncode != 0:
                     problems.append(f'{header.name}: does not compile on its own: {done.stderr.strip().splitlines()[0] if done.stderr.strip() else "?"}')
+    else:
+        print(f'gen_headers: no {compiler}: the headers are not compiled on their own', file=sys.stderr)
+    # (a header of user space whose source is gone is taken away with it)
+    for stale in sorted((out / 'sys/board').glob('*.h')):
+        if not (USER_SOURCES / stale.name).is_file():
+            stale.unlink()
     print(f'gen_headers: {out}/sys/board: {len(list(USER_SOURCES.glob("*.h")))} headers ({written} written)')
     return problems
 
