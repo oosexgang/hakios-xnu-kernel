@@ -60,6 +60,10 @@ tags yet, so the current work is one section.
   personalized `boot.img`, an identity under another name or after the payload's end, and files beside the images all
   reached a phone's repository, and `--version ..` removed the repository itself. `publish` and `verify` read the bytes
   now, and `check-publishable.sh` finds an image or an identity committed here by mistake.
+- The GPU driver could touch the core's registers after the run's end had powered it down (a frame of the window
+  server's, a wait that ran out), wrote the GMU with its clocks off when an earlier kernel had stopped early, read the
+  GMU's message queue without an end, pulled the core's reset without its bus halted, and left the SMMU's streams in
+  pass-through on a panic. `tools/device.py` handed an address that begins with a dash to git as an option.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
