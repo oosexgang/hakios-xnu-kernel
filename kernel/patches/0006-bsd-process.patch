@@ -192,7 +192,61 @@ diff --git a/bsd/kern/kern_credential.c b/bsd/kern/kern_credential.c
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -1919,6 +1919,10 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
+@@ -180,6 +180,53 @@
+ 
+ #if CONFIG_MEMORYSTATUS
+ #include <sys/kern_memorystatus.h>
++#include "memory_floor.h"
++
++/* the floor under the memory limits of a few of the system's daemons (memory_floor.h), boot-arg memfloor=MB */
++static TUNABLE(uint32_t, memory_floor_mb, "memfloor", MEMORY_FLOOR_DEFAULT_MB);
++
++static const char *
++memory_floor_name(proc_t p)
++{
++	return p->p_name[0] != 0 ? p->p_name : p->p_comm;
++}
++
++/* the limits launchd gives with the spawn of one of them */
++static void
++memory_floor_given(proc_t p, int32_t *active, int32_t *inactive)
++{
++	int32_t active_was = *active, inactive_was = *inactive;
++
++	if (memory_floor_raise(memory_floor_name(p), (int32_t)memory_floor_mb, active, inactive)) {
++		printf("memfloor: %s[%d]: its limits, %d MB active and %d MB inactive, raised to %d and %d MB\n",
++		    memory_floor_name(p), proc_getpid(p), active_was, inactive_was, *active, *inactive);
++	}
++}
++
++/*
++ * the limits a process keeps when it becomes one of them by an exec -- xpcproxy, which launchd spawned with the
++ * daemon's limits, and which then becomes the daemon
++ */
++static void
++memory_floor_kept(proc_t p)
++{
++	int32_t active = p->p_memstat_memlimit_active, inactive = p->p_memstat_memlimit_inactive;
++	int32_t active_was = active, inactive_was = inactive;
++	memlimit_options_t options = MEMLIMIT_OPTIONS_NONE;
++
++	if (!memory_floor_raise(memory_floor_name(p), (int32_t)memory_floor_mb, &active, &inactive)) {
++		return;
++	}
++	if (p->p_memstat_state & P_MEMSTAT_MEMLIMIT_ACTIVE_FATAL) {
++		options |= MEMLIMIT_ACTIVE_FATAL;
++	}
++	if (p->p_memstat_state & P_MEMSTAT_MEMLIMIT_INACTIVE_FATAL) {
++		options |= MEMLIMIT_INACTIVE_FATAL;
++	}
++	memorystatus_set_memlimits(p, active, inactive, options);
++	printf("memfloor: %s[%d]: the limits it came with, %d MB active and %d MB inactive, raised to %d and %d MB\n",
++	    memory_floor_name(p), proc_getpid(p), active_was, inactive_was, active, inactive);
++}
+ #endif
+ 
+ #include <IOKit/IOBSD.h>
+@@ -1919,6 +1966,10 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
   *		activators should not be given the opportunity to attempt
   *		to activate the image.
   */
@@ -203,7 +257,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static int
  exec_mach_imgact(struct image_params *imgp)
  {
-@@ -2076,6 +2080,9 @@ grade:
+@@ -2076,6 +2127,9 @@ grade:
  	 * Actually load the image file we previously decided to load.
  	 */
  	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
@@ -213,7 +267,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (lret != LOAD_SUCCESS) {
  		error = load_return_to_errno(lret);
  
-@@ -2984,11 +2991,36 @@ exec_activate_image(struct image_params *imgp)
+@@ -2984,11 +3038,36 @@ exec_activate_image(struct image_params *imgp)
  
  	ndp = kalloc_type(struct nameidata, Z_WAITOK | Z_ZERO | Z_NOFAIL);
  
@@ -250,7 +304,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (error) {
  		if (error == ERESTART) {
  			error = EINTR;
-@@ -3018,6 +3050,9 @@ again:
+@@ -3018,6 +3097,9 @@ again:
  	}
  
  	error = exec_check_permissions(imgp);
@@ -260,7 +314,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (error) {
  		goto bad;
  	}
-@@ -3517,6 +3552,57 @@ exec_handle_exception_port_actions(const struct image_params *imgp,
+@@ -3517,6 +3599,57 @@ exec_handle_exception_port_actions(const struct image_params *imgp,
  }
  
  
@@ -318,7 +372,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  /*
   * exec_handle_file_actions
   *
-@@ -3587,7 +3673,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+@@ -3587,7 +3720,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
  			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
  
  			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
@@ -327,7 +381,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			    imgp->ip_vfs_context);
  
  			error = open1(imgp->ip_vfs_context, ndp,
-@@ -3970,10 +4056,12 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+@@ -3970,10 +4103,12 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
  	struct persona *persona = NULL;
  	kauth_cred_t mycred = kauth_cred_get();
  
@@ -344,7 +398,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
  		if (px_persona->pspi_ngroups > NGROUPS_MAX) {
  			return EINVAL;
-@@ -3981,9 +4069,7 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+@@ -3981,9 +4116,7 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
  	}
  
  	persona = persona_lookup(px_persona->pspi_id);
@@ -355,7 +409,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  	// non-root process should not be allowed to set persona with uid/gid 0
  	if (!kauth_cred_issuser(mycred) &&
-@@ -3991,7 +4077,9 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+@@ -3991,7 +4124,9 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
  		error = EPERM;
  	}
  
@@ -366,7 +420,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	return error;
  }
  
-@@ -4038,7 +4126,36 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+@@ -4038,7 +4173,36 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
  	 */
  	persona = persona_lookup(px_persona->pspi_id);
  	if (!persona) {
@@ -404,7 +458,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	}
  
  	return persona_proc_adopt(p, persona,
-@@ -4333,6 +4450,7 @@ int
+@@ -4333,6 +4497,7 @@ int
  posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  {
  	proc_t p = ap;
@@ -412,7 +466,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	user_addr_t pid = uap->pid;
  	int ival[2];            /* dummy retval for setpgid() */
  	char *subsystem_root_path = NULL;
-@@ -4452,6 +4570,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+@@ -4452,6 +4617,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
  				goto bad;
  			}
@@ -441,7 +495,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  			imgp->ip_px_sa = &px_sa;
  		}
-@@ -4891,6 +5031,7 @@ do_fork1:
+@@ -4891,6 +5078,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -449,7 +503,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_file_actions(imgp,
  		    imgp->ip_px_sa != NULL ? px_sa.psa_flags : 0);
  #if CONFIG_AUDIT
-@@ -4912,6 +5053,7 @@ do_fork1:
+@@ -4912,6 +5100,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -457,7 +511,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_port_actions(imgp, &port_actions);
  #if CONFIG_AUDIT
  		/* Restore the AUE_POSIX_SPAWN audit record. */
-@@ -4953,6 +5095,7 @@ do_fork1:
+@@ -4953,6 +5142,7 @@ do_fork1:
  				goto bad;
  			}
  
@@ -465,7 +519,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_posix_cred_adopt(p, imgp->ip_px_pcred_info);
  			if (error != 0) {
  				goto bad;
-@@ -4974,6 +5117,7 @@ do_fork1:
+@@ -4974,6 +5164,7 @@ do_fork1:
  			 * to ensure that the new persona has access to the image/file
  			 * being executed.
  			 */
@@ -473,7 +527,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_persona_adopt(p, imgp->ip_px_persona);
  			if (error != 0) {
  				goto bad;
-@@ -5052,6 +5196,7 @@ do_fork1:
+@@ -5052,6 +5243,7 @@ do_fork1:
  
  #if MAC_SPAWN   /* XXX */
  	if (uap->mac_p != USER_ADDR_NULL) {
@@ -481,7 +535,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = mac_execve_enter(uap->mac_p, imgp);
  		if (error) {
  			goto bad;
-@@ -5063,6 +5208,7 @@ do_fork1:
+@@ -5063,6 +5255,7 @@ do_fork1:
  	 * Warning: If activation failed after point of no return, it returns error
  	 * as 0 and pretends the call succeeded.
  	 */
@@ -489,7 +543,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	error = exec_activate_image(imgp);
  #if defined(HAS_APPLE_PAC)
  	const uint8_t disable_user_jop = imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE;
-@@ -5219,6 +5365,10 @@ bad_px_sa:
+@@ -5219,6 +5412,10 @@ bad_px_sa:
  	}
  
  bad:
@@ -500,7 +554,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  	if (error == 0) {
  		/* reset delay idle sleep status if set */
-@@ -5282,6 +5432,7 @@ bad:
+@@ -5282,6 +5479,7 @@ bad:
  
  		/* Set task exception ports now that we can check entitlements */
  		if (imgp->ip_px_spa != NULL) {
@@ -508,7 +562,19 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = exec_handle_exception_port_actions(imgp, &port_actions);
  		}
  
-@@ -5358,6 +5509,7 @@ bad:
+@@ -5325,8 +5523,11 @@ bad:
+ 				memlimit_options &= ~MEMLIMIT_INACTIVE_FATAL;
+ 				memlimit_active = -1;
+ 			}
++			memory_floor_given(p, &memlimit_active, &memlimit_inactive);
+ 			memorystatus_set_memlimits(p, memlimit_active, memlimit_inactive,
+ 			    memlimit_options);
++		} else {
++			memory_floor_kept(p);
+ 		}
+ 
+ 		/* Has jetsam relaunch behavior? */
+@@ -5358,6 +5559,7 @@ bad:
  			task_set_thread_limit(new_task, (uint16_t)px_sa.psa_thread_limit);
  		}
  		if (error == 0 && imgp->ip_px_sa != NULL && px_sa.psa_conclave_mem_limit > 0) {
@@ -516,7 +582,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = task_set_conclave_mem_limit_internal(new_task, px_sa.psa_conclave_mem_limit);
  		}
  
-@@ -5411,6 +5563,7 @@ bad:
+@@ -5411,6 +5613,7 @@ bad:
  		 * exec_activate_image because task_bank_init checks entitlements that
  		 * aren't loaded until subsequent calls (including exec_resettextvp).
  		 */
@@ -524,7 +590,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = proc_transstart(p, 0, 0);
  
  		if (error == 0) {
-@@ -5473,6 +5626,7 @@ bad:
+@@ -5473,6 +5676,7 @@ bad:
  	if (error == 0 && imgp->ip_px_sa != NULL) {
  		struct _posix_spawnattr *psa = (struct _posix_spawnattr *) imgp->ip_px_sa;
  
@@ -532,7 +598,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_spawnattr_policy(p, imgp->ip_new_thread, psa->psa_apptype, psa->psa_qos_clamp,
  		    psa->psa_darwin_role, &port_actions);
  	}
-@@ -5537,6 +5691,7 @@ bad:
+@@ -5537,6 +5741,7 @@ bad:
  	 * fire.
  	 */
  	if (error == 0) {
@@ -540,7 +606,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = process_signature(p, imgp);
  
  		/*
-@@ -5765,6 +5920,9 @@ bad:
+@@ -5765,6 +5970,9 @@ bad:
  #endif
  
  	assert(spawn_no_exec || exec_failure_reason == NULL);
@@ -550,7 +616,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	return error;
  }
  
-@@ -6724,16 +6882,145 @@ bad:
+@@ -6724,16 +6932,145 @@ bad:
   * Note:	The argument and environment vectors are user space pointers
   *		to arrays of user space pointers.
   */
@@ -696,7 +762,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/*
  	 * Adjust space reserved for the path name by however much padding it
  	 * needs. Doing this here since we didn't know if this would be a 32-
-@@ -6897,6 +7184,114 @@ exec_extract_strings(struct image_params *imgp)
+@@ -6897,6 +7234,114 @@ exec_extract_strings(struct image_params *imgp)
  		imgp->ip_envc++;
  	}
  
@@ -811,7 +877,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -7789,11 +8184,25 @@ handle_mac_transition:
+@@ -7789,11 +8234,25 @@ handle_mac_transition:
  	 * Also, ensure we always see a modified identity version (rdar://129775819).
  	 */
  	int previous_pid_version = proc_get_ro(p)->p_idversion;
@@ -842,7 +908,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	task_set_uniqueid(proc_task(p));
  
  	/*
-@@ -8767,6 +9176,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -8767,6 +9226,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:
