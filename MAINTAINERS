@@ -309,6 +309,7 @@ TOOLS, CHECKS AND RELEASES
 F:	Makefile
 F:	tools/lint.sh
 F:	tools/check-links.py
+F:	tools/files.py
 F:	tools/check-publishable.sh
 F:	tools/components.py
 F:	tools/heredoc-python.py

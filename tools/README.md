@@ -17,6 +17,7 @@ first lines; `make` lists the common ones.
 | `bootargs.py` | Finds every boot argument the kernel reads, with the comment that describes it, and writes `Documentation/boot-args.md` (`--write`; `--check` says whether it is current). |
 | `components.py` | Checks that `components` pins what the fetching scripts pin. |
 | `check-links.py` | Checks that every link and every repository path in the documentation points at something. |
+| `files.py [-z] [--others] [PATTERN...]` | The repository's files, as the checks go over them: `git ls-files` in a checkout; in a release's tree, which has no git, the list the release put there (`.tracked-files`), else what is on disk without build output. |
 | `check-publishable.sh` | Looks for what must never be published: binaries, firmware, Apple's shader code, home directories, keys. |
 | `heredoc-python.py` | Takes the Python out of the shell scripts' quoted here-documents (`python3 - <<'PY'`), parses it, and writes it out for pyflakes' checks. |
 | `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, pyflakes' checks (ruff or pyflakes) of every Python script and here-document, the checks above. `make lint`. |
