@@ -16,6 +16,39 @@ static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
 static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event, darwins_turn;
+
+/*
+ * The controller's firmware, as the RAM disks have it (hakios_image_file below) and as the model takes it: the files
+ * in the order they are to come, each a TLV file of its type and download mode; what came of each; the segment the
+ * model refuses (-1: none).
+ */
+static struct { const char *name; uint8_t type, mode; uint32_t size; uint8_t file[1200], came[1200]; uint32_t got; bool there; } fw[2] = {
+	{ "msbtfw11.tlv", 1, 3, 1000, { 0 }, { 0 }, 0, true }, { "msnv11.bin", 2, 0, 500, { 0 }, { 0 }, 0, true },
+};
+
+/* each file: its TLV header word, a patch's download mode where its header has it, and bytes of its own */
+static void
+firmware_files(void)
+{
+	for (unsigned i = 0; i < 2; i++) {
+		uint32_t length = fw[i].size - 4;
+
+		for (uint32_t k = 0; k < fw[i].size; k++) {
+			fw[i].file[k] = (uint8_t)(k * 7 + i * 3 + 1);
+		}
+		fw[i].file[0] = fw[i].type;
+		fw[i].file[1] = (uint8_t)length;
+		fw[i].file[2] = (uint8_t)(length >> 8);
+		fw[i].file[3] = 0;
+		if (fw[i].type == 1) {
+			fw[i].file[4 + 10] = fw[i].mode;
+		}
+	}
+}
+static unsigned fw_now, segments_seen, answers_given;
+static int refuse_segment = -1;
+static bool firmware_done, reset_unanswered;
+
 static uint8_t tx[1100], rx[2048];
 static unsigned tx_size, rx_size, rx_pos, fifo_words, done_after;
 static struct { uint32_t address, value; } votes[128];
@@ -60,6 +93,47 @@ peer(void)
 	static const uint8_t version[] = { 4, 0xff, 14, 0, 2, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
 	static const uint8_t complete[] = { 4, 0x0e, 16, 1, 0, 0xfc, 0, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
 	bool loopback = (engine[0x22c / 4] & 1) != 0;
+	if (tx_size >= 6 && tx[0] == 1 && tx[1] == 0x00 && tx[2] == 0xfc && tx[4] == 0x1e) {
+		/* a segment of the firmware: kept as the file it is part of, answered when the file's mode or its end says */
+		unsigned length = tx[5];
+
+		CHECK(fw_now < 2 && tx[3] == 2 + length && tx_size == 6u + length && length <= 243, "a segment as the controller takes it");
+		if (fw_now < 2) {
+			bool last;
+
+			CHECK(fw[fw_now].got + length <= fw[fw_now].size, "no more than the file");
+			memcpy(fw[fw_now].came + fw[fw_now].got, tx + 6, length);
+			fw[fw_now].got += length;
+			last = fw[fw_now].got >= fw[fw_now].size;
+			rx_size = 0;
+			if ((int)segments_seen == refuse_segment) {
+				static const uint8_t no[] = { 4, 0xff, 3, 0x00, 0x1e, 0x05 };
+
+				memcpy(rx, no, sizeof(no));
+				rx_size = sizeof(no);
+			} else if (last || fw[fw_now].mode == 0 || fw[fw_now].mode == 2) {
+				static const uint8_t yes[] = { 4, 0xff, 3, 0x00, 0x1e, 0x00 };
+
+				memcpy(rx, yes, sizeof(yes));
+				rx_size = sizeof(yes);
+				answers_given++;
+			}
+			rx_pos = 0;
+			segments_seen++;
+			fw_now += last;
+			firmware_done = fw_now == 2 || (fw_now == 1 && !fw[1].there);
+		}
+		engine[0x610 / 4] = 1;
+		return;
+	}
+	if (firmware_done && tx_size == sizeof(reset_cmd) && memcmp(tx, reset_cmd, sizeof(reset_cmd)) == 0) {
+		memcpy(rx, reset_evt, sizeof(reset_evt));      /* (the reset after the firmware) */
+		rx_size = reset_unanswered ? 0 : sizeof(reset_evt);
+		rx_pos = 0;
+		firmware_done = false;
+		engine[0x610 / 4] = 1;
+		return;
+	}
 	if (darwins_turn) {
 		/* (Darwin's packets: kept in tx for the scenario to look at; done once each byte has had a look's time to leave) */
 		engine[0x610 / 4] = 1;
@@ -288,6 +362,20 @@ vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) 
 /* Avoid collisions with the model headers' rsc/model variables. */
 #include "board/bt_uart.c"
 
+/* the RAM disks' files (board/image.c in the kernel): the model's firmware, in the directory the board names */
+const uint8_t *
+hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out)
+{
+	(void)disk_out;
+	for (unsigned i = 0; i < 2; i++) {
+		if (fw[i].there && strcmp(dir, b->bluetooth.firmware) == 0 && strcmp(name, fw[i].name) == 0) {
+			*size = fw[i].size;
+			return fw[i].file;
+		}
+	}
+	return NULL;
+}
+
 /* the side Darwin talks to (board/bt_host.c): what it was handed, and an error to give back when asked to */
 static const struct board_bt_controller *handed;
 static int start_error;
@@ -394,6 +482,32 @@ packing_and_clock(void)
 	CHECK(engine[0x48 / 4] == 0x41u && engine[0x4c / 4] == engine[0x48 / 4], "first configuration uses 16x sampling regardless of wrapper version");
 }
 
+/* the firmware: each file whole and in order, answered as its mode says, then the reset; or none at bt_fw=0 */
+static void
+firmware_checks(const char *scenario)
+{
+	if (!strcmp(scenario, "firmware_rom")) {
+		CHECK(segments_seen == 0 && logged("no firmware downloaded (bt_fw=0)") && handed != NULL, "the ROM, as asked: %s", log_text);
+		return;
+	}
+	for (unsigned i = 0; i < 2; i++) {
+		CHECK(fw[i].got == fw[i].size && memcmp(fw[i].came, fw[i].file, fw[i].size) == 0, "%s whole, in order (%u of %u bytes)",
+		    fw[i].name, fw[i].got, fw[i].size);
+	}
+	CHECK(segments_seen == 5 + 3, "five segments of the patch, three of the configuration (%u)", segments_seen);
+	/* the TLV patch says its controller answers only its last segment (mode 3); an ELF one is answered for each */
+	CHECK(answers_given == (fw[0].mode == 3 ? 1u : 5u) + 3, "%u answers", answers_given);
+	CHECK(logged(fw[0].mode == 3 ? "a TLV patch, 1000 bytes in 5 segments (download mode 3" : "an ELF patch, 1000 bytes in 5 segments"),
+	    "what was sent, said: %s", log_text);
+	CHECK(logged("/fw-bt/msnv11.bin taken") && logged("identification complete; the firmware taken"), "then the reset: %s", log_text);
+	{
+		const char *reset = strstr(log_text, "sending HCI_Reset after the firmware");
+
+		CHECK(reset != NULL && strstr(reset, "H4 event +0: 04 0e 04 01 03 0c 00") != NULL, "its answer read after it: %s", log_text);
+	}
+	CHECK(handed != NULL && tx_commands == 2, "then handed to Darwin");
+}
+
 /* what the controller is to say next: these bytes in the RX FIFO */
 static void
 controller_says(const uint8_t *bytes, unsigned length)
@@ -467,7 +581,8 @@ main(int argc, char **argv)
 	static const char *const scenarios[] = { "off", "zero", "no_feature", "invalid_mode", "look", "wrong_protocol", "unsupported_arbiter", "full",
 	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
 	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio", "tx_fifo_busy",
-	    "not_an_event", "darwins", "not_darwins" };
+	    "not_an_event", "darwins", "not_darwins", "firmware", "firmware_elf", "firmware_refused", "firmware_missing", "firmware_rom",
+	    "firmware_junk", "firmware_no_reset" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -543,13 +658,42 @@ main(int argc, char **argv)
 		model.input[b->bluetooth.sw_ctrl] = !sw_low;
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
 		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
-		if (!strcmp(scenario, "darwins") || !strcmp(scenario, "not_darwins")) { boot_args = "bt=2"; }
+		if (!strcmp(scenario, "darwins") || !strcmp(scenario, "not_darwins")) { boot_args = "bt=2 bt_fw=0"; }
+		firmware_files();
+		if (!strncmp(scenario, "firmware", 8)) {
+			boot_args = !strcmp(scenario, "firmware_rom") ? "bt=2 bt_fw=0" : "bt=2";
+			refuse_segment = !strcmp(scenario, "firmware_refused") ? 4 : -1;   /* (the patch's last: always answered) */
+			fw[1].there = strcmp(scenario, "firmware_missing") != 0;
+			reset_unanswered = !strcmp(scenario, "firmware_no_reset");
+			if (!strcmp(scenario, "firmware_junk")) {
+				fw[0].file[0] = 9;              /* (a type of TLV file there is not) */
+			}
+			if (!strcmp(scenario, "firmware_elf")) {
+				/* an ELF patch (.mbn): sent as it is, every segment answered */
+				memcpy(fw[0].file, "\x7f" "ELF\x02\x01\x01", 7);
+				fw[0].mode = 0;
+			}
+		}
 		if (!strcmp(scenario, "not_darwins")) { start_error = ENXIO; }
 		run();
 		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look") || refused != NULL) {
 			CHECK(!en.writes && !rsc.writes && !model.writes && !tx_commands, "inspection/refusal performs no hardware changes");
 			if (wrong_protocol) { CHECK(logged("SE protocol is not UART"), "protocol refusal logged"); }
 			if (refused != NULL) { CHECK(logged(refused), "refusal logged: %s", log_text); }
+		} else if (!strcmp(scenario, "firmware_refused") || !strcmp(scenario, "firmware_missing") ||
+		    !strcmp(scenario, "firmware_junk") || !strcmp(scenario, "firmware_no_reset")) {
+			CHECK(logged("the firmware was not taken") && logged("bring-up stopped; powering down") && !en.reg[0x44] && handed == NULL,
+			    "firmware not taken: powered down, not handed to Darwin: %s", log_text);
+			if (refuse_segment >= 0) {
+				CHECK(logged("segment 4 refused (status 0x5)") && segments_seen == 5, "the segment refused, and nothing after it");
+			} else if (!strcmp(scenario, "firmware_junk")) {
+				CHECK(logged("/fw-bt/msbtfw11.tlv (1000 bytes) is neither a TLV file nor an ELF one") && segments_seen == 0,
+				    "a file that is none: nothing of it sent");
+			} else if (reset_unanswered) {
+				CHECK(segments_seen == 8 && logged("reset response timed out"), "all of it sent, the reset after it unanswered");
+			} else {
+				CHECK(logged("no /fw-bt/msnv11.bin in the RAM disks") && fw[0].got == fw[0].size, "the patch sent, the configuration missing");
+			}
 		} else if (start_error != 0) {
 			CHECK(logged("not handed to Darwin (6)") && logged("bring-up stopped; powering down") && !en.reg[0x44],
 			    "Darwin's side refusing it: the controller powered down: %s", log_text);
@@ -567,12 +711,16 @@ main(int argc, char **argv)
 		} else {
 			CHECK(logged("product id 0x7750, patch version 0x1234, ROM version 0x5678, SoC id 0x11223344"), "decoded version: %s", log_text);
 			CHECK(logged("identification complete") && tx_commands == 2, "both commands completed");
+			CHECK(!strncmp(scenario, "firmware", 8) || segments_seen == 0, "no firmware sent but at bt=2 (%u segments)", segments_seen);
 			CHECK(loopbacks == 1 && read_starts == 2 && rx_cancels == 1, "first configuration succeeds after loopback RX restart");
 			if (garbled) {
 				/* (said, and nothing more: the controller may still answer, and it does) */
 				CHECK(logged("loopback: 5 of 5 bytes back\n") && !logged(", the same"), "a changed byte is not the same: %s", log_text);
 			} else {
 				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
+			}
+			if (!strncmp(scenario, "firmware", 8)) {
+				firmware_checks(scenario);
 			}
 			if (handed != NULL) {
 				darwins();

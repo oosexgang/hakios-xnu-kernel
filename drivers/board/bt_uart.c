@@ -22,6 +22,7 @@
 #include "cmd_db.h"
 #include "spmi.h"
 #include "bt_hci.h"
+#include "bt_qca.h"
 
 static vm_offset_t se, gcc, tlmm, wrapper, db, rsc_base, enable_read, enable_write;
 static bool returning, enable_changed, uart_changed, pins_changed, rcg_changed;
@@ -503,6 +504,38 @@ version_event(const uint8_t *event, unsigned length)
 	return true;
 }
 
+/* One H4 event from the controller by DEADLINE, into EVENT (258 bytes), logged when SAID: its length; 0 when none
+ * came in time; -1 when what came is not an event. */
+static int
+receive_event(uint8_t *event, uint64_t deadline, bool said)
+{
+	unsigned length = 3;
+
+	for (unsigned i = 0; i < length; i++) {
+		if (!receive_byte(&event[i], deadline)) {
+			return 0;
+		}
+		if (i == 0 && event[0] != 4) {
+			hakios_say("bt-uart: unexpected H4 packet type %#x\n", event[0]);
+			return -1;
+		}
+		if (i == 2) {
+			length += event[2];
+		}
+	}
+	/* Log bounded chunks so neither log's line buffer can truncate an event. */
+	for (unsigned i = 0; said && i < length; i += 16) {
+		char line[16 * 3 + 1];
+		unsigned at = 0;
+
+		for (unsigned j = i; j < length && j < i + 16; j++) {
+			at += (unsigned)snprintf(line + at, sizeof(line) - at, "%02x ", event[j]);
+		}
+		hakios_say("bt-uart: H4 event +%u: %s\n", i, line);
+	}
+	return (int)length;
+}
+
 static bool
 wait_event(bool version)
 {
@@ -512,37 +545,102 @@ wait_event(bool version)
 
 	/* A peer flooding unrelated events cannot extend the deadline or the event budget. */
 	for (unsigned n = 0; n < 32; n++) {
-		unsigned length = 3;
+		int length = receive_event(event, deadline, true);
 
-		for (unsigned i = 0; i < length; i++) {
-			if (!receive_byte(&event[i], deadline)) {
-				goto timeout;
-			}
-			if (i == 0 && event[0] != 4) {
-				hakios_say("bt-uart: unexpected H4 packet type %#x\n", event[0]);
-				return false;
-			}
-			if (i == 2) {
-				length += event[2];
-			}
+		if (length < 0) {
+			return false;
 		}
-		/* Log bounded chunks so neither log's line buffer can truncate an event. */
-		for (unsigned i = 0; i < length; i += 16) {
-			char line[16 * 3 + 1];
-			unsigned at = 0;
-
-			for (unsigned j = i; j < length && j < i + 16; j++) {
-				at += (unsigned)snprintf(line + at, sizeof(line) - at, "%02x ", event[j]);
-			}
-			hakios_say("bt-uart: H4 event +%u: %s\n", i, line);
+		if (length == 0) {
+			break;
 		}
-		if (version ? version_event(event, length) : (length == sizeof(reset) && !memcmp(event, reset, sizeof(reset)))) {
+		if (version ? version_event(event, (unsigned)length) : ((unsigned)length == sizeof(reset) && !memcmp(event, reset, sizeof(reset)))) {
 			return true;
 		}
 	}
- timeout:
 	hakios_say("bt-uart: %s response timed out (500 ms/event budget)\n", version ? "getver" : "reset");
 	return false;
+}
+
+/* ---- the firmware: the patch to the controller's ROM and its configuration (board/bt_qca.h) ------------------- */
+
+extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);     /* board/image.c */
+
+/* The controller's answer to segment NUMBER: true when it took it. Other events before it are passed over (at most
+ * 16, within 2 s: a segment of the patch is written into the controller's RAM before it answers). */
+static bool
+wait_segment(uint32_t number)
+{
+	uint8_t event[258];
+	uint64_t deadline = now_us() + 2000000;
+
+	for (unsigned n = 0; n < 16; n++) {
+		int length = receive_event(event, deadline, false), answer;
+
+		if (length <= 0) {
+			break;
+		}
+		if ((answer = bt_qca_segment_answer(event, (unsigned)length)) != 0) {
+			if (answer < 0) {
+				hakios_say("bt-uart: segment %u refused (status %#x)\n", number, event[1] == 0xff ? event[5] : event[6]);
+			}
+			return answer > 0;
+		}
+	}
+	hakios_say("bt-uart: segment %u: no answer within 2 s\n", number);
+	return false;
+}
+
+/* The file NAME of the board's firmware directory sent to the controller, in segments: true when all were taken */
+static bool
+download(const char *name)
+{
+	const char *directory = W->firmware != NULL ? W->firmware : "fw";
+	uint64_t size = 0;
+	const uint8_t *data = hakios_image_file(directory, name, &size, NULL);
+	static uint8_t command[BT_QCA_COMMAND_MOST];
+	struct bt_qca_file f;
+	uint32_t count;
+
+	if (data == NULL) {
+		hakios_say("bt-uart: no /%s/%s in the RAM disks: the controller's firmware is taken from the phone's own "
+		    "vendor/firmware (bluetooth { } names it)\n", directory, name);
+		return false;
+	}
+	f = bt_qca_identify(data, size > 0xffffffffu ? 0 : (uint32_t)size);
+	if (f.kind == BT_QCA_NOT_ONE) {
+		hakios_say("bt-uart: /%s/%s (%llu bytes) is neither a TLV file nor an ELF one\n", directory, name, (unsigned long long)size);
+		return false;
+	}
+	count = bt_qca_segments((uint32_t)size);
+	hakios_say("bt-uart: sending /%s/%s: %s, %llu bytes in %u segments (download mode %u, product %#x, ROM build %#x, "
+	    "patch %#x)\n", directory, name, f.kind == BT_QCA_PATCH ? "a TLV patch" : f.kind == BT_QCA_NVM ? "a TLV configuration" :
+	    "an ELF patch", (unsigned long long)size, count, f.mode, f.product, f.rom_build, f.patch_version);
+	for (uint32_t i = 0; i < count; i++) {
+		unsigned n = bt_qca_segment(command, sizeof(command), data, (uint32_t)size, i);
+
+		if (n == 0 || !transmit(command, n)) {
+			hakios_say("bt-uart: segment %u of /%s/%s not sent\n", i, directory, name);
+			return false;
+		}
+		if (bt_qca_answered(f.mode, (uint32_t)size, i) && !wait_segment(i)) {
+			return false;
+		}
+	}
+	hakios_say("bt-uart: /%s/%s taken\n", directory, name);
+	return true;
+}
+
+/* The patch, then the configuration, then HCI_Reset, after which the controller runs what it was given */
+static bool
+firmware(void)
+{
+	static const uint8_t reset[] = { 1, 3, 0x0c, 0 };
+
+	if (!download(W->rampatch) || (W->nvm != NULL && !download(W->nvm))) {
+		return false;
+	}
+	hakios_say("bt-uart: sending HCI_Reset after the firmware\n");
+	return transmit(reset, sizeof(reset)) && wait_event(false);
 }
 
 /* Shared rollback: locks and sleeping are bypassed only at loader return. */
@@ -677,11 +775,13 @@ static void
 bt_thread(__unused void *arg, __unused wait_result_t result)
 {
 	const struct hakios_board *b = hakios_board();
-	int mode = 0;
+	int mode = 0, fw = 1;
 	static const uint8_t reset[] = { 1, 3, 0x0c, 0 };
 	static const uint8_t getver[] = { 1, 0, 0xfc, 1, 0x19 };
 
 	PE_parse_boot_argn("bt", &mode, sizeof(mode));
+	/* bt_fw=0: at bt=2, the controller handed over as its ROM runs, without the firmware bluetooth { } names */
+	PE_parse_boot_argn("bt_fw", &fw, sizeof(fw));
 	se = ml_io_map(W->serial_engine, 0x4000);
 	wrapper = ml_io_map(W->wrapper, 0x1000);
 	gcc = ml_io_map(b->clocks.gcc, 0x60000);
@@ -726,7 +826,16 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 	if (!transmit(getver, sizeof(getver)) || !wait_event(true)) {
 		goto failed;
 	}
-	hakios_say("bt-uart: identification complete; no firmware downloaded\n");
+	if (mode == 2 && W->rampatch != NULL && fw) {
+		if (!firmware()) {
+			hakios_say("bt-uart: the firmware was not taken\n");
+			goto failed;
+		}
+		hakios_say("bt-uart: identification complete; the firmware taken\n");
+	} else {
+		hakios_say("bt-uart: identification complete; no firmware downloaded%s\n", mode != 2 ? "" : W->rampatch == NULL ?
+		    " (bluetooth { } names none: the controller runs its ROM)" : " (bt_fw=0)");
+	}
 	if (mode == 2) {
 		int error = board_bt_start(&qualcomm_uart);
 
