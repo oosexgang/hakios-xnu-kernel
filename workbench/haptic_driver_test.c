@@ -264,6 +264,26 @@ reset_released(void)
 	never();
 }
 
+/* the reset found released already (a run before this that did not get to put it back): this run's end puts it back */
+static void
+found_released(void)
+{
+	phone("phone-video", 0x9270);
+	model.cfg[RESET] = 1u << 9;             /* an output ... */
+	model.io[RESET] = 2;                    /* ... driving high */
+	pins_changed();                         /* (the chip out of reset, as it was left) */
+	resets_released = 0;
+	boot_args = "haptic=2";
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 10000);
+	CHECK(logged("haptic: the reset is found released already (gpio35 drives high)") && resets_released == 0,
+	    "said, not released again: %u", resets_released);
+	CHECK(!in_reset(), "out of reset while the run goes on");
+	hakios_haptic_quiesce();
+	CHECK(in_reset(), "at the run's end the chip is put in reset all the same");
+	never();
+}
+
 /* the registers Android's driver sets, and no others */
 static bool
 only_androids_registers(void)
@@ -708,7 +728,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "reset_released", reset_released },
+		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "reset_released", reset_released }, { "found_released", found_released },
 		{ "configured", configured }, { "another_wiring", another_wiring },
 		{ "write_does_not_stick", write_does_not_stick }, { "fault_reported", fault_reported }, { "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
 		{ "waveforms_loaded", waveforms_loaded }, { "waveforms_do_not_add_up", waveforms_do_not_add_up },

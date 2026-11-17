@@ -808,6 +808,13 @@ haptic_thread(__unused void *parameter, __unused wait_result_t result)
 		wait_ms(5);
 		reset_pin(true);
 		wait_ms(8);
+	} else if (level >= 2) {
+		/*
+		 * Found released (a run before this one that did not get to put it back, a panic on the way out): this run is
+		 * the chip's all the same, and the run's end holds it in reset as if this run had let it out.
+		 */
+		say("haptic: the reset is found released already (gpio%u drives high)\n", PIN_RESET);
+		released = true;
 	}
 	if (!chip_answers()) {
 		say("haptic: (the reset pin %s)\n", (rd(GPIO_CFG(PIN_RESET)) & CFG_OUTPUT) && (rd(GPIO_IO(PIN_RESET)) & 2) ?
