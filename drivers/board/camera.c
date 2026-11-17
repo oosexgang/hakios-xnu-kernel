@@ -1064,6 +1064,10 @@ supply_on(const struct hakios_camera_supply *s)
 		return ldo_on(s->ldo, s->mv);
 	}
 	if (s->kind == HAKIOS_SUPPLY_GPIO) {
+		if (s->gpio >= TLMM_SIZE / 0x1000) {
+			give_up("a supply's pin past the pins there are");     /* (tools/boards.py says 0 to 255; the table is not trusted past it) */
+			return false;
+		}
 		found_vana_cfg = rd(GPIO_CFG(s->gpio));
 		found_vana_io = rd(GPIO_IO(s->gpio));
 		vana_gpio_switched = true;
