@@ -1,7 +1,8 @@
 #!/bin/bash
 # Look for what must not be published before every commit/push: binaries, firmware, Apple's shader code,
 # home directories, keys. Prints what it finds; exit status 1 if anything.
-# What is looked at is what git could publish: the tracked files and the untracked ones it does not ignore.
+# What is looked at is what git could publish: the tracked files and the untracked ones it does not ignore
+# (tools/files.py --others; in a release's tree, the files the release lists).
 # Build outputs (loader.efi, build/) and brought-in device packages are ignored, and so are not looked at.
 set -uo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
@@ -11,7 +12,7 @@ say() { echo "$*"; bad=1; }
 # (NUL-separated; every grep below reads the same list)
 list=$(mktemp)
 trap 'rm -f "$list"' EXIT
-git ls-files -z -co --exclude-standard | while IFS= read -r -d '' f; do
+tools/files.py -z --others | while IFS= read -r -d '' f; do
 	[ -f "$f" ] && [ ! -L "$f" ] && printf './%s\0' "$f"
 done > "$list"
 scan() { xargs -0 -r grep "$@" < "$list"; }

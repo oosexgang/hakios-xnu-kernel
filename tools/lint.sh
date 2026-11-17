@@ -1,5 +1,5 @@
 #!/bin/bash
-# The checks of form, for every file the repository tracks:
+# The checks of form, for every file the repository tracks (tools/files.py: git's list, or a release's):
 #   - every shell script parses (bash -n), every Python script parses and passes pyflakes' checks (ruff or pyflakes),
 #     and so does the Python in the shell scripts' quoted here-documents (tools/heredoc-python.py)
 #   - every shell script of the repository passes shellcheck (kernel/lx/build.sh apart)
@@ -18,11 +18,11 @@ failed=0
 
 while IFS= read -r script; do
 	bash -n "$script" || failed=1
-done < <(git ls-files '*.sh')
+done < <(tools/files.py '*.sh')
 
 while IFS= read -r script; do
 	python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$script" || failed=1
-done < <(git ls-files '*.py')
+done < <(tools/files.py '*.py')
 
 if command -v shellcheck > /dev/null; then
 	# every shell script of the repository: *.sh, and the files whose first line names sh or bash (bench, the
@@ -35,7 +35,7 @@ if command -v shellcheck > /dev/null; then
 		*.sh) scripts+=("$f") ;;
 		*) [ -f "$f" ] && head -1 "$f" | grep -qE '^#!(/bin/(ba)?sh|/usr/bin/env (ba)?sh)' && scripts+=("$f") ;;
 		esac
-	done < <(git ls-files)
+	done < <(tools/files.py)
 	shellcheck -S warning "${scripts[@]}" build.config.* || failed=1
 else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"
@@ -45,13 +45,13 @@ fi
 # checked with the files below, each as a file of its own in a directory that goes away
 heredocs=$(mktemp -d)
 trap 'rm -rf "$heredocs"' EXIT
-mapfile -t shell_scripts < <(git ls-files '*.sh' bench)
+mapfile -t shell_scripts < <(tools/files.py '*.sh' bench)
 tools/heredoc-python.py --flakes "$heredocs" "${shell_scripts[@]}" || failed=1
 # pyflakes' checks (names undefined, imported or assigned and never used), by ruff or pyflakes where there is one
 if command -v ruff > /dev/null; then
-	{ git ls-files -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 ruff check --select F --no-cache --quiet || failed=1
+	{ tools/files.py -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 ruff check --select F --no-cache --quiet || failed=1
 elif python3 -m pyflakes --version > /dev/null 2>&1; then
-	{ git ls-files -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 python3 -m pyflakes || failed=1
+	{ tools/files.py -z '*.py'; find "$heredocs" -name '*.py' -print0; } | xargs -0 python3 -m pyflakes || failed=1
 else
 	echo "lint: no ruff or pyflakes on this machine: the Python scripts were only parsed"
 fi

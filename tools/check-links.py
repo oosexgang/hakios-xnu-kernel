@@ -7,9 +7,11 @@ repository's layout and are left out. A document that has to name paths that no 
 between `<!-- paths of the old layout -->` and `<!-- end -->`; links are checked there all the same.
 """
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import files  # noqa: E402  (the repository's files: git's list, or a release's)
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY = ('userland/',)
@@ -20,9 +22,9 @@ PATH = re.compile(r'`((?:' + '|'.join(TOP) + r')/[A-Za-z0-9_./-]+)`')
 
 
 def main():
-    files = subprocess.run(['git', 'ls-files', '*.md'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
     problems = []
-    for name in files:
+    documents = files.listed(['*.md'], root=ROOT)
+    for name in documents:
         if name.startswith(LEGACY):
             continue
         path = ROOT / name
@@ -55,7 +57,7 @@ def main():
     for problem in problems:
         print(problem, file=sys.stderr)
     if not problems:
-        print(f'check-links: {len([f for f in files if not f.startswith(LEGACY)])} documents, ok')
+        print(f'check-links: {len([f for f in documents if not f.startswith(LEGACY)])} documents, ok')
     return 1 if problems else 0
 
 
