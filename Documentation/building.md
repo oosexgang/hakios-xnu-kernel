@@ -97,6 +97,7 @@ describes no phone, so bring the phone's package in first:
 ```sh
 tools/device.py available   # the packages the devices branch has
 tools/device.py add renoir  # copies it into arch/arm64/boot/dts/renoir/; or: make device DEVICE=renoir
+tools/device.py add --from https://git.example/you/my-phone.git   # a phone kept in a repository of its own
 ```
 
 Packages elsewhere are found through the environment variable `HAKIOS_DEVICES` (directories, written

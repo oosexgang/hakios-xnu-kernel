@@ -235,6 +235,32 @@ from; the packages that are there show the form), commit and send it. Others the
 have. When a package needs a key or a feature the main branch does not have yet, the two changes belong
 together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 
+### Or keep it in a repository of your own
+
+A phone does not have to wait for the `devices` branch: its package can live in a repository of its own, which
+anyone builds from. The repository needs nothing but the package at its top (its `board.dts` names it):
+
+```
+my-phone/                 a repository on any git host, called anything
+  board.dts               name = "mido"; ... (arch/arm64/boot/dts/_template/board.dts explains every key)
+  soc.dtsi                the SoC file, unless the SoC's is already in a package you bring in with it
+  README.md               what works, what was verified on the phone and when
+```
+
+(A repository with several phones has a directory each, `NAME/board.dts`, as the `devices` branch has.) Then,
+in a checkout of this repository:
+
+```sh
+make phone FROM=https://git.example/you/my-phone.git           # the package brought in, the kernel built for it
+tools/device.py add --from https://git.example/you/my-phone.git#v1   # or only bring it in, at a tag or commit
+```
+
+The repository is cloned into `build/device-sources/` and its package copied into `arch/arm64/boot/dts/` and
+validated against the code here; `tools/device.py list` says where each package came from, and the same command
+again takes what the repository has now. Every driver and feature of the kernel is there for your phone as for
+any other: what a board turns on is its `features`, and what each feature needs is in
+[features.md](features.md) (`tools/boards.py status NAME` says what yours can turn on next).
+
 ## What is still tied to the first two phones
 
 Stated plainly, so nobody finds out the hard way:
