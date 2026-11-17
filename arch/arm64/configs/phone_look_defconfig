@@ -17,3 +17,4 @@ ddr=1
 battery=1
 touchscreen=1
 buttons=1
+bt=-1                   # Bluetooth: the UART, its pins and the controller's power read, nothing written

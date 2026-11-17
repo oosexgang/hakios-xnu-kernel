@@ -1,7 +1,8 @@
-# Bluetooth for Darwin (Documentation/drivers.md, "Wi-Fi, network"): the controller powered, identified, and handed
-# to bluetoothd, everything of phone_metal besides. The log says how far it got: `bt-uart: the controller is Darwin's
-# from here on`, then `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` and `bt: the channel opened` once
-# bluetoothd has found it; Settings' Bluetooth switch is the test. bt=1 first (phone_look's log) if the identification
-# has not been seen on this phone yet.
+# Bluetooth for Darwin (Documentation/drivers.md, "Wi-Fi, network"): the controller powered, identified, given its
+# firmware and handed to bluetoothd, everything of phone_metal besides. The log says how far it got:
+# `bt-uart: identification complete; the firmware taken`, `bt-uart: the controller is Darwin's from here on`, then
+# `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` and `bt: the channel opened` once bluetoothd has found it;
+# Settings' Bluetooth switch is the test. Before it: phone_look's log has what bt=-1 reads, and
+# BENCH_CMDLINE=bt=1 identifies the controller without handing it over; bt_fw=0 tries its ROM alone.
 include phone_metal
 bt=2
