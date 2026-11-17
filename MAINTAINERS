@@ -218,6 +218,7 @@ D:	arch/arm64/boot/README.md
 
 MEASUREMENTS AND PERFORMANCE
 F:	drivers/board/cpufreq.c
+F:	drivers/board/cpufreq_hw.h
 F:	drivers/board/scmi_perf.c
 F:	drivers/board/ddr.c
 F:	drivers/board/bench.c
