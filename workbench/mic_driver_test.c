@@ -709,6 +709,55 @@ the_ring_darwin_reads(void)
 	    "100 ms waiting, and not more: nothing skipped (%llu)", (unsigned long long)(ring_skipped - skipped));
 }
 
+/* half a frame is nothing; one frame is one, and the next the next */
+static void
+reads_at_the_edges(void)
+{
+	struct uio half = { .base = (char *)got, .resid = 1, .to_kernel = false };
+	bool in_order;
+
+	ring = heard;
+	hear(2000);
+	mic_dev_read(0, &half, 0);
+	CHECK(half.resid == 1, "one byte: nothing (%lld left)", (long long)half.resid);
+	CHECK(read_frames(1, 0, &in_order) == 1 && in_order, "one frame: the first");
+	CHECK(read_frames(1, 1, &in_order) == 1 && in_order, "and then the next");
+}
+
+/*
+ * What the DSP says of the reads it was given (ASM_DATA_EVENT_READ_DONE_V2, or a result for one): taken only from the
+ * recording's service, for a read's token and a period there is; a read done with an error, or said in fewer than its
+ * 24 bytes, is counted as one; each marks its period ready.
+ */
+static void
+the_dsps_read_events(void)
+{
+	uint32_t done[6] = { 0, 0x1000, 0, 7, 1920, 0 };
+	uint32_t errors = read_errors, finished = reads_done;
+
+	CHECK(!mic_events(APR_SVC_AFE, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | 1, done, 24), "another service's: not ours");
+	CHECK(!mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, 1, done, 24), "a token that is not a read's: not ours");
+	CHECK(!mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | MIC_PERIODS, done, 24),
+	    "a period past the last: not ours (and nothing written past read_sizes)");
+	CHECK(!mic_events(APR_SVC_ASM, 0, 0x12345, READ_TOKEN | 1, done, 24), "another event: not ours");
+	CHECK(read_ready == 0 && reads_done == finished && read_errors == errors, "none of these counted");
+
+	CHECK(mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | 3, done, 24), "a read done");
+	CHECK(read_sizes[3] == 1920 && (read_ready & 1u << 3) && reads_done == finished + 1 && read_errors == errors,
+	    "its size, its period ready, no error: %u", read_sizes[3]);
+	CHECK(mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | (MIC_PERIODS - 1), done, 24) &&
+	    read_sizes[MIC_PERIODS - 1] == 1920, "the last period");
+	done[0] = 2;
+	CHECK(mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | 4, done, 24) && read_errors == errors + 1,
+	    "done with an error: counted");
+	done[0] = 0;
+	CHECK(mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | 5, done, 20) && read_errors == errors + 2 &&
+	    read_sizes[5] == 0 && (read_ready & 1u << 5), "said short: an error, nothing in it, ready all the same");
+	read_sizes[6] = 99;
+	CHECK(mic_events(APR_SVC_ASM, 0, APR_BASIC_RSP_RESULT, READ_TOKEN | 6, done, 8) && read_errors == errors + 3 &&
+	    read_sizes[6] == 0 && (read_ready & 1u << 6), "a result for a read: it was refused, the period ready and empty");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -723,6 +772,7 @@ main(int argc, char **argv)
 		{ "the_codec_set_up", the_codec_set_up }, { "the_codec_set_up_from_nothing", the_codec_set_up_from_nothing },
 		{ "adc1_turned_on", adc1_turned_on }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
 		{ "the_codec_does_not_take_it", the_codec_does_not_take_it }, { "the_ring_darwin_reads", the_ring_darwin_reads },
+		{ "reads_at_the_edges", reads_at_the_edges }, { "the_dsps_read_events", the_dsps_read_events },
 	};
 
 	if (argc < 2) {
