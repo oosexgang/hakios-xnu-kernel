@@ -14,11 +14,11 @@ scripts/setup-ubuntu.sh --check                 # всё ли стоит на м
 make kernel && make loader                      # ядро и загрузчик
 ```
 
-Прошивки телефона кладутся рядом с рабочей копией, по одной папке на часть (их нет и не будет в репозитории): см.
-`userland/README.md`. Для Bluetooth:
+Прошивки телефона кладутся в `userland/fw-*/`, по одной папке на часть (их нет и не будет в репозитории,
+`.gitignore` их не пропустит): см. `userland/README.md`. Для Bluetooth, из корня рабочей копии:
 
 ```sh
-adb pull /vendor/bt_firmware/image/ fw-bt/      # msbtfw*.mbn или .tlv и msnv*.bin
+adb pull /vendor/bt_firmware/image/ userland/fw-bt/    # msbtfw*.mbn или .tlv и msnv*.bin
 ```
 
 В `board.dts` телефона в разделе `bluetooth { }` укажите `rampatch` и `nvm` — имена этих файлов. Потом соберите малый

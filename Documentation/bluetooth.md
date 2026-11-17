@@ -50,8 +50,8 @@ bluetooth {
 };
 ```
 
-The files are the phone's own, from its Android (`adb pull /vendor/bt_firmware/image/ fw-bt/`, beside the workspace;
-`userland/build.sh` puts them into `fw/`). `tools/boards.py status NAME` says which a phone sends.
+The files are the phone's own, from its Android (`adb pull /vendor/bt_firmware/image/ userland/fw-bt/` at the top of
+the checkout; `userland/userland/build.sh` puts them into `fw/`). `tools/boards.py status NAME` says which a phone sends.
 
 ## The firmware
 

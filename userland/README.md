@@ -104,7 +104,8 @@ adb pull /vendor/firmware/aw8697_haptic.bin fw-haptic/                          
 adb pull /vendor/bt_firmware/image/ fw-bt/                                                    # Bluetooth (bt=2)
 ```
 
-(Put the `fw-*` directories next to the workspace. Wi-Fi also needs `fw-wifi/mac` — the radio's address on one
+(The `fw-*` directories go into `userland/`, beside `userland/userland/`, whose `build.sh` reads `../fw-*`;
+`.gitignore` keeps them out of every commit. Wi-Fi also needs `fw-wifi/mac` — the radio's address on one
 line — and `fw-wifi/network` — network name and password. `userland/build.sh` prints which firmware went in.)
 
 ```sh

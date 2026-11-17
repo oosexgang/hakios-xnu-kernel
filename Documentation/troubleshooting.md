@@ -245,7 +245,7 @@ software without it.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `bt-uart: no /fw/NAME in the RAM disks: ...` | `bt=2`, and the patch or the configuration `bluetooth { }` names is not in the small image. | `adb pull /vendor/bt_firmware/image/ fw-bt/` from the same phone, next to the workspace, and build the small image again (`userland/README.md`); or `bt_fw=0` to try the controller's ROM. |
+| `bt-uart: no /fw/NAME in the RAM disks: ...` | `bt=2`, and the patch or the configuration `bluetooth { }` names is not in the small image. | `adb pull /vendor/bt_firmware/image/ userland/fw-bt/` from the same phone, and build the small image again (`userland/README.md`); or `bt_fw=0` to try the controller's ROM. |
 | `bt-uart: /fw/NAME (N bytes) is neither a TLV file nor an ELF one` | The file is not the controller's firmware, or is cut short. | Compare its size with the phone's; the names of `rampatch` and `nvm` with the files of `vendor/bt_firmware/image`. |
 | `bt-uart: segment N refused (status 0x..)`, or `segment N: no answer within 2 s` | The controller would not take the patch: another chip's, or a step of the protocol it wants and this driver does not send. | The log's `product id`, `ROM version` and `SoC id` lines say which chip it is: the file must be the one the phone's Android sends it. Report the lines. |
 | `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` never comes | bluetoothd did not find the controller, or left before it opened the kernel control. | `bt: service "bluetooth" registered (address ...)` must be there first; without `/chosen mac-address-bluetooth0` (the loader's) there is no service. |
