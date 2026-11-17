@@ -37,6 +37,9 @@ memory_bench(void)
 
 	if (kmem_alloc(kernel_map, &a, size, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS ||
 	    kmem_alloc(kernel_map, &b, size, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS) {
+		if (a != 0) {
+			kmem_free(kernel_map, a, size);         /* (the first was had, the second not) */
+		}
 		printf("membench: no memory\n");
 		return;
 	}
@@ -89,6 +92,9 @@ bench_thread(void *arg, wait_result_t wr __unused)
 
 	if (kmem_alloc(kernel_map, &a, size, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS ||
 	    kmem_alloc(kernel_map, &b, size, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS) {
+		if (a != 0) {
+			kmem_free(kernel_map, a, size);
+		}
 		os_atomic_inc(&bench.ready, relaxed);
 		os_atomic_inc(&bench.done, relaxed);
 		return;
