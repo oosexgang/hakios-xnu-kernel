@@ -4,6 +4,7 @@
 
 struct payload_info {
 	const uint8_t *kernel;
+	uint32_t kernel_size;
 	const uint8_t *ramdisk;
 	uint32_t ramdisk_size;
 	const char *cmdline;
@@ -14,6 +15,72 @@ struct payload_info {
 	uint32_t identity_size;
 	int usb_mode;
 };
+
+/*
+ * The kernel's Mach-O, checked before anything of it is copied or jumped to: the header and its load commands inside
+ * the SIZE bytes of the payload's entry, each command at least as long as its kind and inside the commands' room;
+ * each segment's file part inside the entry and no longer than its memory, its memory not wrapping 2^64; the thread's
+ * entry inside the segments. Out: the lowest and highest addresses of the segments and the entry. False, with what was
+ * wrong said, for a kernel that is not whole.
+ */
+static int
+kernel_layout(const uint8_t *k, uint32_t size, uint64_t *vm_lo, uint64_t *vm_hi, uint64_t *entry_va)
+{
+	const struct mach_header_64 *mh = (const struct mach_header_64 *)k;
+	uint64_t at = sizeof(*mh), end;
+
+	*vm_lo = ~0ULL;
+	*vm_hi = 0;
+	*entry_va = 0;
+	if (k == 0 || size < sizeof(*mh) || mh->magic != MH_MAGIC_64) {
+		print("kernel is not a 64-bit Mach-O\n");
+		return 0;
+	}
+	end = at + mh->sizeofcmds;
+	if (end > size) {
+		print("kernel: its load commands (%x bytes) go past its %x bytes\n", mh->sizeofcmds, size);
+		return 0;
+	}
+	for (uint32_t i = 0; i < mh->ncmds; i++) {
+		const struct load_command *lc = (const struct load_command *)(k + at);
+
+		if (at + sizeof(*lc) > end || lc->cmdsize < sizeof(*lc) || lc->cmdsize % 8 != 0 || lc->cmdsize > end - at) {
+			print("kernel: load command %u at %x does not fit the commands' room\n", i, at);
+			return 0;
+		}
+		if (lc->cmd == LC_SEGMENT_64) {
+			const struct segment_command_64 *sg = (const void *)lc;
+
+			if (lc->cmdsize < sizeof(*sg)) {
+				print("kernel: segment command %u is too short\n", i);
+				return 0;
+			}
+			if (sg->filesize > sg->vmsize || sg->fileoff > size || sg->filesize > size - sg->fileoff ||
+			    sg->vmaddr + sg->vmsize < sg->vmaddr) {
+				print("kernel: segment %u (file %x+%x, memory %x+%x) is not inside the image\n", i, sg->fileoff, sg->filesize,
+				    sg->vmaddr, sg->vmsize);
+				return 0;
+			}
+			if (sg->vmsize != 0) {
+				*vm_lo = sg->vmaddr < *vm_lo ? sg->vmaddr : *vm_lo;
+				*vm_hi = sg->vmaddr + sg->vmsize > *vm_hi ? sg->vmaddr + sg->vmsize : *vm_hi;
+			}
+		} else if (lc->cmd == LC_UNIXTHREAD) {
+			/* cmd, cmdsize, flavor, count, x0..x28, fp, lr, sp, pc: the pc 16 + 32 x 8 bytes in */
+			if (lc->cmdsize < 16 + 33 * 8) {
+				print("kernel: the thread command is too short for its pc\n");
+				return 0;
+			}
+			*entry_va = ((const uint64_t *)((const uint8_t *)lc + 16))[32];
+		}
+		at += lc->cmdsize;
+	}
+	if (*vm_hi == 0 || *entry_va < *vm_lo || *entry_va >= *vm_hi) {
+		print("kernel: its entry %x is not inside its segments (%x..%x)\n", *entry_va, *vm_lo, *vm_hi);
+		return 0;
+	}
+	return 1;
+}
 
 /* the value of the digit C, or 16 when it is none: 0-9, a-f and A-F */
 static unsigned
@@ -142,6 +209,7 @@ parse_payload(struct payload_info *pi, int verbose)
 			pi->ramdisk_size = e->size;
 		} else if (str_eq(name, "kernel")) {
 			pi->kernel = p + sizeof(*e);
+			pi->kernel_size = e->size;
 		} else if (str_eq(name, "cmdline")) {
 			pi->cmdline = text;
 		} else if (str_eq(name, "physbase")) {

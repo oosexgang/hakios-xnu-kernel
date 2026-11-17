@@ -60,30 +60,12 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 	const uint8_t *kernel = pi.kernel;
 	const struct mach_header_64 *mh = (const struct mach_header_64 *)kernel;
-	if (mh->magic != MH_MAGIC_64) {
-		print("kernel is not a 64-bit Mach-O\n");
-		return 0;
-	}
 
-	/* --- kernel extent -------------------------------------------------- */
+	/* --- kernel extent (and every load command checked: payload.c's kernel_layout()) -------------------- */
 	uint64_t vm_lo = ~0ULL, vm_hi = 0, entry_va = 0;
-	const struct load_command *lc = (const struct load_command *)(mh + 1);
-	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
-		if (lc->cmd == LC_SEGMENT_64) {
-			const struct segment_command_64 *sg = (const void *)lc;
-			if (sg->vmsize == 0) {
-				continue;
-			}
-			if (sg->vmaddr < vm_lo) {
-				vm_lo = sg->vmaddr;
-			}
-			if (sg->vmaddr + sg->vmsize > vm_hi) {
-				vm_hi = sg->vmaddr + sg->vmsize;
-			}
-		} else if (lc->cmd == LC_UNIXTHREAD) {
-			/* cmd, cmdsize, flavor, count, x0..x28, fp, lr, sp, pc */
-			entry_va = ((const uint64_t *)((const uint8_t *)lc + 16))[32];
-		}
+	const struct load_command *lc;
+	if (!kernel_layout(kernel, pi.kernel_size, &vm_lo, &vm_hi, &entry_va)) {
+		return 0;
 	}
 	print("kernel va %x..%x entry %x\n", vm_lo, vm_hi, entry_va);
 	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || entry_va == 0) {

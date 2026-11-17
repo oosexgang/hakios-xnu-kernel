@@ -62,6 +62,7 @@ print(const char *format, ...)
 }
 
 #include "src/conventions.h"
+#include "src/xnu.h"
 #include "src/base.c"
 #include "src/devicetree.c"
 #include "src/identity_given.c"
@@ -790,6 +791,68 @@ payload(void)
 }
 
 /* a payload whose sizes are not what is there: none, said so, nothing of it taken -- not read past */
+/* ---- the kernel's Mach-O, checked before it is copied or run (src/payload.c's kernel_layout()) --------- */
+
+/* a kernel of one segment of 0x4000 bytes (0x1000 of them in the file, from 0x1000) and its thread, entry in the segment */
+static unsigned
+small_kernel(uint8_t *k)
+{
+	struct mach_header_64 *mh = (struct mach_header_64 *)k;
+	struct segment_command_64 *sg = (struct segment_command_64 *)(mh + 1);
+	struct load_command *th = (struct load_command *)(sg + 1);
+
+	memset(k, 0, 0x2000);
+	mh->magic = MH_MAGIC_64;
+	mh->ncmds = 2;
+	mh->sizeofcmds = sizeof(*sg) + 288;
+	sg->cmd = LC_SEGMENT_64;
+	sg->cmdsize = sizeof(*sg);
+	sg->vmaddr = 0xfffffff007004000ull;
+	sg->vmsize = 0x4000;
+	sg->fileoff = 0x1000;
+	sg->filesize = 0x1000;
+	th->cmd = LC_UNIXTHREAD;
+	th->cmdsize = 288;
+	((uint64_t *)((uint8_t *)th + 16))[32] = 0xfffffff007005000ull;
+	return 0x2000;
+}
+
+static void
+kernel_checked(void)
+{
+	static uint8_t k[0x2000];
+	struct mach_header_64 *mh = (struct mach_header_64 *)k;
+	struct segment_command_64 *sg = (struct segment_command_64 *)(mh + 1);
+	struct load_command *th = (struct load_command *)(sg + 1);
+	uint64_t lo, hi, entry;
+	unsigned size = small_kernel(k);
+
+	said[0] = 0;
+
+	CHECK(kernel_layout(k, size, &lo, &hi, &entry) && lo == 0xfffffff007004000ull && hi == 0xfffffff007008000ull &&
+	    entry == 0xfffffff007005000ull, "a whole kernel: %llx..%llx, entry %llx", (unsigned long long)lo, (unsigned long long)hi,
+	    (unsigned long long)entry);
+	CHECK(!kernel_layout(k, 16, &lo, &hi, &entry), "shorter than its header");
+	said[0] = 0; small_kernel(k); mh->sizeofcmds = 0x3000;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "its load commands") != NULL, "commands past the image");
+	said[0] = 0; small_kernel(k); sg->cmdsize = 0;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "does not fit") != NULL, "a command of no size (the walk would stand still)");
+	said[0] = 0; small_kernel(k); th->cmdsize = 0x400;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "does not fit") != NULL, "a command past the commands' room");
+	said[0] = 0; small_kernel(k); sg->vmsize = 0x800; ((uint64_t *)((uint8_t *)th + 16))[32] = 0xfffffff007004100ull;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "is not inside the image") != NULL, "more in the file than in memory");
+	said[0] = 0; small_kernel(k); sg->fileoff = 0x1800;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "is not inside the image") != NULL,
+	    "the file part past the payload's entry");
+	said[0] = 0; small_kernel(k); sg->vmsize = ~0ull - 0x1000;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "is not inside the image") != NULL,
+	    "a segment whose memory wraps 2^64: refused for that, not only for its entry then outside");
+	said[0] = 0; small_kernel(k); ((uint64_t *)((uint8_t *)th + 16))[32] = 0x1000;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "is not inside its segments") != NULL, "an entry outside");
+	said[0] = 0; small_kernel(k); th->cmdsize = 64; mh->sizeofcmds = sizeof(*sg) + 64;
+	CHECK(!kernel_layout(k, size, &lo, &hi, &entry) && strstr(said, "too short for its pc") != NULL, "a thread too short for its pc");
+}
+
 static void
 payload_damaged_ones(void)
 {
@@ -970,7 +1033,7 @@ main(int argc, char **argv)
 		{ "memory_and_strings", memory_and_strings }, { "device_tree", device_tree }, { "identity", identity },
 		{ "identity_given", identity_given }, { "identity_from_mkidentity", identity_from_mkidentity },
 		{ "unit", unit }, { "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
-		{ "payload_damaged_ones", payload_damaged_ones }, { "device_tree_full", device_tree_full },
+		{ "payload_damaged_ones", payload_damaged_ones }, { "kernel_checked", kernel_checked }, { "device_tree_full", device_tree_full },
 		{ "command_numbers", command_numbers },
 	};
 

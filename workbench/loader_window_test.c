@@ -29,6 +29,7 @@ print(const char *format, ...)
 }
 
 #include "src/conventions.h"
+#include "src/xnu.h"
 #include "src/base.c"
 #include "src/payload.c"
 #include "src/window.c"
