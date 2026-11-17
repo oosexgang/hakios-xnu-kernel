@@ -78,7 +78,8 @@ pipe_pre_connect(__unused kern_nexus_provider_t p, proc_t who, kern_nexus_t nexu
 
 	*context = channel;
 	say("bt: the channel opened by pid %d (%d)\n", proc_pid(who), error);
-	return 0;
+	/* (without its pools a TX packet could not be given back, nor an RX one made: the channel is refused) */
+	return error != 0 ? error : (tx_pool == NULL || rx_pool == NULL) ? ENOMEM : 0;
 }
 
 /* a channel opened: a session of bluetoothd's begins, with nothing of the last one's (what the controller said for it, the
@@ -551,7 +552,9 @@ carry(__unused void *parameter, __unused wait_result_t result)
 			} else if (controller->send(to_controller, (unsigned)n) == 0) {
 				sent++;
 			} else {
+				lck_mtx_lock(&bt_host_lock);
 				tx_dropped += (unsigned)n;
+				lck_mtx_unlock(&bt_host_lock);
 			}
 		}
 		/* what the controller says, a few milliseconds' wait at most and a few packets at most, so that bluetoothd's
