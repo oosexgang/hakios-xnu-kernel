@@ -241,7 +241,8 @@ bitbang_init(void)
 {
 	gpio_output(PIN_CS, true, PULL_NONE, 6);
 	gpio_output(PIN_CLK, false, PULL_NONE, 6);
-	gpio_output(bitbang_out, false, PULL_NONE, 6);
+	/* (2 mA: the second orientation tried makes the chip's own data-out pin ours, and the two drive it against each other) */
+	gpio_output(bitbang_out, false, PULL_NONE, 2);
 	gpio_configure(bitbang_in, 0, PULL_NONE, 2, false);
 }
 
