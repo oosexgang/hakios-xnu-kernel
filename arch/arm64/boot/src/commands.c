@@ -158,24 +158,27 @@ fb_command(char *cmd)
 			uint64_t total = 0, got = 0, before, limit;
 			uint8_t *dest = (uint8_t *)PAYLOAD_BASE;
 			int to_ramdisk = download_to_ramdisk;
+			efi_block_io *patch_data = to_ramdisk ? NULL : dsu_patch_data;
 			const char *no_room = download_room(to_ramdisk, download_ramdisk_append, download_ramdisk_patch, resident_rd_size,
 			    win_size, &before, &limit);
 
+			/* what the commands before it asked for is for this download only, whatever comes of it */
 			download_to_ramdisk = 0;
 			download_ramdisk_append = 0;
+			dsu_patch_data = NULL;
 			if (no_room != NULL) {
 				fb_reply("FAIL", no_room);
+				return;
+			}
+			if (!number_given(&size_text, 16, &total) || *size_text != 0 || total == 0 || total > limit) {
+				fb_reply("FAIL", "bad size");       /* (nothing received: the resident image is as it was) */
 				return;
 			}
 			if (to_ramdisk) {
 				dest = (uint8_t *)(win_base + RESIDENT_RD_OFFSET + before);
 			}
 			if (to_ramdisk == 1) {
-				resident_rd_size = before;
-			}
-			if (!number_given(&size_text, 16, &total) || *size_text != 0 || total == 0 || total > limit) {
-				fb_reply("FAIL", "bad size");
-				return;
+				resident_rd_size = before;      /* (what was after it is being written over) */
 			}
 			fb_reply_data(total);
 			while (got < total) {
@@ -186,11 +189,15 @@ fb_command(char *cmd)
 				}
 				memcpy(dest + got, usb_rx_buf, (size_t)r);
 				got += (uint64_t)r;
+				host_last_cmd = READ_SYSREG(CNTVCT_EL0);        /* (a host sending is a host there: the watchdog is petted) */
 			}
-			if (got == total && dsu_patch_data != NULL && !to_ramdisk) {
-				efi_block_io *data = dsu_patch_data;
+			if (!to_ramdisk && (got != total || patch_data != NULL)) {
+				/* the payload's area holds no payload now -- part of one, or the patch's bytes: "oem run" says so */
+				((struct payload_header *)PAYLOAD_BASE)->magic = 0;
+			}
+			if (got == total && patch_data != NULL) {
+				efi_block_io *data = patch_data;
 
-				dsu_patch_data = NULL;
 				if (!dsu_write(data, dsu_patch_offset, dest, total)) {
 					fb_reply("FAIL", "patch not written (oem log)");
 					return;
@@ -272,6 +279,9 @@ fb_command(char *cmd)
 			}
 
 			set_result("running", cp, 0);
+			download_to_ramdisk = 0;        /* (a download asked for and never sent is not for the next one) */
+			download_ramdisk_append = 0;
+			dsu_patch_data = NULL;
 			fb_reply("OKAY", "");
 			log_len = 0;
 			kernel_part_len = 0;            /* the last run's kernel log is not this one's */
