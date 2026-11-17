@@ -61,6 +61,7 @@ make ready                                       # или scripts/phone-ready.py
 | 4 | `BENCH_DEFCONFIG=phone_ufs_bench ./bench run` | Цифры скорости чтения с 1–31 запросами | — (только измерение) |
 | 5 | `BENCH_DEFCONFIG=phone_perf ./bench run` | Частоты (`CPU frequency ok`), свой драйвер UFS, GPU. Строки `cpufreq: group N: the rows' core counts ...` присылайте в любом случае: по ним видно, не «турбо» ли верхние строки таблицы частот | Строка `STOPPED` (например, `the hardware is not in charge of its clock`) |
 | 6 | `BENCH_DEFCONFIG=phone_metal ./bench run` | `GPU ok` (`A PICTURE DRAWN BY THE GPU IS ON THE PANEL`), Wi-Fi | `GPU STOPPED`: шаг, на котором остановился |
+| 6a | `BENCH_DEFCONFIG=phone_metal BENCH_CMDLINE=gpu_private=1 ./bench run` (если 6 прошёл) | То же, что в 6: кольцо команд и fence доступны только привилегированным обращениям GPU, как в Linux | Если 6 прошёл, а 6a нет — пришлите оба журнала: по умолчанию это остаётся выключенным |
 | 7 | `BENCH_DEFCONFIG=phone_bt ./bench run` | `Bluetooth controller ok`, `Bluetooth service ok`, `Bluetooth for Darwin ok`; переключатель Bluetooth в Настройках включается и видит устройства | Ниже, раздел 2 |
 
 Снимок экрана во время прогона: `./bench screenshot` (`logs/screen.png`). Что изменилось по сравнению с прошлым
