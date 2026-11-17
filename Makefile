@@ -13,6 +13,8 @@ help:
 	@echo "make device DEVICE=NAME   bring a phone's package in from the devices branch (tools/device.py add)"
 	@echo "make device FROM=URL      ... or from a repository of its own: a phone's board.dts at its top, or a directory each"
 	@echo "make phone FROM=URL [DEVICE=NAME]   the phone's package brought in, then the kernel built for it"
+	@echo "make image [DEVICE=NAME] [DEFCONFIG=NAME]   one image of the loader, the kernel and the boot arguments (build/images/NAME)"
+	@echo "make publish DEVICE=NAME REPO=DIR   that image into a phone's own repository (images/), without Apple's data"
 	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
 	@echo "make test           host tests of kernel drivers and of the tools (workbench/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
@@ -23,6 +25,7 @@ help:
 	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
 	@echo "make analyze-userland the same analyzer on the Darwin side's libraries and programs (DARWIN_SDK=DIR)"
 	@echo "make kernel         build the kernel (kernel/build.sh; Documentation/building.md says what it needs)"
+	@echo "make loader         build the loader (arch/arm64/boot/build.sh: clang and lld)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
 	@echo "make qemu           boot the built kernel in QEMU, try it from its shell and run its own tests (KERNEL=FILE)"
 
@@ -50,10 +53,23 @@ boards-check:
 device:
 	tools/device.py add $(DEVICE) $(if $(FROM),--from $(FROM))
 
-# a phone of one's own, from its package to its kernel: FROM a repository, a directory, or this one's devices branch
+# a phone of one's own, from its package to its kernel and its one image: FROM a repository, a directory, or this
+# one's devices branch
 .PHONY: phone
-phone: device kernel
-	@echo "the kernel for $(or $(DEVICE),the phone of $(FROM)): $(KERNEL); on the phone: ./bench enter, then BENCH_DEFCONFIG=phone_first ./bench run"
+phone: device kernel loader
+	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) --kernel $(KERNEL)
+
+.PHONY: loader
+loader:
+	arch/arm64/boot/build.sh
+
+.PHONY: image
+image:
+	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) --kernel $(KERNEL)
+
+.PHONY: publish
+publish:
+	tools/image.py publish build/images/$(DEVICE) $(REPO) $(if $(VERSION),--version $(VERSION))
 
 .PHONY: compare
 compare:
