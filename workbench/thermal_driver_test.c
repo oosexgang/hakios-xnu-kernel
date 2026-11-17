@@ -29,6 +29,7 @@ static bool osm;
 static uint32_t sensor[2][16];          /* status words */
 static uint32_t perf[3];                /* each group's row */
 static uint32_t lmh[3];                 /* each group's DOMAIN_STATE: what the hardware allows, times 19.2 MHz */
+static uint32_t enabled[3] = { 1, 1, 1 };       /* each group's enable register: the hardware runs its clock */
 static char tl_lines[8192];             /* the "tl:" lines the driver wrote */
 static unsigned writes, foreign;
 static unsigned same_again;             /* writes of the row a group already had */
@@ -76,6 +77,9 @@ hakios_test_rd(vm_offset_t a)
 		if (off == 0x920) {
 			return perf[d];
 		}
+		if (off == 0) {
+			return enabled[d];
+		}
 		if (off == 0x704) {
 			return lmh[d] | 0x7000;         /* (above [9:0], something else) */
 		}
@@ -94,6 +98,9 @@ hakios_test_rd(vm_offset_t a)
 		}
 		if (off == 0x20) {
 			return lmh[d];
+		}
+		if (off == 0) {
+			return enabled[d];
 		}
 	}
 	foreign++;
@@ -297,6 +304,27 @@ osm_chip(void)
 	temperature(0, 3, 550);
 	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1 && perf[1] == ROWS - 1, 3000);
 	CHECK(perf[0] == ROWS - 1 && perf[1] == ROWS - 1, "given back: %u %u", perf[0], perf[1]);
+	CHECK(foreign == 0, "no other register: %u", foreign);
+}
+
+/* a group whose hardware is not in charge of its clock is looked at and never written, as board/cpufreq.c leaves it */
+static void
+group_not_in_charge(void)
+{
+	phone(500);
+	enabled[1] = 0;
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(logged("thermal: group 1: the hardware is not in charge of its clock: looked at, never held back"), "said: %s", log_text);
+	phone(720);
+	enabled[1] = 0;
+	WAIT_FOR(get("step") == 5 && perf[0] == 3 && perf[2] == 4, 3000);
+	CHECK(perf[0] == 3 && perf[2] == 4, "the others held back: %u %u", perf[0], perf[2]);
+	CHECK(perf[1] == ROWS - 1, "the group that is not the hardware's untouched: row %u", perf[1]);
+	phone(550);
+	enabled[1] = 0;
+	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1 && perf[2] == ROWS - 1, 3000);
+	CHECK(perf[1] == ROWS - 1, "and still untouched once the others are given back: row %u", perf[1]);
 	CHECK(foreign == 0, "no other register: %u", foreign);
 }
 
@@ -588,7 +616,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
-		{ "osm_chip", osm_chip },
+		{ "osm_chip", osm_chip }, { "group_not_in_charge", group_not_in_charge },
 		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },

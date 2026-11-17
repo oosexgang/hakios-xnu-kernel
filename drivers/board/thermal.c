@@ -332,6 +332,11 @@ hakios_thermal_init(void)
 	for (unsigned d = 0; d < groups && !scmi && this_board->cpufreq.epss != 0; d++) {
 		epss[d] = ml_io_map(cpufreq_hw_domain(this_board, d), cpufreq_hw_map_size(this_board));
 		read_table(d);
+		if ((rd(epss[d] + layout->enable) & 1) == 0) {
+			/* (as board/cpufreq.c leaves it, and Linux: looked at; its floor its row, so that row is never written) */
+			say("thermal: group %u: the hardware is not in charge of its clock: looked at, never held back\n", d);
+			floor_row[d] = top_row[d];
+		}
 		if (mode >= 2) {
 			most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
 		}
