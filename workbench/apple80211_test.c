@@ -21,7 +21,8 @@ static struct hakios_sta_scan asked_scan;
 static unsigned joins, scans;
 
 bool hakios_sta_present(void) { return true; }
-bool hakios_sta_powered(void) { return true; }
+static bool powered = true;
+bool hakios_sta_powered(void) { return powered; }
 static int power_asked = -1;              /* (what the last power request asked for: 1 on, 0 off) */
 int hakios_sta_ask_power(bool on) { power_asked = on; return 0; }
 int hakios_sta_ask_leave(void) { return 0; }
@@ -415,6 +416,13 @@ power_and_state(void)
 	CHECK(request(true, 19, &power, sizeof(power), NULL) == 0 && power_asked == 0, "off");
 	power_asked = -1;
 	CHECK(request(true, 19, &power, sizeof(power) - 1, NULL) == EINVAL && power_asked == -1, "a request cut short");
+	/* the power read back: on while the radio is, off once it is not */
+	memset(&power, 0xff, sizeof(power));
+	CHECK(request(false, 19, &power, sizeof(power), NULL) == 0 && power.version == 1 && power.radios == 1 && power.state[0] == 1,
+	    "read: on (%u)", power.state[0]);
+	powered = false;
+	CHECK(request(false, 19, &power, sizeof(power), NULL) == 0 && power.state[0] == 0, "read: off (%u)", power.state[0]);
+	powered = true;
 	for (unsigned i = 0; i < 4; i++) {
 		state.phase = states[i].phase;
 		CHECK(request(false, 13, NULL, 0, &answered) == 0 && answered.req_val == states[i].state, "phase %u: %d", i,
