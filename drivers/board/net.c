@@ -387,6 +387,7 @@ hakios_net_attach(const struct hakios_net_link *link)
 	error = ifnet_allocate_extended(&init, &ifp);
 	if (error != 0) {
 		printf("net: the interface en%u cannot be made: error %d\n", unit, error);
+		lck_mtx_destroy(&n->tx_lock, &net_lck_grp);     /* (made again by the next attach) */
 		n->link = NULL;
 		return false;
 	}
@@ -401,6 +402,7 @@ hakios_net_attach(const struct hakios_net_link *link)
 	if (error != 0) {
 		printf("net: the interface en%u cannot be attached: error %d\n", unit, error);
 		ifnet_release(ifp);
+		lck_mtx_destroy(&n->tx_lock, &net_lck_grp);
 		n->link = NULL;
 		return false;
 	}
@@ -420,6 +422,10 @@ hakios_net_attach(const struct hakios_net_link *link)
 	}
 	if (kernel_thread_start(net_thread, n, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
+	} else {
+		/* (the interface stays, as Darwin has it; but nothing will ever be received on it: said, and its link down) */
+		printf("net: en%u's thread cannot be started: NOTHING WILL BE RECEIVED ON IT; its link is taken down\n", unit);
+		hakios_net_link_state_unit(unit, false);
 	}
 	return true;
 }
