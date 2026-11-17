@@ -360,8 +360,8 @@ hakios_thermal_init(void)
 void
 hakios_thermal_quiesce(void)
 {
-	/* SCMI: nothing is asked here -- the other processors are stopped and no lock may be taken; the
-	 * loader runs at whatever level the firmware has, as it does after any SCMI request */
+	/* SCMI: nothing is asked here -- hakios_scmi_perf_quiesce(), called after this, asks each domain back to the level
+	 * it was found at, held back or not */
 	if (mode < 2 || step == 0 || scmi) {
 		return;
 	}

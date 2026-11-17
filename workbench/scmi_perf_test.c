@@ -311,6 +311,24 @@ raises_when_asked(void)
 	CHECK(logged("scmi-perf: domain 0 asked for level 3000: status 0, now 3000") &&
 	    logged("scmi-perf: domain 2 asked for level 3002: status 0, now 3002"), "each set said, with the level read back: %s", log_text);
 	CHECK(!logged("domain 3 asked") && !logged("status -1"), "and no more than the domains there are: %s", log_text);
+	/* the run's end: each back where it was found, for the loader and the next kernel (which takes the level it finds) */
+	hakios_scmi_perf_quiesce();
+	CHECK(sets == 6 && levels[0] == 1000 && levels[1] == 1001 && levels[2] == 1002, "at the end: %u sets, levels %u %u %u", sets,
+	    levels[0], levels[1], levels[2]);
+	CHECK(logged("scmi-perf: at the run's end: domain 2 back at level 1002: status 0"), "said: %s", log_text);
+	hakios_scmi_perf_quiesce();
+	CHECK(sets == 6, "and once only: %u sets", sets);
+}
+
+/* scmi_perf=1 only looks: nothing raised, so nothing is asked at the end either */
+static void
+nothing_back_when_only_looked(void)
+{
+	channel();
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	hakios_scmi_perf_quiesce();
+	CHECK(sets == 0, "no set: %u", sets);
 }
 
 /* a level read back with an error after the set: said as none (-1), not the word that came with the error */
@@ -469,7 +487,7 @@ main(int argc, char **argv)
 		{ "answers_fill_the_memory", answers_fill_the_memory, 1 }, { "channel_described_wrong", channel_described_wrong, 4 },
 		{ "doorbell_in_the_last_word", doorbell_in_the_last_word, 1 }, { "read_back_fails", read_back_fails, 1 },
 		{ "board_without_it", board_without_it, 1 },
-		{ "raises_when_asked", raises_when_asked, 1 }, { "channel_never_free", channel_never_free, 1 },
+		{ "raises_when_asked", raises_when_asked, 1 }, { "nothing_back_when_only_looked", nothing_back_when_only_looked, 1 }, { "channel_never_free", channel_never_free, 1 },
 		{ "mailbox_not_mapped", mailbox_not_mapped, 1 }, { "longer_answers", longer_answers, 1 },
 		{ "one_attribute_word", one_attribute_word, 1 },
 		{ "sets_are_clamped_and_errors_preserve_state", sets_are_clamped_and_errors_preserve_state, 1 },

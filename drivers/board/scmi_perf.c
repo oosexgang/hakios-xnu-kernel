@@ -182,6 +182,31 @@ hakios_scmi_perf_init(void)
 	}
 }
 
+/*
+ * At the run's end (osfmk/arm64/loader_return.c; the other processors stopped, interrupts off): each domain asked back to
+ * the level it was found at. The loader runs a next kernel without a reset: one left at the top finds it there, takes it for
+ * where the firmware left it, and thermal=2 has nothing to hold back from it. No lock is taken -- nobody else runs -- and the
+ * channel's waits are bounded (scmi_query()).
+ */
+void
+hakios_scmi_perf_quiesce(void)
+{
+	for (unsigned domain = 0; domain < scmi_domains; domain++) {
+		uint32_t in[2] = { domain, scmi_found[domain] };
+		unsigned words;
+		int status;
+
+		if (scmi_now[domain] == scmi_found[domain]) {
+			continue;
+		}
+		status = scmi_query(SCMI_PERF_LEVEL_SET, in, 2, NULL, 0, &words);
+		if (status == 0) {
+			scmi_now[domain] = scmi_found[domain];
+		}
+		hakios_say("scmi-perf: at the run's end: domain %u back at level %u: status %d\n", domain, scmi_found[domain], status);
+	}
+}
+
 /* A domain's levels for the thermal limiter: 0 when there is no such domain. */
 int
 hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)

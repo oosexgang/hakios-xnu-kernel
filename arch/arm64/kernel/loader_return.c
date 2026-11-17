@@ -59,6 +59,7 @@ extern void hakios_haptic_quiesce(void);
 extern void hakios_torch_quiesce(void);
 extern void hakios_backlight_quiesce(void);
 extern void hakios_thermal_quiesce(void);
+extern void hakios_scmi_perf_quiesce(void);
 extern void hakios_camera_quiesce(void);
 extern void hakios_mic_quiesce(void);
 extern void hakios_bt_uart_quiesce(void);
@@ -533,6 +534,7 @@ loader_return(void)
 	hakios_torch_quiesce();        /* the flashlight off, if it was lit */
 	hakios_backlight_quiesce();     /* the panel's light back where the loader expects it */
 	hakios_thermal_quiesce();       /* the processors' groups back at the rows they were found at */
+	hakios_scmi_perf_quiesce();     /* ... and, where the firmware sets them (SCMI), at the levels they were found at */
 	hakios_camera_quiesce();       /* the camera powered down, if it was powered up */
 	hakios_mic_quiesce();          /* (what the microphones' path did, said again: it happens in the log's middle) */
 	/*
