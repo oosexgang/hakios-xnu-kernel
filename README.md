@@ -42,6 +42,8 @@ What each needs: [Documentation/building.md](Documentation/building.md).
   `phone_first`, `phone_look`, `phone_metal`, `phone_ufs_check`, `phone_perf` on a phone's first day.
   `tools/defconfig.py --list` names the defconfigs.
 
+По-русски, коротко: [Documentation/quickstart.ru.md](Documentation/quickstart.ru.md).
+
 A new phone: [Documentation/porting.md](Documentation/porting.md). A phone kept in a repository of its own
 (its `board.dts` at the top) is built with `make phone FROM=URL`.
 
