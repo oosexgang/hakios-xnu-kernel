@@ -12,7 +12,7 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`loader { }` of `arch/arm64/boot/dts/NAME/board.dts`, `platform { }` of the `soc.dtsi` beside it). |
 | `efi.h` | The parts of UEFI it uses. |
 | `identity.h`, `mkidentity.py` | Which iPhone Darwin is told it runs on, taken from that iPhone's own device tree: `build.sh` makes `identity.h` from the `DeviceTree.bin` that `darwin/tools/unpack.sh` leaves beside the IPSW (`IDENTITY=FILE` for another). It is Apple's data and is never in the repository; without it the loader is built with a placeholder, and iOS does not start. |
-| `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
+| `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments (and `identity=FILE`, the identity made from your own IPSW). |
 | `mkboot.py` | Packs a phone's UEFI and a payload into the Android boot image `fastboot boot` takes. The board's `[uefi]` section says where the UEFI runs; its build (`SILICIUM_UEFI.fd`, `BootShim.bin`, `device-tree.dtb`) is in `firmware/NAME/uefi/`, which is never published. |
 | `build.sh` | Makes `platforms.h`, then builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
 
@@ -30,6 +30,7 @@ as when it was one file.
 | `src/console.c` | What the loader says, on the screen and into its log; the caches. |
 | `src/logstore.c` | The log kept across runs: a raw write to a partition (phone only). |
 | `src/devicetree.c` | The writer of the Apple-format device tree. |
+| `src/identity_given.c` | Which iPhone Darwin is told it runs on: the one built in (`identity.h`), or the payload's `identity` entry (`mkidentity.py --blob`), so that a loader built with the placeholder -- one that is passed around -- carries no Apple data and is given it at boot. |
 | `src/platform.h` | `struct platform`: what the loader needs to know of a machine; includes the generated `platforms.h`. |
 | `src/return.c` | The reset, the way back from the kernel, the jump into it. |
 | `src/othercore.c` | The kernel on another core: the stub it starts in, its log read while it runs. |
@@ -59,7 +60,7 @@ as when it was one file.
 | `src/commands.c` | The commands taken over USB. |
 | `src/ramfb.c` | QEMU's display in the shape of the phone's screen. |
 
-`workbench/loader_test.c` runs the parts that are plain C (`base.c`, `devicetree.c`, `nvram.c`,
+`workbench/loader_test.c` runs the parts that are plain C (`base.c`, `devicetree.c`, `identity_given.c`, `nvram.c`,
 `payload.c`, `unit.c`) on the host, and `workbench/loader_window_test.c`, `loader_download_test.c`, `loader_dsu_test.c` and
 `loader_own_partition_test.c` the choice of the kernel's memory, the bounds of a download, the finding of the
 system image and the one partition a write may reach; the whole loader is compiled without a warning and linked by `make check`

@@ -29,6 +29,14 @@ static const struct identity_prop identity_product[] = {
 	{ "device-perf-memory-class", 11, 4 },
 };
 static const unsigned char identity_product_data[] = { 1, 0, 0, 0, 3, 0, 0, 0, 'P', '3', 0, 8, 0, 0, 0 };
+static const struct identity_prop identity_haptics[] = { { "closed-loop", 0, 4 } };
+static const unsigned char identity_haptics_data[] = { 1, 0, 0, 0 };
+static const struct identity_prop identity_camera[] = { { "flash", 0, 4 } };
+static const unsigned char identity_camera_data[] = { 1, 0, 0, 0 };
+#define IDENTITY_PLATFORM_NAME "t9999"
+#define IDENTITY_SCREEN_WIDTH 1125
+#define IDENTITY_SCREEN_HEIGHT 2436
+#define IDENTITY_SCREEN_SCALE 3
 
 /* the loader has its own memset, memcpy and memcmp (it links no library): under other names here, beside the host's */
 #define memset loader_memset
@@ -56,6 +64,7 @@ print(const char *format, ...)
 #include "src/conventions.h"
 #include "src/base.c"
 #include "src/devicetree.c"
+#include "src/identity_given.c"
 #include "src/nvram.c"
 #include "src/payload.c"
 #include "src/unit.c"
@@ -241,6 +250,277 @@ identity(void)
 	CHECK(seen_count == count + 2 && (s = found("/product", "model")) != NULL && s->length == 11, "one property by its name, and only that one");
 }
 
+/* ---- the identity the payload carries (src/identity_given.c) --------------------------------------- */
+
+static uint8_t blob[16384];
+static uint32_t blob_size;
+
+static void
+put32(uint32_t value)
+{
+	for (unsigned i = 0; i < 4; i++) {
+		blob[blob_size++] = (uint8_t)(value >> (8 * i));
+	}
+}
+
+/* a blob as arch/arm64/boot/mkidentity.py --blob writes one: PROPS properties in each section, the root's first */
+static void
+blob_make(const char *platform, uint32_t width, uint32_t height, uint32_t scale, const uint32_t counts[4])
+{
+	blob_size = 0;
+	put32(IDENTITY_BLOB_MAGIC);
+	put32(1);
+	put32(0);                               /* (the size, at the end) */
+	memset(blob + blob_size, 0, 32);
+	memcpy(blob + blob_size, platform, strlen(platform));
+	blob_size += 32;
+	put32(width);
+	put32(height);
+	put32(scale);
+	for (unsigned s = 0; s < 4; s++) {
+		put32(counts[s]);
+	}
+	for (unsigned s = 0; s < 4; s++) {
+		for (uint32_t i = 0; i < counts[s]; i++) {
+			char name[32];
+			uint32_t length = 1 + (i + s) % 6;
+
+			memset(blob + blob_size, 0, 32);
+			if (s == 3 && i == 0) {
+				snprintf(name, sizeof(name), "flash");          /* (one the loader looks for by its name) */
+			} else {
+				snprintf(name, sizeof(name), "section-%u", s * 100 + i);
+			}
+			memcpy(blob + blob_size, name, strlen(name));
+			blob_size += 32;
+			put32(length);
+			for (uint32_t k = 0; k < ((length + 3) & ~3u); k++) {
+				blob[blob_size++] = k < length ? (uint8_t)('a' + s * 5 + k) : 0;
+			}
+		}
+	}
+	blob[8] = (uint8_t)blob_size;
+	blob[9] = (uint8_t)(blob_size >> 8);
+}
+
+/* the size field says what the blob now is (after a scenario changed it) */
+static void
+blob_resize(uint32_t size)
+{
+	blob_size = size;
+	blob[8] = (uint8_t)size;
+	blob[9] = (uint8_t)(size >> 8);
+	blob[10] = blob[11] = 0;
+}
+
+/* identity_from_blob() on a copy of the blob's first SIZE bytes on the heap: a read past them is the sanitizer's to find */
+static int
+taken(uint32_t size)
+{
+	struct identity_view v;
+	uint8_t *copy = malloc(size != 0 ? size : 1);
+	int result;
+
+	memcpy(copy, blob, size);
+	result = identity_from_blob(copy, size, &v);
+	free(copy);
+	return result;
+}
+
+static void
+identity_given(void)
+{
+	static const uint32_t counts[4] = { 3, 5, 1, 2 };
+	struct identity_view v, before;
+	static uint8_t tree[65536];
+	struct dt_writer w = { .base = tree, .cur = tree };
+	const struct seen *s;
+
+	identity_built_in(&v);
+	CHECK(!v.given && strcmp(v.platform, "t9999") == 0 && v.width == 1125 && v.height == 2436 && v.scale == 3 && v.root.props == identity_root &&
+	    v.root.count == 2 && v.product.count == 4 && v.haptics.data == identity_haptics_data && v.camera.count == 1, "the one built in");
+
+	blob_make("t8030", 828, 1792, 2, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 1, "a blob is read");
+	CHECK(v.given && strcmp(v.platform, "t8030") == 0 && v.width == 828 && v.height == 1792 && v.scale == 2, "its SoC and screen");
+	CHECK(v.root.count == 3 && v.product.count == 5 && v.haptics.count == 1 && v.camera.count == 2 && v.root.data == blob, "its sections");
+	CHECK(strcmp(v.product.props[4].name, "section-104") == 0 && v.product.props[4].length == 1 + (4 + 1) % 6 &&
+	    v.product.data[v.product.props[4].offset] == 'a' + 5, "a property's name, length and value: %s", v.product.props[4].name);
+	/* what the device tree is given from it is what the blob has */
+	dt_begin(&w, "product");
+	dt_identity(&w, v.product.props, v.product.count, v.product.data);
+	dt_begin(&w, "camera");
+	dt_identity_one(&w, v.camera.props, v.camera.count, v.camera.data, "flash");
+	dt_end(&w);
+	dt_end(&w);
+	seen_count = 0;
+	CHECK(walk(tree, "") == w.cur, "the tree reads back whole");
+	CHECK((s = found("/product", "section-102")) != NULL && s->length == 4 && memcmp(s->value, "fghi", 4) == 0, "a property of /product");
+	CHECK((s = found("/product/camera", "flash")) != NULL && s->length == 4 && memcmp(s->value, "pqrs", 4) == 0, "the camera's flash");
+
+	/* what is not one leaves what was there: the one built in */
+	identity_built_in(&before);
+	v = before;
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob[0] ^= 1;
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0 && memcmp(&v, &before, sizeof(v)) == 0, "another magic");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob[4] = 2;
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "another version");
+	blob_make("t8030", 828, 1792, 2, counts);
+	CHECK(identity_from_blob(blob, blob_size - 4, &v) == 0 && identity_from_blob(blob, blob_size + 4, &v) == 0, "a size other than its own");
+	blob_make("t8030", 828, 1792, 2, counts);
+	memset(blob + 12, 'x', 32);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a SoC's name that does not end");
+	blob_make("", 828, 1792, 2, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "no SoC's name");
+	blob_make("t8030", 828, 1792, 0, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a scale of 0");
+	blob_make("t8030", 828, 1792, 5, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a scale of 5");
+	blob_make("t8030", 0, 1792, 2, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "no width");
+	blob_make("t8030", 828, 0, 2, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "no height");
+	blob_make("t8030", 828, 1792, 2, (const uint32_t[4]){ 3, 0, 1, 2 });
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a section with nothing in it");
+	blob_make("t8030", 828, 1792, 2, (const uint32_t[4]){ 3, IDENTITY_MAX_PROPS + 1, 1, 2 });
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "more than there is room for");
+	{
+		struct identity_view most;
+
+		blob_make("t8030", 828, 1792, 2, (const uint32_t[4]){ 1, IDENTITY_MAX_PROPS, 1, 1 });
+		CHECK(identity_from_blob(blob, blob_size, &most) == 1 && most.product.count == IDENTITY_MAX_PROPS, "as many as there is room for");
+	}
+	blob_make("t8030", 828, 1792, 2, counts);
+	memset(blob + 72, 'n', 32);             /* (the first property's name) */
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a property's name that does not end");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob[72] = 0;
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a property with no name");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob[106] = 0xff;                       /* (its length: far past the end) */
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a value past the end");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob_resize(blob_size - 1);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "the last value cut short");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob_resize(blob_size + 4);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "something after the last property");
+	blob_make("t8030", 828, 1792, 2, counts);
+	blob[8] ^= 4;
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a size field that is not the blob's");
+	/* a value whose padding would go past the end, with more properties said to come: nothing read past it */
+	blob_make("t8030", 828, 1792, 2, (const uint32_t[4]){ 1, 1, 1, 3 });
+	blob_resize(blob_size - (36 + 8) - 3);  /* (the camera's third property gone, and the padding of its second, 5 bytes long) */
+	CHECK(taken(blob_size) == 0, "a value cut short in its padding");
+	/* a length that wraps the reader round to a place inside the property, where another seems to begin */
+	blob_size = 0;
+	put32(IDENTITY_BLOB_MAGIC);
+	put32(1);
+	put32(0);
+	memset(blob + blob_size, 0, 32);
+	memcpy(blob + blob_size, "t8030", 5);
+	blob_size += 32;
+	put32(828);
+	put32(1792);
+	put32(2);
+	put32(2);
+	put32(1);
+	put32(1);
+	put32(1);
+	memset(blob + blob_size, 0, 32);
+	blob[blob_size] = 'a';
+	blob_size += 32;
+	put32(0xfffffffcu);                     /* (36 + this, in 32 bits, is 32: the next "property" starts at this length) */
+	memset(blob + blob_size, 0, 32);        /* (its "name" ends after the length's four bytes; its length, here, is 0) */
+	blob_size += 28;
+	put32(0);
+	for (const char *n = "bcd"; *n; n++) {
+		memset(blob + blob_size, 0, 32);
+		blob[blob_size] = (uint8_t)*n;
+		blob_size += 32;
+		put32(0);
+	}
+	blob_resize(blob_size);
+	CHECK(taken(blob_size) == 0, "a length past the end, whatever it wraps to");
+	blob_make("t8030", 828, 1792, 2, counts);
+	CHECK(identity_from_blob(blob, 71, &v) == 0 && identity_from_blob(NULL, 0, &v) == 0, "too short for its header, or none");
+	CHECK(memcmp(&v, &before, sizeof(v)) == 0, "none of them changed what was there");
+
+	/* the choice, and what is said of it */
+	said[0] = 0;
+	identity_choose(NULL, 0, &v);
+	CHECK(!v.given && said[0] == 0, "no blob: the one built in, nothing said");
+	blob_make("t8030", 828, 1792, 2, counts);
+	identity_choose(blob, blob_size, &v);
+	CHECK(v.given && strstr(said, "from the payload") != NULL, "a blob: it, and said: %s", said);
+	said[0] = 0;
+	identity_choose(blob, blob_size - 4, &v);
+	CHECK(!v.given && v.root.props == identity_root && strstr(said, "not one") != NULL, "a bad one: the one built in, and said: %s", said);
+}
+
+/* what arch/arm64/boot/mkidentity.py --blob makes of an iPhone's device tree, the loader reads: the two run against each other,
+ * on a device tree of the test's own (written by the loader's writer, which writes Apple's format) */
+static void
+identity_from_mkidentity(void)
+{
+	static uint8_t tree[65536];
+	struct dt_writer w = { .base = tree, .cur = tree };
+	char directory[512], command[2048], tools[1024], path[1024];
+	struct identity_view v;
+	uint32_t subtype = 1792, scale = 2, one = 1;
+	FILE *file;
+
+	dt_begin(&w, "device-tree");
+	dt_prop_str(&w, "model", "iPhone99,9");
+	dt_prop_u32(&w, "#address-cells", 2);           /* (the loader's own, not the iPhone's: left out) */
+	dt_prop_str(&w, "serial-number", "syscfg/SrNm");  /* (what iBoot fills in: left out) */
+	dt_begin(&w, "arm-io");
+	dt_prop(&w, "compatible", "arm-io,t8030\0arm-io", 20);
+	dt_end(&w);
+	dt_begin(&w, "product");
+	dt_prop(&w, "artwork-device-subtype", &subtype, 4);
+	dt_prop(&w, "artwork-scale-factor", &scale, 4);
+	dt_prop_str(&w, "product-name", "Test Phone");
+	dt_begin(&w, "haptics");
+	dt_prop(&w, "closed-loop", &one, 4);
+	dt_end(&w);
+	dt_begin(&w, "camera");
+	dt_prop(&w, "flash", &one, 4);
+	dt_end(&w);
+	dt_end(&w);
+	dt_end(&w);
+
+	snprintf(directory, sizeof(directory), "%s/loader_test.XXXXXX", getenv("TMPDIR") != NULL ? getenv("TMPDIR") : "/tmp");
+	if (mkdtemp(directory) == NULL) {
+		CHECK(0, "no directory to work in");
+		return;
+	}
+	snprintf(path, sizeof(path), "%s/tree.bin", directory);
+	CHECK((file = fopen(path, "wb")) != NULL && fwrite(tree, 1, (size_t)(w.cur - tree), file) == (size_t)(w.cur - tree) && fclose(file) == 0,
+	    "the device tree written");
+	snprintf(tools, sizeof(tools), "%s", __FILE__);
+	*strrchr(tools, '/') = 0;
+	snprintf(command, sizeof(command), "cd '%s' && python3 '%s/../arch/arm64/boot/mkidentity.py' --blob identity.bin tree.bin 2> /dev/null",
+	    directory, tools);
+	CHECK(system(command) == 0, "mkidentity.py --blob ran");
+	snprintf(path, sizeof(path), "%s/identity.bin", directory);
+	blob_size = 0;
+	if ((file = fopen(path, "rb")) != NULL) {
+		blob_size = (uint32_t)fread(blob, 1, sizeof(blob), file);
+		fclose(file);
+	}
+	CHECK(blob_size > 72 && identity_from_blob(blob, blob_size, &v) == 1, "the loader takes what it made (%u bytes)", blob_size);
+	CHECK(strcmp(v.platform, "t8030") == 0 && v.width == 828 && v.height == 1792 && v.scale == 2, "the SoC from /arm-io, the screen from /product");
+	CHECK(v.root.count == 1 && strcmp(v.root.props[0].name, "model") == 0 && memcmp(v.root.data + v.root.props[0].offset, "iPhone99,9", 11) == 0,
+	    "of the root, the model alone (%u)", v.root.count);
+	CHECK(v.product.count == 3 && v.haptics.count == 1 && strcmp(v.haptics.props[0].name, "closed-loop") == 0 && v.camera.count == 1 &&
+	    strcmp(v.camera.props[0].name, "flash") == 0, "/product's three, its haptics' and its camera's");
+	snprintf(command, sizeof(command), "rm -rf '%s'", directory);
+	CHECK(system(command) == 0, "the directory removed");
+}
+
 /* ---- the firmware's clock -------------------------------------------------------------------------- */
 
 static struct efi_time clock_says;
@@ -383,8 +663,10 @@ payload(void)
 	entry("checkpoint", "17", 3);
 	entry("physbase", "a2000000", 9);
 	entry("rdres", "4c000000", 9);
+	const uint8_t *identity = entry("identity", "IDNT and the rest", 18);
 	entry("something", "new", 4);                   /* (an entry a newer packer adds is passed over) */
 	CHECK(parse_payload(&info, 1) == 1, "a payload is taken: %s", said);
+	CHECK(info.identity == identity && info.identity_size == 18, "the identity where it is, as it is (read by identity_given.c)");
 	CHECK(info.kernel == kernel && info.ramdisk == ramdisk && info.ramdisk_size == 9, "the kernel and the root image where they are");
 	CHECK(strcmp(info.cmdline, "debug=0x14e cpus=8 wifi=0") == 0, "the boot arguments: %s", info.cmdline);
 	CHECK(info.checkpoint == 17 && info.forced_base == 0xa2000000ULL && info.resident_rd == 0x4c000000ULL, "the numbers");
@@ -394,6 +676,7 @@ payload(void)
 	payload_begin();
 	entry("usb", "", 0);
 	CHECK(parse_payload(&info, 0) == 1 && info.usb_mode == 1 && info.kernel == NULL && info.cmdline[0] == 0, "a payload that only says: take commands");
+	CHECK(info.identity == NULL && info.identity_size == 0, "no identity: the one built in");
 	CHECK(said[0] == 0, "nothing said when not asked");
 
 	payload_begin();
@@ -523,6 +806,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "memory_and_strings", memory_and_strings }, { "device_tree", device_tree }, { "identity", identity },
+		{ "identity_given", identity_given }, { "identity_from_mkidentity", identity_from_mkidentity },
 		{ "unit", unit }, { "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
 	};
 

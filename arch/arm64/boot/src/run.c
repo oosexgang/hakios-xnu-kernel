@@ -366,6 +366,9 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	unit_from_seed(unit_seed, &unit);
 	print("identity: serial number %s, ECID %x%s\n", unit.serial, unit.ecid,
 	    unit_given ? "" : " (a random one: another device at every boot; identity= keeps one, tools/identity.py)");
+	struct identity_view id;
+
+	identity_choose(pi.identity, pi.identity_size, &id);
 
 	dt_begin(&w, "device-tree");
 	/*
@@ -373,8 +376,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * its device up by these, and its files -- the dyld shared cache to begin with -- are
 	 * those of that phone. XNU itself does not care; the hardware is described further down.
 	 */
-	dt_identity(&w, identity_root, sizeof(identity_root) / sizeof(identity_root[0]), identity_root_data);
-	dt_prop_str(&w, "platform-name", IDENTITY_PLATFORM_NAME);  /* the iPhone's SoC (identity.h, from its /arm-io) */
+	dt_identity(&w, id.root.props, id.root.count, id.root.data);
+	dt_prop_str(&w, "platform-name", id.platform);  /* the iPhone's SoC (identity.h or the payload's, from its /arm-io) */
 	/* what iBoot takes from the factory configuration of a real phone; fixed size fields */
 	dt_prop_padded(&w, "serial-number", unit.serial, 32);
 	dt_prop_padded(&w, "mlb-serial-number", unit.mlb, 32);
@@ -393,9 +396,9 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * The iPhone's screen (identity.h, from its /product): what MobileGestalt answers "main screen scale" from,
 	 * and the size the kernel's display reports (MiniIOMobileFramebuffer), whatever the panel really is
 	 */
-	dt_prop_u32(&w, "display-scale", IDENTITY_SCREEN_SCALE);
+	dt_prop_u32(&w, "display-scale", id.scale);
 	{
-		uint32_t size[2] = { IDENTITY_SCREEN_WIDTH, IDENTITY_SCREEN_HEIGHT };
+		uint32_t size[2] = { id.width, id.height };
 		dt_prop(&w, "display-size", size, sizeof(size));
 	}
 	dt_prop_u32(&w, "display-rotation", 0);
@@ -487,7 +490,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 
 	/* the product: screen class, artwork scale, name ... as on the real phone */
 	dt_begin(&w, "product");
-	dt_identity(&w, identity_product, sizeof(identity_product) / sizeof(identity_product[0]), identity_product_data);
+	dt_identity(&w, id.product.props, id.product.count, id.product.data);
 	/*
 	 * and its haptics: "closed-loop" (MobileGestalt's DeviceSupportsClosedLoopHaptics) makes Darwin play
 	 * its vibrations and feedbacks as waveforms on the "Actuator" audio device (the audio plug-in
@@ -495,7 +498,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * that the iPhone X does not have, and nothing vibrates.
 	 */
 	dt_begin(&w, "haptics");
-	dt_identity(&w, identity_haptics, sizeof(identity_haptics) / sizeof(identity_haptics[0]), identity_haptics_data);
+	dt_identity(&w, id.haptics.props, id.haptics.count, id.haptics.data);
 	dt_end(&w);
 	/*
 	 * and of its camera what is here: with torch=N the flash (MobileGestalt's camera-flash; without
@@ -505,7 +508,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	if (torch_requested || camera_requested) {
 		dt_begin(&w, "camera");
 		if (torch_requested) {
-			dt_identity_one(&w, identity_camera, sizeof(identity_camera) / sizeof(identity_camera[0]), identity_camera_data, "flash");
+			dt_identity_one(&w, id.camera.props, id.camera.count, id.camera.data, "flash");
 		}
 		dt_end(&w);
 	}

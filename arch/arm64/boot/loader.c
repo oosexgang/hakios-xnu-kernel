@@ -30,6 +30,7 @@
 #include "src/console.c"          /* what the loader says, on the screen and into its log; the caches */
 #include "src/logstore.c"         /* the log kept across runs: a raw write to a partition (phone only) */
 #include "src/devicetree.c"       /* the writer of the Apple-format device tree */
+#include "src/identity_given.c"   /* which iPhone Darwin is told it runs on: built in, or from the payload */
 #include "src/platform.h"         /* struct platform: what the loader needs to know of a machine; includes the generated platforms.h */
 #include "src/return.c"           /* the reset, the way back from the kernel, the jump into it */
 #include "src/othercore.c"        /* the kernel on another core: the stub it starts in, its log read while it runs */

@@ -10,6 +10,8 @@ struct payload_info {
 	uint64_t checkpoint;
 	uint64_t forced_base;
 	uint64_t resident_rd;           /* size of a root image the host put at the resident address */
+	const uint8_t *identity;        /* which iPhone Darwin is told it runs on (identity_given.c), when the payload says */
+	uint32_t identity_size;
 	int usb_mode;
 };
 
@@ -61,6 +63,9 @@ parse_payload(struct payload_info *pi, int verbose)
 			pi->resident_rd = parse_number(text, 16); /* e.g. loaded there by QEMU; see RESIDENT_RD_OFFSET */
 		} else if (str_eq(e->name, "checkpoint")) {
 			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
+		} else if (str_eq(e->name, "identity")) {
+			pi->identity = p + sizeof(*e);           /* made from the IPSW of whoever boots it: identity_given.c */
+			pi->identity_size = e->size;
 		} else if (str_eq(e->name, "usb")) {
 			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
 		}
