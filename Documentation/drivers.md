@@ -140,6 +140,7 @@ says what each test covers and what it leaves out.
 | `board/guard.c` | `guard_test.c` | (none: tones in, samples out) |
 | `board/ufs.c` | `ufs_driver_test.c` | the loader on core 0: its page and buffer over a made-up disk, noting every write and whether the port may make it |
 | `board/ufshc.c` (its whitelist) | `ufs_whitelist_test.c` | (none: commands made up and never sent) |
+| `board/ufshc.c` (its reads) | `ufs_native_read_test.c` | the controller's registers and slot 0, a thread that answers its doorbell |
 | `board/scmi_perf.c` | `scmi_perf_test.c` | the firmware behind the SCMI channel: its shared memory and doorbell, answering, late, wrongly or not at all |
 | `board/audio.c` | `audio_device_test.c` | (none: a program's writes and volume in, a sink and the recording's memory out) |
 | `board/sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
