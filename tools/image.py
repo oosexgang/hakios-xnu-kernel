@@ -272,6 +272,11 @@ def build(options):
         die(f'{kernel_path} is not a 64-bit Mach-O kernel')
     if loader[:2] != b'MZ':
         die(f'{loader_path} is not a UEFI application')
+    # (the kernel, too, knows the boards it was built with -- build/boards' table, each by its name -- and one that does
+    # not know the phone finds no board on it: every driver of it off)
+    if b'\0' + name.encode() + b'\0' not in kernel:
+        die(f'{kernel_path} does not know {name}: it was built before the package was here. kernel/build.sh '
+            f'(or make kernel), then the image again')
     # (the loader knows the boards whose packages were there when it was built: platforms.h, each by its name; one built
     # before this phone's package was brought in would take the phone for the emulator)
     if b'\0' + name.encode() + b'\0' not in loader:
