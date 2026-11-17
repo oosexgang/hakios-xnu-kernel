@@ -889,6 +889,12 @@ IOMobileFramebuffer::record(MiniIOSurface * s)
 	 */
 	frame->nanoseconds = (since_start & ((1ull << 40) - 1)) | (uint64_t) (s->sid & 0xffff) << 40 | (uint64_t) (s->drawn & 0xff) << 56;
 	to = (uint8_t *) (frame + 1);
+	/* (a frame of another surface than the first, smaller, or one whose rows are not in its memory: not recorded) */
+	if (header->width == 0 || header->height == 0 ||
+	    !s->holds((uint64_t) ((header->height - 1) * REC_STEP + 1) * s->info.bytesPerRow,
+	    (uint64_t) ((header->width - 1) * REC_STEP + 2) * 4)) {
+		return;
+	}
 	for (uint32_t y = 0; y < header->height; y++) {
 		const uint32_t * from = (const uint32_t *) (s->pixels() + (size_t) (y * REC_STEP + 1) * s->info.bytesPerRow);
 
@@ -1294,6 +1300,19 @@ IOMobileFramebuffer::copyBackBuffer(void)
 }
 
 
+/* A layer whose rows would be read past its surface's memory (MiniIOSurface::holds()): said, a few times, and not drawn. */
+static void
+outside(MiniIOSurface * s, const char * what)
+{
+	static unsigned told;
+
+	if (told++ < 8) {
+		IOLog("MiniIOMobileFramebuffer: %s of surface %u (%ux%u, %u bytes a row, at %u of %u bytes) would be read past its "
+		    "memory: not drawn\n", what, s->sid, s->info.width, s->info.height, s->info.bytesPerRow, s->info.offset,
+		    s->info.allocSize);
+	}
+}
+
 /*
  * fb_yuv: a rectangle of a two-plane YCbCr surface ('420f' full range, '420v' video range: luma, then interleaved
  * Cb Cr at half size each way) on the screen, by nearest neighbour, on this thread, BT.601 as CoreVideo's camera
@@ -1338,6 +1357,17 @@ IOMobileFramebuffer::drawYUV(MiniIOSurface * s, const int32_t * src, const int32
 	}
 	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > luma->width || (uint32_t) (sy + sh) > luma->height) {
 		return false;
+	}
+	/* (the luma rows read, and the chroma rows -- half as many, the last one again past its height -- in the surface's memory) */
+	{
+		uint64_t chroma_row = MIN((uint32_t) (sy + sh - 1) / 2, chroma->height - 1);
+		uint64_t chroma_bytes = (uint64_t) MIN((uint32_t) (sx + sw - 1) / 2, chroma->width - 1) * 2 + 2;
+
+		if (!s->holds(luma->offset + (uint64_t) (sy + sh - 1) * luma->bytesPerRow, (uint64_t) (sx + sw)) ||
+		    !s->holds(chroma->offset + chroma_row * chroma->bytesPerRow, chroma_bytes)) {
+			outside(s, "a YCbCr layer");
+			return false;
+		}
 	}
 	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
 	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
@@ -1401,6 +1431,11 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		dh = (int32_t) fHeight;
 	}
 	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > s->info.width || (uint32_t) (sy + sh) > s->info.height) {
+		return;
+	}
+	/* (the rows read are in the surface's memory: its last row's last pixel, four bytes a pixel, is) */
+	if (!s->holds((uint64_t) (sy + sh - 1) * s->info.bytesPerRow, (uint64_t) (sx + sw) * 4)) {
+		outside(s, "a layer");
 		return;
 	}
 	/* the rectangle on the panel */
@@ -1801,7 +1836,8 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			/* fb_yuv: how much of this layer lets the video through, row by row, for the first swaps with one */
 			static unsigned profiled;
 
-			if (profiled < 3) {
+			if (profiled < 3 && s->info.height != 0 &&
+			    s->holds((uint64_t) (s->info.height - 1) * s->info.bytesPerRow, (uint64_t) s->info.width * 4)) {
 				char line[512];
 				size_t n = 0;
 				const uint8_t * px = s->pixels();

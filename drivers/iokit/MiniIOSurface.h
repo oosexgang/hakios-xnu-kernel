@@ -164,6 +164,18 @@ public:
 	{
 		return kpixels + info.offset;
 	}
+	/*
+	 * Whether LENGTH bytes from byte AT of the pixels (from pixels()) lie in the surface's memory, which is allocSize bytes
+	 * from kpixels (ours, or its maker's mapped). Its rows' geometry and its size are the maker's numbers and are not tied
+	 * to each other when it is made: whoever reads rows of it asks this first.
+	 */
+	bool
+	holds(uint64_t at, uint64_t length) const
+	{
+		uint64_t start = (uint64_t) info.offset + at;
+
+		return start <= info.allocSize && length <= info.allocSize - start;
+	}
 	void updateValuesState(void);
 };
 
