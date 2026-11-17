@@ -3942,9 +3942,20 @@ serve_darwin(void)
 		}
 		if (to != 0) {
 			/* (the last session is over: everything is down) */
+			unsigned was_sensor = hw_index;
+			uint32_t was_mode = darwin_mode_n;
+
 			if (!darwin_select(to - 1, darwin_switch_mode)) {
-				give_up("a sensor that cannot be used");
-				break;
+				/*
+				 * A sensor or a mode that cannot be used, asked for by any process that opens the node: the one before
+				 * is taken again, rather than the camera given up for the rest of the run.
+				 */
+				say("camera: sensor %u, mode %u cannot be used: back to sensor %u, mode %u\n", to - 1, darwin_switch_mode,
+				    was_sensor, was_mode);
+				if (!darwin_select(was_sensor, was_mode)) {
+					give_up("neither the sensor asked for nor the one before can be used");
+					break;
+				}
 			}
 			continue;
 		}
