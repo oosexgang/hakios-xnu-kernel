@@ -42,6 +42,13 @@ needs its feature in the board's `features`.
 | `libkern/amfi/`, `bsd/kern/kern_minimac.c` | AMFI and Sandbox policies. | any |
 | `osfmk/minicrypto/` | corecrypto. | any |
 
+These are reached by any program: none of their user clients asks for an entitlement (the kernel has no IOKit MAC
+hook). What a program gives them is held to what it is: a surface's rows are drawn only where they lie in its memory
+(`MiniIOSurface::holds()`), a GPU buffer's size is checked before it is rounded, a client that is closed makes nothing
+more. **Known, not changed:** a surface is found by its number by anybody, and its pixels mapped for writing (IOSurface's
+lookup, and the GPU's buffer made of a surface): a program can read and change another's pictures, as on Darwin with
+global surfaces.
+
 ## Display, input
 
 | File | Part | Feature / boot argument | Portability |
