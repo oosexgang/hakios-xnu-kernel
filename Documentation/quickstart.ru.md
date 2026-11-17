@@ -86,7 +86,8 @@ cd ../mido && git add images && git commit -m "images: первый образ" 
 | Нужно | Команда |
 | --- | --- |
 | Какие тесты запускать после правки файла | `scripts/tests-for.py --changed` (по [MAINTAINERS](../MAINTAINERS)) |
-| Один тест драйвера отдельно | `workbench/mutate.sh ИМЯ_test x x` |
+| Один тест драйвера отдельно | `workbench/mutate.sh ИМЯ_test board/файл.c x x` (`scripts/tests-for.py` подскажет точную команду) |
+| Заготовка нового драйвера | `scripts/new-driver.py ИМЯ` (драйвер, его тест, строка в `make check` и MAINTAINERS) |
 | Проверить, что тест ловит поломку | `workbench/mutate.sh ИМЯ_test board/файл.c 'было' 'стало'` |
 | Всё перед коммитом | `make check` |
 | Исходники релиза | `scripts/release.sh 1.0` (архив, SHA256SUMS и заметки из CHANGELOG в `build/release/`) |

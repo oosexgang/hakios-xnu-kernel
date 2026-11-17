@@ -5,11 +5,13 @@ the documents to read again.
   scripts/tests-for.py FILE...          the files named (paths from the top of the repository, or from here)
   scripts/tests-for.py --changed [REF]  the files changed since REF (default: the last commit), committed or not
 
-A test of the drivers (workbench/NAME.c) runs alone with `workbench/mutate.sh NAME x x`, every scenario of it on this
-machine; a Python test with python3; a script as it is. make check runs them all.
+A test of the drivers (workbench/NAME.c) runs alone with `workbench/mutate.sh NAME SOURCE x x` -- SOURCE one of the files
+it includes, x for x no change -- every scenario of it on this machine; a Python test with python3; a script as it is.
+make check runs them all.
 """
 import argparse
 import fnmatch
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -45,7 +47,15 @@ def run_line(test):
         return test
     name = Path(path)
     if name.suffix == '.c' and name.parent.as_posix() in ('workbench', 'Documentation/examples'):
-        return f'workbench/mutate.sh {name.stem} x x'
+        # (mutate.sh with no change -- x for x -- in a file the test includes: the test as it is, every scenario)
+        try:
+            text = (ROOT / path).read_text(errors='replace')
+        except OSError:
+            text = ''
+        source = re.search(r'#include "((?:board|src)/[^"]+|example_led\.c)"', text)
+        if source:
+            return f'workbench/mutate.sh {name.stem} {source.group(1)} x x'
+        return f'make test (workbench/run.sh: {name.stem})'
     if name.suffix == '.py':
         return f'python3 {path}'
     return path

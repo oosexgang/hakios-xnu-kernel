@@ -74,7 +74,7 @@ class TestsFor(unittest.TestCase):
             tests_for.main(['drivers/board/torch.c', str(ROOT / 'tools/image.py')])
         text = said.getvalue()
         self.assertIn('drivers/board/torch.c: CAMERA AND FLASHLIGHT', text)
-        self.assertIn('workbench/mutate.sh torch_driver_test x x', text)
+        self.assertIn('workbench/mutate.sh torch_driver_test board/board.c x x', text)
         self.assertIn('tools/image.py: IMAGES', text)
         self.assertIn('python3 workbench/image_test.py', text)
         self.assertIn('Documentation/images.md', text)
@@ -85,6 +85,62 @@ class TestsFor(unittest.TestCase):
             tests_for.main(['CHANGELOG.md'])
         self.assertIn('CHANGELOG.md: in no part of MAINTAINERS', complained.getvalue())
         self.assertIn('make check', said.getvalue())
+
+
+spec = importlib.util.spec_from_file_location('new_driver', ROOT / 'scripts/new-driver.py')
+new_driver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(new_driver)
+
+
+class NewDriver(unittest.TestCase):
+    """scripts/new-driver.py on a copy of what it changes: the example, run.sh's list, MAINTAINERS."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        for path in ('Documentation/examples/example_led.c', 'Documentation/examples/example_led_test.c', 'workbench/run.sh',
+                     'MAINTAINERS'):
+            (self.root / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / path).write_text((ROOT / path).read_text())
+        (self.root / 'drivers/board').mkdir(parents=True)
+
+    def make(self, *arguments):
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            try:
+                code = new_driver.main(list(arguments), root=self.root)
+            except SystemExit as stop:
+                code = stop.code
+        return code, said.getvalue()
+
+    def test_a_driver_and_its_test_made_and_listed(self):
+        code, said = self.make('fan_ctl', '--part', 'a fan')
+        self.assertEqual(code, 0, said)
+        driver = (self.root / 'drivers/board/fan_ctl.c').read_text()
+        test = (self.root / 'workbench/fan_ctl_driver_test.c').read_text()
+        self.assertIn('fan_ctl: what it drives', driver)
+        self.assertIn('hakios_fan_ctl_init(void)', driver)
+        self.assertIn('PE_parse_boot_argn("fan_ctl"', driver)
+        self.assertIn('hakios_say("fan_ctl: ', driver)
+        self.assertNotRegex(driver, r'\bled[:=_"]|example_led_|LED_PIN')   # (its head names the example it came from)
+        self.assertIn('#include "board/fan_ctl.c"', test)
+        self.assertIn('boot_args = "fan_ctl=2"', test)
+        self.assertNotRegex(test, r'"led|example_led')
+        self.assertRegex((self.root / 'workbench/run.sh').read_text(), r'\bfan_ctl_driver_test example_led_test; do')
+        areas = tests_for.areas((self.root / 'MAINTAINERS').read_text())
+        names = [name for name, _ in areas]
+        self.assertIn('A FAN', names)
+        self.assertEqual(names, sorted(names), 'in its place')
+        self.assertEqual(dict(areas)['A FAN']['T'], ['workbench/fan_ctl_driver_test.c'])
+        self.assertIn('workbench/mutate.sh fan_ctl_driver_test board/fan_ctl.c x x', said)
+
+    def test_once_and_only_by_a_good_name(self):
+        self.assertEqual(self.make('fan')[0], 0)
+        self.assertIn('there already', str(self.make('fan')[0]))
+        self.assertIn('lower-case', str(self.make('Fan')[0]))
+        self.assertIn('lower-case', str(self.make('../fan')[0]))
 
 
 if __name__ == '__main__':
