@@ -1461,6 +1461,7 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
  * image is gone: it was told of one by us, or by the kernel that left the DSP running.
  */
 static void radio_space_off(void);
+static void radio_stream_to_fault(void);
 
 static bool
 dsp_shutdown(const char *why)
@@ -1479,6 +1480,11 @@ dsp_shutdown(const char *why)
 	result = scm("to shut the Wi-Fi DSP down", SCM_PAS_SHUTDOWN, SCM_ONE_VALUE, PAS_WPSS, 0, 0, &answer);
 	if (result != 0 || answer != 0) {
 		printf("wifi: %u: TRUSTZONE DOES NOT SHUT THE DSP DOWN: the call returns %d, its answer is %#llx\n", step, result, answer);
+		/* (the radio may still be in mission mode, its receive buffers in memory that is not ours once the run is over: its
+		 * stream is sent to fault, not given back to translation that goes on, nor to the pass-through it was found in) */
+		if (ours) {
+			radio_stream_to_fault();
+		}
 		return false;
 	}
 	printf("wifi: %u: THE WI-FI DSP IS SHUT DOWN\n", step);
@@ -3503,6 +3509,18 @@ radio_space_on(void)
 	return true;
 }
 
+/* The radio's stream to fault, its match left: whatever the radio still reaches for is neither translated nor passed through */
+static void
+radio_stream_to_fault(void)
+{
+	if (!radio_space.on) {
+		return;
+	}
+	printf("wifi: %u: the radio's stream is sent to fault (context %u): what it still reaches for goes nowhere\n", step,
+	    radio_space.context);
+	put(&apps_smmu, "s2cr", SMMU_S2CR(radio_space.match), 2u << 16);
+}
+
 /* The stream goes nowhere again, and the context translates nothing: as they were found. */
 static void
 radio_space_off(void)
@@ -3780,7 +3798,15 @@ void
 hakios_wifi_quiesce(void)
 {
 	hakios_apple80211_summary();           /* (also when the run is ended from the phone: five fingers) */
-	if (!dsp_started || dirty) {
+	if (!dsp_started && !dirty) {
+		/* (with wifi=1 the radio is shown its memory before the DSP is started: a run that ends before that, or whose
+		 * bring-up gave up before it, leaves the mapping -- and the next kernel would find a match for the radio's stream
+		 * that is nobody's) */
+		leaving = true;
+		radio_space_off();
+		return;
+	}
+	if (dirty) {
 		return;
 	}
 	leaving = true;
@@ -3869,6 +3895,7 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 
 	/* the memory the radio is shown is one piece: taken now, while that is easy to find */
 	if (hakios_lx_prepare() != 0) {
+		radio_space_off();              /* (whatever of the mapping was made before the memory ran out) */
 		tell("wifi: NO MEMORY FOR THE RADIO in one piece: it is not brought up\n");
 		whole_runs = false;
 		thread_terminate(current_thread());
