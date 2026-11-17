@@ -135,6 +135,26 @@ tags yet, so the current work is one section.
   the fences for the GPU's privileged accesses alone.
 - The battery's report could be made by two threads at once, Wi-Fi's IOKit service could be started twice, and a device
   tree with no CPUs counted left the kernel with none.
+- The touch screens: the FT3658U's idle frame (all 0xff) with a finger down was a bad report, so a missed lift kept the
+  finger down for a second and then reset the chip, and the fourth recovery of a whole run stopped the driver for good;
+  the Goodix driver powered the chip's analog side and drove its pins when its I/O supply had not come up, left fingers
+  down across a reset the chip asked for and across reads that kept failing (enough of them made the five-finger exit),
+  and could mirror a FocalTech position past the panel's edge to the opposite one.
+- The Wi-Fi DSP's firmware: a reply that carried no result, or that was another message's under the same transaction
+  number, was taken as success; the registers' place from an earlier exchange was kept when a later one failed; and a
+  mission mode asked for but not answered was never turned off. A firmware header whose segment table or block of
+  hashes is not where it was checked, or whose segments overlap, is refused.
+- The cellular link: an address at x.y.z.0 or x.y.z.255 was given a /24 in which it is the network's or the broadcast
+  address, an old lease could be confirmed by ARP after the modem's address changed, and a new address while the link
+  stayed up was never asked for through DHCP.
+- The modem's driver walked the shared memory's items without the bounds the common walk has, and then wrote through
+  what it found; its mailbox to the always-on processor was checked with a sum two of that processor's words could
+  wrap. TrustZone's calls were given up after a hundred preemptions (a long authentication is preempted by every
+  interrupt) and failed at once when TrustZone was busy; they are resumed as long as it takes, and asked again 30 ms
+  apart when busy.
+- A firmware's performance level that was sent but whose answer could not be read was taken as never set, and left at
+  its top for the next kernel. QEMU's virtio devices are reset on the way back to the loader, so they write no more
+  into memory that is UEFI's or the next kernel's.
 
 ### For whoever works on the project
 
