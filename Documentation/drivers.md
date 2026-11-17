@@ -83,7 +83,8 @@ needs its feature in the board's `features`.
 ## Wi-Fi, network
 
 Bluetooth first stage (`board/bt_uart.c`) is opt-in: absent/`bt=0` performs no mapping or register access;
-`bt=-1` inspects without power, pin, clock or UART writes (SPMI reads use arbiter command registers).
+`bt=-1` inspects without power, pin, clock or UART writes (SPMI reads use arbiter command registers), and reads the
+serial engine's registers only if its clocks already run: a read of a block whose clock is off can hang the bus.
 `bt=1` inspects first, powers the controller, opens 115200 8N1 H4 with CTS/RTS, sends HCI Reset and
 Qualcomm EDL_PATCH_GETVER, and logs raw events plus product/patch/ROM/SoC versions when recognized.
 Every poll has a bound. Failure powers down; loader return lowers BT_EN, stops UART commands, restores
@@ -94,7 +95,8 @@ Use dedicated Bluetooth VRM resources; the helper cannot recover another client'
 `/dev/btwake`, `/dev/btreset` and `/dev/btpoweroff`; a Skywalk kernel pipe; and the kernel control
 `com.apple.uart.sk.bluetooth`, whose socket options give bluetoothd the channel's UUID and keep its termios. A thread
 carries whole H4 packets between the channel and the UART (115200 baud, packets longer than the FIFO written as it
-empties; a stray byte or a packet cut short throws away what follows until the line is quiet, to be in step again).
+empties; a stray byte or a packet cut short throws away what follows until the line is quiet, 50 ms at most, to be in
+step again; a packet that goes out in part has its command cancelled, and the controller is sent nothing more).
 Broadcom's and Apple's vendor commands, Default Erroneous Data Reporting and the LE periodic advertiser list size are
 answered in the kernel; the controller's own vendor events are not handed on; Read Local Supported Commands has the
 LE commands bluetoothd counts on said (`board/bt_hci.h`, `bt_quirks=`; after HakiOS's MediaTek port and the OnePlus
