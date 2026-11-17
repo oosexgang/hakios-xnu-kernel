@@ -276,6 +276,10 @@ run() { # run OEM-COMMAND LABEL
 	log="logs/$stamp-$2.log"
 	if [ "$1" != "oem selftest" ]; then
 		[ -f "$K" ] || die "no kernel $K: kernel/build.sh"
+		# (the kernel knows the boards it was built with, build/boards' table, each by its name: one built before this
+		# phone's package was here finds no board on it, and every driver of the phone stays off)
+		python3 -c 'import sys; sys.exit(b"\0" + sys.argv[2].encode() + b"\0" not in open(sys.argv[1], "rb").read())' "$K" "$BOARD" ||
+			say "warning: $K does not know $BOARD: it was built before the package was here, and every driver of the phone stays off (kernel/build.sh)" >&2
 		# (Darwin 26/27's, root26-darwin.sh's, when it is there; else the first generation's)
 		local rd=${BENCH_RAMDISK:-$IOS/root26-darwin.apfs}
 		[ -n "${BENCH_RAMDISK:-}" ] || [ -f "$rd" ] || rd=$IOS/root.apfs
