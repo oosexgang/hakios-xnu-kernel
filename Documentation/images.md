@@ -29,10 +29,11 @@ tools/image.py build --board mido --defconfig phone_bt --out /some/where
 make images DEVICE=mido                            # one for each run (phone_* defconfigs): build/images/mido/RUN/
 ```
 
-The loader knows the boards whose packages were there when it was built (`build/boards/platforms.h`, each by its name).
-One built before the phone's package was brought in would take the phone for the emulator, so `build` looks for the
-board's name in `loader.efi` and stops if it is not there: `arch/arm64/boot/build.sh` (`make loader`) and the image
-again. `make phone` builds them in that order.
+The kernel and the loader know the boards whose packages were there when they were built (`build/boards/`, each by its
+name). A loader built before the phone's package was brought in would take the phone for the emulator, and such a
+kernel would find no board on it, every driver of the phone off; so `build` looks for the board's name in both and
+stops if it is not there: `kernel/build.sh` (`make kernel`) or `arch/arm64/boot/build.sh` (`make loader`), and the
+image again. `make phone` builds them in that order.
 
 ## Booting one
 

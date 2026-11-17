@@ -256,6 +256,7 @@ software without it.
 | --- | --- | --- |
 | `image.py: which phone? --board NAME (here: ...)` | More than one package with a `uefi { }` node, or none. | `--board NAME`, or `make image DEVICE=NAME`. |
 | `image.py: no kernel ...: kernel/build.sh` | The kernel has not been built, or was built elsewhere. | `make kernel`, or `--kernel FILE`. |
+| `image.py: ... kernel ... does not know NAME` | The kernel was built before the phone's package was brought in: its board table has no row for the phone, and on it every driver would stay off. | `make kernel`, then the image again. |
 | `image.py: ... does not know NAME: it was built before the package was here` | The loader was built before `tools/device.py add` brought the phone's package in: it knows only the boards it was built with. | `make loader` (`arch/arm64/boot/build.sh`), then the image again. |
 | `image.py: the loader was built with an identity from an IPSW (Apple's data) ...` | `publish` refuses a loader that carries the identity of an iPhone: an image that is passed around must not. | `arch/arm64/boot/build.sh` without a `DeviceTree.bin` beside the IPSW (or move it away), `make image`, `make publish` again. Your own copy can carry it: `tools/image.py personalize`. |
 | `image.py: ... is not what manifest.json says it is` | A file of the image changed after it was built. | Build the image again. |
@@ -268,6 +269,7 @@ software without it.
 | `phone-day.sh: not ready (above): no run started` | `scripts/phone-ready.py` found something `./bench` needs MISSING; its lines are above and in `summary.md`. | What each MISSING line says; `--no-check` begins all the same. |
 | `OLD  kernel  ..., built ..., before commit ...` | The kernel (or the loader) was built before the newest change to its sources, a commit or a file not committed: the phone would run what was there before. | `make kernel` (`make loader`, then `./bench reload`). A kernel named by `BENCH_KERNEL` is not looked at. |
 | `MISSING  loader  ... does not know NAME` | The loader was built before the phone's package was brought in. | `make loader`, then `./bench reload`. |
+| `MISSING  kernel  ... does not know NAME`, `bench: warning: ... does not know NAME` | The kernel was built before the phone's package was brought in: no row of its board table is the phone's, so every driver stays off. | `make kernel`. |
 | `MISSING  identity  none: the loader was built without one` | Darwin would not be told which iPhone it runs on. | The `DeviceTree.bin` of your own IPSW as `firmware/NAME/identity.bin`, or `BENCH_IDENTITY=FILE`. |
 | `NOTE  phone_bt: bt firmware  no ... in userland/fw-bt` | The run at `bt=2` would find no patch for the controller. | `adb pull /vendor/bt_firmware/image/ userland/fw-bt/`, the small image again; or that run without `phone_bt`. |
 | `no log: the run did not come back` | `./bench run` left no new log: the kernel hung before the loader could fetch one, or the phone was not there. What `./bench` said is in `RUN.bench` beside it. | `./bench state`; the kernel's last words, if it hung, are in `logs/*.log.live` (`BENCH_FOLLOW`). |
