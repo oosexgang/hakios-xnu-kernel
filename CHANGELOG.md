@@ -8,6 +8,16 @@ tags yet, so the current work is one section.
 
 ### For whoever brings up a phone
 
+- **The common drivers on every Snapdragon since the SDM845.** The cores' speed (`cpufreq=1`) and the thermal limiter
+  speak both layouts of the frequency block, EPSS (SM8350 and later) and the OSM's firmware before it (SDM845 to
+  SM8250), with each group's block where the SoC file says (`cpufreq { block; domains; }`), and leave a group whose
+  hardware is not in charge of its clock alone. The keys (`buttons=1`) read the power-on block of every generation, 1
+  and 2 (PM8998, PM8150) as well as 3. `tools/boards.py new --dts` reads Linux's own trees as well as the vendor's: the
+  frequency block's layout, TSENS and the UFS host without reg-names, a PMIC's power-on block. What each common
+  driver needs of a chip and which kinds of each block it knows: [chipsets.md](Documentation/chipsets.md).
+- **A kernel of the common drivers alone** for a chip nobody has run: `KCONFIG_FRAGMENTS=bringup kernel/build.sh`.
+  Which drivers a kernel starts is chosen as Linux chooses, in Kconfig files and fragments, and the kernel says at
+  boot what it was made without. ([kconfig.md](Documentation/kconfig.md))
 - **A phone can live in a repository of its own.** `tools/device.py init DIR --name NAME --soc SOC` makes one (its
   package, `BUILDING.md`, a `.gitignore` for what never goes in, a check on every push), and
   `tools/device.py add --from URL[#REF]` or `make phone FROM=URL` builds from it: cloned, its package brought in and
@@ -111,6 +121,13 @@ tags yet, so the current work is one section.
 
 ### For whoever works on the project
 
+- `Kconfig`, `tools/kconfig.py` (check, list, config, header, savedefconfig) and the fragments of
+  `arch/arm64/configs/kconfig/`: every driver described, common to every Snapdragon or of a particular part; `make
+  kconfig`, `make kconfig-check` (in `make check`). `tools/gen_headers.py` makes every header the build makes in one
+  place: the board tables and `kconfig.h`, and with `--user` the headers user space shares, without the kernel's part.
+- More `build.config.*`, each read by its tool: `build.config.qemu` (`tools/qemu-kernel.sh`), `build.config.loader`
+  (the loader's build), `build.config.release` (`scripts/release.sh`), `build.config.arm64.llvm` (an LLVM of the
+  machine's own). ([building.md](Documentation/building.md))
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
 - `scripts/`: `setup-ubuntu.sh` (what a machine needs, by what for), `release.sh` (the sources of a release,
   checked), `new-driver.py` (a new driver and its test from the guide's example). `samples/`: a phone's repository, a

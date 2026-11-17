@@ -140,7 +140,9 @@ the phone off whatever the board file turns on, the console on the screen and wh
 section it still needs. Each row below is independent. Add the feature to `features`, rebuild, and
 pass the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
 first. Every argument is in [boot-args.md](boot-args.md); every driver in [drivers.md](drivers.md);
-what each feature needs written down before it can be listed, key by key, in [features.md](features.md).
+what each feature needs written down before it can be listed, key by key, in [features.md](features.md); which
+generations of each block the drivers common to every Snapdragon know, and a kernel of those alone for a new chip,
+in [chipsets.md](chipsets.md).
 
 | Step | In the board or SoC file | Boot argument | It worked when |
 | --- | --- | --- | --- |

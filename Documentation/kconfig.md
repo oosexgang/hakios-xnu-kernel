@@ -27,8 +27,9 @@ its feature in `board.dts`, its addresses in the SoC file, its boot argument ([d
 | `fs/Kconfig`, `security/Kconfig` | APFS and the RAM file system, the code-signing and MAC policies: not choices. |
 | `arch/arm64/configs/kconfig/*.config` | The fragments. |
 
-The common drivers work on every Snapdragon: what they need of a chip is its SoC file's addresses
-([porting.md](porting.md)). The others are drivers of a part a chip or a phone may not have: a
+The common drivers work on every Snapdragon since the SDM845: what they need of a chip is its SoC file's addresses,
+and the generations of a block they tell apart by the SoC file or the block itself ([chipsets.md](chipsets.md)). The
+others are drivers of a part a chip or a phone may not have: a
 GPU generation, a radio, a codec, a camera block.
 
 ## The fragments

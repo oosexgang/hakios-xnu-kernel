@@ -116,13 +116,15 @@ config QCOM_THERMAL
 	default y
 	help
 	  The TSENS sensors' readings, and with thermal=2 the CPU groups' rows and the panel's level held back by
-	  policy (board/thermal.c). Its rows are EPSS's, or SCMI's where the firmware sets them.
+	  policy (board/thermal.c). Its rows are the cores' frequency block's (EPSS's or the OSM's), or SCMI's where the
+	  firmware sets them.
 
 config QCOM_CPUFREQ
-	bool "CPU frequency through EPSS, the cores' load, the small cores parked"
+	bool "CPU frequency through EPSS or the OSM, the cores' load, the small cores parked"
 	default y
 	help
-	  The cores' groups raised to their top rows and governed by their load (board/cpufreq.c, cpufreq=1), the load
+	  The cores' groups raised to their top rows and governed by their load (board/cpufreq.c, cpufreq=1) on every
+	  Snapdragon since the SDM845 (board/cpufreq_hw.h: EPSS from the SM8350 on, the OSM's firmware before), the load
 	  measured (cpuload=), the small cores parked (park_small=), the L3 and the last-level cache looked at.
 
 config QCOM_DDR_VOTE

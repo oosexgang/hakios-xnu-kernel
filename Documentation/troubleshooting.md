@@ -163,6 +163,7 @@ software without it.
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `cpufreq: disabled: this board's board.dts lists no "cpufreq-epss"` | `cpufreq=1` was passed and the board does not list the feature. | `cpufreq { }` in the SoC file, then `cpufreq-epss` in `features`. |
+| `cpufreq: group N (...): the hardware is not in charge of its clock: left alone` | The group's block reads its enable bit clear: the firmware runs that group's clock itself, or `cpufreq { }` is not the block (a wrong `epss`, `domains`, or `block` of the other layout). | Check `cpufreq { }` against the tree's `qcom,cpufreq-hw` or `-epss` node ([chipsets.md](chipsets.md)); `tools/boards.py new --dts` writes it. |
 | Everything is slow | Without `cpufreq=1` all cores run at 300 MHz. | `cpufreq=1`. It worked when the log has `cpufreq: group N ...: row N -> N of the frequency table, N MHz` for each group. |
 | The phone gets hot with `cpufreq=1` | It runs every group of cores at its top row with nothing holding it back. | `thermal=2` ([thermal.md](thermal.md)). |
 
@@ -171,8 +172,9 @@ software without it.
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `buttons: disabled: no spmi { } in the SoC file or no buttons { } in the board file` | The feature is listed, but the arbiter's address or a key's peripheral is not there. | Fill in both sections. |
-| `buttons: this driver knows version 5 of the arbiter only: no buttons` | The version read, in the line before it, is below 5, or 7 or later, where the registers moved. | Check `core` in `spmi { }`. A newer arbiter needs work in the driver. |
+| `buttons: this driver knows versions 5 and 8 of the arbiter only: no buttons` | The version read, in the line before it, is below 5, or 7 (where the registers moved), or 8 without `channel-map` in `spmi { }`. | Check `core` and, for version 8, `channel-map` in `spmi { }` ([chipsets.md](chipsets.md)). Versions 2, 3 and 7 need work in `board/spmi.h`. |
 | `buttons: no channel of the arbiter is NAME (slave N, peripheral 0x...)` | The arbiter's table has no channel for that peripheral. | Check `pon` and `volume-up` in `buttons { }`: the SPMI slave times 256, plus the high byte of the peripheral's registers (`0x18d`: slave 1, registers `0x8d00`). |
+| `buttons: ... a power-on block of subtype 0x..., which has no keys this driver reads: left alone` | `pon` in `buttons { }` is a power-on block without keys: a secondary PMIC's, or the half of a PMK8350's that is not the operating system's (subtype 8). | `pon` is the primary PMIC's block (subtype 1 or 4), or a PMK8350's `pon_hlos` (subtype 9) ([chipsets.md](chipsets.md)). |
 | `buttons: ... which is not what this driver knows (type 0x..., subtype 0x... to 0x...): left alone` | The peripheral at that address is not a power-on block, or not a GPIO. The line before it shows the type it reports. | The same two values. |
 | `buttons: NAME: no answer from the arbiter`, `... the arbiter refuses`, `... the transfer failed (nobody at that address?)`, `... the transfer was dropped` | A read on the SPMI bus failed; the text is what the arbiter's status said. | A read goes through `observer` of `spmi { }`, for the system `ee` names, to the peripheral of `buttons { }`: check those three. |
 | `buttons: volume up's pin is not an enabled input with a pull-up. ...: volume up is left alone` | Making it one is a write to the PMIC, which this driver does not do. The line before it shows the pin's mode, pull and whether it is enabled. | Check that `volume-up` in `buttons { }` is the key's GPIO. |
