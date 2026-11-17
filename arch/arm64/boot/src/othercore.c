@@ -321,6 +321,7 @@ static uint64_t sound_len;
 #define START_SECONDS           5
 #define SILENCE_SECONDS         50
 #define NOTE_SECONDS            24      /* how long the kernel's progress is written down as it happens */
+#define OVERDUE_SECONDS         180     /* past its time, for its way out: then a kernel that still beats is taken for hung */
 
 static void wdt_pet(void);
 static int wdt_armed;

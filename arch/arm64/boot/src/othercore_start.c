@@ -169,6 +169,16 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 				log_of_hung_kernel(live, slide);
 				status = OTHER_CPU_HUNG;
 			}
+			/*
+			 * ... or beats and never comes back: its way out (the drivers stopped, the store saved) has bounds of its own,
+			 * but locks a stuck thread may hold. Its time and three minutes for the way out, then it is taken for hung.
+			 */
+			if (status == 0 && budget != 0 && seconds_since(started) >= budget + OVERDUE_SECONDS) {
+				print("the kernel's time was %d s, and %d s later it has not come back: taken for hung\n", (uint64_t)budget,
+				    (uint64_t)OVERDUE_SECONDS);
+				log_of_hung_kernel(live, slide);
+				status = OTHER_CPU_HUNG;
+			}
 		}
 		if (block_enabled) {
 			block_poll();
