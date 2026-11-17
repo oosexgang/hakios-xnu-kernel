@@ -449,7 +449,7 @@ uart_stop_rx(void)
 static bool receive_byte(uint8_t *byte, uint64_t deadline);
 
 /* The engine's own loopback (TX to RX, RFR to CTS): whether sending and receiving work at all. */
-static bool
+static void
 uart_loopback(void)
 {
 	static const uint8_t probe[] = { 0x55, 0xa5, 0x0f, 0xf0, 0x3c };
@@ -466,11 +466,11 @@ uart_loopback(void)
 		}
 	}
 	wr(SE(0x22c), 0);
+	/* (said, and nothing more: the controller may answer whatever the engine's own loop gave back) */
 	hakios_say("bt-uart: loopback: %u of %u bytes back%s\n", got, (unsigned)sizeof(probe),
 	    got == sizeof(probe) && !memcmp(back, probe, sizeof(probe)) ? ", the same" : "");
 	uart_stop_rx();
 	wr(SE(0x630), START);
-	return got == sizeof(probe) && !memcmp(back, probe, sizeof(probe));
 }
 
 static uint32_t
@@ -813,7 +813,7 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 				goto failed;
 			}
 			uart_state("after setup");
-			(void)uart_loopback();
+			uart_loopback();
 			hakios_say("bt-uart: sending HCI_Reset\n");
 			answered = transmit(reset, sizeof(reset)) && wait_event(false);
 			uart_state(answered ? "answered" : "no answer");
