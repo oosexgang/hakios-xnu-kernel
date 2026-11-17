@@ -611,7 +611,8 @@ profiles_not_usable(void)
 }
 
 /* monitor tables at the edge: eight rows, the most there may be, are taken; battery rows with a vmax when no
- * temperature row has one stay as they are (there is nothing to turn the vmax into dB with) */
+ * temperature row has one stay as they are (there is nothing to turn the vmax into dB with); a table of temperature
+ * rows only, which end where its block ends, is taken */
 static void
 monitor_tables_at_the_edge(void)
 {
@@ -626,8 +627,10 @@ monitor_tables_at_the_edge(void)
 	acf_registers(0, 0, music_a, 8);
 	acf_registers(1, 0, music_b, 8);
 	acf_monitor_table(0, eight, 8, vbats, 3);
-	acf_monitor_table(1, temps, 4, vbats, 3);
+	acf_monitor_table(1, temps, 4, vbats, 0);
 	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(logged("the amplifier 0x34, slot 1's monitor: at 2 to 5 degrees, 3.000 dB less") &&
+	    !logged("the amplifier 0x34, slot 1's monitor: at 3650"), "no battery rows: the temperature rows taken: %s", log_text);
 	CHECK(!logged("not of the shape known") && logged("the amplifier 0x35, slot 0's monitor: at 2 to 5 degrees, 3.000 dB less"),
 	    "eight rows taken: %s", log_text);
 	CHECK(logged("the amplifier 0x35, slot 0's monitor: at 90 to 100 degrees, 0.000 dB less") &&
