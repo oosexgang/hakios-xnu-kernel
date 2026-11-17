@@ -34,6 +34,7 @@ said(const char *format, ...)
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wformat"
 #define printf said
+#define HAKIOS_MMIO_TEST 1
 #include "board/ufshc.c"
 #undef printf
 
@@ -53,17 +54,38 @@ static int failures;
 /* ---- the controller ------------------------------------------------------------------------------------- */
 
 #define LIST_PA         0x8a000000u
-#define BUFFER          (16 * BLOCK)            /* the slot's buffer: sixteen blocks a command */
+#define BUFFER          (16 * BLOCK)            /* a slot's buffer: sixteen blocks a command */
+#define MOST            8                       /* slots this test gives the driver at most */
 
 static volatile uint32_t registers[UFSHC_SIZE / 4];
-static uint32_t utrd[8], ucd[(UCD_PRDT + 16 * 8) / 4];
-static uint8_t data[BUFFER];
+static uint32_t utrd[MOST][8], ucd[MOST][(UCD_PRDT + 16 * 8) / 4];
+static uint8_t data[MOST][BUFFER];
 static volatile uint32_t take_back;
-static volatile unsigned commands, delay_us;
+static volatile unsigned commands, delay_us, doorbells;
+static volatile bool backwards;                 /* the commands waiting done the last rung first */
+static volatile bool held;                      /* the controller does nothing (another's command in a slot, say) */
 static volatile uint8_t answer_status;          /* the SCSI status the unit answers with (0: good) */
-static struct { uint8_t lun; uint32_t lba, blocks; } asked[16];
+static struct { uint8_t lun, slot; uint32_t lba, blocks; } asked[64];
 
 #define REG(r)          registers[(r) / 4]
+
+/* the registers as the controller has them: a write to the doorbell rings the slots whose bits are set in it, and no others */
+uint32_t
+hakios_test_rd(vm_offset_t address)
+{
+	return __atomic_load_n(&registers[(address - hc) / 4], __ATOMIC_ACQUIRE);
+}
+
+void
+hakios_test_wr(vm_offset_t address, uint32_t value)
+{
+	if (address - hc == UFSHC_UTRLDBR) {
+		doorbells++;
+		__atomic_or_fetch(&REG(UFSHC_UTRLDBR), value, __ATOMIC_RELEASE);
+		return;
+	}
+	__atomic_store_n(&registers[(address - hc) / 4], value, __ATOMIC_RELEASE);
+}
 
 /* the made-up bytes of a unit, by their place in it */
 static uint8_t
@@ -72,53 +94,63 @@ made_up(uint8_t lun, uint64_t at)
 	return (uint8_t)(at * 7 + at / BLOCK + lun * 31);
 }
 
+/* the command in a slot done: its READ(10) into the buffers its PRD table names, its answer in its response */
+static void
+do_slot(unsigned slot)
+{
+	const uint8_t *u = (const uint8_t *)ucd[slot];
+	uint8_t *r = (uint8_t *)ucd[slot] + UCD_RESPONSE;
+	uint32_t lba = (uint32_t)u[18] << 24 | u[19] << 16 | u[20] << 8 | u[21], blocks = (uint32_t)u[23] << 8 | u[24];
+	uint32_t entries = utrd[slot][7] & 0xffff;
+	uint64_t at = (uint64_t)lba * BLOCK;
+
+	if (commands < 64) {
+		asked[commands].lun = u[2];
+		asked[commands].slot = (uint8_t)slot;
+		asked[commands].lba = lba;
+		asked[commands].blocks = blocks;
+	}
+	commands++;
+	for (uint32_t n = 0; n < entries; n++) {
+		const uint32_t *prd = ucd[slot] + (UCD_PRDT + 16 * n) / 4;
+		uint8_t *to = (uint8_t *)(uintptr_t)((uint64_t)prd[1] << 32 | prd[0]);
+
+		for (uint32_t i = 0; i <= prd[3]; i++) {
+			to[i] = made_up(u[2], at++);
+		}
+	}
+	memset(r, 0, 64);
+	r[0] = UPIU_RESPONSE;
+	r[3] = u[3];
+	r[7] = answer_status;
+	utrd[slot][2] = OCS_SUCCESS;
+}
+
 static void *
 controller(void *unused __unused)
 {
 	for (;;) {
-		const uint8_t *u = (const uint8_t *)ucd;
-		uint8_t *r = (uint8_t *)ucd + UCD_RESPONSE;
-		uint32_t lba, blocks, entries;
-		uint64_t at;
+		uint32_t db = __atomic_load_n(&REG(UFSHC_UTRLDBR), __ATOMIC_ACQUIRE);
+		unsigned slot;
 
-		if ((__atomic_load_n(&REG(UFSHC_UTRLDBR), __ATOMIC_ACQUIRE) & 1) == 0) {
+		if (db == 0 || held) {
 			usleep(5);
 			continue;
 		}
-		lba = (uint32_t)u[18] << 24 | u[19] << 16 | u[20] << 8 | u[21];
-		blocks = (uint32_t)u[23] << 8 | u[24];
-		if (commands < 16) {
-			asked[commands].lun = u[2];
-			asked[commands].lba = lba;
-			asked[commands].blocks = blocks;
-		}
-		commands++;
-		entries = utrd[7] & 0xffff;
-		at = (uint64_t)lba * BLOCK;
-		for (uint32_t n = 0; n < entries; n++) {
-			const uint32_t *prd = ucd + (UCD_PRDT + 16 * n) / 4;
-			uint8_t *to = (uint8_t *)(uintptr_t)((uint64_t)prd[1] << 32 | prd[0]);
-
-			for (uint32_t i = 0; i <= prd[3]; i++) {
-				to[i] = made_up(u[2], at++);
-			}
-		}
-		memset(r, 0, 64);
-		r[0] = UPIU_RESPONSE;
-		r[3] = u[3];
-		r[7] = answer_status;
-		utrd[2] = OCS_SUCCESS;
 		if (delay_us != 0) {
-			usleep(delay_us);
+			usleep(delay_us);       /* (more may be rung meanwhile) */
+			db = __atomic_load_n(&REG(UFSHC_UTRLDBR), __ATOMIC_ACQUIRE);
 		}
-		__atomic_and_fetch(&REG(UFSHC_UTRLDBR), ~1u, __ATOMIC_RELEASE);
+		slot = backwards ? 31 - (unsigned)__builtin_clz(db) : (unsigned)__builtin_ctz(db);
+		do_slot(slot);
+		__atomic_and_fetch(&REG(UFSHC_UTRLDBR), ~(1u << slot), __ATOMIC_RELEASE);
 	}
 	return NULL;
 }
 
-/* the driver as switch_in leaves it, its list in and running, with one slot; the controller and the poller started */
+/* the driver as switch_in leaves it, its list in and running, with SLOTS slots; the controller and the poller started */
 static void
-in(void)
+in_with(unsigned slots)
 {
 	pthread_t thread;
 	thread_t poller;
@@ -130,9 +162,11 @@ in(void)
 	hc_list_lo = LIST_PA;
 	hc_list_hi = 0;
 	hc_loader.take_back = &take_back;
-	hc_slots[0] = (struct hc_slot){ .number = 0, .utrd = utrd, .ucd = ucd, .ucd_pa = (uint64_t)(uintptr_t)ucd, .data = data,
-		                        .data_pa = (uint64_t)(uintptr_t)data };
-	hc_free = 1;
+	for (unsigned i = 0; i < slots; i++) {
+		hc_slots[i] = (struct hc_slot){ .number = i, .utrd = utrd[i], .ucd = ucd[i], .ucd_pa = (uint64_t)(uintptr_t)ucd[i],
+			                        .data = data[i], .data_pa = (uint64_t)(uintptr_t)data[i] };
+	}
+	hc_free = slots == 32 ? ~0u : (1u << slots) - 1;
 	hc_slot_buffer = BUFFER;
 	ufshc_set_luns(1u << 0 | 1u << 3);
 	hc_usable = hc_in = true;
@@ -140,6 +174,12 @@ in(void)
 	if (kernel_thread_start(hc_poller, NULL, &poller) == KERN_SUCCESS) {
 		thread_deallocate(poller);
 	}
+}
+
+static void
+in(void)
+{
+	in_with(1);
 }
 
 static bool
@@ -198,6 +238,7 @@ rung_only_while_in(void)
 		                            "the loader taking it back", "a doorbell bit set already" };
 
 	in();
+	held = true;
 	for (unsigned i = 0; i < sizeof(ways) / sizeof(ways[0]); i++) {
 		REG(UFSHC_UTRLBA) = i == 0 ? LIST_PA + 0x1000 : LIST_PA;
 		REG(UFSHC_UTRLBAU) = i == 1 ? 1 : 0;
@@ -210,6 +251,7 @@ rung_only_while_in(void)
 	}
 	hc_slots[0].number = 0;
 	REG(UFSHC_UTRLDBR) = 0;
+	held = false;
 	REG(UFSHC_UTRLBA) = LIST_PA;
 	REG(UFSHC_UTRLBAU) = 0;
 	REG(UFSHC_UTRLRSR) = 1;
@@ -217,6 +259,60 @@ rung_only_while_in(void)
 	CHECK(ufshc_read(0, 0, out, sizeof(out)) == 0 && commands == 1, "and rung when all is as it should be");
 	hc_in = false;
 	CHECK(ufshc_read(0, 0, out, sizeof(out)) == ENXIO && commands == 1, "nor once the list is out");
+}
+
+/* several slots: as many reads in flight as there are slots, done in whatever order, the bytes in theirs */
+static void
+reads_in_flight(void)
+{
+	static uint8_t out[10 * BUFFER + 100];
+	bool used[MOST] = { false };
+	unsigned slots_used = 0;
+
+	in_with(4);
+	backwards = true;                       /* (the last rung done first) */
+	delay_us = 2000;
+	CHECK(ufshc_read(0, 3 * BLOCK + 100, out, sizeof(out)) == 0, "read: %s", log_text);
+	CHECK(is_unit(0, 3 * BLOCK + 100, out, sizeof(out)), "all of it, in its order");
+	CHECK(commands == 11, "a bufferful a command: %u", commands);
+	for (unsigned i = 0; i < commands && i < 64; i++) {
+		slots_used += !used[asked[i].slot];
+		used[asked[i].slot] = true;
+	}
+	CHECK(hc_most_in_flight == 4 && slots_used == 4, "four in flight at once, through the four slots: %llu, %u",
+	    (unsigned long long)hc_most_in_flight, slots_used);
+	CHECK(asked[0].lba > asked[3].lba || asked[1].lba > asked[2].lba, "and done out of order: %u %u %u %u", asked[0].lba,
+	    asked[1].lba, asked[2].lba, asked[3].lba);
+	CHECK(doorbells == commands, "each slot rung once, by its own bit: %u doorbells", doorbells);
+	CHECK(hc_free == 0xf && hc_in_flight == 0 && hc_waiting == 0, "all free again: %#x", hc_free);
+}
+
+/* two readers at once, with fewer slots than both would take: each gets its own bytes */
+static void *
+reader(void *lun)
+{
+	static uint8_t out[2][6 * BUFFER];
+	uintptr_t n = (uintptr_t)lun;
+
+	return ufshc_read((uint8_t)(n ? 3 : 0), n * BUFFER + 512, out[n ? 1 : 0], sizeof(out[0])) == 0 &&
+	       is_unit((uint8_t)(n ? 3 : 0), n * BUFFER + 512, out[n ? 1 : 0], sizeof(out[0])) ? (void *)1 : NULL;
+}
+
+static void
+two_readers(void)
+{
+	pthread_t a, b;
+	void *ok_a, *ok_b;
+
+	in_with(3);
+	delay_us = 500;
+	pthread_create(&a, NULL, reader, (void *)0);
+	pthread_create(&b, NULL, reader, (void *)1);
+	pthread_join(a, &ok_a);
+	pthread_join(b, &ok_b);
+	CHECK(ok_a != NULL && ok_b != NULL, "both read what they asked for: %s", log_text);
+	CHECK(hc_most_in_flight <= 3 && hc_free == 0x7 && hc_in_flight == 0, "never more than the slots: %llu",
+	    (unsigned long long)hc_most_in_flight);
 }
 
 /* an answer that is not good: an error, counted, and nothing copied */
@@ -270,7 +366,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "a_read", a_read }, { "a_long_read", a_long_read }, { "rung_only_while_in", rung_only_while_in },
-		{ "a_bad_answer", a_bad_answer }, { "a_slow_controller", a_slow_controller }, { "not_usable", not_usable },
+		{ "a_bad_answer", a_bad_answer }, { "reads_in_flight", reads_in_flight }, { "two_readers", two_readers }, { "a_slow_controller", a_slow_controller }, { "not_usable", not_usable },
 	};
 
 	if (argc < 2) {
