@@ -28,12 +28,18 @@ The optional Wi-Fi build script (`kernel/lx/build.sh`) fetches Linux's ath11k
 Those fetched sources are not in this repository. The current Renoir configuration does not link
 an external Wi-Fi object.
 
+The Bluetooth controller's firmware is sent as Linux's `drivers/bluetooth/btqca.c` sends it (the files' TLV and ELF
+forms, the segments of the vendor command 0xfc00, which answers a download mode leaves out): `board/bt_qca.h` is written
+from what that driver does, not from its code.
+
 ## Other ports of Darwin to phones
 
 What other ports found about Darwin's own side -- what its daemons ask a driver and what they do with the answer --
 is credited where it is used, in the comment beside the code and in the commit: the OnePlus Nord 2 (MediaTek) port of
 iOS, `frxncyyy/ios-denniz`, branch `nord2-port-20261116` (its kernel pieces under APSL-2.0, its own credits in its
-LICENSES-AND-CREDITS.md). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
+LICENSES-AND-CREDITS.md), and through it HakiOS's MediaTek port: what bluetoothd opens and asks of a controller
+(`board/bt_hci.h`, `board/bt_host.c`, `iokit/Kernel/BoardBluetooth.cpp`), Wi-Fi's RSSI bounds, the sandbox's
+extensions, the application log's name alone. Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
 is taken; nor its device data.
 
 ## Excluded from this repository
