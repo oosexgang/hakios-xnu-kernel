@@ -61,12 +61,14 @@ BLUETOOTH
 F:	drivers/board/bt_uart.c
 F:	drivers/board/bt_host.c
 F:	drivers/board/bt_hci.h
+F:	drivers/board/bt_qca.h
 F:	drivers/iokit/BoardBluetooth.cpp
 F:	include/board/bt.h
 T:	workbench/bt_uart_test.c
 T:	workbench/bt_hci_test.c
+T:	workbench/bt_qca_test.c
 D:	Documentation/drivers.md
-K:	bluetooth-wcn-uart; bt=, bt_quirks=
+K:	bluetooth-wcn-uart; bt=, bt_fw=, bt_quirks=
 
 BOARDS AND DEVICE PACKAGES
 F:	arch/arm64/boot/dts/
