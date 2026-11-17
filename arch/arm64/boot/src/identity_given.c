@@ -18,6 +18,7 @@
 #define IDENTITY_BLOB_MAGIC     0x544e4449u     /* "IDNT" */
 #define IDENTITY_SECTIONS       4
 #define IDENTITY_MAX_PROPS      128             /* in one section: an iPhone's /product has some sixty */
+#define IDENTITY_MOST           0x8000          /* bytes of a blob at most: half the device tree's room */
 
 struct identity_set {
 	const struct identity_prop *props;
@@ -139,6 +140,12 @@ identity_choose(const uint8_t *blob, uint32_t size, struct identity_view *v)
 {
 	identity_built_in(v);
 	if (blob == 0) {
+		return;
+	}
+	if (size > IDENTITY_MOST) {
+		/* (the device tree has 64 KB, the loader's own nodes some 15 of them: an identity has half of it at most) */
+		print("identity: the payload's is %d bytes, more than the %d there is room for: the one built in\n", (uint64_t)size,
+		    (uint64_t)IDENTITY_MOST);
 		return;
 	}
 	if (identity_from_blob(blob, size, v)) {

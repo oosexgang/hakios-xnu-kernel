@@ -7,13 +7,30 @@
 
 struct dt_writer {
 	uint8_t *base, *cur;
+	uint8_t *end;         /* the room's end (0: no limit); what would go past it is not written */
 	uint32_t *counts[16]; /* [depth] -> {nProperties, nChildren} of the open node */
 	int depth;
+	int overflow;         /* something did not fit: the tree is not to be used (run.c does not start the kernel) */
 };
+
+static uint32_t dt_spare[2]; /* (the counts of a node that did not fit, so that its properties count somewhere) */
+
+/* Room for N more bytes; when there is none, the writer says so for good */
+static int
+dt_room(struct dt_writer *w, uint64_t n)
+{
+	if (!w->overflow && w->end != 0 && (uint64_t)(w->end - w->cur) < n) {
+		w->overflow = 1;
+	}
+	return !w->overflow;
+}
 
 static void
 dt_prop(struct dt_writer *w, const char *name, const void *data, uint32_t len)
 {
+	if (!dt_room(w, 36 + (((uint64_t)len + 3) & ~3ULL))) {
+		return;
+	}
 	memset(w->cur, 0, 32);
 	memcpy(w->cur, name, str_len(name));
 	*(uint32_t *)(w->cur + 32) = len;
@@ -113,6 +130,10 @@ dt_begin(struct dt_writer *w, const char *name)
 {
 	if (w->depth > 0) {
 		w->counts[w->depth - 1][1]++;
+	}
+	if (!dt_room(w, 8)) {
+		w->counts[w->depth++] = dt_spare;
+		return;
 	}
 	w->counts[w->depth++] = (uint32_t *)w->cur;
 	memset(w->cur, 0, 8);

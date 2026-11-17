@@ -94,6 +94,12 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t rd1_pa = 0, rd1_size = 0;
 
 	if (pi.resident_rd != 0) {
+		/* (the payload's word for a root image already in memory, QEMU's: it lies inside the RAM given to the kernel, or the
+		 * kernel would be told of one past it -- and the USB commands that read and patch it would go there too) */
+		if (pi.resident_rd > win_size || RESIDENT_RD_OFFSET + pi.resident_rd > win_size) {
+			print("rdres %x: past the RAM given to the kernel (%x bytes): not started\n", pi.resident_rd, win_size);
+			return 0;
+		}
 		resident_rd_size = pi.resident_rd;
 	}
 	if (resident_rd_size != 0) {
@@ -348,7 +354,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 
 	/* --- device tree ---------------------------------------------------- */
 	const struct platform *plat = PLAT;
-	struct dt_writer w = { .base = (uint8_t *)dt_pa, .cur = (uint8_t *)dt_pa, .depth = 0 };
+	struct dt_writer w = { .base = (uint8_t *)dt_pa, .cur = (uint8_t *)dt_pa, .end = (uint8_t *)dt_pa + dt_max, .depth = 0 };
 	uint64_t cntfrq = READ_SYSREG(CNTFRQ_EL0);
 	uint64_t ranges[3] = { 0, plat->io_base, plat->io_size };
 	uint64_t reg2[2];
@@ -635,6 +641,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 
 	dt_end(&w);
 
+	if (w.overflow) {
+		/* (boot_args are right after its room: a tree that went on would have written over them) */
+		print("the device tree does not fit its %x bytes: the kernel is not started\n", dt_max);
+		return 0;
+	}
 	uint32_t dt_len = (uint32_t)(w.cur - w.base);
 	ba->deviceTreeP = dt_pa - slide;
 	ba->deviceTreeLength = dt_len;
