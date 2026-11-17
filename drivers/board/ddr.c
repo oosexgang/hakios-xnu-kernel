@@ -156,31 +156,38 @@ cmd_db_address(const char *name)
 	return entry != NULL ? entry->address : 0;
 }
 
-/* A request through command slot set 0, and the wait until RPMh has done it (board/rpmh.h); what went wrong is said. */
-static bool
-ddr_rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
+/* A request through command slot set 0, and the wait until RPMh has done it (board/rpmh.h); what went wrong is said, and returned. */
+static const char *
+ddr_rpmh_send(const uint32_t *address, const uint32_t *data, unsigned count)
 {
 	const char *problem = hakios_rpmh_send(ddr_rsc + hakios_board()->rpmh.tcs_offset, address, data, count);
 
 	if (problem != NULL) {
 		tell("ddr: RPMh: %s\n", problem);
 	}
-	return problem == NULL;
+	return problem;
 }
 
 static bool
+ddr_rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
+{
+	return ddr_rpmh_send(address, data, count) == NULL;
+}
+
+static const char *
 ddr_vote(uint32_t vote)
 {
 	uint32_t address[3] = { ddr_mc0, ddr_sh0, ddr_acv };
 	uint32_t data[3] = { BCM_VOTE(vote, vote), BCM_VOTE(vote, vote), BCM_VOTE(0, BCM_ACV_APPS) };
 
-	return ddr_rpmh_write(address, data, 3);
+	return ddr_rpmh_send(address, data, 3);
 }
 
 static void
 ddr_raise(void)
 {
 	uint32_t vote = 0x3fff;
+	const char *problem;
 
 	PE_parse_boot_argn("ddr_vote", &vote, sizeof(vote));
 	ddr_mc0 = cmd_db_address("MC0");
@@ -192,9 +199,15 @@ ddr_raise(void)
 	}
 	ddr_rsc = ml_io_map(hakios_board()->rpmh.rsc, RSC_SIZE);
 	hakios_rpmh_lock();
-	ddr_voted = ddr_vote(vote);
+	problem = ddr_vote(vote);
 	hakios_rpmh_unlock();
-	tell("ddr: memory bandwidth vote %u on MC0 (%#x) and SH0 (%#x)%s\n", vote, ddr_mc0, ddr_sh0, ddr_voted ? "" : ": FAILED");
+	/*
+	 * A request without an answer was triggered all the same, and may well be in force: it is given back at the run's end
+	 * like one that was answered (else the loader and the next kernel run with the memory at its top)
+	 */
+	ddr_voted = problem == NULL || problem == RPMH_SAYS_NO_ANSWER;
+	tell("ddr: memory bandwidth vote %u on MC0 (%#x) and SH0 (%#x)%s\n", vote, ddr_mc0, ddr_sh0,
+	    problem == NULL ? "" : ddr_voted ? ": FAILED, or perhaps not: given back at the run's end all the same" : ": FAILED");
 }
 
 /* On the way back to the loader (osfmk/arm64/loader_return.c: loader_return(), whatever the reason; the other processors are stopped) */

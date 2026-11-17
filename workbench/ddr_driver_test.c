@@ -235,11 +235,12 @@ no_answer(void)
 	boot_args = "";
 	rsc.deaf = true;
 	hakios_ddr_init(true);
-	CHECK(logged("ddr: RPMh: no answer to the request") && logged("SH0 (0x50004): FAILED"), "said: %s", log_text);
+	CHECK(logged("ddr: RPMh: no answer to the request") && logged("SH0 (0x50004): FAILED, or perhaps not"), "said: %s", log_text);
 	CHECK(locks == 1 && unlocks == 1, "the slot set is given back all the same");
 	as_found();
 	hakios_ddr_quiesce();
-	CHECK(rsc.triggers == 1, "nothing more is sent on the way out");
+	/* (the request was triggered: it may be in force, and is given back like one that was answered) */
+	CHECK(rsc.triggers == 2, "the vote for the loader is sent on the way out all the same: %u triggers", rsc.triggers);
 }
 
 /* the slot set is somebody's and stays so: nothing is written into it */
