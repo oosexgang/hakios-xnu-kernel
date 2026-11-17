@@ -887,7 +887,7 @@ step_rails(void)
 	known = hakios_spmi_map(&arb);
 	printf("wifi: %u: arbiter version %#x, %u channels\n", step, arb.version, arb.channels);
 	if (!known) {
-		printf("wifi: %u: this knows version 5 of the arbiter only: the supplies are not read\n", step);
+		printf("wifi: %u: this knows versions 5 and 8 of the arbiter only: the supplies are not read\n", step);
 		return true;
 	}
 

@@ -40,8 +40,13 @@
  *   4  read how the keys' inputs are set up, and what they say now
  *   5  watch them                                       (the default)
  *
+ * The power-on block is of either kind Linux's pm8941-pwrkey.c reads: the one split in two of the PMK8350 and
+ * after ("generation 3": its half for the operating system, the keys in bits 7 and 6 of its status), or the one of
+ * before (the PM8998's and the PM8150's, "generations" 1 and 2: the keys in bits 0 and 1). Which it is, its subtype
+ * says at step 3.
+ *
  * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (arbiter version 5),
- * drivers/input/misc/pm8941-pwrkey.c (the "pmk8350" kind), drivers/pinctrl/qcom/pinctrl-spmi-gpio.c,
+ * drivers/input/misc/pm8941-pwrkey.c (every kind of it), drivers/pinctrl/qcom/pinctrl-spmi-gpio.c,
  * and the phone's own device tree (qcom,spmi@c440000, pon_hlos@1300, gpio_keys).
  */
 #include <kern/clock.h>
@@ -176,11 +181,19 @@ find_channel(struct peripheral *p)
 #define REG_INT_LATCHED         0x18
 #define REG_INT_PENDING         0x19
 
-/* the power-on block, of the kind that is split in two ("generation 3"): this is its half for the operating system */
+/*
+ * the power-on block: of the kind that is split in two ("generation 3"), its half for the operating system; or the
+ * primary one of before (generations 1 and 2). Its subtype says which, and where the keys are in its status.
+ */
 #define PON_TYPE                0x01
-#define PON_SUBTYPE_HLOS        0x09
-#define PON_KPDPWR              0x80            /* in the status and in the interrupt registers */
-#define PON_RESIN               0x40
+#define PON_SUBTYPE_PRIMARY     0x01
+#define PON_SUBTYPE_GEN2_PRIMARY 0x04
+#define PON_SUBTYPE_GEN3_HLOS   0x09
+#define PON_GEN3_KPDPWR         0x80            /* in the status and in the interrupt registers */
+#define PON_GEN3_RESIN          0x40
+#define PON_KPDPWR_BEFORE       0x01            /* generations 1 and 2 */
+#define PON_RESIN_BEFORE        0x02
+static uint8_t pon_kpdpwr = PON_GEN3_KPDPWR, pon_resin = PON_GEN3_RESIN;   /* (the block's, from step 3) */
 
 /* a GPIO of the low or medium voltage kind */
 #define GPIO_TYPE               0x10
@@ -267,8 +280,8 @@ buttons_poll(void)
 	if (power.usable || volume_down.usable) {
 		problem = spmi_read(&pon, REG_RT_STATUS, &status, 1);
 		if (problem == NULL) {
-			button_look(&power, status & PON_KPDPWR);
-			button_look(&volume_down, status & PON_RESIN);
+			button_look(&power, status & pon_kpdpwr);
+			button_look(&volume_down, status & pon_resin);
 		} else if (said < 8) {
 			said++;
 			printf("buttons: reading %s: %s\n", pon.name, problem);
@@ -287,7 +300,7 @@ buttons_poll(void)
 
 /* Step 3: is each peripheral what the registers above are those of? */
 static bool
-identify(const struct peripheral *p, uint8_t type, uint8_t subtype_from, uint8_t subtype_to)
+identify(const struct peripheral *p, uint8_t type, uint8_t subtype_from, uint8_t subtype_to, uint8_t *subtype)
 {
 	const char *problem;
 	uint8_t is[2];
@@ -307,6 +320,33 @@ identify(const struct peripheral *p, uint8_t type, uint8_t subtype_from, uint8_t
 		    subtype_from, subtype_to);
 		return false;
 	}
+	if (subtype != NULL) {
+		*subtype = is[1];
+	}
+	return true;
+}
+
+/* Step 3 for the power-on block: one of the kinds above, and where its keys are, by its subtype */
+static bool
+pon_identify(void)
+{
+	uint8_t subtype;
+
+	if (!identify(&pon, PON_TYPE, PON_SUBTYPE_PRIMARY, PON_SUBTYPE_GEN3_HLOS, &subtype)) {
+		return false;
+	}
+	if (subtype == PON_SUBTYPE_GEN3_HLOS) {
+		pon_kpdpwr = PON_GEN3_KPDPWR, pon_resin = PON_GEN3_RESIN;
+	} else if (subtype == PON_SUBTYPE_PRIMARY || subtype == PON_SUBTYPE_GEN2_PRIMARY) {
+		pon_kpdpwr = PON_KPDPWR_BEFORE, pon_resin = PON_RESIN_BEFORE;
+	} else {
+		/* (a secondary block, or the half that is not the operating system's: no keys there) */
+		printf("buttons: ... a power-on block of subtype %#x, which has no keys this driver reads: left alone\n", subtype);
+		return false;
+	}
+	printf("buttons: ... a power-on block of %s: power in bit %u of its status, volume down in bit %u\n",
+	    subtype == PON_SUBTYPE_GEN3_HLOS ? "generation 3" : "before generation 3", (unsigned)__builtin_ctz(pon_kpdpwr),
+	    (unsigned)__builtin_ctz(pon_resin));
 	return true;
 }
 
@@ -328,12 +368,12 @@ pon_inputs(void)
 		return;
 	}
 	printf("buttons: power-on block: status %#x (power %s, volume down %s); interrupts: edge %#x, high %#x, low %#x, "
-	    "enabled %#x, latched %#x, pending %#x\n", r[0], (r[0] & PON_KPDPWR) ? "HELD" : "released",
-	    (r[0] & PON_RESIN) ? "HELD" : "released", r[REG_INT_SET_TYPE - REG_RT_STATUS], r[REG_INT_POLARITY_HIGH - REG_RT_STATUS],
+	    "enabled %#x, latched %#x, pending %#x\n", r[0], (r[0] & pon_kpdpwr) ? "HELD" : "released",
+	    (r[0] & pon_resin) ? "HELD" : "released", r[REG_INT_SET_TYPE - REG_RT_STATUS], r[REG_INT_POLARITY_HIGH - REG_RT_STATUS],
 	    r[REG_INT_POLARITY_LOW - REG_RT_STATUS], r[REG_INT_ENABLED - REG_RT_STATUS], more[0], more[1]);
 	power.usable = volume_down.usable = true;
-	power.last = r[0] & PON_KPDPWR;
-	volume_down.last = r[0] & PON_RESIN;
+	power.last = r[0] & pon_kpdpwr;
+	volume_down.last = r[0] & pon_resin;
 }
 
 /* Step 4 for the pin: it is volume up only if it is an input with a pull-up, and switched on. */
@@ -392,7 +432,7 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	known = hakios_spmi_map(&arb);
 	printf("buttons: PMIC arbiter version %#x, %u channels\n", arb.version, arb.channels);
 	if (!known) {
-		printf("buttons: this driver knows version 5 of the arbiter only: no buttons\n");
+		printf("buttons: this driver knows versions 5 and 8 of the arbiter only: no buttons\n");
 		goto out;
 	}
 	if (steps < 2) {
@@ -407,8 +447,8 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	}
 
 	printf("buttons: step 3: the first transfers on the SPMI bus\n");
-	pon_known = identify(&pon, PON_TYPE, PON_SUBTYPE_HLOS, PON_SUBTYPE_HLOS);
-	pin_known = identify(&pin, GPIO_TYPE, GPIO_SUBTYPE_LV, GPIO_SUBTYPE_MV_VIN3);
+	pon_known = pon_identify();
+	pin_known = identify(&pin, GPIO_TYPE, GPIO_SUBTYPE_LV, GPIO_SUBTYPE_MV_VIN3, NULL);
 	if (steps < 4) {
 		goto out;
 	}

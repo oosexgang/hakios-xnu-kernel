@@ -404,6 +404,47 @@ another_part_at_the_pin(void)
 	no_write();
 }
 
+/* a power-on block of before generation 3 (a PM8998's, a PM8150's: subtype 1 or 4): its keys in bits 0 and 1 */
+static void gen2_power_down(void) { set_pon(0x01); }
+static void gen2_volume_down_down(void) { set_pon(0x02); }
+
+static void
+pon_before_generation_3(uint8_t subtype)
+{
+	phone("phone-cmd");
+	pon_model.reg[0x05] = subtype;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	CHECK(logged("a power-on block of before generation 3: power in bit 0 of its status, volume down in bit 1"),
+	    "said: %s", log_text);
+	press_and_release(gen2_power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(gen2_volume_down_down, pon_up, HAKIOS_BUTTON_VOLUME_DOWN, "volume down");
+	set_pon(PON_KPDPWR | PON_RESIN);        /* (generation 3's bits: nothing, on this kind) */
+	usleep(200 * 1000);
+	CHECK(posts() == 4, "the bits of generation 3 are not this block's keys (%u records)", posts());
+	no_write();
+}
+static void pon_generation_2(void) { pon_before_generation_3(0x04); }
+static void pon_generation_1(void) { pon_before_generation_3(0x01); }
+
+/* a power-on block without keys (a secondary one, subtype 5) is left alone; volume up still works */
+static void
+pon_without_keys(void)
+{
+	phone("phone-cmd");
+	pon_model.reg[0x05] = 0x05;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching volume-up,"), 3000);
+	CHECK(logged("a power-on block of subtype 0x5, which has no keys this driver reads: left alone"), "said: %s", log_text);
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
+	set_pon(0x03);
+	usleep(200 * 1000);
+	CHECK(posts() == 2, "nothing believed of that block (%u records)", posts());
+	no_write();
+}
+
 /* a pin that is not an enabled input with a pull-up is not made one: that would be a write to the PMIC */
 static void
 pin_not_set_up(void)
@@ -459,7 +500,7 @@ another_arbiter(void)
 	boot_args = "buttons=1";
 	hakios_buttons_init();
 	WAIT_FOR(logged("no buttons"), 3000);
-	CHECK(logged("this driver knows version 5 of the arbiter only"), "said in the log: %s", log_text);
+	CHECK(logged("this driver knows versions 5 and 8 of the arbiter only"), "said in the log: %s", log_text);
 	usleep(100 * 1000);
 	CHECK(spmi.transfers == 0, "not one transfer on the bus (%u)", spmi.transfers);
 	no_write();
@@ -581,6 +622,7 @@ main(int argc, char **argv)
 		{ "power_held_at_start", power_held_at_start },
 		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
+		{ "pon_generation_2", pon_generation_2 }, { "pon_generation_1", pon_generation_1 }, { "pon_without_keys", pon_without_keys },
 		{ "pin_not_set_up", pin_not_set_up }, { "pin_pulled_down", pin_pulled_down },
 		{ "pin_an_output", pin_an_output }, { "pin_switched_off", pin_switched_off }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
