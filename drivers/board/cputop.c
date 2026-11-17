@@ -68,7 +68,7 @@ cputop_thread(void *arg __unused, wait_result_t w __unused)
 	for (;;) {
 		uint64_t all = 0, ns;
 		uint32_t gone = 0;
-		char line[640];
+		char line[640] = "";            /* (said as it is when no process took any time: empty, not whatever was there) */
 		int at = 0;
 
 		delay_for_interval(cputop_seconds * 1000, NSEC_PER_MSEC);
