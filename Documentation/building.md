@@ -18,7 +18,9 @@ make check
 Runs the lint, validates the device packages that are present, checks that
 `Documentation/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
 or Darwin: the tests run against three stand-in phones in `workbench/devices/`. CI runs the same on every push, plus
-`kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
+`kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. It runs the same in the tree a release's
+tarball unpacks to, which has no git: the checks go over the files the release lists (`.tracked-files`,
+`tools/files.py`). Debian/Ubuntu packages for everything optional:
 
 ```sh
 sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev
