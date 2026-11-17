@@ -26,6 +26,7 @@ The boot arguments are the board's own (`boot { }` of its `board.dts`) and then 
 make image DEVICE=mido DEFCONFIG=phone_look       # the kernel and the loader already built
 make phone FROM=https://git.example/you/mido.git  # or all of it: the package, the kernel, the loader, the image
 tools/image.py build --board mido --defconfig phone_bt --out /some/where
+make images DEVICE=mido                            # one for each run (phone_* defconfigs): build/images/mido/RUN/
 ```
 
 ## Booting one

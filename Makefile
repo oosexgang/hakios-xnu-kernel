@@ -15,6 +15,7 @@ help:
 	@echo "make phone FROM=URL [DEVICE=NAME]   the phone's package brought in, then the kernel built for it"
 	@echo "make image [DEVICE=NAME] [DEFCONFIG=NAME]   one image of the loader, the kernel and the boot arguments (build/images/NAME)"
 	@echo "make publish DEVICE=NAME REPO=DIR   that image into a phone's own repository (images/), without Apple's data"
+	@echo "make images [DEVICE=NAME]   one image for each run of a phone (phone_* defconfigs), build/images/NAME/RUN/"
 	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
 	@echo "make test           host tests of kernel drivers and of the tools (workbench/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
@@ -69,6 +70,10 @@ loader:
 .PHONY: image
 image:
 	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) --kernel $(KERNEL)
+
+.PHONY: images
+images:
+	tools/image.py build --every-run $(if $(DEVICE),--board $(DEVICE)) --kernel $(KERNEL)
 
 .PHONY: publish
 publish:

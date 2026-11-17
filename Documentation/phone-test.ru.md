@@ -63,7 +63,8 @@ Bluetooth на Snapdragon здесь новый и на телефоне ещё 
 
 ## 3. Один образ, без ./bench
 
-То же ядро одним файлом, как его загрузит любой ([images.md](images.md)):
+`make images DEVICE=ИМЯ` собирает сразу по образу на каждый прогон (`build/images/ИМЯ/phone_bt/` и т.д.). То же ядро
+одним файлом, как его загрузит любой ([images.md](images.md)):
 
 ```sh
 make image DEVICE=ИМЯ DEFCONFIG=phone_bt
