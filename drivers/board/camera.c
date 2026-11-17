@@ -3077,7 +3077,8 @@ capture_sensor(void)
 #define RDI0_SOF                (1u << 27)      /* IFE_IRQ_STATUS0 (cam_vfe_lite16x.h: sof_irq_mask of RDI 0) */
 #define WM0_DONE                1u              /* BUS_IRQ_STATUS1 */
 
-enum { PLACE_FREE, PLACE_WRITING, PLACE_READY, PLACE_READING };
+/* QUEUED: the address given for the next frame, which the IFE takes at the next SOF -- not a reader's to take meanwhile */
+enum { PLACE_FREE, PLACE_WRITING, PLACE_READY, PLACE_READING, PLACE_QUEUED };
 
 static LCK_GRP_DECLARE(darwin_lck_grp, "hakios-camera");
 static LCK_MTX_DECLARE(darwin_lock, &darwin_lck_grp);
@@ -3270,6 +3271,7 @@ darwin_start(void)
 		lck_mtx_lock(&darwin_lock);
 		for (int i = 0; i < RING; i++) {
 			place[i].state = PLACE_FREE;
+			place[i].sequence = 0;            /* (numbered afresh: see the SOF's choice of the next place) */
 		}
 		place[0].state = PLACE_WRITING;
 		lck_mtx_unlock(&darwin_lock);
@@ -3294,6 +3296,7 @@ darwin_start(void)
 	lck_mtx_lock(&darwin_lock);
 	for (int i = 0; i < RING; i++) {
 		place[i].state = PLACE_FREE;
+		place[i].sequence = 0;            /* (numbered afresh: see the SOF's choice of the next place) */
 	}
 	place[0].state = PLACE_WRITING;
 	lines = darwin_ask.lines;
@@ -3395,6 +3398,7 @@ darwin_session(void)
 				}
 			}
 			if (next >= 0) {
+				place[next].state = PLACE_QUEUED;       /* (a reader that came now would read what the IFE writes over) */
 				blk_put(ife, "IFE", WM0_IMAGE_ADDR, (uint32_t)(FRAME_ADDRESSES + (uint64_t)next * ring_place_bytes), false);
 				blk_put(ife, "IFE", IFE_REG_UPDATE, 0x2, false);
 			}
