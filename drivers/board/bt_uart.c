@@ -1,5 +1,7 @@
 /*
- * Qualcomm Bluetooth on a QUP GENI UART, H4 identification only. No firmware loader or Darwin device.
+ * Qualcomm Bluetooth on a QUP GENI UART: power, the UART, H4 identification and, a level further, the controller
+ * handed to Darwin (board/bt_host.c: bluetoothd's service, nodes, Skywalk channel and kernel control), H4
+ * packets either way through the UART. No firmware loader: the controller runs what its ROM has.
  * Wiring and resource names come from bluetooth { } and the SoC file. Register layouts and HCI
  * framing: Linux drivers/tty/serial/qcom_geni_serial.c, drivers/soc/qcom/qcom-geni-se.c,
  * drivers/pinctrl/qcom/pinctrl-spmi-gpio.c and drivers/bluetooth/btqca.{c,h}.
@@ -8,7 +10,9 @@
 #include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
+#include <sys/board/bt.h>
 #include <sys/board/input.h>
+#include <sys/errno.h>
 
 #include "kernel.h"
 #include "board.h"
@@ -17,6 +21,7 @@
 #include "log.h"
 #include "cmd_db.h"
 #include "spmi.h"
+#include "bt_hci.h"
 
 static vm_offset_t se, gcc, tlmm, wrapper, db, rsc_base, enable_read, enable_write;
 static bool returning, enable_changed, uart_changed, pins_changed, rcg_changed;
@@ -333,19 +338,29 @@ uart_init(unsigned sampling, bool flow)
 static bool
 transmit(const uint8_t *bytes, unsigned length)
 {
+	uint32_t depth = (rd(SE(0xe24)) >> 16) & 0x3f;  /* (at least four words: uart_init() refused fewer) */
+
 	wr(SE(0x618), 0xffffffff);
 	wr(SE(0x270), length);
 	wr(SE(0x600), START);
-	/* The only commands are at most five bytes; the verified FIFO has at least four words. */
+	/* A word at a time, each once the FIFO has room for it: a packet of Darwin's is longer than the FIFO. */
 	for (unsigned i = 0; i < length; i += 4) {
 		uint32_t word = 0;
 
 		for (unsigned j = 0; j < 4 && i + j < length; j++) {
 			word |= (uint32_t)bytes[i + j] << (8 * j);
 		}
+		for (unsigned tries = 0; (rd(SE(0x800)) & 0xfffffff) >= depth; tries++) {
+			if (tries >= 1000) {
+				hakios_say("bt-uart: TX FIFO stays full\n");
+				return false;
+			}
+			sleep_us(100);
+		}
 		wr(SE(0x700), word);
 	}
-	for (unsigned i = 0; i < 1000; i++) {
+	/* (at 115200 baud a byte takes 87 us: the longest packet's last word leaves in about 90 ms) */
+	for (unsigned i = 0; i < 1000 + length; i++) {
 		uint32_t status = rd(SE(0x610));
 
 		if (status & M_ERRORS) {
@@ -588,6 +603,68 @@ bt_cleanup(void)
 	}
 }
 
+/* ---- bt=2: the controller, once it has answered, Darwin's (board/bt_host.c carries the packets) ------------- */
+
+static int
+controller_send(const uint8_t *h4, unsigned length)
+{
+	return transmit(h4, length) ? 0 : EIO;
+}
+
+/*
+ * Out of step with the controller: what is left of the FIFO's word and what comes until the line has been quiet for
+ * 5 ms is thrown away, so that the next byte read is, as like as not, the start of a packet. -1.
+ */
+static int
+out_of_step(void)
+{
+	unsigned dropped = rx_left;
+	uint8_t byte;
+
+	rx_left = 0;
+	while (dropped < 65536 && receive_byte(&byte, now_us() + 5000)) {
+		dropped++;
+	}
+	hakios_say("bt-uart: %u more bytes thrown away to be in step again\n", dropped);
+	return -1;
+}
+
+/* A whole H4 packet from the controller: its type within WAIT_MS, the rest within 200 ms of it; -1: out of step */
+static int
+controller_receive(uint8_t *h4, unsigned room, unsigned wait_ms)
+{
+	uint64_t deadline = now_us() + wait_ms * 1000ull;
+	unsigned have = 0, length = 0, header;
+
+	if (room < 5 || !receive_byte(&h4[0], deadline)) {
+		return 0;
+	}
+	have = 1;
+	/* (what a controller sends: ACL 2, SCO 3, an event 4, ISO 5; its header has the length) */
+	header = h4[0] == BT_H4_EVENT ? 3 : h4[0] == BT_H4_SCO ? 4 : h4[0] == BT_H4_ACL || h4[0] == BT_H4_ISO ? 5 : 0;
+	if (header == 0) {
+		hakios_say("bt-uart: a byte %#x from the controller where a packet was to begin: out of step\n", h4[0]);
+		return out_of_step();
+	}
+	deadline = now_us() + 200000;
+	while (have < header || have < (length = bt_h4_length(h4, have))) {
+		if (length > room) {
+			hakios_say("bt-uart: a packet of %u bytes from the controller, room for %u: out of step\n", length, room);
+			return out_of_step();
+		}
+		if (!receive_byte(&h4[have], deadline)) {
+			hakios_say("bt-uart: a packet from the controller cut short after %u bytes\n", have);
+			return out_of_step();
+		}
+		have++;
+	}
+	return (int)have;
+}
+
+static const struct board_bt_controller qualcomm_uart = {
+	.name = "the Qualcomm controller on the UART", .send = controller_send, .receive = controller_receive,
+};
+
 void
 hakios_bt_uart_quiesce(void)
 {
@@ -650,6 +727,15 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 		goto failed;
 	}
 	hakios_say("bt-uart: identification complete; no firmware downloaded\n");
+	if (mode == 2) {
+		int error = board_bt_start(&qualcomm_uart);
+
+		if (error != 0) {
+			hakios_say("bt-uart: not handed to Darwin (%d)\n", error);
+			goto failed;
+		}
+		hakios_say("bt-uart: the controller is Darwin's from here on\n");
+	}
 	goto done;
  failed:
 	hakios_say("bt-uart: bring-up stopped; powering down\n");
@@ -665,8 +751,9 @@ hakios_bt_uart_init(void)
 	int mode = 0;
 	thread_t thread;
 
-	/* boot-arg bt=-1: read and log only; bt=1: power, UART and HCI identification; bt=0/absent: off. */
-	if (!PE_parse_boot_argn("bt", &mode, sizeof(mode)) || (mode != -1 && mode != 1)) {
+	/* boot-arg bt=-1: read and log only; bt=1: power, UART and HCI identification; bt=2: then the controller
+	 * Darwin's (bluetoothd's); bt=0/absent: off. */
+	if (!PE_parse_boot_argn("bt", &mode, sizeof(mode)) || (mode != -1 && mode != 1 && mode != 2)) {
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_BLUETOOTH_WCN_UART)) {

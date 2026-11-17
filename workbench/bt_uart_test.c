@@ -15,9 +15,9 @@ static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_sta
 static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
-static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event;
-static uint8_t tx[8], rx[512];
-static unsigned tx_size, rx_size, rx_pos;
+static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event, darwins_turn;
+static uint8_t tx[1100], rx[2048];
+static unsigned tx_size, rx_size, rx_pos, fifo_words, done_after;
 static struct { uint32_t address, value; } votes[128];
 static int failures;
 extern char log_text[];
@@ -60,6 +60,12 @@ peer(void)
 	static const uint8_t version[] = { 4, 0xff, 14, 0, 2, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
 	static const uint8_t complete[] = { 4, 0x0e, 16, 1, 0, 0xfc, 0, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
 	bool loopback = (engine[0x22c / 4] & 1) != 0;
+	if (darwins_turn) {
+		/* (Darwin's packets: kept in tx for the scenario to look at; done once each byte has had a look's time to leave) */
+		engine[0x610 / 4] = 1;
+		done_after = tx_size;
+		return;
+	}
 	if (loopback) {
 		static const uint8_t probe[] = { 0x55, 0xa5, 0x0f, 0xf0, 0x3c };
 		loopbacks++;
@@ -144,6 +150,18 @@ hakios_test_rd(vm_offset_t address)
 		if (reg == 0x640 && rx_error) {
 			return 1u << 24;
 		}
+		if (reg == 0x800) {
+			/* the TX FIFO: the words written and not yet gone, a byte going for each look (a word for four) */
+			static unsigned looks;
+			unsigned words = fifo_words;
+
+			fifo_words -= fifo_words > 0 && ++looks % 4 == 0;
+			return words;
+		}
+		if (reg == 0x610 && done_after > 0) {
+			done_after--;           /* (at 115200 baud a byte takes 87 us: about one of the driver's looks) */
+			return 0;
+		}
 		return engine[reg / 4];
 	}
 	if (address == b->bluetooth.wrapper + 4) {
@@ -198,6 +216,8 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 			rx_cancels += value == 1u << 2;
 			engine[reg / 4] = value;
 		} else if (reg == 0x700) {
+			CHECK(fifo_words < 16, "a word written to a full TX FIFO");
+			fifo_words++;
 			for (unsigned i = 0; i < 4 && tx_size < engine[0x270 / 4]; i++) {
 				CHECK(tx_size < sizeof(tx), "TX buffer bounds");
 				if (tx_size < sizeof(tx)) {
@@ -267,6 +287,17 @@ vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) 
 #include "board/board.c"
 /* Avoid collisions with the model headers' rsc/model variables. */
 #include "board/bt_uart.c"
+
+/* the side Darwin talks to (board/bt_host.c): what it was handed, and an error to give back when asked to */
+static const struct board_bt_controller *handed;
+static int start_error;
+
+int
+board_bt_start(const struct board_bt_controller *controller)
+{
+	handed = controller;
+	return start_error;
+}
 
 /* a scenario's resources in the command database: one of them not a regulator's (VRM), or not there at all */
 static int odd_resource = -1;
@@ -363,13 +394,80 @@ packing_and_clock(void)
 	CHECK(engine[0x48 / 4] == 0x41u && engine[0x4c / 4] == engine[0x48 / 4], "first configuration uses 16x sampling regardless of wrapper version");
 }
 
+/* what the controller is to say next: these bytes in the RX FIFO */
+static void
+controller_says(const uint8_t *bytes, unsigned length)
+{
+	memcpy(rx, bytes, length);
+	rx_size = length;
+	rx_pos = 0;
+}
+
+/* bt=2: handed to Darwin's side once it has answered, and its packets through the UART either way */
+static void
+darwins(void)
+{
+	static const uint8_t complete[] = { 4, 0x0e, 4, 1, 0x03, 0x0c, 0 };
+	uint8_t packet[1100], got[1100];
+	int n;
+
+	CHECK(handed != NULL && handed->send != NULL && handed->receive != NULL && logged("the controller is Darwin's from here on"),
+	    "handed to Darwin: %s", log_text);
+	darwins_turn = true;
+	/* a packet longer than the FIFO (16 words): all of it, in order, once there is room */
+	packet[0] = 2;
+	packet[1] = 0x01;
+	packet[2] = 0x20;
+	packet[3] = (uint8_t)1016;
+	packet[4] = 1016 >> 8;
+	for (unsigned i = 5; i < 1021; i++) {
+		packet[i] = (uint8_t)(i * 7);
+	}
+	CHECK(handed->send(packet, 1021) == 0 && tx_size == 1021 && memcmp(tx, packet, 1021) == 0, "a long ACL packet sent whole: %u bytes",
+	    tx_size);
+	CHECK(handed->send(complete + 0, 4) == 0 && tx_size == 4, "a short one after it");
+	/* the controller's packets, one whole one a call, and the FIFO's words split between them */
+	memcpy(packet, complete, sizeof(complete));
+	packet[7] = 2;
+	packet[8] = 0x01;
+	packet[9] = 0x20;
+	packet[10] = 26;
+	packet[11] = 0;
+	for (unsigned i = 12; i < 38; i++) {
+		packet[i] = (uint8_t)i;
+	}
+	controller_says(packet, 38);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 7 && memcmp(got, complete, 7) == 0, "the event: %d bytes", n);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 31 && memcmp(got, packet + 7, 31) == 0, "then the ACL packet: %d bytes", n);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 0, "then nothing: %d", n);
+	/* out of step: a byte no packet begins with; a packet cut short; one longer than the room for it */
+	/* an event without parameters, an ISO packet: each its own length, from the header each has */
+	controller_says((const uint8_t[]){ 4, 0x10, 0, 5, 0x01, 0x00, 4, 0, 9, 8, 7, 6, 4, 0x0e, 4, 1, 0x03, 0x0c, 0 }, 19);
+	CHECK((n = handed->receive(got, 4, 5)) == 0, "no room for a header: nothing read (%d)", n);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 3 && got[1] == 0x10, "an event of three bytes: %d", n);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 9 && got[0] == 5 && got[8] == 6, "an ISO packet: %d", n);
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 7 && memcmp(got, complete, 7) == 0, "and the event after them: %d", n);
+	controller_says((const uint8_t[]){ 0x07, 1, 2, 3, 4, 5, 6, 7, 8 }, 9);
+	CHECK(handed->receive(got, sizeof(got), 5) == -1 && logged("where a packet was to begin: out of step") &&
+	    logged("8 more bytes thrown away to be in step again"), "a stray byte, and what came with it: %s", log_text);
+	controller_says(complete, sizeof(complete));
+	CHECK((n = handed->receive(got, sizeof(got), 5)) == 7 && memcmp(got, complete, 7) == 0, "in step again after it: %d bytes", n);
+	controller_says((const uint8_t[]){ 4, 0x0e, 10, 1 }, 4);
+	CHECK(handed->receive(got, sizeof(got), 5) == -1 && logged("cut short after 4 bytes"), "a packet cut short: %s", log_text);
+	controller_says((const uint8_t[]){ 4, 0x3e, 200, 1 }, 4);
+	CHECK(handed->receive(got, 100, 5) == -1 && logged("a packet of 203 bytes from the controller, room for 100"), "too long: %s",
+	    log_text);
+	rx_size = rx_pos = 0;
+	darwins_turn = false;
+}
+
 int
 main(int argc, char **argv)
 {
 	static const char *const scenarios[] = { "off", "zero", "no_feature", "invalid_mode", "look", "wrong_protocol", "unsupported_arbiter", "full",
 	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
 	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio", "tx_fifo_busy",
-	    "not_an_event" };
+	    "not_an_event", "darwins", "not_darwins" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -422,7 +520,7 @@ main(int argc, char **argv)
 		hakios_bt_uart_quiesce();
 		CHECK(!touches && !mappings && !log_text[0], "off touches/maps/logs nothing");
 	} else if (!strcmp(scenario, "invalid_mode")) {
-		boot_args = "bt=2";
+		boot_args = "bt=3";
 		hakios_bt_uart_init();
 		for (unsigned i = 0; i < 300 && !logged("bt-uart: done"); i++) {
 			usleep(1000);           /* (time for a thread started after all to have done something) */
@@ -445,11 +543,16 @@ main(int argc, char **argv)
 		model.input[b->bluetooth.sw_ctrl] = !sw_low;
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
 		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
+		if (!strcmp(scenario, "darwins") || !strcmp(scenario, "not_darwins")) { boot_args = "bt=2"; }
+		if (!strcmp(scenario, "not_darwins")) { start_error = ENXIO; }
 		run();
 		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look") || refused != NULL) {
 			CHECK(!en.writes && !rsc.writes && !model.writes && !tx_commands, "inspection/refusal performs no hardware changes");
 			if (wrong_protocol) { CHECK(logged("SE protocol is not UART"), "protocol refusal logged"); }
 			if (refused != NULL) { CHECK(logged(refused), "refusal logged: %s", log_text); }
+		} else if (start_error != 0) {
+			CHECK(logged("not handed to Darwin (6)") && logged("bring-up stopped; powering down") && !en.reg[0x44],
+			    "Darwin's side refusing it: the controller powered down: %s", log_text);
 		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error || not_an_event) {
 			CHECK(logged("bring-up stopped; powering down") && !logged("identification complete"), "failure is explicit: %s", log_text);
 			CHECK(!en.reg[0x44], "failure powers down");
@@ -470,6 +573,9 @@ main(int argc, char **argv)
 				CHECK(logged("loopback: 5 of 5 bytes back\n") && !logged(", the same"), "a changed byte is not the same: %s", log_text);
 			} else {
 				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
+			}
+			if (handed != NULL) {
+				darwins();
 			}
 			CHECK(en.reg[0x44] == 0x80, "enable high until quiesce");
 			CHECK(en.reg[0x40] == 1 && en.reg[0x46] == 0x80, "the enable GPIO a digital output, and enabled: mode %#x, enable %#x",
