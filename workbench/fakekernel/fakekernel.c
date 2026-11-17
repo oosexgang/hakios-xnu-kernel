@@ -283,6 +283,24 @@ fake_disk_read(const char *name, uint64_t sector, void *data, size_t size, size_
 }
 
 int
+fake_disk_read_async(const char *name, uint64_t sector, void *data, size_t size, struct buf *request)
+{
+	const struct bdevsw *devsw;
+
+	*request = (struct buf){ .flags = B_READ | B_ASYNC, .blkno = (int64_t)sector, .count = (uint32_t)size, .resid = (uint32_t)size,
+		                 .data = data };
+	if (!node_named(name, true, &request->dev)) {
+		return -1;
+	}
+	devsw = disks[major(request->dev) - CHAR_MAJORS];
+	if (devsw->d_strategy == NULL) {
+		return -1;
+	}
+	devsw->d_strategy(request);
+	return 0;
+}
+
+int
 fake_disk_write(const char *name, uint64_t sector, const void *data, size_t size, size_t *resid)
 {
 	return disk_request(name, 0, sector, __DEVOLATILE(void *, data), size, resid);
@@ -489,6 +507,7 @@ msleep(void *channel __unused, struct fake_lock *lock, int priority __unused, co
 }
 
 void wakeup(void *channel __unused) {}
+void wakeup_one(void *channel __unused) {}
 
 wait_result_t
 lck_mtx_sleep(struct fake_lock *lock, int flags __unused, event_t event, int interruptible __unused)

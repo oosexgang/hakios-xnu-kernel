@@ -64,6 +64,7 @@ typedef struct fake_lock lck_mtx_t;
 /* sleeping on a channel with a mutex given up meanwhile, and its wake-up: a short sleep here, for whoever asks looks again */
 #define PRIBIO                          16
 int msleep(void *channel, struct fake_lock *lock, int priority, const char *why, void *time);
+void wakeup_one(void *channel);
 /* the same, as kern/locks.h names it (every caller looks at its condition again when it returns) */
 #define LCK_SLEEP_DEFAULT               0
 wait_result_t lck_mtx_sleep(struct fake_lock *lock, int flags, event_t event, int interruptible);
@@ -249,9 +250,10 @@ typedef struct buf {
 	int64_t blkno;                  /* in 512-byte sectors */
 	uint32_t count, resid;
 	void *data;
-	bool done;
+	volatile bool done;
 } *buf_t;
 #define B_READ                  0x00000001
+#define B_ASYNC                 0x00000002      /* (a request whose asker does not wait: done from another thread, maybe) */
 #define buf_flags(bp)           ((bp)->flags)
 #define buf_device(bp)          ((bp)->dev)
 #define buf_blkno(bp)           ((bp)->blkno)
@@ -291,6 +293,8 @@ int cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev);
  * when the driver did not finish the request.
  */
 int fake_disk_read(const char *name, uint64_t sector, void *data, size_t size, size_t *resid);
+/* the same, as a file system's read-ahead asks: B_ASYNC, not waited for -- REQUEST's done says when it is (-1: no such disk) */
+int fake_disk_read_async(const char *name, uint64_t sector, void *data, size_t size, struct buf *request);
 int fake_disk_write(const char *name, uint64_t sector, const void *data, size_t size, size_t *resid);
 int fake_disk_open(const char *name, int flags);
 int fake_disk_ioctl(const char *name, unsigned long cmd, void *data);
