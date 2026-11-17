@@ -33,7 +33,8 @@ qemu-kernel.log
 /components/tweaks/jb/
 
 # a phone's own files, taken from it or built from its firmware (arch/arm64/boot/mkboot.py, Documentation/porting.md): never published
-/firmware/
+/firmware/*
+!/firmware/README.md
 
 # what bench makes and fetches: its logs, the images it sends
 /logs/

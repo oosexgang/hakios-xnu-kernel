@@ -38,5 +38,6 @@ At the top, beside them: `Makefile` (`make` lists what it does), `MAINTAINERS` (
 `.editorconfig` (the style, for an editor), `.github/` (the check every push runs, and the issue forms).
 
 Made here and never committed (`.gitignore`): `build/` (the boards' tables, images, releases, the repositories phones
-were brought in from), `logs/` (./bench's), `firmware/NAME/` (a phone's UEFI build and its own files), a phone's package
+were brought in from), `logs/` (./bench's), `firmware/NAME/` (a phone's UEFI build and its own files:
+[firmware/README.md](../firmware/README.md) says which), a phone's package
 in `arch/arm64/boot/dts/NAME/` once brought in, and `arch/arm64/boot/identity.h` (made from your IPSW).
