@@ -24,7 +24,7 @@
  *            events say whether it takes the samples at 48 kHz. The amplifiers stay off.
  *   sound=3  ... and the amplifiers, with the tone playing: set up as Android's driver sets them
  *            up, started once the clock runs, faded in to sound_below eighths of a dB under
- *            Android's own level (default 160: 20 dB under, the least it may be is 0), faded
+ *            Android's own level (default 240: 30 dB under, the least it may be is 0), faded
  *            out and powered down at the end. Audible.
  *   sound=4  what Darwin plays (/dev/hakios-audio, board/audio.c), until the run ends: the port
  *            and the stream as above, kept running (silence when Darwin writes nothing); the
@@ -576,6 +576,8 @@ space_faults(void)
 	    rd(apps_smmu.base + SMMU_SGFSYNR1));
 }
 
+static void space_off(void);
+
 /* Our buffer behind the DSP's addresses from AUDIO_ADDRESSES on, through a context of ours. */
 static bool
 space_on(void)
@@ -583,7 +585,10 @@ space_on(void)
 	uint64_t *root, *second, *third, table_root;
 	uint32_t smr = SMMU_SMR(space.match), s2cr = SMMU_S2CR(space.match), sees = 1u << 31 | (uint32_t)AUDIO_STREAM_MASK << 16 | AUDIO_STREAM;
 
-	if (kmem_alloc(kernel_map, &space.tables, 3 * 4096, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+	/* (made once and kept: the next user after the last has left finds them as they were, the same buffer behind them) */
+	if (space.tables == 0 &&
+	    kmem_alloc(kernel_map, &space.tables, 3 * 4096, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		space.tables = 0;
 		return false;
 	}
 	root = (uint64_t *)space.tables;
@@ -632,6 +637,7 @@ space_on(void)
 	    get(&apps_smmu_context, "ttbr0, low", SMMU_CB_TTBR0) != (uint32_t)table_root) {
 		say("sound: THE SMMU DID NOT TAKE WHAT WAS WRITTEN: stream %#x is not going through context %u\n", AUDIO_STREAM,
 		    space.context);
+		space_off();            /* (nobody uses it now: what was written is put back, not left behind) */
 		return false;
 	}
 	say("sound: THE AUDIO STREAM GOES THROUGH CONTEXT %u of the SMMU, with our page tables\n", space.context);
@@ -1280,10 +1286,23 @@ take_down(void)
 	if (level >= 4) {
 		hakios_audio_set_sink("nothing", NULL);
 	}
-	for (unsigned ms = 0; ms < 3000 && (feeder_runs || watcher_runs); ms++) {
-		sleep_ms(1);
+	/*
+	 * The feeder and the watcher stop on `stopping'. One started while this waited for sound_lock (the setup holds it, and
+	 * looked at `stopping' just before) is waited for again with the lock let go, and the sink taken back again.
+	 */
+	for (unsigned again = 0; ; again++) {
+		for (unsigned ms = 0; ms < 3000 && (feeder_runs || watcher_runs); ms++) {
+			sleep_ms(1);
+		}
+		lck_mtx_lock(&sound_lock);
+		if (!(feeder_runs || watcher_runs) || again == 1) {
+			break;
+		}
+		lck_mtx_unlock(&sound_lock);
 	}
-	lck_mtx_lock(&sound_lock);
+	if (level >= 4) {
+		hakios_audio_set_sink("nothing", NULL);
+	}
 	if (running && !taken_down) {
 		taken_down = true;
 		hakios_speaker_stop();
@@ -1345,7 +1364,10 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	say("sound: %s\n", tdm_clock_runs() ? "THE TDM CLOCK AND FRAME SYNC RUN at the pins" :
 	    "THE PINS DO NOT SHOW A RUNNING TDM CLOCK");
 	if (level == 1) {
-		sleep_ms(seconds * 1000);
+		/* (the run's end waits for this under sound_lock: it is not held past it) */
+		for (uint64_t ms = 0; ms < seconds * 1000ull && !stopping; ms += 10) {
+			sleep_ms(10);
+		}
 		ok = true;
 		goto out;
 	}
@@ -1361,6 +1383,11 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 		hakios_adsp_fw_free(acf, acf_size);
 		acf = NULL;
+		if (stopping) {
+			/* (the run ended while this was being set up: take_down() waits for the lock, and puts it all back) */
+			say("sound: the run has ended: Darwin's sound is not started\n");
+			goto out;
+		}
 		feeder_runs = true;
 		if (kernel_thread_start(feeder_thread, NULL, &feeder) != KERN_SUCCESS) {
 			feeder_runs = false;

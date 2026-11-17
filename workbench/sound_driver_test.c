@@ -306,6 +306,11 @@ smmu_set_up(void)
 	CHECK(*smmu(SMMU_AT + SMMU_SMR(2)) == 0x0333 && *smmu(SMMU_AT + SMMU_S2CR(2)) == 0x0444 &&
 	    *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == 0, "put back as found");
 	CHECK(logged("the SMMU has refused the DSP nothing"), "and nothing was refused: %s", log_text);
+	/* a second user after the last has left (a recording after the sound): the same tables, not new ones every time */
+	CHECK(memory(&at, &dsp, &bytes), "given again");
+	CHECK(((uint64_t)*smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0 + 4) << 32 | *smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0)) == ttbr,
+	    "the same tables: %#x", *smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0));
+	hakios_audio_dsp_memory_put();
 }
 
 /* the boot chain lets the stream through untranslated already (a match register whose mask covers it): used as it is */
@@ -357,6 +362,9 @@ smmu_left_alone(void)
 	CHECK(i >= 6 ? *smmu(SMMU_AT + SMMU_SMR(2)) == 0x0333 : smmu_writes == 0, "case %u: nothing of it changed (%u written)", i,
 	    smmu_writes);
 	CHECK(i != 6 || tlb_looks == 101, "a hundred milliseconds of looks, then given up: %u", tlb_looks);
+	CHECK(i != 7 || (*smmu(SMMU_AT + SMMU_S2CR(2)) == 0x0444 && *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == 0),
+	    "what was written put back, not left programmed with nobody using it: s2cr %#x, sctlr %#x",
+	    *smmu(SMMU_AT + SMMU_S2CR(2)), *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR));
 }
 
 /* what the SMMU refused the DSP while it was on is said when it is put back */
