@@ -22,14 +22,10 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 
 static char said[8192];
-static void (*also_logged)(void);       /* (what a scenario has the loader's log given, as print() would) */
 static void
 print(const char *format, ...)
 {
 	snprintf(said + strlen(said), sizeof(said) - strlen(said), "%s", format);
-	if (also_logged != NULL) {
-		also_logged();
-	}
 }
 
 #include "src/conventions.h"
@@ -305,47 +301,60 @@ forced_base(void)
 	sound();
 }
 
-/* "oem result": the last command's line, from what was printed, at most 63 letters of it; the log keeps none of it */
-static const char *logged_as;
-
-static void
-log_it(void)
-{
-	size_t n = strlen(logged_as);
-
-	memcpy(log_buf + log_len, logged_as, n);
-	log_len += (uint32_t)n;
-}
-
+/*
+ * "getvar result": the last command's line, formatted apart from the log -- a run leaves the log full, and a line taken
+ * from it came back empty ("result: "), which bench took for a run that had ended -- and at most 63 letters of it
+ */
 static void
 result_line(void)
 {
-	static char line[100];
-	uint32_t before;
+	static char what[100];
 
-	also_logged = log_it;
 	log_len = 5;
-	for (size_t length = 1; length < sizeof(line); length++) {
-		memset(line, 'a', length);
-		line[length - 1] = 'z';
-		line[length] = 0;
-		logged_as = line;
+	set_result("running", 1, 2);
+	CHECK(strcmp(last_result, "running 1 2") == 0 && log_len == 5, "\"%s\", log %u", last_result, log_len);
+	log_len = sizeof(log_buf) - 1;          /* (full: what print() would put there is dropped) */
+	set_result("hung", 1234, 0xabc);
+	CHECK(strcmp(last_result, "hung 1234 abc") == 0, "with the log full: \"%s\"", last_result);
+	CHECK(log_len == sizeof(log_buf) - 1, "and the log is as it was: %u", log_len);
+	for (size_t length = 1; length < sizeof(what); length++) {
+		size_t kept = length + 4 < 63 ? length + 4 : 63;        /* (" 0 0" after it) */
+
+		memset(what, 'a', length);
+		what[length] = 0;
 		memset(last_result, '#', sizeof(last_result));
-		before = log_len;
-		set_result("running", 1, 2);
-		size_t kept = length < 63 ? length : 63;
-		CHECK(strlen(last_result) == kept && memcmp(last_result, line, kept) == 0, "a line of %zu letters: %zu of them kept, %zu are",
-		    length, kept, strlen(last_result));
-		CHECK(log_len == before, "and the log is as it was: %u, not %u", before, log_len);
+		set_result(what, 0, 0);
+		CHECK(strlen(last_result) == kept && memcmp(last_result, what, kept < length ? kept : length) == 0,
+		    "a word of %zu letters: %zu kept, %zu are", length, kept, strlen(last_result));
 	}
-	also_logged = NULL;
+}
+
+/* "getvar screen", and every line format_into() makes: the loader's %s %d %x of 64-bit values, cut to fit and ended */
+static void
+format_lines(void)
+{
+	char text[16];
+
+	format_into(text, sizeof(text), "%d %d %d", (uint64_t)1080, (uint64_t)2400, (uint64_t)4352);
+	CHECK(strcmp(text, "1080 2400 4352") == 0, "\"%s\"", text);
+	format_into(text, sizeof(text), "%x|%s|%%|%d", (uint64_t)0xdeadbeefULL, "ab", (uint64_t)0);
+	CHECK(strcmp(text, "deadbeef|ab|%|0") == 0, "\"%s\"", text);
+	format_into(text, sizeof(text), "%d", (uint64_t)18446744073709551615ULL);
+	CHECK(strcmp(text, "184467440737095") == 0, "cut to 15 letters and ended: \"%s\"", text);
+	format_into(text, 1, "%s", "anything");
+	CHECK(text[0] == 0, "no room but for its end");
+	memset(text, '#', sizeof(text));
+	format_into(text, 0, "%s", "anything");
+	CHECK(text[0] == '#', "no room at all: nothing written");
+	format_into(text, sizeof(text), "ab%");
+	CHECK(strcmp(text, "ab") == 0, "a '%%' at the end: nothing read after it: \"%s\"", text);
 }
 
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "result_line", result_line },
+		{ "result_line", result_line }, { "format_lines", format_lines },
 		{ "phone_8gb", phone_8gb }, { "payload_near_the_end", payload_near_the_end }, { "ends_are_cut", ends_are_cut },
 		{ "more_than_the_kernel_takes", more_than_the_kernel_takes }, { "largest_free_range", largest_free_range },
 		{ "longer_descriptors", longer_descriptors }, { "nothing_free", nothing_free }, { "firmware_says_no", firmware_says_no },

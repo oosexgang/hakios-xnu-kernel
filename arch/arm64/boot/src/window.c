@@ -14,19 +14,11 @@ static uint64_t download_ramdisk_patch; /* "oem ramdisk patch": where the next d
 #define RAMDISK_CRC_CHUNK (256ULL << 20)
 static char last_result[64] = "idle";
 
+/* "getvar result": what the last command that runs the kernel came to, WHAT A (decimal) B (hex), at most 63 letters */
 static void
 set_result(const char *what, uint64_t a, uint64_t b)
 {
-	uint32_t saved = log_len;
-	uint32_t start = log_len;
-	print("%s %d %x", what, a, b);
-	uint32_t n = log_len - start;
-	if (n > sizeof(last_result) - 1) {
-		n = sizeof(last_result) - 1;
-	}
-	memcpy(last_result, log_buf + start, n);
-	last_result[n] = 0;
-	log_len = saved;
+	format_into(last_result, sizeof(last_result), "%s %d %x", what, a, b);
 }
 
 /* Every range of the firmware's memory map of 1 MB or more, and the total of each type. */

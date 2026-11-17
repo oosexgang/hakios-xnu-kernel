@@ -101,3 +101,76 @@ str_eq(const char *a, const char *b)
 	}
 	return *a == *b;
 }
+
+/*
+ * The loader's printf subset -- %s, and %x and %d of 64-bit values, %% -- each character handed to PUT with TO: print()
+ * puts them on the screen and into the log, format_into() into a string of its own.
+ */
+static void
+format_with(void (*put)(char, void *), void *to, const char *fmt, __builtin_va_list ap)
+{
+	for (; *fmt; fmt++) {
+		if (*fmt != '%') {
+			put(*fmt, to);
+			continue;
+		}
+		fmt++;
+		if (*fmt == 's') {
+			const char *s = __builtin_va_arg(ap, const char *);
+			while (*s) {
+				put(*s++, to);
+			}
+		} else if (*fmt == 'x' || *fmt == 'd') {
+			uint64_t v = __builtin_va_arg(ap, uint64_t);
+			unsigned base = (*fmt == 'x') ? 16 : 10;
+			char tmp[24];
+			int i = 0;
+			do {
+				tmp[i++] = "0123456789abcdef"[v % base];
+				v /= base;
+			} while (v);
+			while (i) {
+				put(tmp[--i], to);
+			}
+		} else if (*fmt == 0) {
+			break;                  /* (a '%' at the end: nothing after it to read) */
+		} else {
+			put(*fmt, to);
+		}
+	}
+}
+
+struct text_room {
+	char *at;
+	uint32_t left;                  /* bytes, the end's 0 among them */
+};
+
+static void
+text_put(char c, void *to)
+{
+	struct text_room *room = to;
+
+	if (room->left > 1) {
+		*room->at++ = c;
+		room->left--;
+	}
+}
+
+/*
+ * FMT formatted into the SIZE bytes at TEXT, cut short to fit, and always ended. For a line kept apart from the log --
+ * "getvar result", "getvar screen" -- which a kernel's run leaves full: what print() puts there after it is lost.
+ */
+static void
+format_into(char *text, uint32_t size, const char *fmt, ...)
+{
+	struct text_room room = { text, size };
+	__builtin_va_list ap;
+
+	if (size == 0) {
+		return;
+	}
+	__builtin_va_start(ap, fmt);
+	format_with(text_put, &room, fmt, ap);
+	__builtin_va_end(ap);
+	*room.at = 0;
+}

@@ -23,39 +23,21 @@ put_char(char c)
 	}
 }
 
-/* printf subset: %s %x %d (64-bit values), %% */
+static void
+console_put(char c, void *unused)
+{
+	(void)unused;
+	put_char(c);
+}
+
+/* onto the screen and into the log: the subset of printf format_with() knows */
 static void
 print(const char *fmt, ...)
 {
 	__builtin_va_list ap;
+
 	__builtin_va_start(ap, fmt);
-	for (; *fmt; fmt++) {
-		if (*fmt != '%') {
-			put_char(*fmt);
-			continue;
-		}
-		fmt++;
-		if (*fmt == 's') {
-			const char *s = __builtin_va_arg(ap, const char *);
-			while (*s) {
-				put_char(*s++);
-			}
-		} else if (*fmt == 'x' || *fmt == 'd') {
-			uint64_t v = __builtin_va_arg(ap, uint64_t);
-			unsigned base = (*fmt == 'x') ? 16 : 10;
-			char tmp[24];
-			int i = 0;
-			do {
-				tmp[i++] = "0123456789abcdef"[v % base];
-				v /= base;
-			} while (v);
-			while (i) {
-				put_char(tmp[--i]);
-			}
-		} else {
-			put_char(*fmt);
-		}
-	}
+	format_with(console_put, NULL, fmt, ap);
 	__builtin_va_end(ap);
 }
 

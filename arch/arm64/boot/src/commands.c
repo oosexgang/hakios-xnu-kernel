@@ -31,25 +31,11 @@ fb_command(char *cmd)
 			} else if (str_eq(var, "result")) {
 				fb_reply("OKAY", last_result);
 			} else if (str_eq(var, "screen") && SCREEN.base != 0) {
-				/* width height bytes-per-row -- formatted here, not through the log, which a kernel run leaves full */
-				char geom[40], *o = geom;
-				uint64_t v[3] = { SCREEN.width, SCREEN.height, SCREEN.stride };
-				for (int k = 0; k < 3; k++) {
-					char digits[20];
-					int nd = 0;
-					uint64_t x = v[k];
-					do {
-						digits[nd++] = (char)('0' + x % 10);
-						x /= 10;
-					} while (x);
-					if (k) {
-						*o++ = ' ';
-					}
-					while (nd) {
-						*o++ = digits[--nd];
-					}
-				}
-				*o = 0;
+				/* width height bytes-per-row */
+				char geom[64];
+
+				format_into(geom, sizeof(geom), "%d %d %d", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height,
+				    (uint64_t)SCREEN.stride);
 				fb_reply("OKAY", geom);
 			} else {
 				fb_reply("OKAY", "");
