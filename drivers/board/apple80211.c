@@ -34,6 +34,7 @@
 #include <kern/kalloc.h>
 #include <kern/locks.h>
 #include <libkern/libkern.h>
+#include <pexpert/pexpert.h>
 #include <sys/errno.h>
 #include <sys/kern_event.h>
 #include <sys/kernel.h>
@@ -340,6 +341,26 @@ get(struct apple80211req *request)
 	case 15:                                /* the mode: a station (APPLE80211_M_STA) */
 		request->req_val = 1;
 		return 0;
+	case 106: {
+		/*
+		 * The bounds wifid's auto-join weighs a known network's strength by (RSSI_BOUNDS, asked once as
+		 * wifid starts): version 1, the least and the most RSSI it counts with (its own defaults, -19 and
+		 * 65, unchanged), and the threshold in dBm. Left unanswered, wifid keeps a threshold of 7, above
+		 * every network ever heard, and auto-join turns each known network down ("Below minimum RSSI
+		 * threshold"): only a tap joins one. wifi_rssi_threshold=DBM: the weakest network auto-join
+		 * takes, -127 to -1 (default -80). (Found by the OnePlus Nord 2 port of iOS, frxncyyy/ios-denniz.)
+		 */
+		struct {
+			uint32_t version;
+			int32_t least, most, threshold;
+		} answer = { .version = 1, .least = -19, .most = 65, .threshold = -80 };
+		int32_t threshold = 0;
+
+		if (PE_parse_boot_argn("wifi_rssi_threshold", &threshold, sizeof(threshold)) && threshold >= -127 && threshold <= -1) {
+			answer.threshold = threshold;
+		}
+		return give(request, &answer, sizeof(answer));
+	}
 	case 27:
 	case 254: {                             /* the channels the radio may tune to */
 		struct apple80211_channels *answer;

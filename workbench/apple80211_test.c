@@ -434,6 +434,27 @@ power_and_state(void)
 	CHECK(request(false, 9, address, sizeof(address), NULL) == ENXIO, "none before it is joined");
 }
 
+/* the RSSI bounds wifid's auto-join weighs a known network by (106): wifid's least and most, and the threshold, -80 dBm or
+ * as the boot argument says when it is one */
+static void
+rssi_bounds(void)
+{
+	struct { uint32_t version; int32_t least, most, threshold; } bounds;
+	static const struct { const char *args; int32_t threshold; } cases[] = {
+		{ "", -80 }, { "wifi_rssi_threshold=-70", -70 }, { "wifi_rssi_threshold=-127", -127 }, { "wifi_rssi_threshold=5", -80 },
+		{ "wifi_rssi_threshold=-128", -80 }, { "wifi_rssi_threshold=0", -80 },
+	};
+
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		boot_args = cases[i].args;
+		memset(&bounds, 0x55, sizeof(bounds));
+		CHECK(request(false, 106, &bounds, sizeof(bounds), NULL) == 0 && bounds.version == 1 && bounds.least == -19 &&
+		    bounds.most == 65 && bounds.threshold == cases[i].threshold, "\"%s\": %u, %d, %d, %d", cases[i].args, bounds.version,
+		    bounds.least, bounds.most, bounds.threshold);
+	}
+	boot_args = "";
+}
+
 /* each channel's DFS and passive marks (CHANNELS_INFO, 207): 5500 MHz is radar's, 5180 passive */
 static void
 channels_marked(void)
@@ -472,7 +493,7 @@ main(int argc, char **argv)
 		{ "scan_results", scan_results }, { "radio_says_too_much", radio_says_too_much }, { "caller_room", caller_room },
 		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "channels_by_number", channels_by_number },
 		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
-		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked },
+		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked }, { "rssi_bounds", rssi_bounds },
 	};
 
 	if (argc < 2) {
