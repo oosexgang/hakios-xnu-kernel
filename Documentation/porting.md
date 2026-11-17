@@ -274,7 +274,10 @@ Stated plainly, so nobody finds out the hard way:
   is data (`gpu { }` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
   (`adreno { }` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
   (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on
-  these two chips: another generation of Adreno needs work in the driver.
+  these two chips: another generation of Adreno needs work in the driver. The memory the zap shader is
+  written into before TrustZone takes it (`ZAP_MEMORY` in `board/adreno.c`, 0x8b71a000) is these phones'
+  `qcom,gpu-zap` reserved region; a phone whose memory map reserves it elsewhere needs it changed before
+  `gpu=1` reaches step 19, or the shader goes into RAM the kernel uses.
 - **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`rpmh { }`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
