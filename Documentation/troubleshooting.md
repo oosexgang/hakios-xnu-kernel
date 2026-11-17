@@ -256,6 +256,7 @@ software without it.
 | --- | --- | --- |
 | `image.py: which phone? --board NAME (here: ...)` | More than one package with a `uefi { }` node, or none. | `--board NAME`, or `make image DEVICE=NAME`. |
 | `image.py: no kernel ...: kernel/build.sh` | The kernel has not been built, or was built elsewhere. | `make kernel`, or `--kernel FILE`. |
+| `image.py: ... does not know NAME: it was built before the package was here` | The loader was built before `tools/device.py add` brought the phone's package in: it knows only the boards it was built with. | `make loader` (`arch/arm64/boot/build.sh`), then the image again. |
 | `image.py: the loader was built with an identity from an IPSW (Apple's data) ...` | `publish` refuses a loader that carries the identity of an iPhone: an image that is passed around must not. | `arch/arm64/boot/build.sh` without a `DeviceTree.bin` beside the IPSW (or move it away), `make image`, `make publish` again. Your own copy can carry it: `tools/image.py personalize`. |
 | `image.py: ... is not what manifest.json says it is` | A file of the image changed after it was built. | Build the image again. |
 | `identity: the payload's is not one (N bytes): the one built in` | The loader found an `identity` entry it cannot read: not made by `mkidentity.py --blob`, or of another version. | `tools/image.py personalize IMAGE --identity DeviceTree.bin` again, with the same checkout's tools. |
