@@ -66,6 +66,14 @@ needs its feature in the board's `features`.
 | `bsd/dev/board/battery.c` | The battery as the UEFI's charger drivers report it to the loader. | `battery-uefi` / `battery=1` | any phone whose loader provides it |
 | `bsd/dev/board/cputop.c` | Which processes use the CPU (`cputop=S`). | — | any |
 
+The frequency table of an EPSS group is read as Linux's `qcom-cpufreq-hw.c` reads it for the source and the
+multiplier, up to the row it repeats; the row register is held inside the table, whatever it reads. **Not done yet**,
+for want of a phone to see them on: the table's core-count field (Linux leaves rows marked as turbo out, and keeps
+the last one as a boost it does not use by default), the domain's enable register (0x0) and per-core DCVS (0xb0: a
+group whose cores each vote, where only the first is written here). `cpufreq=1` raises every group to its top row and
+leaves it there for the loader; `scmi_perf=2` asks its domains back to the levels they were found at, and `ddr=` gives
+its vote back, at the run's end.
+
 ## Sound, camera, haptics, flashlight
 
 | File | Part | Feature / boot argument | Portability |
