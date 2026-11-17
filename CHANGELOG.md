@@ -47,7 +47,13 @@ tags yet, so the current work is one section.
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
 - `scripts/`: `setup-ubuntu.sh` (what a machine needs, by what for), `release.sh` (the sources of a release,
-  checked). `samples/`: a phone's repository, a defconfig of your own.
+  checked), `new-driver.py` (a new driver and its test from the guide's example). `samples/`: a phone's repository, a
+  defconfig of your own.
+- `tools/logcheck.py`: what a run's log says, part by part -- ok, STOPPED and why, disabled; `./bench run` ends with
+  it. [phone-test.ru.md](Documentation/phone-test.ru.md): a day with the phone, the runs in order.
+- `tools/device.py update` takes each package again from where it came; `tools/image.py verify` holds a phone's
+  images to their manifests and to what may be published.
+- `SECURITY.md`, and an issue form for a run on a phone.
 
 ## Unreleased: the port's names, and iOS 27 on redwood
 
