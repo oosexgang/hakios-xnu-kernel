@@ -104,6 +104,11 @@ tags yet, so the current work is one section.
   it let its pages go; a refresh could be sent to a notification port freed meanwhile; a host buffer of nearly 2^64
   bytes broke the GPU's address allocator; a closed GPU client still made buffers nobody freed.
 
+- The way a run starts and comes back: the loader made new pointer-authentication keys for every run, while a core
+  keeps the first it was given -- most likely why a second kernel in one session of the loader always died at once;
+  a run was started over a core the last one left running; a kernel that beat and never came back was waited for
+  for good; with one core the quiesces ran with interrupts on; a core that joined late was never stopped.
+
 ### For whoever works on the project
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
