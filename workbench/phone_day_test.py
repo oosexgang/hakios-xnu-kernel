@@ -13,10 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 # a bench that "runs": a log in logs/ and logs/last.log to it, its kernel's words chosen by the run's name
 BENCH = r'''#!/bin/bash
 mkdir -p logs
+echo "$1 ${BENCH_DEFCONFIG:-}" >> bench-calls
+if [ "$1" = fresh ]; then
+	[ -f fresh-fails ] && { echo "bench: the loader did not come up on USB"; exit 1; }
+	echo "bench: the loader is up (zeta), no kernel run in it yet"; exit 0
+fi
 n=$(ls logs/*.log 2> /dev/null | wc -l)
 log=logs/$(printf '%03d' "$n")-run.log
 case $BENCH_DEFCONFIG in
-phone_never) echo "bench: no answer: the kernel hung"; exit 2 ;;
+phone_never) printf 'Darwin Kernel Version 1\nbacklight: board zeta\n' > "$log.live"
+	echo "bench: no answer: the kernel hung"; exit 2 ;;
+phone_hung) printf 'Darwin Kernel Version 1\ntorch: THE LIGHT IS DARWIN'"'"'S (/dev/hakios-torch)\n' > "$log"
+	ln -sf "$(basename "$log")" logs/last.log
+	echo "result: hung 1 0  [$log]"; echo "bench: the kernel did not come back from its core; restarting the phone"; exit 2 ;;
 phone_bad) printf 'Darwin Kernel Version 1\nadreno: THE GPU IS NOT STARTED: step 7 failed\nkernel returned: log at 0x1, 2 bytes\n' > "$log" ;;
 *) printf 'Darwin Kernel Version 1\ntorch: THE LIGHT IS DARWIN'"'"'S (/dev/hakios-torch)\nkernel returned: log at 0x1, 2 bytes\n' > "$log" ;;
 esac
@@ -40,7 +49,7 @@ class PhoneDay(unittest.TestCase):
             (self.dir / path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / path, self.dir / path)
         shutil.copytree(ROOT / 'arch/arm64/configs', self.dir / 'arch/arm64/configs')
-        for name in ('phone_bad', 'phone_never'):
+        for name in ('phone_bad', 'phone_never', 'phone_hung'):
             (self.dir / f'arch/arm64/configs/{name}_defconfig').write_text(f'# {name}, the test\'s\nx=1\n')
         (self.dir / 'bench').write_text(BENCH)
         (self.dir / 'bench').chmod(0o755)
@@ -81,6 +90,35 @@ class PhoneDay(unittest.TestCase):
         self.assertIn('## phone_bt', summary)
         self.assertIn('no log: the run did not come back', summary)
         self.assertIn('no answer: the kernel hung', (day / 'phone_never.bench').read_text())
+
+    def test_a_fresh_loader_before_every_run_but_the_first(self):
+        done, day = self.day('phone_first', 'phone_look', 'phone_bt')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        calls = (self.dir / 'bench-calls').read_text().split('\n')
+        self.assertEqual([c for c in calls if c], ['run phone_first', 'fresh ', 'run phone_look', 'fresh ', 'run phone_bt'])
+
+    def test_a_loader_that_cannot_be_started_anew_ends_the_day(self):
+        (self.dir / 'fresh-fails').write_text('')
+        done, day = self.day('phone_first', 'phone_look')
+        self.assertEqual(done.returncode, 1)
+        summary = (day / 'summary.md').read_text()
+        self.assertIn('not run: the loader could not be started anew', summary)
+        self.assertNotIn('run phone_look', (self.dir / 'bench-calls').read_text())
+
+    def test_a_kernel_that_hung_on_its_core_is_not_a_run_that_went(self):
+        # (the loader fetched what it said, and every part of it is fine: ./bench failing is what tells)
+        done, day = self.day('phone_hung', 'phone_bt')
+        self.assertEqual(done.returncode, 1)
+        summary = (day / 'summary.md').read_text()
+        self.assertIn('./bench run did not end well (exit 2)', summary)
+        self.assertIn('did not come back from its core', summary)
+        self.assertNotIn('## phone_bt', summary)
+
+    def test_what_a_run_that_stopped_answering_said_is_kept(self):
+        done, day = self.day('phone_never')
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual((day / 'phone_never.live.log').read_text(), 'Darwin Kernel Version 1\nbacklight: board zeta\n')
+        self.assertIn('what it said while it ran: phone_never.live.log', (day / 'summary.md').read_text())
 
     def test_what_the_runs_need_is_looked_at_first(self):
         done, day = self.day('phone_first', 'phone_bt')

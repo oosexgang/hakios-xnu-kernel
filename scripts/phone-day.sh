@@ -57,11 +57,33 @@ if [ -n "$check" ]; then
 fi
 status=0
 previous=''
+first=1
 for run in "${runs[@]}"; do
 	echo "== $run"
+	# one kernel a session of the loader: a second has died at once every time it was tried (./bench fresh restarts it,
+	# and sends the resident image again, when a kernel has run in it)
+	if [ -z "$first" ] && ! "$BENCH" fresh 2>&1 | tee -a "$day/$run.bench"; then
+		{
+			echo "## $run"
+			echo
+			echo '```'
+			echo "not run: the loader could not be started anew (the bench's own words are in $run.bench)"
+			echo '```'
+		} | tee -a "$summary"
+		status=1
+		break
+	fi
+	first=''
 	before=$(readlink logs/last.log 2> /dev/null || true)
-	BENCH_DEFCONFIG=$run "$BENCH" run 2>&1 | tee "$day/$run.bench"
+	touch "$day/.$run.began"
+	BENCH_DEFCONFIG=$run "$BENCH" run 2>&1 | tee -a "$day/$run.bench"
+	ran=${PIPESTATUS[0]}
 	after=$(readlink logs/last.log 2> /dev/null || true)
+	# what the kernel said while it ran, fetched as it went (all there is of a run that stopped answering)
+	for live in logs/*.log.live; do
+		[ -f "$live" ] && [ "$live" -nt "$day/.$run.began" ] && cp "$live" "$day/$run.live.log"
+	done
+	rm -f "$day/.$run.began"
 	{
 		echo "## $run"
 		echo
@@ -69,6 +91,7 @@ for run in "${runs[@]}"; do
 	} >> "$summary"
 	if [ -z "$after" ] || [ "$after" = "$before" ]; then
 		echo "no log: the run did not come back (the bench's own words are in $run.bench)" | tee -a "$summary"
+		[ -f "$day/$run.live.log" ] && echo "what it said while it ran: $run.live.log" | tee -a "$summary"
 		echo '```' >> "$summary"
 		status=1
 		[ -n "$keep_going" ] && continue
@@ -77,6 +100,11 @@ for run in "${runs[@]}"; do
 	cp "logs/$after" "$day/$run.log"
 	tools/logcheck.py "$day/$run.log" | tail -n +2 | tee -a "$summary"
 	checked=${PIPESTATUS[0]}
+	if [ "$ran" != 0 ]; then
+		# (a kernel that hung on its core leaves a log the loader fetched, and ./bench says so and fails: not a run that went)
+		echo "./bench run did not end well (exit $ran): $(grep -h 'bench: ' "$day/$run.bench" | tail -1)" | tee -a "$summary"
+		checked=1
+	fi
 	if [ -n "$previous" ]; then
 		echo "-- since $previous:" >> "$summary"
 		tools/logcheck.py --against "$day/$previous.log" "$day/$run.log" | tail -n +2 >> "$summary"
