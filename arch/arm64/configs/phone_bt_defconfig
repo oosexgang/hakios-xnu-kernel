@@ -1,0 +1,7 @@
+# Bluetooth for Darwin (Documentation/drivers.md, "Wi-Fi, network"): the controller powered, identified, and handed
+# to bluetoothd, everything of phone_metal besides. The log says how far it got: `bt-uart: the controller is Darwin's
+# from here on`, then `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` and `bt: the channel opened` once
+# bluetoothd has found it; Settings' Bluetooth switch is the test. bt=1 first (phone_look's log) if the identification
+# has not been seen on this phone yet.
+include phone_metal
+bt=2

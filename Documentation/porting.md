@@ -160,6 +160,7 @@ them at once. `phone_metal` then turns the GPU, Metal and Wi-Fi on, and `phone_p
 UFS driver: before it, `phone_ufs_check` reads the partitions through that driver once and compares every byte with
 what the loader reads (`ufs: native check:` lines; a `DIFFERENT` or `STOP` and phone_perf is not for this phone yet),
 and `phone_ufs_bench` says what the flash gives with 1 to 31 reads in flight; both go back to the loader when done.
+`phone_bt` is `phone_metal` with the Bluetooth controller handed to bluetoothd (`bt=2`): Settings' switch is the test.
 
 `hw.board.features` in a running system shows what the kernel has for the board.
 
