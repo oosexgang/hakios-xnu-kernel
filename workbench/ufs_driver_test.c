@@ -700,6 +700,80 @@ saver_is_asked(void)
 	CHECK(logged("var_store: the saver did not answer in 400 ms: the store keeps what it had"), "not waited for longer than said: %s", log_text);
 }
 
+/* the driver's own checks of a write, behind the character device's: whole blocks, of the one partition, or nothing */
+static void
+the_writes_own_checks(void)
+{
+	static uint8_t data[8192];
+
+	loader("ufs_write=1");
+	hakios_ufs_init();
+	CHECK(ufs_write(DARWIN, AT(WRITE_FIRST) + 512, data, 4096) == EINVAL, "from the middle of a block: refused");
+	CHECK(ufs_write(DARWIN, AT(WRITE_FIRST), data, 0) == EINVAL, "nothing at all: refused");
+	CHECK(ufs_write(DARWIN, AT(WRITE_FIRST), data, 1000) == EINVAL, "part of a block: refused");
+	CHECK(ufs_write(SUPER, AT(1), data, 4096) == EROFS && ufs_write(BOOT, 0, data, 512) == EROFS, "another partition: refused");
+	CHECK(writes_asked == 0, "the loader was asked for none: %u", writes_asked);
+	CHECK(ufs_write(DARWIN, AT(WRITE_FIRST), data, 4096) == 0 && writes_asked == 1, "a whole block of its own goes");
+	ufs_write_restore();
+}
+
+/* a read from the start of a block that ends inside one goes through the bounce: not a byte past what was asked for */
+static void
+reads_short_of_a_block(void)
+{
+	uint8_t *data = malloc(5000);           /* (the sanitizers see a byte written past it) */
+
+	loader("");
+	hakios_ufs_init();
+	CHECK(data != NULL && ufs_read(DARWIN, AT(7), data, 5000) == 0 && is_disk(DARWIN, 7 * 4096, data, 5000), "read");
+	free(data);
+}
+
+/* a read that begins where the one before ended, in the same partition, is counted as following it */
+static void
+reads_that_follow(void)
+{
+	static uint8_t data[4096];
+
+	loader("");
+	hakios_ufs_init();
+	CHECK(ufs_read(DARWIN, AT(10), data, 4096) == 0 && ufs_read(DARWIN, AT(11), data, 4096) == 0 && ufs_sequential == 1,
+	    "the second follows the first: %llu", (unsigned long long)ufs_sequential);
+	CHECK(ufs_read(SUPER, AT(12), data, 4096) == 0 && ufs_sequential == 1, "where it ended, in another partition: not");
+	CHECK(ufs_read(SUPER, AT(20), data, 4096) == 0 && ufs_sequential == 1, "elsewhere in the same: not");
+}
+
+/* the driver's devices are its block and its character devices, and only once it is up */
+static void
+its_devices(void)
+{
+	loader("");
+	CHECK(!hakios_ufs_dev(makedev(0, 2)), "none before it is up");
+	hakios_ufs_init();
+	CHECK(ufs_bmajor >= 0 && ufs_cmajor >= 0 && ufs_bmajor != ufs_cmajor, "both made: %d, %d", ufs_bmajor, ufs_cmajor);
+	CHECK(hakios_ufs_dev(makedev(ufs_bmajor, 2)) && hakios_ufs_dev(makedev(ufs_cmajor, 2)), "the block and the character device");
+	CHECK(!hakios_ufs_dev(makedev(ufs_bmajor + ufs_cmajor + 7, 2)), "not another driver's");
+}
+
+/* the report: the writing line when the store takes writes, none when it does not */
+static void
+the_report(void)
+{
+	loader("ufs_write=1");
+	hakios_ufs_init();
+	hakios_ufs_report("now");
+	CHECK(logged("ufs: now: 0 requests") && logged("ufs: now: 0 writes into darwin, 0 bytes"), "said: %s", log_text);
+}
+
+static void
+the_report_read_only(void)
+{
+	loader("");
+	hakios_ufs_init();
+	hakios_ufs_report("now");
+	CHECK(logged("ufs: now: 0 requests") && !logged("writes into darwin"), "said: %s", log_text);
+}
+
 /* a loader that was not asked for the storage: nothing */
 static void
 off_without_the_loader(void)
@@ -724,7 +798,9 @@ main(int argc, char **argv)
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
 		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
 		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
-		{ "off_without_the_loader", off_without_the_loader, 1 }, { "one_past_the_last", one_past_the_last, 1 },
+		{ "off_without_the_loader", off_without_the_loader, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
+		{ "reads_short_of_a_block", reads_short_of_a_block, 1 }, { "reads_that_follow", reads_that_follow, 1 }, { "its_devices", its_devices, 1 },
+		{ "the_report", the_report, 1 }, { "the_report_read_only", the_report_read_only, 1 }, { "one_past_the_last", one_past_the_last, 1 },
 	};
 
 	if (argc < 2) {
