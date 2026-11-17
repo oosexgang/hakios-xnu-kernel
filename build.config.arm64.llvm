@@ -1,0 +1,16 @@
+# shellcheck shell=bash
+# build.config.arm64.llvm -- the kernel of build.config.arm64, its Mach-O tools LLVM's (ld64.lld, llvm-ar and their
+# fellows, through kernel/host/llvm) and not theos' cctools: what builds on a machine with no theos at all, and what
+# `make kernel-check` builds with. BUILD_CONFIG=build.config.arm64.llvm kernel/build.sh.
+# shellcheck source=build.config.arm64
+. "$HAKIOS/build.config.arm64"
+
+export TOOLCHAIN=${TOOLCHAIN:-llvm}
+# the newest LLVM of the machine's that has ld64.lld (Debian/Ubuntu: /usr/lib/llvm-N/bin), unless XNU_CLANG_DIR says
+# which; with none, /usr/bin, and kernel/build.sh says what is missing there
+if [ -z "${XNU_CLANG_DIR:-}" ]; then
+	for llvm in $(ls -d /usr/lib/llvm-*/bin 2> /dev/null | sort -V); do
+		[ -x "$llvm/ld64.lld" ] && XNU_CLANG_DIR=$llvm
+	done
+fi
+export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}

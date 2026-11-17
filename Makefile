@@ -141,7 +141,7 @@ kernel:
 
 .PHONY: kernel-check
 kernel-check:
-	TOOLCHAIN=llvm XNU_WARNINGS=1 kernel/build.sh
+	BUILD_CONFIG=build.config.arm64.llvm XNU_WARNINGS=1 kernel/build.sh
 
 # the kernel kernel/build.sh made, unless told otherwise
 KERNEL ?= ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
