@@ -35,6 +35,7 @@ python3 "$HERE/logcheck_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/phone_day_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/phone_ready_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/release_test.py" 2>&1 | tail -3 || failed=1
+python3 "$HERE/kconfig_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/bench_test.py" 2>&1 | tail -3 || failed=1
 
 echo "== boards (arch/arm64/boot/dts/, tools/boards.py)"

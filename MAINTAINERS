@@ -174,6 +174,16 @@ D:	Documentation/images.md
 KERNEL SOURCES
 F:	kernel/
 F:	build.config.*
+F:	Kconfig
+F:	drivers/Kconfig
+F:	drivers/board/Kconfig
+F:	drivers/iokit/Kconfig
+F:	arch/arm64/Kconfig
+F:	fs/Kconfig
+F:	security/Kconfig
+F:	arch/arm64/configs/kconfig/
+F:	tools/kconfig.py
+F:	tools/gen_headers.py
 F:	arch/arm64/kernel/
 F:	arch/arm64/include/
 F:	arch/arm64/tools/
@@ -181,6 +191,8 @@ F:	include/external/
 T:	workbench/kernel_tools_test.sh
 T:	workbench/place_kernel_test.py
 T:	workbench/memory_floor_test.c
+T:	workbench/kconfig_test.py
+T:	workbench/drivers_kconfig_test.c
 T:	kernel/verify.sh (make verify-kernel; network)
 T:	kernel/syntax-check.sh (make syntax-kernel; network)
 D:	kernel/README.md
