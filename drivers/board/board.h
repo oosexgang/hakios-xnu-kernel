@@ -80,6 +80,12 @@ enum {
 #define HAKIOS_TSENS_MAX        8               /* TSENS controllers of a SoC, at most (SM8845 has seven) */
 #define HAKIOS_CAMERA_CLOCKS    8               /* MCLKs, and CSI receivers, of a SoC's camera, at most */
 
+/* the layouts of the cores' frequency hardware (soc: cpufreq { block }; board/cpufreq_hw.h) */
+enum {
+	HAKIOS_CPUFREQ_EPSS = 0,                /* "epss" (the default): SM8350, SM7325, SC7280 and every chip after */
+	HAKIOS_CPUFREQ_OSM  = 1,                /* "osm": the OSM's firmware of the SDM845 to the SM8250 */
+};
+
 struct hakios_board {
 	const char *name;                       /* /chosen/darwin-board */
 	const char *description;
@@ -326,8 +332,11 @@ struct hakios_board {
 
 	/* CPU frequency (soc: cpufreq { }) */
 	struct {
-		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */
+		uint32_t epss, epss_domain_size;        /* the first group's block of registers, and its size: the step to the
+		                                         * next group's as well, unless domains says otherwise */
+		uint32_t domains[HAKIOS_CPU_GROUPS];    /* each group's block, where they are not one step apart; 0: by the step */
 		uint8_t domain_cores[HAKIOS_CPU_GROUPS]; /* how many cores each group has, in the cores' order; 0: no more */
+		uint8_t block;                          /* the registers' layout: HAKIOS_CPUFREQ_* (board/cpufreq_hw.h) */
 	} cpufreq;
 
 	/* an emulator's virtio devices on its MMIO transports (soc: virtio { }) */
