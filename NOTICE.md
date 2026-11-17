@@ -28,7 +28,7 @@ The optional Wi-Fi build script (`kernel/lx/build.sh`) fetches Linux's ath11k
 Those fetched sources are not in this repository. The current Renoir configuration does not link
 an external Wi-Fi object.
 
-The Bluetooth controller's firmware is sent as Linux's `drivers/bluetooth/btqca.c` sends it (the files' TLV and ELF
+The Bluetooth controller's firmware is sent as Linux's Qualcomm Bluetooth driver (btqca.c) sends it (the files' TLV and ELF
 forms, the segments of the vendor command 0xfc00, which answers a download mode leaves out): `board/bt_qca.h` is written
 from what that driver does, not from its code.
 
