@@ -32,7 +32,7 @@ extern void hakios_thermal_init(void);          /* bsd/dev/board/thermal.c */
 static void
 touch_controller_init(void)
 {
-	uint32_t asked = 0;
+	int32_t asked = 0;
 
 	if (hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U)) {
 		hakios_fts_init();
@@ -40,7 +40,7 @@ touch_controller_init(void)
 		hakios_goodix_init();
 	} else if (PE_parse_boot_argn("touchscreen", &asked, sizeof(asked)) && asked != 0) {
 		/* boot-arg touchscreen=1 asks for the touch screen; read here only to say that this board has none */
-		hakios_say("touch: touchscreen=1, but this board's board.dts lists no touch controller (\"touch-...\")\n");
+		hakios_say("touch: touchscreen=%d, but this board's board.dts lists no touch controller (\"touch-...\")\n", asked);
 	}
 }
 
