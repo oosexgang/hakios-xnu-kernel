@@ -160,7 +160,7 @@ class Source:
 
 def tracked(name):
     """Is arch/arm64/boot/dts/NAME part of the repository itself (the emulator's board, the templates)?"""
-    return bool(files.listed([f'arch/arm64/boot/dts/{name}'], root=boards.ROOT))
+    return bool(files.listed([f'arch/arm64/boot/dts/{name}'], root=boards.ROOT, on_disk_too=False))
 
 
 def described(directory, name, board=None):

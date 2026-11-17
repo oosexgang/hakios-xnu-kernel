@@ -80,6 +80,10 @@ class Release(unittest.TestCase):
         (tree / '.tracked-files').unlink()
         files = subprocess.run(['python3', str(tree / 'tools/files.py')], capture_output=True, text=True, check=True).stdout.split()
         self.assertEqual(files, sorted(tracked))
+        own = subprocess.run(['python3', '-c', 'import sys; sys.path.insert(0, "tools"); import files; '
+                              'print(files.listed(["drivers"], on_disk_too=False))'], cwd=tree, capture_output=True, text=True,
+                             check=True).stdout.strip()
+        self.assertEqual(own, '[]', 'which files are the repository\'s own: not known from the disk')
         # the sums and the notes
         self.assertEqual((out / 'SHA256SUMS').read_text().split(),
                          [hashlib.sha256(tarball.read_bytes()).hexdigest(), 'hakios-kernel-1.0.tar.gz'])

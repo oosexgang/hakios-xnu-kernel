@@ -49,8 +49,10 @@ def on_disk(root):
     return sorted(found)
 
 
-def listed(patterns=(), others=False, root=None):
-    """The repository's file names under ROOT, relative and with /, sorted as git sorts them."""
+def listed(patterns=(), others=False, root=None, on_disk_too=True):
+    """The repository's file names under ROOT, relative and with /, sorted as git sorts them. on_disk_too=False: none
+    when there is neither git nor a release's list -- for the question whether a file is the repository's own, which
+    what happens to be on disk cannot answer (a package brought into a copy is on disk too)."""
     root = Path(root or ROOT)
     patterns = list(patterns)
     if checkout(root):
@@ -59,8 +61,10 @@ def listed(patterns=(), others=False, root=None):
         return [n for n in names if n]
     if (root / LISTED).is_file():
         names = [n for n in (root / LISTED).read_text().split('\n') if n]
-    else:
+    elif on_disk_too:
         names = on_disk(root)
+    else:
+        return []
     return [n for n in names if matches(n, patterns)]
 
 
