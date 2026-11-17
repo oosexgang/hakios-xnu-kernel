@@ -523,8 +523,10 @@ carry(__unused void *parameter, __unused wait_result_t result)
 				tx_dropped += (unsigned)n;
 			}
 		}
-		/* what the controller says, a few milliseconds' wait at most so that bluetoothd's packets are not kept waiting */
-		while ((length = controller->receive(from_controller, sizeof(from_controller), 5)) > 0) {
+		/* what the controller says, a few milliseconds' wait at most and a few packets at most, so that bluetoothd's
+		 * packets are not kept waiting: an LE scan in a busy place has the controller send reports back to back, and a
+		 * command to stop it would wait behind them */
+		for (unsigned k = 0; k < 8 && (length = controller->receive(from_controller, sizeof(from_controller), 5)) > 0; k++) {
 			received++;
 			if ((length = (int)bt_rewrite(from_controller, (unsigned)length, quirks)) > 0) {
 				deliver(from_controller, (unsigned)length);
