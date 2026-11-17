@@ -32,6 +32,7 @@ echo "== the repository's own checks (tools/check-links.py, tools/components.py)
 python3 "$HERE/tools_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/maintainers_test.py" 2>&1 | tail -3 || failed=1
 python3 "$HERE/logcheck_test.py" 2>&1 | tail -3 || failed=1
+python3 "$HERE/phone_day_test.py" 2>&1 | tail -3 || failed=1
 
 echo "== boards (arch/arm64/boot/dts/, tools/boards.py)"
 python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
