@@ -19,6 +19,11 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../../.." && pwd)     # (the repository: this is arch/arm64/boot)
+# the compiler, the linker, the load address, more flags: build.config.loader (LOADER_BUILD_CONFIG: another file of the top)
+HAKIOS=$TOP
+export HAKIOS
+# shellcheck source=../../../build.config.loader
+. "$TOP/${LOADER_BUILD_CONFIG:-build.config.loader}"
 DT=${IDENTITY:-${IOS:-$TOP/../ios27}/DeviceTree.bin}
 cd "$HERE"
 if [ -s "$DT" ]; then
@@ -31,11 +36,12 @@ if [ -f identity.h.new ]; then
 	if cmp -s identity.h.new identity.h; then rm identity.h.new; else mv identity.h.new identity.h; fi
 fi
 "$TOP/tools/boards.py" gen
-clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
-  -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I"$TOP/build/boards" ${LOADER_CFLAGS:-} \
+# shellcheck disable=SC2086  # (LOADER_CFLAGS: flags, one a word)
+"$LOADER_CC" --target="$LOADER_TARGET" -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
+  -mgeneral-regs-only -O1 -Wall -Wextra -Wno-unused-parameter -I"$TOP/build/boards" $LOADER_CFLAGS \
   ${LOADER_IDENTITY:+-DLOADER_IDENTITY="\"$(realpath "$LOADER_IDENTITY")\""} -c loader.c -o loader.obj
 # /base: UEFI loads an image at its preferred address when that is free. The PE default (0x140000000)
 # is in the middle of the phone's largest block of RAM, which XNU needs in one piece.
 # /Brepro: no link time in the file, so the same sources give the same loader.efi byte for byte.
-lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro /out:loader.efi loader.obj
+"$LOADER_LINK" /subsystem:efi_application /entry:efi_main /nodefaultlib /base:"$LOADER_BASE" /Brepro /out:loader.efi loader.obj
 ls -la loader.efi

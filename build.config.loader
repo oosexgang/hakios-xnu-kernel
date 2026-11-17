@@ -1,0 +1,18 @@
+# shellcheck shell=bash
+# build.config.loader -- the UEFI loader, as arch/arm64/boot/build.sh builds it: one PE application for every board
+# it knows (build/boards' platforms.h), freestanding, with LLVM's compiler and linker. build.sh reads this unless
+# LOADER_BUILD_CONFIG names another file of the repository's top; each value can be given in the environment
+# instead, and what is given there is kept.
+# shellcheck source=build.config.common
+. "$HAKIOS/build.config.common"
+
+# the compiler and the target: a UEFI application is a PE image, as clang makes for Windows on arm64
+export LOADER_CC=${LOADER_CC:-clang}
+export LOADER_TARGET=${LOADER_TARGET:-aarch64-unknown-windows}
+export LOADER_LINK=${LOADER_LINK:-lld-link}
+# where UEFI loads it when that is free: the PE default (0x140000000) is in the middle of the phones' largest block of
+# RAM, which the kernel needs in one piece
+export LOADER_BASE=${LOADER_BASE:-0xA1000000}
+# more for the compiler: a phone whose payload is reserved elsewhere, or is larger, says so here
+# (-DPAYLOAD_BASE=... -DPAYLOAD_MAX_SIZE=..., arch/arm64/boot/src/conventions.h)
+export LOADER_CFLAGS=${LOADER_CFLAGS:-}
