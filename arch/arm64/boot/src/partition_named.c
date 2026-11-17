@@ -25,8 +25,10 @@ partition_named(const char *want)
 			k++;
 		}
 		if (want[k] == 0 && name[k] == 0) {
+			BS->free_pool(handles);
 			return bio;
 		}
 	}
+	BS->free_pool(handles);
 	return NULL;
 }

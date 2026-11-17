@@ -29,9 +29,11 @@ find_log_partition(void)
 			}
 		}
 		if (match && !EFI_ERROR(BS->handle_protocol(handles[i], &blk_guid, (void **)&bio))) {
+			BS->free_pool(handles);
 			return bio;
 		}
 	}
+	BS->free_pool(handles);
 	return NULL;
 }
 
