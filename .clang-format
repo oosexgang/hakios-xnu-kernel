@@ -1,0 +1,35 @@
+# The C style of the kernel's files of ours, the loader and the tests, as they are written: XNU's (tabs eight wide, a
+# function's type on its own line and its brace on the next, a statement's brace on its line), lines up to 130 columns.
+# A help for an editor, not a rule a check enforces: `clang-format -i FILE` on a new file is a good start, and on an
+# old one only for the lines a change touches (git clang-format). Apple's files keep their own style.
+BasedOnStyle: LLVM
+Language: Cpp
+UseTab: ForContinuationAndIndentation
+IndentWidth: 8
+TabWidth: 8
+ContinuationIndentWidth: 4
+ColumnLimit: 130
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: Never
+  AfterStruct: false
+  AfterEnum: false
+  AfterUnion: false
+  BeforeElse: false
+  BeforeWhile: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+InsertBraces: true
+IndentCaseLabels: false
+SpaceAfterCStyleCast: false
+PointerAlignment: Right
+AlignAfterOpenBracket: DontAlign
+AlignTrailingComments: true
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+ReflowComments: false
+MaxEmptyLinesToKeep: 1
