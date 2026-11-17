@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""What a run's log says, part by part: which came up, which stopped and why, which were not asked for -- the first
+thing to look at after a run on a phone, and what to send back when one did not work.
+
+  tools/logcheck.py [LOG...]        the logs named; the newest of logs/ (./bench's) when none is
+  tools/logcheck.py --all LOG       every line each part said, not only the one that decides
+
+A part is a driver by the prefix of its lines ("adreno:", "bt-uart:" ...). Its state is the line that decides it:
+  ok        a line that says it came up (its driver's own words for it, below)
+  STOPPED   a line that says it did not, or gave up -- that line is shown
+  disabled  "PART: disabled: ..." -- the board or the boot arguments did not ask for it, or could not
+  said      lines of it, and none of those
+and the kernel's own: whether it started, whether it panicked (the panic's line), whether it went back to the loader.
+Status 1 when something stopped or the kernel panicked.
+"""
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# (part, its lines' prefix, what says it came up, what says it did not): each driver's own words (drivers/board/*.c)
+PARTS = [
+    ('GPU', 'adreno', [r'A PICTURE DRAWN BY THE GPU IS ON THE PANEL', r'the GPU runs'],
+     [r'THE GPU IS NOT STARTED', r'startup stops', r'FAILED']),
+    ('Bluetooth controller', 'bt-uart', [r"the controller is Darwin's from here on", r'identification complete'],
+     [r'bring-up stopped', r'the firmware was not taken', r'refused', r'timed out']),
+    ('Bluetooth for Darwin', 'bt', [r'connected by bluetoothd', r'the channel opened', r"is Darwin's: service"],
+     [r'cannot be (made|registered)']),
+    ('Bluetooth service', 'bt', [r'service "bluetooth" registered'], [r'no service "bluetooth"']),
+    ('Storage (own driver)', 'ufs', [r'native check .*: \d+ spans, .* 0 NOT THE SAME, 0 failed reads', r'native: .*transfer list'],
+     [r'DIFFERENT at byte', r': STOP', r'NOT AS IT WAS', r"this kernel's own read failed"]),
+    ('Flashlight', 'torch', [r"THE LIGHT IS DARWIN'S"], [r'COULD NOT BE SWITCHED OFF', r'given up on', r'not lit:']),
+    ('Vibration', 'haptic', [r'THE MOTOR PLAYS WHAT DARWIN PLAYS'], [r'STILL PLAYING']),
+    ('Microphones', 'mic', [r"THE MICROPHONE IS DARWIN'S", r'LISTENING'], [r'NO READ HAS COME BACK']),
+    ('Sound', 'sound', [r'WHAT DARWIN PLAYS GOES TO THE SPEAKERS', r'THE TONE PLAYS NOW'],
+     [r'DID NOT START', r'HAS GIVEN NO PERIOD', r'HAS NOT GIVEN EVERY PERIOD', r'REFUSED', r'DID NOT TAKE']),
+    ('Speaker amplifiers', 'speaker', [r'RUNS, unmuted', r'BOTH AMPLIFIERS ARE CONFIGURED'], [r'failed']),
+    ('Audio DSP', 'adsp', [r'versions .* the channel'], [r'DOES NOT ACKNOWLEDGE', r'taken down']),
+    ('Wi-Fi DSP', 'wifi', [r'QRTR: the DSP is node'], [r'NOT A WORD FROM THE DSP']),
+    ('Wi-Fi driver', 'lx', [r'using the early radio pool'], [r'THE DRIVER IS NOT BUILT IN']),
+    ('Touch (Goodix)', 'goodix', [r'touch screen ready'], [r'failed']),
+    ('Touch (FocalTech)', 'fts', [r'touchscreen ready'], [r'stopped after repeated', r'failed']),
+    ('Touch (FocalTech firmware)', 'focaltech', [], [r'failed']),
+    ('Buttons', 'buttons', [r'believed from here on'], [r'giving up']),
+    ('Camera', 'camera', [r'/dev/hakios-camera: the'], [r'REFUSED', r'not ready']),
+    ('CPU frequency', 'cpufreq', [r'group \d+ .*MHz'], [r'failed']),
+    ('Memory bandwidth', 'ddr', [r'memory bandwidth vote \d+ on'], [r'no vote']),
+    ('Temperature', 'thermal', [r'trip \d'], [r'does not hold']),
+    ('Brightness', 'backlight', [r'brightness'], [r'reports an error', r'switched off: no more']),
+    ('Battery', 'battery', [r'%'], [r'failed']),
+]
+PANIC = re.compile(r'panic\(cpu \d+ caller|^panic:|Kernel panic|Debugger called: <panic>')
+
+
+def check(text, everything=False, out=None):
+    out = out or sys.stdout
+    lines = text.split('\n')
+    bad = False
+    started = next((l for l in lines if 'Darwin Kernel Version' in l), None)
+    panic = next(((n, l) for n, l in enumerate(lines, 1) if PANIC.search(l)), None)
+    back = next((l for l in reversed(lines) if re.search(r'kernel returned: log at', l)), None)
+    print(f'kernel: {"started" if started else "NOT STARTED (no Darwin Kernel Version line)"}' +
+          (f'; PANIC at line {panic[0]}: {panic[1].strip()}' if panic else '; no panic') +
+          ('; back in the loader' if back else ''), file=out)
+    bad |= panic is not None or not started
+    rows = []
+    for name, prefix, good, stop in PARTS:
+        own = [l.strip() for l in lines if re.match(rf'\s*(\[[^\]]*\]\s*)?{re.escape(prefix)}: ', l)]
+        if not own:
+            continue
+        state, why = 'said', own[-1]
+        disabled = next((l for l in own if re.search(rf'{re.escape(prefix)}: disabled', l)), None)
+        stopped = next((l for l in own for p in stop if re.search(p, l)), None)
+        # (the first of a part's words that is there: they are in the order of how far each says it got)
+        came_up = next((l for p in good for l in own if re.search(p, l)), None)
+        if stopped:
+            state, why = 'STOPPED', stopped
+        elif came_up:
+            state, why = 'ok', came_up
+        elif disabled:
+            state, why = 'disabled', disabled
+        if prefix == 'bt' and not any(re.search(p, l) for l in own for p in good + stop):
+            continue                    # (a line of bt: that is the other row's)
+        rows.append((name, state, why, own))
+        bad |= state == 'STOPPED'
+    width = max((len(r[0]) for r in rows), default=0)
+    for name, state, why, own in rows:
+        print(f'  {name:{width}}  {state:8}  {why[:150]}', file=out)
+        if everything:
+            for line in own:
+                print(f'  {"":{width}}            {line[:150]}', file=out)
+    if not rows:
+        print('  (no line of any part: the run stopped before the drivers, or the log is not a run\'s)', file=out)
+    return bad
+
+
+def main(arguments=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('logs', nargs='*', metavar='LOG')
+    parser.add_argument('--all', action='store_true', help='every line of each part')
+    options = parser.parse_args(arguments)
+    logs = [Path(p) for p in options.logs]
+    if not logs:
+        found = sorted((ROOT / 'logs').glob('*.log'), key=lambda p: p.stat().st_mtime)
+        if not found:
+            parser.error('no log named, and none in logs/ (./bench run leaves them there)')
+        logs = found[-1:]
+    bad = False
+    for log in logs:
+        print(f'{log}:')
+        bad |= check(log.read_text(errors='replace'), options.all)
+    return 1 if bad else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -312,6 +312,7 @@ F:	tools/check-publishable.sh
 F:	tools/components.py
 F:	tools/heredoc-python.py
 F:	tools/kernel-view.sh
+F:	tools/logcheck.py
 F:	tools/analyze-userland.sh
 F:	tools/recording.py
 F:	tools/mk-focaltech-fw.py
@@ -325,6 +326,7 @@ F:	.github/
 F:	MAINTAINERS
 T:	workbench/maintainers_test.py
 T:	workbench/tools_test.py
+T:	workbench/logcheck_test.py
 D:	tools/README.md
 D:	scripts/README.md
 D:	workbench/README.md
