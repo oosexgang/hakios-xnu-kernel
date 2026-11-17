@@ -370,6 +370,19 @@ reverse(char *p, uint64_t n)
 }
 
 /*
+ * The kernel's log as the kernel describes it (its head, its ring) is the kernel's own memory, which a kernel gone wrong may
+ * have written over: believed only within a size no log of its has (64 MB in all), so that the sums below do not wrap.
+ */
+#define KERNEL_LOG_MOST         (64ull << 20)
+
+static int
+kernel_log_believable(const struct kernel_live *live)
+{
+	return live->log_head <= KERNEL_LOG_MOST && live->log_ring <= KERNEL_LOG_MOST &&
+	    live->log_head + live->log_ring <= KERNEL_LOG_MOST;
+}
+
+/*
  * The log of a kernel that did not come back to hand it over: put its two parts in order
  * (the ring's oldest character first) and say where it is and how long.
  */
@@ -380,6 +393,10 @@ log_of_hung_kernel(const struct kernel_live *live, uint64_t slide)
 	uint32_t len, ring_at;
 
 	loader_ctx[CTX_LOG_PA] = loader_ctx[CTX_LOG_LEN] = 0;
+	if (!kernel_log_believable(live)) {
+		print("the kernel's log is described as %x + %x bytes: not believed, not handed over\n", live->log_head, live->log_ring);
+		return;
+	}
 	len = *(volatile uint32_t *)(live->log_len + slide);
 	ring_at = *(volatile uint32_t *)(live->log_ring_at + slide);
 	if (*(volatile uint8_t *)(live->log_wrapped + slide) && ring_at < live->log_ring) {
@@ -425,14 +442,20 @@ compose_live_log(const struct kernel_live *live, uint64_t slide)
 	n = staged_len;
 #define PUT(from, size) do { \
 	uint64_t take = (size); \
-	if (n + take > room) { \
+	if (n >= room) { \
+	        take = 0; \
+	} else if (take > room - n) { \
 	        take = room - n; \
 	} \
 	memcpy(out_buf + n, (from), take); \
 	n += take; \
 } while (0)
 	PUT(sep, sizeof(sep) - 1);
-	if (!wrapped || ring_at >= live->log_ring) {
+	if (!kernel_log_believable(live)) {
+		static const char odd[] = "(the kernel describes its log in sizes no log has: not read)\n";
+
+		PUT(odd, sizeof(odd) - 1);
+	} else if (!wrapped || ring_at >= live->log_ring) {
 		PUT(log, len <= live->log_head + live->log_ring ? len : live->log_head + live->log_ring);
 	} else {
 		PUT(log, live->log_head);
