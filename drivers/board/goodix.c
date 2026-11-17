@@ -474,6 +474,25 @@ static struct {
 	uint32_t x, y;
 } contact[GOODIX_MAX_TOUCHES];
 static uint32_t flip;           /* boot-arg touch_flip: 1 = mirror left-right, 2 = mirror top-bottom */
+static bool high_rate;          /* touch_rate=480 was asked for: asked again after a reset */
+
+static void focaltech_release(void);
+
+/* Every finger down lifted where it was: the chip reset, or its reports no longer coming (no finger left down for good) */
+static void
+contacts_release(void)
+{
+	for (uint32_t id = 0; id < GOODIX_MAX_TOUCHES; id++) {
+		if (contact[id].down) {
+			contact[id].down = false;
+			hakios_touch_post(HAKIOS_TOUCH_UP, id, contact[id].x, contact[id].y);
+		}
+	}
+	focaltech_release();
+}
+
+/* Reads that failed one after another before the fingers are taken as lifted: a quarter of a second at 125 Hz */
+#define READS_FAILED_MOST       32
 
 static void
 goodix_report(const uint8_t *touches, uint32_t count)
@@ -530,13 +549,21 @@ static void
 goodix_poll(void)
 {
 	static uint8_t report[8 + 8 * GOODIX_MAX_TOUCHES + 2];
-	static unsigned bad;
+	static unsigned bad, failed;
 	const uint8_t zero = 0;
 	const uint32_t first = 8 + 8 * 2 + 2;           /* the header and two fingers: all there is, most of the time */
 	uint32_t count;
 
 	seen.polls++;
-	if (!goodix_read(touch_address, report, first) || report[0] == 0) {
+	if (!goodix_read(touch_address, report, first)) {
+		if (++failed == READS_FAILED_MOST) {
+			printf("goodix: %u reads failed one after another: the fingers taken as lifted\n", failed);
+			contacts_release();
+		}
+		return;
+	}
+	failed = 0;
+	if (report[0] == 0) {
 		return;
 	}
 	seen.reports++;
@@ -557,7 +584,13 @@ goodix_poll(void)
 	if (report[0] & GOODIX_STATUS_REQUEST) {
 		if ((report[2] & 0xf) == GOODIX_REQUEST_RESET || report[2] == GOODIX_REQUEST_RESET) {
 			printf("goodix: the chip asks to be reset\n");
+			/* (the reports after a reset do not say the fingers that were down have lifted) */
+			contacts_release();
 			touch_reset();
+			if (high_rate && !goodix_command(GOODIX_CMD_HIGH_RATE, 1)) {
+				report_rate = "240 (480 NOT ACKNOWLEDGED after a reset)";
+				printf("goodix: 480 reports a second asked again after the reset: NOT ACKNOWLEDGED\n");
+			}
 		}
 		return;
 	}
@@ -933,6 +966,17 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 	}
 }
 
+static void
+focaltech_release(void)
+{
+	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
+		if (focaltech_contact[i].down) {
+			focaltech_contact[i].down = false;
+			hakios_touch_post(HAKIOS_TOUCH_UP, i, focaltech_contact[i].x, focaltech_contact[i].y);
+		}
+	}
+}
+
 /* Panel size in the FT3680 super-high-resolution reports: the board's touch { } coordinates. */
 static uint32_t focaltech_max_x, focaltech_max_y;
 
@@ -973,7 +1017,7 @@ static void
 focaltech_poll(void)
 {
 	static uint8_t report[FOCALTECH_TOUCH_REPORT_LEN];
-	static unsigned bad;
+	static unsigned bad, failed;
 
 	seen.polls++;
 	if (!focaltech_read(FOCALTECH_TOUCH_DATA, report, sizeof(report))) {
@@ -981,8 +1025,13 @@ focaltech_poll(void)
 		if (bad++ < 8) {
 			printf("focaltech: SPI read failed for touch report\n");
 		}
+		if (++failed == READS_FAILED_MOST) {
+			printf("focaltech: %u reads failed one after another: the fingers taken as lifted\n", failed);
+			focaltech_release();
+		}
 		return;
 	}
+	failed = 0;
 	seen.reports++;
 	focaltech_report(report);
 }
@@ -1185,6 +1234,7 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 		if (PE_parse_boot_argn("touch_rate", &rate, sizeof(rate)) && rate == 480 && touch_chip == TOUCH_GOODIX) {
 			bool done = goodix_command(GOODIX_CMD_HIGH_RATE, 1);
 
+			high_rate = true;
 			report_rate = done ? "480 (acknowledged)" : "240 (480 NOT ACKNOWLEDGED)";
 			printf("goodix: reports 480 times a second (command %#x at %#x): %s\n", GOODIX_CMD_HIGH_RATE, command_address,
 			    done ? "acknowledged" : "NOT ACKNOWLEDGED");

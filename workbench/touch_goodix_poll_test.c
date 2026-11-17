@@ -410,6 +410,56 @@ another_request(void)
 	CHECK(!logged("asks to be reset") && posts == 0, "%s", log_text);
 }
 
+/* a finger down when the chip asks to be reset: lifted, for the reports after a reset do not say so */
+static void
+reset_lifts(void)
+{
+	phone();
+	report(GOODIX_STATUS_TOUCH, 1);
+	goodix_poll();
+	report(GOODIX_STATUS_REQUEST, 0);
+	chip.report[2] = GOODIX_REQUEST_RESET;
+	sum_into(chip.report, 8);
+	goodix_poll();
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 0, "lifted at the reset: %u posts", posts);
+}
+
+static bool
+transfer_fails(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	(void)tx;
+	(void)rx;
+	(void)length;
+	return false;
+}
+
+/* a finger down, then the reads failing one after another: lifted once, after so many, not at the first */
+static void
+reads_failing_lift(void)
+{
+	phone();
+	report(GOODIX_STATUS_TOUCH, 1);
+	goodix_poll();
+	spi_transfer = transfer_fails;
+	for (unsigned i = 0; i < READS_FAILED_MOST - 1; i++) {
+		goodix_poll();
+	}
+	spi_transfer = model_transfer;                  /* (a read that goes starts the count again) */
+	report(GOODIX_STATUS_TOUCH, 1);
+	goodix_poll();
+	spi_transfer = transfer_fails;
+	for (unsigned i = 0; i < READS_FAILED_MOST - 1; i++) {
+		goodix_poll();
+	}
+	CHECK(posts == 1, "still down after %u failed reads, one gone between", 2 * (READS_FAILED_MOST - 1));
+	goodix_poll();
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 0, "lifted: %u posts", posts);
+	for (unsigned i = 0; i < 2 * READS_FAILED_MOST; i++) {
+		goodix_poll();
+	}
+	CHECK(posts == 2, "once: %u posts", posts);
+}
+
 /* the finger lifted: it is not in the next report */
 static void
 lifted(void)
@@ -507,7 +557,7 @@ main(int argc, char **argv)
 		{ "one_finger", one_finger }, { "two_fingers", two_fingers }, { "three_fingers", three_fingers }, { "the_most_fingers", the_most_fingers },
 		{ "nothing_new", nothing_new }, { "bad_header", bad_header }, { "bad_fingers", bad_fingers },
 		{ "at_the_edge", at_the_edge }, { "asks_to_be_reset", asks_to_be_reset }, { "another_request", another_request },
-		{ "lifted", lifted }, { "asks_to_be_reset_with_more_bits", asks_to_be_reset_with_more_bits },
+		{ "lifted", lifted }, { "reset_lifts", reset_lifts }, { "reads_failing_lift", reads_failing_lift }, { "asks_to_be_reset_with_more_bits", asks_to_be_reset_with_more_bits },
 		{ "the_chips_description", the_chips_description }, { "coordinates_not_described", coordinates_not_described },
 		{ "descriptions_not_believed", descriptions_not_believed }, { "a_command", a_command },
 		{ "focaltech_already_running", focaltech_already_running }, { "focaltech_without_firmware", focaltech_without_firmware },
