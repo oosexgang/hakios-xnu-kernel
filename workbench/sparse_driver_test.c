@@ -168,6 +168,7 @@ across_blocks(void)
 	size_t resid = 99;
 
 	image();
+	put32(TABLE_AT + 4 * BLOCKS, 1);        /* (what follows the table looks like an entry: it is none, and is never read) */
 	hakios_sparse_init();
 	memset(data, 0x55, sizeof(data));
 	/* from sector 3 of block 4 (not here) over all of block 5 into block 6 (not here) */
