@@ -67,6 +67,12 @@
 
 static uint32_t level;
 static bool broken, leaving;
+/*
+ * The thread is between registers: set before it looks at `leaving' and writes, cleared after. The run's end sets
+ * `leaving' and then waits for this to clear, so that it never meets a light half lit (written on, `lit' not yet
+ * set) and the thread starts no writes after it (each looks at the other's after setting its own: one sees it).
+ */
+static bool writing;
 
 HAKIOS_DEFINE_SAY(!leaving && ml_get_interrupts_enabled())
 
@@ -482,6 +488,11 @@ serve(void)
 		uint32_t want = wanted;
 		uint64_t now = now_ms();
 
+		__atomic_store_n(&writing, true, __ATOMIC_SEQ_CST);
+		if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+			break;                  /* (the run's end has the light now: hakios_torch_quiesce()) */
+		}
+
 		if (want == 0) {
 			waiting_for_off = false;
 		}
@@ -514,6 +525,7 @@ serve(void)
 			}
 			applied = 0;
 			shown = 0;
+			__atomic_store_n(&writing, false, __ATOMIC_SEQ_CST);
 			continue;
 		}
 		if (applied != 0 && now - last_look >= 100) {
@@ -527,11 +539,13 @@ serve(void)
 				break;
 			}
 		}
+		__atomic_store_n(&writing, false, __ATOMIC_SEQ_CST);
 		wait_ms(20);
 	}
-	if (lit) {
+	if (lit && !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
 		(void)dark();
 	}
+	__atomic_store_n(&writing, false, __ATOMIC_SEQ_CST);
 	shown = 0;
 	say("torch: the light is given up on (%u times lit, %u cut at %u s)\n", times, cut, max_secs);
 }
@@ -655,7 +669,10 @@ hakios_torch_quiesce(void)
 	if (level < 2 || flash.write == 0) {
 		return;
 	}
-	leaving = true;
+	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
+	for (unsigned i = 0; i < 100 && __atomic_load_n(&writing, __ATOMIC_SEQ_CST); i++) {
+		wait_ms(1);             /* (the thread finishing what it writes: 100 ms at most, a stopped CPU's never ends) */
+	}
 	if (lit) {
 		broken = false;         /* (one last time, whatever went before) */
 		say("torch: at the run's end: the light %s\n", dark() ? "switched off" : "COULD NOT BE SWITCHED OFF");
