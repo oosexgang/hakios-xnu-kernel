@@ -4,6 +4,27 @@ static struct loader_block block_shared __attribute__((aligned(0x2000)));
 static void block_io2_probe(efi_handle h, efi_block_io *bio);
 static int block_probe_requested;       /* ufs_probe=1: block_io2_probe() at block_start() */
 static efi_block_io *block_bios[BLOCK_MAX_PARTS];
+/*
+ * The partitions as this core listed them, kept where the kernel cannot write: the shared page's count and sizes are the
+ * kernel's to read, and a kernel that wrote them (a bug, a stray write) is not to have this core index past block_bios[]
+ * or read past a partition.
+ */
+static uint32_t block_parts_kept;
+static struct {
+	uint32_t block_size;
+	uint64_t blocks;
+} block_part_kept[BLOCK_MAX_PARTS];
+
+/* the partition just listed (the shared page's last), kept */
+static void
+block_keep_last(void)
+{
+	uint32_t p = block_shared.parts - 1;
+
+	block_part_kept[p].block_size = block_shared.part[p].block_size;
+	block_part_kept[p].blocks = block_shared.part[p].blocks;
+	block_parts_kept = block_shared.parts;
+}
 static int block_enabled;
 static int block_write_requested;       /* ufs_write=1 on the command line */
 static int block_write_part = -1;       /* the only partition a write may reach; -1: none, writes refused */

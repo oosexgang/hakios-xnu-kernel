@@ -17,6 +17,7 @@ block_start(void)
 	uint64_t nunits = 0;
 
 	memset(&block_shared, 0, sizeof(block_shared));
+	block_parts_kept = 0;
 	block_tables();
 	/* the logical units: the block devices that are not partitions of another */
 	if (!EFI_ERROR(BS->locate_handle_buffer(ByProtocol, &blk_guid, NULL, &count, &handles))) {
@@ -73,6 +74,7 @@ block_start(void)
 			block_write_part = (int)block_shared.parts;
 		}
 		block_bios[block_shared.parts++] = bio;
+		block_keep_last();
 		if (block_probe_requested && bp->name[0] == 'd' && bp->name[1] == 'a' && bp->name[2] == 'r' &&
 		    bp->name[3] == 'w' && bp->name[4] == 'i' && bp->name[5] == 'n' && bp->name[6] == 0) {
 			block_io2_probe(handles[i], bio);
@@ -93,6 +95,7 @@ block_start(void)
 		bp->lun = units[u].lun;
 		bp->flags = BLOCK_PART_UNIT;
 		block_bios[block_shared.parts++] = units[u].bio;
+		block_keep_last();
 	}
 	/*
 	 * The Darwin system image installed as an Android DSU image, as one more partition: "dsu", its
@@ -115,6 +118,7 @@ block_start(void)
 			bp->flags = BLOCK_PART_DSU;
 			block_dsu_part = (int)block_shared.parts;
 			block_bios[block_shared.parts++] = data;
+			block_keep_last();
 			print("ufs: dsu: the DSU image as partition %d, %d blocks of 4096 in %d extents\n",
 			    (uint64_t)block_dsu_part, bp->blocks, (uint64_t)dsu_extents);
 		} else {
@@ -259,11 +263,13 @@ block_poll(void)
 	op = block_shared.ask.op;
 	started = READ_SYSREG(CNTVCT_EL0);
 	bytes = 0;
-	if (part < block_shared.parts && count != 0 && count <= BLOCK_BUFFER_SIZE / block_shared.part[part].block_size &&
-	    lba < block_shared.part[part].blocks && count <= block_shared.part[part].blocks - lba) {
+	/* (bounded by what this core listed, not by what the shared page says now) */
+	if (part < block_parts_kept && block_part_kept[part].block_size != 0 && count != 0 &&
+	    count <= BLOCK_BUFFER_SIZE / block_part_kept[part].block_size &&
+	    lba < block_part_kept[part].blocks && count <= block_part_kept[part].blocks - lba) {
 		efi_block_io *bio = block_bios[part];
 
-		bytes = count * block_shared.part[part].block_size;
+		bytes = count * block_part_kept[part].block_size;
 		if (!hc_list_is_uefis()) {
 			/* the kernel's own list is in: UEFI's driver must not ring now (the kernel should not ask) */
 			if (hc_refused_reads++ < 4) {
@@ -283,8 +289,7 @@ block_poll(void)
 			if (block_write_part < 0 || part != (uint32_t)block_write_part || lba < BLOCK_WRITE_FIRST) {
 				/* not darwin, or not past what the build writes from the computer: never */
 				if (block_writes_refused++ < 8) {
-					print("ufs: a write of %d blocks from %d of %s: REFUSED\n", count, lba,
-					    block_shared.part[part].name);
+					print("ufs: a write of %d blocks from %d of partition %d: REFUSED\n", count, lba, part);
 				}
 				s = 0x800000000000000FULL;      /* EFI_ACCESS_DENIED */
 				bytes = 0;
