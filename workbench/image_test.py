@@ -223,6 +223,79 @@ class Publish(Sandbox):
         _, (code, _) = self.publish()
         self.assertIn('carries an identity', str(code))
 
+    def rehash(self, *files):
+        """manifest.json made to say of FILES what they now are, as anybody may edit it"""
+        manifest = json.loads((self.out / 'manifest.json').read_text())
+        for file in files:
+            manifest['files'][file] = {'sha256': image.sha256((self.out / file).read_bytes())}
+        (self.out / 'manifest.json').write_text(json.dumps(manifest))
+        return manifest
+
+    def test_the_bytes_are_judged_not_the_manifest(self):
+        (self.dir / 'loader.efi').write_bytes(APPLE_LOADER)
+        self.build()
+        manifest = json.loads((self.out / 'manifest.json').read_text())
+        manifest['loader']['identity'] = 'placeholder'          # (edited: it says what is not so)
+        (self.out / 'manifest.json').write_text(json.dumps(manifest))
+        _, (code, _) = self.publish()
+        self.assertIn('identity from an IPSW', str(code))
+
+    def test_apple_s_data_under_any_name_or_after_the_entries(self):
+        blob = image.identity_blob(self.tree())
+        payload = self.out / 'zeta.payload'
+        for hidden in ('Identity', 'identity.bin', 'cmdline-after', 'trailing', 'device-tree', 'im4p'):
+            self.build()
+            entries = image.payload_entries(payload.read_bytes())
+            if hidden == 'cmdline-after':
+                entries = [(n, d + blob if n == 'cmdline' else d) for n, d in entries]
+            elif hidden in ('Identity', 'identity.bin'):
+                entries.append((hidden, blob))
+            elif hidden == 'device-tree':
+                entries.append(('board-notes', b'AAPL,phandle\0' * 20))
+            elif hidden == 'im4p':
+                entries.append(('notes', b'0\x82\x01\x00\x16\x04IM4P\x16\x04dtre'))
+            data = image.payload_pack(entries) + (blob if hidden == 'trailing' else b'')
+            payload.write_bytes(data)
+            self.rehash('zeta.payload')
+            _, (code, said) = self.publish()
+            self.assertNotEqual(code, 0, f'{hidden}: published: {said}')
+            self.assertIn('Apple', str(code), hidden)
+
+    def test_a_boot_image_is_looked_inside(self):
+        self.uefi()
+        self.build()
+        blob = image.identity_blob(self.tree())
+        code, _ = self.tool('personalize', str(self.out / 'boot.img'), '--identity', str(self.dir / 'DeviceTree.bin'))
+        self.assertEqual(code, 0)
+        (self.out / 'boot-mine.img').replace(self.out / 'boot.img')
+        self.rehash('boot.img')
+        _, (code, said) = self.publish('--with-uefi')
+        self.assertNotEqual(code, 0, said)
+        self.assertIn('boot.img', str(code))
+        self.assertTrue(blob)
+
+    def test_a_boot_image_the_manifest_does_not_list_is_not_taken(self):
+        self.build()
+        self.uefi()
+        (self.out / 'boot.img').write_bytes(b'ANDROID!' + bytes(100))     # (not the image's own)
+        _, (code, _) = self.publish('--with-uefi')
+        self.assertIn('boot.img is not the image\'s own', str(code))
+
+    def test_a_version_is_a_name_and_no_more(self):
+        self.build()
+        repository = self.dir / 'phone-repo'
+        (repository / 'images').mkdir(parents=True)
+        (repository / 'keep').write_text('the phone\'s own\n')
+        for version in ('..', '../x', '/tmp/x', '.hidden', 'a/b'):
+            code, _ = self.tool('publish', str(self.out), str(repository), '--version', version)
+            self.assertIn('--version', str(code), version)
+        self.assertEqual((repository / 'keep').read_text(), 'the phone\'s own\n', 'nothing of the repository touched')
+        (repository / 'images/notes').mkdir()
+        (repository / 'images/notes/a.md').write_text('x\n')
+        code, _ = self.tool('publish', str(self.out), str(repository), '--version', 'notes')
+        self.assertIn('is there and is no image', str(code))
+        self.assertTrue((repository / 'images/notes/a.md').is_file())
+
     def test_an_image_that_is_not_what_its_manifest_says_is_not_published(self):
         self.build()
         with open(self.out / 'zeta.payload', 'ab') as payload:
@@ -245,6 +318,25 @@ class Publish(Sandbox):
         self.assertIn('NOT AS PUBLISHED: ', said)
         self.assertIn('not what manifest.json says', said)
         self.assertIn('no image', str(self.tool('verify', str(self.dir / 'uefi-nothing'))[0]))
+
+    def test_verify_sees_what_no_manifest_lists(self):
+        self.build()
+        repository, (code, said) = self.publish()
+        self.assertEqual(code, 0, said)
+        images = repository / 'images'
+        for stray in ('v1/zeta-mine.payload', 'v1/DeviceTree.bin', 'old/n104ap.ipsw'):
+            (images / stray).parent.mkdir(parents=True, exist_ok=True)
+            (images / stray).write_bytes(b'something')
+            code, said = self.tool('verify', str(images))
+            self.assertEqual(code, 1, f'{stray}: {said}')
+            self.assertIn('NOT AS PUBLISHED', said)
+            self.assertIn(Path(stray).name, said)
+            (images / stray).unlink()
+        (images / 'v1/README.md').unlink()
+        (images / 'v1/README.md').symlink_to(self.tree())
+        code, said = self.tool('verify', str(images))
+        self.assertEqual(code, 1, said)
+        self.assertIn('links, not files of its own', said)
 
     def tree(self):
         path = self.dir / 'DeviceTree.bin'

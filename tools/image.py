@@ -356,16 +356,75 @@ def check_against_manifest(directory):
     return manifest
 
 
+# What of Apple's a file's bytes show, whatever its entries are called: an identity blob (mkidentity.py --blob), an
+# Apple image file (IM4P: a DeviceTree.*.im4p, a firmware), an iPhone's device tree (AAPL,phandle in every node of it --
+# the loader and the kernel name it once each, so more than a few is one)
+APPLE_MARKS = ((IDENTITY_MAGIC, 0, 'an identity blob (IDNT)'), (b'IM4P', 0, 'an Apple image file (IM4P)'),
+               (b'AAPL,phandle', 4, 'an iPhone\'s device tree'))
+LOADER_REFUSED = ('the loader was built with an identity from an IPSW (Apple\'s data): remove arch/arm64/boot/identity.h '
+                  'and build the loader again with no DeviceTree.bin beside the IPSW (arch/arm64/boot/build.sh) for an '
+                  'image that is published')
+
+
+def apple_in(data):
+    """What of Apple's DATA holds, by its bytes: a few words, or None"""
+    for mark, allowed, what in APPLE_MARKS:
+        if data.count(mark) > allowed:
+            return what
+    return None
+
+
+def file_refusal(label, data):
+    """Why an image's file (a payload, or a boot image: its gzip stream opened) is not to be published, judged by its
+    bytes alone -- every payload in it, every entry of each whatever its name, and what lies between and after them;
+    None when nothing."""
+    streams = [data]
+    if data[:8] == b'ANDROID!':
+        try:
+            _, kernel = boot_image_parts(data)
+            streams.append(zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(kernel))
+        except (SystemExit, zlib.error) as error:
+            return f'{label}: a boot image whose kernel is not to be read ({error}): it cannot be looked inside'
+    for stream in streams:
+        what = apple_in(stream)
+        if what:
+            return f'{label} holds {what}: Apple\'s data, never part of an image that is published'
+        at = 0
+        while (at := stream.find(b'XNUP', at)) >= 0:
+            try:
+                entries = payload_entries(stream[at:])
+            except SystemExit:
+                entries = []
+            for name, entry in entries:
+                low = name.lower()
+                if 'ident' in low:
+                    return (f'{label}: its payload carries an identity ("{name}", Apple\'s data): build it without '
+                            f'--identity for an image that is published')
+                if low in ('ramdisk', 'rdres'):
+                    return f'{label}: its payload carries a system image: never part of an image that is published'
+                if low == 'loader.efi' and loader_identity(entry) != 'placeholder':
+                    return LOADER_REFUSED
+            at += 4
+    return None
+
+
 def publishable(source, manifest):
-    """What publish refuses in the image at SOURCE, as a sentence; None when nothing."""
+    """What publish refuses in the image at SOURCE, as a sentence; None when nothing. The files themselves are
+    looked at, not what manifest.json says of them (it is not signed, and anybody may edit it)."""
     if manifest['loader']['identity'] != 'placeholder':
-        return ('the loader was built with an identity from an IPSW (Apple\'s data): build the loader without one '
-                '(arch/arm64/boot/build.sh with no DeviceTree.bin) for an image that is published')
-    names = [entry for entry, _ in payload_entries((source / f'{manifest["board"]}.payload').read_bytes())]
-    if 'identity' in names or manifest.get('identity_in_payload'):
+        return LOADER_REFUSED
+    if manifest.get('identity_in_payload'):
         return 'the payload carries an identity (Apple\'s data): build it without --identity for an image that is published'
-    if 'ramdisk' in names:
-        return 'the payload carries a system image: never part of an image that is published'
+    files = manifest.get('files', {})
+    if f'{manifest["board"]}.payload' not in files:
+        return f'manifest.json lists no {manifest["board"]}.payload'
+    for file in files:
+        path = source / file
+        if path.is_symlink():
+            return f'{file} is a link: an image\'s files are its own'
+        refused = file_refusal(file, path.read_bytes())
+        if refused:
+            return refused
     return None
 
 
@@ -381,13 +440,24 @@ def publish(options):
         die(refused)
     files = [f'{name}.payload', 'manifest.json', 'README.md']
     if (source / 'boot.img').is_file():
+        if 'boot.img' not in manifest.get('files', {}):
+            die('boot.img is not the image\'s own: manifest.json does not list it (tools/image.py build made the image '
+                'without it)')
         if options.with_uefi:
             files.append('boot.img')
         else:
             say('boot.img left out: it carries the phone\'s UEFI and its vendor\'s drivers (--with-uefi to publish it)')
+    for file in files:
+        if (source / file).is_symlink():
+            die(f'{source / file} is a link: an image\'s files are its own')
     version = options.version or '{}-{}'.format(manifest['date'][:10], (manifest['code']['commit'] or 'unknown')[:12])
+    # (a name of a directory of images/, no more: not .., not a path, not one that begins with a dot)
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,99}', version):
+        die(f'--version {version!r}: letters, digits, dots, plus and minus signs, beginning with a letter or a digit')
     target = repository / 'images' / version
     if target.exists():
+        if not (target / 'manifest.json').is_file():
+            die(f'{target} is there and is no image: it is left as it is (another --version)')
         shutil.rmtree(target)
     target.mkdir(parents=True)
     for file in files:
@@ -448,10 +518,24 @@ def verify(options):
     if not found:
         die(f'{root}: no image (a directory with a manifest.json) under it')
     bad = 0
+    # (what lies under it outside every image, but the index: a stray DeviceTree.bin, an IPSW, a personalized copy)
+    stray = sorted(str(path.relative_to(root)) for path in root.rglob('*') if (path.is_file() or path.is_symlink()) and
+                   path != root / 'README.md' and not any(directory in path.parents for directory in found))
+    if stray:
+        print(f'{root}: NOT AS PUBLISHED: files in no image: {", ".join(stray)}')
+        bad += 1
     for directory in found:
         try:
             manifest = check_against_manifest(directory)
             refused = publishable(directory, manifest)
+            own = set(manifest.get('files', {})) | {'manifest.json', 'README.md'}
+            more = sorted(str(path.relative_to(directory)) for path in directory.rglob('*') if
+                          (path.is_file() or path.is_symlink()) and str(path.relative_to(directory)) not in own)
+            links = sorted(str(path.relative_to(directory)) for path in directory.rglob('*') if path.is_symlink())
+            if refused is None and links:
+                refused = f'links, not files of its own: {", ".join(links)}'
+            if refused is None and more:
+                refused = f'files manifest.json does not list: {", ".join(more)}'
         except SystemExit as stop:
             refused = str(stop).removeprefix('image.py: ')
         print(f'{directory}: ' + (f'NOT AS PUBLISHED: {refused}' if refused else
