@@ -4416,13 +4416,29 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		size = 0;
 		goto oack;
 	}
-	/* a read: what the modem wrote earlier under that name, else the firmware partition's file */
+	/*
+	 * a read: what the modem wrote earlier under that name, else the firmware partition's file. What it wrote is read from
+	 * a copy of the transfer's own: a write of the same name finishing meanwhile frees the kept one (and a slot used again
+	 * is not to carry `borrowed' over from its last transfer).
+	 */
 	file = NULL;
+	t->borrowed = false;
 	for (unsigned f = 0; f < 8 && file == NULL; f++) {
 		if (tftp_files[f].data != NULL && strcmp(tftp_files[f].name, name) == 0) {
-			file = tftp_files[f].data;
+			static const uint8_t nothing[1];
+
 			size = tftp_files[f].size;
-			t->borrowed = true;
+			if (size == 0) {
+				file = nothing;
+				t->borrowed = true;     /* (static: nothing to give back) */
+			} else if ((file = kalloc_data(size, Z_WAITOK)) != NULL) {
+				memcpy(__DECONST(uint8_t *, file), tftp_files[f].data, size);
+			} else {
+				printf("mpss: tftp: the modem reads \"%s\": no memory for a copy\n", name);
+				tftp_error(tftp_port, node, port, TFTP_ENOENT, "no memory");
+				tftp_refused++;
+				return;
+			}
 		}
 	}
 	if (file == NULL && tftp_file_of(name) == NULL) {
