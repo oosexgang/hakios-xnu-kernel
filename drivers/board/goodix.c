@@ -806,9 +806,18 @@ focaltech_probe(bool verbose)
 {
 	uint8_t high = 0, low = 0;
 
-	/* Maybe firmware is already running (previous session, warm boot). */
+	/*
+	 * Maybe firmware is already running (previous session, warm boot) -- which a chip still held in reset cannot say:
+	 * power_on() leaves the reset line low, and the look below found nothing every time
+	 */
+	touch_reset();
 	if (focaltech_wait_valid(&high, &low)) {
 		return true;
+	}
+	if (FOCALTECH_FW_LENGTH == 0) {
+		/* (the build's stand-in focaltech_fw.h: started, the boot ROM would jump into empty PRAM) */
+		printf("focaltech: no firmware built in (focaltech_fw.h is empty): the chip is not started\n");
+		return false;
 	}
 
 	if (!focaltech_enter_boot_rom()) {
