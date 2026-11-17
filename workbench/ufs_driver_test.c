@@ -879,6 +879,20 @@ writing_has_its_list_out(void)
 	CHECK(switched_in == 1 && ufs_native_on && !ufs_write_busy, "the list back in, reads through it again: %u", switched_in);
 }
 
+/* which partitions ufs_check=1 takes for an image's: the name, or the name with its slot (_a, _b), and nothing else */
+static void
+reference_names(void)
+{
+	static const struct { const char *name; bool is; } names[] = {
+		{ "tz", true }, { "tz_a", true }, { "tz_b", true }, { "tz_c", false }, { "tz_", false }, { "tz_ab", false }, { "tzz", false },
+		{ "t", false }, { "xtz", false }, { "tz_A", false }, { "", false },
+	};
+
+	for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+		CHECK(ufs_is_reference(names[i].name, "tz") == names[i].is, "\"%s\": %s", names[i].name, names[i].is ? "tz's" : "not tz's");
+	}
+}
+
 /* ---- requests that do not wait --------------------------------------------------------------------------- */
 
 /* (darwin is counted in its own 4 KB blocks) a file system's read-ahead: the requests return at once and are served by the driver's threads, each with its own bytes */
@@ -954,7 +968,7 @@ main(int argc, char **argv)
 		{ "off_without_the_loader", off_without_the_loader, 1 }, { "through_its_own_driver", through_its_own_driver, 1 },
 		{ "a_unit_not_known", a_unit_not_known, 1 }, { "writing_has_its_list_out", writing_has_its_list_out, 1 },
 		{ "read_ahead_by_its_threads", read_ahead_by_its_threads, 1 }, { "no_threads", no_threads, 1 },
-		{ "a_request_that_waits", a_request_that_waits, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
+		{ "a_request_that_waits", a_request_that_waits, 1 }, { "reference_names", reference_names, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
 		{ "reads_short_of_a_block", reads_short_of_a_block, 1 }, { "reads_that_follow", reads_that_follow, 1 }, { "its_devices", its_devices, 1 },
 		{ "the_report", the_report, 1 }, { "the_report_read_only", the_report_read_only, 1 }, { "one_past_the_last", one_past_the_last, 1 },
 	};
