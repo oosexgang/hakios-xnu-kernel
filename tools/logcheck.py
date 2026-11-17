@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (part, its lines' prefix, what says it came up, what says it did not): each driver's own words (drivers/board/*.c)
 PARTS = [
+    ('Identity (loader)', 'identity', [r'from the payload \('], [r"the payload's is not one"]),
     ('GPU', 'adreno', [r'A PICTURE DRAWN BY THE GPU IS ON THE PANEL', r'the GPU runs'],
      [r'THE GPU IS NOT STARTED', r'startup stops', r'FAILED']),
     ('Bluetooth controller', 'bt-uart', [r"the controller is Darwin's from here on", r'identification complete', r'bt-uart: done'],

@@ -93,6 +93,16 @@ class LogCheck(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn('every part as it was', said.getvalue())
 
+    def test_which_identity_the_loader_gave(self):
+        _, said = run('identity: serial number ABC, ECID 1\nidentity: from the payload (t8030, 828x1792)\nDarwin Kernel Version 1\n')
+        self.assertRegex(said, r'Identity \(loader\) +ok +identity: from the payload \(t8030, 828x1792\)')
+        code, said = run("identity: serial number ABC, ECID 1\nidentity: the payload's is not one (100 bytes): the one built in\n"
+                         'Darwin Kernel Version 1\n')
+        self.assertRegex(said, r"Identity \(loader\) +STOPPED +identity: the payload's is not one")
+        self.assertEqual(code, 1)
+        _, said = run('identity: serial number ABC, ECID 1\nDarwin Kernel Version 1\n')
+        self.assertRegex(said, r'Identity \(loader\) +said +identity: serial number ABC', 'the one built in: said, no more')
+
     def test_a_look_that_went_through_is_ok(self):
         # (bt=-1 reads and says, and is done: nothing else says it worked)
         code, said = run('Darwin Kernel Version 1\nbt-uart: gpio24 cfg 0 level 0\nbt-uart: done\n')
@@ -109,9 +119,11 @@ class LogCheck(unittest.TestCase):
 
     def test_the_parts_words_are_the_drivers(self):
         # each part's prefix is one its driver writes its lines with
-        sources = ''.join(p.read_text(errors='replace') for p in (ROOT / 'drivers/board').glob('*.c'))
+        # (or the loader: the identity is its)
+        sources = ''.join(p.read_text(errors='replace') for p in [*(ROOT / 'drivers/board').glob('*.c'), *(ROOT / 'drivers/iokit').glob('*.cpp'),
+                                                                   *(ROOT / 'arch/arm64/boot/src').glob('*.c')])
         for name, prefix, _, _ in logcheck.PARTS:
-            self.assertIn(f'"{prefix}: ', sources, f'{name}: no driver writes lines beginning {prefix}:')
+            self.assertTrue(f'"{prefix}: ' in sources, f'{name}: nothing writes lines beginning {prefix}:')
 
 
 if __name__ == '__main__':
