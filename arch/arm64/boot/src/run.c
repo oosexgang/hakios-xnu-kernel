@@ -178,6 +178,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * loader asked for (the loader stays resident across runs) */
 	block_write_requested = 0;
 	block_write_part = -1;
+	block_probe_requested = 0;      /* (ufs_probe=, ufs_native=: as asked for this run, not the one before) */
+	hc_requested = 0;
 	for (const char *c = pi.cmdline; *c; c++) {
 		if (starts_with(c, "bootcpu=") && (c == pi.cmdline || c[-1] == ' ') && c[8] >= '0' && c[8] <= '7') {
 			kernel_mpidr = (uint64_t)(c[8] - '0') << PLAT->core_shift;
