@@ -99,6 +99,11 @@ tags yet, so the current work is one section.
   kernel built before a pull current; `make image` took the kernel at the default path whatever `XNU_SRC` said.
   `./bench fresh` starts the loader anew, and `phone-day.sh` uses it before every run but the first.
 
+- The display, IOSurface and GPU services Darwin's programs talk to: a surface whose rows said more than its memory was
+  read past by the framebuffer (a panic, or kernel memory on the panel); a GPU buffer closed while the GPU still used
+  it let its pages go; a refresh could be sent to a notification port freed meanwhile; a host buffer of nearly 2^64
+  bytes broke the GPU's address allocator; a closed GPU client still made buffers nobody freed.
+
 ### For whoever works on the project
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
