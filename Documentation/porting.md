@@ -154,9 +154,12 @@ what each feature needs written down before it can be listed, key by key, in [fe
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
 | Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
 
-`BENCH_DEFCONFIG=phone_look ./bench run` asks every part above that has a level that only reads for it, on every
-core, with the GPU, Wi-Fi, the sound and the clocks left off: its log, compared with Android's, is the first look at
-all of them at once. `phone_metal` then turns the GPU, Metal and Wi-Fi on, and `phone_perf` the clocks.
+`BENCH_DEFCONFIG=phone_look ./bench run` asks every part above that has a level that only reads for it, on every core,
+with the GPU, Wi-Fi, the sound and the clocks left off: its log, compared with Android's, is the first look at all of
+them at once. `phone_metal` then turns the GPU, Metal and Wi-Fi on, and `phone_perf` the clocks and the kernel's own
+UFS driver: before it, `phone_ufs_check` reads the partitions through that driver once and compares every byte with
+what the loader reads (`ufs: native check:` lines; a `DIFFERENT` or `STOP` and phone_perf is not for this phone yet),
+and `phone_ufs_bench` says what the flash gives with 1 to 31 reads in flight; both go back to the loader when done.
 
 `hw.board.features` in a running system shows what the kernel has for the board.
 

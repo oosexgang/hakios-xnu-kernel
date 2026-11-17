@@ -36,7 +36,7 @@ What each needs: [Documentation/building.md](Documentation/building.md).
 * In QEMU: `make qemu` (the kernel booted as a phone boots it, its shell and its tests), or
   `tools/qemu-kernel.sh [--defconfig NAME] KERNEL`.
 * On a phone: `./bench enter`, `./bench ramdisk IMAGE`, then `BENCH_DEFCONFIG=NAME ./bench run`, NAME going
-  `phone_first`, `phone_look`, `phone_metal`, `phone_perf` on a phone's first day.
+  `phone_first`, `phone_look`, `phone_metal`, `phone_ufs_check`, `phone_perf` on a phone's first day.
   `tools/defconfig.py --list` names the defconfigs.
 
 A new phone: [Documentation/porting.md](Documentation/porting.md).

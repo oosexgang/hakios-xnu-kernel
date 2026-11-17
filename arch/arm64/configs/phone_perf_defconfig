@@ -1,4 +1,7 @@
 # phone_metal with the cores' clocks raised and then governed by their load (board/cpufreq.c, board/thermal.c
-# holding them back when the SoC is hot).
+# holding them back when the SoC is hot), and the storage read through the kernel's own UFS driver, many reads in
+# flight at once, rather than one at a time through the loader (after phone_ufs_check has said its bytes are the
+# loader's; anything not as expected, and the reads go through the loader as before).
 include phone_metal
 cpufreq=1
+ufs_native=1
