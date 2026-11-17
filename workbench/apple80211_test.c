@@ -283,6 +283,11 @@ join(void)
 	assoc.key_length = 10;
 	assoc.ssid_length = 33;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "a name of 33 bytes");
+	assoc.ssid_length = 32;
+	memset(assoc.ssid, 'n', 32);
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && asked_join.ssid_length == 32, "a name of 32 bytes, the longest");
+	joins--;                                /* (not one of the four below) */
+	memcpy(assoc.ssid, "home", 4);
 	assoc.ssid_length = 0;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "no name");
 	assoc.ssid_length = 4;
@@ -301,6 +306,36 @@ join(void)
 		    outcomes[i].status, answered.req_val, outcomes[i].result);
 		CHECK(fake_last_event.event_code == EVENT_ASSOC_DONE, "event 9 posted");
 	}
+}
+
+/* the link, as Darwin is told of it: the name and the access point changed, then the link's own event -- up with the
+ * station's RSSI, down when asked, down and gone (involuntary, reason 4) otherwise */
+static void
+link_changes(void)
+{
+	static const struct { int status; uint8_t down, involuntary; uint32_t reason; int32_t rssi; } cases[] = {
+		{ 1, 0, 0, 0, -55 }, { 0, 1, 0, 0, 0 }, { ETIMEDOUT, 1, 1, 4, 0 }, { EIO, 1, 1, 4, 0 },
+	};
+
+	state.bss.rssi = -55;
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct apple80211_link_changed link;
+		unsigned before = fake_events;
+
+		hakios_apple80211_event(HAKIOS_STA_LINK, cases[i].status);
+		CHECK(fake_events == before + 3 && fake_event_codes[before % 16] == EVENT_SSID_CHANGED &&
+		    fake_event_codes[(before + 1) % 16] == EVENT_BSSID_CHANGED && fake_event_codes[(before + 2) % 16] == EVENT_LINK_CHANGED,
+		    "%d: the name, the access point, then the link (%u events)", cases[i].status, fake_events - before);
+		/* (the interface's name first, then the link's) */
+		CHECK(fake_last_event_length == 16 + sizeof(link), "%d: the name and the link carried: %u bytes", cases[i].status,
+		    fake_last_event_length);
+		memcpy(&link, fake_last_event_data + 16, sizeof(link));
+		CHECK(link.down == cases[i].down && link.involuntary == cases[i].involuntary && link.reason == cases[i].reason &&
+		    link.rssi == cases[i].rssi, "%d: down %u involuntary %u reason %u rssi %d", cases[i].status, link.down, link.involuntary,
+		    link.reason, link.rssi);
+	}
+	hakios_apple80211_event(HAKIOS_STA_SCAN_DONE, 0);
+	CHECK(fake_last_event.event_code == EVENT_SCAN_DONE && fake_last_event_length == 16, "an event without data: the name alone");
 }
 
 /* a scan asked for: the channels named, or every channel when more are named than there is room for */
@@ -327,11 +362,24 @@ scan_request(void)
 	CHECK(asked_scan.frequency_count == 0 && asked_scan.ssid_length == 0, "every channel, for any name: %u",
 	    asked_scan.frequency_count);
 
+	/* as many as there is room for, and the longest name: each taken */
+	scan.ssid_length = 32;
+	memset(scan.ssid, 'n', 32);
+	scan.channel_count = 64;
+	for (unsigned i = 0; i < 64; i++) {
+		scan.channels[i] = (struct apple80211_channel) { 1, i < 13 ? 1 + i : 36 + 4 * (i - 13) > 196 ? 36 : 36 + 4 * (i - 13),
+			                                         i < 13 ? CHANNEL_2GHZ : CHANNEL_5GHZ };
+	}
+	scan.channels[63] = (struct apple80211_channel) { 1, 0, 0 };    /* (and one the radio has not, at the end) */
+	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == 0, "asked");
+	CHECK(asked_scan.frequency_count == 63 && asked_scan.ssid_length == 32, "64 channels, one not the radio's: 63 (%u); a name of 32",
+	    asked_scan.frequency_count);
+
 	scan.channel_count = 1;
 	scan.channels[0] = (struct apple80211_channel) { 1, 0, 0 };
 	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == EINVAL, "only a channel the radio has not");
 	CHECK(request(true, 10, &scan, sizeof(scan) - 1, NULL) == EINVAL, "a request cut short");
-	CHECK(scans == 2, "nothing refused reached the station: %u", scans);
+	CHECK(scans == 3, "nothing refused reached the station: %u", scans);
 }
 
 /* channels by number alone, with no band said: 1 to 14 are 2.4 GHz (14 is 2484 MHz), the rest 5 GHz up to 196; 6 GHz none */
@@ -377,6 +425,28 @@ rates_in_two_elements(void)
 	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0, "given");
 	CHECK(result.rate_count == 4 && result.rates[0] == 1 && result.rates[1] == 2 && result.rates[2] == 6 && result.rates[3] == 12,
 	    "1, 2, 6 and 12 Mbit/s: %u rates", result.rate_count);
+}
+
+/* 54 Mbit/s, the fastest a rate element says, is one; more than fifteen rates are fifteen */
+static void
+the_most_rates(void)
+{
+	uint8_t elements[2 + 8 + 2 + 10] = { 1, 8, 0x6c, 0xee, 0x02, 0x04, 0x0b, 0x16, 0x0c, 0x12, 50, 10 };
+	struct hakios_sta_bss bss = network("home", false);
+	struct apple80211_scan_result result;
+
+	/* (54 Mbit/s -- 108 halves -- counts; 0xee, a basic rate of 55, is none of Wi-Fi's: not taken) */
+	for (unsigned i = 0; i < 10; i++) {
+		elements[12 + i] = (uint8_t)(0x18 + 2 * i);     /* (12 to 21 Mbit/s: ten more) */
+	}
+	memcpy(bss.elements, elements, sizeof(elements));
+	bss.elements_length = sizeof(elements);
+	heard[heard_n++] = bss;
+	memset(&result, FILL, sizeof(result));
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0, "given");
+	CHECK(result.rate_count == 15 && result.rates[0] == 54, "fifteen of the seventeen, the first 54 Mbit/s: %u, %u", result.rate_count,
+	    result.rates[0]);
 }
 
 /* an element that says it is longer than what is left of them: not read, nor what lies past the elements */
@@ -442,7 +512,7 @@ rssi_bounds(void)
 	struct { uint32_t version; int32_t least, most, threshold; } bounds;
 	static const struct { const char *args; int32_t threshold; } cases[] = {
 		{ "", -80 }, { "wifi_rssi_threshold=-70", -70 }, { "wifi_rssi_threshold=-127", -127 }, { "wifi_rssi_threshold=5", -80 },
-		{ "wifi_rssi_threshold=-128", -80 }, { "wifi_rssi_threshold=0", -80 },
+		{ "wifi_rssi_threshold=-128", -80 }, { "wifi_rssi_threshold=0", -80 }, { "wifi_rssi_threshold=-1", -1 },
 	};
 
 	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -493,7 +563,7 @@ main(int argc, char **argv)
 		{ "scan_results", scan_results }, { "radio_says_too_much", radio_says_too_much }, { "caller_room", caller_room },
 		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "channels_by_number", channels_by_number },
 		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
-		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked }, { "rssi_bounds", rssi_bounds },
+		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked }, { "rssi_bounds", rssi_bounds }, { "link_changes", link_changes }, { "the_most_rates", the_most_rates },
 	};
 
 	if (argc < 2) {
