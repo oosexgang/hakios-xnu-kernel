@@ -1138,6 +1138,7 @@ dsp_shutdown(const char *why)
 	printf("adsp: %u: THE AUDIO DSP IS SHUT DOWN\n", step);
 	need(&ipcc);
 	wr(ipcc.base + IPCC_DISABLE, IPCC_LPASS << 16 | IPCC_SMP2P);
+	wr(ipcc.base + IPCC_DISABLE, IPCC_LPASS << 16 | IPCC_GLINK);   /* (both of the two step 7 listened for) */
 	doorbells();
 	dsp_started = false;
 	mailbox_send("{class: image, res: load_state, name: adsp, val: off}");
