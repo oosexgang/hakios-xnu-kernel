@@ -74,6 +74,19 @@ tags yet, so the current work is one section.
   after its start had given up and the DSP had been shut down under them. Still open: a frame sent while the station
   leaves ([drivers.md](Documentation/drivers.md), "Wi-Fi, network").
 
+- `phone_look`, the run meant only to read, wrote to the phone: `touchscreen=1` is the touch screen's whole start
+  (reset, supplies, clocks, pins, the chip), and `backlight=1` turned the display's clocks on when it found them off.
+  The touch drivers have a level that only looks now, `touchscreen=-1`, which `phone_look` uses; `backlight=1` turns no
+  clock on. The FocalTech variant's check for firmware already running ran with the chip held in reset, and a kernel
+  without its firmware started the chip into empty memory; the RPMh request of the Goodix driver went out without the
+  lock the others take; a touch clock past 0x60000 of the clock controller would have been read outside the mapping.
+- The loader: `getvar result` came back empty after a run that filled the log, and `bench` took a running kernel for
+  one that had ended; `oem dsu patch 0x200000` wrote at offset 0 of the system image (a number with `0x` or capitals
+  was read as far as it went); `oem dsu patch`, `oem ramdisk` and `oem ramdisk patch` stayed armed for downloads they
+  were not meant for; a download of more than 180 s had the watchdog reset the phone; `oem read` overwrote the last
+  run's kernel log; `getvar max-download-size` said a fixed size; a refused copy of the DSU metadata could leave a
+  mixed table of extents.
+
 ### For whoever works on the project
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
