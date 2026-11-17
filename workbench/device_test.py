@@ -37,8 +37,11 @@ class Sandbox(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)     # (also when what follows fails)
         self.saved = (boards.ROOT, boards.DEVICES)
         boards.ROOT, boards.DEVICES = self.dir, self.dir / 'arch/arm64/boot/dts'
+        self.addCleanup(setattr, boards, 'DEVICES', self.saved[1])
+        self.addCleanup(setattr, boards, 'ROOT', self.saved[0])
         self.git('init', '-q', '-b', 'code')
         (self.dir / 'arch/arm64/boot/dts/emulator').mkdir(parents=True)
         (self.dir / 'arch/arm64/boot/dts/emulator/board.dts').write_text(board('emulator', 'An emulator'))
@@ -61,10 +64,6 @@ class Sandbox(unittest.TestCase):
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'two packages')
         self.git('checkout', '-q', 'code')
-
-    def tearDown(self):
-        boards.ROOT, boards.DEVICES = self.saved
-        shutil.rmtree(self.dir)
 
     def run_tool(self, *arguments):
         said, complained = io.StringIO(), io.StringIO()

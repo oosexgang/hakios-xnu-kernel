@@ -7,6 +7,7 @@ where the stage0 it carries mounts the small image.
 import importlib.util
 import os
 import plistlib
+import shutil
 import struct
 import tempfile
 import unittest
@@ -32,6 +33,7 @@ def fat(cpus, path, big=False):
 class Stage0(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
 
     def stage0(self, strings):
         path = self.dir / 'stage0'
@@ -51,6 +53,7 @@ class Stage0(unittest.TestCase):
 class Arm64e(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
 
     def test_a_thin_file_is_arm64e_by_its_subtype(self):
         thin(ARM64E, self.dir / 'e')
@@ -97,6 +100,7 @@ class Pruned(unittest.TestCase):
 class Loctable(unittest.TestCase):
     def test_only_english_base_and_the_loc_keys_stay(self):
         d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
         with open(d / 'a.loctable', 'wb') as f:
             plistlib.dump({'en': {'k': 'v'}, 'Base': {}, 'fr': {'k': 'w'}, 'ja': {}, 'LocProvenance': {}}, f,
                           fmt=plistlib.FMT_BINARY)
