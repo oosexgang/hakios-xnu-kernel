@@ -1,7 +1,8 @@
 /*
  * Qualcomm Bluetooth on a QUP GENI UART: power, the UART, H4 identification and, a level further, the controller
  * handed to Darwin (board/bt_host.c: bluetoothd's service, nodes, Skywalk channel and kernel control), H4
- * packets either way through the UART. No firmware loader: the controller runs what its ROM has.
+ * packets either way through the UART. Before it is handed over it is given the firmware bluetooth { } names, the
+ * phone's own patch and configuration (board/bt_qca.h); without them it runs what its ROM has.
  * Wiring and resource names come from bluetooth { } and the SoC file. Register layouts and HCI
  * framing: Linux drivers/tty/serial/qcom_geni_serial.c, drivers/soc/qcom/qcom-geni-se.c,
  * drivers/pinctrl/qcom/pinctrl-spmi-gpio.c and drivers/bluetooth/btqca.{c,h}.
