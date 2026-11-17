@@ -15,7 +15,7 @@ static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_sta
 static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
-static bool rcg_stuck, rx_error, coalesced, sw_low;
+static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event;
 static uint8_t tx[8], rx[512];
 static unsigned tx_size, rx_size, rx_pos;
 static struct { uint32_t address, value; } votes[128];
@@ -96,6 +96,9 @@ peer(void)
 		rx_size = sizeof(reset_evt);
 		if (bad_reset) {
 			rx[6] = 1;
+		}
+		if (not_an_event) {
+			rx[0] = 2;              /* (an ACL data packet's type where the reset's event was to come) */
 		}
 	} else {
 		CHECK(tx_size == sizeof(ver_cmd) && !memcmp(tx, ver_cmd, sizeof(ver_cmd)), "exact H4 EDL_PATCH_GETVER");
@@ -365,7 +368,8 @@ main(int argc, char **argv)
 {
 	static const char *const scenarios[] = { "off", "zero", "no_feature", "invalid_mode", "look", "wrong_protocol", "unsupported_arbiter", "full",
 	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
-	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio" };
+	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio", "tx_fifo_busy",
+	    "not_an_event" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -387,6 +391,7 @@ main(int argc, char **argv)
 	static const struct { const char *scenario, *said; } refusals[] = {
 		{ "not_vrm", "resource is not VRM" }, { "missing_resource", "resource is not VRM" },
 		{ "enable_not_ours", "no owned enable GPIO channel" }, { "enable_not_gpio", "enable GPIO is not LV/MV" },
+		{ "tx_fifo_busy", "SE busy, TX FIFO not empty" },
 	};
 	const char *refused = NULL;
 
@@ -406,6 +411,8 @@ main(int argc, char **argv)
 		spmi.map[7] = 0;                /* (only another system's alias of the enable GPIO is left) */
 	} else if (!strcmp(scenario, "enable_not_gpio")) {
 		en.reg[5] = 0x09;               /* (a subtype that is no LV/MV GPIO's) */
+	} else if (!strcmp(scenario, "tx_fifo_busy")) {
+		engine[0x64 / 4] = 1;           /* (something still in the TX FIFO, the engine otherwise idle) */
 	} else if (!strcmp(scenario, "mv_gpio")) {
 		en.reg[5] = 0x13;               /* (the last of the LV/MV subtypes) */
 	}
@@ -434,6 +441,7 @@ main(int argc, char **argv)
 		rx_error = !strcmp(scenario, "rx_error");
 		coalesced = !strcmp(scenario, "coalesced");
 		sw_low = !strcmp(scenario, "old_wrapper");
+		not_an_event = !strcmp(scenario, "not_an_event");
 		model.input[b->bluetooth.sw_ctrl] = !sw_low;
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
 		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
@@ -442,13 +450,16 @@ main(int argc, char **argv)
 			CHECK(!en.writes && !rsc.writes && !model.writes && !tx_commands, "inspection/refusal performs no hardware changes");
 			if (wrong_protocol) { CHECK(logged("SE protocol is not UART"), "protocol refusal logged"); }
 			if (refused != NULL) { CHECK(logged(refused), "refusal logged: %s", log_text); }
-		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error) {
+		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error || not_an_event) {
 			CHECK(logged("bring-up stopped; powering down") && !logged("identification complete"), "failure is explicit: %s", log_text);
 			CHECK(!en.reg[0x44], "failure powers down");
 			if (silent) {
 				CHECK(loopbacks == 4 && tx_commands == 4 && logged("reset response timed out"), "silent controller tries all four configurations without getver");
 				CHECK(read_starts == 8 && rx_cancels == 7, "four RX setups, four loopback restarts, seven cancels");
 				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "internal loopback succeeds with silent controller");
+			}
+			if (not_an_event) {
+				CHECK(logged("unexpected H4 packet type 0x2"), "a packet that is not an event is said: %s", log_text);
 			}
 		} else {
 			CHECK(logged("product id 0x7750, patch version 0x1234, ROM version 0x5678, SoC id 0x11223344"), "decoded version: %s", log_text);
@@ -461,6 +472,8 @@ main(int argc, char **argv)
 				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
 			}
 			CHECK(en.reg[0x44] == 0x80, "enable high until quiesce");
+			CHECK(en.reg[0x40] == 1 && en.reg[0x46] == 0x80, "the enable GPIO a digital output, and enabled: mode %#x, enable %#x",
+			    en.reg[0x40], en.reg[0x46]);
 			packing_and_clock();
 			unsigned count = rpmh_count;
 			quiesce();
