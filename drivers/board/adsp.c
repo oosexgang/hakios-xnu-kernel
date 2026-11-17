@@ -799,7 +799,7 @@ root_file(const char *name, uint64_t *size)
 	return data;
 }
 
-static bool from_root;                  /* the image is in memory of ours (root_file()), to be given back once written */
+static bool from_root;                  /* a file of the image came from the root (for the log) */
 
 /* For the sound (board/sound.c): a file of /fw on the root, read whole into memory of ours, and given back. */
 extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);   /* board/image.c */
@@ -832,11 +832,16 @@ hakios_adsp_fw_free(const uint8_t *data, uint64_t size)
 	kfree_data(ours, size);
 }
 
-/* A file of fw/ in the small image (ADSP=1 userland/build.sh puts fw-audio/ there), else of the board's firmware
- * directory on the root (above). */
+/*
+ * A file of fw/ in the small image (ADSP=1 userland/build.sh puts fw-audio/ there), else of the board's firmware
+ * directory on the root (above). *owned: whether it is memory of ours, read from the root, to be given back (at *size, its
+ * own size), or the small image's, only lent. Each file says it for itself: an image of both kinds is given back file by
+ * file, what was lent left alone.
+ */
 static const uint8_t *
-image_file(const char *name, uint64_t *size)
+image_file(const char *name, uint64_t *size, bool *owned)
 {
+	*owned = false;
 	{
 		const uint8_t *data = hakios_image_file("fw", name, size, NULL);  /* (board/image.c) */
 
@@ -849,6 +854,7 @@ image_file(const char *name, uint64_t *size)
 
 		if (data != NULL) {
 			from_root = true;
+			*owned = true;
 			return data;
 		}
 	}
@@ -863,32 +869,31 @@ image_file(const char *name, uint64_t *size)
 static struct {
 	const uint8_t *header;
 	uint64_t header_size;
+	bool header_owned;
 	struct {
 		uint32_t at;
 		uint32_t file_size, memory_size;
 		const uint8_t *file;
+		uint64_t owned_size;            /* the file as read from the root, its own size; 0: lent, not ours to give back */
 	} segment[MAX_SEGMENTS];
 	unsigned segments;
 	uint32_t size;
 } image;
 
-/* The image's files given back, if they were read into memory of ours. */
+/* The image's files given back, those read into memory of ours, each at the size it was read at. */
 static void
 image_forget(void)
 {
-	if (!from_root) {
-		return;
-	}
-	if (image.header != NULL) {
+	if (image.header != NULL && image.header_owned) {
 		void *data = (void *)(uintptr_t)image.header;
 
 		kfree_data(data, image.header_size);
 	}
 	for (unsigned s = 0; s < image.segments; s++) {
-		if (image.segment[s].file != NULL) {
+		if (image.segment[s].file != NULL && image.segment[s].owned_size != 0) {
 			void *data = (void *)(uintptr_t)image.segment[s].file;
 
-			kfree_data(data, image.segment[s].file_size);
+			kfree_data(data, image.segment[s].owned_size);
 		}
 	}
 	bzero(&image, sizeof(image));
@@ -906,7 +911,7 @@ step_firmware(void)
 	announce("find the audio DSP's image in the small image or on the root, and check it against its own header");
 	image_forget();
 	image.segments = 0;
-	header = image_file("adsp.mdt", &size);
+	header = image_file("adsp.mdt", &size, &image.header_owned);
 	if (header == NULL) {
 		return false;
 	}
@@ -936,14 +941,17 @@ step_firmware(void)
 		image.segment[image.segments].file_size = segment.file_size;
 		image.segment[image.segments].memory_size = segment.memory_size;
 		image.segment[image.segments].file = NULL;
+		image.segment[image.segments].owned_size = 0;
 		if (segment.file_size != 0) {
 			uint64_t file_size = 0;
+			bool owned = false;
 
 			snprintf(name, sizeof(name), "adsp.b%02u", i);
-			image.segment[image.segments].file = image_file(name, &file_size);
+			image.segment[image.segments].file = image_file(name, &file_size, &owned);
 			if (image.segment[image.segments].file == NULL) {
 				goto fail;
 			}
+			image.segment[image.segments].owned_size = owned ? file_size : 0;
 			if (file_size != segment.file_size) {
 				printf("adsp: %u: fw/%s has %llu bytes, the header says %u\n", step, name, file_size, segment.file_size);
 				image.segments++;               /* (for its file to be given back) */
