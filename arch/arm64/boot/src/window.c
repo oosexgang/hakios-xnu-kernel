@@ -80,7 +80,10 @@ choose_window(const struct payload_info *pi)
 		uint64_t lo = d->phys_start, hi = d->phys_start + (d->pages << 12);
 		/* the payload sits in RAM that UEFI may consider free: stay clear of it */
 		if (lo < pay_hi && hi > pay_lo) {
-			if (pay_lo - lo > hi - pay_hi && pay_lo > lo) {
+			/* (the larger of what is left below it and above it; either may be nothing, and neither sum wraps) */
+			uint64_t below = pay_lo > lo ? pay_lo - lo : 0, above = hi > pay_hi ? hi - pay_hi : 0;
+
+			if (below > above) {           /* (the same: above it, as before) */
 				hi = pay_lo;
 			} else {
 				lo = pay_hi;

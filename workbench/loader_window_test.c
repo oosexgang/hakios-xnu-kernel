@@ -183,6 +183,15 @@ payload_in_the_middle(void)
 	sound();
 }
 
+/* a free block that ends inside the payload's place: what is below it kept, not the whole block dropped */
+static void
+ends_in_the_payload(void)
+{
+	range(EfiConventionalMemory, PAYLOAD_BASE - 0x8000000ULL, PAYLOAD_BASE + 0x1000000ULL);
+	CHECK(choose() == 1 && win_base == PAYLOAD_BASE - 0x8000000ULL && win_size == 0x8000000ULL, "below it: %#llx + %#llx",
+	    (unsigned long long)win_base, (unsigned long long)win_size);
+}
+
 /* how many times `text' is in what was said */
 static unsigned
 said_times(const char *text)
@@ -360,7 +369,7 @@ main(int argc, char **argv)
 		{ "more_than_the_kernel_takes", more_than_the_kernel_takes }, { "largest_free_range", largest_free_range },
 		{ "longer_descriptors", longer_descriptors }, { "nothing_free", nothing_free }, { "firmware_says_no", firmware_says_no },
 		{ "no_low_memory", no_low_memory }, { "forced_base", forced_base }, { "up_to_the_payload", up_to_the_payload },
-		{ "payload_in_the_middle", payload_in_the_middle }, { "memory_map_said", memory_map_said },
+		{ "payload_in_the_middle", payload_in_the_middle }, { "ends_in_the_payload", ends_in_the_payload }, { "memory_map_said", memory_map_said },
 	};
 
 	if (argc < 2) {
