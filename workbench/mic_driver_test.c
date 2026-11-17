@@ -709,6 +709,97 @@ the_ring_darwin_reads(void)
 	    "100 ms waiting, and not more: nothing skipped (%llu)", (unsigned long long)(ring_skipped - skipped));
 }
 
+/* ---- the digital codec: which bolero, and the decimator ------------------------------------------------- */
+
+#define VA_AT   0x3370000u              /* (the VA and TX macros of the model: memory, wherever they are) */
+#define TX_AT   0x3220000u
+
+static void
+macros(uint32_t id0, uint32_t id1, uint32_t cfg0)
+{
+	va_macro.phys = VA_AT;
+	tx_macro.phys = TX_AT;
+	*cell(VA_AT + VA_CORE_ID_0) = id0;
+	*cell(VA_AT + VA_CORE_ID_1) = id1;
+	for (unsigned i = 0; i < 3; i++) {
+		*cell(VA_AT + VA_SWR_MIC_CTL0 + 4 * i) = 0x11;
+	}
+	*cell(TX_AT + TX1_PATH_CFG0) = cfg0;
+}
+
+static uint32_t
+at(uint64_t address)
+{
+	return *cell(address);
+}
+
+/* bolero 2.1 (its ID 02 0E): the SoundWire mics' clock dividers are the VA macro's, as va_macro_init() sets them,
+ * and nothing of them is the TX macro's */
+static void
+bolero_2_1(void)
+{
+	macros(0x02, 0x0e, 0x00);
+	CHECK(bolero_look() && strstr(log_text, "the digital codec is bolero 2.1") != NULL, "taken: %s", log_text);
+	for (unsigned i = 0; i < 3; i++) {
+		CHECK((at(VA_AT + VA_SWR_MIC_CTL0 + 4 * i) & 0xee) == 0xcc && found_va_mic[i] == 0x11, "SWR_MIC_CTL%u: %#x, found %#x", i,
+		    at(VA_AT + VA_SWR_MIC_CTL0 + 4 * i), found_va_mic[i]);
+	}
+	CHECK(va_mic_taken, "to be put back");
+	CHECK(dec1_on(), "the decimator on: %s", log_text);
+	CHECK(written(TX_AT + TX_TOP_CSR_SWR_CTRL) == 0 && written(TX_AT + TX_SWR_MIC0_CTL) == 0, "no clocks in the TX macro");
+	CHECK((at(TX_AT + TX_ADC_MUX1_CFG0) & 0x0f) == 1, "SWR_MIC0 into it (mic_input=1): %#x", at(TX_AT + TX_ADC_MUX1_CFG0));
+}
+
+/* bolero 2.0 (01 0F): nothing in the VA macro, the clocks in the TX macro once the decimator is on */
+static void
+bolero_2_0(void)
+{
+	macros(0x01, 0x0f, 0x00);
+	CHECK(bolero_look() && strstr(log_text, "the digital codec is bolero 2.0") != NULL, "taken: %s", log_text);
+	CHECK(written(VA_AT + VA_SWR_MIC_CTL0) == 0 && !va_mic_taken, "nothing in the VA macro");
+	CHECK(dec1_on(), "the decimator on: %s", log_text);
+	CHECK((at(TX_AT + TX_TOP_CSR_SWR_CTRL) & 1) && (at(TX_AT + TX_SWR_MIC0_CTL) & 0x0e) == 0x0c &&
+	    (at(TX_AT + TX_SWR_MIC1_CTL) & 0x0e) == 0x0c, "the TX macro's clocks: %#x %#x", at(TX_AT + TX_TOP_CSR_SWR_CTRL),
+	    at(TX_AT + TX_SWR_MIC0_CTL));
+}
+
+/* an ID of neither, or half of one: not taken, said, nothing written */
+static void
+bolero_unknown(void)
+{
+	static const uint32_t ids[][2] = { { 0x03, 0x0e }, { 0x01, 0x0e }, { 0x02, 0x0f }, { 0x00, 0x00 } };
+
+	for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
+		macros(ids[i][0], ids[i][1], 0x00);
+		CHECK(!bolero_look(), "%02x %02x: not taken", ids[i][0], ids[i][1]);
+	}
+	CHECK(strstr(log_text, "the digital codec is bolero OF AN UNKNOWN VERSION") != NULL, "said: %s", log_text);
+	CHECK(write_count == 0, "nothing written: %u", write_count);
+}
+
+/* the decimator's high-pass filter found elsewhere than at 150 Hz: put there while it settles, its gate opened and
+ * closed, what it was kept to be put back */
+static void
+decimator_filter_moved(void)
+{
+	macros(0x02, 0x0e, 0x00);
+	CHECK(bolero_look() && dec1_on(), "on: %s", log_text);
+	CHECK((at(TX_AT + TX1_PATH_CFG0) & 0x60) == 0x40 && hpf_cut_off == 0, "at 150 Hz, 0 kept: %#x", at(TX_AT + TX1_PATH_CFG0));
+	CHECK(written(TX_AT + TX1_PATH_CFG0) == 3 && written(TX_AT + TX1_PATH_SEC2) == 2, "the filter set, its gate opened and closed: %u, %u",
+	    written(TX_AT + TX1_PATH_CFG0), written(TX_AT + TX1_PATH_SEC2));
+}
+
+/* ... found at 150 Hz already: left there, the gate not touched */
+static void
+decimator_filter_in_place(void)
+{
+	macros(0x02, 0x0e, 0x40);
+	CHECK(bolero_look() && dec1_on(), "on: %s", log_text);
+	CHECK((at(TX_AT + TX1_PATH_CFG0) & 0x60) == 0x40 && hpf_cut_off == 2, "as it was: %#x", at(TX_AT + TX1_PATH_CFG0));
+	CHECK(written(TX_AT + TX1_PATH_CFG0) == 2 && written(TX_AT + TX1_PATH_SEC2) == 0, "nothing more written: %u, %u",
+	    written(TX_AT + TX1_PATH_CFG0), written(TX_AT + TX1_PATH_SEC2));
+}
+
 /* half a frame is nothing; one frame is one, and the next the next */
 static void
 reads_at_the_edges(void)
@@ -773,6 +864,8 @@ main(int argc, char **argv)
 		{ "adc1_turned_on", adc1_turned_on }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
 		{ "the_codec_does_not_take_it", the_codec_does_not_take_it }, { "the_ring_darwin_reads", the_ring_darwin_reads },
 		{ "reads_at_the_edges", reads_at_the_edges }, { "the_dsps_read_events", the_dsps_read_events },
+		{ "bolero_2_1", bolero_2_1 }, { "bolero_2_0", bolero_2_0 }, { "bolero_unknown", bolero_unknown },
+		{ "decimator_filter_moved", decimator_filter_moved }, { "decimator_filter_in_place", decimator_filter_in_place },
 	};
 
 	if (argc < 2) {
