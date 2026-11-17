@@ -270,8 +270,8 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 + * /dev/null, go to the console instead (that shows NSLog and the "Terminating app due to
 + * uncaught exception" kind of message). With applog=2 every program also gets
 + * OS_ACTIVITY_DT_MODE in its environment, which makes os_log write to standard error as well:
-+ * everything any program logs, and a much slower system. applog_name=NAME[,NAME...] with
-+ * applog=1 does that for the programs whose file names begin with one of the NAMEs only,
++ * everything any program logs, and a much slower system. applog_name=NAME[,NAME...], alone
++ * (it implies applog=1) does that for the programs whose file names begin with one of the NAMEs,
 + * which is how to read what one application extension has to say (launchd starts those for
 + * whoever asks, so there is no job description of ours to put the variable in).
 + */
@@ -286,7 +286,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	if (exec_applog >= 2) {
 +		return true;
 +	}
-+	if (exec_applog == 0 || *p == 0 || imgp->ip_ndp == NULL) {
++	if (*p == 0 || imgp->ip_ndp == NULL) {
 +		return false;
 +	}
 +	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
@@ -309,7 +309,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +static const char *
 +exec_applog_path(int fd, const char *path)
 +{
-+	if (exec_applog && (fd == 1 || fd == 2) && strcmp(path, "/dev/null") == 0) {
++	if ((exec_applog || exec_applog_name[0] != 0) && (fd == 1 || fd == 2) && strcmp(path, "/dev/null") == 0) {
 +		return "/dev/console";
 +	}
 +	return path;
