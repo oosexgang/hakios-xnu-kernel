@@ -49,6 +49,11 @@ fts_decode(const uint8_t *data, uint32_t length, struct fts_frame *frame)
 	struct fts_frame result = { 0 };
 	uint16_t ids = 0;
 	unsigned active = 0, count;
+	if (fts_report_empty(data, length)) {
+		/* (what the chip says once it has nothing to say: no finger down, whatever was, a lift missed included) */
+		*frame = result;
+		return true;
+	}
 	if (length != FTS_REPORT_BYTES || (count = data[1] & 0xf) > FTS_CONTACTS) {
 		return false;
 	}

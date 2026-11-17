@@ -181,11 +181,31 @@ crc_and_empty(void)
 	CHECK(!fts_report_empty(report, sizeof(report)), "its last byte counts");
 }
 
+/* all 0xff with a finger down (its lift missed): decoded as no finger, and the finger lifted */
+static void
+idle_lifts(void)
+{
+	struct fts_frame frame = { 0 };
+
+	frame.active = 1u << 2;
+	frame.x[2] = 100;
+	frame.y[2] = 200;
+	fts_report(&frame);
+	CHECK(posts == 1 && posted[0].type == HAKIOS_TOUCH_DOWN, "down");
+	memset(report, 0xff, sizeof(report));
+	frame.active = 0x1234;
+	CHECK(decodes(&frame) && frame.active == 0, "all 0xff is a frame of no finger: %#x", frame.active);
+	fts_report(&frame);
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 2, "and the finger lifted");
+	CHECK(!fts_decode(report, sizeof(report) - 1, &frame), "not of the report's length: refused");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "decoded", decoded }, { "refused", refused }, { "touches", touches }, { "crc_and_empty", crc_and_empty },
+		{ "idle_lifts", idle_lifts },
 	};
 
 	if (argc < 2) {

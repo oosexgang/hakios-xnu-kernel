@@ -461,7 +461,8 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
         struct fts_frame frame;
         bool read_ok = fts_read(0x01, report, sizeof(report));
         /* This chip returns a CRC-valid all-ff frame while idle. Android reads
-         * only on IRQ; our periodic fallback must not reset an idle controller. */
+         * only on IRQ; our periodic fallback must not reset an idle controller.
+         * (With a finger down it is decoded below: no finger, its lift posted.) */
         if (read_ok && !pending && !active && fts_report_empty(report, sizeof(report))) {
             failures = 0;
             fts_sleep_ms(8);
