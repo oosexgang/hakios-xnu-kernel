@@ -428,6 +428,9 @@ static volatile uint32_t par_n;
 static struct census *volatile watch_cs;
 static uint64_t watch_last = ~0ULL;
 static thread_call_t watch_call;
+/* the walkers' censuses as the timer reads them, against par_walk() freeing them (not par_lock: a stuck walk may hold it) */
+static LCK_GRP_DECLARE(watch_lck_grp, "apfs-check-watch");
+static LCK_MTX_DECLARE(watch_lock, &watch_lck_grp);
 
 static void
 watch_tick(__unused thread_call_param_t p0, __unused thread_call_param_t p1)
@@ -440,11 +443,13 @@ watch_tick(__unused thread_call_param_t p0, __unused thread_call_param_t p1)
 	}
 	/* entries and bytes both count as progress: one big file can take a while */
 	progress = cs->entries + cs->bytes;
+	lck_mtx_lock(&watch_lock);
 	for (uint32_t i = 0; i < par_n; i++) {
 		if (par_cs[i] != NULL) {
 			progress += par_cs[i]->entries + par_cs[i]->bytes;
 		}
 	}
+	lck_mtx_unlock(&watch_lock);
 	if (progress == watch_last) {
 		printf("apfs-check: STUCK: no progress for %d s after entry %llu, at %s, in %s\n",
 		    WATCH_SECONDS, cs->entries, cs->path + cs->rel, watch_phase);
@@ -457,6 +462,9 @@ watch_tick(__unused thread_call_param_t p0, __unused thread_call_param_t p1)
 	/* a sign the timer got to run at all: a walk can starve every thread call */
 	printf("apfs-check: tick, %llu entries\n", cs->entries);
 	watch_last = progress;
+	if (watch_cs == NULL) {
+		return;                 /* (stopped while this looked: not armed again) */
+	}
 	clock_interval_to_deadline(WATCH_SECONDS, NSEC_PER_SEC, &deadline);
 	thread_call_enter_delayed(watch_call, deadline);
 }
@@ -480,6 +488,8 @@ watch_stop(void)
 {
 	watch_cs = NULL;
 	if (watch_call != NULL) {
+		/* (a look already running finished before the census it reads goes; one it armed meanwhile taken back too) */
+		thread_call_cancel_wait(watch_call);
 		thread_call_cancel(watch_call);
 	}
 }
@@ -781,10 +791,24 @@ par_walk(struct census *cs, uint32_t n)
 		if (w[i]->path == NULL || w[i]->buf == NULL) {
 			break;
 		}
+		lck_mtx_lock(&watch_lock);
 		par_cs[i] = w[i];
+		lck_mtx_unlock(&watch_lock);
 		started = i + 1;
 	}
+	if (started < n && w[started] != NULL) {
+		/* (the one whose path or buffer could not be had: given back, with what it had) */
+		if (w[started]->path != NULL) {
+			kfree_data(w[started]->path, PATH_CAP);
+		}
+		if (w[started]->buf != NULL) {
+			kfree_data(w[started]->buf, READ_CHUNK);
+		}
+		kfree_type(struct census, w[started]);
+	}
+	lck_mtx_lock(&watch_lock);
 	par_n = started;
+	lck_mtx_unlock(&watch_lock);
 	printf("apfs-check: %u walkers at once\n", started);
 	for (uint32_t i = 0; i < started; i++) {
 		thread_t th;
@@ -802,9 +826,13 @@ par_walk(struct census *cs, uint32_t n)
 		msleep(&par_stack, &par_lock, PRIBIO, "apfs-walk", NULL);
 	}
 	lck_mtx_unlock(&par_lock);
+	lck_mtx_lock(&watch_lock);
 	par_n = 0;
 	for (uint32_t i = 0; i < started; i++) {
 		par_cs[i] = NULL;
+	}
+	lck_mtx_unlock(&watch_lock);
+	for (uint32_t i = 0; i < started; i++) {
 		cs->sum += w[i]->sum;
 		cs->entries += w[i]->entries;
 		cs->dirs += w[i]->dirs;
@@ -832,6 +860,15 @@ par_walk(struct census *cs, uint32_t n)
 	}
 	census_times(cs, -1);
 	printf("apfs-check: at most %u directories waited on the walkers' stack\n", par_most);
+	if (par_count != 0) {
+		/* (directories no walker took: none started, or every one gone) */
+		printf("apfs-check: %u directories were never walked: the walk is NOT whole\n", par_count);
+		cs->errors++;
+		while (par_count != 0) {
+			par_count--;
+			kfree_data(par_stack[par_count].path, par_stack[par_count].len + 1);
+		}
+	}
 	if (par_stack != NULL) {
 		kfree_data(par_stack, par_cap * sizeof(*par_stack));
 		par_stack = NULL;
@@ -1544,6 +1581,12 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 	cs.buf = kalloc_data(READ_CHUNK, Z_WAITOK);
 	if (cs.path == NULL || cs.buf == NULL) {
 		printf("apfs-check: out of memory\n");
+		if (cs.path != NULL) {
+			kfree_data(cs.path, PATH_CAP);
+		}
+		if (cs.buf != NULL) {
+			kfree_data(cs.buf, READ_CHUNK);
+		}
 		return;
 	}
 
@@ -1633,7 +1676,7 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 	}
 	if (error) {
 		printf("apfs-check: cannot make %s: %d\n", CHECK_MNT, error);
-		return;
+		goto give_back;
 	}
 
 	/*
@@ -1647,13 +1690,13 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 	if (error) {
 		printf("apfs-check: mounting %s on %s failed: %d\n", devname, CHECK_MNT,
 		    error);
-		return;
+		goto give_back;
 	}
 	printf("apfs-check: %s mounted on %s\n", devname, CHECK_MNT);
 	if (mode >= 3) {
 		/* someone in user space is going to read it; leave it alone */
 		printf("apfs-check: left mounted, not walking it here\n");
-		return;
+		goto give_back;
 	}
 
 	cs.rel = sizeof(CHECK_MNT) - 1;
@@ -1717,6 +1760,7 @@ walk:
 	hakios_ufs_report("after the walk");
 	printf("apfs-check: compare with tools/apfs/verify.py sum\n");
 
+give_back:
 	kfree_data(cs.path, PATH_CAP);
 	kfree_data(cs.buf, READ_CHUNK);
 }
