@@ -162,6 +162,51 @@ payload_near_the_end(void)
 	sound();
 }
 
+/* a free range that ends where the payload begins is not in it: taken whole */
+static void
+up_to_the_payload(void)
+{
+	range(EfiConventionalMemory, 0xc0000000ULL, PAYLOAD_BASE);
+	CHECK(choose() == 1 && win_base == 0xc0000000ULL && win_size == PAYLOAD_BASE - 0xc0000000ULL, "%#llx + %#llx",
+	    (unsigned long long)win_base, (unsigned long long)win_size);
+	sound();
+}
+
+/* the payload in the middle of a range, as much before it as after: the window is what follows it */
+static void
+payload_in_the_middle(void)
+{
+	range(EfiConventionalMemory, PAYLOAD_BASE - 0x10000000ULL, PAYLOAD_BASE + PAYLOAD_MAX_SIZE + 0x10000000ULL);
+	CHECK(choose() == 1 && win_base == PAYLOAD_BASE + PAYLOAD_MAX_SIZE && win_size == 0x10000000ULL, "after it: %#llx + %#llx",
+	    (unsigned long long)win_base, (unsigned long long)win_size);
+	sound();
+}
+
+/* how many times `text' is in what was said */
+static unsigned
+said_times(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = said; (at = strstr(at, text)) != NULL; at++) {
+		n++;
+	}
+	return n;
+}
+
+/* the memory map said: each range of 1 MB or more (not one less), and a total for each type there is of the sixteen */
+static void
+memory_map_said(void)
+{
+	range(EfiConventionalMemory, 0x80000000ULL, 0x80100000ULL);    /* 256 pages: said */
+	range(0, 0x80100000ULL, 0x801ff000ULL);                         /* 255: not */
+	range(16, 0x80200000ULL, 0x80400000ULL);                        /* a type past the sixteen: said, in no total */
+	BS = &services;
+	print_memory_map();
+	CHECK(said_times("  %x - %x  type") == 2, "two ranges said: %u", said_times("  %x - %x  type"));
+	CHECK(said_times("  total of type") == 2, "two totals, of types 0 and 7: %u", said_times("  total of type"));
+}
+
 /* a free range the payload is not in is taken whole; ends that are not on 32 MB are cut to it */
 static void
 ends_are_cut(void)
@@ -263,7 +308,8 @@ main(int argc, char **argv)
 		{ "phone_8gb", phone_8gb }, { "payload_near_the_end", payload_near_the_end }, { "ends_are_cut", ends_are_cut },
 		{ "more_than_the_kernel_takes", more_than_the_kernel_takes }, { "largest_free_range", largest_free_range },
 		{ "longer_descriptors", longer_descriptors }, { "nothing_free", nothing_free }, { "firmware_says_no", firmware_says_no },
-		{ "no_low_memory", no_low_memory }, { "forced_base", forced_base },
+		{ "no_low_memory", no_low_memory }, { "forced_base", forced_base }, { "up_to_the_payload", up_to_the_payload },
+		{ "payload_in_the_middle", payload_in_the_middle }, { "memory_map_said", memory_map_said },
 	};
 
 	if (argc < 2) {
