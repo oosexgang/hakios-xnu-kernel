@@ -64,7 +64,7 @@ device:
 # one's devices branch
 .PHONY: phone
 phone: device kernel loader
-	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) --kernel $(KERNEL)
+	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) $(IMAGE_KERNEL)
 
 .PHONY: loader
 loader:
@@ -72,11 +72,11 @@ loader:
 
 .PHONY: image
 image:
-	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) --kernel $(KERNEL)
+	tools/image.py build $(if $(DEVICE),--board $(DEVICE)) $(if $(DEFCONFIG),--defconfig $(DEFCONFIG)) $(IMAGE_KERNEL)
 
 .PHONY: images
 images:
-	tools/image.py build --every-run $(if $(DEVICE),--board $(DEVICE)) --kernel $(KERNEL)
+	tools/image.py build --every-run $(if $(DEVICE),--board $(DEVICE)) $(IMAGE_KERNEL)
 
 .PHONY: publish
 publish:
@@ -145,6 +145,8 @@ kernel-check:
 
 # the kernel kernel/build.sh made, unless told otherwise
 KERNEL ?= ../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837
+# (an image takes KERNEL only when it is given: else tools/image.py's own choice, BENCH_KERNEL or XNU_SRC's, as bench's)
+IMAGE_KERNEL = $(if $(filter command line environment,$(origin KERNEL)),--kernel $(KERNEL))
 .PHONY: qemu
 qemu:
 	workbench/qemu_boot_test.sh $(KERNEL)
