@@ -34,6 +34,9 @@
 #   BENCH_FOLLOW=N  fetch the kernel's log every N seconds of a run (default 10; empty: never), so that a kernel
 #                that hangs leaves what it said in logs/TIME-run.log.live
 #   BENCH_KERNEL    the kernel (default: kernel/build.sh's, $XNU_SRC/BUILD/obj/mach.development.bcm2837)
+#   BENCH_IDENTITY  which iPhone Darwin is told it is, carried in the payload (arch/arm64/boot/src/identity_given.c): an
+#                iPhone's DeviceTree.bin or a blob mkidentity.py --blob made (default firmware/NAME/identity.bin when it is
+#                there); for a loader built without one, as an image's is (Documentation/images.md)
 #   BENCH_RAMDISK   the small image sent with the kernel, mounted on /hakios (default $IOS/root26-darwin.apfs, the one
 #                darwin/userland/root26-darwin.sh writes, else $IOS/root.apfs; none: none)
 #   IOS          the extracted IPSW and the images made from it (default: ios27 beside the repository)
@@ -294,7 +297,20 @@ run() { # run OEM-COMMAND LABEL
 		*" wifi="*) [ -s "firmware/$BOARD/wifi-mac" ] && args="$args wifi_mac=$(tr -d ' \n\r' < "firmware/$BOARD/wifi-mac")" ;;
 		esac
 		say "$BOARD: $args"
-		arch/arm64/boot/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} \
+		local identity=${BENCH_IDENTITY:-firmware/$BOARD/identity.bin}
+		if [ -s "$identity" ]; then
+			# (a device tree made into the blob the loader reads; a blob as it is)
+			if [ "$(head -c 4 "$identity")" != IDNT ]; then
+				python3 arch/arm64/boot/mkidentity.py --blob run-identity.bin "$identity" 2> /dev/null || die "no identity made of $identity"
+				identity=run-identity.bin
+			fi
+			say "identity: $identity"
+		elif [ -n "${BENCH_IDENTITY:-}" ]; then
+			die "no identity $BENCH_IDENTITY (BENCH_IDENTITY)"
+		else
+			identity=
+		fi
+		arch/arm64/boot/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} ${identity:+identity=$identity} \
 			--cmdline "loader_return_after=${BENCH_SECS:-180} epoch=$(date +%s) $args" > /dev/null || return 1
 		FB_TIMEOUT=60 fb stage run-payload.bin | grep -q OKAY || { say "the upload failed"; return 1; }
 	fi
