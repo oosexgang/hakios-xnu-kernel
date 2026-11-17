@@ -14,6 +14,7 @@
 | [release.ru.md](release.ru.md) | In Russian: releasing the sources -- the checks before, the tarball and its sums, the tag, the CHANGELOG after. |
 | [darwin27-ubuntu.ru.md](darwin27-ubuntu.ru.md) | In Russian: what the project has done, and from an Ubuntu machine to Darwin 27 on a phone, step by step. |
 | [drivers.md](drivers.md) | Every driver: its part, its boot argument and feature, how tied it is to one phone. |
+| [kconfig.md](kconfig.md) | The kernel's configuration as Linux keeps it: which drivers a kernel starts, the Kconfig files, the fragments, `kconfig.h`, the headers user space shares. |
 | [features.md](features.md) | Every feature a board can list: the sections and keys it needs first, and what starts it. |
 | [writing-a-driver.md](writing-a-driver.md) | How a driver is written here: the rules and why, what a driver has at hand, the steps, with an example driver and its test that `make check` builds and runs. |
 | [boot-args.md](boot-args.md) | Every boot argument the kernel reads. Generated from the sources. |
