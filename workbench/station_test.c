@@ -239,7 +239,8 @@ join_and_leave(void)
 	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
 	CHECK(had(HAKIOS_STA_JOIN_DONE, 0) && had(HAKIOS_STA_LINK, 1) && called("join:home "), "joined: %s", calls);
 	CHECK(hakios_sta_ask_leave() == 0, "a leave asked for");
-	WAIT_FOR(called("leave "), 3000);
+	/* (the link's going is told after the leave is called: waited for too, or a busy machine sees the one without the other) */
+	WAIT_FOR(called("leave ") && had(HAKIOS_STA_LINK, 0), 3000);
 	CHECK(called("leave ") && had(HAKIOS_STA_LINK, 0), "left: %s", calls);
 }
 
