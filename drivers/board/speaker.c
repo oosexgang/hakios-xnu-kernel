@@ -350,8 +350,10 @@ acf_monitor(uint16_t device, const uint8_t *block, uint32_t length)
 	vbat_count = le32(block + 0x3c);
 	vbat_size = le32(block + 0x40);
 	vbat_at = le32(block + 0x44);
+	/* (in 64 bits: a size or a place of the file's own that would wrap a 32-bit sum is not a table inside the block) */
 	if (sum != le32(block) || temp_size < 12 || vbat_size < 12 || temp_count > MONITOR_ROWS || vbat_count > MONITOR_ROWS ||
-	    temp_at + temp_count * temp_size > length || vbat_at + vbat_count * vbat_size > length) {
+	    (uint64_t)temp_at + (uint64_t)temp_count * temp_size > length ||
+	    (uint64_t)vbat_at + (uint64_t)vbat_count * vbat_size > length) {
 		say("speaker: device %u's monitor table is not of the shape known: not used\n", device);
 		return;
 	}
@@ -564,7 +566,12 @@ sysctrl(struct amplifier *a, uint16_t bits, bool set)
 {
 	uint16_t value;
 
-	if (broken || !get(a, AW_SYSCTRL, &value)) {
+	if (broken) {
+		return false;
+	}
+	if (!get(a, AW_SYSCTRL, &value)) {
+		/* (as a write that does not stick: an amplifier half stopped, or half started, is not left running) */
+		power_down_now("0x04 could not be read");
 		return false;
 	}
 	return put(a, AW_SYSCTRL, set ? (value | bits) : (value & ~bits));

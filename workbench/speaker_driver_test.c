@@ -741,6 +741,19 @@ volume_and_stop(void)
 	never();
 }
 
+/* the bus stops answering as the amplifiers are stopped: neither is left started (unmuted, powered), and it is said */
+static void
+stop_without_an_answer(void)
+{
+	running();
+	device.absent = true;
+	hakios_speaker_stop();
+	CHECK(logged("0x04 could not be read: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK(!amplifiers[0].started && !amplifiers[1].started, "neither left started: %d %d", amplifiers[0].started,
+	    amplifiers[1].started);
+	CHECK(!hakios_speaker_volume(0, 0), "and nothing more asked of them");
+}
+
 /* a slow fade, as sound.c asks for one at level 3 (a step every 50 ms): the status looked at after every step, and a
  * fault in the middle of it ends it there, both powered down */
 static void
@@ -933,6 +946,26 @@ monitor_rows_past_the_end(void)
 	CHECK(logged("device 1's monitor table is not of the shape known: not used"), "said: %s", log_text);
 }
 
+/* a row size whose product with the rows' count wraps 32 bits (4 x 0x40000000): refused, not rows read a gigabyte away */
+static void
+monitor_size_that_wraps(void)
+{
+	uint32_t length = 0x48 + 12 * (4 + 3), sum = 0;
+	uint8_t *block;
+
+	phone_with_file("phone-video");
+	block = acf + acf_size - length;
+	CHECK(le32(block + 0x2c) == 4, "four rows of temperatures: %u", le32(block + 0x2c));
+	put32(block + 0x30, 0x40000000);
+	for (uint32_t i = 4; i < length; i++) {
+		sum += block[i];
+	}
+	put32(block, sum);
+	wide(device.reg_b, 0x01, 0x0311);
+	CHECK(hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start(), "prepared and started all the same: %s", log_text);
+	CHECK(logged("device 1's monitor table is not of the shape known: not used"), "said: %s", log_text);
+}
+
 /* the kernel on its way out while they play: both powered down at once */
 static void
 run_ends(void)
@@ -1019,13 +1052,13 @@ main(int argc, char **argv)
 		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
-		{ "slow_fade", slow_fade }, { "monitor_row_edges", monitor_row_edges },
+		{ "slow_fade", slow_fade }, { "stop_without_an_answer", stop_without_an_answer }, { "monitor_row_edges", monitor_row_edges },
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "profiles_not_usable", profiles_not_usable }, { "monitor_tables_at_the_edge", monitor_tables_at_the_edge },
 		{ "started_unprepared", started_unprepared }, { "board_without_the_part", board_without_the_part },
 		{ "status_never_ready", status_never_ready },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
-		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "run_ends", run_ends }, { "not_listed", not_listed },
+		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "monitor_size_that_wraps", monitor_size_that_wraps }, { "run_ends", run_ends }, { "not_listed", not_listed },
 		{ "acf_edges", acf_edges }, { "eight_bit_numbers", eight_bit_numbers }, { "eight_bit_values", eight_bit_values },
 		{ "a_register_fewer", a_register_fewer },
 	};
