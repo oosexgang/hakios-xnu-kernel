@@ -325,6 +325,9 @@ control_connect(__unused kern_ctl_ref r, struct sockaddr_ctl *address, __unused 
 {
 	char name[32] = "";
 
+	lck_mtx_lock(&bt_host_lock);
+	tx_line.count = 0;                      /* (nothing of a socket before this one's) */
+	lck_mtx_unlock(&bt_host_lock);
 	proc_selfname(name, sizeof(name));
 	say("bt: com.apple.uart.sk.bluetooth connected by %s (pid %d, unit %u)\n", name, proc_selfpid(), address->sc_unit);
 	return 0;
@@ -338,17 +341,24 @@ control_disconnect(__unused kern_ctl_ref r, u_int32_t unit, __unused void *conte
 	return 0;
 }
 
-/* (written to the socket itself: the same as into the channel) */
+/* (written to the socket itself: the same as into the channel) -- all of a write or none of it: the start of a packet
+ * left in the line would have the next one's bytes taken for the rest of it */
 static errno_t
 control_send(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *context, mbuf_t m, __unused int flags)
 {
 	errno_t error = 0;
+	size_t total = 0;
 
-	lck_mtx_lock(&bt_host_lock);
 	for (mbuf_t part = m; part != NULL; part = mbuf_next(part)) {
-		if (!tx_put_locked(mbuf_data(part), mbuf_len(part))) {
-			error = ENOBUFS;
-			break;
+		total += mbuf_len(part);
+	}
+	lck_mtx_lock(&bt_host_lock);
+	if (total > tx_line.size - tx_line.count) {
+		tx_dropped += (uint32_t)total;
+		error = ENOBUFS;
+	} else {
+		for (mbuf_t part = m; part != NULL; part = mbuf_next(part)) {
+			(void)bt_line_put(&tx_line, mbuf_data(part), (unsigned)mbuf_len(part));
 		}
 	}
 	lck_mtx_unlock(&bt_host_lock);
