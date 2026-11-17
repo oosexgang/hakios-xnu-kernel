@@ -93,6 +93,14 @@ class LogCheck(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn('every part as it was', said.getvalue())
 
+    def test_a_look_that_went_through_is_ok(self):
+        # (bt=-1 reads and says, and is done: nothing else says it worked)
+        code, said = run('Darwin Kernel Version 1\nbt-uart: gpio24 cfg 0 level 0\nbt-uart: done\n')
+        self.assertRegex(said, r'Bluetooth controller +ok +bt-uart: done')
+        code, said = run('Darwin Kernel Version 1\nbt-uart: SE protocol is not UART (2); stopping\nbt-uart: bring-up stopped; powering down\n'
+                         'bt-uart: done\n')
+        self.assertRegex(said, r'Bluetooth controller +STOPPED +bt-uart: bring-up stopped')
+
     def test_a_kernel_that_never_started(self):
         code, said = run('loader: platform phone\nno kernel in payload\n')
         self.assertEqual(code, 1)

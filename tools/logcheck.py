@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PARTS = [
     ('GPU', 'adreno', [r'A PICTURE DRAWN BY THE GPU IS ON THE PANEL', r'the GPU runs'],
      [r'THE GPU IS NOT STARTED', r'startup stops', r'FAILED']),
-    ('Bluetooth controller', 'bt-uart', [r"the controller is Darwin's from here on", r'identification complete'],
+    ('Bluetooth controller', 'bt-uart', [r"the controller is Darwin's from here on", r'identification complete', r'bt-uart: done'],
      [r'bring-up stopped', r'the firmware was not taken', r'refused', r'timed out']),
     ('Bluetooth for Darwin', 'bt', [r'connected by bluetoothd', r'the channel opened', r"is Darwin's: service"],
      [r'cannot be (made|registered)']),
