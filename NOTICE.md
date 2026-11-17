@@ -28,6 +28,14 @@ The optional Wi-Fi build script (`kernel/lx/build.sh`) fetches Linux's ath11k
 Those fetched sources are not in this repository. The current Renoir configuration does not link
 an external Wi-Fi object.
 
+## Other ports of Darwin to phones
+
+What other ports found about Darwin's own side -- what its daemons ask a driver and what they do with the answer --
+is credited where it is used, in the comment beside the code and in the commit: the OnePlus Nord 2 (MediaTek) port of
+iOS, `frxncyyy/ios-denniz`, branch `nord2-port-20261116` (its kernel pieces under APSL-2.0, its own credits in its
+LICENSES-AND-CREDITS.md). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
+is taken; nor its device data.
+
 ## Excluded from this repository
 
 Firmware and binaries of others are not repository content; `tools/check-publishable.sh` looks for them:
