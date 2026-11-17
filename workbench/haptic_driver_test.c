@@ -600,6 +600,22 @@ a_vibration_for_darwin(void)
 	CHECK(device.reg[0x0a] == 11 && device.reg[0x12] == 0xf0, "waveform 11, until told to stop: %u %#x", device.reg[0x0a], device.reg[0x12]);
 }
 
+/* a vibration the chip does not stop when told (it stays playing): the chip is put into reset, and nothing more is done */
+static void
+a_vibration_that_does_not_stop(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	darwin_plays(20000, 300);
+	WAIT_FOR(logged("haptic: vibration 1:"), 2000);
+	device.reg[0x3f] = 7;                   /* (its state: playing, and it stays so) */
+	WAIT_FOR(logged("it does not stop"), 3000);
+	CHECK(logged("it does not stop: THE CHIP IS PUT INTO RESET") && in_reset(), "said, and in reset: %s", log_text);
+}
+
 /* a vibration that goes soft: its strength follows Darwin's down (2000 of 32768: five eighths of Android's gain and
  * a little more, 0x58); Darwin stops, and so does the motor */
 static void
@@ -681,6 +697,7 @@ main(int argc, char **argv)
 		{ "waveforms_too_short", waveforms_too_short }, { "waveforms_in_whole_pieces", waveforms_in_whole_pieces }, { "an_effect_played", an_effect_played },
 		{ "the_last_short_effect", the_last_short_effect }, { "not_a_short_effect", not_a_short_effect },
 		{ "a_tap_for_darwin", a_tap_for_darwin }, { "a_vibration_for_darwin", a_vibration_for_darwin },
+		{ "a_vibration_that_does_not_stop", a_vibration_that_does_not_stop },
 		{ "a_vibration_that_softens", a_vibration_that_softens },
 		{ "a_vibration_cut_at_the_limit", a_vibration_cut_at_the_limit }, { "a_whisper_is_not_played", a_whisper_is_not_played },
 		{ "a_sample_at_a_time", a_sample_at_a_time }, { "pretended", pretended },
