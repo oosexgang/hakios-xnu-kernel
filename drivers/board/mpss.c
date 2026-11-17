@@ -345,6 +345,10 @@ smem_peek(uint64_t offset, void *to, uint32_t size)
 static void
 smem_poke(uint32_t offset, uint32_t value)
 {
+	if (smem == NULL || (uint64_t)offset + 4 > SMEM_SIZE || (offset & 3)) {
+		printf("mpss: a write at %#x is outside the shared memory: not made\n", offset);
+		return;
+	}
 	wr((vm_offset_t)smem + offset, value);
 }
 
