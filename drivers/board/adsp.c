@@ -1575,6 +1575,7 @@ struct glink_channel {
 	struct {
 		uint32_t size, fill;
 		uint8_t *data;
+		bool dropping;                  /* a packet too long for it is being let go of, piece by piece, to its end */
 	} our_intents[24];                      /* what the DSP may send into; an intent's number is its place here + 1 */
 	uint32_t our_intent_count;
 	struct glink_packet *first, *last;      /* received, in order */
@@ -1646,8 +1647,12 @@ glink_reset(void)
 static uint32_t
 glink_waiting(void)
 {
-	return glink_queue_unread(smem_word(glink.descriptor + GLINK_THEIR_HEAD), smem_word(glink.descriptor + GLINK_THEIR_TAIL),
-	           glink.theirs_size);
+	uint32_t unread = glink_queue_unread(smem_word(glink.descriptor + GLINK_THEIR_HEAD),
+	    smem_word(glink.descriptor + GLINK_THEIR_TAIL), glink.theirs_size);
+
+	/* (the head read before the bytes it says are there: the DSP wrote them before it moved the head) */
+	hakios_barrier();
+	return unread;
 }
 
 static void
@@ -1659,6 +1664,8 @@ glink_peek(void *to, uint32_t offset, uint32_t count)
 static void
 glink_advance(uint32_t count)
 {
+	/* (every byte of them read before the tail gives their room back to the DSP) */
+	hakios_barrier();
 	smem_poke(glink.descriptor + GLINK_THEIR_TAIL,
 	    glink_queue_after(smem_word(glink.descriptor + GLINK_THEIR_TAIL), count, glink.theirs_size));
 }
@@ -1883,11 +1890,28 @@ glink_pump(void)
 			uint32_t intent = message.param2 - 1;
 
 			channel = glink_theirs(message.param1);
-			if (channel == NULL || intent >= channel->our_intent_count ||
-			    words[0] > channel->our_intents[intent].size - channel->our_intents[intent].fill) {
-				printf("adsp: glink: < data of %u bytes on channel %u for intent %u: NOT OURS OR TOO MUCH, dropped\n", words[0],
+			if (channel == NULL || intent >= channel->our_intent_count) {
+				printf("adsp: glink: < data of %u bytes on channel %u for intent %u: NOT OURS, dropped\n", words[0],
 				    message.param1, message.param2);
 				glink_advance(length);
+				break;
+			}
+			if (channel->our_intents[intent].dropping ||
+			    words[0] > channel->our_intents[intent].size - channel->our_intents[intent].fill) {
+				/*
+				 * Too much for the intent: the whole packet is let go of, the pieces still to come with it, and the
+				 * intent given back at its end -- not kept by the DSP as used for good, nor half filled for the next.
+				 */
+				if (!channel->our_intents[intent].dropping) {
+					printf("adsp: glink: < data of %u bytes on channel %u for intent %u: TOO MUCH, the packet dropped\n",
+					    words[0], message.param1, message.param2);
+				}
+				channel->our_intents[intent].dropping = words[1] != 0;
+				channel->our_intents[intent].fill = 0;
+				glink_advance(length);
+				if (words[1] == 0) {
+					glink_say(GLINK_DONE_REUSE, channel->ours, message.param2, NULL, 0);
+				}
 				break;
 			}
 			glink_peek(channel->our_intents[intent].data + channel->our_intents[intent].fill, 16, words[0]);
@@ -1920,9 +1944,21 @@ glink_pump(void)
 			glink_advance(length);
 			glink_say(GLINK_CLOSE_ACK, message.param1, 0, NULL, 0);
 			if ((channel = glink_theirs(message.param1)) != NULL) {
-				printf("adsp: glink: THE DSP CLOSES \"%s\"\n", channel->name);
+				printf("adsp: glink: THE DSP CLOSES \"%s\": closed from our side too, to be opened afresh if it opens it again\n",
+				    channel->name);
+				if (channel->asked) {
+					glink_say(GLINK_CLOSE, channel->ours, 0, NULL, 0);
+				}
+				/* (as at the start: its intents and ours forgotten -- ours offered again, in the same memory, on a reopening) */
 				channel->open = false;
 				channel->theirs = 0;
+				channel->asked = channel->acknowledged = false;
+				bzero(channel->their_intents, sizeof(channel->their_intents));
+				channel->our_intent_count = 0;
+				for (unsigned n = 0; n < sizeof(channel->our_intents) / sizeof(channel->our_intents[0]); n++) {
+					channel->our_intents[n].fill = 0;
+					channel->our_intents[n].dropping = false;
+				}
 			}
 			break;
 		case GLINK_CLOSE_ACK:
