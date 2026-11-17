@@ -51,6 +51,8 @@ The builds and `make check` run the same check and stop on the same lines. Every
 | `the package does not fit this checkout: ...` | The board check found problems in the package, printed above the line: it has a key or a feature this checkout has not, or lacks one the checkout needs. The package was copied all the same. | Bring the checkout up to date, or take the package as another commit has it (`--from COMMIT`). Until it fits, `tools/device.py remove NAME`: every build stops on a board that fails the check. |
 | `arch/arm64/boot/dts/NAME is not right yet: not exported` | The board check found problems in the package, printed above the line. What is sent is what was validated. | Fix them (first section), then export again. |
 | `DIR is not a directory (a checkout of the devices branch: git worktree add DIR devices)` | `export` copies into a checkout of the `devices` branch that is there already. | `git worktree add ../hakios-devices devices`, then `tools/device.py export NAME ../hakios-devices` ([porting.md](porting.md), step 8). |
+| `URL: the repository cannot be cloned: ...` | `--from` named a repository's address that git could not clone: the address, the network, or a private repository without the credentials git uses. | `git clone URL` by hand says why; a checkout of it on this machine works too (`--from DIR`). |
+| `DIR is there and not empty: a repository is made in a new directory` | `tools/device.py init` makes a phone's repository only where there is nothing. | Another directory, or move what is there. |
 | `git status` shows nothing of `arch/arm64/boot/dts/NAME/` | Git ignores packages in a checkout of the main branch: they are kept on the `devices` branch. | Send the package with `export`, as above. A new SoC file is an ordinary file of the main branch ([CONTRIBUTING.md](../CONTRIBUTING.md)). |
 
 ## The kernel's sources (assemble, export, verify)
@@ -238,6 +240,25 @@ software without it.
 | `adreno: THE GPU IS NOT STARTED: the small image has no DIR/FILE (the phone's /vendor/firmware/FILE goes into fw-gpu/); the system draws with its software renderer` | `gpu=1` was passed, and a firmware file is not in the directory `firmware` of `gpu { }` names. | `adb pull` the file from the same phone and build the small image again. Firmware is never committed. |
 | `adreno: step N: FAILED; the steps after it are not attempted`, then `adreno: THE GPU IS NOT STARTED: step N (...) failed; the system draws with its software renderer` | The bring-up stopped at that step. The step's own lines are above it. | Compare `gpu { }` and `adreno { }` with the device tree. The sequence has only been run on two chips: another generation of Adreno needs work in the driver ([porting.md](porting.md), "What is still tied to the first two phones"). |
 | No application icons, no glass, parts of the interface missing, with `gpu=0` | They are drawn with the GPU, and the software renderer leaves them out. Expected. | [darwin26-boot.md](darwin26-boot.md), Darwin 27, item 10. |
+
+### Bluetooth ([drivers.md](drivers.md), "Wi-Fi, network")
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `bt-uart: no /fw/NAME in the RAM disks: ...` | `bt=2`, and the patch or the configuration `bluetooth { }` names is not in the small image. | `adb pull /vendor/bt_firmware/image/ fw-bt/` from the same phone, next to the workspace, and build the small image again (`userland/README.md`); or `bt_fw=0` to try the controller's ROM. |
+| `bt-uart: /fw/NAME (N bytes) is neither a TLV file nor an ELF one` | The file is not the controller's firmware, or is cut short. | Compare its size with the phone's; the names of `rampatch` and `nvm` with the files of `vendor/bt_firmware/image`. |
+| `bt-uart: segment N refused (status 0x..)`, or `segment N: no answer within 2 s` | The controller would not take the patch: another chip's, or a step of the protocol it wants and this driver does not send. | The log's `product id`, `ROM version` and `SoC id` lines say which chip it is: the file must be the one the phone's Android sends it. Report the lines. |
+| `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` never comes | bluetoothd did not find the controller, or left before it opened the kernel control. | `bt: service "bluetooth" registered (address ...)` must be there first; without `/chosen mac-address-bluetooth0` (the loader's) there is no service. |
+
+## Images ([images.md](images.md))
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `image.py: which phone? --board NAME (here: ...)` | More than one package with a `uefi { }` node, or none. | `--board NAME`, or `make image DEVICE=NAME`. |
+| `image.py: no kernel ...: kernel/build.sh` | The kernel has not been built, or was built elsewhere. | `make kernel`, or `--kernel FILE`. |
+| `image.py: the loader was built with an identity from an IPSW (Apple's data) ...` | `publish` refuses a loader that carries the identity of an iPhone: an image that is passed around must not. | `arch/arm64/boot/build.sh` without a `DeviceTree.bin` beside the IPSW (or move it away), `make image`, `make publish` again. Your own copy can carry it: `tools/image.py personalize`. |
+| `image.py: ... is not what manifest.json says it is` | A file of the image changed after it was built. | Build the image again. |
+| `identity: the payload's is not one (N bytes): the one built in` | The loader found an `identity` entry it cannot read: not made by `mkidentity.py --blob`, or of another version. | `tools/image.py personalize IMAGE --identity DeviceTree.bin` again, with the same checkout's tools. |
 
 ## The checks (`make check`)
 
