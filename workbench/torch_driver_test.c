@@ -180,6 +180,31 @@ shown_level(void)
 	return value;
 }
 
+/* how many words the log's first line that begins with PREFIX has after it; -1: no such line */
+static int
+words_after(const char *prefix)
+{
+	const char *at = strstr(log_text, prefix);
+	int words = 0;
+
+	if (at == NULL) {
+		return -1;
+	}
+	for (at += strlen(prefix); *at != '\0' && *at != '\n'; at++) {
+		words += at[0] == ' ' && at[1] != ' ' && at[1] != '\n' && at[1] != '\0';
+	}
+	return words;
+}
+
+static double
+seconds(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec + t.tv_nsec / 1e9;
+}
+
 /* ---- scenarios ---------------------------------------------------------------------------------- */
 
 /* torch=1: the module is found and read, and nothing is written */
@@ -194,6 +219,9 @@ look_only(void)
 	    "the module's channel that is this system's: %s", log_text);
 	CHECK(logged("a flash LED module of four channels, as Android's driver expects"), "its type is read");
 	CHECK(logged("the PMIC's temperature alarm (subtype 0x9) says 0: stage 0 (all is well)"), "the alarm is read");
+	CHECK(logged("torch: 0x00: 00 00 00 00 18 07 00 00") && words_after("torch: 0x00:") == 32 && words_after("torch: 0xe0:") == 32,
+	    "the module's 256 registers, 32 a line: %s", log_text);
+	CHECK(!logged("torch: 0x100:") && !logged("unreadable"), "and no more: %s", log_text);
 	CHECK(spmi.writes == 0 && spmi.denied == 0, "a look writes nothing (%u writes, %u refused)", spmi.writes, spmi.denied);
 	never();
 }
@@ -203,9 +231,12 @@ static void
 light_once(void)
 {
 	phone("phone-video");
+	double on;
+
 	boot_args = "torch=2 torch_secs=1";
 	hakios_torch_init();
 	WAIT_FOR(lit_now(), 5000);
+	on = seconds();
 	CHECK(lit_now(), "the light comes on: %s", log_text);
 	CHECK(spmi_get(&flash_model, REG_ITARGET0) == 9 && (spmi_get(&flash_model, REG_IRES) & 0x01) == 0,
 	    "at Android's 125 mA: target %u, resolution %#x", spmi_get(&flash_model, REG_ITARGET0), spmi_get(&flash_model, REG_IRES));
@@ -213,6 +244,8 @@ light_once(void)
 	    "strobed by software, the safety timer off, as Android's probe leaves it");
 	CHECK((spmi_get(&flash_model, REG_IRES) & 0x0e) == 0x0e && (spmi_get(&flash_model, REG_TIMER0) & 0x7f) == 0x0f,
 	    "the other channels' bits are left as they were");
+	WAIT_FOR(!lit_now(), 5000);
+	CHECK(seconds() - on > 0.8, "on for the second asked for, not less: %.2f s", seconds() - on);
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("off again after 1 s"), "and goes off after the time asked for");
 	CHECK(!lit_now() && times_lit == 1, "dark again, lit once (%u)", times_lit);
@@ -407,6 +440,55 @@ pmic_hot(void)
 	never();
 }
 
+/* the first generation of the PMIC's alarm keeps its stage in bits 1:0, not 6:4: 0x10 is stage 0, lit */
+static void
+first_generation_alarm(void)
+{
+	phone("phone-video");
+	alarm_model.reg[0x05] = 0x08;
+	alarm_model.reg[0x08] = 0x10;
+	boot_args = "torch=2 torch_secs=1";
+	hakios_torch_init();
+	WAIT_FOR(logged("torch: done"), 5000);
+	CHECK(logged("(subtype 0x8) says 0x10: stage 0 (all is well)") && times_lit == 1, "stage 0, lit: %s", log_text);
+	never();
+	dark_at_the_end();
+}
+
+/* ... and 0x01 there is stage 1: never lit */
+static void
+first_generation_alarm_at_a_stage(void)
+{
+	phone("phone-video");
+	alarm_model.reg[0x05] = 0x08;
+	alarm_model.reg[0x08] = 0x01;
+	boot_args = "torch=2 torch_secs=1";
+	hakios_torch_init();
+	WAIT_FOR(logged("torch: done"), 5000);
+	CHECK(logged("(subtype 0x8) says 0x1: stage 1") && logged("the PMIC's temperature stage 1") && times_lit == 0, "not lit: %s",
+	    log_text);
+	never();
+}
+
+/* trouble while the light is off is no trouble: Darwin's light is still served once it has passed */
+static void
+hot_while_dark(void)
+{
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
+	battery_c = 50;
+	usleep(400 * 1000);
+	CHECK(!logged("given up"), "not given up while dark: %s", log_text);
+	battery_c = 30;
+	ask_for(1000);
+	WAIT_FOR(lit_now(), 3000);
+	CHECK(lit_now(), "lit when asked, once it is cool: %s", log_text);
+	never();
+	dark_at_the_end();
+}
+
 /* trouble before the light: it is never lit (at 45 C, the hottest the battery may be: already too hot) */
 static void
 battery_hot(void)
@@ -532,7 +614,8 @@ main(int argc, char **argv)
 		{ "for_darwin", for_darwin },
 		{ "fault_while_lit", fault_while_lit }, { "module_fault", module_fault }, { "channel_fault", channel_fault },
 		{ "hotter_still", hotter_still }, { "supply_droops", supply_droops }, { "flags_not_readable", flags_not_readable },
-		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "battery_hot", battery_hot },
+		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "first_generation_alarm", first_generation_alarm },
+		{ "first_generation_alarm_at_a_stage", first_generation_alarm_at_a_stage }, { "hot_while_dark", hot_while_dark }, { "battery_hot", battery_hot },
 		{ "time_limit", time_limit }, { "write_does_not_stick", write_does_not_stick },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
