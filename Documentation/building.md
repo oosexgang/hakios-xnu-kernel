@@ -47,11 +47,18 @@ version), read by each target's own:
 |---|---|---|
 | `build.config.arm64` | `kernel/env.sh` (`kernel/build.sh` and every kernel tool) | `ARCH_CONFIG=ARM64`, `MACHINE_CONFIG=BCM2837`, `XNU_ARCH=arm64` (no pointer authentication): the kernel is `BUILD/obj/mach.development.bcm2837` |
 | `build.config.darwin27` | `darwin/userland/env.sh` (the image scripts) | `IOS` (the unpacked IPSW, `../ios27`), `WALLPAPER=yellow`, `METAL` |
+| `build.config.arm64.llvm` | `kernel/env.sh` with `BUILD_CONFIG=build.config.arm64.llvm` (`make kernel-check`) | the kernel of `build.config.arm64`, its Mach-O tools LLVM's: `TOOLCHAIN=llvm`, `XNU_CLANG_DIR` the newest `/usr/lib/llvm-N/bin` with `ld64.lld` |
+| `build.config.loader` | `arch/arm64/boot/build.sh` (`make loader`) | `LOADER_CC=clang`, `LOADER_TARGET`, `LOADER_LINK=lld-link`, `LOADER_BASE=0xA1000000`, `LOADER_CFLAGS` (a payload reserved elsewhere: `-DPAYLOAD_BASE=`, `-DPAYLOAD_MAX_SIZE=`) |
+| `build.config.qemu` | `tools/qemu-kernel.sh`, `workbench/loader_boot_test.sh` | `QEMU`, `QEMU_CPU=cortex-a76`, `QEMU_MEMORY=6G`, `QEMU_ACCEL`, `QEMU_GIC=3`, `QEMU_FIRMWARE` (else the first of `QEMU_FIRMWARE_PLACES`) |
+| `build.config.darwin27` | `darwin/userland/env.sh` (the image scripts) | `IOS` (the unpacked IPSW, `../ios27`), `WALLPAPER=yellow`, `METAL` |
 | `build.config.bench` | `./bench` | `BENCH_BOARD`, `BENCH_SECS=180`, `BENCH_FOLLOW=10` |
+| `build.config.release` | `scripts/release.sh` | `RELEASE_NAME=hakios-kernel`, `RELEASE_DIR=build/release`, `RELEASE_GZIP_LEVEL=9` |
 
 A value given in the environment is kept (`KERNEL_CONFIG=RELEASE kernel/build.sh`, `WALLPAPER=blue
-darwin/userland/root26-darwin.sh`), and `BUILD_CONFIG=FILE` or `DARWIN_BUILD_CONFIG=FILE` names another file
-of the top to read instead: a configuration of your own is a file there that reads `build.config.common` first.
+darwin/userland/root26-darwin.sh`, `QEMU_MEMORY=8G tools/qemu-kernel.sh ...`), and `BUILD_CONFIG=FILE`,
+`DARWIN_BUILD_CONFIG=FILE`, `LOADER_BUILD_CONFIG=FILE`, `QEMU_BUILD_CONFIG=FILE` or `RELEASE_BUILD_CONFIG=FILE` names
+another file of the top to read instead: a configuration of your own is a file there that reads the one it changes
+(or `build.config.common`) first.
 
 ## The kernel
 

@@ -22,7 +22,7 @@ at their paths in the tree for the host's tests.
 | `init/` | | The first programs Darwin runs: `stage0`, `init` (process 1 until Apple's launchd), `var_store`. |
 | `lib/libmini/` | | The small C library they are linked with. |
 | `components/` | | The parts that make a subsystem of Darwin work, a directory each: `metal` (with the second device in `metal/plugin`), `apple-id`, `sep`, `camera`, `audio`, `brightness`, `wallpaper`, `statusbar`, `tweaks`; `upstream.dts`, everything taken from elsewhere. |
-| `build.config.*` | | What a build is: `common`, `arm64` (the kernel), `darwin27` (the images), `bench` (a run on the phone). |
+| `build.config.*` | | What a build is: `common`, `arm64` and `arm64.llvm` (the kernel), `loader`, `qemu` (the emulator), `darwin27` (the images), `bench` (a run on the phone), `release` (the sources published). |
 | `bench` | | The phone on the bench: the resident loader, the images, a run, its log. |
 | `kernel/` | | Apple's release as it is pinned (`UPSTREAM`), the topic patches to its files (`patches/`), the two files of ours that belong nowhere else (`overlay/`), and the tools that assemble, export, check and build the tree (`assemble.sh`, `export.sh`, `verify.sh`, `syntax-check.sh`, `build.sh`). [kernel/README.md](../kernel/README.md). |
 | `darwin/` | | Darwin's user space: the tools that unpack an IPSW and build the images from it (`tools/`), and the inserted libraries (`userland/`). [darwin/README.md](../darwin/README.md). |
