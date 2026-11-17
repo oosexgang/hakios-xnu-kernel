@@ -343,8 +343,21 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		}
 		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
 	}
-	for (const char *c = pi.cmdline; *c && n < BOOT_LINE_LENGTH - 1; c++) {
-		ba->commandLine[n++] = *c;
+	{
+		const char *c = pi.cmdline;
+
+		for (; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+		if (*c != 0) {
+			/*
+			 * (what the loader decided from the whole line -- rd=, cpus=, ufs=, battery= -- the kernel would not be told past
+			 * the cut: a run that starts on a line it does not have is no run to read the log of)
+			 */
+			print("the boot arguments are %u characters past the %u the kernel takes, from \"%s\": not started\n",
+			    (unsigned)str_len(c), BOOT_LINE_LENGTH - 1, c);
+			return 0;
+		}
 	}
 
 	/* --- device tree ---------------------------------------------------- */
