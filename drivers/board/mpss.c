@@ -2787,25 +2787,35 @@ glink_pump(void)
 	char name[33];
 
 	while (glink.up && !glink.broken) {
-		uint32_t waiting = glink_waiting(), length = sizeof(message);
+		uint32_t waiting = glink_waiting(), length, piece = 0;
+		uint64_t whole;
 
 		if (waiting < sizeof(message)) {
 			return;
 		}
 		glink_peek(&message, 0, sizeof(message));
-		if (message.command == GLINK_OPEN) {
-			length += message.param2;
-		} else if (message.command == GLINK_INTENT) {
-			length += 8 * message.param2;
-		} else if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
+		if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
 			if (waiting < 16) {
 				return;
 			}
 			glink_peek(words, 8, 8);
-			length = 16 + words[0];
+			piece = words[0];
 		}
-		length = (length + 7) & ~7u;
-		if (length > glink.theirs_size - 8) {
+		/*
+		 * (64 bits, as board/glink_queue.h counts for the audio DSP: the counts are the modem's, and in 32 an OPEN of 0xfffffff8 bytes was 0 -- handled
+		 * for ever, glink_lock held, the run's end waiting behind it -- and 2^29 intents a message of eight)
+		 */
+		whole = sizeof(message);
+		if (message.command == GLINK_OPEN) {
+			whole += message.param2;
+		} else if (message.command == GLINK_INTENT) {
+			whole += 8ull * message.param2;
+		} else if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
+			whole = 16ull + piece;
+		}
+		whole = (whole + 7) & ~7ull;
+		length = whole > UINT32_MAX ? UINT32_MAX : (uint32_t)whole;
+		if (whole > glink.theirs_size - 8) {
 			printf("mpss: glink: A MESSAGE OF %u BYTES (%s %u %#x): not believed, and nothing more is read\n", length,
 			    glink_name(message.command), message.param1, message.param2);
 			glink.broken = true;
@@ -3280,7 +3290,8 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		printf("mpss: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
 	}
-	if (header.size == 0 || at + header.size > length) {
+	/* (in 64 bits: a size of the modem's that wraps a 32-bit sum is not a datagram inside the message) */
+	if (header.size == 0 || (uint64_t)at + header.size > length) {
 		printf("mpss: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
 	}
