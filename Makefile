@@ -11,6 +11,8 @@ SHELL := /bin/bash
 help:
 	@echo "make check          lint + boards + docs + test: everything that needs no phone (what CI runs)"
 	@echo "make device DEVICE=NAME   bring a phone's package in from the devices branch (tools/device.py add)"
+	@echo "make device FROM=URL      ... or from a repository of its own: a phone's board.dts at its top, or a directory each"
+	@echo "make phone FROM=URL [DEVICE=NAME]   the phone's package brought in, then the kernel built for it"
 	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
 	@echo "make test           host tests of kernel drivers and of the tools (workbench/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
@@ -46,7 +48,12 @@ boards-check:
 
 .PHONY: device
 device:
-	tools/device.py add $(DEVICE)
+	tools/device.py add $(DEVICE) $(if $(FROM),--from $(FROM))
+
+# a phone of one's own, from its package to its kernel: FROM a repository, a directory, or this one's devices branch
+.PHONY: phone
+phone: device kernel
+	@echo "the kernel for $(or $(DEVICE),the phone of $(FROM)): $(KERNEL); on the phone: ./bench enter, then BENCH_DEFCONFIG=phone_first ./bench run"
 
 .PHONY: compare
 compare:
