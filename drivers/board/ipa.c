@@ -643,10 +643,12 @@ static void
 receive_event(struct channel *ch, const struct event *e, void *context)
 {
 	struct receive_context *rc = context;
-	uint32_t slot = (uint32_t)((e->xfer - ch->tre_ring.phys) / ELEMENT_SIZE), length = e->len;
+	/* (the place in 64 bits, checked before it is cut to 32: an address far above the ring is not a slot inside it) */
+	uint64_t place = e->xfer >= ch->tre_ring.phys ? (e->xfer - ch->tre_ring.phys) / ELEMENT_SIZE : UINT64_MAX;
+	uint32_t slot = place < ch->slots ? (uint32_t)place : UINT32_MAX, length = e->len;
 	const uint8_t *buffer;
 
-	if (slot >= ch->slots || e->xfer < ch->tre_ring.phys) {
+	if (slot >= ch->slots) {
 		if (ch->errors++ < 4) {
 			printf("ipa: %s: an event for TRE %#llx, outside the ring at %#llx\n", ch->name, e->xfer, ch->tre_ring.phys);
 		}
@@ -699,7 +701,8 @@ receive_event(struct channel *ch, const struct event *e, void *context)
 static void
 transmit_event(struct channel *ch, const struct event *e, __unused void *context)
 {
-	uint32_t slot = (uint32_t)((e->xfer - ch->tre_ring.phys) / ELEMENT_SIZE);
+	uint64_t place = e->xfer >= ch->tre_ring.phys ? (e->xfer - ch->tre_ring.phys) / ELEMENT_SIZE : UINT64_MAX;
+	uint32_t slot = place < ch->slots ? (uint32_t)place : UINT32_MAX;
 
 	if (slot != ch->done % ch->slots && ch->errors++ < 4) {
 		printf("ipa: %s: slot %u finished while slot %u was expected (code %u)\n", ch->name, slot, ch->done % ch->slots, e->code);
