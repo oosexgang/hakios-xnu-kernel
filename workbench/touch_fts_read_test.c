@@ -13,8 +13,39 @@
 
 extern char log_text[];
 
-uint32_t hakios_test_rd(vm_offset_t address __unused) { return 0; }
-void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { }
+/* the clock controller's registers, where the test puts it (GCC_BASE); everything else reads 0 */
+#define GCC_BASE        0x100000u
+#define GCC_WORDS       (0x60000u / 4)
+static uint32_t gcc_reg[GCC_WORDS];
+static uint32_t refused_votes;          /* vote bits the controller does not take */
+static bool command_sticks;             /* the engine's clock never takes its configuration */
+static uint32_t se_clock_offset;        /* (the board's se_clock, for the command register's bit) */
+static uint32_t vote_offset = ~0u;      /* (the board's vote register) */
+
+uint32_t
+hakios_test_rd(vm_offset_t address)
+{
+	if (address >= GCC_BASE && address < GCC_BASE + 4 * GCC_WORDS) {
+		return gcc_reg[(address - GCC_BASE) / 4];
+	}
+	return 0;
+}
+
+void
+hakios_test_wr(vm_offset_t address, uint32_t value)
+{
+	if (address >= GCC_BASE && address < GCC_BASE + 4 * GCC_WORDS) {
+		uint32_t offset = (uint32_t)(address - GCC_BASE);
+
+		if (offset == se_clock_offset + 0x04 && !command_sticks) {
+			value &= ~1u;                   /* (the configuration taken at once) */
+		}
+		if (offset == vote_offset) {
+			value &= ~refused_votes;
+		}
+		gcc_reg[offset / 4] = value;
+	}
+}
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_touch_post(uint32_t type __unused, uint32_t finger __unused, uint32_t x __unused, uint32_t y __unused) { }
@@ -158,6 +189,94 @@ crc_both_bytes(void)
 	CHECK(!fts_read(0x01, got, FTS_MAX_DATA) && chip.transfers == 3, "refused: %u transfers", chip.transfers);
 }
 
+/*
+ * The engine's clock (clocks_on): with presets (DFSR bit 0) the lowest of them at or above the rate asked
+ * for, in whatever order the eight are; without, the crystal. The phone-cmd board's touch { } wiring.
+ */
+#define CFG(source, divider)    ((source) << 8 | (divider))     /* (mode 0: no M/N) */
+
+static void
+clock_controller(bool presets)
+{
+	board = "phone-cmd";
+	gcc = GCC_BASE;
+	se_clock_offset = hakios_board()->touch.se_clock;
+	vote_offset = hakios_board()->touch.vote_register;
+	gcc_reg[(se_clock_offset + 0x18) / 4] = presets;
+	/* 100, 19.2, 50, 7.68, 300 (the 300 MHz source undivided), 19.2 again, 0 (a source the engine has not), and
+	 * 12.8 MHz last */
+	static const uint32_t cfg[8] = { CFG(1, 11), CFG(0, 0), CFG(1, 23), CFG(0, 4), CFG(6, 0), CFG(0, 0), CFG(2, 0), CFG(0, 2) };
+	for (unsigned l = 0; l < 8; l++) {
+		gcc_reg[(se_clock_offset + 0x20 + 4 * l) / 4] = cfg[l];
+	}
+}
+
+static void
+lowest_preset_above(void)
+{
+	clock_controller(true);
+	CHECK(clocks_on(12000000) && se_source_hz == 12800000 && se_clock_select == 7, "12 MHz: 12.8 MHz, the last preset: %u, %u",
+	    se_source_hz, se_clock_select);
+}
+
+/* two presets of the same rate: the first */
+static void
+first_of_two_alike(void)
+{
+	clock_controller(true);
+	CHECK(clocks_on(15000000) && se_source_hz == 19200000 && se_clock_select == 1, "15 MHz: 19.2 MHz, preset 1 not 5: %u, %u",
+	    se_source_hz, se_clock_select);
+}
+
+static void
+preset_of_the_rate_asked(void)
+{
+	clock_controller(true);
+	CHECK(clocks_on(50000000) && se_source_hz == 50000000 && se_clock_select == 2, "50 MHz: preset 2 exactly: %u, %u",
+	    se_source_hz, se_clock_select);
+}
+
+static void
+no_preset_high_enough(void)
+{
+	clock_controller(true);
+	CHECK(!clocks_on(400000000) && se_source_hz == 0, "400 MHz: none: %u", se_source_hz);
+}
+
+static void
+the_crystal_without_presets(void)
+{
+	clock_controller(false);
+	gcc_reg[(se_clock_offset + 0x08) / 4] = 0x371fu | 0x4000u;      /* (a configuration of before, a bit outside it) */
+	CHECK(clocks_on(12000000) && se_source_hz == XO_HZ && se_clock_select == 0, "the crystal: %u", se_source_hz);
+	CHECK(gcc_reg[(se_clock_offset + 0x08) / 4] == (0x4000u | 1), "its configuration: source 0, divider 1: %#x",
+	    gcc_reg[(se_clock_offset + 0x08) / 4]);
+}
+
+static void
+configuration_not_taken(void)
+{
+	clock_controller(false);
+	command_sticks = true;
+	CHECK(!clocks_on(12000000), "the engine's clock never takes it: refused");
+}
+
+static void
+votes_refused(void)
+{
+	clock_controller(true);
+	refused_votes = 1u << hakios_board()->touch.vote[4];
+	CHECK(!clocks_on(12000000), "the engine's own vote not taken: refused");
+}
+
+static void
+clocks_stay_off(void)
+{
+	clock_controller(true);
+	gcc_reg[hakios_board()->touch.se_clock / 4] = CLOCK_OFF;
+	CHECK(!clocks_on(12000000), "the engine's clock off: refused");
+}
+
 /* the clock controller's bus clocks: running when not off, or off but able to run (bit 1, idle) */
 static void
 bus_clock_ready(void)
@@ -173,6 +292,10 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "a_read", a_read }, { "lengths_refused", lengths_refused }, { "read_again", read_again },
 		{ "read_given_up", read_given_up }, { "crc_both_bytes", crc_both_bytes }, { "bus_clock_ready", bus_clock_ready },
+		{ "lowest_preset_above", lowest_preset_above }, { "first_of_two_alike", first_of_two_alike }, { "preset_of_the_rate_asked", preset_of_the_rate_asked },
+		{ "no_preset_high_enough", no_preset_high_enough }, { "the_crystal_without_presets", the_crystal_without_presets },
+		{ "configuration_not_taken", configuration_not_taken }, { "votes_refused", votes_refused },
+		{ "clocks_stay_off", clocks_stay_off },
 	};
 
 	if (argc < 2) {
