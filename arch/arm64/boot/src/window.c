@@ -97,7 +97,10 @@ choose_window(const struct payload_info *pi)
 		}
 	}
 	print("largest free block %x size %x\n", best_base, best_size);
-	if (pi->forced_base != 0) {
+	if (pi->forced_base != 0 && (pi->forced_base & (BASE_ALIGN - 1)) != 0) {
+		/* (the kernel maps its memory in blocks of that size from its base: a base between two is none it can take) */
+		print("physbase %x is not a multiple of %x: not taken\n", pi->forced_base, (uint64_t)BASE_ALIGN);
+	} else if (pi->forced_base != 0) {
 		best_base = pi->forced_base;
 		best_size = MAX_MEM_SIZE;
 	}
@@ -127,6 +130,15 @@ choose_window(const struct payload_info *pi)
 		uint64_t at = 0xFFFFFFFFULL;
 		if (EFI_ERROR(BS->allocate_pages(AllocateMaxAddress, EfiLoaderData, LOW_DMA_SIZE >> 12, &at))) {
 			at = 0;
+		}
+		if (at != 0 && at < pay_hi && at + LOW_DMA_SIZE > pay_lo) {
+			/* (over the payload, which UEFI may count as free: the devices would write into the next run's) */
+			BS->free_pages(at, LOW_DMA_SIZE >> 12);
+			at = pay_lo - 1;
+			if (pay_lo <= LOW_DMA_SIZE ||
+			    EFI_ERROR(BS->allocate_pages(AllocateMaxAddress, EfiLoaderData, LOW_DMA_SIZE >> 12, &at))) {
+				at = 0;
+			}
 		}
 		low_dma = at;
 		print("low DMA memory %x\n", low_dma);
