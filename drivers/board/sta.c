@@ -110,7 +110,8 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 				}
 				continue;
 			}
-			if (rejoin_at != 0) {
+			if (rejoin_at != 0 && sta_ops != NULL) {
+				/* (with no station, a rejoin's time come and gone would wake this at once, every time: not slept to) */
 				lck_mtx_sleep_deadline(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT, rejoin_at);
 			} else {
 				lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT);
@@ -223,6 +224,8 @@ hakios_sta_attach(const struct hakios_sta_ops *ops)
 		lck_mtx_lock(&sta_lock);
 		sta_ops = NULL;
 		asked_power = asked_scan = asked_join = asked_leave = false;
+		rejoin_at = 0;                  /* (a rejoin of the station gone: not tried by the next) */
+		rejoining = false;
 		while (sta_calls || sta_reads != 0) {
 			lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_calls, THREAD_UNINT);
 		}
