@@ -523,6 +523,7 @@ class HakiosGPUUserClient : public IOUserClient
 
 	task_t                  fTask;
 	struct gpu_buffer *     fBuffers;               /* handle n is fBuffers[n - 1] */
+	bool                    fClosed;                /* clientClose() has given everything back: nothing more is made */
 	uint32_t                fNextQueue;
 	uint32_t                fNextBuffer;            /* where the search for a free handle starts: one given back is not the next given */
 	uint32_t                fBufferCount;
@@ -716,6 +717,8 @@ HakiosGPUUserClient::clientClose(void)
 		if (fLeftCount != 0) {
 			IOLog("HakiosGPU: the GPU is not done with %u buffers of a program that is gone: they stay its own\n", fLeftCount);
 		}
+		/* (a call still on its way after this would make buffers nobody frees: free() gives back only the table) */
+		fClosed = true;
 		IOLockUnlock(gGPULock);
 	}
 	if (!isInactive()) {
@@ -1653,7 +1656,7 @@ HakiosGPUUserClient::clientMemoryForType(UInt32 type, IOOptionBits * options, IO
 	IOReturn ret = kIOReturnBadArgument;
 
 	IOLockLock(gGPULock);
-	b = buffer(type);
+	b = fClosed ? NULL : buffer(type);
 	if (b != NULL) {
 		b->memory->retain();
 		b->seen = true;
@@ -1693,6 +1696,9 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 
 	if (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {
 		return kIOReturnBadArgument;
+	}
+	if (fClosed) {
+		return kIOReturnNotOpen;                        /* (its buffers were all given back: none is made after) */
 	}
 	if (!hakios_gpu_ready() && selector != kHakiosShow) {
 		return kIOReturnNotReady;                       /* given back: the run is ending */
