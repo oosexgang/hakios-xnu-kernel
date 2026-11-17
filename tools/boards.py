@@ -381,6 +381,13 @@ def status_text(name, board, soc):
             line(feature, "one part's driver: only if this phone has that part wired the same way (Documentation/drivers.md)")
         else:
             line(feature, 'can be listed: what it needs is there' + (f' (then {how})' if how else ''))
+    bt = board.get('bluetooth')
+    if bt is not None:
+        out.append('')
+        line('bluetooth firmware', f'{bt["rampatch"]}' + (f' and {bt["nvm"]}' if 'nvm' in bt else '') +
+             f' from the small image\'s {bt.get("firmware", "fw")}/, sent at bt=2 (bt_fw=0: not)' if 'rampatch' in bt else
+             'none named: bt=2 hands the controller over on its ROM (rampatch and nvm in bluetooth { }, from the phone\'s '
+             '/vendor/bt_firmware/image)')
     out += ['', 'A feature that is on is started only with its boot argument, in brackets (Documentation/boot-args.md has',
             'them all); Documentation/porting.md, step 5, has the order to try them in and the log line that says each',
             'one worked.', '']

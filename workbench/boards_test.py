@@ -574,6 +574,17 @@ class Check(Sandbox):
         for _, feature in boards.feature_bits():
             self.assertRegex(said, rf'(?m)^  {feature} ')
 
+    def test_status_says_which_bluetooth_firmware_is_sent(self):
+        socs, found = boards.load()
+        board = dict(found['phone'], bluetooth={'rampatch': 'msbtfw11.mbn', 'nvm': 'msnv11.bin', 'firmware': 'fw-bt'})
+        self.assertRegex(boards.status_text('phone', board, socs['phone']),
+                         r'bluetooth firmware +msbtfw11.mbn and msnv11.bin from the small image\'s fw-bt/, sent at bt=2')
+        board = dict(found['phone'], bluetooth={'rampatch': 'msbtfw11.tlv'})
+        self.assertRegex(boards.status_text('phone', board, socs['phone']), r'bluetooth firmware +msbtfw11.tlv from .* fw/, sent')
+        board = dict(found['phone'], bluetooth={})
+        self.assertRegex(boards.status_text('phone', board, socs['phone']), r'bluetooth firmware +none named: bt=2 hands .* ROM')
+        self.assertNotIn('bluetooth firmware', boards.status_text('phone', found['phone'], socs['phone']), 'no bluetooth { }: nothing said')
+
     def test_the_loader_tells_boards_apart_by_their_framebuffer(self):
         for name, loader, reason in (('twin', 'fb-base = <0xe1000000>;', 'is also that of'),
                                      ('emu1', '', None), ('emu2', '', 'more than one board')):
