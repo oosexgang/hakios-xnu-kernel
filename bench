@@ -345,6 +345,8 @@ run() { # run OEM-COMMAND LABEL
 	touch "$PHONE.ran"
 	ln -sf "$(basename "$log")" logs/last.log
 	echo "$result  [$log]"
+	# what each part of the phone said, in a few lines (the whole of it is in the log)
+	python3 tools/logcheck.py "$log" 2> /dev/null | tail -n +2 || true
 	case "$result" in
 	*hung* | *no-such-core*)
 		say "the kernel did not come back from its core; restarting the phone"
