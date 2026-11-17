@@ -171,6 +171,16 @@ static uint32_t se_source_hz, se_clock_select;
 #include "geni_spi.h"               /* the engine's registers, SPI set up, a transfer, a recovery;
                                          * the engine's clock's rate */
 
+/*
+ * An AHB clock in hardware gated mode (bit 1) may say it is off while its bus is idle, even with the vote taken
+ * (Linux's clk-branch.c does not wait for it either): the engine was given up for that, and its pins driven by hand
+ */
+static bool
+ahb_clock_ready(uint32_t status)
+{
+	return !(status & CLOCK_OFF) || (status & (1u << 1));
+}
+
 static bool
 clocks_on(void)
 {
@@ -206,7 +216,8 @@ clocks_on(void)
 	}
 	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_SE);
 	for (int i = 0; i < 1000; i++) {
-		if (!((rd(GCC_QUP_M_AHB_CBCR) | rd(GCC_QUP_S_AHB_CBCR) | rd(GCC_SE_CBCR)) & CLOCK_OFF)) {
+		if (ahb_clock_ready(rd(GCC_QUP_M_AHB_CBCR)) && ahb_clock_ready(rd(GCC_QUP_S_AHB_CBCR)) &&
+		    !(rd(GCC_SE_CBCR) & CLOCK_OFF)) {
 			return true;
 		}
 		sleep_us(10);
