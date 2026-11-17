@@ -80,6 +80,18 @@ class Links(Sandbox):
         self.assertIn('README.md:1: `tools/gone.py` is not in the repository', complained)
         self.assertNotIn('thing.py', complained)
 
+    def test_what_the_builds_make_may_be_named_before_it_is_made(self):
+        # (what .gitignore keeps out at a place of its own: a fresh checkout, or a release's tree, has none of it yet)
+        self.write('.gitignore', '/tools/made.h\n/tools/out/\n/tools/fw-*/\n*.o\n')
+        self.write('README.md', '`tools/made.h`, `tools/out/x.bin`, `tools/fw-bt/`; not `tools/other.h`, nor `tools/a.o`\n')
+        code, _, complained = self.run_tool(self.links)
+        self.assertEqual(code, 1)
+        self.assertNotIn('made.h', complained)
+        self.assertNotIn('x.bin', complained)
+        self.assertNotIn('fw-bt', complained)
+        self.assertIn('`tools/other.h` is not in the repository', complained)
+        self.assertIn('`tools/a.o` is not in the repository', complained, 'a pattern of no place of its own is no path')
+
     def test_placeholders_and_patterns_are_not_paths(self):
         self.write('README.md', '`arch/arm64/boot/dts/NAME/board.dts`, `docs/NAME.md`, `kernel/patches/*.patch`, `tools/...`\n')
         self.assertEqual(self.run_tool(self.links)[0], 0)
