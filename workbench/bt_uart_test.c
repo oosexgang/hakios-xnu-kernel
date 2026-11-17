@@ -16,6 +16,8 @@ static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
 static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event, darwins_turn;
+static bool shortest_version, short_complete, other_first, last_word_four;
+static vm_offset_t unmapped;    /* a block ml_io_map() gives nothing for */
 
 /*
  * The controller's firmware, as the RAM disks have it (hakios_image_file below) and as the model takes it: the files
@@ -156,8 +158,8 @@ peer(void)
 	CHECK(engine[0x268 / 4] == 8 && engine[0x28c / 4] == 8 && !engine[0x26c / 4] &&
 	    !engine[0x280 / 4] && !engine[0x2a4 / 4] && !engine[0x2a8 / 4] &&
 	    (loopback || !engine[0x22c / 4]) && engine[0x294 / 4] == 160, "UART 8N1, loopback disabled for HCI, stale count");
-	CHECK(!(engine[0x258 / 4] & 1) && !engine[0xe18 / 4] && engine[0x810 / 4] == 13 &&
-	    engine[0x814 / 4] == 14 && !engine[0x80c / 4], "FIFO mode/watermarks");
+	CHECK(!(engine[0x258 / 4] & 1) && !engine[0xe18 / 4] && engine[0x810 / 4] == ((engine[0xe28 / 4] >> 16) & 0x3f) - 3 &&
+	    engine[0x814 / 4] == ((engine[0xe28 / 4] >> 16) & 0x3f) - 2 && !engine[0x80c / 4], "FIFO mode/watermarks");
 	for (unsigned i = 0; i < 4; i++) {
 		CHECK(model.cfg[b->bluetooth.uart_pins[i]] == (uint32_t)b->bluetooth.uart_function << 2, "board UART pin function");
 	}
@@ -188,6 +190,23 @@ peer(void)
 			rx_size = 7;
 			rx[2] = 4;
 		}
+		if (shortest_version) {
+			rx_size = 5;            /* (a vendor event with its response type and nothing after) */
+			rx[2] = 2;
+		}
+		if (short_complete) {
+			memcpy(rx, complete, 7);        /* (a Command Complete of 0xfc00 with its status and nothing after) */
+			rx[2] = 4;
+			rx_size = 7;
+		}
+		if (other_first) {
+			/* (another command's Command Complete before it, as long as one of 0xfc00 cut short) */
+			static const uint8_t other[] = { 4, 0x0e, 4, 1, 0x05, 0x10, 0 };
+
+			memmove(rx + sizeof(other), rx, rx_size);
+			memcpy(rx, other, sizeof(other));
+			rx_size += sizeof(other);
+		}
 		if (coalesced) {
 			memmove(rx + sizeof(reset_evt), rx, rx_size);
 			memcpy(rx, reset_evt, sizeof(reset_evt));
@@ -212,7 +231,10 @@ hakios_test_rd(vm_offset_t address)
 		}
 		if (reg == 0x804) {
 			unsigned left = rx_size - rx_pos;
-			return left ? (left + 3) / 4 | (1u << 31) | ((left % 4) << 28) : 0;
+			/* (the last word's valid bytes: 1 to 3, and for a whole word 0 -- or 4, as an engine may say it) */
+			unsigned valid = left % 4 != 0 ? left % 4 : last_word_four ? 4 : 0;
+
+			return left ? (left + 3) / 4 | (1u << 31) | (valid << 28) : 0;
 		}
 		if (reg == 0x780) {
 			uint32_t word = 0;
@@ -352,7 +374,7 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 	spmi_model_wr(address, value);
 }
 
-vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys; }
+vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys == unmapped ? 0 : phys; }
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) { mappings++; return (vm_offset_t)DB; }
 
 #pragma GCC diagnostic ignored "-Wformat"
@@ -558,8 +580,8 @@ darwins(void)
 	/* an event without parameters, an ISO packet: each its own length, from the header each has */
 	controller_says((const uint8_t[]){ 4, 0x10, 0, 5, 0x01, 0x00, 4, 0, 9, 8, 7, 6, 4, 0x0e, 4, 1, 0x03, 0x0c, 0 }, 19);
 	CHECK((n = handed->receive(got, 4, 5)) == 0, "no room for a header: nothing read (%d)", n);
-	CHECK((n = handed->receive(got, sizeof(got), 5)) == 3 && got[1] == 0x10, "an event of three bytes: %d", n);
-	CHECK((n = handed->receive(got, sizeof(got), 5)) == 9 && got[0] == 5 && got[8] == 6, "an ISO packet: %d", n);
+	CHECK((n = handed->receive(got, 5, 5)) == 3 && got[1] == 0x10, "room for a header to the byte: an event of three bytes: %d", n);
+	CHECK((n = handed->receive(got, 9, 5)) == 9 && got[0] == 5 && got[8] == 6, "an ISO packet, room for it to the byte: %d", n);
 	CHECK((n = handed->receive(got, sizeof(got), 5)) == 7 && memcmp(got, complete, 7) == 0, "and the event after them: %d", n);
 	controller_says((const uint8_t[]){ 0x07, 1, 2, 3, 4, 5, 6, 7, 8 }, 9);
 	CHECK(handed->receive(got, sizeof(got), 5) == -1 && logged("where a packet was to begin: out of step") &&
@@ -582,7 +604,9 @@ main(int argc, char **argv)
 	    "silent", "quiesce", "clock_timeout", "rcg_timeout", "tx_timeout", "bad_reset", "short_version", "cc_version", "rx_error", "coalesced", "old_wrapper",
 	    "loopback_garbled", "not_vrm", "missing_resource", "enable_not_ours", "enable_not_gpio", "mv_gpio", "tx_fifo_busy",
 	    "not_an_event", "darwins", "not_darwins", "firmware", "firmware_elf", "firmware_refused", "firmware_missing", "firmware_rom",
-	    "firmware_junk", "firmware_no_reset" };
+	    "firmware_junk", "firmware_no_reset",
+	    "fifo_narrow", "fifo_shallow", "fifo_four", "rx_shallow", "rx_four", "shortest_version", "short_complete", "other_first",
+	    "last_word_four", "no_mapping" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -655,6 +679,18 @@ main(int argc, char **argv)
 		coalesced = !strcmp(scenario, "coalesced");
 		sw_low = !strcmp(scenario, "old_wrapper");
 		not_an_event = !strcmp(scenario, "not_an_event");
+		shortest_version = !strcmp(scenario, "shortest_version");
+		short_complete = !strcmp(scenario, "short_complete");
+		last_word_four = !strcmp(scenario, "last_word_four");
+		/* (with another event first the version's answer ends on a whole word: 7 + 17 bytes, whose last valid count is 4) */
+		other_first = !strcmp(scenario, "other_first") || last_word_four;
+		/* the engine's FIFOs: words 32 bits wide, the TX one at least four deep, the RX one too */
+		if (!strcmp(scenario, "fifo_narrow")) { engine[0xe24 / 4] = (16u << 24) | (16u << 16); }
+		if (!strcmp(scenario, "fifo_shallow")) { engine[0xe24 / 4] = (32u << 24) | (3u << 16); }
+		if (!strcmp(scenario, "fifo_four")) { engine[0xe24 / 4] = (32u << 24) | (4u << 16); }
+		if (!strcmp(scenario, "rx_shallow")) { engine[0xe28 / 4] = (32u << 24) | (3u << 16); }
+		if (!strcmp(scenario, "rx_four")) { engine[0xe28 / 4] = (32u << 24) | (4u << 16); }
+		if (!strcmp(scenario, "no_mapping")) { unmapped = b->bluetooth.serial_engine; }
 		model.input[b->bluetooth.sw_ctrl] = !sw_low;
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
 		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
@@ -697,6 +733,15 @@ main(int argc, char **argv)
 		} else if (start_error != 0) {
 			CHECK(logged("not handed to Darwin (6)") && logged("bring-up stopped; powering down") && !en.reg[0x44],
 			    "Darwin's side refusing it: the controller powered down: %s", log_text);
+		} else if (!strcmp(scenario, "no_mapping")) {
+			CHECK(logged("bt-uart: mapping failed") && !en.writes && !rsc.writes && !model.writes && !tx_commands,
+			    "a block not mapped: nothing done: %s", log_text);
+		} else if (!strcmp(scenario, "fifo_narrow") || !strcmp(scenario, "fifo_shallow") || !strcmp(scenario, "rx_shallow")) {
+			CHECK(logged(!strcmp(scenario, "rx_shallow") ? "unsupported RX FIFO geometry" : "unsupported TX FIFO geometry") &&
+			    logged("bring-up stopped; powering down") && !en.reg[0x44] && !tx_commands, "a FIFO it cannot use: refused: %s", log_text);
+		} else if (shortest_version || short_complete) {
+			CHECK(logged(shortest_version ? "version response too short (5 bytes)" : "version response too short (7 bytes)") &&
+			    logged("bring-up stopped; powering down") && !en.reg[0x44], "a version answer with no version in it: %s", log_text);
 		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error || not_an_event) {
 			CHECK(logged("bring-up stopped; powering down") && !logged("identification complete"), "failure is explicit: %s", log_text);
 			CHECK(!en.reg[0x44], "failure powers down");
@@ -708,10 +753,14 @@ main(int argc, char **argv)
 			if (not_an_event) {
 				CHECK(logged("unexpected H4 packet type 0x2"), "a packet that is not an event is said: %s", log_text);
 			}
+			if (short_version) {
+				CHECK(logged("version response too short (7 bytes)"), "how short, said: %s", log_text);
+			}
 		} else {
 			CHECK(logged("product id 0x7750, patch version 0x1234, ROM version 0x5678, SoC id 0x11223344"), "decoded version: %s", log_text);
 			CHECK(logged("identification complete") && tx_commands == 2, "both commands completed");
 			CHECK(!strncmp(scenario, "firmware", 8) || segments_seen == 0, "no firmware sent but at bt=2 (%u segments)", segments_seen);
+			CHECK(!other_first || !logged("too short"), "another command's answer passed over, not taken for the version's: %s", log_text);
 			CHECK(loopbacks == 1 && read_starts == 2 && rx_cancels == 1, "first configuration succeeds after loopback RX restart");
 			if (garbled) {
 				/* (said, and nothing more: the controller may still answer, and it does) */
