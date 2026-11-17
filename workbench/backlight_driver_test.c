@@ -495,6 +495,18 @@ incomplete_profile(void)
 	CHECK(m.sent_n == 0, "nothing sent: %u", m.sent_n);
 }
 
+/* a DSI controller said to be at 0 (bl_dsi=0) is none: refused, and nothing touched */
+static void
+no_controller(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_dsi=0";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+	CHECK(m.sent_n == 0 && m.accesses == 0, "nothing sent or touched: %u, %u", m.sent_n, m.accesses);
+}
+
 static void
 no_range(void)
 {
@@ -711,7 +723,8 @@ main(int argc, char **argv)
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
-		{ "backend_from_boot_arg", backend_from_boot_arg }, { "incomplete_profile", incomplete_profile }, { "no_range", no_range },
+		{ "backend_from_boot_arg", backend_from_boot_arg }, { "incomplete_profile", incomplete_profile }, { "no_controller", no_controller },
+		{ "no_range", no_range },
 		{ "least_significant_first", least_significant_first }, { "held_by_the_thermal_cap", held_by_the_thermal_cap },
 		{ "automatic_from_boot_arg", automatic_from_boot_arg }, { "soft_quiesce", soft_quiesce },
 	};
