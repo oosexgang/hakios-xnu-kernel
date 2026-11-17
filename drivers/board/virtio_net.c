@@ -75,6 +75,7 @@ struct queue {
 
 static vm_offset_t virtio;                      /* the device's registers */
 static struct queue receive_queue, transmit_queue;
+static bool net_driven;                         /* the device set going: reset on the way back to the loader */
 
 static inline uint32_t
 reg_read(uint32_t reg)
@@ -247,6 +248,7 @@ virtio_net_start(uint8_t address[ETHER_ADDR_LEN])
 		}
 	}
 	reg_write(VIRTIO_STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+	net_driven = true;
 	reg_write(VIRTIO_QUEUE_NOTIFY, QUEUE_RECEIVE);
 	printf("net: virtio network device in slot %d (it offers features %#x)\n", slot, features);
 	return true;
@@ -274,5 +276,14 @@ hakios_virtio_net_init(void)
 	}
 	if (!virtio_net_start(virtio_link.address) || !hakios_net_attach(&virtio_link)) {
 		printf("net: no network interface\n");
+	}
+}
+
+void
+hakios_virtio_net_quiesce(void)
+{
+	if (net_driven) {
+		reg_write(VIRTIO_STATUS, 0);    /* reset: no more frames written into this kernel's buffers */
+		net_driven = false;
 	}
 }

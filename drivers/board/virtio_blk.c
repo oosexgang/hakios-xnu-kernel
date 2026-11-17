@@ -107,6 +107,7 @@ struct blk_device {
 static LCK_GRP_DECLARE(blk_lck_grp, "hakios-virtio-blk");
 static struct blk_device blk_dev;
 static bool blk_ready;
+static struct blk_device *blk_driven;   /* the device set going: reset on the way back to the loader */
 static int blk_bmajor = -1, blk_cmajor = -1;
 
 /* One of this driver's devices: every request is a trip through the hypervisor */
@@ -485,6 +486,7 @@ blk_attach(struct blk_device *d, int slot)
 	reg_write(d, VIRTIO_QUEUE_READY, 1);
 	reg_write(d, VIRTIO_STATUS,
 	    STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+	blk_driven = d;
 	return true;
 }
 
@@ -544,4 +546,13 @@ hakios_virtio_blk_init(void)
 		return;
 	}
 	printf("virtio-blk: no block device on the bus\n");
+}
+
+void
+hakios_virtio_blk_quiesce(void)
+{
+	if (blk_driven != NULL) {
+		reg_write(blk_driven, VIRTIO_STATUS, 0);        /* reset: no request finished into this kernel's memory later */
+		blk_driven = NULL;
+	}
 }

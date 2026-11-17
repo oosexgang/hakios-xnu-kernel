@@ -120,6 +120,7 @@ struct queue {
 
 static vm_offset_t regs;
 static vm_offset_t shared;
+static bool sound_driven;               /* the device set going: reset on the way back to the loader */
 static uint64_t shared_phys;
 static struct queue control, tx;
 static uint32_t stream;
@@ -330,6 +331,7 @@ sound_attach(int slot)
 		tx_free[tx_free_count++] = n;
 	}
 	reg_write(VIRTIO_STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+	sound_driven = true;
 
 	/* the first stream that plays */
 	count = *(volatile uint32_t *)(regs + VIRTIO_CONFIG + 4);
@@ -392,4 +394,13 @@ hakios_virtio_sound_init(void)
 		return;
 	}
 	printf("virtio-sound: no sound device\n");
+}
+
+void
+hakios_virtio_sound_quiesce(void)
+{
+	if (sound_driven) {
+		reg_write(VIRTIO_STATUS, 0);    /* reset: nothing more read from, or written into, this kernel's buffers */
+		sound_driven = false;
+	}
 }

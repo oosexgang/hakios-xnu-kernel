@@ -65,6 +65,10 @@ extern void hakios_mic_quiesce(void);
 extern void hakios_bt_uart_quiesce(void);
 extern void hakios_ufs_quiesce(void);
 extern void hakios_ufs_close(void);
+extern void hakios_virtio_net_quiesce(void);
+extern void hakios_virtio_input_quiesce(void);
+extern void hakios_virtio_sound_quiesce(void);
+extern void hakios_virtio_blk_quiesce(void);
 extern void hakios_var_save_on_return(void);   /* bsd/dev/board/ufs.c: the data volume into the flash */
 void loader_checkpoint(uint64_t n);
 
@@ -552,6 +556,10 @@ loader_return(void)
 	hakios_scmi_perf_quiesce();     /* ... and, where the firmware sets them (SCMI), at the levels they were found at */
 	hakios_camera_quiesce();       /* the camera powered down, if it was powered up */
 	hakios_mic_quiesce();          /* (what the microphones' path did, said again: it happens in the log's middle) */
+	hakios_virtio_net_quiesce();   /* (the emulator's devices reset: they write no more into memory about to be reused) */
+	hakios_virtio_input_quiesce();
+	hakios_virtio_sound_quiesce();
+	hakios_virtio_blk_quiesce();
 	/*
 	 * A panic's text is first collected in the panic buffer and only later
 	 * flushed to the console; if the console itself is what failed, that

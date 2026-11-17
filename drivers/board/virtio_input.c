@@ -344,3 +344,12 @@ hakios_virtio_input_init(void)
 		printf("virtio-input: no input devices\n");
 	}
 }
+
+void
+hakios_virtio_input_quiesce(void)
+{
+	for (int i = 0; i < device_count; i++) {
+		reg_write(&devices[i], VIRTIO_STATUS, 0);       /* reset: no more events written into this kernel's buffers */
+	}
+	device_count = 0;
+}

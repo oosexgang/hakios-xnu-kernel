@@ -55,4 +55,13 @@
  */
 #define VIRTIO_USED_READ_BARRIER()      __builtin_arm_dmb(0x9)  /* ISHLD */
 
+/*
+ * On the way back to the loader (osfmk/arm64/loader_return.c): each device this kernel set going reset, so that it
+ * writes no more into rings and buffers whose memory is UEFI's or the next kernel's from then on.
+ */
+void hakios_virtio_net_quiesce(void);
+void hakios_virtio_input_quiesce(void);
+void hakios_virtio_sound_quiesce(void);
+void hakios_virtio_blk_quiesce(void);
+
 #endif /* _HAKIOS_VIRTIO_H */
