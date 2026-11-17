@@ -51,7 +51,8 @@ scmi_word(unsigned offset)
 
 /*
  * One SCMI message of the performance protocol. Returns the SCMI status (0: success), or -100 and
- * below when the channel did not answer; `out` gets the answer's words after the status.
+ * below when the channel did not answer; `out` gets the answer's words after the status. -100: nothing
+ * was sent (the channel was not free); -101 and below: sent, and the answer not there or not readable.
  */
 static int
 scmi_query(uint32_t message, const uint32_t *in, unsigned nin, uint32_t *out, unsigned nout, unsigned *nanswer)
@@ -237,6 +238,12 @@ hakios_scmi_perf_set(unsigned domain, uint32_t level)
 	status = scmi_query(SCMI_PERF_LEVEL_SET, in, 2, NULL, 0, &words);
 	if (status == 0) {
 		scmi_now[domain] = level;
+	} else if (status <= -101) {
+		/*
+		 * (the doorbell was rung and no answer can be read: the firmware may have taken the level all the same, so where
+		 * the domain is is not known -- and the run's end puts it back whatever it is)
+		 */
+		scmi_now[domain] = UINT32_MAX;
 	}
 	lck_mtx_unlock(&scmi_lock);
 	return status;

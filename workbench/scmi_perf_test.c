@@ -411,6 +411,21 @@ sets_are_clamped_and_errors_preserve_state(void)
 	CHECK(!hakios_scmi_perf_domain(3, &found, &top), "an unknown domain has no levels");
 }
 
+/* a level the firmware took but whose answer could not be read: put back at the run's end all the same */
+static void
+taken_without_an_answer(void)
+{
+	channel();
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	behaviour = OTHER_TOKEN;                /* (the firmware sets the level; its answer carries another token) */
+	CHECK(hakios_scmi_perf_set(0, 2500) == -103 && levels[0] == 2500, "the level taken, the answer not ours");
+	behaviour = ANSWERS;
+	hakios_scmi_perf_quiesce();
+	CHECK(levels[0] == 1000, "back at the level found at the run's end: %u", levels[0]);
+	CHECK(levels[1] == 1001 && levels[2] == 1002, "and the others, never set, left: %u %u", levels[1], levels[2]);
+}
+
 /* an incomplete reply leaves a gap: later domains cannot be renumbered into its place */
 static void
 incomplete_domains_are_not_exposed(void)
@@ -491,6 +506,7 @@ main(int argc, char **argv)
 		{ "mailbox_not_mapped", mailbox_not_mapped, 1 }, { "longer_answers", longer_answers, 1 },
 		{ "one_attribute_word", one_attribute_word, 1 },
 		{ "sets_are_clamped_and_errors_preserve_state", sets_are_clamped_and_errors_preserve_state, 1 },
+		{ "taken_without_an_answer", taken_without_an_answer, 1 },
 		{ "incomplete_domains_are_not_exposed", incomplete_domains_are_not_exposed, 1 },
 		{ "short_answers", short_answers, 5 }, { "top_at_the_level", top_at_the_level, 1 },
 	};
