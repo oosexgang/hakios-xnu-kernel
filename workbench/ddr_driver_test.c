@@ -216,6 +216,7 @@ look_only(void)
 	CHECK(logged("ddr: BCM CN0      at 0x5000c"), "every bus clock manager is shown");
 	CHECK(!logged("cx.lvl") && !logged("0x3ffff"), "and only those: a rail is not one, whatever its name");
 	CHECK(logged("ddr: slot set 0 (active) command 2 (on): message 0, address 0x50000,") && logged("<- a BCM"), "what the slots hold");
+	CHECK(!logged(": message 0, address 0, data 0"), "and not the empty commands: %s", log_text);
 	CHECK(rsc.writes == 0 && rsc.triggers == 0, "a look writes nothing (%u)", rsc.writes);
 	CHECK(rsc.elsewhere == 0 && canary_whole(), "nothing touched elsewhere");
 }
