@@ -431,6 +431,8 @@ class Check(Sandbox):
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <0>;\n\t\tpins = <84 85 85>;\n\t};\n\tloader {', 'pins are three different pins'),
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <0>;\n\t\tsupplies = "smpb7", "S1B";\n\t};\n\tloader {', 'supplies are three different names'),
             (self.soc, 'gic-dist = <0x17a00000>;\n', '', '"gic-dist" is missing'),
+            (self.soc, 'cores = <8>;', 'cores = <9>;', 'cores is 9: one to eight'),
+            (self.soc, 'cores = <8>;', 'cores = <0>;', 'cores is 0: one to eight'),
         ]
         for change, old, new, reason in cases:
             with self.subTest(reason=reason):

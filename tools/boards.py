@@ -758,6 +758,10 @@ def load(problems=None):
             elif soc['platform'].get('io_base') == 0:
                 problems.add(rel, 'soc.dtsi [platform]: io_base must not be 0 (XNU then takes the '
                                   'machine for one without a SoC)')
+        cores = soc.get('platform', {}).get('cores')
+        if isinstance(cores, int) and not 1 <= cores <= 8:
+            # (the loader keeps a table of eight cores' MPIDRs, arch/arm64/boot/src/run.c, and HAKIOS's boards have eight)
+            problems.add(rel, f'soc.dtsi [platform]: cores is {cores}: one to eight')
         groups = soc.get('cpufreq', {}).get('domain_cores', [])
         if groups and (not 1 <= len(groups) <= 4 or any(not 1 <= n <= 255 for n in groups)):
             problems.add(rel, 'soc.dtsi [cpufreq]: domain_cores is one to four groups of at least one core')
