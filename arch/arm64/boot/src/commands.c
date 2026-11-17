@@ -59,14 +59,10 @@ fb_command(char *cmd)
 			while (*c == ' ') {
 				c++;
 			}
-			off = parse_number(c, 16);
-			while (*c != 0 && *c != ' ') {
-				c++;
+			if (!number_given(&c, 16, &off) || !number_given(&c, 16, &len) || *c != 0) {
+				fb_reply("FAIL", "oem read NAME OFFSET LENGTH, the two in hex");
+				return;
 			}
-			while (*c == ' ') {
-				c++;
-			}
-			len = parse_number(c, 16);
 			bio = partition_named(name);
 			/* (inside the partition without adding the two: an offset near 2^64 would make the sum small) */
 			if (bio == NULL || len == 0 || len > sizeof(out_buf) || off % bio->media->block_size ||
@@ -116,8 +112,13 @@ fb_command(char *cmd)
 			 * "oem ramdisk patch OFFSET" (hex): the next download overwrites the resident image from
 			 * OFFSET on -- an image changed in a few places is sent as those places only.
 			 */
-			uint64_t at = parse_number(cmd + 18, 16);
+			const char *c = cmd + 18;
+			uint64_t at;
 
+			if (!number_given(&c, 16, &at) || *c != 0) {
+				fb_reply("FAIL", "oem ramdisk patch OFFSET, in hex");
+				return;
+			}
 			if (resident_rd_size == 0 || at >= resident_rd_size) {
 				fb_reply("FAIL", "no resident image there");
 				return;
@@ -153,7 +154,8 @@ fb_command(char *cmd)
 			download_to_ramdisk = 1;
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "download:")) {
-			uint64_t total = parse_number(cmd + 9, 16), got = 0, before, limit;
+			const char *size_text = cmd + 9;
+			uint64_t total = 0, got = 0, before, limit;
 			uint8_t *dest = (uint8_t *)PAYLOAD_BASE;
 			int to_ramdisk = download_to_ramdisk;
 			const char *no_room = download_room(to_ramdisk, download_ramdisk_append, download_ramdisk_patch, resident_rd_size,
@@ -171,7 +173,7 @@ fb_command(char *cmd)
 			if (to_ramdisk == 1) {
 				resident_rd_size = before;
 			}
-			if (total == 0 || total > limit) {
+			if (!number_given(&size_text, 16, &total) || *size_text != 0 || total == 0 || total > limit) {
 				fb_reply("FAIL", "bad size");
 				return;
 			}
@@ -261,8 +263,13 @@ fb_command(char *cmd)
 			while (*arg == ' ') {
 				arg++;
 			}
-			int have_cp = selftest || (*arg >= '0' && *arg <= '9');
-			uint64_t cp = selftest ? CHECKPOINT_SELFTEST : parse_number(arg, 10);
+			int have_cp = selftest || *arg != 0;
+			uint64_t cp = CHECKPOINT_SELFTEST;
+
+			if (!selftest && have_cp && (!number_given(&arg, 10, &cp) || *arg != 0)) {
+				fb_reply("FAIL", "oem run [CHECKPOINT], a decimal number");
+				return;
+			}
 
 			set_result("running", cp, 0);
 			fb_reply("OKAY", "");

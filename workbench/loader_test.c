@@ -829,6 +829,37 @@ payload_damaged_ones(void)
 	CHECK(parse_payload(&info, 0) == 1 && info.kernel != NULL, "a header that says all the room reserved for one: taken (%s)", said);
 }
 
+/* the numbers of the host's commands (number_given): hex with or without 0x, either case; anything else refused, not cut short */
+static void
+command_numbers(void)
+{
+	static const struct { const char *text; unsigned base; int taken; uint64_t value; const char *after; } cases[] = {
+		{ "200000", 16, 1, 0x200000, "" }, { "0x200000", 16, 1, 0x200000, "" }, { "0X1f", 16, 1, 0x1f, "" },
+		{ "8000A000", 16, 1, 0x8000a000, "" }, { "deadBEEF 10", 16, 1, 0xdeadbeef, "10" }, { "10   20", 16, 1, 0x10, "20" },
+		{ "ffffffffffffffff", 16, 1, ~0ULL, "" }, { "12", 10, 1, 12, "" }, { "0", 10, 1, 0, "" },
+		{ "", 16, 0, 0, NULL }, { "0x", 16, 0, 0, NULL }, { "x10", 16, 0, 0, NULL }, { "10g", 16, 0, 0, NULL },
+		{ "12a", 10, 0, 0, NULL }, { "0x10", 10, 0, 0, NULL }, { "10000000000000000", 16, 0, 0, NULL },
+		{ "18446744073709551616", 10, 0, 0, NULL }, { " 10", 16, 0, 0, NULL }, { "-1", 16, 0, 0, NULL },
+	};
+
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		const char *at = cases[i].text;
+		uint64_t value = 0x5555;
+		int taken = number_given(&at, cases[i].base, &value);
+
+		if (cases[i].taken) {
+			CHECK(taken && value == cases[i].value && strcmp(at, cases[i].after) == 0, "\"%s\" (base %u): %d, %llx, then \"%s\"",
+			    cases[i].text, cases[i].base, taken, (unsigned long long)value, at);
+		} else {
+			CHECK(!taken && value == 0x5555 && at == cases[i].text, "\"%s\" (base %u) refused, nothing taken: %d, %llx",
+			    cases[i].text, cases[i].base, taken, (unsigned long long)value);
+		}
+	}
+	/* the payload's own entries: as far as the digits go, 0x and capitals too */
+	CHECK(parse_number("4c000000", 16) == 0x4c000000 && parse_number("0x4C000000", 16) == 0x4c000000 &&
+	    parse_number("12 34", 10) == 12, "parse_number");
+}
+
 /* what the packer writes (arch/arm64/boot/mkpayload.py), the loader reads: the two are run against each other */
 static int
 packed(const char *directory, const char *arguments)
@@ -940,6 +971,7 @@ main(int argc, char **argv)
 		{ "identity_given", identity_given }, { "identity_from_mkidentity", identity_from_mkidentity },
 		{ "unit", unit }, { "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
 		{ "payload_damaged_ones", payload_damaged_ones }, { "device_tree_full", device_tree_full },
+		{ "command_numbers", command_numbers },
 	};
 
 	if (argc < 2) {

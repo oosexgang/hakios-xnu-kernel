@@ -15,18 +15,59 @@ struct payload_info {
 	int usb_mode;
 };
 
+/* the value of the digit C, or 16 when it is none: 0-9, a-f and A-F */
+static unsigned
+digit_of(char c)
+{
+	return c >= '0' && c <= '9' ? (unsigned)(c - '0') : c >= 'a' && c <= 'f' ? (unsigned)(c - 'a' + 10) :
+	       c >= 'A' && c <= 'F' ? (unsigned)(c - 'A' + 10) : 16;
+}
+
+/* a number in BASE (16 may begin with 0x), as far as its digits go: for the payload's entries, which the packer writes */
 static uint64_t
 parse_number(const char *c, unsigned base)
 {
 	uint64_t v = 0;
-	for (; *c; c++) {
-		uint64_t d = (*c >= '0' && *c <= '9') ? (uint64_t)(*c - '0') : (*c >= 'a' && *c <= 'f') ? (uint64_t)(*c - 'a' + 10) : 16;
-		if (d >= base) {
-			break;
-		}
-		v = v * base + d;
+
+	if (base == 16 && c[0] == '0' && (c[1] == 'x' || c[1] == 'X')) {
+		c += 2;
+	}
+	for (; *c && digit_of(*c) < base; c++) {
+		v = v * base + digit_of(*c);
 	}
 	return v;
+}
+
+/*
+ * A number of a command from the host at *TEXT, in BASE (16 may begin with 0x), into *VALUE: 1, with *TEXT past it and
+ * the spaces after it; or 0 when it is none -- no digit, a letter after its digits (an "8000A000" read as 8 would put a
+ * download at the wrong place on the storage), more than 64 bits -- and nothing taken.
+ */
+static int
+number_given(const char **text, unsigned base, uint64_t *value)
+{
+	const char *c = *text;
+	uint64_t v = 0;
+	unsigned digits = 0;
+
+	if (base == 16 && c[0] == '0' && (c[1] == 'x' || c[1] == 'X')) {
+		c += 2;
+	}
+	for (; *c && digit_of(*c) < base; c++, digits++) {
+		if (v > (~0ULL - digit_of(*c)) / base) {
+			return 0;
+		}
+		v = v * base + digit_of(*c);
+	}
+	if (digits == 0 || (*c != 0 && *c != ' ')) {
+		return 0;
+	}
+	while (*c == ' ') {
+		c++;
+	}
+	*value = v;
+	*text = c;
+	return 1;
 }
 
 /* An entry's text holds its end within its SIZE bytes (else whoever reads it would read on past it) */

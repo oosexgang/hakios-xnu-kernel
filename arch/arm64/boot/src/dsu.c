@@ -41,8 +41,10 @@ dsu_command(char *cmd)
 		 * replaces those bytes of the image on the storage -- and in the resident area, if the image
 		 * is loaded there.
 		 */
-		dsu_patch_offset = parse_number(cmd + 14, 16);
-		if (dsu_patch_offset >= dsu_bytes || dsu_patch_offset % data->media->block_size) {
+		const char *c = cmd + 14;
+
+		if (!number_given(&c, 16, &dsu_patch_offset) || *c != 0 || dsu_patch_offset >= dsu_bytes ||
+		    dsu_patch_offset % data->media->block_size) {
 			fb_reply("FAIL", "bad offset");
 			return;
 		}
@@ -54,9 +56,15 @@ dsu_command(char *cmd)
 		fb_reply("OKAY", "");
 		return;
 	}
-	want = parse_number(cmd + 13, 16);
+	{
+		const char *c = cmd + 13;
+
+		if (!number_given(&c, 16, &want) || *c != 0) {
+			want = 0;
+		}
+	}
 	parse_payload(&pi, 0);
-	if (want == 0 || want > dsu_bytes || !choose_window(&pi) ||
+	if (want == 0 || want > dsu_bytes || !choose_window(&pi) || win_size <= RESIDENT_RD_OFFSET + RESIDENT_RD_RESERVE ||
 	    want > win_size - RESIDENT_RD_OFFSET - RESIDENT_RD_RESERVE) {
 		fb_reply("FAIL", "bad size or no memory window");
 		return;
