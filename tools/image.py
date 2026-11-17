@@ -272,6 +272,11 @@ def build(options):
         die(f'{kernel_path} is not a 64-bit Mach-O kernel')
     if loader[:2] != b'MZ':
         die(f'{loader_path} is not a UEFI application')
+    # (the loader knows the boards whose packages were there when it was built: platforms.h, each by its name; one built
+    # before this phone's package was brought in would take the phone for the emulator)
+    if b'\0' + name.encode() + b'\0' not in loader:
+        die(f'{loader_path} does not know {name}: it was built before the package was here. arch/arm64/boot/build.sh '
+            f'(or make loader), then the image again')
     preset = options.defconfig or DEFAULT_DEFCONFIG
     cmdline = boot_arguments(board, preset)
     preset = Path(preset).name.removesuffix('_defconfig')     # (a file of one's own: its name, not where it is)

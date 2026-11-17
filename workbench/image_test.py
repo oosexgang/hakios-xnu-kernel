@@ -28,8 +28,8 @@ BOARD = ('/ {\n\tname = "zeta";\n\tdescription = "Phone zeta";\n\tsoc = "sm0001"
          '\tuefi {\n\t\tfd-base = <0x9FD00000>;\n\t\tfd-size = <0x1000>;\n\t};\n'
          '\tboot {\n\t\tfastboot-product = "zeta";\n\t\tcpus = <8>;\n\t\tbootargs = "backlight=1", "wifi=0";\n\t};\n};\n')
 KERNEL = b'\xcf\xfa\xed\xfe' + bytes(range(256)) * 8
-LOADER = b'MZ' + b'\0' * 62 + b'hakios-placeholder' + b'\x90' * 200
-APPLE_LOADER = b'MZ' + b'\0' * 62 + b'iPhone12,1' + b'\x90' * 200
+LOADER = b'MZ' + b'\0' * 62 + b'hakios-placeholder\0zeta\0' + b'\x90' * 200
+APPLE_LOADER = b'MZ' + b'\0' * 62 + b'iPhone12,1\0zeta\0' + b'\x90' * 200
 SHIM = struct.pack('<IIQQQQQQ4sI', 0x14000010, 0, 0x9FD00000, 0x1000, 0, 0, 0, 0, b'ARMd', 0) + b'code'
 UEFI_IMAGE = bytes(range(256)) * 16
 DTB = b'\xd0\x0d\xfe\xed' + b'tree' * 8
@@ -167,6 +167,16 @@ class Build(Sandbox):
         self.assertIn('kernel/build.sh', str(code))
         code, _ = self.tool('build', '--board', 'nobody', '--out', str(self.out))
         self.assertIn('no board "nobody"', str(code))
+
+    def test_a_loader_that_does_not_know_the_phone_is_not_taken(self):
+        (self.dir / 'loader.efi').write_bytes(LOADER.replace(b'\0zeta\0', b'\0emulator\0'))
+        code, _ = self.tool('build', '--board', 'zeta', '--kernel', str(self.dir / 'kernel'), '--loader', str(self.dir / 'loader.efi'),
+                            '--out', str(self.out))
+        self.assertIn('does not know zeta: it was built before the package was here', str(code))
+        (self.dir / 'loader.efi').write_bytes(LOADER.replace(b'\0zeta\0', b'\0zetaplus\0'))
+        code, _ = self.tool('build', '--board', 'zeta', '--kernel', str(self.dir / 'kernel'), '--loader', str(self.dir / 'loader.efi'),
+                            '--out', str(self.out))
+        self.assertIn('does not know zeta', str(code), 'another board whose name begins with it is not it')
 
     def test_a_build_again_leaves_nothing_of_the_last(self):
         self.uefi()
