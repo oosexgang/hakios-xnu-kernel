@@ -200,6 +200,7 @@ T:	workbench/loader_download_test.c
 T:	workbench/loader_dsu_test.c
 T:	workbench/loader_own_partition_test.c
 T:	workbench/loader_boot_test.sh
+T:	workbench/bench_test.py
 D:	arch/arm64/boot/README.md
 
 MEASUREMENTS AND PERFORMANCE
