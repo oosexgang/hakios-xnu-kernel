@@ -89,11 +89,14 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 {
 	vm_offset_t cached = 0, uncached;
 	uint64_t physical;
+	bool early = false;
 
 	size = round_page(size);
-    if (size == lx_early_pool_bytes && lx_early_pool != 0) {
+    if (size <= lx_early_pool_bytes && lx_early_pool != 0) {
+        /* (a pool as large as the board asked for, or larger: what the driver asks for fits in it) */
         cached = lx_early_pool;
         lx_early_pool = 0; /* exactly one consumer; the pool retains ownership */
+        early = true;
         say("lx: using the early radio pool\n");
     } else if (kmem_alloc_contig(kernel_map, &cached, size, 0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) !=
 	    KERN_SUCCESS) {
@@ -105,6 +108,16 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	hakios_cache_flush(cached, cached + size);
 	uncached = ml_io_map_unmappable(physical, size, VM_WIMG_WCOMB);
 	if (uncached == 0 || !hakios_wifi_radio_map(physical, size, address)) {
+		/* (given back as it was had: the memory in one piece, the early pool for the next try, the second view) */
+		say("lx: the radio cannot be shown %lu bytes of ours: given back\n", size);
+		if (uncached != 0) {
+			ml_io_unmap(uncached, size);
+		}
+		if (early) {
+			lx_early_pool = cached;
+		} else {
+			kmem_free(kernel_map, cached, size);
+		}
 		return NULL;
 	}
 	return (void *)uncached;
