@@ -65,6 +65,7 @@ static uintptr_t pipe_context;
 static kern_channel_ring_t tx_ring, rx_ring;
 static kern_pbufpool_t tx_pool, rx_pool;
 static bool channel_open;                       /* bluetoothd has the channel: what the controller says is queued for it */
+static bool tx_waiting;                         /* a packet of bluetoothd's is left in the TX ring for want of room */
 
 static errno_t pipe_domain_init(__unused kern_nexus_domain_provider_t d) { return 0; }
 static void pipe_domain_fini(__unused kern_nexus_domain_provider_t d) { }
@@ -153,7 +154,13 @@ tx_put_locked(const uint8_t *bytes, size_t length)
 	return true;
 }
 
-/* what bluetoothd put into the channel's TX ring: into the queue, its slots given back */
+/*
+ * What bluetoothd put into the channel's TX ring: into the line, its slots given back -- as far as the line has room. A
+ * packet it has no room for yet is left in its slot, and those after it, in their order: the channel is told once the
+ * line has drained (carry), and bluetoothd's next sync takes them. (One longer than the whole line could never go: it is
+ * dropped.) A command or an ACL packet thrown away instead would leave bluetoothd waiting for an answer, or for the
+ * credit of a packet, that never comes.
+ */
 static errno_t
 pipe_sync_tx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_channel_ring_t ring, __unused uint32_t flags)
 {
@@ -165,11 +172,21 @@ pipe_sync_tx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_cha
 		if (packet != 0) {
 			kern_buflet_t buflet = kern_packet_get_next_buflet(packet, NULL);
 			uint8_t *base = buflet != NULL ? kern_buflet_get_data_address(buflet) : NULL;
+			uint32_t length = base != NULL ? kern_buflet_get_data_length(buflet) : 0;
+			bool room = true;
 
-			if (base != NULL && kern_buflet_get_data_length(buflet) > 0) {
+			if (length > 0) {
 				lck_mtx_lock(&bt_host_lock);
-				(void)tx_put_locked(base + kern_buflet_get_data_offset(buflet), kern_buflet_get_data_length(buflet));
+				if (length <= tx_line.size && length > tx_line.size - tx_line.count) {
+					room = false;
+					tx_waiting = true;
+				} else {
+					(void)tx_put_locked(base + kern_buflet_get_data_offset(buflet), length);
+				}
 				lck_mtx_unlock(&bt_host_lock);
+			}
+			if (!room) {
+				break;
 			}
 			(void)kern_channel_slot_detach_packet(ring, slot, packet);
 			if (tx_pool != NULL) {
@@ -517,6 +534,10 @@ carry(__unused void *parameter, __unused wait_result_t result)
 			have = tx_line.count;
 			first = tx_bytes[0];
 			n = bt_line_take(&tx_line, to_controller, sizeof(to_controller), &tx_dropped);
+			if (n != 0 && tx_waiting && tx_ring != NULL) {
+				tx_waiting = false;             /* room again: bluetoothd is told, and its next sync takes what waits */
+				(void)kern_channel_notify(tx_ring, 0);
+			}
 			lck_mtx_unlock(&bt_host_lock);
 			if (n < 0) {
 				say("bt: %u bytes from bluetoothd that begin with %#x, no H4 packet a host sends: dropped\n", have, first);
