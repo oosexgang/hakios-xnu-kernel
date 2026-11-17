@@ -930,7 +930,7 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 {
 	static unsigned shown;
 
-	if (id >= FOCALTECH_MAX_TOUCHES || max_report_x == 0 || max_report_y == 0) {
+	if (id >= FOCALTECH_MAX_TOUCHES || max_report_x < 2 || max_report_y < 2) {
 		return;
 	}
 	if (event == FOCALTECH_EVENT_UP) {
@@ -942,6 +942,9 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 		return;
 	}
 	seen.touches++;
+	/* (15 bits from the chip, more than the panel has: kept on it, so that a mirror does not wrap past 0) */
+	x = x < max_report_x ? x : max_report_x - 1;
+	y = y < max_report_y ? y : max_report_y - 1;
 	switch (flip) {
 	case 1: x = max_report_x - 1 - x; break;
 	case 2: y = max_report_y - 1 - y; break;
@@ -1286,7 +1289,7 @@ hakios_goodix_init(void)
 		return;
 	}
 	if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_enable < 0 || WIRED->vendor_pin[0] < 0 ||
-	    WIRED->vendor_pin[1] < 0 || WIRED->max_x == 0 || WIRED->max_y == 0) {
+	    WIRED->vendor_pin[1] < 0 || WIRED->max_x < 2 || WIRED->max_y < 2) {
 		printf("touch: disabled: the board file does not say how the controller is wired (touch { }, with analog-enable, "
 		    "vendor-pins and coordinates)\n");
 		return;

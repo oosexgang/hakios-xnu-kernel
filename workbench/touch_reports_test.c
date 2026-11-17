@@ -200,6 +200,29 @@ focaltech_fingers(void)
 	focaltech_touch(report, 0, FOCALTECH_EVENT_DOWN, 9, 100, 100);
 	focaltech_report(report);
 	CHECK(posts == before, "no panel size: no position made up");
+	focaltech_max_x = 1;
+	focaltech_report(report);
+	CHECK(posts == before, "a panel one wide: nothing divided by none");
+}
+
+/* a position past the panel's side (the chip has 15 bits): kept on the panel, mirrored or not -- not wrapped round */
+static void
+focaltech_past_the_side(void)
+{
+	uint8_t report[FOCALTECH_TOUCH_REPORT_LEN];
+
+	focaltech_max_x = 10001;
+	focaltech_max_y = 20001;
+	memset(report, 0xff, sizeof(report));
+	focaltech_touch(report, 0, FOCALTECH_EVENT_DOWN, 1, 12000, 25000);
+	focaltech_report(report);
+	CHECK(posts == 1 && was(0, HAKIOS_TOUCH_DOWN, 1, 65535, 65535), "at the far edges: %u %u", posted[0].x, posted[0].y);
+	memset(report, 0xff, sizeof(report));
+	focaltech_report(report);
+	flip = 3;
+	focaltech_touch(report, 0, FOCALTECH_EVENT_DOWN, 1, 12000, 25000);
+	focaltech_report(report);
+	CHECK(posts == 3 && was(2, HAKIOS_TOUCH_DOWN, 1, 0, 0), "mirrored: at the near edges, %u %u", posted[2].x, posted[2].y);
 }
 
 /* CRC-16 reflected 0x8408 from 0xffff, nothing xored after (CRC-16/MCRF4XX): 0x6f91 for "123456789" */
@@ -216,6 +239,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "goodix_fingers", goodix_fingers }, { "goodix_left_out_and_mirrored", goodix_left_out_and_mirrored },
 		{ "goodix_sums", goodix_sums }, { "focaltech_fingers", focaltech_fingers }, { "focaltech_crcs", focaltech_crcs },
+		{ "focaltech_past_the_side", focaltech_past_the_side },
 	};
 
 	if (argc < 2) {
