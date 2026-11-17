@@ -415,8 +415,8 @@ fts_bring_up(void)
 
 static bool looking_only;              /* touchscreen=-1 */
 
-/* touchscreen=-1: what the firmware left -- the votes, the engine's clocks, the pins -- read from the clock controller and
- * the pin controller, which are always reachable; the serial engine, behind its clocks, is not read */
+/* The level that only looks: what the firmware left -- the votes, the engine's clocks, the pins -- read from the clock
+ * controller and the pin controller, which are always reachable; the serial engine, behind its clocks, is not read */
 static void
 fts_look(void)
 {

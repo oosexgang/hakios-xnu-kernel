@@ -235,9 +235,9 @@ static vm_offset_t dsi, gcc, dispcc;
 
 /*
  * May the DSI controller's registers be touched now? The display block powered, the bus clock of its
- * registers running. With MAY_ENABLE (backlight=2, and every command) a clock the firmware left off is
+ * registers running. With MAY_ENABLE (level 2, and every command) a clock the firmware left off is
  * turned on, as the display scan does (the same two writes, and only those), and GCC's put back as it
- * was found when the display block turns out to be powered down after all. Without it (backlight=1, which
+ * was found when the display block turns out to be powered down after all. Without it (level 1, which
  * only looks) nothing is written: a clock that is off is an answer, and no register behind it is read.
  * Every command looks again: whoever else might take the clock away.
  */

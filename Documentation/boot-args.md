@@ -42,7 +42,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `backlight` | With MAY_ENABLE (backlight=2, and every command) a clock the firmware left off is turned on, as the display scan does (the same two writes, and only those), and GCC's put back as it was found when the display block turns out to be powered down after all. |
+| `backlight` | backlight=1 the profile's backend, read only: the DSI controller's version and state logged |
 | `bl_auto` | bl_auto=1 automatic brightness from the start |
 | `bl_backend` | bl_backend=dcs\|soft\|none |
 | `bl_bytes` | bl_bytes=1\|2 how many bytes the panel's 0x51 takes; bl_le=1: least significant first |
@@ -74,7 +74,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fts_spi_hz` | fts_spi_hz=N: the SPI clock, 1 to 12 MHz (default 12 MHz). |
 | `fts_trace` | fts_trace=1: the first 40 touches' positions as the controller gives them, in the log. |
 | `touch_flip` | touch_flip=N: bit 0 mirrors the touches left to right, bit 1 top to bottom. |
-| `touchscreen` | touchscreen=-1: what the firmware left -- the votes, the engine's clocks, the pins -- read from the clock controller and the pin controller, which are always reachable; the serial engine, behind its clocks, is not read |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments are the first phone's). |
 
 ### `bsd/dev/board/goodix.c`
 
