@@ -64,6 +64,7 @@ static bool pipe_ready;
 static uintptr_t pipe_context;
 static kern_channel_ring_t tx_ring, rx_ring;
 static kern_pbufpool_t tx_pool, rx_pool;
+static bool channel_open;                       /* bluetoothd has the channel: what the controller says is queued for it */
 
 static errno_t pipe_domain_init(__unused kern_nexus_domain_provider_t d) { return 0; }
 static void pipe_domain_fini(__unused kern_nexus_domain_provider_t d) { }
@@ -79,12 +80,26 @@ pipe_pre_connect(__unused kern_nexus_provider_t p, proc_t who, kern_nexus_t nexu
 	return 0;
 }
 
-static errno_t pipe_connected(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unused kern_channel_t c) { return 0; }
+/* a channel opened: a session of bluetoothd's begins, with nothing of the last one's (what the controller said for it, the
+ * start of a packet it did not finish) */
+static errno_t
+pipe_connected(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unused kern_channel_t c)
+{
+	lck_mtx_lock(&bt_host_lock);
+	rx_ring_queue.head = rx_ring_queue.count = 0;
+	tx_line.count = 0;
+	channel_open = true;
+	lck_mtx_unlock(&bt_host_lock);
+	return 0;
+}
 static void pipe_pre_disconnect(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unused kern_channel_t c) { }
 
 static void
 pipe_disconnected(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unused kern_channel_t c)
 {
+	lck_mtx_lock(&bt_host_lock);
+	channel_open = false;
+	lck_mtx_unlock(&bt_host_lock);
 	say("bt: the channel closed\n");
 }
 
@@ -219,23 +234,22 @@ pipe_sync_rx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_cha
 	return 0;
 }
 
-/* a whole packet for bluetoothd: queued, and the channel told */
+/*
+ * A whole packet for bluetoothd: queued while it has the channel (else dropped: a session that has not begun is not to
+ * get it), and the channel told. Told under the lock: pipe_ring_fini takes it before the ring goes away, so the ring is
+ * not one a closing channel has freed; and telling only wakes whoever waits on the channel (na_notify), never coming
+ * back into pipe_sync_rx.
+ */
 static void
 deliver(const uint8_t *packet, unsigned length)
 {
-	kern_channel_ring_t ring;
-
 	lck_mtx_lock(&bt_host_lock);
-	if (!pipe_ready || !bt_ring_put(&rx_ring_queue, packet, length)) {
+	if (!channel_open || !bt_ring_put(&rx_ring_queue, packet, length)) {
 		rx_dropped++;
-		lck_mtx_unlock(&bt_host_lock);
-		return;
+	} else if (rx_ring != NULL) {
+		(void)kern_channel_notify(rx_ring, 0);
 	}
-	ring = rx_ring;
 	lck_mtx_unlock(&bt_host_lock);
-	if (ring != NULL) {
-		(void)kern_channel_notify(ring, 0);
-	}
 }
 
 static int
