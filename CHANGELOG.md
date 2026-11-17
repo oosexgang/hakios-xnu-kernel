@@ -93,6 +93,12 @@ tags yet, so the current work is one section.
   top for the next run, whose thermal limiter then had nothing to hold back; the memory's and the touch screens' RPMh
   requests were laid out for a version 2 sequencer whatever the SoC has.
 
+- The tools of a day with the phone: `phone-day.sh` ran its kernels back to back in one session of the loader (which
+  has killed the second one every time) and counted a kernel that hung on its core as a run that went; a screenshot
+  taken during a run could replace the run's log; a fetch that failed deleted the live log; `phone-ready.py` called a
+  kernel built before a pull current; `make image` took the kernel at the default path whatever `XNU_SRC` said.
+  `./bench fresh` starts the loader anew, and `phone-day.sh` uses it before every run but the first.
+
 ### For whoever works on the project
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
