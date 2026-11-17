@@ -347,7 +347,12 @@ fts_probe(void)
     uint8_t high = 0, low = 0, version = 0, mode = 0xff;
     for (unsigned attempt = 0; attempt < 10; attempt++) {
         if (fts_read(0xa3, &high, 1) && fts_read(0x9f, &low, 1) && high == 0x56 && low == 0x52) {
-            if (!fts_read(0x00, &mode, 1) || (mode & 0x70) != 0) {
+            if (!fts_read(0x00, &mode, 1)) {
+                /* (one read that failed is not the chip's mode: asked again as the ID was) */
+                fts_sleep_ms(100);
+                continue;
+            }
+            if ((mode & 0x70) != 0) {
                 printf("fts: chip %#x%02x is not in application work mode (%#x)\n", high, low, mode);
                 return false;
             }
@@ -432,7 +437,7 @@ static void
 fts_thread(__unused void *parameter, __unused wait_result_t result)
 {
     uint8_t report[FTS_REPORT_BYTES];
-    unsigned failures = 0, resets = 0;
+    unsigned failures = 0, resets = 0, good = 0;
     tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
     gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
     if (looking_only) {
@@ -472,6 +477,10 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
             failures = 0;
             seen.reports++;
             fts_report(&frame);
+            if (resets != 0 && ++good >= 60 * 125) {
+                /* (a minute of good reports since: the recoveries counted are of a trouble that passed) */
+                resets = good = 0;
+            }
         } else {
             seen.bad++;
             if (seen.bad <= 4) {
@@ -489,7 +498,7 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
                 if (resets++ >= 3) { break; }
                 fts_reset();
                 if (!fts_probe()) { break; }
-                failures = 0;
+                failures = good = 0;
             }
         }
         if (tick % (60 * 125) == 0) {
