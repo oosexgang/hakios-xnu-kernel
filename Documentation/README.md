@@ -8,6 +8,7 @@
 | [building.md](building.md) | What each build needs and produces; what has been verified and where. |
 | [images.md](images.md) | One image for a phone: the loader, the kernel and the boot arguments in one file, booted with one command, kept in the phone's own repository; which iPhone Darwin is told it is, without Apple's data in it. |
 | [qemu.md](qemu.md) | The kernel in QEMU: booted as a phone boots it, its own root and shell; the network, a second disk, sound, input, processes, threads; what `make qemu` holds. |
+| [phone-test.ru.md](phone-test.ru.md) | In Russian: a day with the phone -- the runs in order, what each must say, Bluetooth step by step, what to send back. |
 | [quickstart.ru.md](quickstart.ru.md) | In Russian: from a clean Ubuntu to one image for your own phone, booted with one command; a phone in its own repository; the commands of everyday work. |
 | [darwin27-ubuntu.ru.md](darwin27-ubuntu.ru.md) | In Russian: what the project has done, and from an Ubuntu machine to Darwin 27 on a phone, step by step. |
 | [drivers.md](drivers.md) | Every driver: its part, its boot argument and feature, how tied it is to one phone. |

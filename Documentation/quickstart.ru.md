@@ -91,4 +91,5 @@ cd ../mido && git add images && git commit -m "images: первый образ" 
 | Всё перед коммитом | `make check` |
 | Исходники релиза | `scripts/release.sh 1.0` (архив, SHA256SUMS и заметки из CHANGELOG в `build/release/`) |
 
-Куда какое изменение относится, расписано в [CONTRIBUTING.md](../CONTRIBUTING.md).
+Куда какое изменение относится, расписано в [CONTRIBUTING.md](../CONTRIBUTING.md). План проверки на телефоне по
+шагам: [phone-test.ru.md](phone-test.ru.md).
