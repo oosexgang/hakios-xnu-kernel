@@ -8,6 +8,8 @@
  */
 #include <unistd.h>
 
+#include <stdarg.h>
+
 #include "fakekernel.h"
 #include <sys/board/input.h>
 
@@ -23,10 +25,27 @@ void hakios_input_init(void);
 /* (the loader's log, where the latency lines go, is the fake kernel's loader_log_line: kept where
  * logged() looks) */
 
+/* what the driver prints, kept where logged() looks too */
+static void
+said(const char *format, ...)
+{
+	char line[768];
+	va_list arguments;
+
+	va_start(arguments, format);
+	vsnprintf(line, sizeof(line), format, arguments);
+	va_end(arguments);
+	for (const char *c = line; *c != 0; c++) {
+		loader_log_putc(*c);
+	}
+}
+
 /* (the kernel's printf takes %llu for a uint64_t, which on this host is an unsigned long of the same size) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat"
+#define printf said
 #include "board/input.c"
+#undef printf
 #pragma GCC diagnostic pop
 
 static int failures;
@@ -65,6 +84,7 @@ in_order(void)
 	uint64_t before;
 
 	hakios_input_init();
+	CHECK(!logged("cannot create the device"), "the device is made, and nothing said of it: %s", log_text);
 	before = mach_absolute_time();
 	hakios_touch_post(HAKIOS_TOUCH_DOWN, 0, 100, 200);
 	hakios_touch_post(HAKIOS_TOUCH_MOVE, 0, 110, 210);
