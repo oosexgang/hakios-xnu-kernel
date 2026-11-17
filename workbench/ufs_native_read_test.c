@@ -64,6 +64,10 @@ static volatile uint32_t take_back;
 static volatile unsigned commands, delay_us, doorbells;
 static volatile bool backwards;                 /* the commands waiting done the last rung first */
 static volatile bool held;                      /* the controller does nothing (another's command in a slot, say) */
+static volatile bool run_sticks;                /* the list does not stop when told to */
+static volatile bool list_ignored;              /* the controller keeps the list it has, whatever is written */
+static volatile uint8_t ocs_given;              /* the OCS the controller gives a command (0: success) */
+static volatile unsigned clears;                /* writes to UTRLCLR */
 static volatile uint8_t answer_status;          /* the SCSI status the unit answers with (0: good) */
 static struct { uint8_t lun, slot; uint32_t lba, blocks; } asked[64];
 
@@ -79,10 +83,29 @@ hakios_test_rd(vm_offset_t address)
 void
 hakios_test_wr(vm_offset_t address, uint32_t value)
 {
-	if (address - hc == UFSHC_UTRLDBR) {
+	switch (address - hc) {
+	case UFSHC_UTRLDBR:
 		doorbells++;
 		__atomic_or_fetch(&REG(UFSHC_UTRLDBR), value, __ATOMIC_RELEASE);
 		return;
+	case UFSHC_UTRLCLR:                     /* a slot whose bit is written 0 is cleared */
+		clears++;
+		__atomic_and_fetch(&REG(UFSHC_UTRLDBR), value, __ATOMIC_RELEASE);
+		return;
+	case UFSHC_UTRLCNR:                     /* written with ones: those notifications taken */
+		__atomic_and_fetch(&REG(UFSHC_UTRLCNR), ~value, __ATOMIC_RELEASE);
+		return;
+	case UFSHC_UTRLRSR:
+		if (value == 0 && run_sticks) {
+			return;
+		}
+		break;
+	case UFSHC_UTRLBA:
+	case UFSHC_UTRLBAU:
+		if (list_ignored) {
+			return;
+		}
+		break;
 	}
 	__atomic_store_n(&registers[(address - hc) / 4], value, __ATOMIC_RELEASE);
 }
@@ -123,7 +146,7 @@ do_slot(unsigned slot)
 	r[0] = UPIU_RESPONSE;
 	r[3] = u[3];
 	r[7] = answer_status;
-	utrd[slot][2] = OCS_SUCCESS;
+	utrd[slot][2] = ocs_given;
 }
 
 static void *
@@ -180,6 +203,44 @@ static void
 in(void)
 {
 	in_with(1);
+}
+
+/* ---- the switches: UEFI's list and this kernel's ---------------------------------------------------------- */
+
+#define UEFI_LO         0x9b000000u
+#define UEFI_UCD_PA     0x9b100000ull
+
+static uint32_t uefi_list[8], uefi_ucd[256];
+static uint32_t list_in, switched_in, switched_out, cnr_at_switch;
+
+/* the controller as UEFI leaves it, its own list in and running, its slot 0 holding a read; this kernel's list not in */
+static void
+uefi_has_it(void)
+{
+	struct hc_cmd c;
+
+	in_with(2);
+	hc_in = false;
+	REG(UFSHC_UTRLBA) = UEFI_LO;
+	REG(UFSHC_UTRLBAU) = 0;
+	REG(UFSHC_UTRLRSR) = 1;
+	REG(UFSHC_HCS) = HCS_UTRLRDY;
+	REG(UFSHC_UTRLCNR) = 0x1;
+	hc_make_read(&c, 0, 0, 1000, 8);
+	memcpy(uefi_ucd, c.upiu, sizeof(c.upiu));
+	uefi_list[0] = c.dw0;
+	uefi_list[4] = (uint32_t)UEFI_UCD_PA;
+	uefi_list[5] = (uint32_t)(UEFI_UCD_PA >> 32);
+	hc_uefi_list = uefi_list;
+	hc_uefi_map_pa = UEFI_UCD_PA;
+	hc_uefi_map_size = sizeof(uefi_ucd);
+	hc_uefi_map_va = (vm_offset_t)uefi_ucd;
+	hc_loader.uefi_lo = UEFI_LO;
+	hc_loader.uefi_hi = 0;
+	hc_loader.list_in = &list_in;
+	hc_loader.switched_in = &switched_in;
+	hc_loader.switched_out = &switched_out;
+	hc_loader.cnr_at_switch = &cnr_at_switch;
 }
 
 static bool
@@ -361,12 +422,113 @@ not_usable(void)
 	CHECK(ufshc_read(0, 0, out, sizeof(out)) == ENXIO && commands == 0, "closed: nothing rung");
 }
 
+/* this kernel's list in and out again: the registers, and what the loader is told */
+static void
+switched_in_and_out(void)
+{
+	static uint8_t out[BLOCK];
+
+	uefi_has_it();
+	CHECK(ufshc_switch_in(false) == 0, "in: %s", log_text);
+	CHECK(REG(UFSHC_UTRLBA) == LIST_PA && REG(UFSHC_UTRLBAU) == 0 && REG(UFSHC_UTRLRSR) == 1 && hc_in, "this kernel's list, running");
+	CHECK(list_in == 1 && switched_in == 1 && cnr_at_switch == 0x1, "the loader told: %u, %u, %#x", list_in, switched_in, cnr_at_switch);
+	CHECK(logged("transfer list switched from UEFI's 00000000:9b000000 to this kernel's 00000000:8a000000"), "said: %s", log_text);
+	CHECK(ufshc_switch_in(false) == 0 && switched_in == 1, "in again: nothing more");
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == 0, "read through it");
+	REG(UFSHC_UTRLCNR) = 0x7;               /* (the notifications this kernel's reads left, beside UEFI's own) */
+	CHECK(ufshc_switch_out("the test") == 0, "out: %s", log_text);
+	CHECK(REG(UFSHC_UTRLBA) == UEFI_LO && REG(UFSHC_UTRLRSR) == 1 && !hc_in, "UEFI's list, running");
+	CHECK(REG(UFSHC_UTRLCNR) == 0x1, "only this kernel's notifications taken: %#x", REG(UFSHC_UTRLCNR));
+	CHECK(list_in == 0 && switched_out == 1 && clears == 0, "the loader told: %u, %u", list_in, switched_out);
+	CHECK(logged("ufs: native: the test: transfer list back to UEFI's") && logged("at the switch 00000001, as it was)\n"),
+	    "said whole, to its end: %s", log_text);
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == ENXIO, "and no read through it once it is out");
+}
+
+/* not put in, and the controller as it was, when anything is not as UEFI leaves it */
+static void
+not_put_in(void)
+{
+	static const char *const ways[] = { "the loader has taken the controller back", "UEFI's slot 0 does not hold a read",
+		                            "the controller's list is not UEFI's", "a request in flight", "the list is not running, or not ready",
+		                            "the list is not running, or not ready" };
+
+	for (unsigned i = 0; i < sizeof(ways) / sizeof(ways[0]); i++) {
+		uefi_has_it();
+		held = true;
+		take_back = i == 0;
+		uefi_ucd[4] = i == 1 ? 0 : uefi_ucd[4];
+		if (i == 1) {
+			((uint8_t *)uefi_ucd)[16] = 0x2a;   /* (a WRITE(10) in UEFI's slot 0) */
+		}
+		REG(UFSHC_UTRLBA) = i == 2 ? UEFI_LO + 0x1000 : UEFI_LO;
+		REG(UFSHC_UTRLDBR) = i == 3 ? 1 : 0;
+		REG(UFSHC_UTRLRSR) = i == 4 ? 0 : 1;
+		REG(UFSHC_HCS) = i == 5 ? 0 : HCS_UTRLRDY;
+		CHECK(ufshc_switch_in(false) == EIO && !hc_in && list_in == 0 && switched_in == 0, "%s: not in", ways[i]);
+		CHECK(logged(ways[i]), "%s: said: %s", ways[i], log_text);
+		CHECK(REG(UFSHC_UTRLBA) == (i == 2 ? UEFI_LO + 0x1000 : UEFI_LO), "%s: the list as it was", ways[i]);
+		take_back = 0;
+		held = false;
+		REG(UFSHC_UTRLDBR) = 0;
+	}
+}
+
+/* a list that does not stop is left running, UEFI's; a controller that keeps its list is given UEFI's back */
+static void
+the_controller_refuses(void)
+{
+	uefi_has_it();
+	run_sticks = true;
+	CHECK(ufshc_switch_in(false) == EIO && logged("the list did not stop") && REG(UFSHC_UTRLBA) == UEFI_LO && REG(UFSHC_UTRLRSR) == 1,
+	    "not stopped: %s", log_text);
+	run_sticks = false;
+	REG(UFSHC_UTRLBA) = 0x12340000u;        /* (a list the controller keeps, whatever is written) */
+	REG(UFSHC_UTRLRSR) = 1;
+	hc_loader.uefi_lo = 0x12340000u;
+	uefi_list[0] = uefi_list[0];
+	list_ignored = true;
+	CHECK(ufshc_switch_in(false) == EIO && logged("the controller did not take this list") && logged("undoing") && !hc_in,
+	    "not taken: %s", log_text);
+}
+
+/* proved: this list's slot 0 runs TEST UNIT READY before anything is read; a proof that fails puts UEFI's list back for good */
+static void
+proved(void)
+{
+	uefi_has_it();
+	CHECK(ufshc_switch_in(true) == 0 && logged("proof: TEST UNIT READY in this list's slot 0 came back here"), "proved: %s", log_text);
+	CHECK(commands == 1 && asked[0].slot == 0, "one command, in slot 0: %u", commands);
+	CHECK(ufshc_switch_out("the test") == 0, "out");
+	ocs_given = 0x0f;
+	CHECK(ufshc_switch_in(true) != 0 && logged("proof FAILED") && logged("after the failed proof: transfer list back to UEFI's"),
+	    "not proved: %s", log_text);
+	CHECK(hc_dead && !hc_in && REG(UFSHC_UTRLBA) == UEFI_LO && list_in == 0, "UEFI's list, and this path off");
+	ocs_given = 0;
+	CHECK(ufshc_switch_in(false) == ENXIO, "for good");
+}
+
+/* a request that does not finish when the list goes out: this kernel's slots cleared, said, UEFI's list back */
+static void
+stuck_when_going_out(void)
+{
+	uefi_has_it();
+	CHECK(ufshc_switch_in(false) == 0, "in");
+	held = true;
+	REG(UFSHC_UTRLDBR) = 2;                 /* (slot 1 rung, and never done) */
+	CHECK(ufshc_switch_out("the test") == 0, "out: %s", log_text);
+	CHECK(clears == 1 && REG(UFSHC_UTRLDBR) == 0 && logged("did not clear in 1 s: this kernel's slots cleared"), "cleared: %s",
+	    log_text);
+	CHECK(REG(UFSHC_UTRLBA) == UEFI_LO && list_in == 0, "UEFI's list back");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "a_read", a_read }, { "a_long_read", a_long_read }, { "rung_only_while_in", rung_only_while_in },
-		{ "a_bad_answer", a_bad_answer }, { "reads_in_flight", reads_in_flight }, { "two_readers", two_readers }, { "a_slow_controller", a_slow_controller }, { "not_usable", not_usable },
+		{ "a_bad_answer", a_bad_answer }, { "switched_in_and_out", switched_in_and_out }, { "not_put_in", not_put_in },
+		{ "the_controller_refuses", the_controller_refuses }, { "proved", proved }, { "stuck_when_going_out", stuck_when_going_out }, { "reads_in_flight", reads_in_flight }, { "two_readers", two_readers }, { "a_slow_controller", a_slow_controller }, { "not_usable", not_usable },
 	};
 
 	if (argc < 2) {
