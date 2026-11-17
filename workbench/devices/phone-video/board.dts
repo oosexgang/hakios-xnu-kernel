@@ -219,5 +219,8 @@
 		supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
 		supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
 		rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
+		firmware = "fw-bt";             // (the tests' firmware: workbench/bt_uart_test.c makes it)
+		rampatch = "msbtfw11.tlv";
+		nvm = "msnv11.bin";
 	};
 };

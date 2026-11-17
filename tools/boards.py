@@ -134,7 +134,8 @@ BOARD_SCHEMA = {
     'bluetooth': {'serial_engine': (int, True), 'wrapper': (int, True), 'clocks': ([int], True),
                   'clock_source': (int, True), 'vote_register': (int, True), 'votes': ([int], True),
                   'uart_pins': ([int], True), 'uart_function': (int, True), 'enable_ppid': (int, True),
-                  'sw_ctrl': (int, True), 'supplies': ([str], True), 'supply_mv': ([int], True), 'rf_clock': (str, True)},
+                  'sw_ctrl': (int, True), 'supplies': ([str], True), 'supply_mv': ([int], True), 'rf_clock': (str, True),
+                  'firmware': (str, False), 'rampatch': (str, False), 'nvm': (str, False)},
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True),
                 'sound_pins': ([int], True), 'sound_function': (int, True), 'tdm': (int, False)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
@@ -497,6 +498,11 @@ def bluetooth_problems(where, bt, problems):
         problems.add(where, 'supplies and rf_clock are distinct command database names, 1 to 8 characters; at most eight supplies')
     if len(bt['supplies']) != len(bt['supply_mv']) or any(not 1 <= n <= 5000 for n in bt['supply_mv']):
         problems.add(where, 'supply_mv matches supplies in order, each 1 to 5000 millivolts')
+    for key in ('firmware', 'rampatch', 'nvm'):
+        if key in bt and not re.fullmatch(r'[A-Za-z0-9._-]{1,63}', bt[key]):
+            problems.add(where, f'{key} is a file or directory name of the small image: letters, digits, dot, dash, underscore')
+    if ('nvm' in bt or 'firmware' in bt) and 'rampatch' not in bt:
+        problems.add(where, 'nvm and firmware go with rampatch: the configuration is sent after the patch')
 
 
 def load_soc(path, problems):
@@ -922,7 +928,9 @@ def table_text(socs, boards):
             for key in ('clocks', 'votes', 'uart_pins', 'supply_mv'):
                 out.append(f'\t\t\t.{key} = {{ {", ".join(str(n) for n in bt[key])} }},')
             out.append(f'\t\t\t.supply_count = {len(bt["supplies"])}, .supplies = {{ {", ".join(c_string(n) for n in bt["supplies"])} }},')
-            out.append(f'\t\t\t.rf_clock = {c_string(bt["rf_clock"])},\n\t\t}},')
+            out.append(f'\t\t\t.rf_clock = {c_string(bt["rf_clock"])},')
+            files = ', '.join(f'.{key} = {c_string(bt[key])}' for key in ('firmware', 'rampatch', 'nvm') if key in bt)
+            out.append((f'\t\t\t{files},\n' if files else '') + '\t\t},')
         touch = board.get('touch')
         if touch:
             pins, clocks = touch['bus_pins'], touch['clocks']

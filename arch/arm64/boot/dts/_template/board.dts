@@ -250,7 +250,8 @@
 	// };
 
 	// Bluetooth H4: values below are illustrative; fill from the board's UART and power nodes.
-	// Feature "bluetooth-wcn-uart": bt=-1 inspects, bt=1 powers and identifies only.
+	// Feature "bluetooth-wcn-uart": bt=-1 inspects, bt=1 powers and identifies, bt=2 sends the firmware named below
+	// and hands the controller to Darwin.
 	bluetooth {
 		serial-engine = <0x898000>;     // UART SE register page
 		wrapper = <0x8c0000>;           // QUP wrapper common registers (HW_VER at +4)
@@ -265,5 +266,8 @@
 		supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
 		supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
 		rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
+		// firmware = "fw-bt";          // the small image's directory with the controller's firmware (default fw)
+		// rampatch = "msbtfw11.mbn";   // the patch to its ROM, from the phone's own vendor/firmware (bt_fw=0: not sent)
+		// nvm = "msnv11.bin";          // its configuration, sent after the patch; without either the ROM runs as it is
 	};
 };

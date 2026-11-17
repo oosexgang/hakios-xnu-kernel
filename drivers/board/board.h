@@ -241,6 +241,9 @@ struct hakios_board {
 		uint8_t supply_count;
 		const char *supplies[8], *rf_clock;
 		uint16_t supply_mv[8];
+		/* the controller's firmware in the small image: its directory (NULL: "fw"), its patch and its configuration
+		 * (NULL: none, the controller runs its ROM) */
+		const char *firmware, *rampatch, *nvm;
 	} bluetooth;
 
 	/* the speaker's two amplifiers (board: speaker { }): the I2C bus they share and what tells them apart */
