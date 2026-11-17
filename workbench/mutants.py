@@ -11,8 +11,12 @@ result): a person tells which.
     SOURCE   the file it includes, as it includes it: board/guard.c
     MAX      at most this many changes (default 60; each builds and runs the test, some seconds)
 
+The changes are taken in the file's order; MUTANTS_FROM=N leaves out the first N, so that a long file is gone
+through a part at a time (MUTANTS_FROM=60 workbench/mutants.py ufs_driver_test board/ufs.c 60: its second sixty).
+
 Exit 0 when nothing survived, 1 when something did.
 """
+import os
 import re
 import subprocess
 import sys
@@ -62,7 +66,8 @@ def main(argv):
         print(f'mutants: no {source} among the drivers, the loader or the examples', file=sys.stderr)
         return 2
     tried = survived = 0
-    for old, new in list(mutants(path.read_text()))[:limit]:
+    first = int(os.environ.get('MUTANTS_FROM', '0'))
+    for old, new in list(mutants(path.read_text()))[first:first + limit]:
         result = subprocess.run([str(HERE / 'mutate.sh'), test, source, old, new], capture_output=True, text=True)
         if result.returncode == 2:
             continue                    # (does not compile: not a change to judge)
