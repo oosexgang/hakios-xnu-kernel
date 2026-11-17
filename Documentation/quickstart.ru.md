@@ -67,6 +67,7 @@ Darwin определяет, на каком устройстве работае
 tools/image.py personalize build/images/mido/boot.img --identity DeviceTree.bin   # получится boot-mine.img
 ```
 
+Вместо `DeviceTree.bin` можно передать сам IPSW: `--identity iPhone.ipsw --model n104ap` (n104ap — это iPhone12,1).
 `DeviceTree.bin` оставляет рядом с IPSW `darwin/tools/unpack.sh`. Загрузчик возьмёт эти свойства из образа и напишет
 в журнал `identity: from the payload (...)`.
 

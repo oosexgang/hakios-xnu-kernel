@@ -64,8 +64,9 @@ repository, and they are not in an image that is passed around. Two ways to have
   ```
 
   The loader takes the identity from the payload when it carries one (`arch/arm64/boot/src/identity_given.c`) and
-  says so (`identity: from the payload (t8030, 828x1792)`). `DeviceTree.bin` is the one `darwin/tools/unpack.sh`
-  leaves beside the IPSW, or `Firmware/all_flash/DeviceTree.*.im4p` of it as it is.
+  says so (`identity: from the payload (t8030, 828x1792)`). `--identity` takes the IPSW itself
+  (`--model n104ap` when it has several iPhones' device trees: n104ap is the iPhone12,1), its
+  `Firmware/all_flash/DeviceTree.*.im4p`, or the `DeviceTree.bin` `darwin/tools/unpack.sh` leaves beside it.
 
 ## Into a phone's repository
 
