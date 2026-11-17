@@ -561,6 +561,14 @@ clock_source(const char *name, uint32_t rcgr, uint32_t source)
 static bool measure_clocks(void);
 
 /*
+ * What of the global clock controller step 5 turned on itself (it was off when the phone started): given back by
+ * gpu_block_stop() once CX is off, so the memory interconnect is not kept from its low power after the run.
+ */
+static struct {
+	bool pll_vote, memnoc, snoc, ddrss;
+} gcc_ours;
+
+/*
  * The clocks the device tree gives the GMU and the SMMU, at the rates both the vendor's driver
  * and Linux bring the GMU up with: 200 MHz for the GMU, 150 MHz for the "hub" (a6xx_gmu_resume).
  * Both come from the 300 MHz tap of the global 600 MHz PLL, which runs anyway: no PLL of the
@@ -577,6 +585,10 @@ step_clocks(void)
 		return false;
 	}
 	announce("in the global clock controller: ask for the 300 MHz tap for the GPU; the GPU's bus and memory clocks on");
+	gcc_ours.pll_vote = gcc_ours.pll_vote || !(rd(gcc.base + GCC_PLL_VOTE) & GCC_PLL_VOTE_GPU_DIV);
+	gcc_ours.memnoc = gcc_ours.memnoc || !(rd(gcc.base + GCC_GPU_MEMNOC_GFX_CBCR) & CBCR_ENABLE);
+	gcc_ours.snoc = gcc_ours.snoc || !(rd(gcc.base + GCC_GPU_SNOC_DVM_GFX_CBCR) & CBCR_ENABLE);
+	gcc_ours.ddrss = gcc_ours.ddrss || !(rd(gcc.base + GCC_DDRSS_GPU_AXI_CBCR) & CBCR_ENABLE);
 	set(&gcc, "pll votes", GCC_PLL_VOTE, GCC_PLL_VOTE_GPU_DIV);
 	if (!clock_on(&gcc, "gpu_memnoc_gfx", GCC_GPU_MEMNOC_GFX_CBCR, false) ||
 	    !clock_on(&gcc, "gpu_snoc_dvm_gfx", GCC_GPU_SNOC_DVM_GFX_CBCR, true) ||
@@ -3042,6 +3054,22 @@ gpu_block_stop(void)
 		get(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR);
 		get(&gpucc, "cx_hw_ctrl", GPUCC_CX_HW_CTRL);
 		cx_off = !cx_is_on();
+	}
+	/* (and what step 5 turned on in the global controller, once nothing of the GPU's runs: as the phone's start leaves it) */
+	if (cx_off) {
+		if (gcc_ours.ddrss) {
+			put(&gcc, "ddrss_gpu_axi", GCC_DDRSS_GPU_AXI_CBCR, rd(gcc.base + GCC_DDRSS_GPU_AXI_CBCR) & ~CBCR_ENABLE);
+		}
+		if (gcc_ours.snoc) {
+			put(&gcc, "gpu_snoc_dvm_gfx", GCC_GPU_SNOC_DVM_GFX_CBCR, rd(gcc.base + GCC_GPU_SNOC_DVM_GFX_CBCR) & ~CBCR_ENABLE);
+		}
+		if (gcc_ours.memnoc) {
+			put(&gcc, "gpu_memnoc_gfx", GCC_GPU_MEMNOC_GFX_CBCR, rd(gcc.base + GCC_GPU_MEMNOC_GFX_CBCR) & ~CBCR_ENABLE);
+		}
+		if (gcc_ours.pll_vote) {
+			put(&gcc, "pll votes", GCC_PLL_VOTE, rd(gcc.base + GCC_PLL_VOTE) & ~GCC_PLL_VOTE_GPU_DIV);
+		}
+		bzero(&gcc_ours, sizeof(gcc_ours));
 	}
 }
 
