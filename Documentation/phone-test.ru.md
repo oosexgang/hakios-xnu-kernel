@@ -43,7 +43,8 @@ adb pull /vendor/bt_firmware/image/ fw-bt/      # msbtfw*.mbn или .tlv и msn
 | 6 | `BENCH_DEFCONFIG=phone_metal ./bench run` | `GPU ok` (`A PICTURE DRAWN BY THE GPU IS ON THE PANEL`), Wi-Fi | `GPU STOPPED`: шаг, на котором остановился |
 | 7 | `BENCH_DEFCONFIG=phone_bt ./bench run` | `Bluetooth controller ok`, `Bluetooth service ok`, `Bluetooth for Darwin ok`; переключатель Bluetooth в Настройках включается и видит устройства | Ниже, раздел 2 |
 
-Снимок экрана во время прогона: `./bench screenshot` (`logs/screen.png`).
+Снимок экрана во время прогона: `./bench screenshot` (`logs/screen.png`). Что изменилось по сравнению с прошлым
+прогоном: `tools/logcheck.py --against logs/СТАРЫЙ.log logs/last.log`.
 
 ## 2. Bluetooth подробнее
 
