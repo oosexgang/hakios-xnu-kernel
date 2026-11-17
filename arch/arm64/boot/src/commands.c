@@ -27,7 +27,16 @@ fb_command(char *cmd)
 			} else if (str_eq(var, "version")) {
 				fb_reply("OKAY", "0.5");
 			} else if (str_eq(var, "max-download-size")) {
-				fb_reply("OKAY", download_to_ramdisk ? "0xffffffff" : "0x03f00000");
+				/* what the next download may be, where the commands before it send it (fastboot: 32 bits at most) */
+				uint64_t before, room;
+				char size[24];
+
+				if (download_room(download_to_ramdisk, download_ramdisk_append, download_ramdisk_patch, resident_rd_size, win_size,
+				    &before, &room) != NULL) {
+					room = 0;
+				}
+				format_into(size, sizeof(size), "0x%x", room < 0xffffffffULL ? room : 0xffffffffULL);
+				fb_reply("OKAY", size);
 			} else if (str_eq(var, "result")) {
 				fb_reply("OKAY", last_result);
 			} else if (str_eq(var, "screen") && SCREEN.base != 0) {
