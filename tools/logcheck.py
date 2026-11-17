@@ -4,6 +4,8 @@ thing to look at after a run on a phone, and what to send back when one did not 
 
   tools/logcheck.py [LOG...]        the logs named; the newest of logs/ (./bench's) when none is
   tools/logcheck.py --all LOG       every line each part said, not only the one that decides
+  tools/logcheck.py --against OLD NEW   what changed from one run to the other: each part whose state is not the same,
+                                    the kernel's start, panic and return; status 1 when something that was ok is not
 
 A part is a driver by the prefix of its lines ("adreno:", "bt-uart:" ...). Its state is the line that decides it:
   ok        a line that says it came up (its driver's own words for it, below)
@@ -54,22 +56,19 @@ PARTS = [
 PANIC = re.compile(r'panic\(cpu \d+ caller|^panic:|Kernel panic|Debugger called: <panic>')
 
 
-def check(text, everything=False, out=None):
-    out = out or sys.stdout
+def states(text):
+    """{part: (state, the line that decides it, all its lines)} of a log, and the kernel's (started, panic, back)."""
     lines = text.split('\n')
-    bad = False
-    started = next((l for l in lines if 'Darwin Kernel Version' in l), None)
-    panic = next(((n, l) for n, l in enumerate(lines, 1) if PANIC.search(l)), None)
-    back = next((l for l in reversed(lines) if re.search(r'kernel returned: log at', l)), None)
-    print(f'kernel: {"started" if started else "NOT STARTED (no Darwin Kernel Version line)"}' +
-          (f'; PANIC at line {panic[0]}: {panic[1].strip()}' if panic else '; no panic') +
-          ('; back in the loader' if back else ''), file=out)
-    bad |= panic is not None or not started
-    rows = []
+    kernel = (any('Darwin Kernel Version' in l for l in lines),
+              next(((n, l) for n, l in enumerate(lines, 1) if PANIC.search(l)), None),
+              any(re.search(r'kernel returned: log at', l) for l in lines))
+    parts = {}
     for name, prefix, good, stop in PARTS:
         own = [l.strip() for l in lines if re.match(rf'\s*(\[[^\]]*\]\s*)?{re.escape(prefix)}: ', l)]
         if not own:
             continue
+        if prefix == 'bt' and not any(re.search(p, l) for l in own for p in good + stop):
+            continue                    # (a line of bt: that is the other row's)
         state, why = 'said', own[-1]
         disabled = next((l for l in own if re.search(rf'{re.escape(prefix)}: disabled', l)), None)
         stopped = next((l for l in own for p in stop if re.search(p, l)), None)
@@ -81,26 +80,60 @@ def check(text, everything=False, out=None):
             state, why = 'ok', came_up
         elif disabled:
             state, why = 'disabled', disabled
-        if prefix == 'bt' and not any(re.search(p, l) for l in own for p in good + stop):
-            continue                    # (a line of bt: that is the other row's)
-        rows.append((name, state, why, own))
-        bad |= state == 'STOPPED'
-    width = max((len(r[0]) for r in rows), default=0)
-    for name, state, why, own in rows:
+        parts[name] = (state, why, own)
+    return kernel, parts
+
+
+def against(old_text, new_text, out=None):
+    """What changed from the run of OLD_TEXT to that of NEW_TEXT; true when something that was ok is not."""
+    out = out or sys.stdout
+    (old_kernel, old), (new_kernel, new) = states(old_text), states(new_text)
+    worse = False
+    for what, a, b in (('started', old_kernel[0], new_kernel[0]), ('panicked', old_kernel[1] is not None, new_kernel[1] is not None),
+                       ('came back to the loader', old_kernel[2], new_kernel[2])):
+        if a != b:
+            print(f'kernel {what}: {"yes" if a else "no"} -> {"yes" if b else "no"}', file=out)
+            worse |= (what == 'panicked') == b
+    changed = 0
+    for name in [n for n, _, _, _ in PARTS]:
+        a, b = old.get(name, ('(nothing)', '', [])), new.get(name, ('(nothing)', '', []))
+        if a[0] != b[0]:
+            changed += 1
+            print(f'  {name}: {a[0]} -> {b[0]}' + (f'   {b[1][:140]}' if b[1] else ''), file=out)
+            worse |= a[0] == 'ok' and b[0] != 'ok'
+    if not changed:
+        print('  every part as it was', file=out)
+    return worse
+
+
+def check(text, everything=False, out=None):
+    out = out or sys.stdout
+    (started, panic, back), parts = states(text)
+    print(f'kernel: {"started" if started else "NOT STARTED (no Darwin Kernel Version line)"}' +
+          (f'; PANIC at line {panic[0]}: {panic[1].strip()}' if panic else '; no panic') +
+          ('; back in the loader' if back else ''), file=out)
+    width = max((len(name) for name in parts), default=0)
+    for name, (state, why, own) in parts.items():
         print(f'  {name:{width}}  {state:8}  {why[:150]}', file=out)
         if everything:
             for line in own:
                 print(f'  {"":{width}}            {line[:150]}', file=out)
-    if not rows:
+    if not parts:
         print('  (no line of any part: the run stopped before the drivers, or the log is not a run\'s)', file=out)
-    return bad
+    return panic is not None or not started or any(state == 'STOPPED' for state, _, _ in parts.values())
 
 
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('logs', nargs='*', metavar='LOG')
     parser.add_argument('--all', action='store_true', help='every line of each part')
+    parser.add_argument('--against', metavar='OLD', help='what changed from the run of OLD to that of the LOG named')
     options = parser.parse_args(arguments)
+    if options.against:
+        if len(options.logs) != 1:
+            parser.error('--against OLD NEW: one log to compare with OLD')
+        print(f'{options.against} -> {options.logs[0]}:')
+        return 1 if against(Path(options.against).read_text(errors='replace'), Path(options.logs[0]).read_text(errors='replace')) else 0
     logs = [Path(p) for p in options.logs]
     if not logs:
         found = sorted((ROOT / 'logs').glob('*.log'), key=lambda p: p.stat().st_mtime)

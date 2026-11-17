@@ -70,6 +70,29 @@ class LogCheck(unittest.TestCase):
         _, said = run(BAD, '--all')
         self.assertIn('adreno: THE GPU IS NOT STARTED', said)
 
+    def test_what_changed_from_one_run_to_the_other(self):
+        with tempfile.TemporaryDirectory() as work:
+            old, new = Path(work) / 'old.log', Path(work) / 'new.log'
+            old.write_text(GOOD)
+            new.write_text(GOOD.replace("bt-uart: the controller is Darwin's from here on\n", 'bt-uart: bring-up stopped; powering down\n')
+                           .replace('bt-uart: identification complete; the firmware taken\n', '')
+                           .replace('camera: disabled', 'camera: /dev/hakios-camera: the back camera\'s frames\ncamera: was disabled')
+                           .replace('kernel returned: log at', 'returned nothing at'))
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said):
+                code = logcheck.main([str(new), '--against', str(old)])
+            text = said.getvalue()
+            self.assertEqual(code, 1, text)
+            self.assertRegex(text, r'Bluetooth controller: ok -> STOPPED +bt-uart: bring-up stopped')
+            self.assertRegex(text, r'Camera: disabled -> ok')
+            self.assertIn('kernel came back to the loader: yes -> no', text)
+            self.assertNotIn('Flashlight', text, 'what did not change is not said')
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said):
+                code = logcheck.main([str(old), '--against', str(old)])
+            self.assertEqual(code, 0)
+            self.assertIn('every part as it was', said.getvalue())
+
     def test_a_kernel_that_never_started(self):
         code, said = run('loader: platform phone\nno kernel in payload\n')
         self.assertEqual(code, 1)
