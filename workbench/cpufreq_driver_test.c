@@ -294,6 +294,22 @@ governor_starts(void)
 	CHECK(gov[1].khz[0] == 300000 && gov[1].khz[8] == 2400000, "its table: %u to %u kHz", gov[1].khz[0], gov[1].khz[8]);
 }
 
+/* a row register that reads past the table (a domain not enabled, a value with other bits): the governor's row is the top, and its
+ * looks are counted inside the table -- the row was an index into khz[] and looks_at[] as it was read */
+static void
+governor_row_past_the_table(void)
+{
+	phone("phone-cmd", 8);
+	boot_args = "cpufreq=1 cpu_gov=0 park_small=0";
+	hakios_cpufreq_init();
+	boot_args = "";
+	epss.wanted[1] = 0x80000037;            /* (what the register says, whatever the kernel wrote) */
+	gov_start();
+	CHECK(gov[1].row == gov[1].top, "the big group taken at its top row, not at %u", gov[1].row);
+	look(5);
+	CHECK(gov[1].row <= gov[1].top && gov[1].looks_at[gov[1].row] == 1, "a look counted at row %u", gov[1].row);
+}
+
 /* down only after four looks that want it, and then to the most any of them wanted */
 static void
 governor_goes_down_slowly(void)
@@ -466,7 +482,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "every_group", every_group }, { "one_core", one_core }, { "some_cores", some_cores }, { "another_soc", another_soc },
 		{ "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
-		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts },
+		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts }, { "governor_row_past_the_table", governor_row_past_the_table },
 		{ "governor_goes_down_slowly", governor_goes_down_slowly }, { "governor_goes_up_at_once", governor_goes_up_at_once },
 		{ "governor_quiesced", governor_quiesced }, { "governor_leaves_a_shared_group", governor_leaves_a_shared_group },
 		{ "governor_not_with_thermal", governor_not_with_thermal }, { "small_cores_parked", small_cores_parked },

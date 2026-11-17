@@ -486,7 +486,8 @@ gov_start(void)
 			g->rows = row + 1;
 		}
 		g->top = g->rows - 1;
-		g->row = rd(g->base + EPSS_PERF_STATE);
+		/* (an index into khz[] and looks_at[]: never past the table, whatever the register reads; Linux bounds it too) */
+		g->row = MIN(rd(g->base + EPSS_PERF_STATE), g->top);
 		gov_on = true;
 		printf("cpufreq: group %u (cores %#x) by its load: %u rows, %u to %u MHz\n", d, g->cores, g->rows, g->khz[0] / 1000,
 		    g->khz[g->top] / 1000);
