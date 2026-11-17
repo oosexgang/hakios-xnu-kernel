@@ -282,6 +282,14 @@ class Packages(Sandbox):
         self.assertEqual(code, 0, said)
         self.assertEqual(sorted(boards.load()[1]), ['emulator', 'iota-phone'])
 
+    def test_an_address_that_is_an_option_is_none(self):
+        marker = self.dir / 'ran'
+        for given in (f'--upload-pack=touch {marker}', f'-uhttps://x.git', f'https://example.org/phone.git#--upload-pack=touch {marker}'):
+            with self.assertRaises(SystemExit) as stop:
+                device.clone(given)
+            self.assertIn('not a repository\'s address', str(stop.exception), given)
+        self.assertFalse(marker.exists(), 'nothing of it run')
+
     def test_a_phone_s_repository_made_then_brought_in(self):
         target = Path(tempfile.mkdtemp()) / 'my-phone'
         self.addCleanup(shutil.rmtree, target.parent)

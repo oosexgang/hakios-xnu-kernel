@@ -83,16 +83,20 @@ def package_name(directory, text):
 def clone(given):
     """URL[#REF] cloned, shallow, into build/device-sources/: its directory and the commit it is at."""
     url, _, ref = given.partition('#')
+    # (a word that begins with a dash is an option of git's, not an address -- --upload-pack= runs what follows it -- and
+    # each is given after -- besides)
+    if url.startswith('-') or ref.startswith('-'):
+        raise SystemExit(f'{given}: not a repository\'s address (it begins with a dash)')
     cache = boards.ROOT / 'build/device-sources' / (re.sub(r'[^A-Za-z0-9.-]+', '_', url).strip('_') + (f'@{ref}' if ref else ''))
     if cache.exists():
         shutil.rmtree(cache)            # (taken again whole: what is brought in is what the repository has now)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    command = ['git', 'clone', '-q', '--depth', '1'] + (['--branch', ref] if ref else []) + [url, str(cache)]
+    command = ['git', 'clone', '-q', '--depth', '1'] + (['--branch', ref] if ref else []) + ['--', url, str(cache)]
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode != 0 and ref:
         # a commit, which --branch does not take: the whole history, then that commit
         shutil.rmtree(cache, ignore_errors=True)
-        done = subprocess.run(['git', 'clone', '-q', url, str(cache)], capture_output=True, text=True)
+        done = subprocess.run(['git', 'clone', '-q', '--', url, str(cache)], capture_output=True, text=True)
         if done.returncode == 0:
             done = subprocess.run(['git', '-C', str(cache), 'checkout', '-q', ref], capture_output=True, text=True)
     if done.returncode != 0:
