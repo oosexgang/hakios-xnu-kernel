@@ -1,0 +1,21 @@
+# shellcheck shell=bash
+# build.config.qemu -- the emulator a kernel of this repository is booted in: QEMU's virt machine with a real UEFI,
+# started as a phone is (tools/qemu-kernel.sh, and the tests and tools that boot through it). tools/qemu-kernel.sh
+# reads this unless QEMU_BUILD_CONFIG names another file of the repository's top; each value can be given in the
+# environment instead, and what is given there is kept.
+# shellcheck source=build.config.common
+. "$HAKIOS/build.config.common"
+
+# the emulator, and the processor it plays: an ARMv8.2 core of the phones' generation, as the kernel is built for
+export QEMU=${QEMU:-qemu-system-aarch64}
+export QEMU_CPU=${QEMU_CPU:-cortex-a76}
+# the machine's memory: Darwin 27's window server and Metal's stand-in want more than 4 GB
+export QEMU_MEMORY=${QEMU_MEMORY:-6G}
+# how QEMU runs the code: TCG with a translation cache larger than its default, which a whole user space fills
+export QEMU_ACCEL=${QEMU_ACCEL:-tcg,tb-size=384}
+# the interrupt controller: version 3, as the phones' (the kernel has no driver for version 2)
+export QEMU_GIC=${QEMU_GIC:-3}
+# an aarch64 UEFI build: QEMU_FIRMWARE, else the first of these that is there (Debian/Ubuntu: qemu-efi-aarch64);
+# its variables file is the one beside it (..._VARS.fd), else an empty one
+export QEMU_FIRMWARE=${QEMU_FIRMWARE:-}
+export QEMU_FIRMWARE_PLACES=${QEMU_FIRMWARE_PLACES:-/usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd}

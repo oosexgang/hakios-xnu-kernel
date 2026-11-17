@@ -51,6 +51,11 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
+# the emulator, its processor, memory and firmware: build.config.qemu (QEMU_BUILD_CONFIG: another file of the top)
+HAKIOS=$HERE
+export HAKIOS
+# shellcheck source=../build.config.qemu
+source "$HERE/${QEMU_BUILD_CONFIG:-build.config.qemu}"
 until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' defconfig='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio='' interactive='' display=none
 with_devices=1 image='' identity=''
 while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
@@ -98,9 +103,10 @@ if [ -n "$disk" ]; then
 fi
 [ -z "$qmp" ] || devices+=(-qmp "unix:$qmp,server,nowait")
 [ -n "$image" ] || { kernel=$(realpath -e "$1") || exit 1; }
-command -v qemu-system-aarch64 > /dev/null || die "no qemu-system-aarch64 (apt: qemu-system-arm)"
+command -v "$QEMU" > /dev/null || die "no $QEMU (apt: qemu-system-arm; QEMU in build.config.qemu)"
 firmware=
-for code in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+# shellcheck disable=SC2086  # (a list of places, one a word)
+for code in $QEMU_FIRMWARE $QEMU_FIRMWARE_PLACES; do
 	[ -f "$code" ] && firmware=$code && break
 done
 [ -n "$firmware" ] || die "no aarch64 UEFI firmware (apt: qemu-efi-aarch64)"
@@ -128,7 +134,7 @@ fi
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 [ -n "$monitor" ] || monitor=$W/monitor
 : > "$log"
-machine=(qemu-system-aarch64 -M 'virt,gic-version=3' -cpu cortex-a76 -smp "$cpus" -m 6G -accel 'tcg,tb-size=384'
+machine=("$QEMU" -M "virt,gic-version=$QEMU_GIC" -cpu "$QEMU_CPU" -smp "$cpus" -m "$QEMU_MEMORY" -accel "$QEMU_ACCEL"
 	-drive "if=pflash,format=raw,readonly=on,file=$firmware" -drive "if=pflash,format=raw,file=$W/vars.fd"
 	-drive "file=fat:rw:$W/esp,format=raw,if=virtio" -device virtio-rng-pci -device ramfb
 	-device "loader,file=$W/payload.bin,addr=0xF0000000,force-raw=on" -display "$display"

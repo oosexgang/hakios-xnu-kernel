@@ -12,12 +12,18 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 LOADER=${1:?usage: loader_boot_test.sh LOADER.EFI}
+# the emulator and its firmware as tools/qemu-kernel.sh has them (build.config.qemu)
+HAKIOS=$(cd "$HERE/.." && pwd)
+export HAKIOS
+# shellcheck source=../build.config.qemu
+source "$HAKIOS/${QEMU_BUILD_CONFIG:-build.config.qemu}"
 FIRMWARE=
-for code in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+# shellcheck disable=SC2086  # (a list of places, one a word)
+for code in $QEMU_FIRMWARE $QEMU_FIRMWARE_PLACES; do
 	[ -f "$code" ] && FIRMWARE=$code && break
 done
-if ! command -v qemu-system-aarch64 > /dev/null || [ -z "$FIRMWARE" ]; then
-	echo "loader_boot_test: no qemu-system-aarch64 or aarch64 UEFI firmware here: left out"
+if ! command -v "$QEMU" > /dev/null || [ -z "$FIRMWARE" ]; then
+	echo "loader_boot_test: no $QEMU or aarch64 UEFI firmware here: left out"
 	exit 0
 fi
 W=$(mktemp -d)
@@ -53,7 +59,7 @@ boot() {
 	python3 "$HERE/../arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$W/kernel" ${identity:+identity="$identity"} \
 		${args:+--cmdline "$args"} > /dev/null
 	cp "${FIRMWARE%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
-	timeout 120 qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -m 4G \
+	timeout 120 "$QEMU" -M "virt,gic-version=$QEMU_GIC" -cpu "$QEMU_CPU" -m 4G \
 		-drive if=pflash,format=raw,readonly=on,file="$FIRMWARE" -drive if=pflash,format=raw,file="$W/vars.fd" \
 		-drive file=fat:rw:"$W/esp",format=raw,if=virtio -device virtio-rng-pci \
 		-device loader,file="$W/payload.bin",addr=0xF0000000,force-raw=on \
