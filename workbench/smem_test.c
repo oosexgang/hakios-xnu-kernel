@@ -337,6 +337,20 @@ items_lie_inside(void)
 	memcpy(bytes + dsp_at, &header, sizeof(header));
 	INSIDE("items from the top below their part");
 	CHECK(count == 2, "none from the top is given out: the two from the bottom remain (%u)", count);
+	/* from the top: the first entry's canary spoilt, or its padding larger than its item -- the walk from the top ends there */
+#define TOP_ENTRY (bytes + dsp_at + 0x2000 - 64)
+	as_a_boot_loader_lays_it_out();
+	memcpy(&entry, TOP_ENTRY, sizeof(entry));
+	entry.canary ^= 1;
+	memcpy(TOP_ENTRY, &entry, sizeof(entry));
+	INSIDE("a spoilt canary from the top");
+	CHECK(count == 2, "none from the top is given out (%u)", count);
+	as_a_boot_loader_lays_it_out();
+	memcpy(&entry, TOP_ENTRY, sizeof(entry));
+	entry.padding_data = (uint16_t)(entry.size + 1);
+	memcpy(TOP_ENTRY, &entry, sizeof(entry));
+	INSIDE("padding larger than an item from the top");
+	CHECK(count == 2, "the same (%u)", count);
 	/* a partition that has grown past the area since it was found (another processor writes while we look) */
 	as_a_boot_loader_lays_it_out();
 	memcpy(&header, bytes + dsp_at, sizeof(header));
