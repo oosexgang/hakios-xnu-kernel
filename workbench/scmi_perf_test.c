@@ -22,6 +22,7 @@ extern char log_text[];
 static _Alignas(64) volatile uint32_t shmem[0x80 / 4];
 static _Alignas(64) volatile uint32_t mailbox[0x1000 / 4];
 static unsigned mapped_elsewhere;
+static bool mailbox_unmapped;           /* the mailbox's mapping fails */
 
 vm_offset_t
 ml_io_map(vm_offset_t phys, vm_size_t size)
@@ -29,7 +30,7 @@ ml_io_map(vm_offset_t phys, vm_size_t size)
 	if (phys == SHMEM_PA && size <= sizeof(shmem)) {
 		return (vm_offset_t)shmem;
 	}
-	if (phys == MAILBOX_PA && size <= sizeof(mailbox)) {
+	if (phys == MAILBOX_PA && size <= sizeof(mailbox) && !mailbox_unmapped) {
 		return (vm_offset_t)mailbox;
 	}
 	mapped_elsewhere++;
@@ -49,6 +50,8 @@ static bool missing_level;
 static int short_of = -1;               /* a message answered with one word fewer than it should be (0x3: none) */
 static int top_at_level = -1;           /* a domain whose limits' top is its level now, or that less one */
 static int top_below_level = -1;
+static unsigned attribute_words = 4;    /* the words a domain's attributes are answered with */
+static unsigned extra_words;            /* words more than asked for, after each answer that has any */
 
 static void
 answer(uint32_t status, const uint32_t *words, unsigned n)
@@ -58,6 +61,10 @@ answer(uint32_t status, const uint32_t *words, unsigned n)
 		shmem[0x20 / 4 + i] = words[i];
 	}
 	shmem[0x14 / 4] = 8 + 4 * n;            /* the header, the status and the words */
+	for (unsigned i = 0; n > 0 && i < extra_words; i++) {
+		shmem[0x20 / 4 + n + i] = 0xdead0000u + i;
+		shmem[0x14 / 4] += 4;
+	}
 	if (n > 0 && (int)(shmem[0x18 / 4] & 0xff) == short_of) {
 		shmem[0x14 / 4] = short_of == 0x3 ? 8 : shmem[0x14 / 4] - 4;  /* (a domain's attributes: none at all) */
 	}
@@ -110,7 +117,7 @@ firmware(void *unused __unused)
 			/* set limits, set level, fast channels, level indexing; rate limit; sustained kHz and level */
 			uint32_t attributes[4] = { 0xea000000u, 0, 2000000 + in, 20 + in };
 
-			answer(0, attributes, 4);
+			answer(0, attributes, attribute_words);
 		} else if (message == 0x6) {
 			uint32_t limits[2] = { 3000 + in, 300 + in };   /* max, min */
 
@@ -244,6 +251,58 @@ raises_when_asked(void)
 		    "domain %u keeps its found level and top", d);
 		CHECK(levels[d] == top, "domain %u raised: %u", d, levels[d]);
 	}
+	CHECK(logged("scmi-perf: domain 0 asked for level 3000: status 0, now 3000") &&
+	    logged("scmi-perf: domain 2 asked for level 3002: status 0, now 3002"), "each set said, with the level read back: %s", log_text);
+	CHECK(!logged("domain 3 asked") && !logged("status -1"), "and no more than the domains there are: %s", log_text);
+}
+
+/* a channel the firmware never frees: nothing written into it, the doorbell not rung */
+static void
+channel_never_free(void)
+{
+	channel();
+	shmem[0x04 / 4] = 0;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("scmi-perf: SCMI performance protocol unavailable") && rings == 0 && asked_n == 0, "%u rings: %s", rings, log_text);
+}
+
+/* the mailbox cannot be mapped: said, and nothing asked */
+static void
+mailbox_not_mapped(void)
+{
+	channel();
+	mailbox_unmapped = true;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("scmi-perf: cannot map SCMI channel") && asked_n == 0, "said: %s", log_text);
+}
+
+/* answers longer than what was asked for: what was asked for is taken, nothing past it written */
+static void
+longer_answers(void)
+{
+	uint32_t found = 0, top = 0;
+
+	channel();
+	extra_words = 3;
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(logged("SCMI performance 4.0, 3 domains") && hakios_scmi_perf_domain(2, &found, &top) && found == 1002 && top == 3002,
+	    "taken as they are: %s", log_text);
+	CHECK(logged("domain 1 asked for level 3001: status 0, now 3001"), "%s", log_text);
+}
+
+/* a domain's attributes in one word: said, the rest as none */
+static void
+one_attribute_word(void)
+{
+	channel();
+	attribute_words = 1;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("domain 0 attributes 0xea000000: set limits 1, set level 1, fast channels 1, level indexing 1, sustained 0 kHz at "
+	    "level 0"), "said: %s", log_text);
 }
 
 /* thermal requests are bounded by the firmware top; a refused request never changes the cached level */
@@ -340,7 +399,9 @@ main(int argc, char **argv)
 		{ "reads_and_says", reads_and_says, 1 }, { "four_domains_at_most", four_domains_at_most, 1 },
 		{ "does_not_answer", does_not_answer, 5 }, { "only_when_asked", only_when_asked, 1 },
 		{ "board_without_it", board_without_it, 1 },
-		{ "raises_when_asked", raises_when_asked, 1 },
+		{ "raises_when_asked", raises_when_asked, 1 }, { "channel_never_free", channel_never_free, 1 },
+		{ "mailbox_not_mapped", mailbox_not_mapped, 1 }, { "longer_answers", longer_answers, 1 },
+		{ "one_attribute_word", one_attribute_word, 1 },
 		{ "sets_are_clamped_and_errors_preserve_state", sets_are_clamped_and_errors_preserve_state, 1 },
 		{ "incomplete_domains_are_not_exposed", incomplete_domains_are_not_exposed, 1 },
 		{ "short_answers", short_answers, 5 }, { "top_at_the_level", top_at_the_level, 1 },
