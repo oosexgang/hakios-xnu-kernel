@@ -754,6 +754,7 @@ lx_start(void)
 	int ret;
 
 	bus.how = lx_os_option("wifi_lx");
+	bus.closed = false;     /* (a start opens what an earlier stop -- of a driver that was never up, say -- closed) */
 	if (lx_prepare() != 0) {
 		lx_tell("lx: no thread, or no memory the radio can be given\n");
 		return (ENOMEM);

@@ -1476,7 +1476,14 @@ dsp_shutdown(const char *why)
 
 	printf("wifi: %u: %s: the DSP is asked to stop, then TrustZone to shut it down\n", step, why);
 	if (!leaving) {
-		hakios_lx_stop();                      /* (the driver, if it stayed up: it leaves its network and goes down in order) */
+		if (ours) {
+			/*
+			 * (the driver, if it stayed up: it leaves its network and goes down in order. Not before a DSP of an earlier
+			 * kernel is shut down -- this one's driver is not started yet, and stopping it would close its registers for
+			 * the start to come)
+			 */
+			hakios_lx_stop();
+		}
 		hakios_wlfw_stop(step);                /* (what the stand-in of step 15 has to say first, while there is a link) */
 		link_stop();
 	}
@@ -3571,6 +3578,9 @@ radio_map(uint64_t physical, uint64_t size, uint64_t attributes, unsigned long l
 	lck_mtx_lock(&hakios_smmu_lock);       /* (the sound may be looking for a free context at the same time) */
 	if ((!radio_space.found && !radio_space_find()) || !radio_enter(*address, physical, size, attributes)) {
 		lck_mtx_unlock(&hakios_smmu_lock);
+		if (radio_space.next == *address - RADIO_ADDRESSES + size) {
+			radio_space.next -= size;       /* (the addresses given back, for a try that comes after) */
+		}
 		return false;
 	}
 	printf("wifi: %u: the radio is to see %llu KB of ours (%#llx) at %#llx\n", step, size >> 10, physical, *address);
