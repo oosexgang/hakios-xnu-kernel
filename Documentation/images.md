@@ -89,6 +89,8 @@ refused, whatever is asked:
 | `boot.img`, unless `--with-uefi` | It carries the phone's UEFI and its vendor's drivers: only the repository's owner knows whether they may publish them. |
 
 `tools/image.py show FILE` says what an image holds and whether it is the file its manifest names;
+`tools/image.py diff A B` what differs between two (the code, the run, each boot argument, the kernel: which image a
+report was made with);
 `tools/image.py verify DIR` holds every image under a phone's `images/` to its manifest and to the rules above (the
 check `samples/device-repo/` gives a phone's repository runs it on every push).
 

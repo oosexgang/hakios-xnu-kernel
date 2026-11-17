@@ -18,6 +18,9 @@
   tools/image.py verify DIR
         every image under DIR (a phone's images/) is what its manifest says, and what publish would take: no identity,
         no system image, a loader without Apple's data; status 1 when one is not (the phone's repository's check runs it)
+  tools/image.py diff A B
+        what differs between two images (directories with a manifest.json, or the manifests): the code, the package,
+        the run and its boot arguments one by one, the kernel, the loader -- which image a report was made with
   tools/image.py extract FILE [--payload OUT] [--loader OUT]
         its payload and its loader, as files (tools/qemu-kernel.sh --image boots an image in QEMU with them)
 
@@ -427,6 +430,39 @@ def verify(options):
     return 1 if bad else 0
 
 
+def manifest_of(path):
+    path = Path(path)
+    path = path / 'manifest.json' if path.is_dir() else path
+    if not path.is_file():
+        die(f'{path}: no manifest.json')
+    return json.loads(path.read_text())
+
+
+def diff(options):
+    a, b = manifest_of(options.a), manifest_of(options.b)
+    rows = [('board', a['board'], b['board']),
+            ('code', a['code']['describe'] or a['code']['commit'], b['code']['describe'] or b['code']['commit']),
+            ('device package', a['device_package'], b['device_package']), ('run', a['defconfig'], b['defconfig']),
+            ('kernel', a['kernel']['sha256'][:16], b['kernel']['sha256'][:16]),
+            ('loader', f'{a["loader"]["sha256"][:16]} ({a["loader"]["identity"]})', f'{b["loader"]["sha256"][:16]} ({b["loader"]["identity"]})'),
+            ('identity carried', str(a.get('identity_in_payload', False)), str(b.get('identity_in_payload', False)))]
+    same = True
+    for what, x, y in rows:
+        if x != y:
+            print(f'{what}: {x}  ->  {y}')
+            same = False
+    # the boot arguments one by one, by name: what only one has, and what each gives a name both have
+    args_a = {defconfig.key(arg): arg for arg in a['cmdline'].split()}
+    args_b = {defconfig.key(arg): arg for arg in b['cmdline'].split()}
+    for key in sorted(set(args_a) | set(args_b)):
+        if args_a.get(key) != args_b.get(key):
+            print(f'boot argument {key}: {args_a.get(key, "(none)")}  ->  {args_b.get(key, "(none)")}')
+            same = False
+    if same:
+        print('the same image: code, package, run, boot arguments, kernel and loader')
+    return 0 if same else 1
+
+
 def extract(options):
     data = Path(options.file).read_bytes()
     payload = boot_image_payload(data)[1] if data[:8] == b'ANDROID!' else data
@@ -466,13 +502,16 @@ def main(arguments=None):
     command.add_argument('file', metavar='FILE')
     command = commands.add_parser('verify', help='every image under a directory, as published')
     command.add_argument('directory', metavar='DIR')
+    command = commands.add_parser('diff', help='what differs between two images')
+    command.add_argument('a', metavar='A')
+    command.add_argument('b', metavar='B')
     command = commands.add_parser('extract', help='its payload and its loader, as files')
     command.add_argument('file', metavar='FILE')
     command.add_argument('--payload')
     command.add_argument('--loader')
     options = parser.parse_args(arguments)
     return {'build': build, 'publish': publish, 'personalize': personalize, 'show': show,
-            'verify': verify, 'extract': extract}[options.command](options)
+            'verify': verify, 'diff': diff, 'extract': extract}[options.command](options)
 
 
 if __name__ == '__main__':

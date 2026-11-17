@@ -235,6 +235,28 @@ class Publish(Sandbox):
         return path
 
 
+class Diff(Sandbox):
+    def test_what_differs_between_two_images(self):
+        self.build()
+        first = self.dir / 'first'
+        self.out.rename(first)
+        (self.dir / 'test_defconfig').write_text('wifi=1\ncam=1\nbt=2\n')
+        self.build()
+        code, said = self.tool('diff', str(first), str(self.out))
+        self.assertEqual(code, 1, said)
+        self.assertIn('boot argument cam: cam=0  ->  cam=1', said)
+        self.assertIn('boot argument bt: (none)  ->  bt=2', said)
+        self.assertNotIn('boot argument wifi', said, 'the same on both: not said')
+        self.assertNotIn('kernel:', said)
+        (self.dir / 'kernel').write_bytes(KERNEL + b'more')
+        self.build()
+        self.assertRegex(self.tool('diff', str(first), str(self.out / 'manifest.json'))[1], r'kernel: [0-9a-f]{16}  ->  [0-9a-f]{16}')
+        code, said = self.tool('diff', str(self.out), str(self.out))
+        self.assertEqual(code, 0)
+        self.assertIn('the same image', said)
+        self.assertIn('no manifest.json', str(self.tool('diff', str(self.dir), str(self.out))[0]))
+
+
 class Personalize(Sandbox):
     def test_a_payload_given_the_identity_of_an_ipsw(self):
         self.build()
