@@ -76,7 +76,7 @@ export HAKIOS_DEVICES=$PWD/../hakios-devices           # (или: tools/device.p
 
 make check                                             # всё, что не требует телефона
 tools/boards.py status renoir                          # что у телефона включено и чего не хватает
-arch/arm64/boot/build.sh                                        # loader/loader.efi
+arch/arm64/boot/build.sh                                        # arch/arm64/boot/loader.efi
 workbench/loader_boot_test.sh                          # загрузчик под настоящим UEFI в QEMU
 ```
 

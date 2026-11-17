@@ -55,7 +55,7 @@ source kernel/env.sh
 source "$HAKIOS/build.config.bench"
 IOS=${IOS:-$(cd .. && pwd)/ios27}
 K=${BENCH_KERNEL:-$XNU_SRC/BUILD/obj/mach.development.bcm2837}
-L=loader/loader.efi
+L=arch/arm64/boot/loader.efi
 mkdir -p logs
 PHONE=${XDG_RUNTIME_DIR:-/tmp}/hakios-phone
 # adb's server inherits every open descriptor: started during a run it would keep the run's lock (8)

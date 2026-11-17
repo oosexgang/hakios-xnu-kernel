@@ -1,6 +1,6 @@
 #!/bin/bash
 # Boot a kernel of this repository in QEMU's virt machine, as a phone boots it: a real UEFI starts the
-# loader (loader/loader.efi), which takes the kernel from a payload and gives it the emulator's board.
+# loader (arch/arm64/boot/loader.efi), which takes the kernel from a payload and gives it the emulator's board.
 # The machine has a display (ramfb) and a serial port; what the kernel says on either is kept.
 #
 #   tools/qemu-kernel.sh [options] KERNEL

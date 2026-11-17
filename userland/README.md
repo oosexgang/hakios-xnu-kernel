@@ -137,7 +137,7 @@ Every release has a boot image of the first phone attached: its UEFI with our lo
   ```sh
   xnu/apply.sh && xnu-deps/setup.sh && ./xnu-build.sh -j8 -k
   ```
-- **Loader** — `xnuloader/build.sh` (clang + lld-link, an EFI application without EDK2).
+- **Loader** — `arch/arm64/boot/build.sh` (clang + lld-link, an EFI application without EDK2).
 - **Images** — `REST=1 userland/build.sh` (variables documented at the top of that file).
 - **UEFI** — [uefi/README.md](uefi/README.md) (Project Silicium port); not needed to run, `prebuilt/uefi` has it.
 - After rebuilding: `tools/update-prebuilt.sh` refreshes `prebuilt/`.

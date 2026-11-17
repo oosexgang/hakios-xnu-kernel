@@ -27,7 +27,7 @@ sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g
 ## The loader
 
 ```sh
-arch/arm64/boot/build.sh             # loader/loader.efi
+arch/arm64/boot/build.sh             # arch/arm64/boot/loader.efi
 ```
 
 It includes `platforms.h`, the boards it knows, which the script first makes into `build/boards/` from
