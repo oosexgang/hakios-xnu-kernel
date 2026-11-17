@@ -128,8 +128,9 @@ struct lx_radio {
 	int last_error;
 	unsigned sent, sent_lost, received, received_group, eapol, rekeys;
 	/*
-	 * The receive path's use of the station and the interface (a reply to the access point, its address), against
-	 * station_leave() and station_down() freeing them: users counts the frames being acted on, closing keeps new ones off.
+	 * The receive and send paths' use of the station and the interface (a reply to the access point, its address, a frame
+	 * Darwin sends), against station_leave() and station_down() freeing them: users counts the frames being acted on,
+	 * closing keeps new ones off.
 	 */
 	int station_users;
 	bool station_closing;
@@ -2051,15 +2052,26 @@ int
 lx_station_send(const unsigned char *frame, unsigned long length)
 {
 	struct lx_radio *radio = the_radio;
+	int error;
 
-	if (radio == NULL || !radio->joined) {
+	/*
+	 * (counted as the receive path's frames are, so that station_leave() and station_down() do not free the station, the
+	 * interface or the key under it; the driver's tx takes only its spinlocks, so the leaving's bounded wait is not held up)
+	 */
+	if (radio == NULL || !station_use(radio)) {
+		return (ENETDOWN);
+	}
+	if (!radio->joined) {
+		station_done(radio);
 		return (ENETDOWN);
 	}
 	if (length >= 42 && frame[12] == 0x08 && frame[13] == 0x06 && radio->told_arp < 16) {
 		radio->told_arp++;
 		frame_told("sent", frame, (unsigned)length, 0);
 	}
-	return (ethernet_send(radio, frame, (unsigned)length) ? 0 : ENOBUFS);
+	error = ethernet_send(radio, frame, (unsigned)length) ? 0 : ENOBUFS;
+	station_done(radio);
+	return (error);
 }
 
 /* ---- the station boundary: what the kernel asks through sys/board/sta.h --------------------------------- */

@@ -137,11 +137,11 @@ Wi-Fi (`wifi=1`) shows the radio its memory through the SMMU before the DSP is s
 ending: the DSP shut down, a run that ended before the DSP was started (the next kernel's `hakios_wifi_quiesce`), a
 bring-up whose memory ran out. When TrustZone refuses to shut the DSP down, the radio's stream is sent to fault rather
 than left translating into memory that is the next owner's. When the driver's start gives up (60 s) or the run ends
-before it is up, its rings' thread is stopped and the registers closed before the DSP goes. **Known, not fixed:** a
-frame Darwin sends (`lx_station_send`) is not held off while the station leaves (`station_leave`, the network lost or
-the run's end): the send may read the station and its key as they are freed. The two must be held apart, but the
-leaving waits for the driver's work (`cancel_work_sync`), which takes the radio's lock itself, so that lock cannot just
-be held across it; it is left until it can be built and run against the driver (`kernel/lx/build.sh`).
+before it is up, its rings' thread is stopped and the registers closed before the DSP goes. A
+frame Darwin sends (`lx_station_send`) and a frame received are counted while they use the station (`station_use`), and
+the station's leaving (`station_leave`, the network lost or the run's end) waits, at most a second, for those counted
+before it frees the station and its key; none starts after. The count takes no lock, so the leaving still waits for the
+driver's work (`cancel_work_sync`) as before.
 
 
 | File | Part | Feature / boot argument | Portability |
