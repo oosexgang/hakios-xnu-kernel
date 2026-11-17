@@ -12,6 +12,13 @@ make image DEVICE=NAME DEFCONFIG=phone_look       # again, for another kind of r
 make publish DEVICE=NAME REPO=PATH-OF-A-CHECKOUT-OF-THIS-REPOSITORY   # the image into images/ here
 ```
 
+To run it from the phone's RAM (nothing is written to its storage) with the kernel's `./bench`:
+
+```sh
+BENCH_BOARD=NAME make ready                     # what the runs need, all here? before the phone is connected
+BENCH_BOARD=NAME make day                       # the runs in order; their logs and a summary in logs/day-TIME/
+```
+
 `tools/device.py add --from URL#v1` takes this repository at a tag or a commit, `tools/device.py update NAME` takes
 it again as it is now; `tools/boards.py status NAME` says what
 the phone can turn on next. The kernel's Documentation/porting.md goes through a port step by step, and
