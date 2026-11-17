@@ -414,7 +414,40 @@ pin_not_set_up(void)
 	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching"), 3000);
 	CHECK(logged("volume up is left alone"), "said in the log");
+	CHECK(logged("volume up's pin: mode 0 (input), supply 0, pull 5 (none), enabled;"), "and how it is set up: %s", log_text);
 	no_write();
+}
+
+/* a pin pulled down, one that is an output, one switched off: none of them is volume up, each said as it is */
+static void
+pin_set_up_otherwise(unsigned reg, uint8_t value, const char *said)
+{
+	phone("phone-cmd");
+	pin_model.reg[reg] = value;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching"), 3000);
+	CHECK(logged("volume up is left alone") && !logged("watching power volume-up"), "not taken: %s", log_text);
+	CHECK(logged(said), "said as it is (%s): %s", said, log_text);
+	no_write();
+}
+
+static void
+pin_pulled_down(void)
+{
+	pin_set_up_otherwise(0x42, 0x04, "pull 4 (down), enabled");
+}
+
+static void
+pin_an_output(void)
+{
+	pin_set_up_otherwise(0x40, 0x01, "mode 1 (output), supply 0, pull 0 (up)");
+}
+
+static void
+pin_switched_off(void)
+{
+	pin_set_up_otherwise(0x46, 0x00, "pull 0 (up), DISABLED");
 }
 
 /* an arbiter of another version has other registers: nothing is read through it */
@@ -548,7 +581,8 @@ main(int argc, char **argv)
 		{ "power_held_at_start", power_held_at_start },
 		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
-		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
+		{ "pin_not_set_up", pin_not_set_up }, { "pin_pulled_down", pin_pulled_down },
+		{ "pin_an_output", pin_an_output }, { "pin_switched_off", pin_switched_off }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
 		{ "board_without_keys", board_without_keys }, { "held_in_the_summary", held_in_the_summary },
 		{ "a_short_silence", a_short_silence },
