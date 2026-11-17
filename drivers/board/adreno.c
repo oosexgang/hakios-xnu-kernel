@@ -3745,6 +3745,7 @@ hakios_gpu_recover(void)
 	if (!core_bus_halt(true)) {
 		/* (a reset pulled while the bus still has the core's transactions under way leaves the SMMU waiting for good) */
 		printf("adreno: gpu: the core's bus did not say it had halted: not reset, the GPU is not waited for again\n");
+		wr(gmu.base + GMU_PWR_COL_KEEPALIVE, 0);        /* (so that the slumber at the end is not refused for it) */
 		return false;
 	}
 	wr(gpu.base + RBBM_SW_RESET_CMD, 1);
