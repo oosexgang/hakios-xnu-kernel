@@ -25,6 +25,19 @@ bt_uart.c: the controller on the QUP GENI UART, 115200 baud, CTS/RTS
    the patch and the configuration (bt_qca.h) → HCI_Reset → board_bt_start()
 ```
 
+What the bridge does when the two sides go at different speeds, or bluetoothd comes and goes:
+
+- **A full line.** What bluetoothd writes waits in a line of 16 KB until the controller takes it (115200 baud is about
+  11 KB/s). A packet the line has no room for stays in its slot of the channel, with those after it, in their order,
+  and the channel is told once the line has drained; a write to the kernel control goes in whole or is refused
+  (ENOBUFS). Nothing of a command or an ACL packet is thrown away for want of room.
+- **Turns.** The thread takes eight packets from the controller at most, then what bluetoothd wrote: a scan's reports
+  coming back to back do not keep a command waiting.
+- **Sessions.** What the controller says is queued only while bluetoothd has the channel. A channel opened, or the
+  kernel control connected, starts with nothing of the last session's.
+- **A start that fails** takes away what it made: the nodes, the pipe, the kernel control, and the service, which is
+  made last. The controller's driver powers the controller down then.
+
 ## The levels
 
 | Boot argument | What happens |
@@ -115,5 +128,8 @@ kernel's build only (`kernel/syntax-check.skip`).
 - Seen on a phone.
 - A faster UART (Qualcomm's baud rate command) and the controller's in-band sleep: 115200 baud carries keyboards, mice and
   LE; audio would want more.
+- Who may talk to the controller: the kernel control is not CTL_FLAG_PRIVILEGED and the nodes are 0666, so a process
+  the sandbox lets reach them could send HCI commands, or open the channel before bluetoothd does. What bluetoothd
+  runs as on a phone, and what Apple's own driver asks of it, is to be seen before this is narrowed.
 - /dev/btwake and its fellows do nothing: bluetoothd opens and writes to them, and nothing is behind them. What it
   writes is said in the log (`bt: bluetoothd wrote N bytes to /dev/btreset, the first ..`), the first forty times.
