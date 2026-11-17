@@ -73,6 +73,7 @@ repository, and they are not in an image that is passed around. Two ways to have
   says so (`identity: from the payload (t8030, 828x1792)`). `--identity` takes the IPSW itself
   (`--model n104ap` when it has several iPhones' device trees: n104ap is the iPhone12,1), its
   `Firmware/all_flash/DeviceTree.*.im4p`, or the `DeviceTree.bin` `darwin/tools/unpack.sh` leaves beside it.
+  A kernel of your own tried in QEMU takes it the same way: `tools/qemu-kernel.sh --identity DeviceTree.bin KERNEL`.
 
 ## Into a phone's repository
 

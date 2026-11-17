@@ -26,7 +26,9 @@ the console (`--type`, a line once the shell's prompt is back), takes the screen
 attaches a disk image to the virtio block device (`--disk`), writes what the virtio sound device plays to
 a WAV file (`--audio`), forwards a TCP port of the machine to this one (`--forward H:G`), opens QEMU's QMP
 on a socket (`--qmp`, for `tools/qemu/touch.py` to touch the screen and press the buttons), and runs a
-command here while it types (`--then`). Its head lists every option.
+command here while it types (`--then`). `--identity DeviceTree.bin` gives the payload which iPhone Darwin is told it
+is, as `./bench` does on a phone (`BENCH_IDENTITY`), for a loader built without one; `--image FILE` boots an image of
+`tools/image.py` as it is. Its head lists every option.
 
 ## The machine
 
