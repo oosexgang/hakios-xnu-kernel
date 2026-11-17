@@ -54,6 +54,8 @@ bt_wait_us(uint32_t us)
 #define START (1u << 27)
 #define M_DONE 1u
 #define M_ERRORS 0x3300002eu  /* command failure, overrun, illegal command, command abort */
+#define M_CANCELLED (1u << 4)
+#define M_ABORTED (1u << 5)
 #define S_ERRORS 0x3300002eu
 
 static bool
@@ -120,16 +122,48 @@ resources(void)
 	return true;
 }
 
+/* The engine's three clocks running (the halt registers bluetooth { } names: bit 31 is set while a clock is off) */
+static bool
+engine_clocked(void)
+{
+	for (unsigned i = 0; i < 3; i++) {
+		if (rd(gcc + W->clocks[i]) & (1u << 31)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool engine_looked_at;
+
+/* The engine's own registers, read only while it is clocked (a read of a block whose clock is off can hang the bus):
+ * a UART's, at rest */
+static bool
+engine_ready(void)
+{
+	uint32_t revision = rd(SE(0x68));
+
+	engine_looked_at = true;
+	hakios_say("bt-uart: GENI_FW_REVISION_RO %#x (protocol %u), QUP HW version %#x\n",
+	    revision, (revision >> 8) & 0xff, rd(wrapper + 4));
+	if (((revision >> 8) & 0xff) != 2) {
+		hakios_say("bt-uart: SE protocol is not UART (2); stopping\n");
+		return false;
+	}
+	if ((rd(SE(0x40)) & 0x1001) || (rd(SE(0x64)) & 1) || (rd(SE(0x800)) & 0xfffffff)) {
+		hakios_say("bt-uart: SE busy, TX FIFO not empty or FIFO interface disabled; stopping\n");
+		return false;
+	}
+	return true;
+}
+
 static bool
 inspect(void)
 {
-	struct hakios_spmi arb;
-	uint32_t revision = rd(SE(0x68));
+	struct hakios_spmi arb = { 0 };         /* (all of it set by hakios_spmi_map; a compiler that cannot see so is told) */
 	bool mapped = hakios_spmi_map(&arb);
 	static const uint8_t regs[] = { 0x05, 0x40, 0x41, 0x42, 0x44, 0x45, 0x46 };
 
-	hakios_say("bt-uart: GENI_FW_REVISION_RO %#x (protocol %u), QUP HW version %#x\n",
-	    revision, (revision >> 8) & 0xff, rd(wrapper + 4));
 	hakios_say("bt-uart: GCC votes %#x, halt %#x %#x %#x; RCG cmd %#x cfg %#x\n", rd(VOTE),
 	    rd(gcc + W->clocks[0]), rd(gcc + W->clocks[1]), rd(gcc + W->clocks[2]), rd(RCG(0)), rd(RCG(4)));
 	for (unsigned i = 0; i < 5; i++) {
@@ -138,12 +172,9 @@ inspect(void)
 		saved_pins[i] = rd(GPIO_CFG(pin));
 		hakios_say("bt-uart: gpio%u cfg %#x level %u\n", pin, saved_pins[i], gpio_get(pin));
 	}
-	if (((revision >> 8) & 0xff) != 2) {
-		hakios_say("bt-uart: SE protocol is not UART (2); stopping\n");
-		return false;
-	}
-	if ((rd(SE(0x40)) & 0x1001) || (rd(SE(0x64)) & 1) || (rd(SE(0x800)) & 0xfffffff)) {
-		hakios_say("bt-uart: SE busy, TX FIFO not empty or FIFO interface disabled; stopping\n");
+	if (!engine_clocked()) {
+		hakios_say("bt-uart: the serial engine's clocks are off: its registers are read once they are on, not before\n");
+	} else if (!engine_ready()) {
 		return false;
 	}
 	if (!mapped) {
@@ -337,6 +368,28 @@ uart_init(unsigned sampling, bool flow)
 	return true;
 }
 
+/*
+ * A transmit that went wrong part way (the FIFO stayed full, an error, no done): the engine's command cancelled, or
+ * aborted when it will not cancel, and its interrupts taken, so that the next command starts on an engine at rest --
+ * not on one still busy with this one, whose words would go out as the rest of it. false.
+ */
+static bool
+transmit_failed(void)
+{
+	wr(SE(0x604), 1u << 2);                 /* M_GENI_CMD_CTRL: cancel */
+	for (unsigned i = 0; i < 100 && !(rd(SE(0x610)) & M_CANCELLED); i++) {
+		sleep_us(10);
+	}
+	if (!(rd(SE(0x610)) & M_CANCELLED)) {
+		wr(SE(0x604), 1u << 1);         /* abort */
+		for (unsigned i = 0; i < 100 && !(rd(SE(0x610)) & M_ABORTED); i++) {
+			sleep_us(10);
+		}
+	}
+	wr(SE(0x618), 0xffffffff);
+	return false;
+}
+
 static bool
 transmit(const uint8_t *bytes, unsigned length)
 {
@@ -355,7 +408,7 @@ transmit(const uint8_t *bytes, unsigned length)
 		for (unsigned tries = 0; (rd(SE(0x800)) & 0xfffffff) >= depth; tries++) {
 			if (tries >= 1000) {
 				hakios_say("bt-uart: TX FIFO stays full\n");
-				return false;
+				return transmit_failed();
 			}
 			sleep_us(100);
 		}
@@ -367,7 +420,7 @@ transmit(const uint8_t *bytes, unsigned length)
 
 		if (status & M_ERRORS) {
 			hakios_say("bt-uart: TX error %#x\n", status);
-			return false;
+			return transmit_failed();
 		}
 		if (status & M_DONE) {
 			wr(SE(0x618), status);
@@ -376,18 +429,33 @@ transmit(const uint8_t *bytes, unsigned length)
 		sleep_us(100);
 	}
 	hakios_say("bt-uart: TX timed out\n");
-	return false;
+	return transmit_failed();
 }
 
 /* Keep unused bytes of a FIFO word, including when two H4 events share that word. */
 static uint32_t rx_word;
 static unsigned rx_left;
 
+/*
+ * A byte from the controller: one the FIFO's last word still holds whatever the time, else one that comes before
+ * DEADLINE. (The deadline is the wait's measure: a count of tries was, and gave up after half a second whatever the
+ * deadline said. The tries left are a backstop for a clock that does not move.)
+ */
 static bool
 receive_byte(uint8_t *byte, uint64_t deadline)
 {
-	for (unsigned tries = 0; tries < 5000 && now_us() < deadline; tries++) {
-		uint32_t irq = rd(SE(0x640));
+	static unsigned said;
+
+	for (unsigned tries = 0; tries < 1000000; tries++) {
+		uint32_t irq;
+
+		if (rx_left) {
+			*byte = (uint8_t)rx_word;
+			rx_word >>= 8;
+			rx_left--;
+			return true;
+		}
+		irq = rd(SE(0x640));
 
 		if (irq) {
 			wr(SE(0x648), irq);
@@ -405,18 +473,23 @@ receive_byte(uint8_t *byte, uint64_t deadline)
 					unsigned valid = (status >> 28) & 7;
 
 					if (valid > 4) {
-						return false;
+						/* (taken out all the same: left in the FIFO, it would stop every read after it) */
+						(void)rd(SE(0x780));
+						rx_left = 0;
+						if (said++ < 4) {
+							hakios_say("bt-uart: the RX FIFO's last word said to hold %u bytes of 4: thrown away\n",
+							    valid);
+						}
+						continue;
 					}
 					rx_left = valid ? valid : 4;
 				}
 				rx_word = rd(SE(0x780));
+				continue;
 			}
 		}
-		if (rx_left) {
-			*byte = (uint8_t)rx_word;
-			rx_word >>= 8;
-			rx_left--;
-			return true;
+		if (now_us() >= deadline) {
+			return false;
 		}
 		sleep_us(100);
 	}
@@ -704,24 +777,42 @@ bt_cleanup(void)
 
 /* ---- bt=2: the controller, once it has answered, Darwin's (board/bt_host.c carries the packets) ------------- */
 
+/*
+ * Once a packet has gone out in part, the controller takes what comes next for the rest of it: its framing is lost, and
+ * nothing more is sent to it (Bluetooth stops until a restart) rather than commands it would read wrong.
+ */
+static bool tx_lost;
+
 static int
 controller_send(const uint8_t *h4, unsigned length)
 {
-	return transmit(h4, length) ? 0 : EIO;
+	if (tx_lost) {
+		return EIO;
+	}
+	if (!transmit(h4, length)) {
+		tx_lost = true;
+		hakios_say("bt-uart: a packet of %u bytes went out in part, or not at all: the controller is out of step with "
+		    "what would follow, and is sent nothing more\n", length);
+		return EIO;
+	}
+	return 0;
 }
 
 /*
  * Out of step with the controller: what is left of the FIFO's word and what comes until the line has been quiet for
- * 5 ms is thrown away, so that the next byte read is, as like as not, the start of a packet. -1.
+ * 5 ms is thrown away, so that the next byte read is, as like as not, the start of a packet -- for 50 ms at most: a
+ * controller that does not pause (a scan's reports back to back) would otherwise keep bluetoothd's packets waiting for
+ * seconds, and the next look tries again. -1.
  */
 static int
 out_of_step(void)
 {
 	unsigned dropped = rx_left;
+	uint64_t until = now_us() + 50000;
 	uint8_t byte;
 
 	rx_left = 0;
-	while (dropped < 65536 && receive_byte(&byte, now_us() + 5000)) {
+	while (dropped < 65536 && now_us() < until && receive_byte(&byte, now_us() + 5000 < until ? now_us() + 5000 : until)) {
 		dropped++;
 	}
 	hakios_say("bt-uart: %u more bytes thrown away to be in step again\n", dropped);
@@ -796,7 +887,7 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 	if (!inspect() || mode == -1) {
 		goto done;
 	}
-	if (!power_on() || !clocks_on()) {
+	if (!power_on() || !clocks_on() || (!engine_looked_at && !engine_ready())) {
 		goto failed;
 	}
 	/* The engine's oversampling (16 from QUP 2.5, 32 before) and the controller's CTS are what the first

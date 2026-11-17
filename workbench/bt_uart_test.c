@@ -15,6 +15,10 @@ static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_sta
 static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version, garbled;
+/* the engine's clocks off until the driver votes for them, and its registers read meanwhile (none is to be: such a read
+ * can hang the bus); the engine's command cancelled or aborted, and started */
+static bool clocks_off_until_voted;
+static unsigned se_reads_off, m_cancels, m_aborts, tx_starts;
 static bool rcg_stuck, rx_error, coalesced, sw_low, not_an_event, darwins_turn;
 static bool shortest_version, short_complete, other_first, last_word_four;
 static vm_offset_t unmapped;    /* a block ml_io_map() gives nothing for */
@@ -137,8 +141,9 @@ peer(void)
 		return;
 	}
 	if (darwins_turn) {
-		/* (Darwin's packets: kept in tx for the scenario to look at; done once each byte has had a look's time to leave) */
-		engine[0x610 / 4] = 1;
+		/* (Darwin's packets: kept in tx for the scenario to look at; done once each byte has had a look's time to leave --
+		 * or never, stuck_tx) */
+		engine[0x610 / 4] = stuck_tx ? 0 : 1;
 		done_after = tx_size;
 		return;
 	}
@@ -220,10 +225,26 @@ peer(void)
 	engine[0x610 / 4] = stuck_tx ? 0 : 1;
 }
 
+/* the driver's votes for the engine's clocks are all in the GCC's vote register */
+static bool
+voted(void)
+{
+	uint32_t mask = 0;
+
+	for (unsigned i = 0; i < 5; i++) {
+		mask |= 1u << b->bluetooth.votes[i];
+	}
+	return (clocks[b->bluetooth.vote_register / 4] & mask) == mask;
+}
+
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
 	touches++;
+	if (clocks_off_until_voted && !voted() && ((address >= b->bluetooth.serial_engine &&
+	    address < b->bluetooth.serial_engine + 0x4000) || address == b->bluetooth.wrapper + 4)) {
+		se_reads_off++;
+	}
 	if (address >= b->bluetooth.serial_engine && address < b->bluetooth.serial_engine + 0x4000) {
 		unsigned reg = (unsigned)(address - b->bluetooth.serial_engine);
 		if (reg == 0x68) {
@@ -268,6 +289,10 @@ hakios_test_rd(vm_offset_t address)
 		if (stuck_clock && reg == b->bluetooth.clocks[2]) {
 			return 1u << 31;
 		}
+		if (clocks_off_until_voted && !voted() &&
+		    (reg == b->bluetooth.clocks[0] || reg == b->bluetooth.clocks[1] || reg == b->bluetooth.clocks[2])) {
+			return 1u << 31;        /* (the halt register: off) */
+		}
 		return clocks[reg / 4];
 	}
 	if (address >= model.base && address < model.base + 0x100000) {
@@ -304,6 +329,13 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 		} else if (reg == 0x600) {
 			CHECK(value == 1u << 27, "UART TX opcode");
 			tx_size = 0;
+			tx_starts++;
+		} else if (reg == 0x604) {
+			CHECK(value == 1u << 2 || value == 1u << 1, "TX cancel or abort");
+			m_cancels += value == 1u << 2;
+			m_aborts += value == 1u << 1;
+			engine[0x610 / 4] |= value == 1u << 2 ? 1u << 4 : 1u << 5;     /* (cancelled, or aborted) */
+			fifo_words = 0;
 		} else if (reg == 0x630) {
 			CHECK(value == 1u << 27, "UART RX opcode");
 			read_starts++;
@@ -593,6 +625,19 @@ darwins(void)
 	controller_says((const uint8_t[]){ 4, 0x3e, 200, 1 }, 4);
 	CHECK(handed->receive(got, 100, 5) == -1 && logged("a packet of 203 bytes from the controller, room for 100"), "too long: %s",
 	    log_text);
+	/* a packet that does not go out whole (the engine never says done): the engine's command cancelled, and the
+	 * controller, out of step with whatever would follow, sent nothing more -- however the engine is after it */
+	{
+		unsigned starts;
+
+		stuck_tx = true;
+		starts = tx_starts;
+		CHECK(handed->send(complete + 0, 4) == EIO && m_cancels >= 1 && tx_starts == starts + 1, "not sent: cancelled (%u)",
+		    m_cancels);
+		CHECK(logged("went out in part, or not at all: the controller is out of step"), "said: %s", log_text);
+		stuck_tx = false;
+		CHECK(handed->send(complete + 0, 4) == EIO && tx_starts == starts + 1, "nothing more sent (%u starts)", tx_starts - starts);
+	}
 	rx_size = rx_pos = 0;
 	darwins_turn = false;
 }
@@ -606,7 +651,7 @@ main(int argc, char **argv)
 	    "not_an_event", "darwins", "not_darwins", "firmware", "firmware_elf", "firmware_refused", "firmware_missing", "firmware_rom",
 	    "firmware_junk", "firmware_no_reset",
 	    "fifo_narrow", "fifo_shallow", "fifo_four", "rx_shallow", "rx_four", "shortest_version", "short_complete", "other_first",
-	    "last_word_four", "no_mapping" };
+	    "last_word_four", "no_mapping", "clocks_off", "look_clocks_off" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -693,7 +738,8 @@ main(int argc, char **argv)
 		if (!strcmp(scenario, "no_mapping")) { unmapped = b->bluetooth.serial_engine; }
 		model.input[b->bluetooth.sw_ctrl] = !sw_low;
 		if (!strcmp(scenario, "unsupported_arbiter")) { spmi.version = 0x80000000; }
-		if (!strcmp(scenario, "look")) { boot_args = "bt=-1"; }
+		if (!strcmp(scenario, "look") || !strcmp(scenario, "look_clocks_off")) { boot_args = "bt=-1"; }
+		clocks_off_until_voted = !strcmp(scenario, "clocks_off") || !strcmp(scenario, "look_clocks_off");
 		if (!strcmp(scenario, "darwins") || !strcmp(scenario, "not_darwins")) { boot_args = "bt=2 bt_fw=0"; }
 		firmware_files();
 		if (!strncmp(scenario, "firmware", 8)) {
@@ -712,8 +758,13 @@ main(int argc, char **argv)
 		}
 		if (!strcmp(scenario, "not_darwins")) { start_error = ENXIO; }
 		run();
-		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look") || refused != NULL) {
+		if (wrong_protocol || spmi.version == 0x80000000 || !strcmp(scenario, "look") || !strcmp(scenario, "look_clocks_off") ||
+		    refused != NULL) {
 			CHECK(!en.writes && !rsc.writes && !model.writes && !tx_commands, "inspection/refusal performs no hardware changes");
+			if (clocks_off_until_voted) {
+				CHECK(logged("the serial engine's clocks are off: its registers are read once they are on") &&
+				    !logged("GENI_FW_REVISION_RO"), "clocks off: said, the engine not read: %s", log_text);
+			}
 			if (wrong_protocol) { CHECK(logged("SE protocol is not UART"), "protocol refusal logged"); }
 			if (refused != NULL) { CHECK(logged(refused), "refusal logged: %s", log_text); }
 		} else if (!strcmp(scenario, "firmware_refused") || !strcmp(scenario, "firmware_missing") ||
@@ -786,6 +837,11 @@ main(int argc, char **argv)
 			}
 		}
 		quiesce();
+	}
+	CHECK(se_reads_off == 0, "no register of the serial engine read while its clocks were off: %u", se_reads_off);
+	if (!strcmp(scenario, "clocks_off")) {
+		CHECK(logged("the serial engine's clocks are off") && logged("GENI_FW_REVISION_RO 0x200"), "looked at once voted: %s",
+		    log_text);
 	}
 	CHECK(!unexpected && !spmi.elsewhere && !model.elsewhere && !rsc.elsewhere, "all traffic inside declared register models");
 	CHECK(!rsc.changed_while_sent && !spmi.denied && !rpmh_locks && !spmi_locks && canary_whole(), "shared transports and database intact");
