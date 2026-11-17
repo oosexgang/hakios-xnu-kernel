@@ -260,6 +260,15 @@ software without it.
 | `image.py: ... is not what manifest.json says it is` | A file of the image changed after it was built. | Build the image again. |
 | `identity: the payload's is not one (N bytes): the one built in` | The loader found an `identity` entry it cannot read: not made by `mkidentity.py --blob`, or of another version. | `tools/image.py personalize IMAGE --identity DeviceTree.bin` again, with the same checkout's tools. |
 
+## A day with the phone (`scripts/phone-day.sh`, `tools/logcheck.py`)
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `no log: the run did not come back` | `./bench run` left no new log: the kernel hung before the loader could fetch one, or the phone was not there. What `./bench` said is in `RUN.bench` beside it. | `./bench state`; the kernel's last words, if it hung, are in `logs/*.log.live` (`BENCH_FOLLOW`). |
+| `RUN did not go all the way (above)` | `tools/logcheck.py` found a part STOPPED, a panic or no kernel in that run's log; the day stops there. | The summary has the line that decides it; [phone-test.ru.md](phone-test.ru.md) says what each run must say. `--keep-going` runs the rest all the same. |
+| `kernel: NOT STARTED (no Darwin Kernel Version line)` | The log has nothing of the kernel: the loader did not start it (its own lines are above), or the log is not a run's. | `./bench log` for the loader's side; [porting.md](porting.md), step 4. |
+| A part `said`, neither ok nor STOPPED | It wrote lines, and none of the words that say it came up or stopped: a look-only level, or a driver that ended between the two. | `tools/logcheck.py --all LOG` shows every line of it. |
+
 ## The checks (`make check`)
 
 `make check` is the lint, the board check of the first section (it covers every package that was
