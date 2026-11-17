@@ -1,6 +1,7 @@
 # Everything that can be checked without a phone, on every push and pull request:
 #   make check        lint, the board files and their generated table, the generated docs, the host
-#                     tests of the kernel's drivers (also under qemu-aarch64) and of the tools
+#                     tests of the kernel's drivers (also under qemu-aarch64) and of the tools, and the loader
+#                     booted by a real UEFI in QEMU's virt machine (workbench/loader_boot_test.sh)
 #   kernel/verify.sh  Apple's pinned release + kernel/overlay + kernel/patches assemble, and exporting
 #                     the assembled tree gives back exactly what is committed
 #   kernel/syntax-check.sh
@@ -29,7 +30,8 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             if sudo timeout 240 apt-get update -q &&
-               sudo timeout 240 apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev; then
+               sudo timeout 240 apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev \
+                   qemu-system-arm qemu-efi-aarch64; then
               exit 0
             fi
             echo "attempt $attempt failed; waiting"
