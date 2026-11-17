@@ -501,6 +501,34 @@ the_dsp_knows_better(void)
 	CHECK(reported == 0, "nothing more from the firmware: %u", reported);
 }
 
+/* full on the charger, taking nothing: full, not "not charging" */
+static void
+full_on_the_charger(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID, 100, 4450, 0, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(told()->percent_hundredths == 10000 && told()->external == 1 && told()->status == 4, "full: %d%%, status %d",
+	    told()->percent_hundredths / 100, told()->status);
+}
+
+/* battery_shown=N: N%% shown whatever the firmware says, 100 included */
+static void
+shown_as_told(void)
+{
+	static char arguments[128];
+
+	phone("phone-cmd");
+	snprintf(arguments, sizeof(arguments), "%s battery_shown=100", boot_args);
+	boot_args = arguments;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 40, 3750, 200, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(told()->percent_hundredths == 10000 && s("battery_soc") == 40, "100%% shown, the firmware's 40%% read: %d, %d",
+	    told()->percent_hundredths, s("battery_soc"));
+}
+
 
 int
 main(int argc, char **argv)
@@ -513,7 +541,7 @@ main(int argc, char **argv)
 		{ "the_arithmetic", the_arithmetic }, { "a_stale_figure_is_not_shown", a_stale_figure_is_not_shown },
 		{ "on_a_port_that_gives_too_little", on_a_port_that_gives_too_little },
 		{ "shown_a_little_at_a_time", shown_a_little_at_a_time }, { "the_dsp_knows_better", the_dsp_knows_better },
-		{ "address_zero", address_zero },
+		{ "address_zero", address_zero }, { "full_on_the_charger", full_on_the_charger }, { "shown_as_told", shown_as_told },
 	};
 
 	if (argc < 2) {
