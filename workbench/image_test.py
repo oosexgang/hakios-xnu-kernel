@@ -123,6 +123,8 @@ class Build(Sandbox):
         # the board's arguments and cpus=, then the defconfig's, each replacing one of the same name, as ./bench
         self.assertEqual(dict(entries)['cmdline'], b'backlight=1 wifi=1 cpus=8 cam=0\0')
         self.assertFalse((self.out / 'boot.img').exists(), 'no UEFI build: no boot image')
+        self.assertIn('no boot.img:', said, '... and that is said')
+        self.assertIn('BootShim.bin', said)
         manifest = json.loads((self.out / 'manifest.json').read_text())
         self.assertEqual((manifest['board'], manifest['loader']['identity'], manifest['identity_in_payload']), ('zeta', 'placeholder', False))
         self.assertEqual(manifest['files']['zeta.payload']['sha256'], image.sha256(payload))

@@ -299,7 +299,11 @@ def build(options):
     files = {f'{name}.payload': payload}
     uefi = Path(options.uefi) if options.uefi else ROOT / 'firmware' / name / 'uefi'
     boot = None
-    if 'uefi' in board and all((uefi / f).is_file() for f in UEFI_FILES):
+    missing = [f for f in UEFI_FILES if not (uefi / f).is_file()]
+    if 'uefi' in board and missing:
+        # (the payload alone is for a phone whose loader is already up; fastboot boot needs boot.img)
+        say(f'no boot.img: {uefi} has no {", ".join(missing)} (the phone\'s UEFI build, firmware/{name}/uefi/)')
+    if 'uefi' in board and not missing:
         import mkboot
         image, shim, dtb = ((uefi / f).read_bytes() for f in UEFI_FILES)
         boot = mkboot.pack(shim, image, dtb, payload, board['uefi'])
