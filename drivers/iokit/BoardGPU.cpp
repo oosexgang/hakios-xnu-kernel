@@ -986,7 +986,12 @@ HakiosGPUUserClient::hostBuffer(struct hakios_host * request)
 	IOMemoryDescriptor * memory;
 	IOReturn ret;
 
-	if (request->bytes == 0 || (request->address & 4095) != 0 || size > GPU_BUFFER_MAX || end <= start) {
+	/*
+	 * (the size before it is rounded: bytes within 4095 of 2^64 round to a size of 0, which passed, and the GPU address
+	 * given for it was given again to the next buffer)
+	 */
+	if (request->bytes == 0 || request->bytes > GPU_BUFFER_MAX || (request->address & 4095) != 0 || size == 0 ||
+	    size > GPU_BUFFER_MAX || end <= start) {
 		return kIOReturnBadArgument;
 	}
 	memory = IOMemoryDescriptor::withAddressRange(start, end - start, kIODirectionInOut, fTask);
