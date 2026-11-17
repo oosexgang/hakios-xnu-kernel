@@ -19,7 +19,8 @@ struct board_bt_controller {
 /* The Darwin side made, and a thread carrying packets for good: 0, or an errno (nothing is made then) */
 int board_bt_start(const struct board_bt_controller *controller);
 
-/* The service bluetoothd finds the controller by (iokit/Kernel/BoardBluetooth.cpp): 0, or an errno */
+/* The service bluetoothd finds the controller by (iokit/Kernel/BoardBluetooth.cpp): 0, or an errno; and taken away again */
 int board_bt_publish(void);
+void board_bt_unpublish(void);
 
 #endif /* _SYS_BOARD_BT_H */

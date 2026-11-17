@@ -270,6 +270,31 @@ deliver(const uint8_t *packet, unsigned length)
 	lck_mtx_unlock(&bt_host_lock);
 }
 
+/* what pipe_make made, taken away again, the last first (what it did not get to is null) */
+static void
+pipe_unmake(void)
+{
+	lck_mtx_lock(&bt_host_lock);
+	pipe_ready = false;
+	lck_mtx_unlock(&bt_host_lock);
+	if (pipe_controller != NULL) {
+		if (!uuid_is_null(pipe_instance)) {
+			(void)kern_nexus_controller_free_provider_instance(pipe_controller, pipe_instance);
+			uuid_clear(pipe_instance);
+		}
+		if (!uuid_is_null(pipe_provider)) {
+			(void)kern_nexus_controller_deregister_provider(pipe_controller, pipe_provider);
+			uuid_clear(pipe_provider);
+		}
+		kern_nexus_controller_destroy(pipe_controller);
+		pipe_controller = NULL;
+	}
+	if (!uuid_is_null(pipe_domain)) {
+		(void)kern_nexus_deregister_domain_provider(pipe_domain);
+		uuid_clear(pipe_domain);
+	}
+}
+
 static int
 pipe_make(void)
 {
@@ -293,6 +318,7 @@ pipe_make(void)
 	    &pipe_domain)) != 0 || (error = kern_nexus_controller_create(&pipe_controller)) != 0 ||
 	    (error = kern_nexus_attr_create(&attributes)) != 0) {
 		say("bt: the Skywalk pipe cannot be made (%d)\n", error);
+		pipe_unmake();
 		return error;
 	}
 	(void)kern_nexus_attr_set(attributes, NEXUS_ATTR_ANONYMOUS, 1);
@@ -310,6 +336,7 @@ pipe_make(void)
 	}
 	if (error != 0) {
 		say("bt: the Skywalk pipe cannot be made (%d)\n", error);
+		pipe_unmake();
 		return error;
 	}
 	lck_mtx_lock(&bt_host_lock);
@@ -430,6 +457,7 @@ control_register(void)
 	reg.ctl_getopt = control_getopt;
 	if ((error = ctl_register(&reg, &control)) != 0) {
 		say("bt: the kernel control com.apple.uart.sk.bluetooth cannot be registered (%d)\n", error);
+		control = NULL;
 	}
 	return error;
 }
@@ -497,18 +525,36 @@ static const struct cdevsw node_cdevsw = {
 	.d_stop = eno_stop, .d_reset = eno_reset, .d_select = node_select, .d_mmap = eno_mmap, .d_strategy = eno_strat, .d_type = 0
 };
 
+static int node_major = -1;
+static void *node_handles[3];
+
+static void
+nodes_remove(void)
+{
+	for (unsigned i = 0; i < 3; i++) {
+		if (node_handles[i] != NULL) {
+			devfs_remove(node_handles[i]);
+			node_handles[i] = NULL;
+		}
+	}
+	if (node_major >= 0) {
+		(void)cdevsw_remove(node_major, &node_cdevsw);
+		node_major = -1;
+	}
+}
+
 static int
 nodes_make(void)
 {
-	int major = cdevsw_add(-1, &node_cdevsw);
-
-	if (major < 0) {
+	if ((node_major = cdevsw_add(-1, &node_cdevsw)) < 0) {
 		say("bt: /dev/btwake and its fellows cannot be made\n");
 		return ENXIO;
 	}
 	for (unsigned i = 0; i < 3; i++) {
-		if (devfs_make_node(makedev(major, i), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "%s", node_names[i]) == NULL) {
+		node_handles[i] = devfs_make_node(makedev(node_major, i), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "%s", node_names[i]);
+		if (node_handles[i] == NULL) {
 			say("bt: /dev/%s cannot be made\n", node_names[i]);
+			nodes_remove();
 			return ENXIO;
 		}
 	}
@@ -569,6 +615,12 @@ carry(__unused void *parameter, __unused wait_result_t result)
 	}
 }
 
+/*
+ * The Darwin side, made in the order bluetoothd comes to it backwards -- the nodes, the pipe, the kernel control, and
+ * the service it looks for last -- and, should a step fail, what the steps before it made taken away again: the
+ * controller's driver powers the controller down then, and bluetoothd is not to find a service with nothing behind it.
+ * (A second start, or one after a failed start, is refused or tried afresh.)
+ */
 int
 board_bt_start(const struct board_bt_controller *given)
 {
@@ -579,12 +631,33 @@ board_bt_start(const struct board_bt_controller *given)
 		return EBUSY;
 	}
 	PE_parse_boot_argn("bt_quirks", &quirks, sizeof(quirks));
-	controller = given;
-	if ((error = board_bt_publish()) != 0 || (error = nodes_make()) != 0 || (error = pipe_make()) != 0 ||
-	    (error = control_register()) != 0) {
+	if ((error = nodes_make()) != 0) {
 		return error;
 	}
+	if ((error = pipe_make()) != 0) {
+		nodes_remove();
+		return error;
+	}
+	if ((error = control_register()) != 0) {
+		pipe_unmake();
+		nodes_remove();
+		return error;
+	}
+	if ((error = board_bt_publish()) != 0) {
+		(void)ctl_deregister(control);
+		control = NULL;
+		pipe_unmake();
+		nodes_remove();
+		return error;
+	}
+	controller = given;
 	if (kernel_thread_start(carry, NULL, &thread) != KERN_SUCCESS) {
+		controller = NULL;
+		board_bt_unpublish();
+		(void)ctl_deregister(control);
+		control = NULL;
+		pipe_unmake();
+		nodes_remove();
 		return ENOMEM;
 	}
 	thread_deallocate(thread);

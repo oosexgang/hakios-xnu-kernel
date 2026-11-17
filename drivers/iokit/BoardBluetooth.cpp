@@ -21,6 +21,7 @@
 
 /* (declared for C in include/board/bt.h, which the IOKit side's include paths do not reach) */
 extern "C" int board_bt_publish(void);
+extern "C" void board_bt_unpublish(void);
 
 class BoardBluetooth : public IOService
 {
@@ -85,4 +86,14 @@ board_bt_publish(void)
 	IOLog("bt: service \"bluetooth\" registered (address %02x:%02x:%02x:%02x:%02x:%02x, transport H4BC)\n", address[0], address[1],
 	    address[2], address[3], address[4], address[5]);
 	return 0;
+}
+
+/* the service taken away (board_bt_start could not finish): bluetoothd is not to find a controller with nothing behind it */
+void
+board_bt_unpublish(void)
+{
+	if (published != NULL) {
+		published->terminate(kIOServiceSynchronous);
+		OSSafeReleaseNULL(published);
+	}
 }
