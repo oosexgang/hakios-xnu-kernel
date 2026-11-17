@@ -53,6 +53,11 @@ __asm__ (
         /* exactly what other_cpu_entry does before the keys (on that core they then stay put):
          * vectors, CPACR, and the fixed bits of SCTLR with the MMU and caches off */
         "  msr daifset, #0xf\n"
+        /* no instruction or translation of the run before: the core may have kept them through its CPU_OFF */
+        "  ic iallu\n"
+        "  tlbi vmalle1\n"
+        "  dsb nsh\n"
+        "  isb\n"
         "  adrp x9, other_cpu_vectors\n"
         "  add  x9, x9, :lo12:other_cpu_vectors\n"
         "  msr vbar_el1, x9\n"
@@ -127,6 +132,11 @@ __asm__ (
         ".globl other_cpu_entry\n"
         "other_cpu_entry:\n"                    /* x0 = &other_cpu_start; MMU and caches are off */
         "  msr daifset, #0xf\n"
+        /* no instruction or translation of the run before: the core may have kept them through its CPU_OFF */
+        "  ic iallu\n"
+        "  tlbi vmalle1\n"
+        "  dsb nsh\n"
+        "  isb\n"
         /* until the kernel has vectors of its own, an exception must not go nowhere */
         "  adrp x9, other_cpu_vectors\n"
         "  add  x9, x9, :lo12:other_cpu_vectors\n"
