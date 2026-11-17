@@ -189,7 +189,8 @@ SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_most_in_flight, CTLFLAG_RD | CTLF
  * end, into the loader's log directly (hakios_ufs_quiesce; printf is not for that moment).
  */
 #define KEPT_LINES          64
-static char hc_kept[KEPT_LINES][208];
+#define LINE_BYTES          320                 /* (the longest line, the list put back, is some 260) */
+static char hc_kept[KEPT_LINES][LINE_BYTES];
 static uint32_t hc_kept_count;
 
 static void
@@ -197,7 +198,7 @@ hc_say(const char *format, ...) __printflike(1, 2);
 static void
 hc_say(const char *format, ...)
 {
-	char line[208];
+	char line[LINE_BYTES];
 	va_list list;
 
 	va_start(list, format);
