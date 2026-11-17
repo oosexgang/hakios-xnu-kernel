@@ -176,8 +176,8 @@ class Repository(unittest.TestCase):
             first = (ROOT / 'arch/arm64/boot/src' / name).read_text().split('\n')[0]
             self.assertTrue(first.startswith('/* Part of the loader (included by loader.c, not compiled alone): '), name)
         self.assertEqual(len(re.findall(r'(?m)^\| `src/', readme)), len(included) + 1)     # (and the row of src/ itself)
-        # the drivers' list: every start function it calls is called once
-        calls = re.findall(r'(?m)^\t(\w+_(?:init|start))\(\);', (ROOT / 'drivers/board/drivers.c').read_text())
+        # the drivers' list: every start function it calls is called once (under its if (CONFIG_...) or not)
+        calls = re.findall(r'(?m)^\t+(\w+_(?:init|start))\(\);', (ROOT / 'drivers/board/drivers.c').read_text())
         self.assertGreater(len(calls), 20)
         self.assertEqual(len(calls), len(set(calls)))
 
