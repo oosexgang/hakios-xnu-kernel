@@ -308,6 +308,20 @@ monitor_is_obeyed(void)
 	CHECK(peak_out >= 3240, "and whole again without it: %d", peak_out);
 }
 
+/* the gain moves across a block from the last block's to this one's and has arrived by the block's last frame:
+ * a block of one frame is all at the new gain */
+static void
+the_gain_arrives_by_the_last_frame(void)
+{
+	int16_t frame[2] = { 10000, 10000 };
+
+	hakios_guard_configure(false, 0);
+	hakios_guard_attenuation(0);
+	hakios_guard_monitor(6 * 8);            /* 6 dB down: a half */
+	hakios_guard_process(frame, 1);
+	CHECK(frame[0] >= 4950 && frame[0] <= 5050 && frame[1] == frame[0], "at the half at once: %d %d of 10000", frame[0], frame[1]);
+}
+
 /* more frames at once than the guard works on in one go */
 static void
 long_call(void)
@@ -366,7 +380,7 @@ main(int argc, char **argv)
 		{ "amplifiers_off", amplifiers_off }, { "low_tones_are_taken_out", low_tones_are_taken_out }, { "filter_off", filter_off },
 		{ "gain_is_limited_not_clipped", gain_is_limited_not_clipped }, { "one_spike", one_spike },
 		{ "amplifiers_turned_down", amplifiers_turned_down }, { "monitor_is_obeyed", monitor_is_obeyed },
-		{ "long_call", long_call }, { "decibels", decibels },
+		{ "the_gain_arrives_by_the_last_frame", the_gain_arrives_by_the_last_frame }, { "long_call", long_call }, { "decibels", decibels },
 	};
 
 	if (argc < 2) {
