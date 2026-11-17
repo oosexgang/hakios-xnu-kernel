@@ -21,6 +21,16 @@ first lines; `make` lists the common ones.
 | `heredoc-python.py` | Takes the Python out of the shell scripts' quoted here-documents (`python3 - <<'PY'`), parses it, and writes it out for pyflakes' checks. |
 | `lint.sh` | All of the checks of form in one: syntax of every script, shellcheck, pyflakes' checks (ruff or pyflakes) of every Python script and here-document, the checks above. `make lint`. |
 | `mk-focaltech-fw.py` | Makes the header one touch driver includes from a firmware file of your own phone. The firmware is not in the repository. |
+| `boardfile.py` | Reads and writes board and SoC files: the syntax of a device tree source, the one a porter reads in the phone's Android tree. A module of `boards.py`, not a command. |
+| `defconfig.py NAME` | The boot arguments of a defconfig of `arch/arm64/configs` (or of a file), on one line; `--list` names every defconfig with its first line. `./bench`, `tools/qemu-kernel.sh` and `tools/image.py` read them through it. |
+| `identity.py` | A phone's identity: the seed the loader makes its serial numbers, ECID and addresses from (`identity=` among the boot arguments), kept per phone. |
+| `kernel-view.sh DIR` | The kernel's files of ours laid out at their paths in its tree, as links to the repository's: what the host tests include (`drivers/board` as `bsd/dev/board`, and so on). |
+| `mk-libdeflate.sh` | Puts the decompressing half of libdeflate into the kernel tree, for the APFS driver's compressed files. |
+| `qupclocks.py` | The clocks of a serial engine, for `touch { }` of a board file, out of Linux's clock driver for the SoC. |
+| `recording.py` | A video of a screen recording the kernel's display driver left (`rec_secs=N`, `./bench recording`). |
+| `apfs/` | APFS on this machine, from the kernel's own sources: `mkapfs.py` makes images, `apfs-tool` reads and checks them, `mksparse.py` makes the sparse images `/dev/rsp0` stands for; their tests (`run-tests.sh`). |
+| `qemu/` | Helpers for a kernel in QEMU: `screendump.sh` (a picture of its screen), `touch.py` (a touch through QMP). |
+| `qemu-init/` | The program that is `/sbin/launchd` of `qemu-root.sh`'s root: says what the kernel says of itself, then a shell whose commands try the rest of the kernel. |
 
 The tools need Python 3.11 or newer and git, nothing else. They are tested in `workbench/`
 (`boards_test.py`, `device_test.py`, `bootargs_test.py`, `tools_test.py`), in small repositories of
