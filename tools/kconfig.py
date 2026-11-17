@@ -43,6 +43,7 @@ class Symbol:
         self.name = name
         self.where = where              # (file, line) of its config entry
         self.prompt = None
+        self.visible = []               # the prompt's own `if': where it does not hold, a fragment's ask is not taken
         self.defaults = []              # (value expression, condition expression or None)
         self.depends = []               # expressions, all of which must hold (its own and those of the menus it is in)
         self.selects = []               # (symbol name, condition or None)
@@ -107,8 +108,11 @@ def parse_expression(text, where):
             raise KconfigError(f'{where}: "{text}": a symbol was expected, not {token}')
         if peek() in ('=', '!='):
             operator = take()
-            other = take()
-            return ('eq' if operator == '=' else 'ne', token, other.strip('"'))
+            other = take().strip('"')
+            if not re.fullmatch(r'[A-Za-z0-9_]+', other):
+                raise KconfigError(f'{where}: "{text}": a symbol or y or n was expected after {operator}, not {other}')
+            # (as Linux: both sides are values, a symbol's or the constants y and n)
+            return ('eq' if operator == '=' else 'ne', token, other)
         return ('symbol', token)
 
     tree = either()
@@ -122,7 +126,7 @@ def symbols_in(tree):
     if kind == 'symbol':
         return {tree[1]} - {'y', 'n'}
     if kind in ('eq', 'ne'):
-        return {tree[1]} - {'y', 'n'}
+        return {tree[1], tree[2]} - {'y', 'n'}
     if kind == 'not':
         return symbols_in(tree[1])
     return symbols_in(tree[1]) | symbols_in(tree[2])
@@ -134,8 +138,8 @@ def evaluate(tree, values):
         name = tree[1]
         return name == 'y' or (name != 'n' and values.get(name, False))
     if kind in ('eq', 'ne'):
-        value = 'y' if evaluate(('symbol', tree[1]), values) else 'n'
-        return (value == tree[2]) == (kind == 'eq')
+        same = evaluate(('symbol', tree[1]), values) == evaluate(('symbol', tree[2]), values)
+        return same == (kind == 'eq')
     if kind == 'not':
         return not evaluate(tree[1], values)
     if kind == 'and':
@@ -193,7 +197,8 @@ class Kconfig:
                 prompt, condition = self._quoted(rest, where)
                 current.prompt = prompt
                 if condition is not None:
-                    current.depends.append(condition)
+                    # (as Linux: it hides the prompt, not the symbol -- hidden, it takes its default)
+                    current.visible.append(condition)
                 continue
             if word == 'def_bool':
                 if current is None:
@@ -229,7 +234,8 @@ class Kconfig:
                         text.append('')
                         index += 1
                         continue
-                    width = len(body) - len(body.lstrip())
+                    expanded = body.expandtabs(8)       # (as Linux measures it: a tab to the next column of eight)
+                    width = len(expanded) - len(expanded.lstrip())
                     if indent is None:
                         indent = width
                     if width < indent or width == 0:
@@ -262,8 +268,6 @@ class Kconfig:
                 _, conditions = stack.pop()
             elif word == 'comment':
                 self._quoted(rest, where)
-            elif word == 'visible' or word == 'depends':
-                pass
             else:
                 raise KconfigError(f'{where}: {word} is not a word of the language this tree uses')
         if stack:
@@ -319,7 +323,7 @@ class Kconfig:
                 allowed = all(evaluate(d, values) for d in symbol.depends)
                 if symbol.name in selected:
                     value = True
-                elif symbol.prompt is not None and symbol.name in asked:
+                elif symbol.prompt is not None and symbol.name in asked and all(evaluate(v, values) for v in symbol.visible):
                     value = asked[symbol.name] and allowed
                 else:
                     value = False
@@ -333,6 +337,10 @@ class Kconfig:
                     changed = True
             if not changed:
                 break
+        else:
+            # (Linux refuses such a tree as a recursive dependency: here what it came to is said not to be settled)
+            warnings.append('the configuration does not settle: a select and a dependency undo each other (a loop); '
+                            'what is written is where it stopped')
         for symbol in self.symbols.values():
             if values[symbol.name] and not all(evaluate(d, values) for d in symbol.depends):
                 warnings.append(f'CONFIG_{symbol.name} is selected, and its own dependencies are not met')
@@ -342,6 +350,38 @@ class Kconfig:
 
     def defaults(self):
         return self.resolve({})[0]
+
+    def default_under(self, symbol, values):
+        """what SYMBOL would be under VALUES (every other symbol as there) if nobody asked: its first default that holds,
+        within its dependencies"""
+        for default, condition in symbol.defaults:
+            if condition is None or evaluate(condition, values):
+                return evaluate(default, values) and all(evaluate(d, values) for d in symbol.depends)
+        return False
+
+    def selected_under(self, name, values):
+        return any(values[s.name] and target == name and (condition is None or evaluate(condition, values))
+                   for s in self.symbols.values() for target, condition in s.selects)
+
+    def savedefconfig(self, values):
+        """VALUES as the smallest fragment Linux's savedefconfig would write: each choice whose value is not what its default
+        would be under VALUES (not under no fragment at all), selected ones left to their selection; then checked to give
+        VALUES back, and whatever it does not, written too. Returns the fragment's lines."""
+        written = {}
+        for symbol in self.symbols.values():
+            if symbol.prompt is None or self.selected_under(symbol.name, values):
+                continue
+            if values[symbol.name] != self.default_under(symbol, values):
+                written[symbol.name] = values[symbol.name]
+        for _ in range(len(self.symbols)):
+            again = self.resolve(written)[0]
+            missing = [s.name for s in self.symbols.values() if s.prompt is not None and s.name not in written and
+                       again[s.name] != values[s.name]]
+            if not missing:
+                break
+            written[missing[0]] = values[missing[0]]
+        return [f'CONFIG_{name}=y' if written[name] else f'# CONFIG_{name} is not set'
+                for name in self.symbols if name in written]
 
 
 def read_fragment(path):
@@ -456,10 +496,8 @@ def main(argv=None):
                 what = symbol.prompt or ('(not a choice)' if symbol.defaults else '(on when a driver that uses it is)')
                 print(f'{"y" if values[symbol.name] else "n"}  {symbol.name:28} {what}')
         elif options.command == 'savedefconfig':
-            defaults = kconfig.defaults()
-            for symbol in kconfig.symbols.values():
-                if symbol.prompt is not None and values[symbol.name] != defaults[symbol.name]:
-                    print(f'CONFIG_{symbol.name}=y' if values[symbol.name] else f'# CONFIG_{symbol.name} is not set')
+            for line in kconfig.savedefconfig(values):
+                print(line)
         else:
             text = dotconfig(kconfig, values, paths) if options.command == 'config' else header(kconfig, values, paths)
             out = Path(options.out or ROOT / ('build/kconfig/.config' if options.command == 'config' else 'build/boards/kconfig.h'))

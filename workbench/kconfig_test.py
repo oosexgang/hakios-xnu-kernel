@@ -4,12 +4,15 @@ tree uses it (depends on, select, default if, def_bool, menus, if blocks, source
 fragment's ask is taken where the dependencies allow it, and said where they do not; savedefconfig gives back a fragment
 of the same configuration; kconfig.h defines every symbol under #ifndef and names what is off; and the headers user
 space shares with the kernel come out without the kernel's part, each compiling on its own."""
+import contextlib
+import io
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,11 +126,57 @@ class Language(unittest.TestCase):
         self.assertTrue(values['S'], 'selected: on, as in Linux')
         self.assertIn('CONFIG_S is selected, and its own dependencies are not met', warnings)
 
+    def test_the_finer_points_linux_has(self):
+        top = '''config X
+\tbool "X"
+\thelp
+\t  X.
+
+config P
+\tbool "P, its prompt only where X is" if X
+\tdefault y
+\thelp
+\t  A prompt's own if hides the prompt, not the symbol.
+
+config Q
+\tbool "Q"
+\tdefault y if P = X
+\thelp
+\t  Two symbols compared.
+
+config R
+\tbool "R"
+\thelp
+\t  A help whose lines are a tab and spaces,
+\t    and a line further in.
+        default y
+'''
+        (self.dir / 'Kconfig').write_text(top)
+        k = kconfig.Kconfig(self.dir)
+        values, _ = k.resolve({'P': False})
+        self.assertTrue(values['P'], 'hidden (X is n): the ask is not taken, the default is')
+        values, _ = k.resolve({'X': True, 'P': False})
+        self.assertFalse(values['P'], 'shown: taken')
+        self.assertFalse(values['Q'], 'P (n) = X (y): not the same')
+        self.assertTrue(k.resolve({'X': True})[0]['Q'], 'P (y) = X (y): the same')
+        values, _ = k.resolve({})
+        self.assertFalse(values['Q'], 'P (y) is not X (n)')
+        self.assertTrue(values['R'], 'eight spaces are a tab: the default after the help is the entry\'s, not help text')
+        self.assertNotIn('default', k.symbols['R'].help)
+        self.assertEqual(kconfig.symbols_in(kconfig.parse_expression('P = X', 'x')), {'P', 'X'})
+
+    def test_a_loop_is_said(self):
+        (self.dir / 'Kconfig').write_text('config A\n\tbool "A"\n\tdefault y\n\tdepends on !B\n\tselect B\n\thelp\n\t  A.\n'
+                                          'config B\n\tbool\n\thelp\n\t  B.\n')
+        _, warnings = kconfig.Kconfig(self.dir).resolve({})
+        self.assertTrue(any('does not settle' in w for w in warnings), warnings)
+
     def test_what_is_not_this_language_is_refused(self):
         for text, said in (('config A\n\ttristate "A"\n', 'only bool'), ('config a\n\tbool "a"\n', 'upper case'),
                            ('menu "M"\nconfig A\n\tbool "A"\n', 'menu not closed'), ('choice\n', 'not a word'),
                            ('config A\n\tbool "A"\nconfig A\n\tbool "A"\n', 'described already'),
-                           ('config A\n\tbool "A"\n\tdepends on A &&\n', 'ends too soon')):
+                           ('config A\n\tbool "A"\n\tdepends on A &&\n', 'ends too soon'),
+                           ('menu "M"\nvisible if A\nendmenu\n', 'not a word')):
             (self.dir / 'Kconfig').write_text(text)
             with self.assertRaises(kconfig.KconfigError) as raised:
                 kconfig.Kconfig(self.dir)
@@ -148,12 +197,24 @@ class Language(unittest.TestCase):
         asked = kconfig.read_fragment(fragment)
         self.assertEqual(asked, {'C': True, 'B': False})
         k = kconfig.Kconfig(self.dir)
-        values, _ = k.resolve(asked)
-        saved = self.dir / 'saved.config'
-        defaults = k.defaults()
-        saved.write_text(''.join((f'CONFIG_{s.name}=y\n' if values[s.name] else f'# CONFIG_{s.name} is not set\n')
-                                 for s in k.symbols.values() if s.prompt is not None and values[s.name] != defaults[s.name]))
-        self.assertEqual(k.resolve(kconfig.read_fragment(saved))[0], values, 'the saved fragment makes the same configuration')
+        # (the command itself, as a porter runs it, and what it writes read back)
+        for text in ('CONFIG_C=y\n# CONFIG_B is not set\n',
+                     '# CONFIG_B is not set\n# CONFIG_D is not set\n',   # D defaults to y once B is off: its n is to be kept
+                     '# CONFIG_A is not set\nCONFIG_D=y\n'):
+            fragment.write_text(text)
+            values, _ = k.resolve(kconfig.read_fragment(fragment))
+            said = io.StringIO()
+            with mock.patch.object(kconfig.Kconfig, '__init__', lambda own, *a: own.__dict__.update(k.__dict__)), \
+                    contextlib.redirect_stdout(said):
+                self.assertEqual(kconfig.main(['savedefconfig', str(fragment)]), 0)
+            saved = self.dir / 'saved.config'
+            saved.write_text(said.getvalue())
+            self.assertEqual(k.resolve(kconfig.read_fragment(saved))[0], values, f'{text!r}: the same configuration back')
+        self.assertIn('# CONFIG_D is not set', k.savedefconfig(k.resolve({'B': False, 'D': False})[0]),
+                      "D's n is written: its default under B=n is y")
+        self.assertEqual(k.savedefconfig(k.defaults()), [], 'the defaults: nothing')
+        self.assertEqual(k.savedefconfig(k.resolve({'A': False})[0]), ['# CONFIG_A is not set'],
+                         'what follows from A=n (B, E off) is not written: the smallest fragment')
         (self.dir / 'bad.config').write_text('CONFIG_A=maybe\n')
         with self.assertRaises(kconfig.KconfigError):
             kconfig.read_fragment(self.dir / 'bad.config')
@@ -206,6 +267,16 @@ class Tree(unittest.TestCase):
 
 
 class UserHeaders(unittest.TestCase):
+    def test_a_header_that_needs_stdint_and_does_not_say_so(self):
+        out = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out)
+        source = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, source)
+        (source / 'bad.h').write_text('struct bad { uint32_t x; };\n')
+        with mock.patch.object(gen_headers, 'USER_SOURCES', source):
+            problems = gen_headers.user_headers(out)
+        self.assertTrue(any(p.startswith('bad.h: does not compile on its own') for p in problems), problems)
+
     def test_the_kernels_part_left_out(self):
         text = ('#include <stdint.h>\nstruct a { uint32_t x; };\n#ifdef KERNEL\n#if X\nvoid k(void);\n#endif\nint kk;\n'
                 '#else\nint user_only;\n#endif\n#ifndef KERNEL\nint also_user;\n#else\nint kernel_again;\n#endif\n'
@@ -223,8 +294,11 @@ class UserHeaders(unittest.TestCase):
     def test_the_trees_headers_for_user_space(self):
         out = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, out)
+        (out / 'sys/board').mkdir(parents=True)
+        (out / 'sys/board/gone.h').write_text('/* a header whose source is no more */\n')
         problems = gen_headers.user_headers(out)
         self.assertEqual(problems, [])
+        self.assertFalse((out / 'sys/board/gone.h').exists(), 'a header whose source is gone is taken away')
         exported = sorted(p.name for p in (out / 'sys/board').glob('*.h'))
         self.assertEqual(exported, sorted(p.name for p in (ROOT / 'include/board').glob('*.h')))
         text = (out / 'sys/board/input.h').read_text()
