@@ -4067,6 +4067,8 @@ rmtfs_start(void)
 	return true;
 }
 
+static void tftp_stop_all(void);
+
 static void
 rmtfs_stop(void)
 {
@@ -4086,6 +4088,7 @@ rmtfs_stop(void)
 		servreg_port = NULL;
 	}
 	ipa_qmi_stop();
+	tftp_stop_all();
 	for (unsigned f = 0; f < 4; f++) {
 		rmtfs_files[f].open = false;
 	}
@@ -4128,12 +4131,15 @@ struct tftp_transfer {
 	uint64_t size;
 	uint32_t blksize, wsize, rsize, seek;
 	uint32_t sent;                          /* blocks sent so far */
+	uint32_t last;                          /* the block shorter than the others (perhaps empty) that ends a read; 0: not sent */
+	uint64_t active_us;                     /* when the modem was last heard on it (a transfer it gave up on is taken back) */
 	bool done, writing, borrowed;           /* borrowed: data is a tftp_files entry's, not to be freed */
 	uint8_t *written;                       /* a write: what has come, up to TFTP_WRITE_MAX */
 	uint32_t written_size, expected;
 	char name[96];
 };
 static struct tftp_transfer tftp_transfers[4];
+#define TFTP_IDLE_US            (10ull * 1000000)      /* a transfer the modem has said nothing on for this long is over */
 
 /* What the modem writes, kept for the run (it reads some of it back); not on the storage. */
 #define TFTP_WRITE_MAX          (1u << 20)
@@ -4181,6 +4187,17 @@ tftp_transfer_end(struct tftp_transfer *t)
 	t->done = true;
 }
 
+/* Every transfer still open ended: the link is going (rmtfs_stop()), and nothing of theirs is left for the next */
+static void
+tftp_stop_all(void)
+{
+	for (unsigned i = 0; i < sizeof(tftp_transfers) / sizeof(tftp_transfers[0]); i++) {
+		if (tftp_transfers[i].port != NULL || tftp_transfers[i].data != NULL || tftp_transfers[i].written != NULL) {
+			tftp_transfer_end(&tftp_transfers[i]);
+		}
+	}
+}
+
 /* Blocks `from` + 1 onward, a window of them: TFTP's blocks are numbered from 1. */
 static void
 tftp_send_window(struct tftp_transfer *t, uint32_t from)
@@ -4215,7 +4232,8 @@ tftp_send_window(struct tftp_transfer *t, uint32_t from)
 		}
 		t->sent = block;
 		if (n < t->blksize) {
-			break;                          /* the last block */
+			t->last = block;                /* the last block: shorter, or empty after a file of whole blocks */
+			break;
 		}
 	}
 	kfree_data(packet, t->blksize + 4);
@@ -4250,6 +4268,7 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 		}
 		memcpy(t->written + t->written_size, m + 4, n);
 		t->written_size += n;
+		t->active_us = now_us();
 		t->expected++;
 		if (block % t->wsize == 0 || n < t->blksize) {
 			qrtr_send(t->port, node, port, ack, sizeof(ack));
@@ -4299,8 +4318,12 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 		tftp_transfer_end(t);
 		return;
 	}
-	if ((uint64_t)t->seek + (uint64_t)block * t->blksize >= t->size || (t->rsize != 0 && (uint64_t)block * t->blksize >= t->rsize)) {
-		/* the acknowledged block was the last: over */
+	t->active_us = now_us();
+	/*
+	 * Over when the block acknowledged was the short one that ends a read (TFTP: a file of whole blocks ends with an empty
+	 * one, so the modem does not wait for more), or as much as it asked for has gone
+	 */
+	if ((t->last != 0 && block >= t->last) || (t->rsize != 0 && (uint64_t)block * t->blksize >= t->rsize)) {
 		tftp_served++;
 		tftp_transfer_end(t);
 		return;
@@ -4339,7 +4362,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	uint8_t oack[160];
 	unsigned at;
 
-	bool writing;
+	bool writing, read_write;
 
 	if (length < 4) {
 		return;
@@ -4412,8 +4435,32 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	if (wsize > TFTP_MAX_WINDOW) {
 		wsize = TFTP_MAX_WINDOW;
 	}
+	if (strlen(name) >= sizeof(tftp_transfers[0].name)) {
+		/* (kept cut, it would be another name's: a shorter one that is its beginning) */
+		printf("mpss: tftp: the modem asks for a name of %zu characters: longer than is kept\n", strlen(name));
+		tftp_error(tftp_port, node, port, TFTP_ENOENT, "name too long");
+		tftp_refused++;
+		return;
+	}
+	read_write = strncmp(name, "/readwrite/", 11) == 0;
+	if (writing && !read_write) {
+		/* (a write anywhere else would stand, for the rest of the run, in front of the firmware of that name) */
+		printf("mpss: tftp: the modem writes \"%s\": not under /readwrite/: refused\n", name);
+		tftp_error(tftp_port, node, port, TFTP_EACCESS, "read-only");
+		tftp_refused++;
+		return;
+	}
 	for (unsigned i = 0; i < sizeof(tftp_transfers) / sizeof(tftp_transfers[0]) && t == NULL; i++) {
 		if (tftp_transfers[i].port == NULL) {
+			t = &tftp_transfers[i];
+		}
+	}
+	for (unsigned i = 0; i < sizeof(tftp_transfers) / sizeof(tftp_transfers[0]) && t == NULL; i++) {
+		if (now_us() - tftp_transfers[i].active_us > TFTP_IDLE_US) {
+			/* (a transfer the modem has not spoken on for that long it gave up on: its slot, file and port taken back) */
+			printf("mpss: tftp: \"%s\" given up after %u s without a word from the modem\n", tftp_transfers[i].name,
+			    (unsigned)(TFTP_IDLE_US / 1000000));
+			tftp_transfer_end(&tftp_transfers[i]);
 			t = &tftp_transfers[i];
 		}
 	}
@@ -4434,6 +4481,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		}
 		t->node = node;
 		t->peer = port;
+		t->active_us = now_us();
 		t->writing = true;
 		t->expected = 1;
 		t->blksize = blksize;
@@ -4456,7 +4504,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	 */
 	file = NULL;
 	t->borrowed = false;
-	for (unsigned f = 0; f < 8 && file == NULL; f++) {
+	for (unsigned f = 0; f < 8 && file == NULL && read_write; f++) {
 		if (tftp_files[f].data != NULL && strcmp(tftp_files[f].name, name) == 0) {
 			static const uint8_t nothing[1];
 
@@ -4510,6 +4558,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	}
 	t->node = node;
 	t->peer = port;
+	t->active_us = now_us();
 	t->data = file;
 	t->size = size;
 	t->blksize = blksize;
