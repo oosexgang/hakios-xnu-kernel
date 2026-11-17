@@ -15,7 +15,8 @@
  * The mask and the router given to DHCP are not the modem's: a cellular session is a point-to-point
  * link, and its "gateway" need not be in any subnet with the address, which DHCP cannot express.
  * The interface gets a /24 around its address with the router at its .1 (or .2): any router will
- * do, since every packet goes to the modem anyway.
+ * do, since every packet goes to the modem anyway. An address that would be a /24's own or its
+ * broadcast address (x.y.z.0, x.y.z.255) gets as much shorter a prefix as it takes (cell_mask()).
  */
 #include <kern/locks.h>
 #include <libkern/libkern.h>
@@ -79,6 +80,23 @@ checksum(const uint8_t *data, size_t length)
 	return (uint16_t)~sum;
 }
 
+/*
+ * The mask en1 is told: a /24 around the address (see the top of the file), or as much shorter as it takes for the
+ * address not to be its network's own address or its broadcast address (a carrier's x.y.z.0 or x.y.z.255); /8 at most.
+ */
+static uint32_t
+cell_mask(uint32_t address)
+{
+	for (unsigned bits = 24; bits >= 8; bits--) {
+		uint32_t mask = 0xffffffffu << (32 - bits), host = address & ~mask;
+
+		if (host != 0 && host != ~mask) {
+			return mask;
+		}
+	}
+	return 0xffffff00u;
+}
+
 /* ---- ARP: the router answers for everything ---------------------------------------------------- */
 
 static bool
@@ -87,8 +105,12 @@ arp_answer(const uint8_t *frame, size_t length)
 	const uint8_t *arp = frame + 14;
 	uint8_t reply[42];
 
-	/* Ethernet/IPv4, a request, not for our own address */
-	if (length < 42 || get32(arp) != 0x00010800 || arp[4] != 6 || arp[5] != 4 || arp[7] != 1 || get32(arp + 24) == session.address) {
+	/*
+	 * Ethernet/IPv4, a request, not for our own address; and asked from the address the session has, or none (a probe):
+	 * a request from an address of an earlier session is not answered, so that a lease of it is not taken as still good
+	 */
+	if (length < 42 || get32(arp) != 0x00010800 || arp[4] != 6 || arp[5] != 4 || arp[7] != 1 || get32(arp + 24) == session.address ||
+	    (get32(arp + 14) != session.address && get32(arp + 14) != 0)) {
 		return false;
 	}
 	memcpy(reply, frame + 6, 6);                    /* to the asker */
@@ -309,13 +331,15 @@ static struct hakios_net_link cell_link = {
 void
 hakios_cell_session(bool up, uint32_t address, uint32_t mask, uint32_t gateway, uint32_t dns1, uint32_t dns2, uint32_t mtu)
 {
-	uint32_t router;
+	uint32_t router, was_address;
+	bool was_up;
 
 	lck_mtx_lock(&cell_lock);
+	was_up = session.up;
+	was_address = session.address;
 	session.modem_mask = mask;
 	session.modem_gateway = gateway;
-	/* a /24 around the address, with the router in it (see the top of the file) */
-	mask = 0xffffff00;
+	mask = cell_mask(address);
 	router = (address & mask) | 1;
 	if (router == address) {
 		router = (address & mask) | 2;
@@ -328,15 +352,19 @@ hakios_cell_session(bool up, uint32_t address, uint32_t mask, uint32_t gateway, 
 	session.mtu = mtu;
 	session.up = up && address != 0;
 	lck_mtx_unlock(&cell_lock);
-	printf("cell: the data session is %s: %u.%u.%u.%u (the modem's mask %u.%u.%u.%u and gateway %u.%u.%u.%u; en1 is told /24 and router "
+	printf("cell: the data session is %s: %u.%u.%u.%u (the modem's mask %u.%u.%u.%u and gateway %u.%u.%u.%u; en1 is told /%u and router "
 	    "%u.%u.%u.%u), DNS %u.%u.%u.%u %u.%u.%u.%u, MTU %u%s\n", session.up ? "UP" : "down",
 	    address >> 24, (address >> 16) & 0xff, (address >> 8) & 0xff, address & 0xff,
 	    session.modem_mask >> 24, (session.modem_mask >> 16) & 0xff, (session.modem_mask >> 8) & 0xff, session.modem_mask & 0xff,
-	    gateway >> 24, (gateway >> 16) & 0xff, (gateway >> 8) & 0xff, gateway & 0xff,
+	    gateway >> 24, (gateway >> 16) & 0xff, (gateway >> 8) & 0xff, gateway & 0xff, (unsigned)__builtin_popcount(mask),
 	    router >> 24, (router >> 16) & 0xff, (router >> 8) & 0xff, router & 0xff,
 	    dns1 >> 24, (dns1 >> 16) & 0xff, (dns1 >> 8) & 0xff, dns1 & 0xff, dns2 >> 24, (dns2 >> 16) & 0xff, (dns2 >> 8) & 0xff, dns2 & 0xff,
 	    mtu, cell_attached ? "" : " (no en1: the IPA's data path is not up)");
 	if (cell_attached) {
+		if (was_up && session.up && was_address != address) {
+			/* (another address while the link stays up: down and up again, so that DHCP is asked anew, not the old lease kept) */
+			hakios_net_link_state_unit(CELL_UNIT, false);
+		}
 		hakios_net_link_state_unit(CELL_UNIT, session.up);
 	}
 }
