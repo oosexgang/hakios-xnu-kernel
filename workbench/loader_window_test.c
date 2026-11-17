@@ -22,10 +22,14 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 
 static char said[8192];
+static void (*also_logged)(void);       /* (what a scenario has the loader's log given, as print() would) */
 static void
 print(const char *format, ...)
 {
 	snprintf(said + strlen(said), sizeof(said) - strlen(said), "%s", format);
+	if (also_logged != NULL) {
+		also_logged();
+	}
 }
 
 #include "src/conventions.h"
@@ -301,10 +305,47 @@ forced_base(void)
 	sound();
 }
 
+/* "oem result": the last command's line, from what was printed, at most 63 letters of it; the log keeps none of it */
+static const char *logged_as;
+
+static void
+log_it(void)
+{
+	size_t n = strlen(logged_as);
+
+	memcpy(log_buf + log_len, logged_as, n);
+	log_len += (uint32_t)n;
+}
+
+static void
+result_line(void)
+{
+	static char line[100];
+	uint32_t before;
+
+	also_logged = log_it;
+	log_len = 5;
+	for (size_t length = 1; length < sizeof(line); length++) {
+		memset(line, 'a', length);
+		line[length - 1] = 'z';
+		line[length] = 0;
+		logged_as = line;
+		memset(last_result, '#', sizeof(last_result));
+		before = log_len;
+		set_result("running", 1, 2);
+		size_t kept = length < 63 ? length : 63;
+		CHECK(strlen(last_result) == kept && memcmp(last_result, line, kept) == 0, "a line of %zu letters: %zu of them kept, %zu are",
+		    length, kept, strlen(last_result));
+		CHECK(log_len == before, "and the log is as it was: %u, not %u", before, log_len);
+	}
+	also_logged = NULL;
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
+		{ "result_line", result_line },
 		{ "phone_8gb", phone_8gb }, { "payload_near_the_end", payload_near_the_end }, { "ends_are_cut", ends_are_cut },
 		{ "more_than_the_kernel_takes", more_than_the_kernel_takes }, { "largest_free_range", largest_free_range },
 		{ "longer_descriptors", longer_descriptors }, { "nothing_free", nothing_free }, { "firmware_says_no", firmware_says_no },
