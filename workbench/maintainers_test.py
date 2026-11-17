@@ -59,6 +59,19 @@ class Maintainers(unittest.TestCase):
             self.assertTrue(keys.get('F'), f'{name} has no files')
 
 
+class Readmes(unittest.TestCase):
+    def test_every_tool_and_script_is_in_its_readme(self):
+        for directory in ('tools', 'scripts'):
+            readme = (ROOT / directory / 'README.md').read_text()
+            for path in sorted((ROOT / directory).iterdir()):
+                name = path.name + ('/' if path.is_dir() else '')
+                if name in ('README.md', '__pycache__/') or not any(f == f'{directory}/{path.name}' or f.startswith(f'{directory}/{path.name}/')
+                                                                    for f in TRACKED):
+                    continue
+                self.assertTrue(f'`{name}' in readme or f'`{path.name} ' in readme,
+                                f'{directory}/{name} is not in {directory}/README.md')
+
+
 class TestsFor(unittest.TestCase):
     def test_patterns(self):
         self.assertTrue(tests_for.covers('drivers/board/ufs.c', 'drivers/board/ufs.c'))
