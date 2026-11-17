@@ -689,7 +689,8 @@ mailbox_open(void)
 	}
 	box = get(&aoss, "our mailbox", QMP_OUR_BOX);
 	size = get(&aoss, "our mailbox's size", QMP_OUR_BOX_SIZE);
-	if (size < QMP_MESSAGE + 4 || box < 0x3c || box + size > aoss.size || (box & 3)) {
+	/* (as board/ipc.h's qmp_box_usable(): no sum of the processor's two words that can wrap past the block) */
+	if (size < QMP_MESSAGE + 4 || box < 0x3c || (box & 3) || box > aoss.size || size > aoss.size - box) {
 		printf("mpss: %u: our mailbox is not where a message fits\n", step);
 		return false;
 	}
