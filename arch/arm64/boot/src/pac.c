@@ -240,15 +240,31 @@ kernel_pac_setup(const uint8_t *file, const struct mach_header_64 *mh, uint64_t 
 	}
 	if (keys_pa == 0) {
 		print("pac: the kernel has no __DATA,__pac_keys section: no keys, nothing to sign\n");
+		g_probe_keys_pa = 0;    /* (not the last run's: the secondary entry would put its stale keys in place) */
 		return;
 	}
 
-	uint64_t keys[10];
-	uint64_t state;
-	__asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(state));
-	state ^= (uint64_t)(uintptr_t)mh >> 4;
-	for (int i = 0; i < 10; i++) {
-		keys[i] = pac_mix64(&state);
+	/*
+	 * The keys, made once in a session of the loader and the same for every run of it. Under Qualcomm's hypervisor what
+	 * a core holds is what was written to it first (othercore.c): this core, the loader's, is never powered off, and kept
+	 * the first run's keys -- the kernel's pointers were signed with them here (pacia) -- while each core the next run
+	 * started took that run's new keys from __pac_keys: the first signed pointer one of them authenticated faulted, and
+	 * a second kernel in one session died at once, every time.
+	 */
+	static uint64_t keys[10];
+	static int keys_made;
+
+	if (!keys_made) {
+		uint64_t state;
+
+		__asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(state));
+		state ^= (uint64_t)(uintptr_t)mh >> 4;
+		for (int i = 0; i < 10; i++) {
+			keys[i] = pac_mix64(&state);
+		}
+		keys_made = 1;
+	} else {
+		print("pac: the keys of this session's first run, again (a core keeps the first it was given)\n");
 	}
 	memcpy((void *)(uintptr_t)keys_pa, keys, sizeof(keys));
 	g_probe_keys_pa = keys_pa;      /* hakios: let the core-200 probe read the same block */
