@@ -331,6 +331,7 @@ T:	workbench/tools_test.py
 T:	workbench/logcheck_test.py
 T:	workbench/phone_day_test.py
 T:	workbench/phone_ready_test.py
+T:	workbench/release_test.py
 D:	tools/README.md
 D:	scripts/README.md
 D:	workbench/README.md
