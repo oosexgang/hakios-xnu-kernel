@@ -8,6 +8,8 @@
   tools/device.py export NAME DIR               copy the package arch/arm64/boot/dts/NAME to DIR/NAME: into a checkout of
                                                 the devices branch, to send it there
   tools/device.py list                          the packages that are here, and where each is from
+  tools/device.py update [NAME...]              each package brought in again from where it came (all of them when
+                                                none is named): what its repository, branch or directory has now
   tools/device.py init DIR --name NAME --soc SOC [--dts FILE] [--description TEXT]
                                                 a phone's own repository, made: its package (tools/boards.py new,
                                                 the SoC's file copied from a package here that has it) and what
@@ -273,6 +275,32 @@ def init(directory, name, soc, dts=None, description=None, with_git=True):
     return 0
 
 
+def where_from(name):
+    """The SOURCE a package was brought in from, as its note has it ("URL (commit)", "devices (commit)", a directory)"""
+    note = boards.DEVICES / name / NOTE
+    if not note.is_file():
+        return None
+    text = note.read_text().strip()
+    return re.sub(r' \([0-9a-f]{12}\)$', '', text) or None
+
+
+def update(names):
+    here = [path.parent.name for path in sorted(boards.DEVICES.glob('*/board.dts')) if (path.parent / NOTE).is_file()]
+    for name in names:
+        if name not in here:
+            raise SystemExit(f'arch/arm64/boot/dts/{name} was not brought in by this tool: there is nowhere to take it again from')
+    names = names or here
+    if not names:
+        print('no package here was brought in by this tool (tools/device.py add NAME)')
+        return 0
+    status = 0
+    for name in names:
+        source = where_from(name)
+        print(f'{name}: from {source}')
+        status |= add([name], Source(source))
+    return status
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -286,6 +314,7 @@ def main(arguments=None):
     command.add_argument('name', metavar='NAME')
     command.add_argument('directory', metavar='DIR')
     commands.add_parser('list')
+    commands.add_parser('update').add_argument('names', nargs='*', metavar='NAME')
     command = commands.add_parser('init')
     command.add_argument('directory', metavar='DIR')
     command.add_argument('--name', required=True)
@@ -294,6 +323,8 @@ def main(arguments=None):
     command.add_argument('--description')
     command.add_argument('--no-git', action='store_true')
     options = parser.parse_args(arguments)
+    if options.command == 'update':
+        return update(options.names)
     if options.command == 'init':
         return init(options.directory, options.name, options.soc, options.dts, options.description, not options.no_git)
 

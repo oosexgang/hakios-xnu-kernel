@@ -239,6 +239,24 @@ class Packages(Sandbox):
         self.assertEqual(self.run_tool('add', 'zeta', '--from', url + '#v1')[0], 0)
         self.assertEqual(boards.load()[1]['zeta']['description'], 'Phone zeta')
 
+    def test_each_package_brought_in_again_from_where_it_came(self):
+        bare, source = self.phone_repository('zeta-repo')
+        run = ['git', '-C', str(source), '-c', 'user.name=t', '-c', 'user.email=t@localhost']
+        self.assertEqual(self.run_tool('add', '--from', f'file://{bare}')[0], 0)
+        self.assertEqual(self.run_tool('add', 'alpha')[0], 0)
+        (source / 'board.dts').write_text(board('zeta', 'Phone zeta, newer'))
+        subprocess.run(run + ['commit', '-qam', 'newer'], check=True)
+        subprocess.run(['git', '-C', str(source), 'push', '-q', str(bare), 'main'], check=True)
+        code, said, complained = self.run_tool('update')
+        self.assertEqual((code, complained), (0, ''), said)
+        self.assertIn(f'zeta: from file://{bare}', said)
+        self.assertIn('alpha: from devices', said)
+        self.assertEqual(boards.load()[1]['zeta']['description'], 'Phone zeta, newer')
+        code, said, _ = self.run_tool('update', 'alpha')
+        self.assertEqual(code, 0)
+        self.assertNotIn('zeta', said, 'only the one named')
+        self.assertIn('was not brought in by this tool', str(self.run_tool('update', 'emulator')[0]))
+
     def test_a_repository_of_several_phones_and_one_at_a_commit(self):
         bare, source = self.phone_repository('phones', ['eta', 'theta'])
         commit = subprocess.run(['git', '-C', str(source), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
