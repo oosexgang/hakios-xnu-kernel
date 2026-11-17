@@ -1,7 +1,8 @@
 /*
  * A touch screen on SPI: either a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680, as a source of
  * touches for /dev/hakios-touch (sys/board/input.h). Which serial engine, clocks, pins and supplies
- * is the board's touch { }. Only with boot-arg touchscreen=1.
+ * is the board's touch { }. Only with boot-arg touchscreen=1; touchscreen=-1 only looks: the clocks', pins' and
+ * straps' state as the firmware left them, in the log, and nothing powered, configured or sent.
  *
  * There is no clock, pin, regulator or SPI framework in this kernel, so the driver does all of
  * it itself, in the order the vendor's Linux drivers do:
@@ -956,6 +957,8 @@ focaltech_poll(void)
 	focaltech_report(report);
 }
 
+static bool looking_only;              /* touchscreen=-1 */
+
 /* Which touch chip is on this board. */
 enum touch_chip { TOUCH_GOODIX, TOUCH_FOCALTECH };
 static enum touch_chip touch_chip;
@@ -1107,6 +1110,15 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
+	if (looking_only) {
+		/* (the clock controller and the pins are always reachable; the serial engine, behind its clocks, is not read) */
+		show_state("as found (touchscreen=-1: looking only)");
+		printf("goodix: touchscreen=-1: the straps read gpio%u=%u gpio%u=%u (%s); nothing powered, configured or sent\n",
+		    PIN_GOODIX_ID, gpio_get(PIN_GOODIX_ID), PIN_FOCALTECH_ID, gpio_get(PIN_FOCALTECH_ID),
+		    gpio_get(PIN_GOODIX_ID) && !gpio_get(PIN_FOCALTECH_ID) ? "FocalTech" : "Goodix");
+		thread_terminate(current_thread());
+		return;
+	}
 	se = ml_io_map(SE_PHYS, SE_SIZE);
 	rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
 	cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);      /* memory, not registers: no alignment rules */
@@ -1162,12 +1174,13 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 void
 hakios_goodix_init(void)
 {
-	uint32_t enabled = 0;
+	int32_t enabled = 0;
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) {
 		return;
 	}
+	looking_only = enabled == -1;
 	/* (called only on a board that lists "touch-goodix": bsd/dev/board/drivers.c) */
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
 		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are (pins { }, clocks { }, rpmh { })\n");

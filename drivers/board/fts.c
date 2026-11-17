@@ -6,6 +6,8 @@
  * GENI/RPMh FIFO transport is adapted from this project's board/goodix.c.
  * Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins
  * and supplies is the board file's touch { } (the numbers named in comments are the first phone's).
+ * touchscreen=-1 only looks: the clocks' and pins' state as the firmware left them, in the log, and
+ * nothing powered, configured or sent.
  * No firmware flashing or bootloader
  * commands; the chip must boot its installed application firmware (0x5652).
  * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.
@@ -411,6 +413,21 @@ fts_bring_up(void)
     return false;
 }
 
+static bool looking_only;              /* touchscreen=-1 */
+
+/* touchscreen=-1: what the firmware left -- the votes, the engine's clocks, the pins -- read from the clock controller and
+ * the pin controller, which are always reachable; the serial engine, behind its clocks, is not read */
+static void
+fts_look(void)
+{
+    printf("fts: as found (touchscreen=-1: looking only): votes %#x, clocks %#x %#x %#x, rate cfg %#x dfs %#x; pins"
+        " cs/clk/data0/data1 cfg %#x %#x %#x %#x, reset %#x/%u, int %#x/%u\n", rd(GCC_VOTE), rd(GCC_QUP_M_AHB_CBCR),
+        rd(GCC_QUP_S_AHB_CBCR), rd(GCC_SE_CBCR), rd(GCC_SE_CFG), rd(GCC_SE_DFSR), rd(GPIO_CFG(PIN_CS)), rd(GPIO_CFG(PIN_CLK)),
+        rd(GPIO_CFG(PIN_DATA0)), rd(GPIO_CFG(PIN_DATA1)), rd(GPIO_CFG(PIN_RESET)), rd(GPIO_IO(PIN_RESET)),
+        rd(GPIO_CFG(PIN_INT)), rd(GPIO_IO(PIN_INT)));
+    printf("fts: touchscreen=-1: nothing powered, configured or sent\n");
+}
+
 static void
 fts_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -418,6 +435,11 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
     unsigned failures = 0, resets = 0;
     tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
     gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
+    if (looking_only) {
+        if (tlmm && gcc) { fts_look(); }
+        thread_terminate(current_thread());
+        return;
+    }
     se = ml_io_map(SE_PHYS, SE_SIZE);
     rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
     cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
@@ -484,10 +506,11 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
 void
 hakios_fts_init(void)
 {
-    uint32_t enabled = 0;
+    int32_t enabled = 0;
     thread_t thread;
-    /* boot-arg touchscreen=1: the controller started, its touches posted to /dev/hakios-touch */
+    /* boot-arg touchscreen=1: the controller started, its touches posted to /dev/hakios-touch; -1: only looked at */
     if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
+    looking_only = enabled == -1;
     /* (called only on a board that lists "touch-ft3658u": bsd/dev/board/drivers.c) */
     if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
         printf("fts: disabled: the SoC file does not say where the pins, the clock controller and RPMh are (pins { }, clocks { }, rpmh { })\n");

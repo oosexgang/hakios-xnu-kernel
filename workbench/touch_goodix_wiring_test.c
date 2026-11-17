@@ -13,9 +13,9 @@
 
 extern char log_text[];
 
-static unsigned mappings, accesses;
+static unsigned mappings, accesses, writes;
 uint32_t hakios_test_rd(vm_offset_t address __unused) { accesses++; return 0; }
-void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { accesses++; }
+void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { accesses++; writes++; }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys; }
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys; }
 void hakios_touch_post(uint32_t type __unused, uint32_t finger __unused, uint32_t x __unused, uint32_t y __unused) { }
@@ -128,11 +128,24 @@ off_by_default(void)
 	CHECK(mappings == 0 && accesses == 0 && log_text[0] == 0, "nothing mapped, touched or said: %s", log_text);
 }
 
+/* touchscreen=-1: the clock controller's and the pins' state read and said; nothing written -- no pin, clock, supply or chip */
+static void
+look_only(void)
+{
+	board = "phone-video";
+	boot_args = "touchscreen=-1";
+	hakios_goodix_init();
+	usleep(200 * 1000);
+	CHECK(logged("the straps read") && logged("nothing powered, configured or sent"), "said: %s", log_text);
+	CHECK(accesses > 0 && writes == 0, "read (%u), and nothing written (%u)", accesses, writes);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "as_it_was", as_it_was }, { "another_wiring", another_wiring }, { "not_wired", not_wired }, { "off_by_default", off_by_default },
+		{ "look_only", look_only },
 	};
 
 	if (argc < 2) {
