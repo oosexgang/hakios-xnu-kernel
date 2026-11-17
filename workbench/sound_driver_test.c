@@ -171,12 +171,17 @@ void hakios_guard_configure(bool hpf __unused, uint32_t gain __unused) { }
 void hakios_guard_attenuation(uint32_t below __unused) { }
 void hakios_guard_monitor(uint32_t below __unused) { }
 void hakios_guard_process(int16_t *frames __unused, uint32_t count __unused) { }
-void hakios_guard_take_report(struct hakios_guard_report *report) { memset(report, 0, sizeof(*report)); }
+/* the guard's report: as many blocks as a scenario says it has worked on since it was last taken */
+static uint32_t guard_blocks;
+void hakios_guard_take_report(struct hakios_guard_report *report) { memset(report, 0, sizeof(*report)); report->blocks = guard_blocks; guard_blocks = 0; }
 int hakios_guard_decibels(uint64_t ratio __unused) { return 0; }
 void hakios_audio_set_sink(const char *name __unused, hakios_audio_sink_t sink __unused) { }
 bool hakios_audio_volume(uint32_t *below __unused, bool *muted __unused, uint32_t *generation __unused) { return false; }
-bool hakios_audio_recording_fed(void) { return false; }
-void hakios_audio_record_fed(const int16_t *frames __unused, uint32_t count __unused) { }
+/* what is played, fed to a recording (board/audio.c) while a scenario says one is fed */
+static bool recording;
+static unsigned recorded_calls, recorded_frames;
+bool hakios_audio_recording_fed(void) { return recording; }
+void hakios_audio_record_fed(const int16_t *frames __unused, uint32_t count) { recorded_calls++; recorded_frames += count; }
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -490,6 +495,82 @@ darwins_frames_through_the_ring(void)
 	CHECK(darwin_sink(frames, 4) == 2 && ring_head == ring_tail + RING_FRAMES, "no more than the room: head %u", ring_head);
 }
 
+/* the tone the first level plays: the same sample on the left and on the right, every frame; silence all zeros */
+static void
+the_tone_in_both_channels(void)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	bool both = true, silent = true;
+
+	buffer = (vm_offset_t)periods;
+	tone_at = 0;
+	memset(periods, 0x55, sizeof(periods));
+	period_fill(0, false);
+	period_fill(1, true);
+	for (unsigned f = 0; f < PERIOD_FRAMES; f++) {
+		both &= periods[2 * f] == tone[f % 48] && periods[2 * f + 1] == tone[f % 48];
+		silent &= periods[4096 / 2 + 2 * f] == 0 && periods[4096 / 2 + 2 * f + 1] == 0;
+	}
+	CHECK(both, "the tone in both channels: %d %d, %d %d", periods[2], periods[3], periods[4], periods[5]);
+	CHECK(silent, "silence in both");
+}
+
+/* sound in one channel is sound */
+static void
+sound_in_one_channel(void)
+{
+	const int16_t right_only[] = { 0, 100 }, left_only[] = { -100, 0 };
+
+	last_sound_us = 0;
+	CHECK(darwin_sink(right_only, 1) == 1 && last_sound_us != 0, "the right alone");
+	last_sound_us = 0;
+	CHECK(darwin_sink(left_only, 1) == 1 && last_sound_us != 0, "the left alone");
+}
+
+/* tenths of a dB as the log says them */
+static void
+decibels_as_text(void)
+{
+	char t[16];
+
+	CHECK(strcmp(db_text(t, 0), "0.0") == 0 && strcmp(db_text(t, -57), "-5.7") == 0 && strcmp(db_text(t, 31), "3.1") == 0 &&
+	    strcmp(db_text(t, -3), "-0.3") == 0, "%s", db_text(t, 0));
+}
+
+/* the guard's line: said when it has worked on something, and not when quiet or when it has not */
+static void
+the_guards_line(void)
+{
+	guard_blocks = 5;
+	guard_say(", 5 s", true);
+	CHECK(!logged("sound: the guard"), "not when quiet: %s", log_text);
+	guard_blocks = 5;
+	guard_say(", 5 s", false);
+	CHECK(logged("sound: the guard, 5 s: peaks in 0, out 0") && logged("of 5 periods"), "said: %s", log_text);
+	guard_say(" until the amplifiers stopped", false);
+	CHECK(!logged("until the amplifiers stopped"), "not for nothing: %s", log_text);
+}
+
+/* a recording fed what is played: Darwin's frames when there are any, not a period of silence */
+static void
+recording_fed_what_is_played(void)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	const int16_t frames[] = { 100, -200, 300, 5 };
+
+	buffer = (vm_offset_t)periods;
+	recording = true;
+	period_fill_darwin(0);
+	CHECK(recorded_calls == 0, "nothing for an empty ring: %u", recorded_calls);
+	CHECK(darwin_sink(frames, 2) == 2, "taken");
+	period_fill_darwin(1);
+	CHECK(recorded_calls == 1 && recorded_frames == 2, "Darwin's two frames: %u calls, %u frames", recorded_calls, recorded_frames);
+	recording = false;
+	CHECK(darwin_sink(frames, 2) == 2, "taken");
+	period_fill_darwin(0);
+	CHECK(recorded_calls == 1, "and none without a recording: %u", recorded_calls);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -500,7 +581,9 @@ main(int argc, char **argv)
 		{ "smmu_left_alone", smmu_left_alone, 8 }, { "smmu_faults_said", smmu_faults_said, 1 },
 		{ "the_streams_events", the_streams_events, 1 }, { "the_dsps_answers", the_dsps_answers, 1 },
 		{ "darwins_frames_through_the_ring", darwins_frames_through_the_ring, 1 }, { "said_off", said_off, 2 },
-		{ "no_amplifiers", no_amplifiers, 1 },
+		{ "no_amplifiers", no_amplifiers, 1 }, { "the_tone_in_both_channels", the_tone_in_both_channels, 1 },
+		{ "sound_in_one_channel", sound_in_one_channel, 1 }, { "decibels_as_text", decibels_as_text, 1 },
+		{ "the_guards_line", the_guards_line, 1 }, { "recording_fed_what_is_played", recording_fed_what_is_played, 1 },
 	};
 	char name[64];
 	const char *colon;
