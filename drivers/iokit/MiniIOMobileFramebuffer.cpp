@@ -2181,10 +2181,15 @@ IOMobileFramebufferUserClient::vsync(void)
 		args[5] = fVSyncCount >> 32;
 		send = true;
 		armVSync();
+		/*
+		 * sent with the lock held: registerNotificationPort() swaps the port under it and lets the old one go after, and
+		 * a send after the lock was let go could be to a port freed meanwhile. (The send drops rather than waits: it does
+		 * not hold the lock for long.)
+		 */
+		sendAsyncResult64WithOptions(ref, kIOReturnSuccess, args, 6, kIOUserNotifyOptionCanDrop);
 	}
 	IOLockUnlock(fLock);
 	if (send) {
-		sendAsyncResult64WithOptions(ref, kIOReturnSuccess, args, 6, kIOUserNotifyOptionCanDrop);
 		uint64_t late;
 
 		absolutetime_to_nanoseconds(mach_absolute_time() - now, &late);
