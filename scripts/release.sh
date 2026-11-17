@@ -19,6 +19,12 @@ set -euo pipefail
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 cd "$TOP"
 die() { echo "release.sh: $*" >&2; exit 1; }
+# the tarball's name, its folder, its compression: build.config.release (RELEASE_BUILD_CONFIG: another file of the top)
+HAKIOS=$TOP
+export HAKIOS
+# shellcheck source=../build.config.release
+. "$TOP/${RELEASE_BUILD_CONFIG:-build.config.release}"
+[[ $RELEASE_GZIP_LEVEL =~ ^[1-9]$ ]] || die "RELEASE_GZIP_LEVEL is 1 to 9: $RELEASE_GZIP_LEVEL"
 version='' check=1 tag=''
 for argument in "$@"; do
 	case $argument in
@@ -40,8 +46,8 @@ if [ -n "$check" ]; then
 	make check > build/release-check.log 2>&1 || die "make check fails: build/release-check.log"
 fi
 
-name=hakios-kernel-$version
-out=$TOP/build/release
+name=$RELEASE_NAME-$version
+out=$TOP/$RELEASE_DIR
 mkdir -p "$out"
 rm -f "$out/$name.tar.gz"
 commit=$(git rev-parse HEAD)
@@ -51,7 +57,7 @@ trap 'rm -rf "$listing"' EXIT
 { git ls-tree -r --name-only HEAD; echo .tracked-files; } | LC_ALL=C sort > "$listing/.tracked-files"
 touch -d "@$(git log -1 --format=%ct)" "$listing/.tracked-files"
 # (the commit's time in the tarball, not now: the same commit gives the same file)
-git archive --format=tar --prefix="$name/" --add-file="$listing/.tracked-files" HEAD | gzip -n -9 > "$out/$name.tar.gz"
+git archive --format=tar --prefix="$name/" --add-file="$listing/.tracked-files" HEAD | gzip -n "-$RELEASE_GZIP_LEVEL" > "$out/$name.tar.gz"
 (cd "$out" && sha256sum "$name.tar.gz" > SHA256SUMS)
 {
 	echo "# HakiOS kernel $version"

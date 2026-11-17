@@ -1,0 +1,14 @@
+# shellcheck shell=bash
+# build.config.release -- the sources of a release, as scripts/release.sh makes them: what the tarball and the folder
+# it goes in are called, and how hard it is compressed. scripts/release.sh reads this unless RELEASE_BUILD_CONFIG names
+# another file of the repository's top; each value can be given in the environment instead, and what is given there
+# is kept.
+# shellcheck source=build.config.common
+. "$HAKIOS/build.config.common"
+
+# the tarball is RELEASE_NAME-VERSION.tar.gz, everything in it under RELEASE_NAME-VERSION/
+export RELEASE_NAME=${RELEASE_NAME:-hakios-kernel}
+# where it is written, with SHA256SUMS and NOTES.md beside it (relative to the repository's top)
+export RELEASE_DIR=${RELEASE_DIR:-build/release}
+# gzip's level: 9, as small as it gets (the same commit gives the same bytes at any level: gzip -n)
+export RELEASE_GZIP_LEVEL=${RELEASE_GZIP_LEVEL:-9}

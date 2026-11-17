@@ -36,7 +36,8 @@ class Release(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
         self.repo = self.dir / 'repo'
-        for path in ('scripts/release.sh', 'tools/check-publishable.sh', 'tools/files.py', '.gitignore'):
+        for path in ('scripts/release.sh', 'tools/check-publishable.sh', 'tools/files.py', '.gitignore', 'build.config.release',
+                     'build.config.common'):
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / path, self.repo / path)
         (self.repo / 'CHANGELOG.md').write_text(CHANGELOG)
@@ -54,6 +55,20 @@ class Release(unittest.TestCase):
     def release(self, *arguments):
         return subprocess.run([str(self.repo / 'scripts/release.sh'), *arguments], cwd=self.repo, capture_output=True,
                               text=True, env=GIT)
+
+    def test_named_and_placed_as_build_config_release_says(self):
+        (self.repo / 'build.config.mine').write_text('. "$HAKIOS/build.config.release"\nRELEASE_NAME=mine\nRELEASE_DIR=out\n')
+        self.git('add', 'build.config.mine')
+        self.git('commit', '-qm', 'a release of my own')
+        done = subprocess.run([str(self.repo / 'scripts/release.sh'), '2.0', '--no-check'], cwd=self.repo, capture_output=True,
+                              text=True, env=dict(GIT, RELEASE_BUILD_CONFIG='build.config.mine'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        with tarfile.open(self.repo / 'out/mine-2.0.tar.gz') as archive:
+            self.assertIn('mine-2.0/README.md', archive.getnames())
+        done = subprocess.run([str(self.repo / 'scripts/release.sh'), '2.1', '--no-check'], cwd=self.repo, capture_output=True,
+                              text=True, env=dict(GIT, RELEASE_GZIP_LEVEL='x'))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn('RELEASE_GZIP_LEVEL is 1 to 9', done.stderr)
 
     def test_the_tarball_and_its_list(self):
         done = self.release('1.0', '--no-check')
