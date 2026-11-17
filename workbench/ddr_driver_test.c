@@ -17,7 +17,8 @@
 
 extern char log_text[];
 
-uint32_t hakios_test_rd(vm_offset_t address) { return rsc_model_rd(address); }
+static uint32_t sequencer_at;           /* the sequencer's own address: its version is read there (RSC_DRV_ID) */
+uint32_t hakios_test_rd(vm_offset_t address) { return sequencer_at != 0 && address == sequencer_at ? 0x00020000 : rsc_model_rd(address); }
 void hakios_test_wr(vm_offset_t address, uint32_t value) { rsc_model_wr(address, value); }
 
 /* ---- the kernel around the driver ---------------------------------------------------------------- */
@@ -94,6 +95,7 @@ phone(const char *name, bool with_sh0)
 	b = hakios_board();
 	if (b != NULL) {
 		rsc.base = b->rpmh.rsc + b->rpmh.tcs_offset;
+		sequencer_at = b->rpmh.rsc;     /* (a version 2 sequencer, as the model's slot set is laid out) */
 		database_at = b->rpmh.cmd_db;
 		database_size = b->rpmh.cmd_db_size;
 	}

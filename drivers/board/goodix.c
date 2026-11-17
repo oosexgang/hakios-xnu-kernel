@@ -110,7 +110,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 
 	/* (the slots are shared: the memory's vote, Bluetooth's supplies, the audio DSP's may be sent at the same time) */
 	hakios_rpmh_lock();
-	problem = hakios_rpmh_send(TCS(0), address, data, count);
+	problem = hakios_rpmh_send_rsc(rsc, hakios_board()->rpmh.tcs_offset, address, data, count);
 	hakios_rpmh_unlock();
 
 	if (problem != NULL) {

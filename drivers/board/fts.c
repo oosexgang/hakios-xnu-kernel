@@ -95,7 +95,7 @@ rpmh_address(const char *name)
 static bool
 rpmh_write_locked(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	const char *problem = hakios_rpmh_send(TCS(0), address, data, count);
+	const char *problem = hakios_rpmh_send_rsc(rsc, hakios_board()->rpmh.tcs_offset, address, data, count);
 
 	if (problem != NULL) {
 		printf("fts: RPMh: %s\n", problem);

@@ -160,7 +160,7 @@ cmd_db_address(const char *name)
 static const char *
 ddr_rpmh_send(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	const char *problem = hakios_rpmh_send(ddr_rsc + hakios_board()->rpmh.tcs_offset, address, data, count);
+	const char *problem = hakios_rpmh_send_rsc(ddr_rsc, hakios_board()->rpmh.tcs_offset, address, data, count);
 
 	if (problem != NULL) {
 		tell("ddr: RPMh: %s\n", problem);
