@@ -98,8 +98,13 @@ empties; a stray byte or a packet cut short throws away what follows until the l
 Broadcom's and Apple's vendor commands, Default Erroneous Data Reporting and the LE periodic advertiser list size are
 answered in the kernel; the controller's own vendor events are not handed on; Read Local Supported Commands has the
 LE commands bluetoothd counts on said (`board/bt_hci.h`, `bt_quirks=`; after HakiOS's MediaTek port and the OnePlus
-Nord 2 port of iOS built on it, APSL 2.0). There is still no firmware download or baud switch: the controller runs
-its ROM, and whether bluetoothd takes that is for a phone to say.
+Nord 2 port of iOS built on it, APSL 2.0). Before it is handed over, the controller is given the firmware
+`bluetooth { }` names -- `rampatch` (the patch to its ROM, a TLV `.tlv` or an ELF `.mbn`) and `nvm` (its
+configuration), taken from the phone's own `vendor/firmware` into the small image's `firmware` directory -- in segments
+of 243 bytes, each answered as the patch's download mode says and the last always, then HCI_Reset (`board/bt_qca.h`;
+Qualcomm's protocol as Linux's `btqca.c` speaks it). The configuration is sent as it is: no in-band sleep, no faster
+UART. Without the names, or with `bt_fw=0`, the controller runs its ROM. There is no baud switch, and none of this has
+been seen on a phone yet.
 
 Validated against host register models only, including both wrapper sampling rates and H4 event forms.
 SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects
