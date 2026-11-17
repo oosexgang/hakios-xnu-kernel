@@ -55,8 +55,9 @@ def when(seconds):
 
 
 def last_change(paths):
-    """(time, what) of the newest change to PATHS: a file changed and not committed, else the last commit to them;
-    None outside a git checkout."""
+    """(time, what) of the newest change to PATHS: a file changed and not committed, else the last commit to them or
+    the newest file of them as it is here -- a pull or a checkout brings commits made before the build with the time
+    they arrive, which is what a file's time says; None outside a git checkout."""
     def git(*arguments):
         try:
             done = subprocess.run(['git', '-C', str(ROOT), *arguments], capture_output=True, text=True)
@@ -73,11 +74,16 @@ def last_change(paths):
             newest = (path.stat().st_mtime, f'{path.relative_to(ROOT)}, not committed')
     if newest:
         return newest
+    for name in (git('ls-files', '-z', '--', *paths) or '').split('\0'):
+        path = ROOT / name
+        if name and path.is_file() and (newest is None or path.stat().st_mtime > newest[0]):
+            newest = (path.stat().st_mtime, f'{name} as it is here (pulled or checked out then)')
     commit = (git('log', '-1', '--format=%ct %h %s', '--', *paths) or '').strip()
-    if not commit:
-        return None
-    stamp, rest = commit.split(' ', 1)
-    return int(stamp), f'commit {rest}'
+    if commit:
+        stamp, rest = commit.split(' ', 1)
+        if newest is None or int(stamp) >= newest[0]:
+            return int(stamp), f'commit {rest}'
+    return newest
 
 
 def current(report, what, path, sources, how):

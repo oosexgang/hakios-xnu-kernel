@@ -157,6 +157,8 @@ class Checkout(unittest.TestCase):
         (self.dir / 'arch/arm64/boot/src').mkdir(parents=True)
         (self.dir / 'arch/arm64/boot/src/loader.c').write_text('int l;\n')
         now = time.time()
+        for path in ('drivers/board/x.c', 'arch/arm64/boot/src/loader.c'):
+            os.utime(self.dir / path, (now - 3 * HOUR, now - 3 * HOUR))     # (written, then committed)
         self.git('init', '-q')
         self.git('add', 'drivers', 'arch/arm64/boot/src')
         self.git('commit', '-qm', 'drivers: the change', when=now - HOUR)
@@ -176,6 +178,13 @@ class Checkout(unittest.TestCase):
         os.utime(self.dir / 'drivers/board/x.c', (now + HOUR, now + HOUR))
         self.assertEqual(self.lines()['kernel'][0], 'OLD')
         self.assertIn('drivers/board/x.c, not committed', self.lines()['kernel'][1])
+        # a commit made before the build, pulled after it: its time is older than the kernel, the file's is the pull's
+        (self.dir / 'drivers/board/x.c').write_text('int x = 2;\n')
+        self.git('commit', '-qam', 'drivers: made this morning, pulled tonight', when=now - 3 * HOUR)
+        os.utime(self.kernel, (now + 2 * HOUR, now + 2 * HOUR))
+        os.utime(self.dir / 'drivers/board/x.c', (now + 3 * HOUR, now + 3 * HOUR))
+        self.assertEqual(self.lines()['kernel'][0], 'OLD', 'a commit older than the build, newer here')
+        self.assertIn('drivers/board/x.c as it is here (pulled or checked out then)', self.lines()['kernel'][1])
         # a kernel named by BENCH_KERNEL is the user's to know
         self.env['BENCH_KERNEL'] = str(self.kernel)
         self.assertEqual(self.lines()['kernel'][0], 'ok')
