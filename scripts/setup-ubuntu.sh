@@ -7,7 +7,7 @@
 # missing, its status 1 when something is. Installing asks apt (sudo when not root). The SDK's headers and theos are
 # not packages: Documentation/building.md says where they come from.
 #
-#   check    make check: the lint, the boards, the host tests and their aarch64 half under qemu-user
+#   check    make check: the lint, the boards, the host tests and their aarch64 half under qemu-user, the loader in QEMU
 #   kernel   kernel/build.sh with LLVM's own Mach-O tools (clang 20: XNU_CLANG_DIR=/usr/lib/llvm-20/bin)
 #   loader   arch/arm64/boot/build.sh: the loader, a UEFI application made with clang and lld
 #   qemu     tools/qemu-kernel.sh, make qemu: the kernel booted in QEMU's virt machine under a real UEFI
@@ -15,7 +15,7 @@
 set -uo pipefail
 die() { echo "setup-ubuntu.sh: $*" >&2; exit 2; }
 declare -A GROUP=(
-	[check]="build-essential git python3 gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev file"
+	[check]="build-essential git python3 gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev file qemu-system-arm qemu-efi-aarch64"
 	[kernel]="build-essential git curl python3 perl xz-utils flex bison m4 autoconf automake gawk clang-20 lld-20 llvm-20"
 	[loader]="clang lld"
 	[qemu]="qemu-system-arm qemu-efi-aarch64"
