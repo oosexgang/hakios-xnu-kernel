@@ -357,6 +357,9 @@ struct kev_msg {
 int kev_post_msg(struct kev_msg *message);
 extern struct kev_msg fake_last_event;  /* (its data pointers are the poster's, gone once it returns) */
 extern unsigned fake_events;            /* how many were posted */
+/* what the last one carried, copied: its vectors one after another (at most 512 bytes), and the codes of the last 16 */
+extern uint8_t fake_last_event_data[512];
+extern uint32_t fake_last_event_length, fake_event_codes[16];
 
 /* for the tests (fakekernel.c) */
 /*

@@ -404,12 +404,25 @@ memset_s(void *to, size_t room, int value, size_t length)
 
 struct kev_msg fake_last_event;
 unsigned fake_events;
+uint8_t fake_last_event_data[512];
+uint32_t fake_last_event_length, fake_event_codes[16];
 
 int
 kev_post_msg(struct kev_msg *message)
 {
 	fake_last_event = *message;
+	fake_event_codes[fake_events % 16] = message->event_code;
 	fake_events++;
+	fake_last_event_length = 0;
+	for (unsigned i = 0; i < 5 && message->dv[i].data_length != 0; i++) {
+		uint32_t n = message->dv[i].data_length;
+
+		if (n > sizeof(fake_last_event_data) - fake_last_event_length) {
+			n = (uint32_t)(sizeof(fake_last_event_data) - fake_last_event_length);
+		}
+		memcpy(fake_last_event_data + fake_last_event_length, message->dv[i].data_ptr, n);
+		fake_last_event_length += n;
+	}
 	return 0;
 }
 
