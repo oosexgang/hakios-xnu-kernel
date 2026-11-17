@@ -36,6 +36,10 @@ tags yet, so the current work is one section.
   (every byte against the loader's) and `phone_ufs_bench` to try it first.
 - Wi-Fi answers Darwin's RSSI bounds request (`wifi_rssi_threshold=`); the sandbox stand-in issues and consumes
   extensions; `applog_name=` works without `applog`.
+- **A floor under the memory limits of lsd, installd, pkd, fileproviderd and containermanagerd** (`memfloor=`, 128 MB by
+  default; 0 turns it off): Apple's limits of a few megabytes let the kernel kill lsd while it builds the LaunchServices
+  database from nothing, and an application installed then does not start. After the OnePlus Nord 2 port of iOS (its
+  piece 0732, APSL 2.0), which found it on its phone; not yet seen on ours.
 
 ### Fixes
 
