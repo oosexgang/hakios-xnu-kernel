@@ -266,7 +266,9 @@ static void
 governed(void)
 {
 	phone("phone-cmd", 8);
-	boot_args = "cpufreq=1 cpu_gov=0";
+	/* (park_small=0 as well: no thread that parks and looks, which would look too, between this test's looks, once
+	 * gov_start() has put the governor on) */
+	boot_args = "cpufreq=1 cpu_gov=0 park_small=0";
 	hakios_cpufreq_init();
 	boot_args = "";
 	gov_start();
