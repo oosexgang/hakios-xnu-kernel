@@ -4,6 +4,51 @@ What changed in HakiOS, for people who use it, build it or port it to a phone. C
 what a reader does with the project, not by commit: `git log` has the detail. There are no release
 tags yet, so the current work is one section.
 
+## Unreleased: one image for a phone, a phone's own repository, Bluetooth, the kernel's own UFS driver
+
+### For whoever brings up a phone
+
+- **A phone can live in a repository of its own.** `tools/device.py init DIR --name NAME --soc SOC` makes one (its
+  package, `BUILDING.md`, a `.gitignore` for what never goes in, a check on every push), and
+  `tools/device.py add --from URL[#REF]` or `make phone FROM=URL` builds from it: cloned, its package brought in and
+  validated against the code. A repository whose `board.dts` is at its top is one package, named as the file names
+  it. ([porting.md](Documentation/porting.md), "Or keep it in a repository of your own".)
+- **One image for a phone.** `make image` (or `tools/image.py build`) puts the loader, the kernel and the boot
+  arguments into one payload, and into `boot.img` when the phone's UEFI build is there: `fastboot boot boot.img`, one
+  command. A `manifest.json` says what went in. `make publish` puts an image into the phone's repository; it refuses
+  Apple's data, a system image and a file that is not its manifest's, and leaves the UEFI out unless told.
+  `tools/qemu-kernel.sh --image` boots one in QEMU as a phone would. ([images.md](Documentation/images.md))
+- **The identity can come with the payload.** Which iPhone Darwin is told it is (Apple's data from an IPSW) was built
+  into the loader; a loader built without it now takes it from the payload's `identity` entry
+  (`tools/image.py personalize`, `BENCH_IDENTITY`), so an image that is passed around carries none.
+
+### On the phone
+
+- **Bluetooth for Darwin** (`bt=2`, defconfig `phone_bt`): after the controller has answered, the kernel makes what
+  Darwin 27's bluetoothd opens -- the IORegistry service `bluetooth` with the loader's address, `/dev/btwake` and its
+  fellows, a Skywalk channel and the kernel control `com.apple.uart.sk.bluetooth` -- and carries whole H4 packets
+  between it and the UART. What bluetoothd expects of Broadcom's and Apple's controllers is answered in the kernel
+  (`bt_quirks=`). After HakiOS's MediaTek port and the OnePlus Nord 2 port of iOS (APSL 2.0). Before that the
+  controller is given the firmware `bluetooth { }` names (`rampatch`, `nvm`, from the phone's own vendor/firmware;
+  `bt_fw=0` leaves it on its ROM). Not yet seen on a phone.
+- **The kernel reads the phone's storage itself** (`ufs_native=1`, in `phone_perf`): its own transfer list in the
+  UFS controller instead of asking the loader, several reads in flight (`ufs_workers=`), with `phone_ufs_check`
+  (every byte against the loader's) and `phone_ufs_bench` to try it first.
+- Wi-Fi answers Darwin's RSSI bounds request (`wifi_rssi_threshold=`); the sandbox stand-in issues and consumes
+  extensions; `applog_name=` works without `applog`.
+
+### Fixes
+
+- The flashlight could be left on at the run's end when the end met a light being switched on (torch).
+- `bench` looked for the loader where it was before it moved to `arch/arm64/boot/`.
+- The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
+
+### For whoever works on the project
+
+- `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
+- `scripts/`: `setup-ubuntu.sh` (what a machine needs, by what for), `release.sh` (the sources of a release,
+  checked). `samples/`: a phone's repository, a defconfig of your own.
+
 ## Unreleased: the port's names, and iOS 27 on redwood
 
 - **No phone gives its name to code.** What the first generation called after its first phone is
