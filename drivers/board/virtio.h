@@ -49,4 +49,10 @@
 #define VIRTIO_ID_INPUT                 18
 #define VIRTIO_ID_SOUND                 25
 
+/*
+ * After a new used index is seen, before what it covers is read (the ring's id and length, the buffer, a status byte):
+ * the device wrote those before it moved the index, and on ARM the loads after could be served before the load of it.
+ */
+#define VIRTIO_USED_READ_BARRIER()      __builtin_arm_dmb(0x9)  /* ISHLD */
+
 #endif /* _HAKIOS_VIRTIO_H */

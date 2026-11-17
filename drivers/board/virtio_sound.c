@@ -206,6 +206,7 @@ control_request(const void *request, uint32_t request_size, void *answer, uint32
 		delay_for_interval(1, NSEC_PER_MSEC);
 	}
 	control.seen++;
+	VIRTIO_USED_READ_BARRIER();
 	memcpy(answer, in, answer_size);
 	if (*(const uint32_t *)answer != SND_S_OK) {
 		printf("virtio-sound: request %#x refused: %#x\n", *(const uint32_t *)request, *(const uint32_t *)answer);
@@ -219,7 +220,19 @@ static void
 sound_pump(void)
 {
 	while (tx.seen != *(volatile uint16_t *)&tx.used->idx) {
-		tx_free[tx_free_count++] = (uint16_t)(tx.used->ring[tx.seen++ % QUEUE_SIZE].id / 2);
+		uint32_t id;
+
+		VIRTIO_USED_READ_BARRIER();
+		id = tx.used->ring[tx.seen++ % QUEUE_SIZE].id;
+		/*
+		 * (the device's id is the chain's first descriptor, 2n for buffer n: one past the buffers, odd, or one more
+		 * than there are -- a duplicate -- would have the frames written past the shared memory, and is not believed)
+		 */
+		if (id % 2 != 0 || id / 2 >= TX_BUFFERS || tx_free_count >= TX_BUFFERS) {
+			printf("virtio-sound: the device gives back buffer %u, which is not one of ours to take back\n", id);
+			continue;
+		}
+		tx_free[tx_free_count++] = (uint16_t)(id / 2);
 	}
 	while (tx_free_count != 0 && ring_tail - ring_head >= PERIOD_FRAMES) {
 		uint16_t n = tx_free[--tx_free_count];

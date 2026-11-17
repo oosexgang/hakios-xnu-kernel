@@ -232,7 +232,10 @@ input_poll(__unused thread_call_param_t p0, __unused thread_call_param_t p1)
 		bool returned = false;
 
 		while (d->seen != *(volatile uint16_t *)&d->used->idx) {
-			uint32_t id = d->used->ring[d->seen++ % QUEUE_SIZE].id % QUEUE_SIZE;
+			uint32_t id;
+
+			VIRTIO_USED_READ_BARRIER();
+			id = d->used->ring[d->seen++ % QUEUE_SIZE].id % QUEUE_SIZE;
 
 			input_event(d, &d->events[id]);
 			/* give the buffer back */

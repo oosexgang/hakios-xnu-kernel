@@ -145,6 +145,11 @@ virtio_transmit(mbuf_t packet, size_t length)
 
 	/* the buffers the device has done with */
 	while (q->seen != *(volatile uint16_t *)&q->used->idx) {
+		VIRTIO_USED_READ_BARRIER();
+		if (q->free_count >= QUEUE_SIZE) {
+			q->seen++;                      /* (an entry more than there are buffers: a duplicate, not believed) */
+			continue;
+		}
 		q->free[q->free_count++] = (uint16_t)(q->used->ring[q->seen++ % QUEUE_SIZE].id % QUEUE_SIZE);
 	}
 	if (q->free_count == 0) {
@@ -174,8 +179,11 @@ virtio_poll(void)
 	unsigned frames = 0;
 
 	while (q->seen != *(volatile uint16_t *)&q->used->idx) {
-		uint32_t id = q->used->ring[q->seen % QUEUE_SIZE].id % QUEUE_SIZE;
-		uint32_t length = q->used->ring[q->seen % QUEUE_SIZE].len;
+		uint32_t id, length;
+
+		VIRTIO_USED_READ_BARRIER();
+		id = q->used->ring[q->seen % QUEUE_SIZE].id % QUEUE_SIZE;
+		length = q->used->ring[q->seen % QUEUE_SIZE].len;
 
 		q->seen++;
 		if (length > sizeof(struct virtio_net_header) && length <= BUFFER_SIZE) {
