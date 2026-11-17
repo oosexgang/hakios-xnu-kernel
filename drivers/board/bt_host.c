@@ -397,7 +397,30 @@ control_register(void)
 static int node_open(__unused dev_t d, __unused int f, __unused int t, __unused struct proc *p) { return 0; }
 static int node_close(__unused dev_t d, __unused int f, __unused int t, __unused struct proc *p) { return 0; }
 static int node_read(__unused dev_t d, __unused struct uio *u, __unused int f) { return 0; }
-static int node_write(__unused dev_t d, struct uio *uio, __unused int f) { uio_setresid(uio, 0); return 0; }
+static const char *const node_names[] = { "btwake", "btreset", "btpoweroff" };
+
+/* what bluetoothd writes is taken, and nothing done with it -- but said, the first times: what it asks of these nodes is
+ * for a phone's log to show (a reset, the power, the wake line), before anything is put behind them */
+static int
+node_write(dev_t dev, struct uio *uio, __unused int f)
+{
+	static unsigned said;
+	uint8_t bytes[8];
+	user_ssize_t length = uio_resid(uio);
+	int error = 0;
+
+	if (length > 0 && said < 40) {
+		size_t n = length < (user_ssize_t)sizeof(bytes) ? (size_t)length : sizeof(bytes);
+
+		if ((error = uiomove((caddr_t)bytes, (int)n, uio)) == 0) {
+			said++;
+			say("bt: bluetoothd wrote %lld bytes to /dev/%s, the first %02x (nothing is behind it)\n", (long long)length,
+			    minor(dev) < 3 ? node_names[minor(dev)] : "?", bytes[0]);
+		}
+	}
+	uio_setresid(uio, 0);
+	return error;
+}
 static int node_select(__unused dev_t d, __unused int w, __unused void *wql, __unused struct proc *p) { return 1; }
 
 static int
@@ -435,7 +458,6 @@ static const struct cdevsw node_cdevsw = {
 static int
 nodes_make(void)
 {
-	static const char *const names[] = { "btwake", "btreset", "btpoweroff" };
 	int major = cdevsw_add(-1, &node_cdevsw);
 
 	if (major < 0) {
@@ -443,8 +465,8 @@ nodes_make(void)
 		return ENXIO;
 	}
 	for (unsigned i = 0; i < 3; i++) {
-		if (devfs_make_node(makedev(major, i), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "%s", names[i]) == NULL) {
-			say("bt: /dev/%s cannot be made\n", names[i]);
+		if (devfs_make_node(makedev(major, i), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "%s", node_names[i]) == NULL) {
+			say("bt: /dev/%s cannot be made\n", node_names[i]);
 			return ENXIO;
 		}
 	}
