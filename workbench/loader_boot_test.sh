@@ -3,7 +3,8 @@
 # with a stand-in kernel (one segment, a branch to itself) in the payload. What is held: the identity it
 # makes of identity=SEED is the one tools/identity.py says of that seed (the serial number and the ECID it
 # prints, which are what it writes into the device tree); without a seed it makes another at each boot;
-# and it goes on to the kernel.
+# an identity carried in the payload (mkidentity.py --blob, of a device tree made here) is the one Darwin is told,
+# and one that is not an identity is said to be and left; and it goes on to the kernel.
 #
 #   workbench/loader_boot_test.sh LOADER.EFI
 #
@@ -48,8 +49,9 @@ cp "$LOADER" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
 
 # boot: until the loader says it jumps to the kernel (or a minute), what it said
 boot() {
-	local args=$1 log=$2
-	python3 "$HERE/../arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$W/kernel" ${args:+--cmdline "$args"} > /dev/null
+	local args=$1 log=$2 identity=${3:-}
+	python3 "$HERE/../arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$W/kernel" ${identity:+identity="$identity"} \
+		${args:+--cmdline "$args"} > /dev/null
 	cp "${FIRMWARE%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 	timeout 120 qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -m 4G \
 		-drive if=pflash,format=raw,readonly=on,file="$FIRMWARE" -drive if=pflash,format=raw,file="$W/vars.fd" \
@@ -81,5 +83,15 @@ check "without a seed, a random one, said to be: $first" grep -aq "a random one"
 check "of the form: 10 of the alphabet without I and O" \
 	bash -c "[[ '${first##* }' =~ ^[0-9A-HJ-NP-Z]{10}\$ ]]"
 check "another at the next boot: $second" test -n "$second" -a "$first" != "$second"
+
+# an identity in the payload: of a device tree of the test's own (workbench/image_test.py writes one), and junk
+python3 -c "import sys; sys.path.insert(0, '$HERE'); import image_test; open('$W/tree.bin', 'wb').write(image_test.device_tree())"
+python3 "$HERE/../arch/arm64/boot/mkidentity.py" --blob "$W/identity.bin" "$W/tree.bin" 2> /dev/null
+boot "" "$W/identity.log" "$W/identity.bin"
+check "the payload's identity, taken: t8030, 828x1792" grep -aq "identity: from the payload (t8030, 828x1792)" "$W/identity.log"
+check "and on to the kernel with it" grep -aq "jumping to" "$W/identity.log"
+head -c 100 /dev/zero > "$W/junk.bin"
+boot "" "$W/junk.log" "$W/junk.bin"
+check "junk as an identity: said, and the one built in kept" grep -aq "identity: the payload's is not one (100 bytes)" "$W/junk.log"
 [ $failed = 0 ] && echo "loader_boot_test: ok"
 exit $failed
