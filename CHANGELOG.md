@@ -55,7 +55,10 @@ tags yet, so the current work is one section.
 - `scripts/phone-ready.py` (`make ready`): before the phone is connected, whether the runs have what they need here --
   the kernel and the loader built and not older than their sources, the loader knowing the phone, the identity, the
   small image, the Bluetooth firmware at `bt=2`. `scripts/phone-day.sh` begins with it. `tools/image.py build` refuses
-  a loader that does not know the phone.
+  a kernel or a loader that does not know the phone (built before its package was brought in), and `./bench run` warns
+  of such a kernel.
+- `make check` runs in the tree a release's tarball unpacks to, which has no git: `scripts/release.sh` puts the list of
+  the files beside them (`.tracked-files`) and the checks go over it (`tools/files.py`).
 - `tools/device.py update` takes each package again from where it came; `tools/image.py verify` holds a phone's
   images to their manifests and to what may be published.
 - `SECURITY.md`, and an issue form for a run on a phone.
