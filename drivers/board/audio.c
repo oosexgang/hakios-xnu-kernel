@@ -264,6 +264,10 @@ audio_ioctl(__unused dev_t dev, u_long command, caddr_t data, __unused int flags
 	if (command != HAKIOS_AUDIO_SET_VOLUME) {
 		return ENOTTY;
 	}
+	if (volume->below > HAKIOS_AUDIO_BELOW_MOST) {
+		/* (any process may open the node: a value that wraps the driver's sum would undo the ceiling under it) */
+		return EINVAL;
+	}
 	lck_mtx_lock(&audio_lock);
 	volume_below = volume->below;
 	volume_muted = volume->muted != 0;

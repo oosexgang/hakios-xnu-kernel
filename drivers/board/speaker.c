@@ -778,7 +778,7 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
-		uint32_t target = a->volume_at + below;
+		uint32_t target = below > VOLUME_LOWEST ? VOLUME_LOWEST : a->volume_at + below;
 
 		if (broken || !a->started) {
 			return false;
@@ -795,7 +795,7 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 
 		for (unsigned i = 0; i < 2; i++) {
 			struct amplifier *a = &amplifiers[i];
-			uint32_t target = a->volume_at + below, next;
+			uint32_t target = below > VOLUME_LOWEST ? VOLUME_LOWEST : a->volume_at + below, next;
 
 			if (target > VOLUME_LOWEST) {
 				target = VOLUME_LOWEST;

@@ -32,9 +32,10 @@
 #include <sys/ioccom.h>
 
 struct hakios_audio_volume {
-	uint32_t below;                 /* eighths of a dB */
+	uint32_t below;                 /* eighths of a dB, at most HAKIOS_AUDIO_BELOW_MOST */
 	uint32_t muted;
 };
+#define HAKIOS_AUDIO_BELOW_MOST (120 * 8)       /* further under than any amplifier goes (EINVAL past it) */
 _Static_assert(sizeof(struct hakios_audio_volume) == 8, "the volume is 8 bytes (the ioctl's number carries the size)");
 #define HAKIOS_AUDIO_SET_VOLUME _IOW('r', 1, struct hakios_audio_volume)
 

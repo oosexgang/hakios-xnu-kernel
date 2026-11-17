@@ -719,6 +719,9 @@ volume_and_stop(void)
 	running();
 	CHECK(hakios_speaker_volume(100, 0), "to 12.5 dB below Android's level: %s", log_text);
 	CHECK(reads(device.reg, 0x05) == 0x1487 && reads(device.reg_b, 0x05) == 0x1487, "3 + 100 eighths of a dB: %#x", reads(device.reg, 0x05));
+	CHECK(hakios_speaker_volume(0xfffffffe, 0), "a level past the lowest: %s", log_text);
+	CHECK(reads(device.reg, 0x05) == 0x17c0 && reads(device.reg_b, 0x05) == 0x17c0, "the lowest, not a sum that wrapped: %#x",
+	    reads(device.reg, 0x05));
 	CHECK(hakios_speaker_volume(0, 0), "to Android's level: %s", log_text);
 	CHECK(reads(device.reg, 0x05) == 0x1403 && reads(device.reg_b, 0x05) == 0x1403, "the profile's own: %#x", reads(device.reg, 0x05));
 	CHECK(loudest[0] == 3 && loudest[1] == 3, "never louder than Android's level: %d, %d", loudest[0], loudest[1]);

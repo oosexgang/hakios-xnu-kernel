@@ -285,6 +285,14 @@ volume(void)
 	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0 && hakios_audio_volume(&below, &muted, &generation) && muted &&
 	    generation == 2, "muted, a second setting");
 	CHECK(fake_dev_ioctl(NODE, 0x1234, &v) == ENOTTY, "nothing else is answered");
+	/* a level that would wrap the sound driver's sum (its ceiling under Android's level plus this) is refused */
+	v.muted = 0;
+	v.below = 0xffffff10;
+	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == EINVAL, "refused");
+	CHECK(hakios_audio_volume(&below, &muted, &generation) && muted && generation == 2, "and the volume kept as it was");
+	v.below = HAKIOS_AUDIO_BELOW_MOST;
+	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0 && hakios_audio_volume(&below, &muted, &generation) &&
+	    below == HAKIOS_AUDIO_BELOW_MOST && generation == 3, "the most is taken");
 }
 
 int
