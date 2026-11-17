@@ -89,7 +89,17 @@ Qualcomm EDL_PATCH_GETVER, and logs raw events plus product/patch/ROM/SoC versio
 Every poll has a bound. Failure powers down; loader return lowers BT_EN, stops UART commands, restores
 pins/RCG and removes only the GCC bits it added, then drops RF and rail enable votes in reverse order.
 Use dedicated Bluetooth VRM resources; the helper cannot recover another client's prior RPMh voltage vote.
-There is no firmware download, baud switch, Darwin interface or claim of a working Bluetooth stack.
+`bt=2` does all of `bt=1` and then hands the controller to Darwin (`board/bt_host.c`): the IORegistry service
+`bluetooth` with the address the loader put into `/chosen mac-address-bluetooth0` and transport-encoding 3 (H4BC);
+`/dev/btwake`, `/dev/btreset` and `/dev/btpoweroff`; a Skywalk kernel pipe; and the kernel control
+`com.apple.uart.sk.bluetooth`, whose socket options give bluetoothd the channel's UUID and keep its termios. A thread
+carries whole H4 packets between the channel and the UART (115200 baud, packets longer than the FIFO written as it
+empties; a stray byte or a packet cut short throws away what follows until the line is quiet, to be in step again).
+Broadcom's and Apple's vendor commands, Default Erroneous Data Reporting and the LE periodic advertiser list size are
+answered in the kernel; the controller's own vendor events are not handed on; Read Local Supported Commands has the
+LE commands bluetoothd counts on said (`board/bt_hci.h`, `bt_quirks=`; after HakiOS's MediaTek port and the OnePlus
+Nord 2 port of iOS built on it, APSL 2.0). There is still no firmware download or baud switch: the controller runs
+its ROM, and whether bluetoothd takes that is for a phone to say.
 
 Validated against host register models only, including both wrapper sampling rates and H4 event forms.
 SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects
@@ -100,7 +110,8 @@ comments; hardware behavior and the controller's actual version-event variant re
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/board/bt_uart.c` | Qualcomm Bluetooth power and H4 identification only. | `bluetooth-wcn-uart` / `bt=-1`, `bt=1` | data (`bluetooth { }`, `pins { }`, `clocks { }`, `rpmh { }`, `spmi { }`); shared SPMI v5/v6 |
+| `bsd/dev/board/bt_uart.c` | Qualcomm Bluetooth power, H4 identification, and the controller's packets through the UART. | `bluetooth-wcn-uart` / `bt=-1`, `bt=1`, `bt=2` | data (`bluetooth { }`, `pins { }`, `clocks { }`, `rpmh { }`, `spmi { }`); shared SPMI v5/v6 |
+| `bsd/dev/board/bt_host.c`, `bt_hci.h`, `iokit/Kernel/BoardBluetooth.cpp` | Darwin's side of Bluetooth: bluetoothd's service, nodes, Skywalk channel and kernel control; what is answered or changed between it and the controller. | `bt=2`, `bt_quirks=` | any controller a driver hands over (`include/board/bt.h`) |
 | `bsd/dev/board/wifi.c`, `board/wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`wifi { }`) |
 | `bsd/dev/board/lx.c`, `board/qmi.c`, `board/sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/board/apple80211.c` | Apple80211 requests of Darwin's Wi-Fi daemon, answered in the kernel. | — | any |
