@@ -55,7 +55,7 @@ until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel
 with_devices=1 image='' identity=''
 while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
 	case $1 in
-	--image) image=$(realpath "$2") || exit 1; shift 2 ;;
+	--image) image=$(realpath -e "$2") || exit 1; shift 2 ;;
 	--until) until_text=$2; shift 2 ;;
 	--seconds) seconds=$2; shift 2 ;;
 	--screen) screen=$(realpath -m "$2"); shift 2 ;;
@@ -64,9 +64,9 @@ while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
 	--log) log=$(realpath -m "$2"); shift 2 ;;
 	--boot-args) args=$2; shift 2 ;;
 	--defconfig) defconfig=$("$HERE/tools/defconfig.py" "$2") || exit 1; shift 2 ;;
-	--ramdisk) ramdisk=$(realpath "$2"); shift 2 ;;
-	--identity) identity=$(realpath "$2") || exit 1; shift 2 ;;
-	--disk) disk=$(realpath "$2"); shift 2 ;;
+	--ramdisk) ramdisk=$(realpath -e "$2") || exit 1; shift 2 ;;
+	--identity) identity=$(realpath -e "$2") || exit 1; shift 2 ;;
+	--disk) disk=$(realpath -e "$2") || exit 1; shift 2 ;;
 	--audio) audio=$(realpath -m "$2"); shift 2 ;;
 	--cpus) cpus=$2; shift 2 ;;
 	--qemu) read -ra extra <<< "$2"; shift 2 ;;
@@ -97,7 +97,7 @@ if [ -n "$disk" ]; then
 	devices+=(-drive "file=$disk,format=raw,if=none,id=disk0,readonly=on" -device 'virtio-blk-device,drive=disk0')
 fi
 [ -z "$qmp" ] || devices+=(-qmp "unix:$qmp,server,nowait")
-[ -n "$image" ] || { kernel=$(realpath "$1") || exit 1; }
+[ -n "$image" ] || { kernel=$(realpath -e "$1") || exit 1; }
 command -v qemu-system-aarch64 > /dev/null || die "no qemu-system-aarch64 (apt: qemu-system-arm)"
 firmware=
 for code in /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/edk2/aarch64/QEMU_EFI.fd; do
@@ -107,7 +107,7 @@ done
 [ -n "$image" ] || [ -f "$HERE/arch/arm64/boot/loader.efi" ] || "$HERE/arch/arm64/boot/build.sh" > /dev/null || die "the loader does not build"
 
 W=$(mktemp -d)
-trap 'kill "$qemu" 2> /dev/null; rm -rf "$W"' EXIT
+trap 'kill "${qemu:-}" 2> /dev/null; rm -rf "$W"' EXIT       # (no qemu yet when it stops before starting one)
 mkdir -p "$W/esp/EFI/BOOT"
 if [ -n "$image" ]; then
 	# the image's own loader and payload, untouched: what QEMU's UEFI starts is what a phone's would
