@@ -222,6 +222,22 @@ another_soc(void)
 	CHECK(epss.elsewhere == 0, "%u accesses where nothing of the block is", epss.elsewhere);
 }
 
+/* each group's rows' core counts said, and rows of count 1 (Linux's turbo rows) named as such; nothing else changes */
+static void
+core_counts_said(void)
+{
+	phone("phone-cmd", 8);
+	for (unsigned row = 0; row < ROWS; row++) {
+		epss.table[1][row] |= (row >= 6 ? 1u : 3u) << 16;      /* the big group's last rows: one core at a time */
+		epss.table[0][row] |= 4u << 16;
+	}
+	boot_args = "cpufreq=1 cpu_gov=0";
+	hakios_cpufreq_init();
+	CHECK(logged("cpufreq: group 0: the rows' core counts 44444444\n"), "the small group: %s", log_text);
+	CHECK(logged("cpufreq: group 1: the rows' core counts 333333111 (1: a row Linux leaves out as turbo)"), "the big one");
+	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8, "still the top rows: %u %u", epss.wanted[0], epss.wanted[1]);
+}
+
 /* a group whose hardware is not in charge of its clock (its enable bit clear) is left alone and said, as Linux leaves it */
 static void
 not_in_charge(void)
@@ -531,7 +547,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "every_group", every_group }, { "one_core", one_core }, { "some_cores", some_cores }, { "another_soc", another_soc },
-		{ "not_in_charge", not_in_charge }, { "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
+		{ "not_in_charge", not_in_charge }, { "core_counts_said", core_counts_said }, { "odd_tables", odd_tables }, { "off_by_default", off_by_default }, { "not_listed", not_listed },
 		{ "unknown_board", unknown_board }, { "governor_starts", governor_starts }, { "governor_row_past_the_table", governor_row_past_the_table },
 		{ "governor_goes_down_slowly", governor_goes_down_slowly }, { "governor_goes_up_at_once", governor_goes_up_at_once },
 		{ "governor_quiesced", governor_quiesced }, { "governor_leaves_a_shared_group", governor_leaves_a_shared_group },

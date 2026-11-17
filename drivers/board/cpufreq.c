@@ -58,21 +58,28 @@ domain_map(uint32_t domain)
 	return (rd(base + layout->enable) & 1) ? base : 0;
 }
 
-/* the top row of a group's table (it ends by repeating its last row), and its frequency */
+/*
+ * the top row of a group's table (it ends by repeating its last row), and its frequency; and, for the log, each row's core
+ * count as one digit (CPUFREQ_HW_CORE_COUNT: rows of count 1 are the ones Linux keeps out as turbo), "4441" for four rows
+ */
 static uint32_t
-table_top(vm_offset_t base, uint32_t *top_khz)
+table_top(vm_offset_t base, uint32_t *top_khz, char counts[CPUFREQ_HW_ROWS + 1])
 {
 	uint32_t top = 0;
 
 	*top_khz = 0;
+	counts[0] = 0;
 	for (uint32_t row = 0; row < CPUFREQ_HW_ROWS; row++) {
-		uint32_t khz = cpufreq_hw_khz(rd(base + cpufreq_hw_row(layout, row)));
+		uint32_t entry = rd(base + cpufreq_hw_row(layout, row));
+		uint32_t khz = cpufreq_hw_khz(entry);
 
 		if (row > 0 && khz <= *top_khz) {
 			break;
 		}
 		top = row;
 		*top_khz = khz;
+		counts[row] = (char)('0' + CPUFREQ_HW_CORE_COUNT(entry));
+		counts[row + 1] = 0;
 	}
 	return top;
 }
@@ -105,6 +112,8 @@ static void
 raise_domain(uint32_t domain, uint32_t cores)
 {
 	uint32_t top = 0, top_khz = 0, was;
+	char counts[CPUFREQ_HW_ROWS + 1];
+	bool turbo = false;
 	vm_offset_t base;
 
 	base = domain_map(domain);
@@ -112,12 +121,17 @@ raise_domain(uint32_t domain, uint32_t cores)
 		tell("cpufreq: group %u (%u of our cores): the hardware is not in charge of its clock: left alone\n", domain, cores);
 		return;
 	}
-	top = table_top(base, &top_khz);
+	top = table_top(base, &top_khz, counts);
 	was = rd(base + layout->perf_state);
 	wr(base + layout->perf_state, top);
 	sleep_ms(20);
 	tell("cpufreq: group %u (%u of our cores): row %u -> %u of the frequency table, %u MHz\n", domain, cores, was, top,
 	    top_khz / 1000);
+	/* (only looked at: whether the top rows are ones Linux would leave out, which a phone's log is to tell) */
+	for (unsigned i = 0; counts[i] != 0; i++) {
+		turbo |= counts[i] == '0' + CPUFREQ_HW_TURBO;
+	}
+	tell("cpufreq: group %u: the rows' core counts %s%s\n", domain, counts, turbo ? " (1: a row Linux leaves out as turbo)" : "");
 }
 
 /*

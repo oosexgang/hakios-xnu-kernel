@@ -76,6 +76,13 @@ cpufreq_hw_row(const struct cpufreq_hw_layout *layout, uint32_t row)
 	return layout->table + layout->row_size * (row < CPUFREQ_HW_ROWS ? row : CPUFREQ_HW_ROWS - 1);
 }
 
+/*
+ * a row's core count ([18:16]): Linux takes a row whose count is 1 for one that holds only while a single core of the group
+ * runs ("turbo"), leaves those out of its table and keeps the last as a boost frequency it does not use by default
+ */
+#define CPUFREQ_HW_CORE_COUNT(entry)    (((entry) >> 16) & 7)
+#define CPUFREQ_HW_TURBO                1
+
 /* a row's frequency, in kHz */
 static inline uint32_t
 cpufreq_hw_khz(uint32_t entry)
