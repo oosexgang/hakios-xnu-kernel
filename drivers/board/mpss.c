@@ -392,12 +392,15 @@ smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsi
 	uint32_t at, step_back;
 	unsigned count = 0;
 
+	/* (as board/smem.h's hakios_smem_items(): every entry's padding and size inside the partition, the partition inside the area) */
 	if (partition == 0 || !smem_peek(partition, &header, sizeof(header)) || header.free_uncached > header.size ||
-	    header.free_cached > header.size) {
+	    header.free_cached > header.size || (uint64_t)partition + header.size > SMEM_SIZE) {
 		return 0;
 	}
 	for (at = sizeof(header); at + sizeof(entry) <= header.free_uncached;) {
-		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > header.size) {
+		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > header.size ||
+		    entry.padding_data > entry.size ||
+		    (uint64_t)at + sizeof(entry) + entry.padding_header + entry.size > header.free_uncached) {
 			break;
 		}
 		if (count < max) {
@@ -413,7 +416,8 @@ smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsi
 	}
 	step_back = ((uint32_t)sizeof(entry) + cacheline - 1) & ~(cacheline - 1);
 	for (at = header.size - step_back; at > header.free_cached && at < header.size;) {
-		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at) {
+		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at ||
+		    entry.padding_data > entry.size || at - entry.size < header.free_cached) {
 			break;
 		}
 		if (count < max) {
