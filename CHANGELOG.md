@@ -53,6 +53,9 @@ tags yet, so the current work is one section.
   UEFI's list back, went on to ask the loader -- for writes too -- with its own list perhaps still in; took a short
   read for a whole one; used again slots it had cleared without an abort; and read a GPT header's size off the disk
   unchecked. All found in reviews, before a phone has run them.
+- The loader held no size a payload gives to what is there (an entry's, the header's, the padding's, rdres) and no
+  device tree to its 64 KB: a damaged payload or an identity larger than the room was read past, or written over the
+  boot arguments. Each is bounded now, and a payload that does not hold together is none, said so.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
