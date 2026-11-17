@@ -26,6 +26,8 @@ help:
 	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
 	@echo "make analyze-userland the same analyzer on the Darwin side's libraries and programs (DARWIN_SDK=DIR)"
 	@echo "make logcheck [LOG=FILE]   what a run's log says, part by part (the newest of logs/ unless told)"
+	@echo "make day [RUNS=\"phone_look phone_bt\"]   a day with the phone: each run through ./bench, logs and a summary in logs/day-*/"
+	@echo "make changed        the tests of what changed since the last commit, run (scripts/tests-for.py --changed --run)"
 	@echo "make new-driver NAME=name  a new driver from the guide's example, with its test (scripts/new-driver.py)"
 	@echo "make release VERSION=x.y   the sources of a release, checked, in build/release/ (scripts/release.sh)"
 	@echo "make kernel         build the kernel (kernel/build.sh; Documentation/building.md says what it needs)"
@@ -82,6 +84,14 @@ publish:
 .PHONY: logcheck
 logcheck:
 	tools/logcheck.py $(LOG)
+
+.PHONY: day
+day:
+	scripts/phone-day.sh $(RUNS)
+
+.PHONY: changed
+changed:
+	scripts/tests-for.py --changed --run
 
 .PHONY: new-driver
 new-driver:
