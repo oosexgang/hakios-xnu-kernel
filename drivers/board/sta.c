@@ -155,6 +155,13 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			}
 			hakios_apple80211_event(HAKIOS_STA_POWER, error == 0 ? power_on : !power_on);
 			lck_mtx_lock(&sta_lock);
+			if (error != 0 && !asked_power) {
+				/*
+				 * (sta_on was set when the power was asked for: the change did not happen, and what is said of the power --
+				 * hakios_sta_powered(), the get-power request -- is to be what the radio is, as the event says it)
+				 */
+				sta_on = !power_on;
+			}
 			if (error == 0 && power_on && standing.ssid_length != 0 && !asked_join) {
 				asked_join_what = standing;
 				asked_join = true;

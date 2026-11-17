@@ -370,6 +370,7 @@ power_refused(void)
 	CHECK(hakios_sta_ask_power(false) == 0, "off asked for");
 	WAIT_FOR(events_n > 0, 3000);
 	CHECK(last_event(&status) == HAKIOS_STA_POWER && status == 1, "still on: %d", status);
+	CHECK(hakios_sta_powered(), "and said to be on, as it is: not off, as was asked");
 }
 
 /* another standing network that does come through: it is the standing one now, and the one before is not joined again */
