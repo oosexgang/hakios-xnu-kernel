@@ -81,8 +81,8 @@ tags yet, so the current work is one section.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 - Wi-Fi left the radio's mapping in the SMMU when TrustZone would not shut the DSP down, when the run ended before the
   DSP was started and when a bring-up ran out of memory; and the driver's rings went on being read every millisecond
-  after its start had given up and the DSP had been shut down under them. Still open: a frame sent while the station
-  leaves ([drivers.md](Documentation/drivers.md), "Wi-Fi, network").
+  after its start had given up and the DSP had been shut down under them; a frame Darwin sent while the station left
+  could read the station and its key as they were freed ([drivers.md](Documentation/drivers.md), "Wi-Fi, network").
 
 - `phone_look`, the run meant only to read, wrote to the phone: `touchscreen=1` is the touch screen's whole start
   (reset, supplies, clocks, pins, the chip), and `backlight=1` turned the display's clocks on when it found them off.
@@ -118,6 +118,23 @@ tags yet, so the current work is one section.
   keeps the first it was given -- most likely why a second kernel in one session of the loader always died at once;
   a run was started over a core the last one left running; a kernel that beat and never came back was waited for
   for good; with one core the quiesces ran with interrupts on; a core that joined late was never stopped.
+- The loader takes a kernel only after every load command is checked against the file (sizes, segments' file and
+  memory bounds, the entry inside a segment), signs pointers only inside the kernel's segments and its chained fixups
+  inside the file, refuses boot arguments longer than the kernel's line instead of cutting them, and believes the
+  kernel's log ring only inside its bounds.
+- Sound before its first run on the phone: a volume past any amplifier's lowest was taken and summed past 32 bits, a
+  speaker amplifier whose state could not be read was left on, and the microphones' bring-up could start after the
+  run's end. The audio DSP's link answered a request with another request's answer, freed a
+  received intent twice when a message was dropped, and could be taken up again while its old thread still ran.
+- The camera kept the frame's sequence across a restart, waited a fixed 1.5 s for a frame however long the sensor's
+  frames are, and mapped its buffers into the SMMU again on every start. The modem summed a QRTR datagram's and a
+  GLINK message's lengths in 32 bits, where a length from the modem could wrap them, and took DMS answers meant for
+  another request.
+- The GPU: a buffer the SMMU would not unmap was given back to be reused, the clocks the driver turned on were left on
+  at the run's end, and a submission of more commands than the ring holds was taken. `gpu_private=1` maps the ring and
+  the fences for the GPU's privileged accesses alone.
+- The battery's report could be made by two threads at once, Wi-Fi's IOKit service could be started twice, and a device
+  tree with no CPUs counted left the kernel with none.
 
 ### For whoever works on the project
 
