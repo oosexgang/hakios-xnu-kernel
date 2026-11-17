@@ -35,6 +35,9 @@ qemu-kernel.log
 # a phone's own files, taken from it or built from its firmware (arch/arm64/boot/mkboot.py, Documentation/porting.md): never published
 /firmware/*
 !/firmware/README.md
+# ... and the vendor's firmware userland/userland/build.sh puts into the small image (userland/README.md): fw-gpu, fw-wifi,
+# fw-audio, fw-haptic, fw-bt, fw-camera beside it
+/userland/fw-*/
 
 # what bench makes and fetches: its logs, the images it sends
 /logs/
