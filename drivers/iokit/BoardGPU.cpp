@@ -632,10 +632,15 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * slot)
 		if (busy) {
 			static uint32_t said;
 
-			if (b->surface == NULL) {
-				b->memory->retain();
-			} else {
-				b->surface->memory->retain();
+			/*
+			 * The GPU may still write it, its SMMU mapping is left: the pages under it are kept for good -- the buffer's own
+			 * memory (for a surface made around its maker's memory that is the snapshot or the maker's pages, not the
+			 * surface's state page), and the surface itself, whose going would free the snapshot and let the maker's
+			 * pages go
+			 */
+			b->memory->retain();
+			if (b->surface != NULL) {
+				b->surface->retain();
 			}
 			if (said++ < 8) {
 				IOLog("HakiosGPU: the GPU is not done with what it was given: a buffer of %llu bytes stays its own\n", b->size);
