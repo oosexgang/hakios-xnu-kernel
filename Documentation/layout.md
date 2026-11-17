@@ -24,3 +24,4 @@ at their paths in the tree for the host's tests.
 | `components/` | | The parts that make a subsystem of Darwin work, a directory each: `metal` (with the second device in `metal/plugin`), `apple-id`, `sep`, `camera`, `audio`, `brightness`, `wallpaper`, `statusbar`, `tweaks`; `upstream.dts`, everything taken from elsewhere. |
 | `build.config.*` | | What a build is: `common`, `arm64` (the kernel), `darwin27` (the images), `bench` (a run on the phone). |
 | `bench` | | The phone on the bench: the resident loader, the images, a run, its log. |
+| `scripts/` | | What a person runs by hand: setting a machine up (`setup-ubuntu.sh`), a release of the sources (`release.sh`). `tools/` has what the builds and checks run. |

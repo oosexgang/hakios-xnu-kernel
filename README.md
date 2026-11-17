@@ -20,6 +20,7 @@ on your machine from files you have.
 | `kernel/` | Apple's release, the patches to it, and the tools that assemble, check and build the kernel |
 | `darwin/` | Darwin 26/27 user space: the image and library builders |
 | `tools/`, `workbench/` | The tools; the tests that need no phone |
+| `scripts/` | What you run by hand: set a machine up (`setup-ubuntu.sh`), release the sources (`release.sh`) |
 | `Documentation/` | Everything else ([layout.md](Documentation/layout.md) has the whole map) |
 
 ## How do I build it
