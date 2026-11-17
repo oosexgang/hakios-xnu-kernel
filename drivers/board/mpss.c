@@ -2998,9 +2998,21 @@ glink_pump(void)
 			glink_advance(length);
 			glink_say(GLINK_CLOSE_ACK, message.param1, 0, NULL, 0);
 			if ((channel = glink_theirs(message.param1)) != NULL) {
-				printf("mpss: glink: THE DSP CLOSES \"%s\"\n", channel->name);
+				printf("mpss: glink: THE DSP CLOSES \"%s\": closed from our side too, to be opened afresh\n", channel->name);
+				/*
+				 * (as Linux's qcom_glink_rx_close(): our side closed as well, and nothing of the session kept -- its
+				 * intents are not the next one's, and an open that is not sent again is never acknowledged again)
+				 */
+				if (channel->asked) {
+					glink_say(GLINK_CLOSE, channel->ours, 0, NULL, 0);
+				}
 				channel->open = false;
 				channel->theirs = 0;
+				channel->asked = false;
+				channel->acknowledged = false;
+				channel->request_answered = channel->request_granted = false;
+				bzero(channel->their_intents, sizeof(channel->their_intents));
+				channel->our_intent_count = 0;  /* (their buffers kept: offered again, as they are, once it is open) */
 			}
 			break;
 		case GLINK_CLOSE_ACK:
