@@ -322,8 +322,13 @@ pgpio_given_up(void)
 	CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 5, false) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 0, "once given up, nothing more");
 	CHECK(pgpio_put(PGPIO_DIG_PULL_CTL, 5, true) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 5, "but what puts things back, yes");
 	spmi.map[9] = 0x3c000;
-	CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 1, true) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 5, "a channel that is not its own now");
-	CHECK(logged("the arbiter's channel is no longer the PM8008i's reset GPIO") || broken, "said");
+	{
+		unsigned transfers = spmi.transfers;
+
+		/* (given up on already, the reason is not said again: what is looked at is that nothing was written) */
+		CHECK(!pgpio_put(PGPIO_DIG_PULL_CTL, 1, true) && pgpio_model.reg[PGPIO_DIG_PULL_CTL] == 5 && spmi.transfers == transfers,
+		    "a channel that is not its own now: nothing sent through it (%u transfers)", spmi.transfers - transfers);
+	}
 }
 
 /* how many times `text' is in the log */

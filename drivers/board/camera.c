@@ -1969,8 +1969,21 @@ smmu_find(void)
 		say("camera: the SMMU has no match register or context left\n");
 		return false;
 	}
-	smmu_second = ml_io_map(SMMU_PHYS + smmu_pages_size, 0x1000);
-	smmu_context = ml_io_map(SMMU_PHYS + (uint64_t)(smmu_pages + smmu_context_n) * smmu_pages_size, 0x1000);
+	/* (mapped once a context number: a session after every second of idleness mapped them anew, and nothing unmapped them) */
+	{
+		static uint32_t mapped_context = ~0u;
+		static vm_offset_t second_page, context_page;
+
+		if (second_page == 0) {
+			second_page = ml_io_map(SMMU_PHYS + smmu_pages_size, 0x1000);
+		}
+		if (mapped_context != smmu_context_n || context_page == 0) {
+			context_page = ml_io_map(SMMU_PHYS + (uint64_t)(smmu_pages + smmu_context_n) * smmu_pages_size, 0x1000);
+			mapped_context = smmu_context_n;
+		}
+		smmu_second = second_page;
+		smmu_context = context_page;
+	}
 	if (rd(smmu_context + SMMU_CB_SCTLR) & 1) {
 		say("camera: SMMU context %u is switched on although no stream uses it: somebody's\n", smmu_context_n);
 		return false;
