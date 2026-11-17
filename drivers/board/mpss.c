@@ -2639,6 +2639,17 @@ static struct {
 	struct glink_channel channel[CHANNELS];
 	uint32_t said, heard, trace;
 	char others[4][33];                     /* the channels the DSP opens that nobody here speaks (for the log) */
+	/*
+	 * Our control messages that found no room in our queue (an answer to the DSP's: done-reuse, open-ack, ...), sent
+	 * in order before anything else once there is room, as Linux's qcom_glink_tx() waits for room for them: one
+	 * dropped would leave the DSP waiting for an intent back, or an acknowledgement, for good
+	 */
+	struct {
+		struct glink_message message;
+		uint32_t more_length;
+		uint8_t more[48];
+	} pending[32];
+	uint32_t pending_first, pending_count, pending_lost;
 } glink = {
 	.channel = {
 		[CHANNEL_QRTR] = { .name = "IPCRTR", .ours = 1, .intents = { { 0x800, 5 }, { 0x2000, 3 }, { 0x4400, 2 } } },
@@ -2763,14 +2774,49 @@ glink_name(unsigned command)
 	return command < sizeof(names) / sizeof(names[0]) ? names[command] : "?";
 }
 
+/* The control messages that waited for room, sent in order while there is room for them. With glink_lock held. */
+static void
+glink_say_pending(void)
+{
+	while (glink.pending_count != 0) {
+		uint32_t at = glink.pending_first % (sizeof(glink.pending) / sizeof(glink.pending[0]));
+
+		if (!glink_put(&glink.pending[at].message, sizeof(glink.pending[at].message), glink.pending[at].more,
+		    glink.pending[at].more_length)) {
+			return;
+		}
+		glink.pending_first++;
+		glink.pending_count--;
+	}
+}
+
 static void
 glink_say(unsigned command, uint32_t param1, uint32_t param2, const void *more, uint32_t more_length)
 {
 	struct glink_message message = { .command = (uint16_t)command, .param1 = (uint16_t)param1, .param2 = param2 };
-	bool sent = glink_put(&message, sizeof(message), more, more_length);
+	const uint32_t most = sizeof(glink.pending) / sizeof(glink.pending[0]);
+	bool sent;
 
+	glink_say_pending();
+	sent = glink.pending_count == 0 && glink_put(&message, sizeof(message), more, more_length);
+	if (!sent && glink.up && glink.pending_count < most && more_length <= sizeof(glink.pending[0].more)) {
+		uint32_t at = (glink.pending_first + glink.pending_count) % most;
+
+		glink.pending[at].message = message;
+		glink.pending[at].more_length = more_length;
+		if (more_length != 0) {
+			memcpy(glink.pending[at].more, more, more_length);
+		}
+		glink.pending_count++;
+		if (glink.trace > 0) {
+			glink.trace--;
+			printf("mpss: glink: > %s %u %#x: no room in our queue yet, sent once there is\n", glink_name(command), param1, param2);
+		}
+		return;
+	}
 	if (glink.trace > 0 || !sent) {
 		glink.trace -= glink.trace > 0;
+		glink.pending_lost += !sent;
 		printf("mpss: glink: > %s %u %#x%s\n", glink_name(command), param1, param2, sent ? "" : ": NO ROOM IN OUR QUEUE, not sent");
 	}
 }
@@ -2809,6 +2855,7 @@ glink_pump(void)
 	uint32_t words[4];
 	char name[33];
 
+	glink_say_pending();
 	while (glink.up && !glink.broken) {
 		uint32_t waiting = glink_waiting(), length, piece = 0;
 		uint64_t whole;
@@ -3075,8 +3122,8 @@ glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 				found = (int)n;
 			}
 		}
-		if (found >= 0 && glink_room() >= ((length + sizeof(header) + 7) & ~7u)) {
-			break;
+		if (found >= 0 && glink.pending_count == 0 && glink_room() >= ((length + sizeof(header) + 7) & ~7u)) {
+			break;                  /* (after the control messages that wait: they go first) */
 		}
 		if (!fits && !asked) {
 			channel->request_answered = false;
@@ -5174,6 +5221,7 @@ step_link(void)
 		bzero(channel->their_intents, sizeof(channel->their_intents));
 	}
 	bzero(glink.others, sizeof(glink.others));
+	glink.pending_first = glink.pending_count = 0;  /* (nothing of the last link's said on this one) */
 	glink.trace = 60;
 	glink.up = true;
 	qrtr_hellos = qrtr_in = qrtr_out = qrtr_lookups = 0;
