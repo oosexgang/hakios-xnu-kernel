@@ -279,7 +279,7 @@ identity(void)
 
 /* ---- the identity the payload carries (src/identity_given.c) --------------------------------------- */
 
-static uint8_t blob[16384];
+static uint8_t blob[IDENTITY_MOST];
 static uint32_t blob_size;
 
 static void
@@ -325,6 +325,42 @@ blob_make(const char *platform, uint32_t width, uint32_t height, uint32_t scale,
 				blob[blob_size++] = k < length ? (uint8_t)('a' + s * 5 + k) : 0;
 			}
 		}
+	}
+	blob[8] = (uint8_t)blob_size;
+	blob[9] = (uint8_t)(blob_size >> 8);
+}
+
+/* a blob with one property in each section: the root's named FIRST, of FIRST_LENGTH bytes; the camera's of LAST_LENGTH; the others of 4 */
+static void
+blob_one_each(const char *first, uint32_t first_length, uint32_t last_length)
+{
+	blob_size = 0;
+	put32(IDENTITY_BLOB_MAGIC);
+	put32(1);
+	put32(0);
+	memset(blob + blob_size, 0, 32);
+	memcpy(blob + blob_size, "t8030", 5);
+	blob_size += 32;
+	put32(828);
+	put32(1792);
+	put32(2);
+	for (unsigned s = 0; s < 4; s++) {
+		put32(1);
+	}
+	for (unsigned s = 0; s < 4; s++) {
+		uint32_t length = s == 0 ? first_length : s == 3 ? last_length : 4, padded = (length + 3) & ~3u;
+
+		memset(blob + blob_size, 0, 32);
+		if (s == 0) {
+			memcpy(blob + blob_size, first, strlen(first) < 32 ? strlen(first) : 32);
+		} else {
+			blob[blob_size] = (uint8_t)('a' + s);
+		}
+		blob_size += 32;
+		put32(length);
+		memset(blob + blob_size, 'v', length);
+		memset(blob + blob_size + length, 0, padded - length);
+		blob_size += padded;
 	}
 	blob[8] = (uint8_t)blob_size;
 	blob[9] = (uint8_t)(blob_size >> 8);
@@ -475,6 +511,19 @@ identity_given(void)
 	CHECK(identity_from_blob(blob, 71, &v) == 0 && identity_from_blob(NULL, 0, &v) == 0, "too short for its header, or none");
 	CHECK(memcmp(&v, &before, sizeof(v)) == 0, "none of them changed what was there");
 
+	/* the edges: a name that fills its 32 bytes has no end in them, whatever byte comes after it */
+	blob_make("t8030", 1280, 1792, 2, counts);      /* (1280: the byte after the SoC's name is a 0) */
+	memset(blob + 12, 'x', 32);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a SoC's name of 32 letters, a 0 after them");
+	blob_one_each("nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn", 0, 4);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 0, "a property's name of 32 letters, a length of 0 after them");
+	blob_one_each("model", 4, 0);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 1 && v.camera.count == 1 && v.camera.props[0].length == 0,
+	    "the last property with no value (a flag of the device tree's) is one");
+	blob_make("t8030", 828, 1792, 4, counts);
+	CHECK(identity_from_blob(blob, blob_size, &v) == 1 && v.scale == 4, "a scale of 4 is one");
+	v = before;
+
 	/* the choice, and what is said of it */
 	said[0] = 0;
 	identity_choose(NULL, 0, &v);
@@ -485,6 +534,11 @@ identity_given(void)
 	said[0] = 0;
 	identity_choose(blob, blob_size - 4, &v);
 	CHECK(!v.given && v.root.props == identity_root && strstr(said, "not one") != NULL, "a bad one: the one built in, and said: %s", said);
+	blob_one_each("model", IDENTITY_MOST - 228, 4);   /* (228: the header, four names and lengths, three values of 4) */
+	said[0] = 0;
+	identity_choose(blob, blob_size, &v);
+	CHECK(blob_size == IDENTITY_MOST && v.given && strstr(said, "from the payload") != NULL,
+	    "one of as many bytes as there is room for (%u): it, and said: %s", blob_size, said);
 	said[0] = 0;
 	identity_choose(blob, IDENTITY_MOST + 1, &v);
 	CHECK(!v.given && strstr(said, "there is room for: the one built in") != NULL,
