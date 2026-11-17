@@ -24,5 +24,19 @@ at their paths in the tree for the host's tests.
 | `components/` | | The parts that make a subsystem of Darwin work, a directory each: `metal` (with the second device in `metal/plugin`), `apple-id`, `sep`, `camera`, `audio`, `brightness`, `wallpaper`, `statusbar`, `tweaks`; `upstream.dts`, everything taken from elsewhere. |
 | `build.config.*` | | What a build is: `common`, `arm64` (the kernel), `darwin27` (the images), `bench` (a run on the phone). |
 | `bench` | | The phone on the bench: the resident loader, the images, a run, its log. |
+| `kernel/` | | Apple's release as it is pinned (`UPSTREAM`), the topic patches to its files (`patches/`), the two files of ours that belong nowhere else (`overlay/`), and the tools that assemble, export, check and build the tree (`assemble.sh`, `export.sh`, `verify.sh`, `syntax-check.sh`, `build.sh`). [kernel/README.md](../kernel/README.md). |
+| `darwin/` | | Darwin's user space: the tools that unpack an IPSW and build the images from it (`tools/`), and the inserted libraries (`userland/`). [darwin/README.md](../darwin/README.md). |
+| `userland/` | | The small image's own programs and libraries and the script that builds it (`userland/build.sh`), with the phone's firmware it takes from `../fw-*`. [userland/README.md](../userland/README.md). |
+| `tools/` | | What the builds and the checks run, and what a person asks a question of: boards, devices, images, logs, defconfigs, QEMU. [tools/README.md](../tools/README.md). |
+| `workbench/` | | The tests that need no phone: the drivers on the host and under `qemu-aarch64` against models of their hardware, the loader in QEMU, the tools. [workbench/README.md](../workbench/README.md). |
+| `Documentation/`, `LICENSES/` | | Everything else to read ([README.md](README.md) lists it); the licences ([NOTICE.md](../NOTICE.md) says which file has which). |
 | `samples/` | | Starting points to copy: a phone's own repository (`device-repo/`, which `tools/device.py init` uses), a defconfig of your own. |
 | `scripts/` | | What a person runs by hand: setting a machine up (`setup-ubuntu.sh`), a release of the sources (`release.sh`). `tools/` has what the builds and checks run. |
+
+At the top, beside them: `Makefile` (`make` lists what it does), `MAINTAINERS` (each part's files, tests and documents;
+`scripts/tests-for.py` reads it), `CONTRIBUTING.md`, `SECURITY.md`, `NOTICE.md`, `CHANGELOG.md`, `.clang-format` and
+`.editorconfig` (the style, for an editor), `.github/` (the check every push runs, and the issue forms).
+
+Made here and never committed (`.gitignore`): `build/` (the boards' tables, images, releases, the repositories phones
+were brought in from), `logs/` (./bench's), `firmware/NAME/` (a phone's UEFI build and its own files), a phone's package
+in `arch/arm64/boot/dts/NAME/` once brought in, and `arch/arm64/boot/identity.h` (made from your IPSW).
