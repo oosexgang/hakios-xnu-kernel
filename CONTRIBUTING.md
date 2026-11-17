@@ -71,6 +71,13 @@ its source named in a comment.
 ## Style
 
 C in the kernel follows the files around it: tabs, the comment above the code explains *why*, a
-driver starts with a comment that says what the hardware is and where each number comes from. Shell
+driver starts with a comment that says what the hardware is and where each number comes from (`.clang-format` is
+that style for an editor: a start for new files, and for the lines a change touches). Shell
 scripts in `kernel/`, `workbench/` and `tools/` pass `shellcheck`. Python needs nothing outside the
 standard library.
+
+## Reports
+
+A run on a phone, good or bad, has its form ("A run on a phone": what `tools/logcheck.py` said, what was seen);
+something that does not work, "Something does not work". A security problem is reported privately:
+[SECURITY.md](SECURITY.md).
