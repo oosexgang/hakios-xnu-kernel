@@ -115,6 +115,16 @@ publish(IOService * service, IOService * provider, const char * name)
 void
 HakiosWLANStart(const char * interface, const uint8_t * address)
 {
+	static bool started;
+
+	/*
+	 * (net.c calls this for every wireless link it attaches: a second -- a re-attach -- made a second controller under the
+	 * same "wlan" node, both interfaces marked primary. The first one stands for the radio.)
+	 */
+	if (OSCompareAndSwap8(0, 1, (volatile UInt8 *) &started) == false) {
+		IOLog("HakiosWLAN: %s: the radio's services are there already\n", interface);
+		return;
+	}
 	IOService * platform = IOService::getPlatform();
 	OSDictionary * match = IOService::nameMatching("wlan");
 	IOService * node = match != NULL ? IOService::copyMatchingService(match) : NULL;   /* the device tree's */
