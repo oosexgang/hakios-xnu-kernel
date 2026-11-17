@@ -18,6 +18,8 @@
 #   bench memmap           the phone's memory map as its firmware reports it
 #   bench reboot           cold-reset the phone (back to Android)
 #   bench reload           restart into a freshly built loader (after arch/arm64/boot/build.sh)
+#   bench fresh            the loader started anew if a kernel has run in this session of it, and the resident image
+#                       sent again (scripts/phone-day.sh, before each run but the first: one kernel a session)
 #
 # Which phone: BENCH_BOARD (or HAKIOS_BOARD), else the only device package here with a uefi { } node
 # (tools/device.py add NAME; HAKIOS_DEVICES as for the builds). Its board file gives the boot arguments
@@ -238,10 +240,21 @@ resident_again() {
 	fi
 }
 
-fetch_log() { # fetch_log FILE
-	rm -f "$1"
-	FB_TIMEOUT=20 fb get_staged "$1" > /dev/null
-	[ -s "$1" ] && tr -d '\0' < "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+# staged FILE OEM-COMMAND [SECONDS]: what the command stages, fetched into FILE -- the two under one lock, so that no other
+# fastboot comes between them (a screenshot taken in another terminal during a run stages the screen in the log's place), and
+# FILE replaced only by a whole fetch (a phone that resets during one leaves the last one there)
+staged() {
+	local file=$1 wait=${3:-20}
+	rm -f "$file.new"
+	# shellcheck disable=SC2086  # (the command's words: "oem log" is two of them for fastboot)
+	(flock -w 90 9 || exit 1
+		timeout 10 fastboot $2 2>&1 | grep -q OKAY || exit 1
+		timeout "$wait" fastboot get_staged "$file.new" > /dev/null 2>&1) 9> "$PHONE.lock"
+	[ -s "$file.new" ] && mv "$file.new" "$file"
+}
+
+fetch_log() { # fetch_log FILE: the loader's log, and the last run's kernel log after it, as text
+	staged "$1.raw" "oem log" && tr -d '\0' < "$1.raw" > "$1" && rm -f "$1.raw"
 }
 
 # The boot arguments of the run: the board's, with BENCH_CMDLINE's in place of those of the same name
@@ -314,7 +327,7 @@ run() { # run OEM-COMMAND LABEL
 		else
 			identity=
 		fi
-		arch/arm64/boot/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+ramdisk=$rd} ${identity:+identity=$identity} \
+		arch/arm64/boot/mkpayload.py -o run-payload.bin kernel="$K" ${rd:+"ramdisk=$rd"} ${identity:+"identity=$identity"} \
 			--cmdline "loader_return_after=${BENCH_SECS:-180} epoch=$(date +%s) $args" > /dev/null || return 1
 		FB_TIMEOUT=60 fb stage run-payload.bin | grep -q OKAY || { say "the upload failed"; return 1; }
 	fi
@@ -322,17 +335,22 @@ run() { # run OEM-COMMAND LABEL
 	if [ "$1" != "oem selftest" ]; then
 		# the loader goes on answering during a run: ask until the result is no longer "running", and
 		# fetch the log as it stands every BENCH_FOLLOW seconds, so that a phone that resets leaves it
-		local follow=${BENCH_FOLLOW-10} deadline=$(($(date +%s) + ${BENCH_SECS:-180} + 100)) followed n=0
+		local follow=${BENCH_FOLLOW-10} deadline=$(($(date +%s) + ${BENCH_SECS:-180} + 100)) followed n=0 silent=0
 		[ "${BENCH_SECS:-180}" = 0 ] && deadline=$(($(date +%s) + 86400))
 		followed=$(date +%s)
 		while :; do
 			result=$(FB_TIMEOUT=15 fb getvar result | grep '^result:')
-			case "$result" in "" | *running*) ;; *) break ;; esac
+			# (no answer for half a minute and the loader gone -- the phone reset -- is a run that hung, whatever the deadline)
+			case "$result" in
+			"") silent=$((silent + 1)); [ "$silent" -ge 15 ] && [ "$(state)" != loader ] && break ;;
+			*running*) silent=0 ;;
+			*) break ;;
+			esac
 			[ "$(date +%s)" -ge "$deadline" ] && { result=; break; }
 			if [ -n "$follow" ] && [ $(($(date +%s) - followed)) -ge "$follow" ]; then
 				followed=$(date +%s)
 				n=$((n + 1))
-				fb oem log | grep -q OKAY && fetch_log "$log.live" && { [ -z "${BENCH_FOLLOW_KEEP:-}" ] || cp "$log.live" "$log.live.$n"; }
+				fetch_log "$log.live" && { [ -z "${BENCH_FOLLOW_KEEP:-}" ] || cp "$log.live" "$log.live.$n"; }
 			fi
 			sleep 2
 		done
@@ -363,11 +381,30 @@ run() { # run OEM-COMMAND LABEL
 	fi
 }
 
+# The loader started anew when a kernel has already run in this session of it -- a second kernel in one session has
+# died at once every time it was tried -- and the resident image sent again, whatever its size (the restart keeps only
+# the small ones). Nothing is done for a loader no kernel has run in yet.
+fresh() {
+	local rwho rwhat rsize
+	if [ "$(state)" != loader ] || [ ! -f "$PHONE.ran" ]; then
+		enter
+		return
+	fi
+	[ -s "$PHONE.ramdisk" ] && IFS=$'\t' read -r rwho rwhat rsize < "$PHONE.ramdisk"
+	say "a kernel has run in this session of the loader: the phone is restarted, and the loader started anew"
+	fb reboot > /dev/null
+	rm -f "$PHONE.ours"
+	wait_for android 120 || true
+	enter || return 1
+	if [ -n "${rwhat:-}" ] && [ ! -s "$PHONE.ramdisk" ]; then
+		[ -f "$rwhat" ] || { say "the resident image $rwhat is not here to send again" >&2; return 1; }
+		ramdisk "$rwhat"
+	fi
+}
+
 fetch_staged() { # fetch_staged OEM-COMMAND FILE WHAT
 	enter || return 1
-	# shellcheck disable=SC2086  # (the command's words: "oem recording" is two of them for fastboot)
-	fb $1 | grep -q OKAY || { say "the last run left no $3"; return 1; }
-	FB_TIMEOUT=120 fb get_staged "$2" > /dev/null
+	staged "$2" "$1" 120 || { say "the last run left no $3"; return 1; }
 }
 
 ramdisk() { # ramdisk [FILE|none]
@@ -393,8 +430,7 @@ screenshot() { # screenshot [FILE.png]
 	enter || return 1
 	local out=${1:-logs/screen.png} geom
 	geom=$(fb getvar screen | sed -n 's/^screen: //p')
-	[ -n "$geom" ] && fb oem screenshot | grep -q OKAY || { say "the loader has no display"; return 1; }
-	FB_TIMEOUT=60 fb get_staged logs/screen.raw > /dev/null
+	[ -n "$geom" ] && staged logs/screen.raw "oem screenshot" 60 || { say "the loader has no display"; return 1; }
 	# shellcheck disable=SC2086  # (three numbers)
 	python3 - logs/screen.raw "$out" $geom <<'PY' && rm -f logs/screen.raw && say "$out ($geom)"
 import struct, sys, zlib
@@ -436,17 +472,18 @@ enter) enter && say "the loader is up ($BOARD)" ;;
 ramdisk) ramdisk "$2" ;;
 run) run "oem run $2" "run${2:+-cp$2}" ;;
 selftest) run "oem selftest" selftest ;;
-log) enter && fb oem log > /dev/null && fetch_log logs/loader.log && cat logs/loader.log ;;
+log) enter && fetch_log logs/loader.log && cat logs/loader.log ;;
 screenshot) screenshot "$2" ;;
 recording) fetch_staged "oem recording" logs/recording.raw "recording (rec_secs=N)" &&
 	tools/recording.py logs/recording.raw "${2:-logs/recording.mp4}" && rm -f logs/recording.raw ;;
 sound) fetch_staged "oem sound" logs/sound.raw "sound recording (rec_sound=N)" &&
 	"arch/arm64/boot/dts/$BOARD/legacy/tools/sound.py" logs/sound.raw "${2:-logs/sound.wav}" && rm -f logs/sound.raw ;;
 stop) not_anothers_run stop && fb oem stop | grep -q OKAY && say "asked the kernel to come back" ;;
-memmap) enter && fb oem memmap > /dev/null && fb oem log > /dev/null && fetch_log logs/loader.log && sed -n '/^memory map/,$p' logs/loader.log ;;
+memmap) enter && fb oem memmap > /dev/null && fetch_log logs/loader.log && sed -n '/^memory map/,$p' logs/loader.log ;;
 hang) enter && fb oem hang; say "waiting for the watchdog..."; t0=$(date +%s)
 	wait_for android 150 && say "back in Android after $(($(date +%s) - t0)) s" || say "not back ($(describe "$(state)"))" ;;
 reboot) not_anothers_run reboot && fb reboot && rm -f "$PHONE.ours" ;;
 reload) [ "$(state)" = loader ] && { fb reboot > /dev/null; rm -f "$PHONE.ours"; wait_for android 120; }; enter && say "the loader is up ($BOARD)" ;;
+fresh) fresh && say "the loader is up ($BOARD), no kernel run in it yet" ;;
 *) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0" ;;
 esac

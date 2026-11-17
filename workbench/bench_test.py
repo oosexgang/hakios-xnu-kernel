@@ -228,6 +228,41 @@ class Bench(unittest.TestCase):
         done = self.bench('run')
         self.assertIn('warning: a kernel has already run in this session of the loader', done.stdout)
 
+    def test_a_fresh_loader_before_the_next_run(self):
+        # a kernel has run in this session: the phone restarted, the loader started anew, the resident image sent again --
+        # one too big for the restart's own resending (over 64 MB) as well
+        self.at('loader')
+        image = self.dir / 'system image.apfs'
+        with open(image, 'wb') as f:
+            f.truncate(65 << 20)
+        self.assertEqual(self.bench('ramdisk', str(image)).returncode, 0)
+        self.assertEqual(self.bench('run').returncode, 0)
+        (self.phone / 'calls').write_text('')
+        done = self.bench('fresh')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        calls = self.calls()
+        self.assertIn('fastboot reboot', calls)
+        self.assertLess(calls.index('fastboot reboot'), calls.index('adb reboot bootloader'))
+        self.assertIn(f'fastboot stage {image}', calls, 'the resident image sent again')
+        self.assertIn('no kernel run in it yet', done.stdout)
+        done = self.bench('run')
+        self.assertNotIn('warning: a kernel has already run', done.stdout)
+
+    def test_a_fresh_loader_is_left_as_it_is(self):
+        self.at('loader')
+        done = self.bench('fresh')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn('fastboot reboot', self.calls(), 'no kernel has run in it: nothing restarted')
+
+    def test_a_small_image_whose_path_has_a_space(self):
+        self.at('loader')
+        image = self.dir / 'my images' / 'root.apfs'
+        image.parent.mkdir()
+        image.write_bytes(b'APFS' * 64)
+        done = self.bench('run', BENCH_RAMDISK=str(image))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(payload_entries((self.phone / 'staged').read_bytes())['ramdisk'], b'APFS' * 64)
+
     def test_the_identity_goes_with_the_run(self):
         self.at('loader')
         blob = b'IDNT' + bytes(60)
