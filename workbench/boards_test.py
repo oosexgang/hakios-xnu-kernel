@@ -1231,6 +1231,11 @@ class DeviceTree(Sandbox):
             self.assertEqual(found(f'cpufreq@18591000 {{ compatible = {compatible}; reg = <0x18591000 0x1000>, '
                                    '<0x18592000 0x1000>; reg-names = "freq-domain0", "freq-domain1"; };'),
                              {'epss': 0x18591000, 'epss_domain_size': 0x1000})
+        # one cell an address, as the parent says, and no reg-names
+        self.assertEqual(devicetree.from_dts('/ { soc { #address-cells = <1>; #size-cells = <1>; cpufreq@18591000 { '
+                                             'compatible = "qcom,cpufreq-hw"; reg = <0x18591000 0x1000>, <0x18592000 0x1000>; '
+                                             '}; }; };')[0]['cpufreq'],
+                         {'block': 'osm', 'epss': 0x18591000, 'epss_domain_size': 0x1000})
         # the vendor's debug node beside it is not the block
         self.assertIsNone(found('debug@18591000 { compatible = "qcom,cpufreq-hw-epss-debug"; reg = <0x18591000 0x800>; '
                                 'reg-names = "domain-top"; };'))
@@ -1252,6 +1257,13 @@ class DeviceTree(Sandbox):
             pmic@0 { compatible = "qcom,pm8998", "qcom,spmi-pmic"; reg = <0x0 0>;
                 pon@800 { compatible = "qcom,pm8998-pon"; reg = <0x800>; }; }; }; };''')
         self.assertEqual(board['buttons'], {'pon': 0x008, 'pon_name': "the PM8998's power-on block"})
+        # one switched off is not the keys' block
+        _, board, _ = devicetree.from_dts('''/ { spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            pmic@0 { compatible = "qcom,pm8998", "qcom,spmi-pmic"; reg = <0x0 0>;
+                pon@800 { compatible = "qcom,pm8998-pon"; reg = <0x800>; }; };
+            pmic@2 { compatible = "qcom,pm8150b", "qcom,spmi-pmic"; reg = <0x2 0>;
+                pon@800 { compatible = "qcom,pm8916-pon"; reg = <0x800>; status = "disabled"; }; }; }; };''')
+        self.assertEqual(board['buttons']['pon'], 0x008)
         # an RPMh sequencer whose first slot set is not an active one is said
         rsc = '''/ {{ rsc@18200000 {{ compatible = "qcom,rpmh-rsc"; reg = <0x18200000 0x10000>, <0x18210000 0x10000>,
             <0x18220000 0x10000>; reg-names = "drv-0", "drv-1", "drv-2"; qcom,drv-id = <2>; qcom,tcs-offset = <0xd00>;

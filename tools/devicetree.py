@@ -87,19 +87,25 @@ def cpufreq_block(node, compatible):
     """[cpufreq] of a cpufreq-hw node, but its groups' cores: the layout (EPSS, or the OSM's before it), the first
     group's block and the blocks' size, and each group's address where they are not one size apart (an SM8150's)"""
     reg = cells(node.props.get('reg'))
+    # an address and a size of as many cells as the parent says (2 and 2 unless said, as a SoC node of an arm64 tree)
+    parent = node.parent
+    address = (cells(parent.props.get('#address-cells')) or [2])[0] if parent is not None else 2
+    sizes = (cells(parent.props.get('#size-cells')) or [2])[0] if parent is not None else 2
     names = strings(node.props.get('reg-names'))
-    count = len(names) or len(reg) // 4             # (without reg-names: two cells an address and two a size)
-    if not count or not reg or len(reg) % (2 * count):
+    if names and reg and len(reg) % len(names) == 0 and len(reg) // len(names) != address + sizes:
+        # the regs named say how many cells an entry has, where the parent is not in the text read (a .dtsi alone)
+        address = sizes = {2: 1, 4: 2}.get(len(reg) // len(names), 0)
+    if address not in (1, 2) or sizes not in (1, 2) or not reg or len(reg) % (address + sizes):
         return None
-    width = len(reg) // count // 2
+    count = len(reg) // (address + sizes)
 
     def number(words):
         value = 0
         for word in words:
             value = value << 32 | word
         return value
-    blocks = [(number(reg[i * 2 * width:i * 2 * width + width]), number(reg[i * 2 * width + width:(i + 1) * 2 * width]))
-              for i in range(count)]
+    step = address + sizes
+    blocks = [(number(reg[i * step:i * step + address]), number(reg[i * step + address:(i + 1) * step])) for i in range(count)]
     bases, size = [base for base, _ in blocks], min(size for _, size in blocks)
     entry = {'epss': bases[0], 'epss_domain_size': size}
     if not any('epss' in c for c in compatible):
@@ -418,7 +424,7 @@ def from_dts(text, panel=None):
         if 'qcom,qfprom' in compatible and unit_address(node):
             adreno.setdefault('qfprom', unit_address(node))
         if ('qcom,qpnp-power-on' in compatible or any(re.fullmatch(r'qcom,pm[a-z0-9]+-pon', c) for c in compatible)) \
-                and unit_address(node):
+                and unit_address(node) and strings(node.props.get('status')) != ['disabled']:
             # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N. The vendor's
             # qcom,qpnp-power-on, Linux's qcom,pm8998-pon and the like (a PMK8350's at its HLOS half, its unit address)
             slave, pmic = pmic_of(node)
