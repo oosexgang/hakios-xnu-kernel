@@ -2027,6 +2027,8 @@ public:
 	virtual IOReturn registerNotificationPort(mach_port_t port, UInt32 type, io_user_reference_t refCon) APPLE_KEXT_OVERRIDE;
 	virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments * args,
 	    IOExternalMethodDispatch * dispatch, OSObject * target, void * reference) APPLE_KEXT_OVERRIDE;
+private:
+	IOReturn method(uint32_t selector, IOExternalMethodArguments * args);
 };
 
 OSDefineMetaClassAndStructors(IOMobileFramebufferUserClient, IOUserClient);
@@ -2108,6 +2110,11 @@ IOMobileFramebufferUserClient::registerNotificationPort(mach_port_t port, UInt32
 	IOLockLock(fLock);
 	old = fPorts[type];
 	fPorts[type] = port;
+	if (type == kFBNotifyVSync && port != NULL && fCallbacks[type] != 0 && !fVSyncRunning && !fClosed) {
+		/* (the refreshes asked for before there was a port to send them to stopped at the first: started again) */
+		fVSyncRunning = true;
+		armVSync();
+	}
 	IOLockUnlock(fLock);
 	if (old != NULL) {
 		releaseNotificationPort(old);
@@ -2202,9 +2209,28 @@ IOMobileFramebufferUserClient::vsync(void)
 	}
 }
 
+/*
+ * A call made asynchronously hands over a send right to its wake port, which is the driver's once the call succeeds
+ * (MIG takes it back only on an error). None of these calls keeps it -- the answers go to the notification ports -- so it
+ * is given back here, or every such call would leave a port behind for good.
+ */
 IOReturn
 IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
     IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
+{
+	IOReturn result = method(selector, args);
+
+	(void) dispatch;
+	(void) target;
+	(void) reference;
+	if (result == kIOReturnSuccess && args->asyncWakePort != MACH_PORT_NULL) {
+		releaseAsyncReference64(args->asyncReference);
+	}
+	return result;
+}
+
+IOReturn
+IOMobileFramebufferUserClient::method(uint32_t selector, IOExternalMethodArguments * args)
 {
 	const uint64_t * in = args->scalarInput;
 	uint64_t * out = args->scalarOutput;

@@ -144,6 +144,8 @@ public:
 	virtual IOReturn registerNotificationPort(mach_port_t port, UInt32 type, io_user_reference_t refCon) APPLE_KEXT_OVERRIDE;
 	virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments * args,
 	    IOExternalMethodDispatch * dispatch, OSObject * target, void * reference) APPLE_KEXT_OVERRIDE;
+private:
+	IOReturn method(uint32_t selector, IOExternalMethodArguments * args);
 };
 
 OSDefineMetaClassAndStructors(AppleKeyStoreUserClient, IOUserClient);
@@ -207,9 +209,24 @@ AppleKeyStoreUserClient::answer(IOExternalMethodArguments * args, const uint8_t 
 	return kIOReturnSuccess;
 }
 
+/* (an asynchronous call's wake port is the driver's once it succeeds, and none is kept: given back, not left behind) */
 IOReturn
 AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
     IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
+{
+	IOReturn result = method(selector, args);
+
+	(void) dispatch;
+	(void) target;
+	(void) reference;
+	if (result == kIOReturnSuccess && args->asyncWakePort != MACH_PORT_NULL) {
+		releaseAsyncReference64(args->asyncReference);
+	}
+	return result;
+}
+
+IOReturn
+AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * args)
 {
 	static const uint8_t bagUUID[16] = { 0x72, 0x65, 0x64, 0x77, 0x6f, 0x6f, 0x64, 0x00, 0x6b, 0x65, 0x79, 0x62, 0x61, 0x67, 0x00, 0x01 };
 	uint8_t der[128];
