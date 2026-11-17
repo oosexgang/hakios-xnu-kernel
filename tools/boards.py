@@ -76,6 +76,11 @@ CAMCC_LISTS = ('mclk_rcg', 'mclk_branch', 'csiphy_branch', 'csiphy_timer_rcg', '
 CAMCC_PLLS = {'pll0_config': 9, 'pll2_config': 5}
 CAMCC_SOURCES = ('pll0_even_source', 'pll0_odd_source', 'pll2_source')
 
+# the layouts of the cores' frequency hardware (board/cpufreq_hw.h): EPSS (the default), the OSM's firmware before it;
+# and how far into a group's block each reaches (its last register, the row wanted, and 4)
+CPUFREQ_BLOCKS = ('epss', 'osm')
+CPUFREQ_EXTENT = {'epss': 0x324, 'osm': 0x924}
+
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
     'platform': {'io_base': (U64, False), 'io_size': (U64, False), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
@@ -105,7 +110,8 @@ SOC_SCHEMA = {
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
     'scmi_perf': {'shmem': (int, True), 'mailbox': (int, True), 'doorbell': (int, True)},
     'virtio': {'mmio': (int, True), 'transports': (int, True)},
-    'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
+    'cpufreq': {'block': (CPUFREQ_BLOCKS, False), 'epss': (int, True), 'epss_domain_size': (int, True),
+                'domains': ([int], False), 'domain_cores': ([int], True)},
 }
 # a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
 SUPPLY = re.compile(r'ldo([1-9]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
@@ -758,10 +764,23 @@ def load(problems=None):
         elif groups and 'platform' in soc and sum(groups) != soc['platform'].get('cores'):
             problems.add(rel, f'soc.dtsi: domain_cores adds up to {sum(groups)} cores, [platform] has '
                               f'{soc["platform"].get("cores")}')
+        cpufreq = soc.get('cpufreq', {})
+        if cpufreq:
+            block = cpufreq.get('block', 'epss')
+            if block in CPUFREQ_EXTENT and cpufreq.get('epss_domain_size', 0) < CPUFREQ_EXTENT[block]:
+                problems.add(rel, f'soc.dtsi [cpufreq]: epss_domain_size {cpufreq["epss_domain_size"]:#x} is smaller than '
+                                  f'a group\'s registers of the {block.upper()} layout reach ({CPUFREQ_EXTENT[block]:#x})')
+            domains = cpufreq.get('domains')
+            if domains is not None and (len(domains) != len(groups) or 0 in domains):
+                problems.add(rel, f'soc.dtsi [cpufreq]: domains gives each group\'s block: {len(groups)} addresses, none 0 '
+                                  f'(it has {len(domains)})')
+            elif domains is not None and domains[0] != cpufreq.get('epss'):
+                problems.add(rel, f'soc.dtsi [cpufreq]: domains begins at {domains[0]:#x}, epss is {cpufreq.get("epss", 0):#x}: '
+                                  f'the same, the first group\'s block')
         thermal = data.get('thermal')
         if thermal is not None:
             if 'cpufreq' in soc and 'floor_mhz' not in thermal:
-                problems.add(f'{rel} [thermal]', 'floor_mhz: needed with EPSS (the SoC\'s [cpufreq])')
+                problems.add(f'{rel} [thermal]', 'floor_mhz: needed with the cores\' frequency block (the SoC\'s [cpufreq])')
             if groups and len(thermal.get('floor_mhz', [])) != len(groups):
                 problems.add(f'{rel} [thermal]', f'floor_mhz: one value for each of the {len(groups)} groups of cores '
                                                  f'(soc.dtsi [cpufreq] domain_cores)')
@@ -864,8 +883,12 @@ def table_text(socs, boards):
             groups = ', '.join(str(n) for n in cpufreq['domain_cores'])
             out += ['\t\t.cpufreq = {',
                     f'\t\t\t.epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x},',
-                    f'\t\t\t.domain_cores = {{ {groups} }},',
-                    '\t\t},']
+                    f'\t\t\t.domain_cores = {{ {groups} }},']
+            if cpufreq.get('domains'):
+                out.append('\t\t\t.domains = { ' + ', '.join(f'{a:#010x}' for a in cpufreq['domains']) + ' },')
+            if cpufreq.get('block', 'epss') != 'epss':
+                out.append(f'\t\t\t.block = HAKIOS_CPUFREQ_{cpufreq["block"].upper()},')
+            out.append('\t\t},')
         spmi = soc.get('spmi')
         if spmi:
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '

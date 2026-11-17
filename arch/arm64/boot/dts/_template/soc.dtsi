@@ -162,10 +162,18 @@
 		tsens = <0x0c263000 0x0c265000>; // the TSENS controllers (at most eight), reg "tsens_tm_physical"
 	};
 
-	// CPU frequency through EPSS, for the feature "cpufreq-epss" and a board's thermal { }.
+	// The cores' frequency hardware, for the feature "cpufreq-epss" and a board's thermal { }: EPSS on the SM8350,
+	// SM7325, SC7280 and every chip after them, the OSM's firmware before it (SDM845, SM8150, SM8250, SC7180,
+	// SM6350, SM7225). The node is qcom,cpufreq-epss or qcom,cpufreq-hw (the vendor's qcom,cpufreq-hw-epss or
+	// qcom,cpufreq-hw); tools/boards.py new --dts reads it, the layout with it.
 	cpufreq {
-		epss = <0x18591000>;            // qcom,cpufreq-hw-epss: the first of its "freq-domainN" regs
-		epss-domain-size = <0x1000>;    // the distance from one to the next
+		block = "epss";                 // optional: "epss" (the default) or "osm", the registers' layout
+		                                // (drivers/board/cpufreq_hw.h): "osm" for a qcom,cpufreq-hw node
+		epss = <0x18591000>;            // the first of its "freq-domainN" regs
+		epss-domain-size = <0x1000>;    // their size (at least 0x324 for EPSS, 0x924 for the OSM), and the distance
+		                                // from one to the next unless domains says otherwise
+		domains = <0x18591000 0x18592000 0x18593000>; // optional: each "freq-domainN", where they are not one
+		                                // size apart (an SM8150's are not); the first is epss
 		domain-cores = <4 3 1>;         // how many cores each group has, in the cores' order (the cpu@ nodes'
 		                                // qcom,freq-domain); one to four groups, together platform { } cores
 	};
@@ -189,12 +197,13 @@
 		timeout-scale = <20>;           // optional: how many times longer the kernel waits for a lock; for emulators
 	};
 
-	// Optional SCMI performance channel for the cpufreq-scmi feature.
 	virtio {
 		mmio = <0x0a000000>;            // for "virtio" (an emulator): the first virtio,mmio node's reg
 		transports = <32>;              // how many of those nodes follow it, 0x200 bytes apart
 	};
 
+	// Optional SCMI performance channel for the cpufreq-scmi feature: a chip whose cores' speeds are the firmware's
+	// (SM8845).
 	scmi-perf {
 		shmem = <0>;                    // shared-memory channel's physical address
 		mailbox = <0>;                  // mailbox's physical base

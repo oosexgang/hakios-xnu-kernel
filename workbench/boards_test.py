@@ -323,6 +323,21 @@ class Check(Sandbox):
         self.soc('thermal {\n\t\ttsens = <0xc263000 0xc265000>;\n\t};', '')
         self.assertIn('thermal { } needs thermal { }', self.problems())
 
+    def test_the_frequency_block_holds_together(self):
+        self.soc('\t\tepss-domain-size = <0x1000>;\n', '\t\tblock = "osm";\n\t\tepss-domain-size = <0x800>;\n')
+        self.assertIn('epss-domain-size 0x800 is smaller than a group\'s registers of the OSM layout reach (0x924)',
+                      self.problems())
+        self.soc('\t\tepss-domain-size = <0x800>;\n', '\t\tepss-domain-size = <0x1400>;\n')
+        self.assertEqual(self.problems(), '')
+        self.soc('\t\tepss-domain-size = <0x1400>;\n', '\t\tepss-domain-size = <0x1400>;\n\t\tdomains = <0x18591000 0x18593800>;\n')
+        self.assertIn('domains gives each group\'s block: 3 addresses, none 0 (it has 2)', self.problems())
+        self.soc('domains = <0x18591000 0x18593800>;', 'domains = <0x18590000 0x18593800 0x18595800>;')
+        self.assertIn('domains begins at 0x18590000, epss is 0x18591000', self.problems())
+        self.soc('domains = <0x18590000 0x18593800 0x18595800>;', 'domains = <0x18591000 0x18593800 0x18595800>;')
+        self.assertEqual(self.problems(), '')
+        self.soc('block = "osm";', 'block = "osm2";')
+        self.assertIn('osm2', self.problems())
+
     def test_bluetooth_dt_references_are_not_guessed(self):
         tree = '''/ {
             tlmm: pinctrl@f000000 { compatible = "qcom,test-tlmm"; gpio-controller; };
@@ -379,7 +394,7 @@ class Check(Sandbox):
             (self.board, 'min = <1>;', 'min = <1>;\n\t\tbrightness = <5>;', 'unknown key "brightness"'),
             (self.board, '\tthermal {', '\tthermals {', 'unknown section thermals { }'),
             (self.board, 'floor-mhz = <1000 1100 1100>;', 'floor-mhz = <1000>;', 'one value for each of the 3 groups'),
-            (self.board, 'floor-mhz = <1000 1100 1100>;\n', '', 'floor-mhz: needed with EPSS'),
+            (self.board, 'floor-mhz = <1000 1100 1100>;\n', '', "floor-mhz: needed with the cores' frequency block"),
             (self.soc, 'tsens = <0xc263000 0xc265000>;', 'tsens = <' + ' '.join(['0xc263000'] * 9) + '>;',
              'at most 8 TSENS controllers'),
             (self.soc, 'tsens = <0xc263000 0xc265000>;', 'tsens = <' + ' '.join(['0xc263000'] * 8) + '>;', None),
@@ -633,6 +648,19 @@ class Generate(Sandbox):
                          '.epss = 0x18591000, .epss_domain_size = 0x1000,', '.domain_cores = { 4, 3, 1 },', '"cpufreq-epss"'):
             self.assertIn(expected, text)
         self.assertNotIn('*/board.dts', text, 'a path with */ in it would close the header\'s comment')
+
+    def test_the_table_carries_the_osm_layout(self):
+        self.soc('\t\tepss = <0x18591000>;\n\t\tepss-domain-size = <0x1000>;\n',
+                 '\t\tblock = "osm";\n\t\tepss = <0x18591000>;\n\t\tepss-domain-size = <0x1400>;\n'
+                 '\t\tdomains = <0x18591000 0x18593800 0x18595800>;\n')
+        text = boards.table_text(*boards.load())
+        self.assertIn('.domains = { 0x18591000, 0x18593800, 0x18595800 },', text)
+        self.assertIn('.block = HAKIOS_CPUFREQ_OSM,', text)
+
+    def test_the_table_leaves_the_epss_defaults_unsaid(self):
+        text = boards.table_text(*boards.load())
+        self.assertNotIn('.block =', text)
+        self.assertNotIn('.domains =', text)
 
     def test_the_table_carries_the_gpu(self):
         path = self.dir / 'devices/phone/board.dts'
