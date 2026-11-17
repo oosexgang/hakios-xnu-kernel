@@ -86,12 +86,17 @@ cd ../mido && git add images && git commit -m "images: v1"
 ```
 
 `images/VERSION/` gets the payload, the manifest and the README, and `images/README.md` lists every version. What is
-refused, whatever is asked:
+refused, whatever is asked -- judged by the files' bytes, not by what manifest.json says of them (anybody may edit it):
+every payload in a file is read, a boot image's gzip stream opened, each entry looked at whatever its name, and what
+lies between and after them:
 
 | Refused | Why |
 | --- | --- |
 | A loader built with an identity from an IPSW | Apple's data. Build the loader without one for an image that is published. |
-| A payload that carries an identity | The same. |
+| A payload that carries an identity, under any name | The same. |
+| An identity blob (`IDNT`), an Apple image file (`IM4P`) or an iPhone's device tree anywhere in a file | The same, wherever it was put. |
+| `boot.img` the manifest does not list, and links | Only the image's own files are published. |
+| A `--version` that is not a plain name, or that names a directory that is no image | Publishing writes `images/VERSION/` and nothing else. |
 | A payload with a system image in it | The system image is Darwin's own files (`./bench ramdisk`), never part of an image. |
 | An image that is not what its manifest says | A file changed after it was built. |
 | `boot.img`, unless `--with-uefi` | It carries the phone's UEFI and its vendor's drivers: only the repository's owner knows whether they may publish them. |
