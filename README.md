@@ -25,6 +25,21 @@ on your machine from files you have.
 | `MAINTAINERS` | Each part of the project: its files, its tests, its documents (`scripts/tests-for.py FILE` says what to run) |
 | `Documentation/` | Everything else ([layout.md](Documentation/layout.md) has the whole map) |
 
+## Where it is
+
+Said plainly, each with where it is recorded; "seen on a phone", "runs in QEMU" and "passes the host tests" are three
+different statements.
+
+| What | State |
+| --- | --- |
+| Darwin 27.2 (24B119, the iPhone12,1's files) | The home screen on Renoir (Snapdragon 780G), from RAM, drawn in software (`gpu=0`); in QEMU the lock screen. [darwin26-boot.md](Documentation/darwin26-boot.md) |
+| Darwin 26.6.2 (23G90) | The home screen on Renoir, first on 31 October 2026. Same document. |
+| Each driver | What it has been seen to do, and how tied it is to one phone: [drivers.md](Documentation/drivers.md); what a phone can turn on next: `tools/boards.py status NAME`. |
+| New, not yet seen on a phone | Bluetooth for Darwin (`bt=2`: the controller's firmware, bluetoothd's service, channel and control), the kernel's own UFS driver in `phone_perf`, one image for a phone ([images.md](Documentation/images.md)). Held by the host tests and, where it can be, by QEMU. |
+| Not there | What Darwin draws with the GPU -- applications' icons, Liquid Glass -- while the GPU is off ([metal-glass.md](Documentation/metal-glass.md)). |
+
+A day with a phone, the runs in order and what each must say: [Documentation/phone-test.ru.md](Documentation/phone-test.ru.md).
+
 ## How do I build it
 
 1. The kernel: `kernel/build.sh` (or `make kernel-check`, with LLVM's tools). It makes the tree beside the repository
