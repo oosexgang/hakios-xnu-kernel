@@ -171,6 +171,13 @@ void
 psci_smp_cpu_running(void)
 {
 	psci_smp_cpu_reached(PSCI_SMP_CPU_RUNNING);
+	/*
+	 * A core whose start was given up on, arriving after the others were told to stop: its own interrupt controller's
+	 * start cleared the stop it was sent, and it would run on into the loader's next kernel. It stops here.
+	 */
+	if (os_atomic_load(&psci_smp_stopping, acquire)) {
+		psci_smp_cpu_off();
+	}
 }
 
 static void
