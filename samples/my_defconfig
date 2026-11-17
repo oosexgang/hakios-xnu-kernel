@@ -1,0 +1,12 @@
+# A defconfig of your own: the boot arguments of one kind of run, one a line (tools/defconfig.py).
+# This first line is what `tools/defconfig.py --list` shows of it: say what the run is for.
+#
+# NAME or NAME=VALUE; what follows # is a comment. "include OTHER" takes OTHER_defconfig's arguments first, and a
+# later line of the same name replaces one before it -- as the board's own arguments (boot { } of its board.dts) are
+# replaced by these when ./bench runs it (BENCH_DEFCONFIG=FILE) or an image is built with it
+# (tools/image.py build --defconfig FILE). Documentation/boot-args.md has every argument the kernel reads.
+include phone_first            # the display, the console, the way back to the loader
+backlight=1                    # brightness through the panel (Documentation/backlight.md)
+thermal=1                      # the thermal limiter, looking only (Documentation/thermal.md)
+buttons=1                      # the keys
+# wifi=1                       # a line left as a comment is not an argument
