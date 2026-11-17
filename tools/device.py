@@ -136,8 +136,9 @@ class Source:
     def copy(self, name, to):
         """The package's files into the directory `to`, which is not there yet."""
         if self.directory is not None:
+            # (a phone's repository's own: its git, its checks, its images, which no build reads)
             shutil.copytree(self.directory if self.single is not None else self.directory / name, to,
-                            ignore=shutil.ignore_patterns('.git', NOTE))
+                            ignore=shutil.ignore_patterns('.git', '.github', 'images', NOTE))
             return
         to.mkdir(parents=True)
         for path in git('ls-tree', '-r', '--name-only', self.commit, '--', f'{name}/').stdout.split('\n'):
