@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """scripts/phone-day.sh with a stand-in for ./bench, in a copy of what it uses: the runs in order, each log looked at,
-the summary, a stop at the first run that did not go -- or not, with --keep-going -- and a run that left no log."""
+the summary, a stop at the first run that did not go -- or not, with --keep-going -- and a run that left no log; what the
+runs need looked at first (a stand-in for scripts/phone-ready.py), and no day begun on a machine that is not ready."""
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +24,13 @@ ln -sf "$(basename "$log")" logs/last.log
 echo "result: done  [$log]"
 '''
 
+# a check of what the runs need: ready unless the test left a word in not-ready
+READY = r'''#!/bin/bash
+echo "phone-ready: zeta, for $*"
+if [ -f not-ready ]; then echo "  MISSING  kernel  $(cat not-ready)"; exit 1; fi
+echo "  ok       kernel  here"
+'''
+
 
 class PhoneDay(unittest.TestCase):
     def setUp(self):
@@ -36,10 +44,13 @@ class PhoneDay(unittest.TestCase):
             (self.dir / f'arch/arm64/configs/{name}_defconfig').write_text(f'# {name}, the test\'s\nx=1\n')
         (self.dir / 'bench').write_text(BENCH)
         (self.dir / 'bench').chmod(0o755)
+        (self.dir / 'ready').write_text(READY)
+        (self.dir / 'ready').chmod(0o755)
 
     def day(self, *runs):
         done = subprocess.run([str(self.dir / 'scripts/phone-day.sh'), *runs], cwd=self.dir, capture_output=True, text=True,
-                              env={'PATH': '/usr/bin:/bin', 'BENCH': str(self.dir / 'bench')})
+                              env={'PATH': '/usr/bin:/bin', 'BENCH': str(self.dir / 'bench'),
+                                   'READY': str(self.dir / 'ready')})
         days = sorted((self.dir / 'logs').glob('day-*'))
         return done, days[-1] if days else None
 
@@ -70,6 +81,26 @@ class PhoneDay(unittest.TestCase):
         self.assertIn('## phone_bt', summary)
         self.assertIn('no log: the run did not come back', summary)
         self.assertIn('no answer: the kernel hung', (day / 'phone_never.bench').read_text())
+
+    def test_what_the_runs_need_is_looked_at_first(self):
+        done, day = self.day('phone_first', 'phone_bt')
+        summary = (day / 'summary.md').read_text()
+        self.assertLess(summary.index('## Before'), summary.index('## phone_first'))
+        self.assertIn('phone-ready: zeta, for phone_first phone_bt', summary)
+        self.assertIn('ok       kernel  here', summary)
+
+    def test_a_machine_that_is_not_ready_begins_no_run(self):
+        (self.dir / 'not-ready').write_text('no kernel: kernel/build.sh')
+        done, day = self.day('phone_first')
+        self.assertEqual(done.returncode, 2)
+        self.assertIn('not ready (above): no run started', done.stdout)
+        self.assertEqual([p.name for p in day.iterdir()], ['summary.md'], 'no run')
+        self.assertIn('MISSING  kernel  no kernel: kernel/build.sh', (day / 'summary.md').read_text())
+        # told to begin all the same: the runs, and nothing looked at
+        done, day = self.day('--no-check', 'phone_first')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn('## Before', (day / 'summary.md').read_text())
+        self.assertTrue((day / 'phone_first.log').is_file())
 
     def test_a_run_there_is_no_defconfig_of(self):
         done, day = self.day('phone_nothing')
