@@ -1,0 +1,6 @@
+# phone_perf with its numbers said: how fast every core gets at memory at once with the clocks raised (membench=2,
+# 2 s after the clocks: "membench: all ... at once"), and how busy each core is every second for the whole run
+# (cpuload=1000: "tl: u" lines, tools/frames.py), against which a change to the governor or the clocks is weighed.
+include phone_perf
+membench=2
+cpuload=1000
