@@ -13,6 +13,7 @@ osfmk/arm64/psci_smp.c
 osfmk/arm64/a64emu.c
 osfmk/arm64/user_exception_trace.c
 
-# the network stack's and the MAC framework's private headers
+# the network stack's and the MAC framework's private headers (Skywalk's take the network stack's with them)
 bsd/dev/board/net.c
+bsd/dev/board/bt_host.c
 bsd/kern/kern_minimac.c
