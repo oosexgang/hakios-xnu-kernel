@@ -11,6 +11,7 @@
  *   ufs_native_read_test SCENARIO
  */
 #include <stdarg.h>
+#include <unistd.h>
 
 #include "fakekernel.h"
 
@@ -153,10 +154,13 @@ static void *
 controller(void *unused __unused)
 {
 	for (;;) {
-		uint32_t db = __atomic_load_n(&REG(UFSHC_UTRLDBR), __ATOMIC_ACQUIRE);
+		uint32_t db;
 		unsigned slot;
 
-		if (db == 0 || held) {
+		/* (held looked at before the doorbell and after it: a scenario holds the controller before it rings for it, and
+		 * lets go once the doorbell is as it wants it) */
+		if (__atomic_load_n(&held, __ATOMIC_ACQUIRE) || (db = __atomic_load_n(&REG(UFSHC_UTRLDBR), __ATOMIC_ACQUIRE)) == 0 ||
+		    __atomic_load_n(&held, __ATOMIC_ACQUIRE)) {
 			usleep(5);
 			continue;
 		}
@@ -172,6 +176,23 @@ controller(void *unused __unused)
 }
 
 /* the driver as switch_in leaves it, its list in and running, with SLOTS slots; the controller and the poller started */
+static bool threads_started;
+
+/* the controller held: from here on it does nothing, whatever is rung */
+static void
+hold(void)
+{
+	__atomic_store_n(&held, true, __ATOMIC_SEQ_CST);
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+/* ... and let go of: what the scenario set in the registers before is what the controller sees after */
+static void
+let_go(void)
+{
+	__atomic_store_n(&held, false, __ATOMIC_RELEASE);
+}
+
 static void
 in_with(unsigned slots)
 {
@@ -193,9 +214,12 @@ in_with(unsigned slots)
 	hc_slot_buffer = BUFFER;
 	ufshc_set_luns(1u << 0 | 1u << 3);
 	hc_usable = hc_in = true;
-	pthread_create(&thread, NULL, controller, NULL);
-	if (kernel_thread_start(hc_poller, NULL, &poller) == KERN_SUCCESS) {
-		thread_deallocate(poller);
+	if (!threads_started) {                 /* (once a process, however many times a scenario sets the driver up) */
+		threads_started = true;
+		pthread_create(&thread, NULL, controller, NULL);
+		if (kernel_thread_start(hc_poller, NULL, &poller) == KERN_SUCCESS) {
+			thread_deallocate(poller);
+		}
 	}
 }
 
@@ -299,7 +323,7 @@ rung_only_while_in(void)
 		                            "the loader taking it back", "a doorbell bit set already" };
 
 	in();
-	held = true;
+	hold();
 	for (unsigned i = 0; i < sizeof(ways) / sizeof(ways[0]); i++) {
 		REG(UFSHC_UTRLBA) = i == 0 ? LIST_PA + 0x1000 : LIST_PA;
 		REG(UFSHC_UTRLBAU) = i == 1 ? 1 : 0;
@@ -312,7 +336,7 @@ rung_only_while_in(void)
 	}
 	hc_slots[0].number = 0;
 	REG(UFSHC_UTRLDBR) = 0;
-	held = false;
+	let_go();
 	REG(UFSHC_UTRLBA) = LIST_PA;
 	REG(UFSHC_UTRLBAU) = 0;
 	REG(UFSHC_UTRLRSR) = 1;
@@ -455,7 +479,7 @@ not_put_in(void)
 
 	for (unsigned i = 0; i < sizeof(ways) / sizeof(ways[0]); i++) {
 		uefi_has_it();
-		held = true;
+		hold();
 		take_back = i == 0;
 		uefi_ucd[4] = i == 1 ? 0 : uefi_ucd[4];
 		if (i == 1) {
@@ -469,8 +493,8 @@ not_put_in(void)
 		CHECK(logged(ways[i]), "%s: said: %s", ways[i], log_text);
 		CHECK(REG(UFSHC_UTRLBA) == (i == 2 ? UEFI_LO + 0x1000 : UEFI_LO), "%s: the list as it was", ways[i]);
 		take_back = 0;
-		held = false;
 		REG(UFSHC_UTRLDBR) = 0;
+		let_go();
 	}
 }
 
@@ -514,7 +538,7 @@ stuck_when_going_out(void)
 {
 	uefi_has_it();
 	CHECK(ufshc_switch_in(false) == 0, "in");
-	held = true;
+	hold();
 	REG(UFSHC_UTRLDBR) = 2;                 /* (slot 1 rung, and never done) */
 	CHECK(ufshc_switch_out("the test") == 0, "out: %s", log_text);
 	CHECK(clears == 1 && REG(UFSHC_UTRLDBR) == 0 && logged("did not clear in 1 s: this kernel's slots cleared"), "cleared: %s",
