@@ -66,6 +66,18 @@ class LogCheck(unittest.TestCase):
         self.assertRegex(said, r'Storage \(own driver\) +STOPPED +ufs: native check: .*DIFFERENT at byte 4096')
         self.assertNotIn('back in the loader', said)
 
+    def test_what_the_common_drivers_say_of_a_block_they_do_not_know(self):
+        code, said = run('Darwin Kernel Version 12377.121.6: ...\n'
+                         'cpufreq: group 0 (4 of our cores): row 2 -> 7 of the frequency table, 1804 MHz\n'
+                         'cpufreq: group 1 (3 of our cores): the hardware is not in charge of its clock: left alone\n'
+                         'buttons: PMIC arbiter version 0x70000000, 512 channels\n'
+                         'buttons: this driver knows versions 5 and 8 of the arbiter only: no buttons\n')
+        self.assertEqual(code, 1, said)
+        self.assertRegex(said, r'CPU frequency +STOPPED +cpufreq: group 1 .*not in charge of its clock')
+        self.assertRegex(said, r'Buttons +STOPPED +buttons: this driver knows versions 5 and 8')
+        _, said = run('buttons: ... a power-on block of subtype 0x5, which has no keys this driver reads: left alone\n')
+        self.assertRegex(said, r'Buttons +STOPPED')
+
     def test_every_line_of_each_part_when_asked(self):
         _, said = run(BAD, '--all')
         self.assertIn('adreno: THE GPU IS NOT STARTED', said)
