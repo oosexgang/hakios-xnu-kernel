@@ -48,6 +48,7 @@ static struct {
 	uint32_t answer;                        /* the read FIFO's word, while one waits there */
 	bool waiting;
 	uint8_t device_reg[16][0x10000];        /* what each device's registers hold */
+	uint8_t ever_set[16][0x10000];          /* every bit ever written into each */
 	uint16_t stuck_reg;                     /* a register that keeps none of what is written (0: none) */
 	unsigned status_reads, fifo_status_reads, fifo_reads, commands, slave_status_reads;
 	uint8_t ids[32];                        /* the ids reads were sent with */
@@ -99,6 +100,7 @@ swr_model_wr(uint64_t address, uint32_t value)
 		if (reg != swr.stuck_reg || reg == 0) {
 			swr.device_reg[device][reg] = (uint8_t)(value >> 24);
 		}
+		swr.ever_set[device][reg] |= (uint8_t)(value >> 24);
 		break;
 	case 0x0304:                            /* CMD_FIFO_RD_CMD */
 		swr.commands++;
@@ -521,6 +523,41 @@ the_codec_set_up(void)
 		    "%#x: %#x, its bits %#x wanted %#x and the others left", wanted[i].reg, now, wanted[i].mask, wanted[i].value);
 	}
 	CHECK(strstr(log_text, "(efuse 30: 0x5)") != NULL, "the efuse said");
+	CHECK(swr.ever_set[4][0x3001] & 0x40, "ANA_BIAS's 0x40 was set before it was taken away: %#x", swr.ever_set[4][0x3001]);
+}
+
+/* ... and from registers that hold nothing: every bit that is wanted set is written, not found there */
+static void
+the_codec_set_up_from_nothing(void)
+{
+	codec();
+	memset(swr.device_reg[4], 0, sizeof(swr.device_reg[4]));
+	swr.device_reg[4][0x34ce] = 0x05;
+	CHECK(codec_init(), "set up: %s", log_text);
+	CHECK(swr.device_reg[4][0x3103] == 0xca && swr.device_reg[4][0x3001] == 0x80 && swr.device_reg[4][0x3029] == 0x80,
+	    "SLEEP_CTL %#x, ANA_BIAS %#x, BIAS_VBG_FINE_ADJ %#x", swr.device_reg[4][0x3103], swr.device_reg[4][0x3001],
+	    swr.device_reg[4][0x3029]);
+}
+
+/* ADC1 on (mic bias 1 and the ADC's request), from registers that hold nothing: each of its bits there */
+static void
+adc1_turned_on(void)
+{
+	static const struct { uint16_t reg; uint8_t mask, value; } wanted[] = {
+		{ WCD_CDC_DIG_CLK_CTL, 0xf0, 0xf0 }, { WCD_CDC_ANA_CLK_CTL, 0x18, 0x18 }, { WCD_CDC_ANA_TX_CLK_CTL, 0x01, 0x01 },
+		{ WCD_MICB1_TEST_CTL_2, 0x01, 0x01 }, { WCD_MICB2_TEST_CTL_2, 0x01, 0x01 }, { WCD_MICB3_TEST_CTL_2, 0x01, 0x01 },
+		{ WCD_MICB4_TEST_CTL_2, 0x01, 0x01 }, { WCD_ANA_MICB1, 0xc0, 0x40 }, { WCD_ANA_TX_CH1, 0x1f, 6 },
+		{ WCD_CDC_REQ_CTL, 0x03, 0x02 }, { WCD_ANA_TX_CH2, 0x40, 0x00 }, { WCD_CDC_TX_ANA_MODE_0_1, 0x0f, 0x05 },
+	};
+
+	codec();
+	memset(swr.device_reg[4], 0, sizeof(swr.device_reg[4]));
+	CHECK(adc1_on(), "on: %s", log_text);
+	for (size_t i = 0; i < sizeof(wanted) / sizeof(wanted[0]); i++) {
+		CHECK((swr.device_reg[4][wanted[i].reg] & wanted[i].mask) == wanted[i].value, "%#x: %#x, its bits %#x wanted %#x",
+		    wanted[i].reg, swr.device_reg[4][wanted[i].reg], wanted[i].mask, wanted[i].value);
+	}
+	CHECK(swr.ever_set[4][WCD_ANA_TX_CH2] & 0x40, "the ADC's input held (HPF) before it is let go: %#x", swr.ever_set[4][WCD_ANA_TX_CH2]);
 }
 
 /* a register that holds what is wanted already is read, not written */
@@ -683,7 +720,8 @@ main(int argc, char **argv)
 		{ "the_first_vote_refused", the_first_vote_refused }, { "the_link_up", the_link_up }, { "the_link_down", the_link_down },
 		{ "reads_over_the_bus", reads_over_the_bus }, { "an_answer_for_another_read", an_answer_for_another_read },
 		{ "a_full_fifo", a_full_fifo }, { "an_answer_a_while_after", an_answer_a_while_after }, { "no_answer_at_all", no_answer_at_all }, { "the_codec_found", the_codec_found }, { "the_codec_not_there", the_codec_not_there },
-		{ "the_codec_set_up", the_codec_set_up }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
+		{ "the_codec_set_up", the_codec_set_up }, { "the_codec_set_up_from_nothing", the_codec_set_up_from_nothing },
+		{ "adc1_turned_on", adc1_turned_on }, { "the_codec_left_as_it_is", the_codec_left_as_it_is },
 		{ "the_codec_does_not_take_it", the_codec_does_not_take_it }, { "the_ring_darwin_reads", the_ring_darwin_reads },
 	};
 
