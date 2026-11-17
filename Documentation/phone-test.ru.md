@@ -50,7 +50,7 @@ make ready                                       # или scripts/phone-ready.py
 | № | Команда | Что должно быть | Если нет |
 | --- | --- | --- | --- |
 | 1 | `BENCH_DEFCONFIG=phone_first ./bench run` | `kernel: started; no panic; back in the loader` | Пришлите `logs/last.log`: ядро не дошло до драйверов |
-| 2 | `BENCH_DEFCONFIG=phone_look ./bench run` | Всё, что только читает: `said` или `ok` у яркости, температуры, памяти, батареи, кнопок, тача и Bluetooth (`bt=-1`), без `STOPPED` | Строка `STOPPED` и `tools/logcheck.py --all logs/last.log` |
+| 2 | `BENCH_DEFCONFIG=phone_look ./bench run` | Всё, что только читает: `said` или `ok` у яркости (`backlight=1` ничего не включает), температуры, памяти, батареи, кнопок, тача (`touchscreen=-1`: только состояние пинов и тактирования) и Bluetooth (`bt=-1`), без `STOPPED` | Строка `STOPPED` и `tools/logcheck.py --all logs/last.log` |
 | 3 | `BENCH_DEFCONFIG=phone_ufs_check ./bench run` | `Storage (own driver) ok` с `0 NOT THE SAME, 0 failed reads` | `DIFFERENT` или `STOP`: phone_perf для этого телефона пока не годится, пришлите журнал |
 | 4 | `BENCH_DEFCONFIG=phone_ufs_bench ./bench run` | Цифры скорости чтения с 1–31 запросами | — (только измерение) |
 | 5 | `BENCH_DEFCONFIG=phone_perf ./bench run` | Частоты (`CPU frequency ok`), свой драйвер UFS, GPU | Строка `STOPPED` |

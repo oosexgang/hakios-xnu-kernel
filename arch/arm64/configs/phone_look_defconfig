@@ -1,7 +1,7 @@
-# The run after phone_first: every core the board gives, the touch screen and the keys, and each part that has a level
-# that only reads asked for it, so that its log can be compared with the phone's under Android before anything is
-# written to it (Documentation/porting.md, step 5). The GPU, Wi-Fi, the sound, the cameras and the clocks stay as
-# they are.
+# The run after phone_first: every core the board gives, the keys, and each part that has a level that only reads
+# asked for it, so that its log can be compared with the phone's under Android before anything is written to it
+# (Documentation/porting.md, step 5). The GPU, Wi-Fi, the sound, the cameras, the clocks and the touch screen's
+# controller stay as they are.
 include debug
 gpu=0
 metal=0
@@ -11,10 +11,10 @@ adsp=0
 sound=0
 cam=0
 haptic=0
-backlight=1
+backlight=1             # the DSI controller read when its clocks run; none turned on
 thermal=1
 ddr=1
 battery=1
-touchscreen=1
+touchscreen=-1          # the touch screen: its clocks', pins' and straps' state read, nothing powered or sent
 buttons=1
 bt=-1                   # Bluetooth: the UART, its pins and the controller's power read, nothing written
