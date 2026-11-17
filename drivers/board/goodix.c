@@ -1037,16 +1037,22 @@ show_state(const char *when)
 	    gpio_get(PIN_FOCALTECH_ID), gpio_get(PIN_GOODIX_ID));
 }
 
-/* Power the chip up from nothing, in the vendor driver's order. */
-static void
+/*
+ * Power the chip up from nothing, in the vendor driver's order. False when its I/O supply did not come up: then nothing
+ * more is driven, neither the analog supply nor a pin the chip would be powered through without it.
+ */
+static bool
 power_on(void)
 {
 	gpio_output(PIN_RESET, false, PULL_UP, 8);
 	gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
-	io_supply_on();
+	if (!io_supply_on()) {
+		return false;
+	}
 	sleep_ms(3);
 	gpio_output(PIN_AVDD, true, PULL_NONE, 2);
 	sleep_ms(15);
+	return true;
 }
 
 static void
@@ -1073,7 +1079,10 @@ bring_up(void)
 	touch_chip = touch_chip_detect();
 	printf("goodix: ID gpio%u=%u gpio%u=%u: selected %s\n", PIN_GOODIX_ID, gpio_get(PIN_GOODIX_ID), PIN_FOCALTECH_ID,
 	    gpio_get(PIN_FOCALTECH_ID), chip_name());
-	power_on();
+	if (!power_on()) {
+		printf("goodix: the chip's I/O supply is not on: nothing more powered or driven\n");
+		return false;
+	}
 
 	if (clocks_on()) {
 		printf("goodix: serial engine: firmware %#x, interface %#x, parameters %#x, source clock %u Hz (select %u)\n",
