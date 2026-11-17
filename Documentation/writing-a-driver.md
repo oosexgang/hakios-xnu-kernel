@@ -55,7 +55,9 @@ needs it.
 ## Steps
 
 1. **Copy the example** to `drivers/board/NAME.c`. A driver works on any board from its
-   data; one of a single part is named after the part.
+   data; one of a single part is named after the part. `scripts/new-driver.py NAME` does this step and the
+   mechanical half of step 4 -- the test copied, in `workbench/run.sh`'s list, the part in `MAINTAINERS` -- and
+   prints the rest.
 2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `board/board.h` and its name in
    `tools/boards.py`. An address the driver needs that no section has yet becomes a key:
    [arch/arm64/boot/dts/README.md](../arch/arm64/boot/dts/README.md), "Adding a kind of data", has the seven places.
