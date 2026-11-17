@@ -143,6 +143,21 @@ class Build(Sandbox):
         self.assertEqual((front, dtb), (SHIM + UEFI_IMAGE, DTB))
         self.assertIn('fastboot boot boot.img', (self.out / 'README.md').read_text())
 
+    def test_one_image_for_each_run_of_a_phone(self):
+        code, said = self.tool('build', '--board', 'zeta', '--kernel', str(self.dir / 'kernel'), '--loader',
+                               str(self.dir / 'loader.efi'), '--out', str(self.out), '--uefi', str(self.dir / 'uefi'), '--every-run')
+        self.assertEqual(code, 0, said)
+        runs = sorted(p.name.removesuffix('_defconfig') for p in image.defconfig.CONFIGS.glob('phone_*_defconfig'))
+        self.assertGreater(len(runs), 3)
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()), runs)
+        for run in runs:
+            manifest = json.loads((self.out / run / 'manifest.json').read_text())
+            self.assertEqual(manifest['defconfig'], run)
+            cmdline = dict(image.payload_entries((self.out / run / 'zeta.payload').read_bytes()))['cmdline'].rstrip(b'\0').decode()
+            self.assertEqual(cmdline, image.boot_arguments(boards.load()[1]['zeta'], run))
+        self.assertIn(f'{len(runs)} images, one a run', said)
+        self.assertIn('not with --defconfig', str(self.tool('build', '--board', 'zeta', '--every-run', '--defconfig', 'phone_bt')[0]))
+
     def test_what_is_not_a_kernel_or_a_loader_is_not_taken(self):
         (self.dir / 'kernel').write_bytes(b'ELF!')
         code, _ = self.tool('build', '--board', 'zeta', '--kernel', str(self.dir / 'kernel'), '--loader', str(self.dir / 'loader.efi'),

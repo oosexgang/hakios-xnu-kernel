@@ -2,6 +2,9 @@
 """One image for a phone: its kernel, its loader and its boot arguments in one file, to boot, keep and pass around.
 
   tools/image.py build [--board NAME] [--defconfig NAME] [--identity FILE] [--out DIR]
+  tools/image.py build --every-run [--board NAME] [--out DIR]
+        one image for each run of a phone (the defconfigs phone_*), each in DIR/DEFCONFIG/: a day with the phone
+        (Documentation/phone-test.ru.md) without a build between the runs
         build/images/NAME/: NAME.payload (the loader, the kernel and the boot arguments, as the phone's UEFI starts
         them), boot.img when the phone's UEFI build is there (fastboot boot boot.img: one command, nothing written to
         the phone), manifest.json (what went in, with the hashes), README.md (how to boot it)
@@ -223,6 +226,16 @@ The system image (`./bench ramdisk`) is never part of an image.
 
 
 def build(options):
+    if getattr(options, 'every_run', False):
+        if options.defconfig:
+            die('--every-run builds one image for each phone_ defconfig: not with --defconfig')
+        name, _ = board_of(options.board)
+        top = Path(options.out or ROOT / 'build/images' / name)
+        runs = sorted(path.name.removesuffix('_defconfig') for path in defconfig.CONFIGS.glob('phone_*_defconfig'))
+        for run in runs:
+            build(argparse.Namespace(**dict(vars(options), every_run=False, defconfig=run, out=str(top / run))))
+        say(f'{top}: {len(runs)} images, one a run: {", ".join(runs)}')
+        return 0
     name, board = board_of(options.board)
     kernel_path = Path(options.kernel or os.environ.get('BENCH_KERNEL') or
                        Path(os.environ.get('XNU_SRC') or ROOT.parent / 'xnu-12377-hakios') / 'BUILD/obj/mach.development.bcm2837')
@@ -439,6 +452,7 @@ def main(arguments=None):
     command.add_argument('--uefi', help='the phone\'s UEFI build (firmware/NAME/uefi)')
     command.add_argument('--identity', help='an identity to carry: Apple\'s data, for your own phone')
     command.add_argument('--out', help='where (build/images/NAME)')
+    command.add_argument('--every-run', action='store_true', help='one image for each phone_ defconfig, in OUT/DEFCONFIG/')
     command = commands.add_parser('publish', help='an image into a phone\'s repository')
     command.add_argument('image', metavar='IMAGE_DIR')
     command.add_argument('repository', metavar='DEVICE_REPO')
