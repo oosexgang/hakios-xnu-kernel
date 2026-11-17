@@ -12,6 +12,9 @@
         an image someone else built, given the identity of your own iPhone's IPSW (below): a payload or a boot.img
   tools/image.py show FILE
         what an image holds, and whether it is what its manifest says
+  tools/image.py verify DIR
+        every image under DIR (a phone's images/) is what its manifest says, and what publish would take: no identity,
+        no system image, a loader without Apple's data; status 1 when one is not (the phone's repository's check runs it)
   tools/image.py extract FILE [--payload OUT] [--loader OUT]
         its payload and its loader, as files (tools/qemu-kernel.sh --image boots an image in QEMU with them)
 
@@ -307,6 +310,19 @@ def check_against_manifest(directory):
     return manifest
 
 
+def publishable(source, manifest):
+    """What publish refuses in the image at SOURCE, as a sentence; None when nothing."""
+    if manifest['loader']['identity'] != 'placeholder':
+        return ('the loader was built with an identity from an IPSW (Apple\'s data): build the loader without one '
+                '(arch/arm64/boot/build.sh with no DeviceTree.bin) for an image that is published')
+    names = [entry for entry, _ in payload_entries((source / f'{manifest["board"]}.payload').read_bytes())]
+    if 'identity' in names or manifest.get('identity_in_payload'):
+        return 'the payload carries an identity (Apple\'s data): build it without --identity for an image that is published'
+    if 'ramdisk' in names:
+        return 'the payload carries a system image: never part of an image that is published'
+    return None
+
+
 def publish(options):
     source = Path(options.image)
     manifest = check_against_manifest(source)
@@ -314,15 +330,9 @@ def publish(options):
     repository = Path(options.repository)
     if not repository.is_dir():
         die(f'{repository} is not a directory (a checkout of the phone\'s repository)')
-    if manifest['loader']['identity'] != 'placeholder':
-        die('the loader was built with an identity from an IPSW (Apple\'s data): build the loader without one '
-            '(arch/arm64/boot/build.sh with no DeviceTree.bin) for an image that is published')
-    payload = (source / f'{name}.payload').read_bytes()
-    names = [entry for entry, _ in payload_entries(payload)]
-    if 'identity' in names or manifest.get('identity_in_payload'):
-        die('the payload carries an identity (Apple\'s data): build it without --identity for an image that is published')
-    if 'ramdisk' in names:
-        die('the payload carries a system image: never part of an image that is published')
+    refused = publishable(source, manifest)
+    if refused:
+        die(refused)
     files = [f'{name}.payload', 'manifest.json', 'README.md']
     if (source / 'boot.img').is_file():
         if options.with_uefi:
@@ -386,6 +396,24 @@ def show(options):
     return 0
 
 
+def verify(options):
+    root = Path(options.directory)
+    found = sorted(path.parent for path in root.rglob('manifest.json'))
+    if not found:
+        die(f'{root}: no image (a directory with a manifest.json) under it')
+    bad = 0
+    for directory in found:
+        try:
+            manifest = check_against_manifest(directory)
+            refused = publishable(directory, manifest)
+        except SystemExit as stop:
+            refused = str(stop).removeprefix('image.py: ')
+        print(f'{directory}: ' + (f'NOT AS PUBLISHED: {refused}' if refused else
+                                  f'{manifest["board"]}, {manifest["code"]["describe"] or "?"}, {manifest["defconfig"]}: as its manifest says'))
+        bad += refused is not None
+    return 1 if bad else 0
+
+
 def extract(options):
     data = Path(options.file).read_bytes()
     payload = boot_image_payload(data)[1] if data[:8] == b'ANDROID!' else data
@@ -422,13 +450,15 @@ def main(arguments=None):
     command.add_argument('-o', '--output')
     command = commands.add_parser('show', help='what an image holds')
     command.add_argument('file', metavar='FILE')
+    command = commands.add_parser('verify', help='every image under a directory, as published')
+    command.add_argument('directory', metavar='DIR')
     command = commands.add_parser('extract', help='its payload and its loader, as files')
     command.add_argument('file', metavar='FILE')
     command.add_argument('--payload')
     command.add_argument('--loader')
     options = parser.parse_args(arguments)
     return {'build': build, 'publish': publish, 'personalize': personalize, 'show': show,
-            'extract': extract}[options.command](options)
+            'verify': verify, 'extract': extract}[options.command](options)
 
 
 if __name__ == '__main__':

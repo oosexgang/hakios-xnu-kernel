@@ -198,6 +198,22 @@ class Publish(Sandbox):
         _, (code, _) = self.publish()
         self.assertIn('not what manifest.json says', str(code))
 
+    def test_every_image_of_a_repository_verified(self):
+        self.build()
+        repository, (code, said) = self.publish()
+        self.assertEqual(code, 0, said)
+        code, said = self.tool('verify', str(repository / 'images'))
+        self.assertEqual(code, 0, said)
+        self.assertIn('zeta, ', said)
+        self.assertIn('as its manifest says', said)
+        with open(repository / 'images/v1/zeta.payload', 'ab') as payload:
+            payload.write(b'!')
+        code, said = self.tool('verify', str(repository / 'images'))
+        self.assertEqual(code, 1)
+        self.assertIn('NOT AS PUBLISHED: ', said)
+        self.assertIn('not what manifest.json says', said)
+        self.assertIn('no image', str(self.tool('verify', str(self.dir / 'uefi-nothing'))[0]))
+
     def tree(self):
         path = self.dir / 'DeviceTree.bin'
         path.write_bytes(device_tree())

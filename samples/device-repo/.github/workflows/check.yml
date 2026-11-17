@@ -36,9 +36,6 @@ jobs:
           for package in $(kernel/tools/device.py list | awk '/\[from / { print $1 }'); do
             kernel/tools/boards.py status "$package"
           done
-      - name: Each image in images/ is what its manifest says
+      - name: Each image in images/ is what its manifest says, with nothing of Apple's in it
         run: |
-          for file in phone/images/*/*.payload; do
-            [ -f "$file" ] || continue
-            kernel/tools/image.py show "$file" | tee /dev/stderr | grep -q 'manifest.json: the same'
-          done
+          if [ -d phone/images ]; then kernel/tools/image.py verify phone/images; fi
