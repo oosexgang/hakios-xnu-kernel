@@ -151,6 +151,7 @@ static uint32_t ufs_bsize[BLOCK_MAX_PARTS];   /* the block size each device is c
 static int ufs_bmajor = -1, ufs_cmajor = -1;
 static bool ufs_ready, ufs_dead;
 static uint64_t ufs_requests, ufs_errors, ufs_bytes, ufs_wait_us;
+static uint64_t ufs_async, ufs_async_inline, ufs_queue_most;  /* requests that do not wait (ufs_workers) */
 static uint64_t ufs_copy_us;                    /* copying out of the loader's buffer */
 static uint64_t ufs_small, ufs_medium, ufs_large; /* requests of <= 4 KB, <= 64 KB, more */
 static uint64_t ufs_sequential;                 /* requests that start where the one before ended */
@@ -470,6 +471,10 @@ hakios_ufs_report(const char *when)
 	    "the one before), %llu errors, %llu bytes; waiting %llu ms, of it in ReadBlocks %llu ms; "
 	    "copying %llu ms\n", when, ufs_requests, ufs_small, ufs_medium, ufs_large, ufs_sequential,
 	    ufs_errors, ufs_bytes, ufs_wait_us / 1000, loader_ns / 1000000, ufs_copy_us / 1000);
+	if (ufs_async != 0 || ufs_async_inline != 0) {
+		printf("ufs: %s: %llu requests that do not wait served by this driver's threads (%llu waiting at most), %llu in the "
+		    "thread that asked, the queue full\n", when, ufs_async, ufs_queue_most, ufs_async_inline);
+	}
 	if (ufs_write_part >= 0 || ufs_writes != 0 || ufs_write_refused != 0) {
 		printf("ufs: %s: %llu writes into darwin, %llu bytes, read back by the loader; %llu did not "
 		    "finish, %llu refused here\n", when, ufs_writes, ufs_write_bytes, ufs_write_errors,
@@ -726,8 +731,9 @@ ufs_cclose(dev_t dev, int flags, int devtype, proc_t p)
 	return ufs_close(dev, flags, devtype, p);
 }
 
+/* One request of the block device's, served in this thread: read, its residue and error set, done. */
 static void
-ufs_strategy(buf_t bp)
+ufs_serve(buf_t bp)
 {
 	uint32_t part = (uint32_t)minor(buf_device(bp));
 	uint64_t offset, len, size;
@@ -761,6 +767,84 @@ ufs_strategy(buf_t bp)
 		buf_seterror(bp, error);
 	}
 	buf_biodone(bp);
+}
+
+/*
+ * Requests that do not wait (B_ASYNC: the file system's read-ahead, the cluster layer's) are served
+ * by a few threads of this driver's own, so that the thread that asked goes on, and one thread's
+ * read-ahead has several reads in flight at once -- what the slots of this kernel's own UFS driver
+ * are for. ufs_workers=N: the requests that do not wait (read-ahead) served by N threads of this
+ * driver's own, up to 16 (default 4); 0: each in the thread that asks, as before. A request that
+ * waits is served in its own thread all the same.
+ */
+#define UFS_QUEUE           128
+static buf_t ufs_queue[UFS_QUEUE];
+static uint32_t ufs_queue_head, ufs_queue_tail;  /* (ufs_queue_lock) */
+static uint32_t ufs_workers = 4;
+static bool ufs_workers_on;
+static LCK_MTX_DECLARE(ufs_queue_lock, &ufs_lck_grp);
+
+static void
+ufs_worker(__unused void *arg, __unused wait_result_t wr)
+{
+	for (;;) {
+		buf_t bp;
+
+		lck_mtx_lock(&ufs_queue_lock);
+		while (ufs_queue_head == ufs_queue_tail) {
+			msleep(&ufs_queue_head, &ufs_queue_lock, PRIBIO, "ufsq", NULL);
+		}
+		bp = ufs_queue[ufs_queue_head++ % UFS_QUEUE];
+		lck_mtx_unlock(&ufs_queue_lock);
+		ufs_serve(bp);
+	}
+}
+
+static void
+ufs_strategy(buf_t bp)
+{
+	if ((buf_flags(bp) & B_ASYNC) && ufs_workers_on) {
+		bool queued = false;
+
+		lck_mtx_lock(&ufs_queue_lock);
+		if (ufs_queue_tail - ufs_queue_head < UFS_QUEUE) {
+			ufs_queue[ufs_queue_tail++ % UFS_QUEUE] = bp;
+			ufs_async++;
+			if (ufs_queue_tail - ufs_queue_head > ufs_queue_most) {
+				ufs_queue_most = ufs_queue_tail - ufs_queue_head;
+			}
+			queued = true;
+			wakeup_one((caddr_t)&ufs_queue_head);
+		} else {
+			ufs_async_inline++;     /* (the queue full: this one served here) */
+		}
+		lck_mtx_unlock(&ufs_queue_lock);
+		if (queued) {
+			return;
+		}
+	}
+	ufs_serve(bp);
+}
+
+/* the threads that serve requests that do not wait (ufs_workers) */
+static void
+ufs_workers_start(void)
+{
+	unsigned started = 0;
+
+	PE_parse_boot_argn("ufs_workers", &ufs_workers, sizeof(ufs_workers));
+	for (uint32_t i = 0; i < ufs_workers && i < 16; i++) {
+		thread_t thread;
+
+		if (kernel_thread_start(ufs_worker, NULL, &thread) == KERN_SUCCESS) {
+			thread_deallocate(thread);
+			started++;
+		}
+	}
+	ufs_workers_on = started != 0;
+	if (started != 0) {
+		printf("ufs: %u threads serve the requests that do not wait (ufs_workers=0: each in the thread that asks)\n", started);
+	}
 }
 
 static int
@@ -1573,6 +1657,7 @@ hakios_ufs_init(void)
 	ufs_ready = true;
 	printf("ufs: %u partitions of the phone's storage as /dev/ufs_NAME and /dev/rufs_NAME, read only, "
 	    "through the loader's page at %llx and its %u KB buffer\n", made, pa, ufs_buffer_size >> 10);
+	ufs_workers_start();
 
 	/*
 	 * ufs_write=1: /dev/rufs_darwin takes writes, past the Darwin volume and the cryptexes. darwin
