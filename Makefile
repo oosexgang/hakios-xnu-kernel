@@ -24,6 +24,9 @@ help:
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"
 	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
 	@echo "make analyze-userland the same analyzer on the Darwin side's libraries and programs (DARWIN_SDK=DIR)"
+	@echo "make logcheck [LOG=FILE]   what a run's log says, part by part (the newest of logs/ unless told)"
+	@echo "make new-driver NAME=name  a new driver from the guide's example, with its test (scripts/new-driver.py)"
+	@echo "make release VERSION=x.y   the sources of a release, checked, in build/release/ (scripts/release.sh)"
 	@echo "make kernel         build the kernel (kernel/build.sh; Documentation/building.md says what it needs)"
 	@echo "make loader         build the loader (arch/arm64/boot/build.sh: clang and lld)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
@@ -70,6 +73,18 @@ image:
 .PHONY: publish
 publish:
 	tools/image.py publish build/images/$(DEVICE) $(REPO) $(if $(VERSION),--version $(VERSION))
+
+.PHONY: logcheck
+logcheck:
+	tools/logcheck.py $(LOG)
+
+.PHONY: new-driver
+new-driver:
+	scripts/new-driver.py $(NAME)
+
+.PHONY: release
+release:
+	scripts/release.sh $(VERSION)
 
 .PHONY: compare
 compare:
