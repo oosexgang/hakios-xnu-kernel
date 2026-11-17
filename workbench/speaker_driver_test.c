@@ -524,6 +524,12 @@ second_is_missing(void)
 	CHECK(!hakios_speaker_prepare(acf, acf_size), "refused: %s", log_text);
 	CHECK(logged("nobody at I2C address 0x34") && logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
 	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103, "the first is powered down and muted: %#x", reads(device.reg, 0x04));
+	{
+		char line[64];
+
+		snprintf(line, sizeof(line), "0x04 <- 0x%04x, reads 0x%04x", reads(device.reg, 0x04), reads(device.reg, 0x04));
+		CHECK(logged(line), "what it reads afterwards is said, read from it: %s", log_text);
+	}
 	CHECK(writes_into[1] == 0, "nothing went into the second");
 	never();
 }
@@ -572,6 +578,92 @@ file_not_trusted(void)
 	CHECK(!hakios_speaker_prepare(acf, acf_size), "a profile that writes a fuse: %s", log_text);
 	CHECK(logged("writes register 0x78, which is not one of the configuration's"), "said: %s", log_text);
 	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
+	never();
+}
+
+static bool down(const uint8_t *bank);
+
+/* profiles the driver cannot use: one without the system control register, one that writes 0x70 -- the bus is not used */
+static void
+profiles_not_usable(void)
+{
+	static const uint16_t no_sysctrl[][2] = { { 0x05, 0x1403 }, { 0x06, 0x34e8 }, { 0x08, 0x4a4c } };
+	static const uint16_t at_0x70[][2] = { { 0x04, 0x0202 }, { 0x05, 0x1403 }, { 0x08, 0x4a4c }, { 0x70, 0x0001 } };
+
+	phone_with_file("phone-video");
+	memset(acf, 0, sizeof(acf));
+	acf_entries = 0;
+	acf_size = 0x50 + 4 * 0x30;
+	put32(acf + 0x3c, 0x50);
+	acf_registers(0, 0, no_sysctrl, 3);
+	acf_registers(1, 0, music_b, 8);
+	CHECK(!hakios_speaker_prepare(acf, acf_size) && logged("no usable Music profile for device 0"), "no 0x04: %s", log_text);
+	memset(acf, 0, sizeof(acf));
+	acf_entries = 0;
+	acf_size = 0x50 + 4 * 0x30;
+	put32(acf + 0x3c, 0x50);
+	acf_registers(0, 0, at_0x70, 4);
+	acf_registers(1, 0, music_b, 8);
+	CHECK(!hakios_speaker_prepare(acf, acf_size) && logged("writes register 0x70, which is not one of the configuration's"),
+	    "0x70: %s", log_text);
+	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
+	never();
+}
+
+/* monitor tables at the edge: eight rows, the most there may be, are taken; battery rows with a vmax when no
+ * temperature row has one stay as they are (there is nothing to turn the vmax into dB with) */
+static void
+monitor_tables_at_the_edge(void)
+{
+	static const struct row eight[] = { { 90, 100, 0, 0 }, { 80, 89, 0, 0 }, { 70, 79, 0, 0 }, { 60, 69, 0, 0 },
+		                            { 50, 59, 0, 0 }, { 40, 49, 0, 0 }, { 30, 39, 0, 0 }, { 2, 5, 24, 0 } };
+
+	phone_with_file("phone-video");
+	memset(acf, 0, sizeof(acf));
+	acf_entries = 0;
+	acf_size = 0x50 + 4 * 0x30;
+	put32(acf + 0x3c, 0x50);
+	acf_registers(0, 0, music_a, 8);
+	acf_registers(1, 0, music_b, 8);
+	acf_monitor_table(0, eight, 8, vbats, 3);
+	acf_monitor_table(1, temps, 4, vbats, 3);
+	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(!logged("not of the shape known") && logged("the amplifier 0x35, slot 0's monitor: at 2 to 5 degrees, 3.000 dB less"),
+	    "eight rows taken: %s", log_text);
+	CHECK(logged("the amplifier 0x35, slot 0's monitor: at 90 to 100 degrees, 0.000 dB less") &&
+	    logged("the amplifier 0x35, slot 0's monitor: at 3650 to 3750 mV, 0.000 dB less"), "no vmax in dB for the first: %s", log_text);
+	never();
+}
+
+/* started before it was prepared: nothing */
+static void
+started_unprepared(void)
+{
+	phone_with_file("phone-video");
+	CHECK(!hakios_speaker_start(), "not started");
+	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
+}
+
+/* a board without the part, though its SoC file has the pins: nothing */
+static void
+board_without_the_part(void)
+{
+	phone("phone-cmd");
+	CHECK(!hakios_speaker_prepare(acf, acf_size) && logged("speaker: not on this board"), "said: %s", log_text);
+	CHECK(device.starts == 0, "the bus was not used");
+}
+
+/* the second's status lacks what the driver waits for (no fault said, the power stage not up): both down */
+static void
+status_never_ready(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg_b, 0x01, 0x0211);
+	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(!hakios_speaker_start(), "not started: %s", log_text);
+	CHECK(logged("an amplifier's status is not as the driver wants it: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE") &&
+	    !logged("THE AMPLIFIER 0x34, slot 1 RUNS"), "said: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
 	never();
 }
 
@@ -878,6 +970,9 @@ main(int argc, char **argv)
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
+		{ "profiles_not_usable", profiles_not_usable }, { "monitor_tables_at_the_edge", monitor_tables_at_the_edge },
+		{ "started_unprepared", started_unprepared }, { "board_without_the_part", board_without_the_part },
+		{ "status_never_ready", status_never_ready },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
 		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "run_ends", run_ends }, { "not_listed", not_listed },
 		{ "acf_edges", acf_edges }, { "eight_bit_numbers", eight_bit_numbers }, { "eight_bit_values", eight_bit_values },
