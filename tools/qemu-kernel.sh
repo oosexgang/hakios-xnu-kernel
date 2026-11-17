@@ -6,7 +6,7 @@
 #   tools/qemu-kernel.sh [options] KERNEL
 #   tools/qemu-kernel.sh [options] --image FILE
 #     --image FILE      an image tools/image.py built (its payload, or its boot.img): its own loader, kernel and boot
-#                       arguments, as a phone boots it; --boot-args, --defconfig and --ramdisk are not for it
+#                       arguments, as a phone boots it; --boot-args, --defconfig, --ramdisk and --identity are not for it
 #     --until TEXT      stop once the serial log has TEXT (default: when the kernel waits for its root, or
 #                       panics)
 #     --seconds N       stop after N seconds in any case (default 300)
@@ -21,6 +21,10 @@
 #     --defconfig NAME  the boot arguments of arch/arm64/configs/NAME_defconfig (tools/defconfig.py --list), before
 #                       --boot-args', which replace one of the same name
 #     --ramdisk FILE    a disk image the kernel gets as /dev/md0 (its root: --boot-args rd=md0)
+#     --identity FILE   which iPhone Darwin is told it is, carried in the payload as ./bench carries it
+#                       (BENCH_IDENTITY): an iPhone's DeviceTree.bin, or a blob arch/arm64/boot/mkidentity.py --blob
+#                       made; for a loader built without one (arch/arm64/boot/src/identity_given.c). Not for --image:
+#                       tools/image.py personalize gives an image one
 #     --audio FILE      a virtio sound device, whose output QEMU writes into FILE (a WAV file); the kernel
 #                       plays /dev/hakios-audio through it
 #     --disk FILE       a disk image on a virtio disk, read only, which the kernel gets as the block device /dev/rvblk0
@@ -48,7 +52,7 @@ set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 die() { echo "qemu-kernel: $*" >&2; exit 1; }
 until_text='Waiting on <dict|panic\(' seconds=300 screen='' log=$PWD/qemu-kernel.log args='' defconfig='' ramdisk='' cpus=1 verbose=-v extra=() typed='' after=5 forward='' then='' monitor='' qmp='' disk='' audio='' interactive='' display=none
-with_devices=1 image=''
+with_devices=1 image='' identity=''
 while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
 	case $1 in
 	--image) image=$(realpath "$2") || exit 1; shift 2 ;;
@@ -61,6 +65,7 @@ while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
 	--boot-args) args=$2; shift 2 ;;
 	--defconfig) defconfig=$("$HERE/tools/defconfig.py" "$2") || exit 1; shift 2 ;;
 	--ramdisk) ramdisk=$(realpath "$2"); shift 2 ;;
+	--identity) identity=$(realpath "$2") || exit 1; shift 2 ;;
 	--disk) disk=$(realpath "$2"); shift 2 ;;
 	--audio) audio=$(realpath -m "$2"); shift 2 ;;
 	--cpus) cpus=$2; shift 2 ;;
@@ -77,6 +82,8 @@ while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do
 	esac
 done
 [ $# -eq 1 ] || { [ -n "$image" ] && [ $# -eq 0 ]; } || die "usage: tools/qemu-kernel.sh [options] KERNEL, or [options] --image FILE"
+[ -z "$image" ] || [ -z "$identity$ramdisk$defconfig$args" ] ||
+	die "--image boots the image as it is: no --boot-args, --defconfig, --ramdisk or --identity (tools/image.py personalize gives it an identity)"
 # (the kernel's drivers speak virtio 1.0, which QEMU's MMIO transports offer when not forced to the legacy one)
 devices=()
 [ -z "$with_devices" ] || devices=(-global virtio-mmio.force-legacy=false -netdev "user,id=net0$forward" -device 'virtio-net-device,netdev=net0'
@@ -108,10 +115,15 @@ if [ -n "$image" ]; then
 		die "$image: not an image tools/image.py made"
 else
 	cp "$HERE/arch/arm64/boot/loader.efi" "$W/esp/EFI/BOOT/BOOTAA64.EFI"
+	# (a device tree made into the blob the loader reads, as ./bench makes it; a blob as it is)
+	if [ -n "$identity" ] && [ "$(head -c 4 "$identity")" != IDNT ]; then
+		python3 "$HERE/arch/arm64/boot/mkidentity.py" --blob "$W/identity.bin" "$identity" > /dev/null || die "no identity made of $identity"
+		identity=$W/identity.bin
+	fi
 	# the console on the screen too only for a picture of it: in QEMU each line scrolls the whole framebuffer
 	cmdline="$verbose cpus=$cpus${screen:+ console_screen=1}${with_devices:+ virtio_net=1 virtio_input=1}${disk:+ virtio_blk=1}${audio:+ virtio_sound=1}${defconfig:+ $defconfig} $args"
 	python3 "$HERE/arch/arm64/boot/mkpayload.py" -o "$W/payload.bin" kernel="$kernel" ${ramdisk:+ramdisk="$ramdisk"} \
-		"--cmdline=${cmdline# }" > /dev/null || die "no payload"
+		${identity:+identity="$identity"} "--cmdline=${cmdline# }" > /dev/null || die "no payload"
 fi
 cp "${firmware%CODE.fd}VARS.fd" "$W/vars.fd" 2> /dev/null || truncate -s 64M "$W/vars.fd"
 [ -n "$monitor" ] || monitor=$W/monitor
