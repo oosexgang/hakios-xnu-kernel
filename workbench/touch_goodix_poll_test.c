@@ -51,14 +51,38 @@ static int failures;
 /* ---- the chip's model: its memory at the touch report, what was read and written ---------------- */
 
 #define REPORT          0x10308         /* where this chip keeps its touch report */
+#define COMMAND         0x10180         /* ... and its command buffer, as its description says */
 
 static struct {
 	uint8_t report[8 + 8 * GOODIX_MAX_TOUCHES + 2];
+	uint8_t version[28], info[GOODIX_MAX_READ];
+	uint8_t command[16];                    /* what was last written into the command buffer */
+	uint8_t acks[8];                        /* the acknowledgements it answers with, one a look, the last again */
+	unsigned acks_n, looks, commands;
 	unsigned reads, writes;
 	uint32_t last_read_address, last_read_length;
 	uint32_t written_address;
 	uint8_t written;
 } chip;
+
+/* the byte of the chip's memory at an address: its report, its version, its description, its command buffer */
+static uint8_t
+memory_at(uint32_t at)
+{
+	if (at >= REPORT && at - REPORT < sizeof(chip.report)) {
+		return chip.report[at - REPORT];
+	}
+	if (at >= GOODIX_FW_VERSION && at - GOODIX_FW_VERSION < sizeof(chip.version)) {
+		return chip.version[at - GOODIX_FW_VERSION];
+	}
+	if (at >= GOODIX_IC_INFO && at - GOODIX_IC_INFO < sizeof(chip.info) && at < COMMAND) {
+		return chip.info[at - GOODIX_IC_INFO];
+	}
+	if (at >= COMMAND && at - COMMAND < 16) {
+		return at - COMMAND == 1 ? chip.acks[chip.looks < chip.acks_n ? chip.looks : chip.acks_n - 1] : chip.command[at - COMMAND];
+	}
+	return 0;
+}
 
 static bool
 model_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
@@ -70,15 +94,21 @@ model_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 		chip.last_read_address = address;
 		chip.last_read_length = length - 8;
 		for (uint32_t i = 0; i < length - 8; i++) {
-			uint32_t at = address - REPORT + i;
-
-			rx[8 + i] = at < sizeof(chip.report) ? chip.report[at] : 0;
+			rx[8 + i] = memory_at(address + i);
+		}
+		if (address == COMMAND && chip.acks_n != 0) {
+			chip.looks++;
 		}
 		return true;
 	}
 	chip.writes++;                          /* (0xf0) a write */
 	chip.written_address = address;
 	chip.written = tx[5];
+	if (address == COMMAND) {
+		memcpy(chip.command, tx + 5, 16);
+		chip.commands++;
+		chip.looks = 0;
+	}
 	return true;
 }
 
@@ -132,6 +162,42 @@ static bool
 was(unsigned n, uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 {
 	return n < posts && posted[n].type == type && posted[n].finger == finger && posted[n].x == x && posted[n].y == y;
+}
+
+/*
+ * The chip's version (a name, its firmware, a sum) and its description: its length, a version, features and counts,
+ * five empty lists, then the "misc" part -- the command buffer's address first, the report's 44 bytes on, the panel's
+ * coordinates 138 bytes on -- and a sum. LENGTH: what the description says it is (the misc part whole from 181).
+ */
+#define LISTS_END       (2 + 16 + 10 + 4 + 5)
+
+static void
+described(unsigned length, uint16_t x, uint16_t y)
+{
+	memset(chip.version, 0, sizeof(chip.version));
+	memcpy(chip.version, "GT9916", 6);
+	memcpy(chip.version + 10, "01020304", 8);
+	sum_into(chip.version, sizeof(chip.version));
+	memset(chip.info, 0, sizeof(chip.info));
+	chip.info[0] = (uint8_t)length;
+	chip.info[1] = (uint8_t)(length >> 8);
+	if (length >= LISTS_END + 144) {
+		uint8_t *misc = chip.info + LISTS_END;
+
+		misc[0] = (uint8_t)COMMAND;
+		misc[1] = (uint8_t)(COMMAND >> 8);
+		misc[2] = (uint8_t)(COMMAND >> 16);
+		misc[44] = (uint8_t)REPORT;
+		misc[45] = (uint8_t)(REPORT >> 8);
+		misc[46] = (uint8_t)(REPORT >> 16);
+		misc[138] = (uint8_t)x;
+		misc[139] = (uint8_t)(x >> 8);
+		misc[140] = (uint8_t)y;
+		misc[141] = (uint8_t)(y >> 8);
+	}
+	if (length >= 2 && length <= sizeof(chip.info)) {
+		sum_into(chip.info, length);
+	}
 }
 
 /* ---- scenarios ---------------------------------------------------------------------------------- */
@@ -249,6 +315,85 @@ asks_to_be_reset(void)
 	CHECK(logged("the chip asks to be reset") && posts == 0, "%s", log_text);
 }
 
+/* the request's low four bits are what it asks for, whatever is above them */
+static void
+asks_to_be_reset_with_more_bits(void)
+{
+	phone();
+	report(GOODIX_STATUS_REQUEST, 0);
+	chip.report[2] = 0x10 | GOODIX_REQUEST_RESET;
+	sum_into(chip.report, 8);
+	goodix_poll();
+	CHECK(logged("the chip asks to be reset") && posts == 0, "%s", log_text);
+}
+
+/* the chip's description: where its report and its command buffer are, and the panel's coordinates */
+static void
+the_chips_description(void)
+{
+	phone();
+	touch_address = command_address = 0;
+	described(LISTS_END + 144, 1080, 2400);
+	CHECK(goodix_probe(true), "probed: %s", log_text);
+	CHECK(touch_address == REPORT && command_address == COMMAND && max_x == 1080 && max_y == 2400, "report %#x, commands %#x, %u x %u",
+	    touch_address, command_address, max_x, max_y);
+	CHECK(logged("goodix: chip \"GT9916\", firmware \"01020304\"") && logged("coordinates up to 1080 x 2400"), "said: %s", log_text);
+}
+
+/* a description without the panel's coordinates, or with one of them 0: the board's are kept */
+static void
+coordinates_not_described(void)
+{
+	phone();
+	described(LISTS_END + 144, 0, 2400);
+	CHECK(goodix_probe(true) && max_x == 1000 && max_y == 2000, "the board's: %u x %u", max_x, max_y);
+	described(LISTS_END + 144, 1080, 0);
+	CHECK(goodix_probe(true) && max_x == 1000 && max_y == 2000, "the board's: %u x %u", max_x, max_y);
+}
+
+/* a description shorter than its fixed part, or as long as a read can be: not believed, and said so */
+static void
+descriptions_not_believed(void)
+{
+	phone();
+	described(39, 0, 0);
+	CHECK(!goodix_probe(true) && logged("goodix: bad chip description (length 39)"), "39 bytes: %s", log_text);
+	described(GOODIX_MAX_READ, 0, 0);
+	CHECK(!goodix_probe(true) && logged("bad chip description (length 1024)"), "1024 bytes: %s", log_text);
+	described(LISTS_END + 49, 0, 0);
+	CHECK(!goodix_probe(true) && logged("chip description too short"), "lists, and no room for the report's address: %s", log_text);
+}
+
+/* a command: written whole, with its sum; done once the chip acknowledges, waited for while it is busy */
+static void
+a_command(void)
+{
+	phone();
+	command_address = COMMAND;
+	chip.acks[0] = GOODIX_ACK_OK;
+	chip.acks_n = 1;
+	CHECK(goodix_command(GOODIX_CMD_HIGH_RATE, 1), "done");
+	CHECK(chip.commands == 1 && chip.command[2] == 5 && chip.command[3] == GOODIX_CMD_HIGH_RATE && chip.command[4] == 1 &&
+	    chip.command[5] == (uint8_t)(5 + GOODIX_CMD_HIGH_RATE + 1) && chip.command[6] == 0, "written as Android writes it");
+	chip.acks[0] = chip.acks[1] = GOODIX_ACK_BUSY;
+	chip.acks[2] = GOODIX_ACK_OK;
+	chip.acks_n = 3;
+	chip.commands = 0;
+	CHECK(goodix_command(GOODIX_CMD_HIGH_RATE, 1) && chip.commands == 1, "busy twice, then done: written once (%u)", chip.commands);
+	chip.acks[0] = GOODIX_ACK_BUSY;
+	chip.acks_n = 1;
+	chip.commands = 0;
+	CHECK(!goodix_command(GOODIX_CMD_HIGH_RATE, 1) && chip.commands == 6, "busy all along: not done, written six times (%u)",
+	    chip.commands);
+	chip.acks[0] = 0x55;
+	chip.commands = 0;
+	CHECK(!goodix_command(GOODIX_CMD_HIGH_RATE, 1) && chip.commands == 6, "another answer: written again at once, six times (%u)",
+	    chip.commands);
+	command_address = 0;
+	chip.commands = chip.writes = 0;
+	CHECK(!goodix_command(GOODIX_CMD_HIGH_RATE, 1) && chip.writes == 0, "no command buffer described: nothing written anywhere");
+}
+
 /* a request that is not a reset: nothing */
 static void
 another_request(void)
@@ -280,7 +425,9 @@ main(int argc, char **argv)
 		{ "one_finger", one_finger }, { "two_fingers", two_fingers }, { "three_fingers", three_fingers }, { "the_most_fingers", the_most_fingers },
 		{ "nothing_new", nothing_new }, { "bad_header", bad_header }, { "bad_fingers", bad_fingers },
 		{ "at_the_edge", at_the_edge }, { "asks_to_be_reset", asks_to_be_reset }, { "another_request", another_request },
-		{ "lifted", lifted },
+		{ "lifted", lifted }, { "asks_to_be_reset_with_more_bits", asks_to_be_reset_with_more_bits },
+		{ "the_chips_description", the_chips_description }, { "coordinates_not_described", coordinates_not_described },
+		{ "descriptions_not_believed", descriptions_not_believed }, { "a_command", a_command },
 	};
 
 	if (argc < 2) {
