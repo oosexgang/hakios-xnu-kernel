@@ -2396,6 +2396,8 @@ ipa_firmware_stop(void)
 {
 	uint64_t answer = ~0ull;
 
+	/* (this processor's data path first: en1's poll is not to read the GSI once its clock is off) */
+	hakios_ipa_data_stop(leaving);
 	(void)scm("to shut the IPA's firmware down", SCM_PAS_SHUTDOWN, SCM_ONE_VALUE, pas_ipa, 0, 0, 0, &answer);
 	if (!leaving) {
 		ipa_space_off();

@@ -28,6 +28,11 @@
  */
 bool hakios_ipa_data_setup(void);
 bool hakios_ipa_data_ready(void);
+/*
+ * The data path no more (the modem driver's, before it votes the IPA's clock off): nothing is sent or polled after this,
+ * so that nobody reads the GSI's registers with its clock off. leaving: on the way out, no lock taken.
+ */
+void hakios_ipa_data_stop(bool leaving);
 /* One IP packet to the modem on QMAP mux `mux`. Copied. False if dropped (no room, too long). */
 bool hakios_ipa_transmit(uint8_t mux, const void *packet, size_t length);
 /*

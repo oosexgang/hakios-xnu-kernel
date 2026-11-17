@@ -718,6 +718,10 @@ hakios_ipa_transmit(uint8_t mux, const void *packet, size_t length)
 		return false;
 	}
 	lck_mtx_lock(&ipa_lock);
+	if (!ready) {
+		lck_mtx_unlock(&ipa_lock);      /* (stopped while this waited for the lock) */
+		return false;
+	}
 	channel_events(ch, transmit_event, NULL);
 	if (ch->next - ch->done >= ch->slots - 1) {     /* one slot always left free: write==read means empty */
 		ch->dropped++;
@@ -753,6 +757,10 @@ hakios_ipa_poll(void (*receive)(uint8_t mux, const uint8_t *packet, size_t lengt
 		return 0;
 	}
 	lck_mtx_lock(&ipa_lock);
+	if (!ready) {
+		lck_mtx_unlock(&ipa_lock);      /* (stopped while this waited for the lock) */
+		return 0;
+	}
 	channel_events(&modem_rx, receive_event, &rc);
 	channel_events(&lan_rx, receive_event, &rc);
 	channel_events(&modem_tx, transmit_event, NULL);
@@ -771,6 +779,22 @@ bool
 hakios_ipa_data_ready(void)
 {
 	return ready;
+}
+
+void
+hakios_ipa_data_stop(bool leaving)
+{
+	if (!ready) {
+		return;
+	}
+	if (leaving) {
+		ready = false;
+		return;
+	}
+	lck_mtx_lock(&ipa_lock);        /* (a poll or a send under way finishes first) */
+	ready = false;
+	lck_mtx_unlock(&ipa_lock);
+	printf("ipa: the data path is stopped: nothing more is sent or looked for\n");
 }
 
 void
