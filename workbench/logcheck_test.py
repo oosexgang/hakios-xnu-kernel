@@ -111,6 +111,19 @@ class LogCheck(unittest.TestCase):
                          'bt-uart: done\n')
         self.assertRegex(said, r'Bluetooth controller +STOPPED +bt-uart: bring-up stopped')
 
+    def test_a_touch_screen_only_looked_at_is_said_and_one_that_did_not_start_is_stopped(self):
+        # (touchscreen=-1, phone_look's: the state is said, and nothing says it worked or failed)
+        code, said = run('Darwin Kernel Version 1\nfts: as found (touchscreen=-1: looking only): votes 0x0, clocks 0x80000000\n'
+                         'fts: touchscreen=-1: nothing powered, configured or sent\n')
+        self.assertRegex(said, r'Touch \(FocalTech\) +said +fts: touchscreen=-1')
+        code, said = run('Darwin Kernel Version 1\nfts: no application ID 0x5652 (last 0x0000); no firmware is flashed\n'
+                         'fts: touchscreen unavailable\n')
+        self.assertRegex(said, r'Touch \(FocalTech\) +STOPPED +fts: touchscreen unavailable')
+        code, said = run('Darwin Kernel Version 1\nfocaltech: no firmware built in (focaltech_fw.h is empty): the chip is not started\n'
+                         'goodix: no focaltech touch screen\n')
+        self.assertRegex(said, r'Touch \(FocalTech firmware\) +STOPPED +focaltech: no firmware built in')
+        self.assertRegex(said, r'Touch \(Goodix\) +STOPPED +goodix: no focaltech touch screen')
+
     def test_a_kernel_that_never_started(self):
         code, said = run('loader: platform phone\nno kernel in payload\n')
         self.assertEqual(code, 1)
