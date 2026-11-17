@@ -59,6 +59,8 @@ static int failures;
 #define KEEP_ON         (1u << 30 | 1u << 29 | 8u)      /* ACV: the memory kept on for this processor */
 
 static const struct { uint32_t unit; uint16_t width; uint8_t vcd, reserved; } mc0 = { 1000, 14, 0, 0 };
+/* (an aux of four bytes, shorter than a bus clock manager's: not read as one) */
+static const uint8_t cn0_short[4] = { 0x11, 0x22, 0x33, 0x44 };
 
 /* which of the three the database lacks, where a phone is asked for without all of them */
 static const char *left_out = "SH0";
@@ -69,7 +71,7 @@ phone(const char *name, bool with_sh0)
 {
 	static const struct resource rails[] = { { "cx.lvl", 0x30000, NULL, 0 }, { "MC0", 0x3ffff, NULL, 0 } };
 	static const struct resource buses[] = {
-		{ "MC0", 0x50000, &mc0, sizeof(mc0) }, { "SH0", 0x50004, NULL, 0 }, { "ACV", 0x50008, NULL, 0 }, { "CN0", 0x5000c, NULL, 0 },
+		{ "MC0", 0x50000, &mc0, sizeof(mc0) }, { "SH0", 0x50004, NULL, 0 }, { "ACV", 0x50008, NULL, 0 }, { "CN0", 0x5000c, cn0_short, sizeof(cn0_short) },
 	};
 	static struct resource without[3];
 	unsigned kept = 0;
@@ -210,10 +212,14 @@ look_only(void)
 	boot_args = "ddr=1";
 	rsc.address[2] = 0x50000;               /* (as a boot loader leaves a vote of its own in a slot) */
 	rsc.data[2] = VOTE(2000);
+	rsc.address[3] = 0x50004;               /* (and one whose vote is 0: a command all the same) */
+	rsc.data[3] = 0;
 	rsc.enabled = 0x4;
 	hakios_ddr_init(true);
 	CHECK(logged("ddr: BCM MC0      at 0x50000: unit 1000, width 14, vcd 0 (aux 8 bytes)"), "the memory's bus clock manager: %s", log_text);
-	CHECK(logged("ddr: BCM CN0      at 0x5000c"), "every bus clock manager is shown");
+	CHECK(logged("ddr: BCM CN0      at 0x5000c: unit 0, width 0, vcd 0 (aux 4 bytes)"), "every bus clock manager is shown, one whose aux "
+	    "is too short for what it says as nothing: %s", log_text);
+	CHECK(logged("ddr: slot set 0 (active) command 3: message 0, address 0x50004, data 0"), "a command whose vote is 0 is one: %s", log_text);
 	CHECK(!logged("cx.lvl") && !logged("0x3ffff"), "and only those: a rail is not one, whatever its name");
 	CHECK(logged("ddr: slot set 0 (active) command 2 (on): message 0, address 0x50000,") && logged("<- a BCM"), "what the slots hold");
 	CHECK(!logged(": message 0, address 0, data 0"), "and not the empty commands: %s", log_text);
