@@ -116,6 +116,8 @@ extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
 #define UPIU_COMMAND        0x01
 #define UPIU_RESPONSE       0x21
+#define UPIU_FLAG_UNDERFLOW 0x20                /* the response's flags (byte 1): fewer bytes moved than expected */
+#define UPIU_FLAG_OVERFLOW  0x40                /* ... more than expected */
 #define UPIU_FLAG_READ      0x40
 #define UPIU_FLAG_WRITE     0x20
 #define LUN_WELL_KNOWN      0x80
@@ -154,6 +156,12 @@ static vm_offset_t hc_uefi_map_va;
 static struct hc_slot hc_slots[SLOTS];
 static uint32_t hc_nslots;                      /* slots 1..hc_nslots carry reads */
 static uint32_t hc_free;                        /* bit i: hc_slots[i] free */
+static uint32_t hc_retired;                     /* slots cleared without an abort: the device may yet finish their commands,
+                                                 * and an answer with their tag would be taken for a new one's -- never used again */
+static bool hc_proven;                          /* reads may be rung: slot 0's proof came back since the list went in (or the
+                                                 * caller asked for none) */
+static bool hc_lost;                            /* this kernel's list was not seen to go back: it may still be in the controller,
+                                                 * and UEFI's driver is not to be asked for anything (ufshc_list_in) */
 static uint32_t hc_slot_buffer = SLOT_BUFFER_DEFAULT;
 static uint32_t hc_lun_mask = 1;                /* the logical units reads may go to: LUN 0 */
 static bool hc_usable;
@@ -526,7 +534,7 @@ hc_ring(struct hc_slot *s)
 
 	lck_mtx_lock(&hc_lock);
 	istate = ml_set_interrupts_enabled(FALSE);
-	ok = hc_in && !hc_closed && !hc_dead && *hc_loader.take_back == 0 &&
+	ok = hc_in && (hc_proven || s->number == SLOT_PROOF) && !hc_closed && !hc_dead && *hc_loader.take_back == 0 &&
 	    hc_read(UFSHC_UTRLBA) == hc_list_lo && hc_read(UFSHC_UTRLBAU) == hc_list_hi &&
 	    (hc_read(UFSHC_UTRLRSR) & 1) != 0 && (hc_read(UFSHC_UTRLDBR) & bit) == 0;
 	if (ok) {
@@ -680,6 +688,15 @@ hc_complete(struct hc_slot *s, const char *what, bool tur)
 		}
 		return EIO;
 	}
+	/* a good status, and the device moved fewer bytes than were asked for (or more): the rest of the buffer is the last
+	 * read's, not this one's -- the response's underflow and overflow flags, and its residual count */
+	if (!tur && ((r[1] & (UPIU_FLAG_UNDERFLOW | UPIU_FLAG_OVERFLOW)) != 0 || (r[12] | r[13] | r[14] | r[15]) != 0)) {
+		hc_say("ufs: native: slot %u (%s): the device moved %s bytes than asked for (flags %02x, residual %u): not taken\n",
+		    s->number, what, (r[1] & UPIU_FLAG_OVERFLOW) ? "more" : "fewer", r[1],
+		    (uint32_t)r[12] << 24 | (uint32_t)r[13] << 16 | (uint32_t)r[14] << 8 | r[15]);
+		os_atomic_inc(&hc_errors, relaxed);
+		return EIO;
+	}
 	return 0;
 }
 
@@ -718,9 +735,16 @@ hc_take(bool wait)
 static void
 hc_give(struct hc_slot *s)
 {
+	uint32_t bit = 1u << (s - hc_slots);
+
 	lck_mtx_lock(&hc_lock);
-	hc_free |= 1u << (s - hc_slots);
+	if ((hc_retired & bit) == 0) {
+		hc_free |= bit;
+	}
 	hc_in_flight--;
+	if (hc_free == 0 && hc_in_flight == 0) {
+		hc_dead = true;                 /* (every slot retired: nothing left to read with) */
+	}
 	wakeup(&hc_free);
 	lck_mtx_unlock(&hc_lock);
 }
@@ -869,6 +893,9 @@ hc_prove(void)
 		    "did not run it from this list\n", e, ocs);
 		return e != 0 ? e : EIO;
 	}
+	lck_mtx_lock(&hc_lock);
+	hc_proven = true;
+	lck_mtx_unlock(&hc_lock);
 	hc_say("ufs: native: proof: TEST UNIT READY in this list's slot 0 came back here (OCS 0, response %02x, status %02x)\n",
 	    ((volatile const uint8_t *)s->ucd)[UCD_RESPONSE + 6], ((volatile const uint8_t *)s->ucd)[UCD_RESPONSE + 7]);
 	return 0;
@@ -895,6 +922,8 @@ hc_put_back(struct hc_put_back_result *r)
 	}
 	if (r->db_before != 0 && hc_read(UFSHC_UTRLBA) == hc_list_lo && hc_read(UFSHC_UTRLBAU) == hc_list_hi) {
 		r->cleared = true;
+		hc_retired |= r->db_before;     /* (the device is not told: it may yet finish them) */
+		hc_free &= ~r->db_before;
 		hc_write(UFSHC_UTRLCLR, 0);
 		for (t = mach_absolute_time(); (r->db_after_clear = hc_read(UFSHC_UTRLDBR)) != 0 && hc_us_since(t) < 1000000;) {
 			__builtin_arm_yield();
@@ -966,6 +995,8 @@ ufshc_switch_in(bool prove)
 	istate = ml_set_interrupts_enabled(FALSE);
 	if (*hc_loader.take_back != 0) {
 		no = "the loader has taken the controller back";
+	} else if (hc_retired & (1u << SLOT_PROOF)) {
+		no = "the proof's slot was cleared once, and its command may yet come back";
 	} else {
 		no = hc_uefi_slot0(uefi_upiu, &uefi_dw0);
 	}
@@ -1006,8 +1037,10 @@ ufshc_switch_in(bool prove)
 				no = "the controller did not take this list";
 				hc_put_back(&undo);
 				undone = true;
+				hc_lost = !undo.ok;
 			} else {
 				hc_in = true;
+				hc_proven = !prove;     /* (no read is rung before the proof has come back) */
 				*hc_loader.cnr_at_switch = hc_cnr_in;
 				*hc_loader.list_in = 1;
 				(*hc_loader.switched_in)++;
@@ -1019,6 +1052,11 @@ ufshc_switch_in(bool prove)
 	lck_mtx_unlock(&hc_lock);
 	if (undone) {
 		hc_put_back_print("undoing", &undo, false);
+		if (!undo.ok) {
+			hc_say("ufs: native: this kernel's list may still be in the controller: nothing more is asked of UEFI's driver, "
+			    "nor of this one, until the phone restarts\n");
+			hc_off();
+		}
 	}
 	if (no != NULL) {
 		hc_say("ufs: native: this kernel's list not put in: %s (list %08x:%08x, doorbell %08x, run %08x, HCS %08x; UEFI's "
@@ -1067,16 +1105,20 @@ ufshc_switch_out(const char *why)
 	lck_mtx_unlock(&hc_lock);
 	hc_put_back_print(why, &r, false);
 	if (!r.ok) {
+		hc_lost = true;
+		hc_say("ufs: native: this kernel's list may still be in the controller: nothing more is asked of UEFI's driver, "
+		    "nor of this one, until the phone restarts\n");
 		hc_off();
 		return EIO;
 	}
 	return 0;
 }
 
+/* this kernel's list is in the controller -- or may be: one not seen to go back counts as in (UEFI's driver must not ring) */
 bool
 ufshc_list_in(void)
 {
-	return hc_in;
+	return hc_in || hc_lost;
 }
 
 bool

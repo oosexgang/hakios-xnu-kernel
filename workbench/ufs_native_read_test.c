@@ -70,6 +70,7 @@ static volatile bool list_ignored;              /* the controller keeps the list
 static volatile uint8_t ocs_given;              /* the OCS the controller gives a command (0: success) */
 static volatile unsigned clears;                /* writes to UTRLCLR */
 static volatile uint8_t answer_status;          /* the SCSI status the unit answers with (0: good) */
+static volatile uint32_t residual_given;         /* bytes the unit says it did not move (its response's residual, underflow) */
 static struct { uint8_t lun, slot; uint32_t lba, blocks; } asked[64];
 
 #define REG(r)          registers[(r) / 4]
@@ -147,6 +148,13 @@ do_slot(unsigned slot)
 	r[0] = UPIU_RESPONSE;
 	r[3] = u[3];
 	r[7] = answer_status;
+	if (residual_given != 0) {
+		r[1] = 0x20;                    /* (underflow) */
+		r[12] = (uint8_t)(residual_given >> 24);
+		r[13] = (uint8_t)(residual_given >> 16);
+		r[14] = (uint8_t)(residual_given >> 8);
+		r[15] = (uint8_t)residual_given;
+	}
 	utrd[slot][2] = ocs_given;
 }
 
@@ -213,7 +221,7 @@ in_with(unsigned slots)
 	hc_free = slots == 32 ? ~0u : (1u << slots) - 1;
 	hc_slot_buffer = BUFFER;
 	ufshc_set_luns(1u << 0 | 1u << 3);
-	hc_usable = hc_in = true;
+	hc_usable = hc_in = hc_proven = true;
 	if (!threads_started) {                 /* (once a process, however many times a scenario sets the driver up) */
 		threads_started = true;
 		pthread_create(&thread, NULL, controller, NULL);
@@ -546,6 +554,77 @@ stuck_when_going_out(void)
 	CHECK(REG(UFSHC_UTRLBA) == UEFI_LO && list_in == 0, "UEFI's list back");
 }
 
+/* a list that does not go back (the controller keeps this kernel's): it counts as in for good -- UEFI's driver is not to
+ * be asked for anything, nor is this one -- and the loader's page says it is still in */
+static void
+lost_when_going_out(void)
+{
+	static uint8_t out[BLOCK];
+
+	uefi_has_it();
+	CHECK(ufshc_switch_in(false) == 0, "in");
+	list_ignored = true;
+	CHECK(ufshc_switch_out("the test") == EIO && logged("NOT BACK TO"), "not back: %s", log_text);
+	CHECK(ufshc_list_in() && !hc_in && hc_dead, "counted as in, and off");
+	CHECK(list_in == 1 && switched_out == 0, "the loader's page: still in (%u)", list_in);
+	CHECK(logged("this kernel's list may still be in the controller: nothing more is asked of UEFI's driver"), "said: %s", log_text);
+	list_ignored = false;
+	CHECK(ufshc_switch_in(false) == ENXIO && ufshc_read(0, 0, out, sizeof(out)) == ENXIO, "nothing more, either way");
+}
+
+/* the unit says it moved fewer bytes than were asked for (a good status all the same): an error, nothing copied */
+static void
+a_short_read(void)
+{
+	static uint8_t out[2 * BLOCK];
+
+	in();
+	residual_given = BLOCK;
+	memset(out, 0x5a, sizeof(out));
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == EIO, "an error");
+	CHECK(out[0] == 0x5a && out[sizeof(out) - 1] == 0x5a && hc_errors == 1, "nothing copied, counted");
+	CHECK(logged("the device moved fewer bytes than asked for (flags 20, residual 4096): not taken"), "said: %s", log_text);
+	residual_given = 0;
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == 0 && is_unit(0, 0, out, sizeof(out)), "a whole one taken");
+}
+
+/* slots cleared when the list went out are not used again (the device may yet finish their commands, and an answer with
+ * their tag would be taken for a new command's); the proof's slot among them, the list is not put in again */
+static void
+cleared_slots_retired(void)
+{
+	static uint8_t out[BLOCK];
+
+	uefi_has_it();
+	CHECK(ufshc_switch_in(false) == 0, "in");
+	hold();
+	REG(UFSHC_UTRLDBR) = 2;                 /* (slot 1 rung, and never done) */
+	CHECK(ufshc_switch_out("the test") == 0 && clears == 1, "out, cleared");
+	let_go();
+	CHECK(hc_retired == 2 && (hc_free & 2) == 0, "slot 1 retired: %#x, free %#x", hc_retired, hc_free);
+	CHECK(ufshc_switch_in(false) == 0 && ufshc_read(0, 0, out, sizeof(out)) == 0, "in again, and a read");
+	CHECK(commands == 1 && asked[0].slot == 0, "in another slot than 1: %u", asked[0].slot);
+	hold();
+	REG(UFSHC_UTRLDBR) = 1;                 /* (now slot 0, the proof's, rung and never done) */
+	CHECK(ufshc_switch_out("the test") == 0, "out, cleared again");
+	let_go();
+	CHECK(ufshc_switch_in(true) == EIO && logged("the proof's slot was cleared once"), "not put in again: %s", log_text);
+}
+
+/* no read is rung before the proof has come back */
+static void
+no_read_before_the_proof(void)
+{
+	static uint8_t out[BLOCK];
+
+	in_with(2);
+	hc_free = 2;                            /* (a read's slot, 1: slot 0 is the proof's own) */
+	hc_proven = false;
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == ENXIO && commands == 0, "not rung");
+	hc_proven = true;
+	CHECK(ufshc_read(0, 0, out, sizeof(out)) == 0 && commands == 1, "rung once proven");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -553,6 +632,8 @@ main(int argc, char **argv)
 		{ "a_read", a_read }, { "a_long_read", a_long_read }, { "rung_only_while_in", rung_only_while_in },
 		{ "a_bad_answer", a_bad_answer }, { "switched_in_and_out", switched_in_and_out }, { "not_put_in", not_put_in },
 		{ "the_controller_refuses", the_controller_refuses }, { "proved", proved }, { "stuck_when_going_out", stuck_when_going_out }, { "reads_in_flight", reads_in_flight }, { "two_readers", two_readers }, { "a_slow_controller", a_slow_controller }, { "not_usable", not_usable },
+		{ "lost_when_going_out", lost_when_going_out }, { "a_short_read", a_short_read },
+		{ "cleared_slots_retired", cleared_slots_retired }, { "no_read_before_the_proof", no_read_before_the_proof },
 	};
 
 	if (argc < 2) {
