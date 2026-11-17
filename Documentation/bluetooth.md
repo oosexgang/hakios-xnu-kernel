@@ -115,7 +115,7 @@ What each failure means: [troubleshooting.md](troubleshooting.md), "Bluetooth". 
 
 | Test | What it holds |
 | --- | --- |
-| `workbench/bt_uart_test.c` | The driver against models of the serial engine, the clocks, RPMh, the pins, the PMIC's arbiter and a controller: what it reads before it writes, every refusal, the four UART configurations, the version, the firmware sent whole and answered as its mode says, each way it can fail, packets longer than the FIFO, the line brought back in step. |
+| `workbench/bt_uart_test.c` | The driver against models of the serial engine, the clocks, RPMh, the pins, the PMIC's arbiter and a controller: what it reads before it writes (and nothing of the engine while its clocks are off), every refusal, the four UART configurations, the version, the firmware sent whole and answered as its mode says, each way it can fail, packets longer than the FIFO, the line brought back in step, a packet that does not go out whole and nothing sent after it. |
 | `workbench/bt_hci_test.c` | Packets' lengths; what is answered here and what goes to the controller; the controller's events as bluetoothd is to see them. |
 | `workbench/bt_qca_test.c` | The firmware's files told apart, every byte in segments, which answers each mode leaves out, what an answer says. |
 | `workbench/bt_queue_test.c` | The line and the ring, held to a plain list over twenty thousand steps. |
