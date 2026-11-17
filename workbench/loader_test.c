@@ -823,6 +823,10 @@ payload_damaged_ones(void)
 	((struct payload_header *)payload_area)->size = 0xffffffffu;
 	CHECK(parse_payload(&info, 0) == 0 && info.kernel == NULL, "a header that says more than a payload may have: none");
 	CHECK(strstr(said, "reserved for one: damaged") != NULL, "said: %s", said);
+	payload_begin();
+	entry("kernel", "k", 2);
+	((struct payload_header *)payload_area)->size = (uint32_t)(PAYLOAD_MAX_SIZE - sizeof(struct payload_header));
+	CHECK(parse_payload(&info, 0) == 1 && info.kernel != NULL, "a header that says all the room reserved for one: taken (%s)", said);
 }
 
 /* what the packer writes (arch/arm64/boot/mkpayload.py), the loader reads: the two are run against each other */
