@@ -38,6 +38,7 @@ echo "== device packages (tools/device.py)"
 python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
 echo "== the boot image a phone is started with (arch/arm64/boot/mkboot.py)"
 python3 "$HERE/mkboot_test.py" 2>&1 | tail -3 || failed=1
+python3 "$HERE/image_test.py" 2>&1 | tail -3 || failed=1
 # The tables the code under test is built with: the repository's own boards and the tests' phones
 # (workbench/devices), which stand in for real ones -- device
 # packages are not part of this repository.
