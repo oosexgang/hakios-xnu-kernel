@@ -26,7 +26,12 @@ while IFS= read -r -d '' f; do
 	esac
 	case "$f" in
 	*/rc.jobs.*|*/rc.*) ;;
-	*.bin|*.mbn|*.elf|*.efi|*.fd|*.dtb|*.metallib|*.bc|*.air|*.ipsw|*.img|*.apfs|*_fw.h) say "firmware/Apple file name: $f" ;;
+	*.bin|*.mbn|*.elf|*.efi|*.fd|*.dtb|*.metallib|*.bc|*.air|*.ipsw|*.img|*.apfs|*_fw.h|*.payload|*.im4p) say "firmware/Apple file name: $f" ;;
+	esac
+	# (by its bytes: an image's payload, an identity blob, an Apple image file -- whatever the file is called)
+	case "$(head -c 4 "$f" 2> /dev/null | od -An -c | tr -d ' ')" in
+	XNUP) say "an image's payload: $f" ;;
+	IDNT) say "an identity blob (Apple's data): $f" ;;
 	esac
 done < "$list"
 scan -lI -e "/Users/[a-z]" -e "/private/tmp/[a-z]*-[0-9]*/" | grep -v "^./tools/check-publishable.sh$" | while read -r f; do echo "home path: $f"; done | grep . && bad=1

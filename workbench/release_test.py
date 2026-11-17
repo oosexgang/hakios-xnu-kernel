@@ -124,6 +124,23 @@ class Release(unittest.TestCase):
         self.assertIn('something that must not be published', done.stderr)
         self.assertFalse((self.repo / 'build/release/hakios-kernel-1.0.tar.gz').exists())
 
+    def test_an_image_or_an_identity_committed_by_mistake_is_found(self):
+        # (an image published into this repository instead of a phone's, an identity under a name of no kind, a device
+        # tree of Apple's packed as it comes: by their names, and by their first bytes whatever they are called)
+        for path, data, said in (('images/v1/zeta.payload', b'XNUP' + bytes(60), 'zeta.payload'),
+                                 ('notes/zeta-image', b'XNUP' + bytes(60), "an image's payload"),
+                                 ('notes/mine', b'IDNT\x01\x00\x00\x00' + bytes(56), 'an identity blob'),
+                                 ('firmware/DeviceTree.n104ap.im4p', b'0\x82' + bytes(62), 'DeviceTree.n104ap.im4p')):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_bytes(data)
+            self.git('add', '-f', path)
+            done = subprocess.run([str(self.repo / 'tools/check-publishable.sh')], cwd=self.repo, capture_output=True, text=True,
+                                  env=GIT)
+            self.assertEqual(done.returncode, 1, f'{path}: {done.stdout}')
+            self.assertIn(said, done.stdout, path)
+            self.git('rm', '-q', '--cached', path)
+            (self.repo / path).unlink()
+
 
 if __name__ == '__main__':
     unittest.main()
