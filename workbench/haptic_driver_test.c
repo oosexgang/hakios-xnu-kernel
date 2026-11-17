@@ -600,6 +600,25 @@ a_vibration_for_darwin(void)
 	CHECK(device.reg[0x0a] == 11 && device.reg[0x12] == 0xf0, "waveform 11, until told to stop: %u %#x", device.reg[0x0a], device.reg[0x12]);
 }
 
+/* a write longer than the driver's own buffer (256 samples): taken a bufferful at a time, every sample counted, nothing read
+ * past the buffer (the sanitizers' to see) */
+static void
+a_long_write(void)
+{
+	static int16_t samples[600];
+
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	for (unsigned i = 0; i < 600; i++) {
+		samples[i] = (int16_t)(i % 2 ? -100 : 100);
+	}
+	CHECK(fake_dev_write("hakios-haptic", samples, sizeof(samples)) == 0 && written_frames == 600, "every sample taken: %llu",
+	    (unsigned long long)written_frames);
+}
+
 /* a vibration the chip does not stop when told (it stays playing): the chip is put into reset, and nothing more is done */
 static void
 a_vibration_that_does_not_stop(void)
@@ -697,7 +716,7 @@ main(int argc, char **argv)
 		{ "waveforms_too_short", waveforms_too_short }, { "waveforms_in_whole_pieces", waveforms_in_whole_pieces }, { "an_effect_played", an_effect_played },
 		{ "the_last_short_effect", the_last_short_effect }, { "not_a_short_effect", not_a_short_effect },
 		{ "a_tap_for_darwin", a_tap_for_darwin }, { "a_vibration_for_darwin", a_vibration_for_darwin },
-		{ "a_vibration_that_does_not_stop", a_vibration_that_does_not_stop },
+		{ "a_vibration_that_does_not_stop", a_vibration_that_does_not_stop }, { "a_long_write", a_long_write },
 		{ "a_vibration_that_softens", a_vibration_that_softens },
 		{ "a_vibration_cut_at_the_limit", a_vibration_cut_at_the_limit }, { "a_whisper_is_not_played", a_whisper_is_not_played },
 		{ "a_sample_at_a_time", a_sample_at_a_time }, { "pretended", pretended },
