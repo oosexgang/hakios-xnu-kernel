@@ -73,6 +73,8 @@ static struct {
 	uint8_t header[4];                      /* of the last transfer */
 	unsigned bad_crc, busy, failed;         /* so many of the next answers are spoilt so */
 	bool flip_high_crc;                     /* the CRC's high byte wrong, its low byte right */
+	bool by_register;                       /* answers with its registers from the one asked for on, not data */
+	uint8_t reg[256];
 } chip;
 
 static bool
@@ -88,8 +90,14 @@ model_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 		chip.failed--;
 		return false;
 	}
-	memcpy(rx + FTS_READ_PREFIX, chip.data, n);
-	crc = fts_crc(chip.data, n);
+	if (chip.by_register) {
+		for (uint32_t i = 0; i < n; i++) {
+			rx[FTS_READ_PREFIX + i] = chip.reg[(tx[0] + i) & 0xff];
+		}
+	} else {
+		memcpy(rx + FTS_READ_PREFIX, chip.data, n);
+	}
+	crc = fts_crc(rx + FTS_READ_PREFIX, n);
 	/* (one spoilt answer at a time: a wrong CRC first, then a busy status) */
 	if (chip.bad_crc > 0) {
 		chip.bad_crc--;
@@ -286,11 +294,53 @@ bus_clock_ready(void)
 	CHECK(!fts_ahb_clock_ready(CLOCK_OFF), "off");
 }
 
+/* ---- the probe: the application's ID, its work mode, its firmware ------------------------------------- */
+
+/* a controller running its firmware, as the phone's comes up: the ID 0x5652 at 0xa3/0x9f, work mode at 0x00 */
+static void
+running_firmware(uint8_t mode, uint8_t high, uint8_t low)
+{
+	controller();
+	chip.by_register = true;
+	chip.reg[0xa3] = high;
+	chip.reg[0x9f] = low;
+	chip.reg[0x00] = mode;
+	chip.reg[0xa6] = 0x12;
+}
+
+static void
+probed(void)
+{
+	running_firmware(0x00, 0x56, 0x52);
+	CHECK(fts_probe(), "found: %s", log_text);
+	CHECK(logged("fts: FT3658U ID 0x5652, firmware 0x12"), "said: %s", log_text);
+}
+
+/* in a mode other than the application's work mode (factory, test): not used */
+static void
+not_in_work_mode(void)
+{
+	running_firmware(0x40, 0x56, 0x52);
+	CHECK(!fts_probe() && logged("fts: chip 0x5652 is not in application work mode (0x40)"), "said: %s", log_text);
+	running_firmware(0x10, 0x56, 0x52);
+	CHECK(!fts_probe() && logged("not in application work mode (0x10)"), "the mode's lowest bit as well: %s", log_text);
+}
+
+/* another ID (the boot loader's, half of it, or none): no firmware, after ten looks */
+static void
+another_id(void)
+{
+	running_firmware(0x00, 0x56, 0x53);
+	CHECK(!fts_probe() && logged("fts: no application ID 0x5652 (last 0x5653)"), "said: %s", log_text);
+	running_firmware(0x00, 0x57, 0x52);
+	CHECK(!fts_probe() && logged("(last 0x5752)"), "said: %s", log_text);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "a_read", a_read }, { "lengths_refused", lengths_refused }, { "read_again", read_again },
+		{ "a_read", a_read }, { "probed", probed }, { "not_in_work_mode", not_in_work_mode }, { "another_id", another_id }, { "lengths_refused", lengths_refused }, { "read_again", read_again },
 		{ "read_given_up", read_given_up }, { "crc_both_bytes", crc_both_bytes }, { "bus_clock_ready", bus_clock_ready },
 		{ "lowest_preset_above", lowest_preset_above }, { "first_of_two_alike", first_of_two_alike }, { "preset_of_the_rate_asked", preset_of_the_rate_asked },
 		{ "no_preset_high_enough", no_preset_high_enough }, { "the_crystal_without_presets", the_crystal_without_presets },
