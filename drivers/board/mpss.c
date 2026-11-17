@@ -5507,7 +5507,10 @@ wda_send_format(void)
 	if (wda_sent || wda_port == NULL || wda_port_number == 0) {
 		return;
 	}
-	wda_sent = true;
+	/* (the link's thread and the steps' both come here: whichever takes the flag first sends, the other does not) */
+	if (__atomic_exchange_n(&wda_sent, true, __ATOMIC_SEQ_CST)) {
+		return;
+	}
 	request[5] = sizeof(request) - 7;
 	tell("mpss: wda: about to set the data format of the embedded port: raw IP in QMAP, no checksum offload\n");
 	qrtr_send(wda_port, wda_node, wda_port_number, request, sizeof(request));
@@ -5778,7 +5781,10 @@ wds_advance(void)
 	}
 	/* bind once (unless modem_data_nobind), before or after registration */
 	if (!wds_bind_sent && !option("modem_data_nobind")) {
-		wds_bind_sent = true;
+		/* (the link's thread and the steps' both come here: one bind, sent by whichever takes the flag first) */
+		if (__atomic_exchange_n(&wds_bind_sent, true, __ATOMIC_SEQ_CST)) {
+			return;
+		}
 		wds_last_try = now_us();
 		tell("mpss: wds: about to bind the client to mux %u of the embedded port (the IPA)\n", DATA_MUX);
 		qrtr_send(wds_port, wds_node, wds_port_number, bind, sizeof(bind));
@@ -5786,7 +5792,9 @@ wds_advance(void)
 	}
 	/* start the session only once registered, and retry while it is refused */
 	if (wds_registered && !wds_start_pending && now_us() - wds_last_try >= WDS_RETRY_US) {
-		wds_start_pending = true;
+		if (__atomic_exchange_n(&wds_start_pending, true, __ATOMIC_SEQ_CST)) {
+			return;                 /* (the other thread is starting it) */
+		}
 		wds_last_try = now_us();
 		wds_send_start();
 	}
