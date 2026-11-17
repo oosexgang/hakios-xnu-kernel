@@ -37,6 +37,7 @@ static int deaf_register = -1;                  /* a register that does not take
 static uint8_t ram[0x1000];
 static unsigned ram_at;
 static int ram_wrong_at = -1;
+static unsigned ram_written_closed;             /* bytes into the RAM's data port while the RAM was not opened (0x45 bit 2) */
 
 static void
 chip_written(uint8_t reg, uint8_t value)
@@ -48,6 +49,7 @@ chip_written(uint8_t reg, uint8_t value)
 	} else if (reg == 0x41) {
 		ram_at = (ram_at & 0xff00) | value;
 	} else if (reg == 0x42) {
+		ram_written_closed += (device.reg[0x45] & 0x04) == 0;
 		ram[ram_at++ % sizeof(ram)] = value;
 	}
 	if (reg != deaf_register) {
@@ -230,6 +232,8 @@ look_only(void)
 	    "the chip in reset does not answer, and why is said");
 	CHECK(model.cfg[RESET] == HELD_IN_RESET && resets_released == 0, "the reset pin is as it was found: %#x", model.cfg[RESET]);
 	CHECK(!logged("PUT INTO RESET"), "nothing is given up that was never taken");
+	CHECK(logged("function 0, pull 1, 2 mA, input") && logged("function 1, pull 3, 2 mA, input"),
+	    "each pin as it was found, its drive strength in mA: %s", log_text);
 	never();
 	hakios_haptic_quiesce();
 	CHECK(model.cfg[RESET] == HELD_IN_RESET, "nor at the run's end");
@@ -240,11 +244,17 @@ static void
 reset_released(void)
 {
 	phone("phone-video", 0x9270);
+	device.reg[0x7c] = 0x11;                /* the last register compared, other than Android's */
+	device.reg[0x32] = 0x22;                /* a data port: not read, so not compared */
 	boot_args = "haptic=2";
 	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 10000);
 	CHECK(logged("haptic: the reset is released: gpio35 low for 5 ms, then high") && resets_released == 1, "released once: %u",
 	    resets_released);
+	CHECK(logged("haptic: 0x7c = 0x11 (Android leaves 0x00)") && logged("haptic: 0x03 = 0x00 (Android leaves 0x59)"),
+	    "the registers that differ are said, up to the last: %s", log_text);
+	CHECK(!logged("haptic: 0x32 =") && !logged("haptic: 0x42 =") && !logged("haptic: 0x57 =") && !logged("haptic: 0x58 ="),
+	    "the data ports are not read, and a register as Android leaves it is not said: %s", log_text);
 	CHECK(logged("haptic: the chip at 0x5a is 0x9270, an AW86927"), "the chip answers and is the one expected: %s", log_text);
 	CHECK(logged("registers differ from what Android leaves in them"), "its registers are read and compared");
 	CHECK(!in_reset(), "the chip stays out of reset while the run goes on");
@@ -388,9 +398,12 @@ waveforms_loaded(void)
 {
 	phone("phone-video", 0x9270);
 	make_waveforms(3, 40);
+	waveforms[waveforms_size] = 0x55;       /* (past the file's end: not in its sum) */
 	boot_args = "haptic=3";
 	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(ram_written_closed == 0 && register_written[0x2d] && register_written[0x2e], "the RAM opened before it is written, "
+	    "both bytes of its base said: %u bytes written closed", ram_written_closed);
 	CHECK(logged("haptic: Android's waveforms: 133 bytes from 0x800 on, 3 waveforms"), "the file as it is: %s", log_text);
 	CHECK(memcmp(ram + 0x800, waveforms + 4, waveforms_size - 4) == 0, "every byte of it in the RAM, where it goes");
 	CHECK(ram[0x7ff] == 0 && ram[0x800 + waveforms_size - 4] == 0, "and nothing around it");
@@ -426,6 +439,35 @@ ram_reads_back_wrong(void)
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(logged("the RAM reads back differently at 0x800"), "said where: %s", log_text);
 	CHECK(logged("THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
+}
+
+/* a file too short to hold even its header: as if there were none */
+static void
+waveforms_too_short(void)
+{
+	phone("phone-video", 0x9270);
+	memset(waveforms, 0x11, 7);
+	waveforms_size = 7;
+	boot_args = "haptic=3";
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(logged("no aw8697_haptic.bin in fw/") && !logged("does not add up"), "said: %s", log_text);
+	CHECK(!register_written[0x42] && !register_written[0x2d] && !in_reset(), "nothing of it written, nothing wrong");
+}
+
+/* a file whose RAM part is a whole number of the pieces it is written and read in (64 bytes): all of it, no more */
+static void
+waveforms_in_whole_pieces(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(1, 59);
+	boot_args = "haptic=3";
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(logged("haptic: Android's waveforms: 64 bytes from 0x800 on, 1 waveforms") &&
+	    logged("are in the chip's RAM and read back as written"), "said: %s", log_text);
+	CHECK(memcmp(ram + 0x800, waveforms + 4, 64) == 0 && ram[0x840] == 0, "the 64 bytes, and nothing after");
+	CHECK(!in_reset(), "nothing was wrong");
 }
 
 /* haptic=4 haptic_effect=N: waveform N played once from the RAM, at Android's gain, then back in standby */
@@ -497,7 +539,50 @@ a_tap_for_darwin(void)
 	WAIT_FOR(logged("haptic: tap 1:"), 2000);
 	CHECK(logged("haptic: tap 1: Darwin's waveform peaks at 20000 of 32768: Android's waveform 1 at gain 0x80"), "said: %s", log_text);
 	CHECK(device.reg[0x0a] == 1 && device.reg[0x12] == 0, "waveform 1, once");
+	CHECK(device.reg[0x07] == 0x80 && device.reg[0x08] == 0x04, "at that gain, from the RAM: %#x %#x", device.reg[0x07], device.reg[0x08]);
 	CHECK(!logged("haptic: vibration"), "a tap, not a vibration");
+}
+
+/* Darwin's waveform a sample a write, the least there is: heard all the same */
+static void
+a_sample_at_a_time(void)
+{
+	int16_t sample = 20000;
+
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	for (unsigned t = 0; t < 20 && !logged("haptic: tap 1:"); t++) {
+		CHECK(fake_dev_write("hakios-haptic", &sample, sizeof(sample)) == 0, "written");
+		usleep(1000);
+	}
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	CHECK(logged("haptic: tap 1: Darwin's waveform peaks at 20000 of 32768"), "said: %s", log_text);
+}
+
+/* the microphone's stand-in for Darwin (hakios_haptic_pretend): 256 is silence, as from Darwin; louder, a tap */
+static void
+pretended(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	for (unsigned t = 0; t < 20; t++) {
+		hakios_haptic_pretend(256);
+		usleep(5000);
+	}
+	usleep(100000);
+	CHECK(!logged("haptic: tap") && !logged("haptic: vibration"), "silence: %s", log_text);
+	for (unsigned t = 0; t < 4; t++) {
+		hakios_haptic_pretend(3000);
+		usleep(5000);
+	}
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	CHECK(logged("haptic: tap 1: Darwin's waveform peaks at 3000 of 32768"), "a tap: %s", log_text);
 }
 
 /* ... and one that goes on, a vibration: Android's waveform 11 over and over */
@@ -592,11 +677,13 @@ main(int argc, char **argv)
 		{ "configured", configured }, { "another_wiring", another_wiring },
 		{ "write_does_not_stick", write_does_not_stick }, { "fault_reported", fault_reported }, { "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
 		{ "waveforms_loaded", waveforms_loaded }, { "waveforms_do_not_add_up", waveforms_do_not_add_up },
-		{ "ram_reads_back_wrong", ram_reads_back_wrong }, { "an_effect_played", an_effect_played },
+		{ "ram_reads_back_wrong", ram_reads_back_wrong },
+		{ "waveforms_too_short", waveforms_too_short }, { "waveforms_in_whole_pieces", waveforms_in_whole_pieces }, { "an_effect_played", an_effect_played },
 		{ "the_last_short_effect", the_last_short_effect }, { "not_a_short_effect", not_a_short_effect },
 		{ "a_tap_for_darwin", a_tap_for_darwin }, { "a_vibration_for_darwin", a_vibration_for_darwin },
 		{ "a_vibration_that_softens", a_vibration_that_softens },
 		{ "a_vibration_cut_at_the_limit", a_vibration_cut_at_the_limit }, { "a_whisper_is_not_played", a_whisper_is_not_played },
+		{ "a_sample_at_a_time", a_sample_at_a_time }, { "pretended", pretended },
 	};
 
 	if (argc < 2) {
