@@ -286,6 +286,28 @@ class Personalize(Sandbox):
         self.assertEqual((front, dtb), (SHIM + UEFI_IMAGE, DTB))
         self.assertIn('identity', dict(image.payload_entries(payload)))
 
+    def test_the_identity_of_an_ipsw_itself(self):
+        import zipfile
+        self.build()
+
+        def der(tag, body):
+            return bytes([tag, 0x82]) + len(body).to_bytes(2, 'big') + body
+        tree = device_tree()
+        im4p = der(0x30, der(0x16, b'IM4P') + der(0x16, b'dtre') + der(0x16, b'test') + der(0x04, tree))
+        ipsw = self.dir / 'phone.ipsw'
+        with zipfile.ZipFile(ipsw, 'w') as z:
+            z.writestr('Firmware/all_flash/DeviceTree.n104ap.im4p', im4p)
+            z.writestr('Firmware/all_flash/DeviceTree.d421ap.im4p', im4p.replace(b'iPhone99,9', b'iPhone77,7'))
+            z.writestr('BuildManifest.plist', b'<plist/>')
+        self.assertIn('which iPhone', str(self.tool('personalize', str(self.out / 'zeta.payload'), '--identity', str(ipsw))[0]))
+        self.assertIn('no device tree for n999ap (it has: d421ap, n104ap)',
+                      str(self.tool('personalize', str(self.out / 'zeta.payload'), '--identity', str(ipsw), '--model', 'n999ap')[0]))
+        code, said = self.tool('personalize', str(self.out / 'zeta.payload'), '--identity', str(ipsw), '--model', 'N104AP')
+        self.assertEqual(code, 0, said)
+        blob = dict(image.payload_entries((self.out / 'zeta-mine.payload').read_bytes()))['identity']
+        self.assertIn(b'iPhone99,9', blob)
+        self.assertNotIn(b'iPhone77,7', blob)
+
     def test_what_is_no_device_tree_gives_no_identity(self):
         self.build()
         (self.dir / 'junk').write_bytes(b'\0' * 64)

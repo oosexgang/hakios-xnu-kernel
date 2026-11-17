@@ -11,7 +11,7 @@
   tools/image.py publish IMAGE_DIR DEVICE_REPO [--version TEXT] [--with-uefi]
         the image into DEVICE_REPO/images/VERSION/ and the index DEVICE_REPO/images/README.md: for a phone's own
         repository (tools/device.py add --from), which others then boot from
-  tools/image.py personalize IMAGE --identity FILE [-o OUT]
+  tools/image.py personalize IMAGE --identity FILE [--model NAME] [-o OUT]
         an image someone else built, given the identity of your own iPhone's IPSW (below): a payload or a boot.img
   tools/image.py show FILE
         what an image holds, and whether it is what its manifest says
@@ -46,7 +46,9 @@ import shutil
 import struct
 import subprocess
 import sys
+import re
 import tempfile
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -175,12 +177,30 @@ def boot_arguments(board, preset):
     return ' '.join(merged.values())
 
 
-def identity_blob(path):
-    """An identity for the payload: a blob as it is, or one made from an iPhone's device tree (mkidentity.py --blob)."""
+def device_tree_of_ipsw(path, model, into):
+    """The device tree of an IPSW (a zip): Firmware/all_flash/DeviceTree.MODEL.im4p, the only one or the one MODEL
+    names (n104ap: iPhone12,1), written into INTO; its path."""
+    with zipfile.ZipFile(path) as ipsw:
+        trees = sorted(n for n in ipsw.namelist() if re.fullmatch(r'Firmware/all_flash/DeviceTree\.[a-z0-9]+\.im4p', n))
+        chosen = [n for n in trees if model is None or n.split('.')[1] == model.lower()]
+        if len(chosen) != 1:
+            models = ', '.join(n.split('.')[1] for n in trees) or 'none'
+            die(f'{path}: which iPhone\'s device tree? --model NAME (it has: {models})' if chosen else
+                f'{path}: no device tree for {model} (it has: {models})')
+        out = Path(into) / Path(chosen[0]).name
+        out.write_bytes(ipsw.read(chosen[0]))
+        return out
+
+
+def identity_blob(path, model=None):
+    """An identity for the payload: a blob as it is, or one made from an iPhone's device tree (mkidentity.py --blob) --
+    the device tree itself, its IM4P, or the IPSW it is in."""
     data = Path(path).read_bytes()
     if data[:4] == IDENTITY_MAGIC:
         return data
     with tempfile.TemporaryDirectory() as work:
+        if zipfile.is_zipfile(path):
+            path = device_tree_of_ipsw(path, model, work)
         out = Path(work) / 'identity.bin'
         done = subprocess.run([sys.executable, str(ROOT / 'arch/arm64/boot/mkidentity.py'), '--blob', str(out), str(path)],
                               capture_output=True, text=True)
@@ -258,7 +278,7 @@ def build(options):
     entries = [('loader.efi', loader), ('kernel', kernel), ('cmdline', cmdline.encode() + b'\0')]
     identity = None
     if options.identity:
-        identity = identity_blob(options.identity)
+        identity = identity_blob(options.identity, options.model)
         entries.append(('identity', identity))
     payload = payload_pack(entries)
 
@@ -380,7 +400,7 @@ def publish(options):
 def personalize(options):
     path = Path(options.image)
     data = path.read_bytes()
-    identity = identity_blob(options.identity)
+    identity = identity_blob(options.identity, options.model)
     is_boot = data[:8] == b'ANDROID!'
     payload = boot_image_payload(data)[1] if is_boot else data
     entries = [(n, d) for n, d in payload_entries(payload) if n != 'identity'] + [('identity', identity)]
@@ -487,6 +507,7 @@ def main(arguments=None):
     command.add_argument('--loader', help='the loader (arch/arm64/boot/loader.efi)')
     command.add_argument('--uefi', help='the phone\'s UEFI build (firmware/NAME/uefi)')
     command.add_argument('--identity', help='an identity to carry: Apple\'s data, for your own phone')
+    command.add_argument('--model', help='which iPhone\'s device tree, when --identity is an IPSW with several (n104ap)')
     command.add_argument('--out', help='where (build/images/NAME)')
     command.add_argument('--every-run', action='store_true', help='one image for each phone_ defconfig, in OUT/DEFCONFIG/')
     command = commands.add_parser('publish', help='an image into a phone\'s repository')
@@ -496,7 +517,8 @@ def main(arguments=None):
     command.add_argument('--with-uefi', action='store_true')
     command = commands.add_parser('personalize', help='an image given the identity of your own IPSW')
     command.add_argument('image', metavar='IMAGE')
-    command.add_argument('--identity', required=True)
+    command.add_argument('--identity', required=True, help='a DeviceTree.bin, its .im4p, the IPSW, or a blob')
+    command.add_argument('--model', help='which iPhone\'s device tree, when the IPSW has several (n104ap: iPhone12,1)')
     command.add_argument('-o', '--output')
     command = commands.add_parser('show', help='what an image holds')
     command.add_argument('file', metavar='FILE')
