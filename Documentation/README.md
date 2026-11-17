@@ -11,6 +11,7 @@
 | [whats-new.ru.md](whats-new.ru.md) | In Russian: what changed in the last days, in a page, each with its document. |
 | [phone-test.ru.md](phone-test.ru.md) | In Russian: a day with the phone -- the runs in order, what each must say, Bluetooth step by step, what to send back. |
 | [quickstart.ru.md](quickstart.ru.md) | In Russian: from a clean Ubuntu to one image for your own phone, booted with one command; a phone in its own repository; the commands of everyday work. |
+| [release.ru.md](release.ru.md) | In Russian: releasing the sources -- the checks before, the tarball and its sums, the tag, the CHANGELOG after. |
 | [darwin27-ubuntu.ru.md](darwin27-ubuntu.ru.md) | In Russian: what the project has done, and from an Ubuntu machine to Darwin 27 on a phone, step by step. |
 | [drivers.md](drivers.md) | Every driver: its part, its boot argument and feature, how tied it is to one phone. |
 | [features.md](features.md) | Every feature a board can list: the sections and keys it needs first, and what starts it. |

@@ -56,7 +56,7 @@ fastboot boot build/images/ИМЯ/boot.img                         # из RAM, �
 
 ## Как предложить изменение
 
-`make check` должен проходить. `scripts/tests-for.py --changed --run` прогоняет тесты того, что вы изменили. Один
+`make check` должен проходить. `scripts/tests-for.py --changed --run` прогоняет тесты того, что вы изменили. Выпуск исходников: [Documentation/release.ru.md](Documentation/release.ru.md). Один
 коммит — одна тема; в теме сказано, что затронуто, а в тексте — зачем. Ничего от Apple, производителя телефона или
 поставщика не коммитится (`tools/check-publishable.sh` проверяет). Подробно: [CONTRIBUTING.md](CONTRIBUTING.md);
 об уязвимостях: [SECURITY.md](SECURITY.md).

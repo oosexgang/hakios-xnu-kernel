@@ -337,6 +337,7 @@ D:	tools/README.md
 D:	scripts/README.md
 D:	workbench/README.md
 D:	CONTRIBUTING.md
+D:	Documentation/release.ru.md
 
 TOUCH SCREENS
 F:	drivers/board/goodix.c
