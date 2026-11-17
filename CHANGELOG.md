@@ -56,6 +56,10 @@ tags yet, so the current work is one section.
 - The loader held no size a payload gives to what is there (an entry's, the header's, the padding's, rdres) and no
   device tree to its 64 KB: a damaged payload or an identity larger than the room was read past, or written over the
   boot arguments. Each is bounded now, and a payload that does not hold together is none, said so.
+- Publishing an image judged it by its manifest, which anybody may edit: a loader with an iPhone's identity, a
+  personalized `boot.img`, an identity under another name or after the payload's end, and files beside the images all
+  reached a phone's repository, and `--version ..` removed the repository itself. `publish` and `verify` read the bytes
+  now, and `check-publishable.sh` finds an image or an identity committed here by mistake.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
