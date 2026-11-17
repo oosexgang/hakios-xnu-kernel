@@ -905,7 +905,15 @@ rails(uint32_t level)
 		values[r] = (uint32_t)position;
 	}
 	need(&rsc);
-	lck_mtx_lock(&hakios_rsc_lock);
+	if (leaving) {
+		/* (on the way back to the loader, interrupts off: whoever holds the sequencer's lock will not let it go) */
+		if (!lck_mtx_try_lock(&hakios_rsc_lock)) {
+			printf("mpss: %u: the sequencer's lock is held: the rails at level %u are not asked\n", step, level);
+			return false;
+		}
+	} else {
+		lck_mtx_lock(&hakios_rsc_lock);
+	}
 	/* (the boot loader leaves the trigger set after its last request, done: idle is what the status says) */
 	if (rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_STATUS) == 0) {
 		printf("mpss: %u: TCS %u of the sequencer is busy (status %#x, control %#x): the rails are not asked\n", step, RPMH_TCS,
