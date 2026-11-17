@@ -680,7 +680,7 @@ ufs_write_restore(void)
 {
 	lck_mtx_lock(&ufs_write_mtx);
 	if (ufs_write_out) {
-		if (ufs_write_was_native && ufs_native_in(false) == 0) {
+		if (ufs_write_was_native && ufs_native_in(true) == 0) {
 			ufs_native_on = true;
 		}
 		ufs_write_busy = false;
@@ -1416,7 +1416,7 @@ ufs_native_check(void)
 	for (uint32_t i = 0; going && i < ufs_parts; i++) {
 		volatile struct loader_block_part *e = &ufs_page->part[i];
 		uint64_t entries_lba, count, size, table, alt, alt_entries;
-		uint32_t want, got;
+		uint32_t want, got, header_size;
 
 		if ((e->flags & BLOCK_PART_UNIT) == 0 || ufs_lun[i] == 0xff) {
 			continue;
@@ -1432,7 +1432,9 @@ ufs_native_check(void)
 		table = (count * size + 4095) / 4096;
 		want = *(uint32_t *)(h + 16);
 		*(uint32_t *)(h + 16) = 0;
-		got = crc32(0, h, *(uint32_t *)(h + 12));
+		/* (the header's own size, read off the disk: 92 bytes at least and a block at most, or no sum is taken over it) */
+		header_size = *(uint32_t *)(h + 12);
+		got = header_size >= 92 && header_size <= 4096 ? crc32(0, h, header_size) : ~want;
 		printf("ufs: native check: %s (LUN %u): GPT header crc %s (%x), table at block %llu, %llu entries of %llu bytes, "
 		    "backup header at block %llu\n", e->name, ufs_lun[i], got == want ? "right" : "WRONG", got, entries_lba, count,
 		    size, alt);
