@@ -33,6 +33,7 @@
 #include <sys/vnode_internal.h>
 #include <libkern/libkern.h>
 #include <kern/startup.h>
+#include <os/atomic_private.h>
 #include <kern/task.h>
 #include <mach/vm_param.h>
 #include <vm/vm_kern.h>
@@ -271,6 +272,72 @@ minisandbox_container_path(user_addr_t arg)
 	return error;
 }
 
+/*
+ * Requests 5 and 6, "issue an extension" and "consume one" (sandbox_extension_issue_*() and
+ * sandbox_extension_consume() of libsystem_sandbox). An extension is a token one process is given
+ * by another to reach what its own sandbox shuts it out of; tccd, having let an application use the
+ * camera or the microphone, issues it one for that service and hands it over with the answer. With
+ * nothing written into the token's buffer, the issue returns no token, and tccd answers the
+ * application with an error ("Failed to issue Sandbox Extension for kTCCServiceCamera") instead of
+ * the grant: no capture input, a black preview. (Found by the OnePlus Nord 2 port of iOS,
+ * frxncyyy/ios-denniz, on iOS 16.7.)
+ *
+ * Nothing is confined here, so an extension grants nothing and restricts nothing: it only has to
+ * exist. Issue: { class name, type, data, flags, token buffer (2048 bytes), pid, pid version }; a
+ * token is written that names the class and the type. Consume: { token, its length with the NUL,
+ * where the handle goes }; a new positive handle is written there. What does not look like either
+ * -- a class that is no "com.apple." name, a type past the five there are, no buffer, a token that
+ * cannot be read -- is left as before: success, and nothing written.
+ */
+#define SANDBOX_SYSCALL_EXTENSION_ISSUE         5
+#define SANDBOX_SYSCALL_EXTENSION_CONSUME       6
+#define SANDBOX_EXTENSION_TOKEN_MAX             2048
+static uint64_t minisandbox_extensions;         /* issued and consumed, numbering the tokens and the handles */
+
+static int
+minisandbox_extension_issue(user_addr_t arg)
+{
+	struct {
+		user_addr_t class_name;
+		uint64_t    type;
+		user_addr_t data;
+		uint64_t    flags;
+		user_addr_t token;
+		uint64_t    pid;
+		uint64_t    pidversion;
+	} args;
+	char class_name[128], token[256];
+	size_t done = 0;
+	int n;
+
+	if (copyin(arg, &args, sizeof(args)) != 0 || args.token == 0 || args.type > 4 ||
+	    copyinstr(args.class_name, class_name, sizeof(class_name), &done) != 0 || strncmp(class_name, "com.apple.", 10) != 0) {
+		return 0;
+	}
+	n = snprintf(token, sizeof(token), "%016llx;%08llx;%s", (unsigned long long)os_atomic_inc(&minisandbox_extensions, relaxed),
+	    (unsigned long long)args.type, class_name);
+	return copyout(token, args.token, (size_t)n + 1);
+}
+
+static int
+minisandbox_extension_consume(user_addr_t arg)
+{
+	struct {
+		user_addr_t token;
+		uint64_t    length;
+		user_addr_t handle;
+	} args;
+	char first;
+	int64_t handle;
+
+	if (copyin(arg, &args, sizeof(args)) != 0 || args.handle == 0 || args.length < 2 || args.length > SANDBOX_EXTENSION_TOKEN_MAX ||
+	    copyin(args.token, &first, 1) != 0) {
+		return 0;
+	}
+	handle = (int64_t)os_atomic_inc(&minisandbox_extensions, relaxed);
+	return copyout(&handle, args.handle, sizeof(handle));
+}
+
 /* Which request numbers have been seen: one log line each, to learn what user space asks for. */
 static uint64_t minisandbox_seen;
 
@@ -280,10 +347,17 @@ minisandbox_policy_syscall(struct proc *p, int call, user_addr_t arg)
 	if (call >= 0 && call < 64 && (minisandbox_seen & (1ULL << call)) == 0) {
 		minisandbox_seen |= 1ULL << call;
 		printf("minisandbox: request %d (first seen from %s[%d]): %s\n", call, p->p_comm, proc_getpid(p),
-		    call == SANDBOX_SYSCALL_CONTAINER_PATH ? "answered" : "allowed");
+		    call == SANDBOX_SYSCALL_CONTAINER_PATH || call == SANDBOX_SYSCALL_EXTENSION_ISSUE ||
+		    call == SANDBOX_SYSCALL_EXTENSION_CONSUME ? "answered" : "allowed");
 	}
 	if (call == SANDBOX_SYSCALL_CONTAINER_PATH) {
 		return minisandbox_container_path(arg);
+	}
+	if (call == SANDBOX_SYSCALL_EXTENSION_ISSUE) {
+		return minisandbox_extension_issue(arg);
+	}
+	if (call == SANDBOX_SYSCALL_EXTENSION_CONSUME) {
+		return minisandbox_extension_consume(arg);
 	}
 	return 0;
 }
