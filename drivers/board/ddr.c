@@ -205,7 +205,7 @@ ddr_raise(void)
 	 * A request without an answer was triggered all the same, and may well be in force: it is given back at the run's end
 	 * like one that was answered (else the loader and the next kernel run with the memory at its top)
 	 */
-	ddr_voted = problem == NULL || problem == RPMH_SAYS_NO_ANSWER;
+	ddr_voted = problem == NULL || strcmp(problem, RPMH_SAYS_NO_ANSWER) == 0;     /* (the words, not where they are) */
 	tell("ddr: memory bandwidth vote %u on MC0 (%#x) and SH0 (%#x)%s\n", vote, ddr_mc0, ddr_sh0,
 	    problem == NULL ? "" : ddr_voted ? ": FAILED, or perhaps not: given back at the run's end all the same" : ": FAILED");
 }
