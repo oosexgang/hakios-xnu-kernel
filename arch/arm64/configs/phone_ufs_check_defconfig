@@ -1,0 +1,6 @@
+# The phone's storage read through the kernel's own UFS driver (board/ufshc.c), once, against the loader: what it reads
+# of the partitions is compared with what the loader reads, byte for byte, and the run goes back to the loader
+# (Documentation/porting.md, step 5). Before phone_perf, which reads through that driver for the whole run.
+include debug
+ufs_native=1            # this kernel's own transfer list in the controller, if all is as expected
+ufs_native_check=1      # the same bytes as the loader's, said, then back to the loader

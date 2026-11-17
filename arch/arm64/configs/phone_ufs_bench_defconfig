@@ -1,0 +1,6 @@
+# What the phone's flash gives through the kernel's own UFS driver: N threads reading at random places of the
+# port's partition, for 1, 2, 4, 8, 16 and 31 reads in flight, MB/s and microseconds a read; then back to the loader.
+# After phone_ufs_check has said the bytes are the loader's.
+include debug
+ufs_native=1
+ufs_native_bench=1
