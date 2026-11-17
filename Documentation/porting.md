@@ -257,7 +257,9 @@ tools/device.py add --from https://git.example/you/my-phone.git#v1   # or only b
 
 The repository is cloned into `build/device-sources/` and its package copied into `arch/arm64/boot/dts/` and
 validated against the code here; `tools/device.py list` says where each package came from, and the same command
-again takes what the repository has now. Every driver and feature of the kernel is there for your phone as for
+again takes what the repository has now. `make phone` ends with one image of the loader, the kernel and the boot
+arguments (`build/images/NAME/`), which `make publish DEVICE=NAME REPO=DIR` puts into that repository's `images/` for
+others to boot ([images.md](images.md)). Every driver and feature of the kernel is there for your phone as for
 any other: what a board turns on is its `features`, and what each feature needs is in
 [features.md](features.md) (`tools/boards.py status NAME` says what yours can turn on next).
 

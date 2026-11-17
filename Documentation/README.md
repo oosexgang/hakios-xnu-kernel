@@ -6,6 +6,7 @@
 | [architecture.md](architecture.md) | How the boot chain, the kernel, the loader and Darwin user space fit together; what is data, what is a driver, what is the same for every device; what is not in the repository. |
 | [porting.md](porting.md) | How to bring the project up on another Qualcomm phone, step by step. |
 | [building.md](building.md) | What each build needs and produces; what has been verified and where. |
+| [images.md](images.md) | One image for a phone: the loader, the kernel and the boot arguments in one file, booted with one command, kept in the phone's own repository; which iPhone Darwin is told it is, without Apple's data in it. |
 | [qemu.md](qemu.md) | The kernel in QEMU: booted as a phone boots it, its own root and shell; the network, a second disk, sound, input, processes, threads; what `make qemu` holds. |
 | [darwin27-ubuntu.ru.md](darwin27-ubuntu.ru.md) | In Russian: what the project has done, and from an Ubuntu machine to Darwin 27 on a phone, step by step. |
 | [drivers.md](drivers.md) | Every driver: its part, its boot argument and feature, how tied it is to one phone. |
