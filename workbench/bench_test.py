@@ -8,7 +8,6 @@ defconfig's arguments, the log fetched and looked at); what bench refuses (anoth
 took the phone for another board, a second command while a run holds the phone) and what it warns of (a kernel that
 does not know the phone, a second run in one session of the loader)."""
 import fcntl
-import os
 import shutil
 import struct
 import subprocess
