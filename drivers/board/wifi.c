@@ -1061,9 +1061,6 @@ step_firmware(void)
 		char name[16];
 
 		mdt_segment(header, i, &segment);
-		if (MDT_HASH(segment.flags)) {
-			hashes = segment.file_size;
-		}
 		if (!mdt_loaded(&segment)) {
 			continue;                       /* (not one that is loaded) */
 		}
@@ -1071,6 +1068,13 @@ step_firmware(void)
 			printf("wifi: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			return false;
+		}
+		for (uint32_t j = 0; j < image.segments; j++) {
+			if (!mdt_apart(segment.paddr - WPSS_MEMORY, segment.memory_size, image.segment[j].at, image.segment[j].memory_size)) {
+				printf("wifi: %u: segment %u (%#x, %#x bytes) is loaded over one before it\n", step, i, segment.paddr,
+				    segment.memory_size);
+				return false;
+			}
 		}
 		image.segment[image.segments].at = segment.paddr - WPSS_MEMORY;
 		image.segment[image.segments].file_size = segment.file_size;
@@ -1096,7 +1100,7 @@ step_firmware(void)
 		highest = segment.paddr + segment.memory_size > highest ? segment.paddr + segment.memory_size : highest;
 		image.segments++;
 	}
-	if (image.segments == 0 || lowest != WPSS_MEMORY || !mdt_header_whole(count, hashes, size)) {
+	if (image.segments == 0 || lowest != WPSS_MEMORY || !mdt_header_whole(header, count, size, &hashes)) {
 		printf("wifi: %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
 		    "the header %u and the hashes %u\n", step, image.segments, lowest, size, 52 + 32 * count, hashes);
 		image.segments = 0;

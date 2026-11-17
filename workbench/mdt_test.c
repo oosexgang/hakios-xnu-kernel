@@ -23,6 +23,8 @@ header(uint32_t count, uint32_t hashes)
 {
 	memset(file, 0, sizeof(file));
 	memcpy(file, "\177ELF\1\1\1", 7);
+	file[28] = MDT_ELF_HEADER;              /* e_phoff: the table right after the header */
+	file[42] = MDT_SEGMENT;                 /* e_phentsize */
 	file[44] = (uint8_t)count;
 	file[45] = (uint8_t)(count >> 8);
 	return MDT_ELF_HEADER + (uint64_t)MDT_SEGMENT * count + hashes;
@@ -59,6 +61,18 @@ headers(void)
 	CHECK(mdt_segment_count(file, LARGEST + 1, MOST, LARGEST) == 0, "larger than what is handed over: not one");
 	CHECK(mdt_segment_count(file, 4, MOST, LARGEST) == 0 && mdt_segment_count(NULL, 0, MOST, LARGEST) == 0,
 	    "a file of four bytes, or none: not one, and nothing read past it");
+	size = header(4, 0);
+	file[5] = 2;                            /* big-endian */
+	CHECK(mdt_segment_count(file, size, MOST, LARGEST) == 0, "a big-endian ELF: not one");
+	size = header(4, 0);
+	file[28] = MDT_ELF_HEADER + MDT_SEGMENT;
+	CHECK(mdt_segment_count(file, size, MOST, LARGEST) == 0, "a table that is not right after the header: not one");
+	size = header(4, 0);
+	file[31] = 1;
+	CHECK(mdt_segment_count(file, size, MOST, LARGEST) == 0, "a table 16 MiB on: not one");
+	size = header(4, 0);
+	file[42] = 56;
+	CHECK(mdt_segment_count(file, size, MOST, LARGEST) == 0, "entries of 56 bytes (a 64-bit table): not one");
 }
 
 static void
@@ -127,13 +141,50 @@ boundaries(void)
 	CHECK(mdt_within(&s, 0x9f000000, 0x100000), "nothing, at the memory's very end");
 }
 
+#define TABLE_END(n)    (MDT_ELF_HEADER + MDT_SEGMENT * (n))
+#define HASHES          (2u << 24)              /* the flags of the block of hashes */
+
+static void
+hashes_at(uint32_t i, uint32_t offset, uint32_t size)
+{
+	struct elf_segment s = { .type = 0, .offset = offset, .file_size = size, .flags = HASHES };
+
+	memcpy(file + MDT_ELF_HEADER + MDT_SEGMENT * i, &s, sizeof(s));
+}
+
 static void
 whole(void)
 {
-	CHECK(mdt_header_whole(4, 200, MDT_ELF_HEADER + 4 * MDT_SEGMENT + 200), "the three parts and nothing else");
-	CHECK(!mdt_header_whole(4, 200, MDT_ELF_HEADER + 4 * MDT_SEGMENT + 201), "a byte more");
-	CHECK(!mdt_header_whole(4, 0xffffffffu, (MDT_ELF_HEADER + 4 * MDT_SEGMENT + 0xffffffffull) & 0xffffffffu),
+	uint32_t hashes = 7;
+	uint64_t size = header(4, 200);
+
+	hashes_at(1, TABLE_END(4), 200);
+	CHECK(mdt_header_whole(file, 4, size, &hashes) && hashes == 200, "the three parts and nothing else (%u)", hashes);
+	CHECK(!mdt_header_whole(file, 4, size + 1, &hashes), "a byte more");
+	hashes_at(1, TABLE_END(4), 0xffffffffu);
+	CHECK(!mdt_header_whole(file, 4, (TABLE_END(4) + 0xffffffffull) & 0xffffffffu, &hashes),
 	    "hashes that would wrap a 32-bit sum to the file's size");
+	size = header(4, 0);
+	CHECK(!mdt_header_whole(file, 4, size, &hashes) && hashes == 0, "no block of hashes, and nothing after the table");
+	size = header(4, 200);
+	hashes_at(1, TABLE_END(4) + 8, 200);
+	CHECK(!mdt_header_whole(file, 4, size, &hashes), "hashes said to be elsewhere than after the table");
+	hashes_at(1, TABLE_END(4), 200);
+	hashes_at(2, TABLE_END(4), 200);
+	CHECK(!mdt_header_whole(file, 4, size, &hashes), "two blocks of hashes");
+	size = header(4, 0);
+	hashes_at(1, TABLE_END(4), 0);
+	CHECK(!mdt_header_whole(file, 4, size, &hashes), "a block of hashes of no bytes");
+}
+
+static void
+apart(void)
+{
+	CHECK(mdt_apart(0, 0x1000, 0x1000, 0x1000) && mdt_apart(0x1000, 0x1000, 0, 0x1000), "end to end, either way round");
+	CHECK(!mdt_apart(0, 0x1001, 0x1000, 0x1000) && !mdt_apart(0x1000, 0x1000, 0xfff, 0x10), "a byte over, either way round");
+	CHECK(!mdt_apart(0x2000, 0x10, 0x1000, 0x2000), "one inside the other");
+	CHECK(mdt_apart(0xfffff000u, 0x1000, 0, 0x10), "at the top of 32 bits, and one at 0");
+	CHECK(!mdt_apart(0x1000, 0xffffffffu, 0x2000, 0x10), "a size that would wrap a 32-bit sum below the other");
 }
 
 int
@@ -141,6 +192,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "headers", headers }, { "segments", segments }, { "within", within }, { "whole", whole }, { "boundaries", boundaries },
+		{ "apart", apart },
 	};
 
 	if (argc < 2) {
