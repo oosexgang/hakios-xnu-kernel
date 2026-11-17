@@ -1024,6 +1024,12 @@ test_helpers(void)
 	reply[1] ^= 0x40;
 	deliver(reply, n);                              /* not ours */
 	reply[1] ^= 0x40;
+	reply[3] ^= 0x01;
+	memset(&answer, 0x55, sizeof(answer));
+	deliver(reply, n);                              /* its number, another message's reply */
+	check(answer.resp.result == 0x5555 && !txn.done, "a reply of another message is taken as the request's");
+	memset(&answer, 0, sizeof(answer));
+	reply[3] ^= 0x01;
 	reply[8] = 9;                                   /* the TLV says more than the message has */
 	deliver(reply, n);
 	result = hakios_qmi_txn_wait_ms(&txn, 200);

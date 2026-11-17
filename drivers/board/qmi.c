@@ -603,7 +603,7 @@ struct qmi_state {
 	bool connected;
 	uint32_t peer_node, peer_port;
 	/* said in the log once each, so that a firmware that talks a lot cannot fill it */
-	bool said_malformed, said_undecoded, said_unknown;
+	bool said_malformed, said_undecoded, said_unknown, said_other_message;
 };
 
 static const struct hakios_qrtr_ops *qmi_transport;
@@ -698,6 +698,16 @@ qmi_receive(void *context, uint32_t node, uint32_t port, const void *data, size_
 		os_lock(&s->lock);
 		found = find_transaction(s, NULL, id);
 		txn = found != NULL ? *found : NULL;
+		if (txn != NULL && txn->message != message) {
+			/* (a reply with the number of a request of another message: not its reply, nothing decoded into it) */
+			if (!s->said_other_message) {
+				s->said_other_message = true;
+				os_log("qmi: a reply %#x to transaction %u, which asked %#x: dropped (said once)\n", message, id,
+				    txn->message);
+			}
+			os_unlock(&s->lock);
+			return;
+		}
 		if (txn != NULL && !txn->done && txn->ei != NULL && txn->dest != NULL) {
 			txn->result = hakios_qmi_decode(data, length, txn->ei, txn->dest);
 			txn->done = true;
@@ -915,6 +925,9 @@ qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi_tx
 		os_free(buffer, size);
 		return length;
 	}
+	os_lock(&s->lock);
+	txn->message = (uint16_t)msg_id;
+	os_unlock(&s->lock);
 	error = s->transport->send(s->port, node, port, buffer, (size_t)length);
 	os_free(buffer, size);
 	return error > 0 ? -error : error;

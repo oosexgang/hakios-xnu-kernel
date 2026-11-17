@@ -156,6 +156,7 @@ struct hakios_qrtr_ops;
 struct qmi_txn {
 	struct qmi_handle *qmi;
 	uint16_t id;
+	uint16_t message;               /* the request's message, which its reply must be (qmi_send_request()) */
 	int result;                     /* of decoding the reply */
 	const struct qmi_elem_info *ei; /* the reply's description, and ... */
 	void *dest;                     /* ... the structure it goes into */
