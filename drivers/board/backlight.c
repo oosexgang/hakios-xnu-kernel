@@ -235,30 +235,44 @@ static vm_offset_t dsi, gcc, dispcc;
 
 /*
  * May the DSI controller's registers be touched now? The display block powered, the bus clock of its
- * registers running -- turned on if the firmware left it off, as the display scan does (the same two
- * writes, and only those). Every command looks again: whoever else might take the clock away.
+ * registers running. With MAY_ENABLE (backlight=2, and every command) a clock the firmware left off is
+ * turned on, as the display scan does (the same two writes, and only those), and GCC's put back as it
+ * was found when the display block turns out to be powered down after all. Without it (backlight=1, which
+ * only looks) nothing is written: a clock that is off is an answer, and no register behind it is read.
+ * Every command looks again: whoever else might take the clock away.
  */
 static bool
-dsi_reachable(void)
+dsi_reachable(bool may_enable)
 {
-	uint32_t clock;
+	uint32_t clock, found;
 
 	if (gcc == 0 || dispcc == 0 || dsi == 0) {
 		return false;
 	}
-	clock = rd(gcc + profile.gcc_disp_ahb_cbcr);
-	if (!(clock & CBCR_ENABLE)) {
-		wr(gcc + profile.gcc_disp_ahb_cbcr, clock | CBCR_ENABLE);
+	found = rd(gcc + profile.gcc_disp_ahb_cbcr);
+	if (!(found & CBCR_ENABLE)) {
+		if (!may_enable) {
+			return false;
+		}
+		wr(gcc + profile.gcc_disp_ahb_cbcr, found | CBCR_ENABLE);
 		delay(10000);
 		if (!(rd(gcc + profile.gcc_disp_ahb_cbcr) & CBCR_ENABLE)) {
+			wr(gcc + profile.gcc_disp_ahb_cbcr, found);
 			return false;
 		}
 	}
+	/* (read through the clock just made sure of: the display clock controller's registers need it) */
 	if (!(rd(dispcc + profile.dispcc_core_gdscr) & GDSC_POWER_ON)) {
+		if (!(found & CBCR_ENABLE)) {
+			wr(gcc + profile.gcc_disp_ahb_cbcr, found);
+		}
 		return false;
 	}
 	clock = rd(dispcc + profile.dispcc_ahb_cbcr);
 	if (clock & CBCR_OFF) {
+		if (!may_enable) {
+			return false;
+		}
 		wr(dispcc + profile.dispcc_ahb_cbcr, clock | CBCR_ENABLE);
 		delay(10000);
 		if (rd(dispcc + profile.dispcc_ahb_cbcr) & CBCR_OFF) {
@@ -276,8 +290,9 @@ dcs_start(void)
 	gcc = ml_io_map(profile.gcc, 0x80000);
 	dispcc = ml_io_map(profile.dispcc, 0x4000);
 	dsi = ml_io_map(profile.dsi, DSI_SIZE);
-	if (!dsi_reachable()) {
-		say("backlight: dcs: the display block is off or its registers have no clock: nothing done\n");
+	if (!dsi_reachable(mode >= 2)) {
+		say("backlight: dcs: the display block is off or its registers have no clock%s: nothing done\n",
+		    mode >= 2 ? "" : " (backlight=1 turns none on)");
 		return false;
 	}
 	version = rd(dsi + DSI_HW_VERSION);
@@ -331,7 +346,7 @@ dcs_send(uint32_t raw)
 	bool sent;
 	uint64_t began = now_us();
 
-	if (broken || n == 0 || !dsi_reachable()) {
+	if (broken || n == 0 || !dsi_reachable(true)) {
 		return false;
 	}
 	control = rd(dsi + DSI_CTRL);

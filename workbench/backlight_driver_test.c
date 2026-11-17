@@ -423,6 +423,8 @@ static void
 look_only(void)
 {
 	phone("phone-cmd", false);
+	c.gcc_disp_ahb |= 1;                    /* (the firmware's splash on the panel: the display's clocks running) */
+	c.ahb &= ~0x80000000u;
 	boot_args = "backlight=1";
 	hakios_backlight_init();
 	usleep(200000);
@@ -430,6 +432,29 @@ look_only(void)
 	CHECK(logged("looking only") && logged("version 2.5"), "said what it found");
 	CHECK(m.sent_n == 0 && m.fifo_n == 0 && m.tpg == 0, "nothing sent");
 	CHECK(m.errors == 0, "%s", m.error);
+}
+
+/* backlight=1 with the display's clocks off (the panel dark): no clock turned on, no register behind them read, and said */
+static void
+look_only_clocks_off(void)
+{
+	uint32_t gcc_found, ahb_found;
+
+	phone("phone-cmd", false);
+	gcc_found = c.gcc_disp_ahb, ahb_found = c.ahb;
+	boot_args = "backlight=1";
+	hakios_backlight_init();
+	usleep(200000);
+	CHECK(c.gcc_disp_ahb == gcc_found, "GCC's display bus clock as found: %#x, not %#x", c.gcc_disp_ahb, gcc_found);
+	CHECK(m.accesses == 0, "nothing of the DSI controller read: %u accesses", m.accesses);
+	CHECK(logged("backlight=1 turns none on"), "said: %s", log_text);
+	c.gcc_disp_ahb |= 1;                    /* the bus clock on, the display registers' off: that one stays off too */
+	gcc_found = c.gcc_disp_ahb;
+	log_text[0] = 0;
+	hakios_backlight_init();
+	usleep(200000);
+	CHECK(c.gcc_disp_ahb == gcc_found && c.ahb == ahb_found, "the display registers' clock as found: %#x", c.ahb);
+	CHECK(m.accesses == 0, "and nothing behind it read: %u accesses", m.accesses);
 }
 
 static void
@@ -454,6 +479,7 @@ display_unpowered(void)
 	usleep(100000);
 	CHECK(m.accesses == 0, "%u accesses to an unpowered block", m.accesses);
 	CHECK(strcmp(get_string("backend"), "none") == 0, "%s", get_string("backend"));
+	CHECK(!(c.gcc_disp_ahb & 1), "GCC's display bus clock, turned on to look, put back off: %#x", c.gcc_disp_ahb);
 }
 
 static void
@@ -719,7 +745,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "command_panel", command_panel }, { "setup_put_back", setup_put_back }, { "controller_not_usable", controller_not_usable },
 		{ "controller_2_2", controller_2_2 }, { "controller_2_1", controller_2_1 },
-		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only },
+		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only }, { "look_only_clocks_off", look_only_clocks_off },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
