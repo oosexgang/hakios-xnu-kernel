@@ -5,6 +5,7 @@ U-Boot from RAM with `fastboot boot`, U-Boot finds the loader and its payload **
 application. Nothing is flashed: not `boot`, not any other partition, and a reboot gives the phone back to Android.
 
 Status in one line: **works on the POCO X5 Pro and in QEMU, the whole chain to the kernel's user space, with `xl` as it was.**
+The Nothing Phone (1)'s tree is published here too (`devices/spacewar/u-boot/files/`); it has not been run end to end yet.
 The sections below say exactly what was run.
 
 ## Why
@@ -27,10 +28,12 @@ ABL ──fastboot boot──> U-Boot (RAM) ──hakios load──> payload at 
 - **The boot image** (`tools/mkubootimg.py`): the kernel is `gzip(u-boot.bin)` with the phone's Android device tree appended,
   exactly what ABL expects for Silicium's image (header version 1); the ramdisk is an `HKUB` container with the loader and a payload,
   or nothing.
-- **U-Boot's device tree** (`devices/redwood/u-boot/files/dts/upstream/src/arm64/qcom/sm7325-xiaomi-redwood.dts`): the panel's
+- **U-Boot's device tree** (`devices/<name>/u-boot/files/dts/upstream/src/arm64/qcom/`: redwood's `sm7325-xiaomi-redwood.dts`,
+  spacewar's `sm7325-nothing-spacewar.dts`): the panel's
   framebuffer at `0xE1000000` as ABL left it (the loader knows the phone by that address), the keys, USB as a device, UFS, and every
   carve-out of the Android device tree and of Silicium's memory map. The size of RAM is not in it: ABL writes it into the device
-  tree it hands over and U-Boot reads it from there.
+  tree it hands over and U-Boot reads it from there. spacewar's tree also carries the two U-Boot drivers its UFS needs
+  (`drivers/soc/qcom/rpmh-rsc.c` and `drivers/phy/qcom/phy-qcom-qmp-ufs.c`), laid over U-Boot with the rest of `u-boot/files/`.
 - **`0xF0000000`, 64 MiB** is reserved in that device tree (`hakios-payload`): nothing in U-Boot takes it, the hakios command
   writes the payload there, and the loader's memory window stays clear of it, as under Silicium.
 - **The hakios command** (`uefi/u-boot/files/cmd/hakios.c`):
@@ -55,8 +58,9 @@ ABL ──fastboot boot──> U-Boot (RAM) ──hakios load──> payload at 
 ## Build
 
 ```sh
-tools/hakios-device.py sync          # devices/redwood and uefi/, as for everything else
+tools/hakios-device.py sync          # devices/redwood, devices/spacewar and uefi/, as for everything else
 make u-boot                          # = uefi/u-boot/apply.sh (U-Boot at uefi/u-boot/BASE into u-boot/) + uefi/u-boot/build.sh redwood
+uefi/u-boot/build.sh spacewar        # the Nothing Phone (1)'s tree, once devices/spacewar/u-boot/files/ is applied
 ```
 
 `uefi/u-boot/build.sh` needs an AArch64 GCC (`aarch64-linux-gnu-gcc`, or Arm's `aarch64-none-elf-gcc` from
