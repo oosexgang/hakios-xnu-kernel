@@ -87,6 +87,12 @@ tags yet, so the current work is one section.
   run's kernel log; `getvar max-download-size` said a fixed size; a refused copy of the DSU metadata could leave a
   mixed table of extents.
 
+- `phone_perf`'s drivers: the CPU governor took a group's row from its register as an index without a bound (a write
+  past its arrays every 8 ms, were the register to read past the table), and the thermal limiter took it as its top; a
+  memory vote RPMh did not answer in time was not given back at the run's end; `scmi_perf=2` left every domain at its
+  top for the next run, whose thermal limiter then had nothing to hold back; the memory's and the touch screens' RPMh
+  requests were laid out for a version 2 sequencer whatever the SoC has.
+
 ### For whoever works on the project
 
 - `MAINTAINERS`: each part, its files, tests and documents; `scripts/tests-for.py FILE` says what to run.
