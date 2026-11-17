@@ -514,6 +514,8 @@ loader_log_append_msgbuf(void)
 void
 loader_return(void)
 {
+	static bool quiescing;
+
 	hakios_ufs_close();             /* no read of the storage in flight from here on */
 #if defined(GENERIC_PSCI_SMP)
 	/*
@@ -523,6 +525,19 @@ loader_return(void)
 	 */
 	psci_smp_stop_others();
 #endif
+	/*
+	 * The quiesces are written for one processor, its interrupts off, nobody else running: with more than one that is
+	 * what psci_smp_stop_others() leaves; with one (cpus=1, phone_first) it returned before masking them, and a thread
+	 * of a driver could run between two quiesces -- the thermal limiter on the SCMI channel, the Wi-Fi link's -- with
+	 * the hardware half put away under it.
+	 */
+	(void) ml_set_interrupts_enabled(FALSE);
+	/* (a panic in one of them comes back here: the rest is not tried again, the loader is gone back to) */
+	if (quiescing) {
+		loader_jump(0, 0);
+		return;
+	}
+	quiescing = true;
 	hakios_bt_uart_quiesce();     /* Bluetooth enable low and its power/clock votes dropped */
 	hakios_ufs_quiesce();          /* this kernel's requests to the storage done, UEFI's list as it was, for the log */
 	hakios_adreno_quiesce();       /* the GPU block, if it was started, has tables in memory that is about to be reused */
