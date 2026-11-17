@@ -6,7 +6,8 @@ body:
     attributes:
       value: |
         `./bench run` ends with what each part said; `tools/logcheck.py --all logs/last.log` gives every line of each.
-        Documentation/phone-test.ru.md has the runs in order and what each must say.
+        Documentation/phone-test.ru.md has the runs in order and what each must say. A whole day of runs
+        (`scripts/phone-day.sh`) leaves `logs/day-TIME/summary.md`: paste it below instead.
 
         Do not attach Apple's files, the phone maker's firmware or device trees, or a log that has your Wi-Fi's name
         and passphrase in it: look before you paste.
@@ -27,10 +28,16 @@ body:
     validations:
       required: true
   - type: textarea
+    id: ready
+    attributes:
+      label: What make ready says
+      description: "scripts/phone-ready.py for the run, before it: the kernel and the loader current and knowing the phone, the identity, the small image, the firmware."
+      render: text
+  - type: textarea
     id: logcheck
     attributes:
       label: What tools/logcheck.py says
-      description: "Its whole output for the run's log; with --all for the parts that stopped."
+      description: "Its whole output for the run's log, with --all for the parts that stopped; or a day's summary.md."
       render: text
     validations:
       required: true
