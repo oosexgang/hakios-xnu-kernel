@@ -79,6 +79,16 @@ class TestsFor(unittest.TestCase):
         self.assertIn('python3 workbench/image_test.py', text)
         self.assertIn('Documentation/images.md', text)
 
+    def test_what_is_run_here_and_what_elsewhere(self):
+        lines = ['workbench/mutate.sh torch_driver_test board/board.c x x', 'python3 workbench/image_test.py',
+                 'workbench/qemu_boot_test.sh (with a kernel: make qemu)', 'make test (workbench/run.sh: x)', 'workbench/qmi/run.sh']
+        self.assertEqual(tests_for.runnable(lines), [lines[0], lines[1], lines[4]])
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            code = tests_for.run(['true', 'false', 'kernel/verify.sh (make verify-kernel; network)'])
+        self.assertEqual(code, 1)
+        self.assertIn('1 of 2 passed: not false (1 run otherwise: kernel/verify.sh (make verify-kernel; network))', said.getvalue())
+
     def test_a_file_of_no_part_is_said_to_be(self):
         said, complained = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(said), contextlib.redirect_stderr(complained):

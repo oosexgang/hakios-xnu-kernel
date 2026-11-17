@@ -4,6 +4,7 @@ the documents to read again.
 
   scripts/tests-for.py FILE...          the files named (paths from the top of the repository, or from here)
   scripts/tests-for.py --changed [REF]  the files changed since REF (default: the last commit), committed or not
+  ... --run                             and run those tests, one after another: which passed, which did not
 
 A test of the drivers (workbench/NAME.c) runs alone with `workbench/mutate.sh NAME SOURCE x x` -- SOURCE one of the files
 it includes, x for x no change -- every scenario of it on this machine; a Python test with python3; a script as it is.
@@ -74,6 +75,7 @@ def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('files', nargs='*', metavar='FILE')
     parser.add_argument('--changed', nargs='?', const='HEAD', metavar='REF')
+    parser.add_argument('--run', action='store_true', help='run the tests found, and say which passed')
     options = parser.parse_args(arguments)
     files = [relative(f) for f in options.files]
     if options.changed:
@@ -108,8 +110,29 @@ def main(arguments=None):
             print(f'  {line}')
     for path in nowhere:
         print(f'{path}: in no part of MAINTAINERS (make check runs everything)', file=sys.stderr)
+    if options.run:
+        return run(list(tests))
     print('\nall of them: make check')
     return 0
+
+
+def runnable(lines):
+    """The lines that are a command to run here (not those that say how they are run elsewhere, in brackets)."""
+    return [line for line in lines if '(' not in line and not line.startswith('make ')]
+
+
+def run(lines):
+    """Each test, one after another, from the top of the repository: 0 when every one passed."""
+    failed = []
+    commands = runnable(lines)
+    for line in commands:
+        print(f'\n== {line}', flush=True)
+        if subprocess.run(['bash', '-c', line], cwd=ROOT).returncode != 0:
+            failed.append(line)
+    left = [line for line in lines if line not in commands]
+    print(f'\n{len(commands) - len(failed)} of {len(commands)} passed' + (': not ' + '; '.join(failed) if failed else '') +
+          (f' ({len(left)} run otherwise: {"; ".join(left)})' if left else ''))
+    return 1 if failed else 0
 
 
 if __name__ == '__main__':
