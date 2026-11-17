@@ -1969,8 +1969,19 @@ hfi_receive(unsigned which, uint32_t number, uint32_t *verdict)
 	volatile uint32_t *data = (volatile uint32_t *)((vm_offset_t)hfi + HFI_QUEUE_AT(which));
 	bool answered = false;
 
-	while (queue->read != queue->write) {
+	/*
+	 * (at most as many messages as the queue holds: the write index is the GMU's, in memory it writes, and one that is not
+	 * where a message ends -- of firmware that does not round to four words, or of a GMU that has gone wrong -- would
+	 * never be reached)
+	 */
+	for (unsigned taken = 0; queue->read != queue->write; taken++) {
 		uint32_t message[8] = { 0 }, at = queue->read % HFI_QUEUE_WORDS, words = data[at] >> 8 & 0xff;
+
+		if (taken >= HFI_QUEUE_WORDS / 4) {
+			printf("adreno: %u: the GMU's queue %u does not end where it says (read %u, written %u): no more read of it\n",
+			    step, which, queue->read, queue->write);
+			break;
+		}
 
 		for (uint32_t i = 0; i < words; i++) {
 			if (i < 8) {
@@ -2854,9 +2865,31 @@ gx_off(void)
 }
 
 /* What step 4 does when it finds the GPU block running: see there. Nothing here has been set up by this kernel. */
+/* A clock of the GPU block running: its control register says on, and the clock is not said to be off */
+static bool
+gpucc_running(uint32_t cbcr)
+{
+	return (rd(gpucc.base + cbcr) & (CBCR_ENABLE | CBCR_OFF)) == CBCR_ENABLE;
+}
+
 static void
 stale_stop(void)
 {
+	/*
+	 * (the GMU, the RSCC and the SMMU are written only while their clocks run: a kernel that stopped before its step 5,
+	 * or failed in it, leaves CX on with them off -- and a register of a block whose clock is off hangs the bus. Then CX
+	 * alone is switched off: a GMU without its clock does not run anyway.)
+	 */
+	if (!gpucc_running(GPUCC_CX_GMU_CBCR) || !gpucc_running(GPUCC_AHB_CBCR) || !gpucc_running(GPUCC_HUB_AON_CBCR)) {
+		printf("adreno: %u: the GMU's clocks are off: the GMU, the RSCC and the SMMU are not touched, CX alone switched off\n",
+		    step);
+		put(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR, rd(gpucc.base + GPUCC_CX_GDSCR) | GDSC_SW_COLLAPSE);
+		for (int i = 0; i < 1000 && cx_is_on(); i++) {
+			sleep_us(100);
+		}
+		get(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR);
+		return;
+	}
 	need(&gmu);
 	need(&rscc);
 	put(&gmu, "cm3_sysreset", GMU_CM3_SYSRESET, 1);
@@ -2893,23 +2926,32 @@ stale_stop(void)
  * Otherwise the halt is lifted again at once, as Linux does: the GMU reaches its memory through
  * the same interface, and one that cannot read its messages does not answer "slumber".
  */
-static void
+static bool
 core_bus_halt(bool for_good)
 {
+	bool acknowledged = true;
+
+	/* (each acknowledgement waited for 100 ms at most, by the clock -- also with interrupts off, on a run's way back) */
 	if (for_good) {
 		wr(gpu.base + RBBM_GBIF_HALT, 1);
-		for (int i = 0; i < 100000 && !(rd(gpu.base + RBBM_GBIF_HALT_ACK) & 1); i++) {
+		for (int i = 0; i < 10000 && !(rd(gpu.base + RBBM_GBIF_HALT_ACK) & 1); i++) {
+			spin_us(10);
 		}
+		acknowledged &= (rd(gpu.base + RBBM_GBIF_HALT_ACK) & 1) != 0;
 	}
 	wr(gbif.base + GBIF_HALT, 1);
-	for (int i = 0; i < 100000 && !(rd(gbif.base + GBIF_HALT_ACK) & 1); i++) {
+	for (int i = 0; i < 10000 && !(rd(gbif.base + GBIF_HALT_ACK) & 1); i++) {
+		spin_us(10);
 	}
 	wr(gbif.base + GBIF_HALT, 2);
-	for (int i = 0; i < 100000 && !(rd(gbif.base + GBIF_HALT_ACK) & 2); i++) {
+	for (int i = 0; i < 10000 && !(rd(gbif.base + GBIF_HALT_ACK) & 2); i++) {
+		spin_us(10);
 	}
+	acknowledged &= (rd(gbif.base + GBIF_HALT_ACK) & 3) == 3;
 	if (!for_good) {
 		wr(gbif.base + GBIF_HALT, 0);
 	}
+	return acknowledged;
 }
 
 static bool core_stuck;                 /* the 3D core has not finished what it was given, and is not waited for */
@@ -3022,15 +3064,26 @@ hakios_adreno_quiesce(void)
 		core_bus_halt(true);
 		core_runs = false;
 	}
+	/*
+	 * (each stream's match taken away and its stream sent to fault, as space_off() does: a context with its SCTLR alone
+	 * cleared is one whose translation is skipped, and what the core or the GMU still writes would go to the physical
+	 * memory its addresses name -- somebody else's after the run)
+	 */
 	if (gmu_space_is_on) {
+		wr(smmu.base + SMMU_SMR(GMU_MATCH), 0);
+		wr(smmu.base + SMMU_S2CR(GMU_MATCH), SMMU_S2CR_FAULT);
 		wr(smmu.base + smmu_context(&gmu_space) + SMMU_CB_SCTLR, 0);
 		gmu_space_is_on = false;
 	}
 	if (core_space_is_on) {
+		wr(smmu.base + SMMU_SMR(CORE_MATCH), 0);
+		wr(smmu.base + SMMU_S2CR(CORE_MATCH), SMMU_S2CR_FAULT);
 		wr(smmu.base + smmu_context(&core_space) + SMMU_CB_SCTLR, 0);
 		core_space_is_on = false;
 	}
 	if (second_space_is_on) {
+		wr(smmu.base + SMMU_SMR(SECOND_MATCH), 0);
+		wr(smmu.base + SMMU_S2CR(SECOND_MATCH), SMMU_S2CR_FAULT);
 		wr(smmu.base + smmu_context(&second_space) + SMMU_CB_SCTLR, 0);
 		second_space_is_on = false;
 	}
@@ -3403,9 +3456,18 @@ hakios_gpu_unmap(uint64_t address, uint64_t size)
 		space_map(&core_space, address + offset, 0, 0);
 	}
 	space_commit(&core_space);
+	if (!gpu_kept) {
+		return;                 /* (the GPU given back: its SMMU context is off, and its registers not to be touched) */
+	}
 	wr(smmu.base + context + SMMU_CB_TLBIASID, core_space.context);
 	wr(smmu.base + context + SMMU_CB_TLBSYNC, 1);
+	/* (the pages go back to the system once this returns: what the TLB held of them is gone first, 10 ms at most) */
 	for (int i = 0; i < 1000 && (rd(smmu.base + context + SMMU_CB_TLBSTATUS) & 1); i++) {
+		spin_us(10);
+	}
+	if (rd(smmu.base + context + SMMU_CB_TLBSTATUS) & 1) {
+		printf("adreno: gpu: the SMMU's TLB did not say it had forgotten %#llx..%#llx: the 3D core may yet reach them\n",
+		    address, address + size);
 	}
 }
 
@@ -3506,6 +3568,15 @@ hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t cou
 {
 	uint32_t wanted = 26 + 4 * count, room = 0;
 
+	/*
+	 * (the run is ending, or has given the GPU back: its core has no power, and a register of it would hang the bus. The
+	 * caller holds the lock hakios_gpu_stop() is called under, so what it sees here stays so until it lets go; a
+	 * submission that looked before taking the lock -- BoardGPU.cpp's externalMethod -- is turned away here.)
+	 */
+	if (!gpu_kept) {
+		return 0;
+	}
+
 	for (int i = 0; i < 20000; i++) {
 		room = (rd(gpu.base + CP_RB_RPTR) + RING_WORDS - ring_at - 1) % RING_WORDS;
 		if (room >= wanted) {
@@ -3550,6 +3621,11 @@ void
 hakios_gpu_report(const char *why)
 {
 	uint32_t context = smmu_context(&core_space);
+
+	if (!gpu_kept) {
+		printf("adreno: gpu: %s: the GPU has been given back: nothing of it is read\n", why);
+		return;
+	}
 
 	printf("adreno: gpu: %s: submission %u is the last, the core has done %u; ring: read up to %u, written up to %u; status "
 	    "%#x, interrupts %#x; command processor: fault %#x, interrupts %#x, protection %#x\n", why, gpu_fence,
@@ -3636,7 +3712,11 @@ hakios_gpu_recover(void)
 
 	wr(gpu.base + CP_SQE_CNTL, 3);
 	wr(gmu.base + GMU_PWR_COL_KEEPALIVE, 1);
-	core_bus_halt(true);
+	if (!core_bus_halt(true)) {
+		/* (a reset pulled while the bus still has the core's transactions under way leaves the SMMU waiting for good) */
+		printf("adreno: gpu: the core's bus did not say it had halted: not reset, the GPU is not waited for again\n");
+		return false;
+	}
 	wr(gpu.base + RBBM_SW_RESET_CMD, 1);
 	rd(gpu.base + RBBM_SW_RESET_CMD);       /* (Linux reads it back and waits, to be sure of the order) */
 	sleep_us(101);
