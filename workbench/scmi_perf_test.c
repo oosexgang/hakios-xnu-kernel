@@ -22,6 +22,7 @@ extern char log_text[];
 static _Alignas(64) volatile uint32_t shmem[0x80 / 4];
 static _Alignas(64) volatile uint32_t mailbox[0x1000 / 4];
 static unsigned mapped_elsewhere;
+static volatile unsigned doorbell_at = DOORBELL;        /* where the firmware listens: the board's doorbell */
 static bool mailbox_unmapped;           /* the mailbox's mapping fails */
 
 vm_offset_t
@@ -41,7 +42,7 @@ ml_io_map(vm_offset_t phys, vm_size_t size)
 /* what the firmware was asked, in order: the message ids of the performance protocol */
 static volatile unsigned asked[64], asked_n, rings;
 /* how the firmware answers */
-enum { ANSWERS, SILENT, WITH_ERROR, OTHER_TOKEN, TOO_LONG, REFUSES };
+enum { ANSWERS, SILENT, WITH_ERROR, OTHER_TOKEN, TOO_LONG, REFUSES, ONE_WORD_TOO_LONG, THE_WHOLE_MEMORY };
 static volatile int behaviour = ANSWERS;
 static volatile uint32_t domains = 3;
 static volatile uint32_t levels[4] = { 1000, 1001, 1002, 1003 };
@@ -52,6 +53,7 @@ static int top_at_level = -1;           /* a domain whose limits' top is its lev
 static int top_below_level = -1;
 static unsigned attribute_words = 4;    /* the words a domain's attributes are answered with */
 static unsigned extra_words;            /* words more than asked for, after each answer that has any */
+static bool level_fails_after_a_set;    /* a level asked for once one has been set: an error, with a word all the same */
 
 static void
 answer(uint32_t status, const uint32_t *words, unsigned n)
@@ -76,10 +78,10 @@ firmware(void *unused __unused)
 	for (;;) {
 		uint32_t header, message, protocol, in;
 
-		while (mailbox[DOORBELL / 4] == 0) {
+		while (mailbox[doorbell_at / 4] == 0) {
 			usleep(20);
 		}
-		mailbox[DOORBELL / 4] = 0;
+		mailbox[doorbell_at / 4] = 0;
 		rings++;
 		header = shmem[0x18 / 4];
 		message = header & 0xff;
@@ -108,7 +110,7 @@ firmware(void *unused __unused)
 		} else if (message == 0x8) {
 			uint32_t level = levels[in];
 
-			answer(0, &level, missing_level && in == 1 ? 0 : 1);
+			answer(level_fails_after_a_set && sets > 0 ? (uint32_t)-3 : 0, &level, missing_level && in == 1 ? 0 : 1);
 		} else if (message == 0x7) {
 			levels[in] = shmem[0x20 / 4];
 			sets++;
@@ -131,6 +133,10 @@ firmware(void *unused __unused)
 		}
 		if (behaviour == TOO_LONG) {
 			shmem[0x14 / 4] = 0x200;
+		}
+		if (behaviour == ONE_WORD_TOO_LONG || behaviour == THE_WHOLE_MEMORY) {
+			/* (the shared memory is 0x80 bytes; the length counts from 0x18: 0x68 fills it) */
+			shmem[0x14 / 4] = behaviour == THE_WHOLE_MEMORY ? 0x68 : 0x6c;
 		}
 		shmem[0x04 / 4] = behaviour == WITH_ERROR ? 3 : 1;     /* the channel free again, with an error if so */
 	}
@@ -208,7 +214,7 @@ four_domains_at_most(void)
 static void
 does_not_answer(void)
 {
-	static const int ways[] = { SILENT, WITH_ERROR, OTHER_TOKEN, REFUSES, TOO_LONG };
+	static const int ways[] = { SILENT, WITH_ERROR, OTHER_TOKEN, REFUSES, TOO_LONG, ONE_WORD_TOO_LONG };
 	const char *which = getenv("SCMI_CASE");
 	unsigned i = which ? (unsigned)atoi(which) : 0;
 
@@ -220,6 +226,57 @@ does_not_answer(void)
 	CHECK(!logged("current level") && !logged("domains"), "case %u: and nothing it answered taken: %s", i, log_text);
 	CHECK(asked_n == 1, "case %u: and nothing more asked: %u", i, asked_n);
 	only_reads();
+}
+
+/* an answer as long as the shared memory holds: taken */
+static void
+answers_fill_the_memory(void)
+{
+	channel();
+	behaviour = THE_WHOLE_MEMORY;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("scmi-perf: SCMI performance 4.0, 3 domains") && logged("domain 2 limits 302..3002"), "taken: %s", log_text);
+}
+
+/* a channel the board describes wrong (no shared memory, no mailbox, a doorbell past the mailbox's page or not on a
+ * word): said, nothing mapped, nothing asked */
+static void
+channel_described_wrong(void)
+{
+	static struct hakios_board copy;
+	const char *which = getenv("SCMI_CASE");
+	unsigned i = which ? (unsigned)atoi(which) : 0;
+
+	channel();
+	copy = *hakios_board();
+	switch (i) {
+	case 0: copy.scmi_perf.shmem = 0; break;
+	case 1: copy.scmi_perf.mailbox = 0; break;
+	case 2: copy.scmi_perf.doorbell = 0x1000; break;
+	default: copy.scmi_perf.doorbell = DOORBELL + 2; break;
+	}
+	found = &copy;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("scmi-perf: invalid channel description") && asked_n == 0 && rings == 0 && mapped_elsewhere == 0,
+	    "case %u: said, nothing asked: %s", i, log_text);
+}
+
+/* the doorbell in the mailbox page's last word: a doorbell like another */
+static void
+doorbell_in_the_last_word(void)
+{
+	static struct hakios_board copy;
+
+	channel();
+	copy = *hakios_board();
+	copy.scmi_perf.doorbell = 0x1000 - 4;
+	doorbell_at = 0x1000 - 4;
+	found = &copy;
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(logged("scmi-perf: SCMI performance 4.0, 3 domains") && rings == asked_n && asked_n > 0, "rung there: %s", log_text);
 }
 
 /* only when asked for, on a board that has the channel and lists the feature */
@@ -254,6 +311,17 @@ raises_when_asked(void)
 	CHECK(logged("scmi-perf: domain 0 asked for level 3000: status 0, now 3000") &&
 	    logged("scmi-perf: domain 2 asked for level 3002: status 0, now 3002"), "each set said, with the level read back: %s", log_text);
 	CHECK(!logged("domain 3 asked") && !logged("status -1"), "and no more than the domains there are: %s", log_text);
+}
+
+/* a level read back with an error after the set: said as none (-1), not the word that came with the error */
+static void
+read_back_fails(void)
+{
+	channel();
+	level_fails_after_a_set = true;
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(sets == 3 && logged("scmi-perf: domain 0 asked for level 3000: status 0, now -1"), "said: %s", log_text);
 }
 
 /* a channel the firmware never frees: nothing written into it, the doorbell not rung */
@@ -397,7 +465,9 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); unsigned cases; } scenarios[] = {
 		{ "reads_and_says", reads_and_says, 1 }, { "four_domains_at_most", four_domains_at_most, 1 },
-		{ "does_not_answer", does_not_answer, 5 }, { "only_when_asked", only_when_asked, 1 },
+		{ "does_not_answer", does_not_answer, 6 }, { "only_when_asked", only_when_asked, 1 },
+		{ "answers_fill_the_memory", answers_fill_the_memory, 1 }, { "channel_described_wrong", channel_described_wrong, 4 },
+		{ "doorbell_in_the_last_word", doorbell_in_the_last_word, 1 }, { "read_back_fails", read_back_fails, 1 },
 		{ "board_without_it", board_without_it, 1 },
 		{ "raises_when_asked", raises_when_asked, 1 }, { "channel_never_free", channel_never_free, 1 },
 		{ "mailbox_not_mapped", mailbox_not_mapped, 1 }, { "longer_answers", longer_answers, 1 },
