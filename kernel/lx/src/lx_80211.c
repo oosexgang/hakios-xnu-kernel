@@ -127,6 +127,12 @@ struct lx_radio {
 	int8_t signal;				/* dBm, of the last beacon of the network joined */
 	int last_error;
 	unsigned sent, sent_lost, received, received_group, eapol, rekeys;
+	/*
+	 * The receive path's use of the station and the interface (a reply to the access point, its address), against
+	 * station_leave() and station_down() freeing them: users counts the frames being acted on, closing keeps new ones off.
+	 */
+	int station_users;
+	bool station_closing;
 	unsigned group_lost, mic_wrong;		/* frames to everybody not made into Ethernet; Michael's check failed */
 	unsigned group_air;			/* frames addressed to everybody on the air (the group's key), as the driver gave them */
 	unsigned told_group, told_arp;		/* of frame_told()'s lines, so many said */
@@ -858,12 +864,49 @@ frame_told(const char *what, const uint8_t *e, unsigned length, unsigned flags)
 	}
 }
 
+/* The station and the interface taken for a frame received, or false while they are being taken down */
+static bool
+station_use(struct lx_radio *radio)
+{
+	__atomic_add_fetch(&radio->station_users, 1, __ATOMIC_SEQ_CST);
+	if (__atomic_load_n(&radio->station_closing, __ATOMIC_SEQ_CST)) {
+		__atomic_sub_fetch(&radio->station_users, 1, __ATOMIC_SEQ_CST);
+		return false;
+	}
+	return true;
+}
+
+static void
+station_done(struct lx_radio *radio)
+{
+	__atomic_sub_fetch(&radio->station_users, 1, __ATOMIC_SEQ_CST);
+}
+
+/* Before the station or the interface is freed: no frame received starts acting on them, and those that had, have finished */
+static void
+station_close(struct lx_radio *radio)
+{
+	__atomic_store_n(&radio->station_closing, true, __ATOMIC_SEQ_CST);
+	for (unsigned ms = 0; __atomic_load_n(&radio->station_users, __ATOMIC_SEQ_CST) != 0 && ms < 1000; ms++) {
+		lx_pause_ms(1);
+	}
+}
+
+static void
+station_open(struct lx_radio *radio)
+{
+	__atomic_store_n(&radio->station_closing, false, __ATOMIC_SEQ_CST);
+}
+
 /* An Ethernet frame the radio has received; FLAGS: the driver's description of it (RX_FLAG_...). */
 static void
 ethernet_received(struct lx_radio *radio, struct sk_buff *skb, unsigned flags)
 {
 	if (skb->len >= 14 && skb->data[12] == 0x88 && skb->data[13] == 0x8e) {
-		handshake_message(radio, skb->data, skb->len);
+		if (station_use(radio)) {
+			handshake_message(radio, skb->data, skb->len);
+			station_done(radio);
+		}
 	} else if (radio->joined && skb->len >= 14) {
 		*(skb->data[0] & 1 ? &radio->received_group : &radio->received) += 1;
 		radio->received_at = lx_os_nanoseconds();
@@ -976,7 +1019,10 @@ linuxkpi_ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb, struct ieee8
 		heard(radio, skb->data, skb->len, status->freq, status->signal);
 	} else if (skb->len >= 24 && (skb->data[0] & 0x0c) == 0x00) {
 		radio->others++;
-		management_received(radio, skb->data, skb->len);
+		if (station_use(radio)) {
+			management_received(radio, skb->data, skb->len);
+			station_done(radio);
+		}
 	} else if (to_ethernet(skb, (status->flag & RX_FLAG_IV_STRIPPED) != 0)) {
 		ethernet_received(radio, skb, status->flag);
 	} else {
@@ -1044,6 +1090,7 @@ station_down(struct lx_radio *radio)
 {
 	struct ieee80211_hw *hw = &radio->hw;
 
+	station_close(radio);           /* (the receive path reads the interface's address) */
 	mutex_lock(&hw->wiphy->mtx);
 	if (radio->vif != NULL) {
 		radio->ops->remove_interface(hw, radio->vif);
@@ -1056,6 +1103,7 @@ station_down(struct lx_radio *radio)
 	mutex_unlock(&hw->wiphy->mtx);
 	kfree(radio->vif_memory);
 	radio->vif_memory = NULL;
+	station_open(radio);
 	printf("lx: the interface is removed and the radio stopped\n");
 }
 
@@ -1540,6 +1588,9 @@ station_leave(struct lx_radio *radio)
 	struct ieee80211_vif *vif = radio->vif;
 	int state = radio->reached;
 
+	/* (a reply the receive path was making to the access point finished, and no other begun, before the handshake's state
+	 * is cleared and the station freed) */
+	station_close(radio);
 	if (radio->joined) {
 		radio->joined = false;
 		lx_os_net_link(0);
@@ -1587,6 +1638,7 @@ station_leave(struct lx_radio *radio)
 	kfree(radio->sta_memory);
 	radio->sta_memory = radio->sta = NULL;
 	radio->reached = IEEE80211_STA_NOTEXIST;
+	station_open(radio);
 }
 
 /*
