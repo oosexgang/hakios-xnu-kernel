@@ -218,6 +218,33 @@ device_tree(void)
 	CHECK(found("/device-tree/cpus", "reg") == NULL && found("/device-tree", "darwin-board") == NULL, "nothing lands in another node");
 }
 
+/* a tree that does not fit the room it is given: nothing written past its end, the writer says so, its nodes still end */
+static void
+device_tree_full(void)
+{
+	static uint8_t tree[512 + 64];
+	struct dt_writer w = { .base = tree, .cur = tree, .end = tree + 512 };
+	static uint8_t big[600];
+
+	memset(tree, 0xaa, sizeof(tree));
+	dt_begin(&w, "device-tree");
+	dt_prop_str(&w, "model", "a phone");
+	CHECK(!w.overflow, "what fits is written");
+	dt_prop(&w, "too-big", big, sizeof(big));
+	CHECK(w.overflow, "one property larger than what is left: said");
+	dt_begin(&w, "chosen");
+	dt_prop_u32(&w, "after", 1);
+	dt_end(&w);
+	dt_end(&w);
+	CHECK(w.depth == 0 && w.cur <= w.end, "the nodes end, and the writer stopped inside its room");
+	for (unsigned i = 512; i < sizeof(tree); i++) {
+		CHECK(tree[i] == 0xaa, "nothing written past the end: byte %u is %#x", i, tree[i]);
+		if (tree[i] != 0xaa) {
+			break;
+		}
+	}
+}
+
 /* the iPhone's own properties are copied as they are, but the display's gamut */
 static void
 identity(void)
@@ -458,6 +485,10 @@ identity_given(void)
 	said[0] = 0;
 	identity_choose(blob, blob_size - 4, &v);
 	CHECK(!v.given && v.root.props == identity_root && strstr(said, "not one") != NULL, "a bad one: the one built in, and said: %s", said);
+	said[0] = 0;
+	identity_choose(blob, IDENTITY_MOST + 1, &v);
+	CHECK(!v.given && strstr(said, "there is room for: the one built in") != NULL,
+	    "one larger than the device tree has room for: the one built in, and said: %s", said);
 }
 
 /* what arch/arm64/boot/mkidentity.py --blob makes of an iPhone's device tree, the loader reads: the two run against each other,
@@ -696,6 +727,48 @@ payload(void)
 	entry("usb", "", 0);
 	((struct payload_header *)payload_area)->size -= sizeof(struct payload_entry);
 	CHECK(parse_payload(&info, 0) == 1 && info.kernel != NULL && info.usb_mode == 0, "nor past the size the header gives");
+
+	/* a name of all sixteen letters (no end of its own) is passed over, and what follows read */
+	payload_begin();
+	entry("abcdefghijklmnop", "x", 2);
+	entry("usb", "", 0);
+	CHECK(parse_payload(&info, 1) == 1 && info.usb_mode == 1, "a name with no end of its own passed over: %s", said);
+}
+
+/* a payload whose sizes are not what is there: none, said so, nothing of it taken -- not read past */
+static void
+payload_damaged_ones(void)
+{
+	struct payload_info info;
+	struct payload_entry *e;
+
+	payload_begin();
+	e = (struct payload_entry *)payload_at;
+	entry("kernel", "the kernel", 11);
+	e->size = 0x40000000;                   /* (a gigabyte, in a payload of a few bytes) */
+	CHECK(parse_payload(&info, 0) == 0 && info.kernel == NULL && info.cmdline[0] == 0, "an entry past the payload's end: none");
+	CHECK(strstr(said, "are left: the payload is damaged") != NULL, "said: %s", said);
+
+	payload_begin();
+	e = (struct payload_entry *)payload_at;
+	entry("ramdisk", "an image", 9);
+	e->size = 0xfffffff8;                   /* (whose padding to sixteen would wrap on 32 bits) */
+	CHECK(parse_payload(&info, 0) == 0 && info.ramdisk == NULL, "one whose padding would wrap: none");
+
+	payload_begin();
+	entry("kernel", "k", 2);
+	entry("cmdline", "debug=0x14e", 11);    /* (its eleven letters, and no end) */
+	CHECK(parse_payload(&info, 0) == 0 && info.kernel == NULL && info.cmdline[0] == 0, "boot arguments without an end: none");
+	CHECK(strstr(said, "has no end to its text: the payload is damaged") != NULL, "said: %s", said);
+	payload_begin();
+	entry("rdres", "4c000000", 8);
+	CHECK(parse_payload(&info, 0) == 0 && info.resident_rd == 0, "a number without an end: none");
+
+	payload_begin();
+	entry("kernel", "k", 2);
+	((struct payload_header *)payload_area)->size = 0xffffffffu;
+	CHECK(parse_payload(&info, 0) == 0 && info.kernel == NULL, "a header that says more than a payload may have: none");
+	CHECK(strstr(said, "reserved for one: damaged") != NULL, "said: %s", said);
 }
 
 /* what the packer writes (arch/arm64/boot/mkpayload.py), the loader reads: the two are run against each other */
@@ -808,6 +881,7 @@ main(int argc, char **argv)
 		{ "memory_and_strings", memory_and_strings }, { "device_tree", device_tree }, { "identity", identity },
 		{ "identity_given", identity_given }, { "identity_from_mkidentity", identity_from_mkidentity },
 		{ "unit", unit }, { "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
+		{ "payload_damaged_ones", payload_damaged_ones }, { "device_tree_full", device_tree_full },
 	};
 
 	if (argc < 2) {
