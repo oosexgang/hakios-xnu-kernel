@@ -641,6 +641,7 @@ started_unprepared(void)
 {
 	phone_with_file("phone-video");
 	CHECK(!hakios_speaker_start(), "not started");
+	CHECK(!logged("power-down off") && !logged("status"), "nothing tried: %s", log_text);
 	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
 }
 
