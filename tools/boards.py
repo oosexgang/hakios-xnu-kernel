@@ -179,7 +179,7 @@ WRITES_TO_PMIC = ('bluetooth-wcn-uart', 'torch-pm8350c', 'camera-sm7325')    # .
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (Documentation/boot-args.md has every argument; a test holds these names to it.)
 FEATURE_BOOTARGS = {
-    'bluetooth-wcn-uart': 'bt=-1 looks; bt=1 powers and identifies',
+    'bluetooth-wcn-uart': 'bt=-1 looks; bt=1 powers and identifies; bt=2 then hands it to Darwin',
     'cpufreq-scmi': 'scmi_perf=1',
     'cpufreq-epss': 'cpufreq=1',
     'ddr-rpmh': 'ddr=1 looks; ddr=2 with cpufreq=1 votes',
