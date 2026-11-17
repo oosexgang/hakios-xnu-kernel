@@ -224,6 +224,20 @@ read_only(void)
 	CHECK(all(memory + ROOT + DATA_AT, BLOCK, 0xa0) && all(memory, ROOT, 0x11), "and the RAM disk is as it was");
 }
 
+/* a sector whose offset in bytes wraps 64 bits (2^55 x 512 is 0): refused, not served as sector 0 */
+static void
+sector_that_wraps(void)
+{
+	uint8_t data[BLOCK];
+	size_t resid = 0;
+
+	image();
+	hakios_sparse_init();
+	memset(data, 0x55, sizeof(data));
+	CHECK(fake_disk_read("rsp0", 1ull << 55, data, BLOCK, &resid) == EINVAL && resid == BLOCK, "refused: resid %zu", resid);
+	CHECK(all(data, BLOCK, 0x55), "and block 0's 0xa0 not given for it: %#x", data[0]);
+}
+
 /* an entry of the table that points past the image's blocks: nothing is read from there */
 static void
 table_points_outside(void)
@@ -346,6 +360,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); unsigned cases; } scenarios[] = {
 		{ "served", served, 1 }, { "across_blocks", across_blocks, 1 }, { "every_block_here", every_block_here, 1 }, { "read_only", read_only, 1 },
+		{ "sector_that_wraps", sector_that_wraps, 1 },
 		{ "table_points_outside", table_points_outside, 1 }, { "does_not_fit", does_not_fit, 7 },
 		{ "header_makes_no_sense", header_makes_no_sense, 6 }, { "no_image_there", no_image_there, 1 },
 		{ "offset_past_the_disk", offset_past_the_disk, 3 }, { "no_ram_disk", no_ram_disk, 1 }, { "off_by_default", off_by_default, 1 },

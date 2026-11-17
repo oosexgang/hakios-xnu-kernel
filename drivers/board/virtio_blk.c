@@ -213,11 +213,17 @@ blk_read(struct blk_device *d, uint64_t offset, void *data, size_t len)
 		__builtin_arm_dmb(0xb);
 		if (d->used->idx != d->seen) {
 			d->seen = d->used->idx;
+			VIRTIO_USED_READ_BARRIER();     /* (the status byte after the index) */
 			break;
 		}
 		if (mach_absolute_time() > deadline) {
-			printf("virtio-blk: a read of %lu bytes at %llu went unanswered\n",
+			/*
+			 * The request stays the device's (its descriptors on the ring, the caller's buffer behind them): nothing
+			 * more is asked of it, or the next request's descriptors would be taken for this one's when it ends.
+			 */
+			printf("virtio-blk: a read of %lu bytes at %llu went unanswered: the disk is given up on\n",
 			    (unsigned long)len, offset);
+			blk_ready = false;
 			lck_mtx_unlock(&d->lock);
 			return EIO;
 		}
@@ -270,6 +276,12 @@ blk_dev_strategy(buf_t bp)
 	}
 	if (!(buf_flags(bp) & B_READ)) {
 		buf_seterror(bp, EROFS);         /* this device never writes */
+		buf_biodone(bp);
+		return;
+	}
+	if (buf_blkno(bp) < 0 || (uint64_t)buf_blkno(bp) > UINT64_MAX / VIRTIO_BLK_SECTOR) {
+		buf_seterror(bp, EINVAL);       /* (a block whose offset wraps is not a small one in range) */
+		buf_setresid(bp, buf_count(bp));
 		buf_biodone(bp);
 		return;
 	}
@@ -354,12 +366,42 @@ blk_dev_size(dev_t dev)
 	return blk_ready ? VIRTIO_BLK_SECTOR : -1;
 }
 
+/*
+ * The character device: read through a buffer of the kernel's. physio() would hand the strategy routine the reader's own
+ * address, which kvtophys() cannot translate -- the device was told to write at physical 0 (board/ufs.c says the same of
+ * physio in this kernel).
+ */
 static int
 blk_dev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 {
-	/* the character device is here so that tools can see the disk; reads go by buffer */
-	return physio(blk_dev_strategy, NULL, dev, B_READ, (u_int (*)(buf_t))blk_dev_size,
-	    uio, VIRTIO_BLK_SECTOR);
+	struct blk_device *d = &blk_dev;
+	vm_offset_t bounce = 0;
+	int error = 0;
+
+	if (!blk_ready) {
+		return ENXIO;
+	}
+	if (uio_offset(uio) < 0 || uio_offset(uio) % VIRTIO_BLK_SECTOR != 0 || uio_resid(uio) % VIRTIO_BLK_SECTOR != 0) {
+		return EINVAL;          /* (whole sectors, as a raw disk is read) */
+	}
+	if (kmem_alloc(kernel_map, &bounce, BLK_MAX_XFER, KMA_KOBJECT | KMA_DATA, VM_KERN_MEMORY_FILE) != KERN_SUCCESS) {
+		return ENOMEM;
+	}
+	while (uio_resid(uio) > 0 && error == 0) {
+		uint64_t offset = (uint64_t)uio_offset(uio), end = d->capacity * VIRTIO_BLK_SECTOR;
+		size_t chunk = (size_t)MIN((uint64_t)uio_resid(uio), (uint64_t)BLK_MAX_XFER);
+
+		if (offset >= end) {
+			break;                  /* (the end of the disk: what was read is the read) */
+		}
+		chunk = (size_t)MIN((uint64_t)chunk, end - offset);
+		error = blk_read(d, offset, (void *)bounce, chunk);
+		if (error == 0) {
+			error = uiomove((caddr_t)bounce, (int)chunk, uio);
+		}
+	}
+	kmem_free(kernel_map, bounce, BLK_MAX_XFER);
+	return error;
 }
 
 static const struct bdevsw blk_bdevsw = {

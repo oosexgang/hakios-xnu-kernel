@@ -111,6 +111,12 @@ sparse_strategy(buf_t bp)
 		buf_biodone(bp);
 		return;
 	}
+	if (buf_blkno(bp) < 0 || (uint64_t)buf_blkno(bp) > UINT64_MAX / SPARSE_SECTOR) {
+		buf_setresid(bp, buf_count(bp));
+		buf_seterror(bp, EINVAL);       /* (a block whose offset wraps is not a small one in range) */
+		buf_biodone(bp);
+		return;
+	}
 	off = (uint64_t)buf_blkno(bp) * SPARSE_SECTOR;
 	left = buf_count(bp);
 	dst = (uint8_t *)buf_dataptr(bp);
