@@ -7,7 +7,9 @@ make check
 ```
 
 It must pass. It runs the lint, validates the board and SoC files, checks that `Documentation/boot-args.md` is
-current and runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
+current and runs the host tests. While you work, `scripts/tests-for.py --changed` says which of them hold the files
+you changed, each with the command that runs it alone (the parts and their tests are in `MAINTAINERS`; a new file
+goes into its part there, and `make check` says so when one does not). CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
 a change to a driver, `kernel/syntax-check.sh --tree DIR` says in seconds whether it still compiles,
 without the kernel toolchain; before you send a change to the kernel, `make kernel-check` compiles
 every file and links the whole kernel with LLVM's tools in a few minutes, and lists any warning in

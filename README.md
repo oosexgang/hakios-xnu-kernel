@@ -22,6 +22,7 @@ on your machine from files you have.
 | `tools/`, `workbench/` | The tools; the tests that need no phone |
 | `scripts/` | What you run by hand: set a machine up (`setup-ubuntu.sh`), release the sources (`release.sh`) |
 | `samples/` | Starting points to copy: a phone's own repository, a defconfig of your own |
+| `MAINTAINERS` | Each part of the project: its files, its tests, its documents (`scripts/tests-for.py FILE` says what to run) |
 | `Documentation/` | Everything else ([layout.md](Documentation/layout.md) has the whole map) |
 
 ## How do I build it
