@@ -359,6 +359,15 @@ copies(void)
 	metadata(metadata_bytes + 0x3000, "system_gsi", two, 2);
 	metadata(metadata_bytes + 0x80000, "system_gsi", other, 2);
 	CHECK(dsu_find(&data) == 0 && strstr(said, "two different copies") != NULL, "two that differ: %s", said);
+	{
+		/* as many bytes, from the same first sector, in one extent where the other has two: they differ */
+		static const struct piece one[] = { { 0x100000, 0x5000, 0 } };
+
+		phone();
+		metadata(metadata_bytes + 0x3000, "system_gsi", two, 2);
+		metadata(metadata_bytes + 0x80000, "system_gsi", one, 1);
+		CHECK(dsu_find(&data) == 0 && strstr(said, "two different copies") != NULL, "the same size, other extents: %s", said);
+	}
 	phone();
 	metadata(metadata_bytes + 0x3000, "system_gsi_b", two, 2);
 	CHECK(dsu_find(&data) == 0 && strstr(said, "no lp_metadata with a system_gsi") != NULL, "none: %s", said);
