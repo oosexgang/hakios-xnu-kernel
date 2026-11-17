@@ -651,8 +651,9 @@ def load(problems=None):
                 problems.add(f'{rel} [touch]', 'coordinates are the largest x and y the controller reports: two numbers, not 0')
             if not 0 < touch['vote_register'] < 0x100000 or touch['vote_register'] & 3:
                 problems.add(f'{rel} [touch]', 'vote_register is an offset in the clock controller: a register\'s, not 0')
+            # (the drivers map 0x100000 of the clock controller; the engine's clock has its rate registers up to 0xbc after it)
             if len(touch['clocks']) != 3 or any(not 0 < offset < 0x100000 for offset in touch['clocks']) or \
-                    len(set(touch['clocks'])) != 3:
+                    len(set(touch['clocks'])) != 3 or touch['clocks'][2] > 0x100000 - 0xc0:
                 problems.add(f'{rel} [touch]', 'clocks are three different offsets in the clock controller: the two bus clocks, the engine\'s own')
             if len(touch['votes']) != 5 or any(not 0 <= bit <= 31 for bit in touch['votes']) or len(set(touch['votes'])) != 5:
                 problems.add(f'{rel} [touch]', 'votes are five different bits of the vote register, 0 to 31')

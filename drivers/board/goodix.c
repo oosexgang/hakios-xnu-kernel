@@ -144,7 +144,7 @@ io_supply_on(void)
 /* ---- clocks (GCC) -------------------------------------------------------------------------------- */
 
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
-#define GCC_SIZE                0x60000UL
+#define GCC_SIZE                0x100000UL     /* (as far as tools/boards.py lets touch { } reach) */
 #define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
 /* the clocks of the touch controller's serial engine (SE) and of its group (QUP): which bits and offsets is the board's */
 #define VOTE_QUP_CORE_2X        (1u << WIRED->vote[0])
