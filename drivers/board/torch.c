@@ -398,10 +398,16 @@ light(uint32_t permille)
 	if (!configure() || !put_bits(FLASH_IRESOLUTION, 0x01, 0x00) || !put_bits(FLASH_ITARGET0, 0x7f, (uint8_t)code)) {
 		return false;
 	}
-	if (!lit && (!put(FLASH_MODULE_EN, 0x80) || !put_bits(FLASH_EN_LED_CTRL, 0x01, 0x01))) {
-		return false;
+	if (!lit) {
+		/*
+		 * Taken for lit from the first write that may light it: a write that lands and then does not read back leaves
+		 * it lit all the same, and whatever ends this (the service, the run's end) switches it off only if lit is set.
+		 */
+		lit = true;
+		if (!put(FLASH_MODULE_EN, 0x80) || !put_bits(FLASH_EN_LED_CTRL, 0x01, 0x01)) {
+			return false;
+		}
 	}
-	lit = true;
 	return true;
 }
 
@@ -409,9 +415,16 @@ light(uint32_t permille)
 static bool
 dark(void)
 {
-	bool ok = put_bits(FLASH_EN_LED_CTRL, 0x01, 0x00) && put(FLASH_MODULE_EN, 0x00) && put_bits(FLASH_ITARGET0, 0x7f, 0x00) &&
-	    put_bits(FLASH_SAFETY_TIMER0, 0x80, 0x00);
+	/*
+	 * Off is tried whatever went wrong before: a light left on would stay on for the rest of the run with its safety
+	 * timer off. (broken stops every other write; it is put back as it was, or set if this failed too.)
+	 */
+	bool was_broken = broken, ok;
 
+	broken = false;
+	ok = put_bits(FLASH_EN_LED_CTRL, 0x01, 0x00) && put(FLASH_MODULE_EN, 0x00) && put_bits(FLASH_ITARGET0, 0x7f, 0x00) &&
+	    put_bits(FLASH_SAFETY_TIMER0, 0x80, 0x00);
+	broken = was_broken || !ok;
 	lit = !ok && lit;
 	return ok;
 }
@@ -428,6 +441,12 @@ torch_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	uint32_t value;
 	int error;
 
+	if (broken) {
+		return ENXIO;           /* (given up on: Darwin is not to show a light that nothing lights) */
+	}
+	if (uio_resid(uio) < (user_ssize_t)sizeof(value)) {
+		return EINVAL;          /* (a level is 4 bytes: less is not taken, and not to be asked again for ever) */
+	}
 	while (uio_resid(uio) >= (user_ssize_t)sizeof(value)) {
 		if ((error = uiomove((caddr_t)&value, sizeof(value), uio)) != 0) {
 			return error;
@@ -446,6 +465,9 @@ torch_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 {
 	uint32_t value = shown;
 
+	if (uio_offset(uio) != 0) {
+		return 0;               /* (the level once a read: the end after it, so that a reader to the end ends) */
+	}
 	return uiomove((caddr_t)&value, (int)MIN(sizeof(value), (size_t)uio_resid(uio)), uio);
 }
 

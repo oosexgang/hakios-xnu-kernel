@@ -34,6 +34,7 @@ static unsigned forbidden_writes;       /* to a register that is not one of the 
 static unsigned highest_target;         /* the highest current code ever written */
 static unsigned times_lit;              /* the channel switched on with the module enabled */
 static bool stuck;                      /* the module does not take what is written (a write that does not read back) */
+static bool led_reads_otherwise;        /* the channels' register takes a write and then reads back with bit 1 set as well */
 static bool lit_too_bright;             /* lit with a resolution or a target that is not Android's */
 
 static bool
@@ -57,6 +58,9 @@ flash_written(struct spmi_peripheral *p, uint8_t reg, uint8_t value)
 	}
 	if (!stuck) {
 		p->reg[reg] = value;
+	}
+	if (led_reads_otherwise && reg == REG_EN_LED) {
+		p->reg[reg] |= 0x02;
 	}
 	if (is_lit()) {
 		if (!was) {
@@ -169,6 +173,13 @@ static void
 ask_for(uint32_t permille)
 {
 	CHECK(fake_dev_write("hakios-torch", &permille, sizeof(permille)) == 0, "/dev/hakios-torch takes a level");
+}
+
+/* given up on: a level is refused (ENXIO), so that Darwin does not show a light that nothing lights */
+static void
+refused(uint32_t permille)
+{
+	CHECK(fake_dev_write("hakios-torch", &permille, sizeof(permille)) == ENXIO, "/dev/hakios-torch refuses a level once given up");
 }
 
 static uint32_t
@@ -356,8 +367,8 @@ fault_while_lit(void)
 	/* (the light goes off, then the line is written: waited for on its own) */
 	EVENTUALLY(logged("no more writing to the flash module for the rest of the run"), 2000, "said in the log");
 	spmi_set(&flash_model, REG_STATUS2, 0);
-	ask_for(0);
-	ask_for(1000);
+	refused(0);
+	refused(1000);
 	usleep(300 * 1000);
 	CHECK(!lit_now() && times_lit == 1, "and stays off for the rest of the run (%u times lit)", times_lit);
 	never();
@@ -382,8 +393,8 @@ lit_then(void (*goes_wrong)(void), const char *said, const char *what)
 	WAIT_FOR(!lit_now() && logged(said), 2000);
 	CHECK(!lit_now(), "off when %s", what);
 	CHECK(logged(said), "and why is said (\"%s\"): %s", said, log_text);
-	ask_for(0);
-	ask_for(1000);
+	refused(0);
+	refused(1000);
 	usleep(300 * 1000);
 	CHECK(!lit_now() && times_lit == 1, "and stays off for the rest of the run (%u times lit)", times_lit);
 	never();
@@ -541,6 +552,45 @@ write_does_not_stick(void)
 	never();
 }
 
+/* the channel switched on, and its register not reading back as written: given up on, and the light switched off all the
+ * same, not left on with its safety timer off; Darwin told no more is taken */
+static void
+lit_and_then_given_up(void)
+{
+	uint32_t level = 500;
+
+	phone("phone-video");
+	led_reads_otherwise = true;
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	ask_for(500);
+	WAIT_FOR(logged("the light is given up on"), 5000);
+	CHECK(logged("a register that did not read back as written"), "said: %s", log_text);
+	CHECK(!is_lit(), "the light is off: enable %#x, channels %#x", flash_model.reg[REG_MODULE_EN], flash_model.reg[REG_EN_LED]);
+	CHECK(fake_dev_write("hakios-torch", &level, sizeof(level)) == ENXIO, "a level after it: refused");
+	never();
+}
+
+/* a write of less than a level is refused, not taken as nothing; a read gives the level once, then the end */
+static void
+short_writes_and_reads(void)
+{
+	uint32_t got[2] = { 7, 7 };
+	size_t done = 0;
+
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 5000);
+	CHECK(fake_dev_write("hakios-torch", got, 2) == EINVAL, "two bytes: refused");
+	CHECK(fake_dev_pread("hakios-torch", got, sizeof(got), 0, &done) == 0 && done == 4 && got[0] == 0 && got[1] == 7,
+	    "a read: the level, 4 bytes (%zu)", done);
+	CHECK(fake_dev_pread("hakios-torch", got, sizeof(got), 4, &done) == 0 && done == 0, "then the end (%zu)", done);
+	dark_at_the_end();
+	never();
+}
+
 /* the module's channel is another system's to write: looked at, never written */
 static void
 not_ours_to_write(void)
@@ -617,6 +667,7 @@ main(int argc, char **argv)
 		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "first_generation_alarm", first_generation_alarm },
 		{ "first_generation_alarm_at_a_stage", first_generation_alarm_at_a_stage }, { "hot_while_dark", hot_while_dark }, { "battery_hot", battery_hot },
 		{ "time_limit", time_limit }, { "write_does_not_stick", write_does_not_stick },
+		{ "lit_and_then_given_up", lit_and_then_given_up }, { "short_writes_and_reads", short_writes_and_reads },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
 		{ "dropped_and_asked_again", dropped_and_asked_again },
