@@ -252,6 +252,13 @@ software without it.
 | `bt-uart: segment N refused (status 0x..)`, or `segment N: no answer within 2 s` | The controller would not take the patch: another chip's, or a step of the protocol it wants and this driver does not send. | The log's `product id`, `ROM version` and `SoC id` lines say which chip it is: the file must be the one the phone's Android sends it. Report the lines. |
 | `bt: com.apple.uart.sk.bluetooth connected by bluetoothd` never comes | bluetoothd did not find the controller, or left before it opened the kernel control. | `bt: service "bluetooth" registered (address ...)` must be there first; without `/chosen mac-address-bluetooth0` (the loader's) there is no service. |
 
+### Wi-Fi ([drivers.md](drivers.md), "Wi-Fi, network")
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `wifi: N: TRUSTZONE DOES NOT SHUT THE DSP DOWN: the call returns ..., its answer is ...` | The DSP is still running at the run's end. The radio's stream in the SMMU is sent to fault, so it cannot write into memory that is not the kernel's any more; the next run starts from a radio that is not quiet. | Power the phone off and on before the next run with `wifi=1`. Report the line with the ones before it (`the DSP is asked to stop`). |
+| The phone goes down, or the log stops, just as the network is lost or the run ends with Wi-Fi joined | Perhaps the known race: a frame sent by Darwin while the station is being taken apart ([drivers.md](drivers.md), "Wi-Fi, network"). | Report the log's last lines. A run without `wifi=1` is not affected. |
+
 ## Images ([images.md](images.md))
 
 | What you see | What it means | What to do |

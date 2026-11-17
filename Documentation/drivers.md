@@ -114,6 +114,16 @@ v7 and later before any PMIC transfer. Its map/owner layout needs shared-helper 
 board can power BT_EN. UART/PMIC/HCI register facts follow the sources named in the driver and board
 comments; hardware behavior and the controller's actual version-event variant remain unverified.
 
+Wi-Fi (`wifi=1`) shows the radio its memory through the SMMU before the DSP is started, and takes it away at every
+ending: the DSP shut down, a run that ended before the DSP was started (the next kernel's `hakios_wifi_quiesce`), a
+bring-up whose memory ran out. When TrustZone refuses to shut the DSP down, the radio's stream is sent to fault rather
+than left translating into memory that is the next owner's. When the driver's start gives up (60 s) or the run ends
+before it is up, its rings' thread is stopped and the registers closed before the DSP goes. **Known, not fixed:** a
+frame Darwin sends (`lx_station_send`) is not held off while the station leaves (`station_leave`, the network lost or
+the run's end): the send may read the station and its key as they are freed. The two must be held apart, but the
+leaving waits for the driver's work (`cancel_work_sync`), which takes the radio's lock itself, so that lock cannot just
+be held across it; it is left until it can be built and run against the driver (`kernel/lx/build.sh`).
+
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
