@@ -1,0 +1,44 @@
+# The phone's package held to the kernel's checks on every push: it is read by the kernel's own tools, as a build
+# would read it, and what it can turn on next is said. Nothing is built here: that needs the Darwin toolchain.
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # the kernel's repository, and the branch of it this phone is built with
+  KERNEL_REPOSITORY: oosexgang/xnu-kernel-qcom
+  KERNEL_REF: ''
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: phone
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.KERNEL_REPOSITORY }}
+          ref: ${{ env.KERNEL_REF }}
+          path: kernel
+      - name: The package, brought in and checked as a build would
+        run: kernel/tools/device.py add --from "$GITHUB_WORKSPACE/phone"
+      - name: Every board and SoC file the kernel would be built with
+        run: kernel/tools/boards.py check
+      - name: What the phone can turn on next
+        run: |
+          for package in $(kernel/tools/device.py list | awk '/\[from / { print $1 }'); do
+            kernel/tools/boards.py status "$package"
+          done
+      - name: Each image in images/ is what its manifest says
+        run: |
+          for file in phone/images/*/*.payload; do
+            [ -f "$file" ] || continue
+            kernel/tools/image.py show "$file" | tee /dev/stderr | grep -q 'manifest.json: the same'
+          done

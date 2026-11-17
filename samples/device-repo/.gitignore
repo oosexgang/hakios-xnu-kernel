@@ -1,0 +1,16 @@
+# What a phone's repository never holds (BUILDING.md, "What is not here")
+/firmware/
+*.ipsw
+*.im4p
+DeviceTree*.bin
+identity.bin
+*.apfs
+*.dmg
+# a device tree as Android has it, and its source: the vendor's
+*.dtb
+*.dtbo
+/dts-android/
+# what the kernel's tools make, when run in here
+/build/
+*.payload
+!/images/**/*.payload

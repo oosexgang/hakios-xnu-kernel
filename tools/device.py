@@ -8,6 +8,10 @@
   tools/device.py export NAME DIR               copy the package arch/arm64/boot/dts/NAME to DIR/NAME: into a checkout of
                                                 the devices branch, to send it there
   tools/device.py list                          the packages that are here, and where each is from
+  tools/device.py init DIR --name NAME --soc SOC [--dts FILE] [--description TEXT]
+                                                a phone's own repository, made: its package (tools/boards.py new,
+                                                the SoC's file copied from a package here that has it) and what
+                                                samples/device-repo/ has (BUILDING.md, .gitignore, a check on push)
 
 A device package is a directory NAME with board.dts in it (arch/arm64/boot/dts/_template/board.dts explains the
 file) and whatever else belongs to the phone: its README, its notes. The repository itself describes no
@@ -237,6 +241,38 @@ def export(name, directory):
     return 0
 
 
+SAMPLE = Path(__file__).resolve().parents[1] / 'samples/device-repo'   # (the repository's own, wherever boards look)
+
+
+def init(directory, name, soc, dts=None, description=None, with_git=True):
+    """A phone's own repository at DIRECTORY: its package at the top, and what samples/device-repo/ has."""
+    directory = Path(directory)
+    if directory.exists() and any(directory.iterdir()):
+        raise SystemExit(f'{directory} is there and not empty: a repository is made in a new directory')
+    if (boards.DEVICES / name).exists():
+        raise SystemExit(f'arch/arm64/boot/dts/{name} is there already: a package of that name is made elsewhere '
+                         f'(tools/device.py remove {name}, or another name)')
+    # made where tools/boards.py makes packages, beside the others (a SoC's file is copied from one that has it), then
+    # moved: nothing of it is left in this checkout
+    boards.new_board(name, soc, Path(dts) if dts else None, None, description)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    if directory.exists():
+        directory.rmdir()
+    shutil.move(str(boards.DEVICES / name), str(directory))
+    for path in sorted(SAMPLE.rglob('*')):
+        if path.is_file():
+            target = directory / path.relative_to(SAMPLE)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(path.read_text().replace('NAME', name) if path.name == 'BUILDING.md' else path.read_text())
+    if with_git:
+        subprocess.run(['git', 'init', '-q', str(directory)], check=True)
+    print(f'{directory}: the repository of {name}' + (' (git init: commit it, and push it where others can clone it)'
+                                                      if with_git else ''))
+    print(f'next: fill in {directory}/board.dts and soc.dtsi (Documentation/porting.md), then: '
+          f'tools/device.py add --from {directory}')
+    return 0
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -250,7 +286,16 @@ def main(arguments=None):
     command.add_argument('name', metavar='NAME')
     command.add_argument('directory', metavar='DIR')
     commands.add_parser('list')
+    command = commands.add_parser('init')
+    command.add_argument('directory', metavar='DIR')
+    command.add_argument('--name', required=True)
+    command.add_argument('--soc', required=True)
+    command.add_argument('--dts', metavar='FILE', help='the phone\'s Android device tree, to start from what it says')
+    command.add_argument('--description')
+    command.add_argument('--no-git', action='store_true')
     options = parser.parse_args(arguments)
+    if options.command == 'init':
+        return init(options.directory, options.name, options.soc, options.dts, options.description, not options.no_git)
 
     if options.command == 'available':
         source = Source(options.source)

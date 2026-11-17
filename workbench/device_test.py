@@ -264,6 +264,34 @@ class Packages(Sandbox):
         self.assertEqual(code, 0, said)
         self.assertEqual(sorted(boards.load()[1]), ['emulator', 'iota-phone'])
 
+    def test_a_phone_s_repository_made_then_brought_in(self):
+        target = Path(tempfile.mkdtemp()) / 'my-phone'
+        self.addCleanup(shutil.rmtree, target.parent)
+        code, said, complained = self.run_tool('init', str(target), '--name', 'kappa', '--soc', 'sm0001', '--description', 'Phone kappa')
+        self.assertEqual(code, 0, said + complained)
+        for name in ('board.dts', 'soc.dtsi', 'BUILDING.md', '.gitignore', '.github/workflows/check.yml'):
+            self.assertTrue((target / name).is_file(), name)
+        self.assertTrue((target / '.git').is_dir(), 'a git repository')
+        self.assertIn('name = "sm0001"', (target / 'soc.dtsi').read_text())
+        self.assertIn('make image DEVICE=kappa', (target / 'BUILDING.md').read_text())
+        self.assertFalse((self.dir / 'arch/arm64/boot/dts/kappa').exists(), 'nothing of it left in the checkout')
+        # what a build reads of it, and only that: not its git, its checks or its images
+        (target / 'images/v1').mkdir(parents=True)
+        (target / 'images/v1/kappa.payload').write_bytes(b'XNUP')
+        code, said, complained = self.run_tool('add', '--from', str(target))
+        self.assertEqual((code, complained), (0, ''), said)
+        brought = {p.name for p in (self.dir / 'arch/arm64/boot/dts/kappa').iterdir()}
+        self.assertEqual(brought, {'board.dts', 'soc.dtsi', 'BUILDING.md', '.gitignore', '.from'})
+        self.assertEqual(sorted(boards.load()[1]), ['emulator', 'kappa'])
+
+    def test_a_repository_is_made_only_where_there_is_nothing(self):
+        there = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, there)
+        (there / 'something').write_text('mine\n')
+        self.assertIn('not empty', str(self.run_tool('init', str(there), '--name', 'kappa', '--soc', 'sm0001')[0]))
+        self.assertIn('there already', str(self.run_tool('init', str(there / 'new'), '--name', 'emulator', '--soc', 'sm0001')[0]))
+        self.assertEqual(sorted(p.name for p in there.iterdir()), ['something'])
+
     def test_what_is_not_there_is_said_with_what_is(self):
         code, _, _ = self.run_tool('add', 'delta')
         self.assertIn('has no package "delta" (it has: alpha, beta)', str(code))
