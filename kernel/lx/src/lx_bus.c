@@ -834,6 +834,13 @@ lx_start(void)
 	    ab->dev_flags);
 	if (!up) {
 		lx_pause_ms(600);		/* (for core.c to have wound down: the mode "off") */
+		/*
+		 * (core.c may have started the bus -- mission mode asked for -- and left the rings' thread at the copy engines: it
+		 * is stopped, and the registers closed, before the DSP is shut down under them: a register of a radio without its
+		 * DSP does not answer, and the phone resets without a word)
+		 */
+		bus_quiet();
+		bus.closed = true;
 		ath11k_qmi_deinit_service(ab);
 		return (test_bit(ATH11K_FLAG_REGISTERED, &ab->dev_flags) ? ETIMEDOUT : EIO);
 	}
@@ -875,6 +882,10 @@ lx_stop(void)
 	struct ath11k_base *ab = driver;
 
 	if (ab == NULL) {
+		/* (a start still on its way, or one that gave up: whatever of the bus it started is stopped, and the registers
+		 * closed, before the DSP is shut down) */
+		bus_quiet();
+		bus.closed = true;
 		return;
 	}
 	driver = NULL;
