@@ -879,6 +879,67 @@ writing_has_its_list_out(void)
 	CHECK(switched_in == 1 && ufs_native_on && !ufs_write_busy, "the list back in, reads through it again: %u", switched_in);
 }
 
+/* ---- requests that do not wait --------------------------------------------------------------------------- */
+
+/* (darwin is counted in its own 4 KB blocks) a file system's read-ahead: the requests return at once and are served by the driver's threads, each with its own bytes */
+static void
+read_ahead_by_its_threads(void)
+{
+	static uint8_t data[8][3 * 4096];
+	static struct buf requests[8];
+	bool all = false;
+
+	loader("");
+	hakios_ufs_init();
+	CHECK(logged("ufs: 4 threads serve the requests that do not wait"), "said: %s", log_text);
+	for (unsigned i = 0; i < 8; i++) {
+		CHECK(fake_disk_read_async("ufs_darwin", 20 + 7 * i, data[i], sizeof(data[i]), &requests[i]) == 0, "asked %u", i);
+	}
+	for (int waited = 0; !all && waited < 5000; waited++) {
+		all = true;
+		for (unsigned i = 0; i < 8; i++) {
+			all &= requests[i].done;
+		}
+		usleep(1000);
+	}
+	CHECK(all, "all eight done");
+	for (unsigned i = 0; i < 8; i++) {
+		CHECK(requests[i].error == 0 && requests[i].resid == 0 && is_disk(DARWIN, (20 + 7 * i) * 4096ull, data[i], sizeof(data[i])),
+		    "request %u: its bytes (error %d, resid %u)", i, requests[i].error, requests[i].resid);
+	}
+	CHECK(ufs_async == 8 && ufs_async_inline == 0 && ufs_queue_most >= 1, "eight through the queue: %llu", (unsigned long long)ufs_async);
+	hakios_ufs_report("now");
+	CHECK(logged("ufs: now: 8 requests that do not wait served by this driver's threads"), "reported: %s", log_text);
+}
+
+/* ufs_workers=0: each request served in the thread that asks, done when the call returns, as before */
+static void
+no_threads(void)
+{
+	static uint8_t data[4096];
+	static struct buf request;
+
+	loader("ufs_workers=0");
+	hakios_ufs_init();
+	CHECK(!logged("threads serve the requests"), "none started: %s", log_text);
+	CHECK(fake_disk_read_async("ufs_darwin", 30, data, sizeof(data), &request) == 0 && request.done && request.error == 0 &&
+	    is_disk(DARWIN, 30 * 4096, data, sizeof(data)), "done in the asker's thread");
+	CHECK(ufs_async == 0, "none queued: %llu", (unsigned long long)ufs_async);
+}
+
+/* a request that waits is served in its own thread, whatever threads there are */
+static void
+a_request_that_waits(void)
+{
+	static uint8_t data[4096];
+	size_t resid = 0;
+
+	loader("");
+	hakios_ufs_init();
+	CHECK(fake_disk_read("ufs_darwin", 31, data, sizeof(data), &resid) == 0 && resid == 0 && is_disk(DARWIN, 31 * 4096, data,
+	    sizeof(data)) && ufs_async == 0, "served at once, not queued");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -891,7 +952,9 @@ main(int argc, char **argv)
 		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
 		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
 		{ "off_without_the_loader", off_without_the_loader, 1 }, { "through_its_own_driver", through_its_own_driver, 1 },
-		{ "a_unit_not_known", a_unit_not_known, 1 }, { "writing_has_its_list_out", writing_has_its_list_out, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
+		{ "a_unit_not_known", a_unit_not_known, 1 }, { "writing_has_its_list_out", writing_has_its_list_out, 1 },
+		{ "read_ahead_by_its_threads", read_ahead_by_its_threads, 1 }, { "no_threads", no_threads, 1 },
+		{ "a_request_that_waits", a_request_that_waits, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
 		{ "reads_short_of_a_block", reads_short_of_a_block, 1 }, { "reads_that_follow", reads_that_follow, 1 }, { "its_devices", its_devices, 1 },
 		{ "the_report", the_report, 1 }, { "the_report_read_only", the_report_read_only, 1 }, { "one_past_the_last", one_past_the_last, 1 },
 	};
