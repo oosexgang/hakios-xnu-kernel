@@ -1,7 +1,8 @@
 /*
  * The thermal limiter itself (drivers/board/thermal.c),
  * run as a host program on the fake kernel (fakekernel/) against a model of two TSENS controllers and the
- * three EPSS groups of a lahaina-family SoC. workbench/run.sh builds it for the host and for aarch64
+ * three EPSS groups of a lahaina-family SoC -- or, for phone-keys, one controller and the two groups of a chip
+ * of the OSM's layout, their blocks not one size apart (board/cpufreq_hw.h). workbench/run.sh builds it for the host and for aarch64
  * under qemu-aarch64.
  *
  *   thermal_driver_test SCENARIO
@@ -18,6 +19,12 @@ extern char log_text[];
 #define TSENS1          0x0c265000u
 #define EPSS            0x18591000u
 #define ROWS            9
+/* phone-keys' (workbench/devices/phone-keys/soc.dtsi): the OSM's layout -- the table at 0x110, a row every 32 bytes,
+ * the row wanted at 0x920, what LMh allows at 0x704 -- and its TSENS */
+#define OSM0            0x05591000u
+#define OSM1            0x05593800u
+#define OSM_TSENS       0x0d263000u
+static bool osm;
 
 static uint32_t sensor[2][16];          /* status words */
 static uint32_t perf[3];                /* each group's row */
@@ -42,7 +49,7 @@ uint32_t
 hakios_test_rd(vm_offset_t a)
 {
 	for (unsigned c = 0; c < 2; c++) {
-		uint32_t base = c ? TSENS1 : TSENS0;
+		uint32_t base = osm ? (c ? 0 : OSM_TSENS) : c ? TSENS1 : TSENS0;
 
 		if (a >= base && a < base + 0x200) {
 			unsigned which = (unsigned)(a - base - 0xa0) / 4;
@@ -57,7 +64,23 @@ hakios_test_rd(vm_offset_t a)
 			return sensor[c][which];
 		}
 	}
-	if (a >= EPSS && a < EPSS + 0x3000) {
+	if (osm && ((a >= OSM0 && a < OSM0 + 0x1400) || (a >= OSM1 && a < OSM1 + 0x1400))) {
+		unsigned d = a >= OSM1, off = (unsigned)(a - (d ? OSM1 : OSM0));
+
+		if (off >= 0x110 && off < 0x110 + 32 * 40 && (off - 0x110) % 32 == 0) {
+			unsigned row = (off - 0x110) / 32;
+
+			row = row >= ROWS ? ROWS - 1 : row;
+			return table_mult[row] ? 1u << 30 | table_mult[row] : 0;
+		}
+		if (off == 0x920) {
+			return perf[d];
+		}
+		if (off == 0x704) {
+			return lmh[d] | 0x7000;         /* (above [9:0], something else) */
+		}
+	}
+	if (!osm && a >= EPSS && a < EPSS + 0x3000) {
 		unsigned d = (a - EPSS) / 0x1000, off = (a - EPSS) % 0x1000;
 
 		if (off >= 0x100 && off < 0x100 + 4 * 40) {
@@ -80,7 +103,13 @@ hakios_test_rd(vm_offset_t a)
 void
 hakios_test_wr(vm_offset_t a, uint32_t v)
 {
-	if (a >= EPSS && a < EPSS + 0x3000 && (a - EPSS) % 0x1000 == 0x320) {
+	if (osm && (a == OSM0 + 0x920 || a == OSM1 + 0x920)) {
+		same_again += perf[a == OSM1 + 0x920] == v;
+		perf[a == OSM1 + 0x920] = v;
+		writes++;
+		return;
+	}
+	if (!osm && a >= EPSS && a < EPSS + 0x3000 && (a - EPSS) % 0x1000 == 0x320) {
 		same_again += perf[(a - EPSS) / 0x1000] == v;
 		perf[(a - EPSS) / 0x1000] = v;
 		writes++;
@@ -247,6 +276,28 @@ heat_and_cool(void)
 	CHECK(cap == 1000, "the panel too: %u", cap);
 	CHECK(foreign == 0, "no other register");
 	CHECK(scmi_asked == 0, "an EPSS board never asks SCMI: %u", scmi_asked);
+}
+
+/* a chip of the OSM's layout (SDM845 to SM8250), its two groups' blocks not one size apart: looked at and held back the same */
+static void
+osm_chip(void)
+{
+	phone(600);
+	board = "phone-keys";
+	osm = true;
+	lmh[1] = 600;                           /* 11520 MHz: [9:0] counts, not [7:0] */
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(strstr(tl_lines, "limit") != NULL, 1000);
+	CHECK(strstr(tl_lines, " hottest 600 sensor 3 limit 1920,11520 asked 1920,1920 ") != NULL, "the line: %.200s", tl_lines);
+	CHECK(get("most") == 5, "the small group from row 8 to its floor row 3: %u", get("most"));
+	temperature(0, 3, 720);
+	WAIT_FOR(get("step") == 5 && perf[0] == 3 && perf[1] == 4, 3000);
+	CHECK(perf[0] == 3 && perf[1] == 4, "at the floors, written at 0x920 of each block: %u %u", perf[0], perf[1]);
+	temperature(0, 3, 550);
+	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1 && perf[1] == ROWS - 1, 3000);
+	CHECK(perf[0] == ROWS - 1 && perf[1] == ROWS - 1, "given back: %u %u", perf[0], perf[1]);
+	CHECK(foreign == 0, "no other register: %u", foreign);
 }
 
 /* a chip without EPSS: the groups are the firmware's SCMI domains, held back from their top to where they were found */
@@ -537,6 +588,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
+		{ "osm_chip", osm_chip },
 		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
