@@ -768,12 +768,21 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 			cores_left_on = 1;
 		}
 	}
+	/*
+	 * What the kernel left is believed only where it can be: a word of its own inside its image, a buffer inside the RAM it
+	 * was given (not the panic log at the top) -- a kernel that scribbled over its data must not have the loader read UEFI's
+	 * memory, or fault, on the way back (and the log with it lost)
+	 */
+	uint64_t ram_lo = win_base, ram_size = win_size - PANIC_LOG_RESERVE;
+#define KERNEL_WORDS(p, n)      ((p) >= kern_lo && (p) <= kern_hi && (n) <= kern_hi - (p))
+#define IN_RAM(pa, n)           ((pa) >= ram_lo && (n) <= ram_size && (pa) - ram_lo <= ram_size - (n))
 	recording_data = NULL;
 	recording_len = 0;
-	if (kernel_live != NULL && kernel_live->recording != 0 && checkpoint != CHECKPOINT_SELFTEST) {
+	if (kernel_live != NULL && kernel_live->recording != 0 && checkpoint != CHECKPOINT_SELFTEST &&
+	    KERNEL_WORDS(kernel_live->recording + slide, 16)) {
 		const uint64_t *recording = (const uint64_t *)(kernel_live->recording + slide);
 
-		if (recording[0] != 0 && recording[1] > 24 && recording[1] <= (1ULL << 30)) {
+		if (recording[0] != 0 && recording[1] > 24 && recording[1] <= (1ULL << 30) && IN_RAM(recording[0], recording[1])) {
 			recording_data = (const char *)recording[0];
 			recording_len = recording[1];
 			print("the kernel left a screen recording: %d bytes at %x\n", recording_len, recording[0]);
@@ -782,10 +791,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	sound_data = NULL;
 	sound_len = 0;
 	if (kernel_live != NULL && kernel_live->magic2 == KERNEL_LIVE_MAGIC2 && kernel_live->sound != 0 &&
-	    checkpoint != CHECKPOINT_SELFTEST) {
+	    checkpoint != CHECKPOINT_SELFTEST && KERNEL_WORDS(kernel_live->sound + slide, 16)) {
 		const uint64_t *sound = (const uint64_t *)(kernel_live->sound + slide);
 
-		if (sound[0] != 0 && sound[1] > 24 && sound[1] <= (1ULL << 30)) {
+		if (sound[0] != 0 && sound[1] > 24 && sound[1] <= (1ULL << 30) && IN_RAM(sound[0], sound[1])) {
 			sound_data = (const char *)sound[0];
 			sound_len = sound[1];
 			print("the kernel left a sound recording: %d bytes at %x\n", sound_len, sound[0]);
@@ -813,7 +822,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		} else {
 			set_result("returned", klog_len, 0);
 		}
+		if (klog != NULL && !IN_RAM((uint64_t)(uintptr_t)klog, klog_len)) {
+			print("the kernel's log (%x, %x bytes) is not inside the RAM it was given: not read\n", (uint64_t)(uintptr_t)klog,
+			    klog_len);
+			klog = NULL;
+			klog_len = 0;
+		}
 	}
+#undef KERNEL_WORDS
+#undef IN_RAM
 	write_logs(klog, klog_len);
 	return 1;
 }

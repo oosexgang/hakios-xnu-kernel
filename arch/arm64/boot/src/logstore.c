@@ -56,6 +56,9 @@ static uint64_t staged_len;
  */
 static uint64_t kernel_part_at, kernel_part_len;
 
+/* what compose_logs() leaves for the loader's log beside the kernel's: all of log_buf, the two lines around, a block */
+#define KERNEL_PART_ROOM        (sizeof(log_buf) + 2 * 32 + 512)
+
 static void
 compose_logs(const char *klog, uint64_t klog_len)
 {
@@ -76,8 +79,12 @@ compose_logs(const char *klog, uint64_t klog_len)
 	memcpy(out_buf, log_buf, log_len);
 	kernel_part_len = 0;
 	if (klog != NULL) {
-		if (klog_len > sizeof(out_buf) - n - 8192) {
-			klog_len = sizeof(out_buf) - n - 8192;
+		/*
+		 * (room left for the loader's log to grow to its whole size, and the two lines around the kernel's: else a later
+		 * compose_logs(NULL) would find no room for the kernel's part and leave it out for good)
+		 */
+		if (klog_len > sizeof(out_buf) - n - (KERNEL_PART_ROOM)) {
+			klog_len = sizeof(out_buf) - n - (KERNEL_PART_ROOM);
 		}
 		kernel_part_at = n;
 		memcpy(out_buf + n, sep, sizeof(sep) - 1);
@@ -107,7 +114,7 @@ write_logs(const char *klog, uint64_t klog_len)
 		/* No log partition (QEMU): echo the returned kernel log on the console instead. */
 		if (klog != NULL) {
 			print("\n== KERNEL LOG ==\n");
-			for (uint64_t i = 0; i < klog_len; i++) {
+			for (uint64_t i = 0; i < klog_len && i < sizeof(out_buf); i++) {      /* (as much as is staged, no more) */
 				put_char(klog[i]);
 			}
 			print("\n== END OF LOG ==\n");
