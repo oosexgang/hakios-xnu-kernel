@@ -192,15 +192,32 @@ core0(void *unused __unused)
 void FlushPoC_DcacheRegion(vm_offset_t va __unused, size_t length __unused) { flushes++; }
 void loader_return(void) {}
 
-/* this kernel's own driver of the controller (board/ufshc.c) is not part of this: it is there, and not used */
-static unsigned switched_out;
+/*
+ * this kernel's own driver of the controller (board/ufshc.c) is not part of this: it is there, and not used -- but by
+ * the scenarios of the way between the two, which say what its reads answer (darwin's bytes, from where its unit has
+ * it) and whether its list goes back in
+ */
+static unsigned switched_out, switched_in, native_reads;
+static int native_error = EIO, switch_in_error = EIO;
 bool ufshc_probe(const struct ufshc_loader *loader __unused, bool only __unused) { return false; }
 bool ufshc_available(void) { return false; }
 void ufshc_set_luns(uint32_t mask __unused) {}
-int ufshc_switch_in(bool prove __unused) { return EIO; }
+int ufshc_switch_in(bool prove __unused) { switched_in++; return switch_in_error; }
 int ufshc_switch_out(const char *why __unused) { switched_out++; return 0; }
 bool ufshc_list_in(void) { return list_in; }
-int ufshc_read(uint8_t lun __unused, uint64_t offset __unused, uint8_t *dst __unused, uint64_t len __unused) { return EIO; }
+#define DARWIN_ON_ITS_UNIT 0x100000ull         /* (where darwin begins on its unit, as a GPT would say) */
+int
+ufshc_read(uint8_t lun __unused, uint64_t offset, uint8_t *dst, uint64_t len)
+{
+	native_reads++;
+	if (native_error != 0) {
+		return native_error;
+	}
+	for (uint64_t i = 0; i < len; i++) {
+		dst[i] = made_up(2, offset - DARWIN_ON_ITS_UNIT + i);  /* (darwin's, part 2) */
+	}
+	return 0;
+}
 void ufshc_report(const char *when __unused) {}
 
 static void
@@ -787,6 +804,81 @@ off_without_the_loader(void)
 	CHECK(log_text[0] == 0 && asked_n == 0, "nor on the way out: %s", log_text);
 }
 
+/* ---- the way between the loader and this kernel's own driver ------------------------------------------------ */
+
+/* darwin through this kernel's own driver, from where its unit has it; a read of it that fails, and through the loader from
+ * then on, the driver's list put out */
+static void
+through_its_own_driver(void)
+{
+	static uint8_t data[3 * 4096];
+	size_t done = 0;
+
+	loader("");
+	hakios_ufs_init();
+	ufs_lun[DARWIN] = 0;
+	ufs_lun_offset[DARWIN] = DARWIN_ON_ITS_UNIT;
+	ufs_native_on = true;
+	native_error = 0;
+	CHECK(fake_dev_pread("rufs_darwin", data, sizeof(data), AT(5) + 100, &done) == 0 && done == sizeof(data) &&
+	    is_disk(DARWIN, 5 * 4096 + 100, data, sizeof(data)), "read through it: %s", log_text);
+	CHECK(native_reads == 1 && asked_n == 0, "the loader asked nothing: %u reads, %u asked", native_reads, asked_n);
+	native_error = EIO;
+	memset(data, 0, sizeof(data));
+	CHECK(fake_dev_pread("rufs_darwin", data, sizeof(data), AT(7), &done) == 0 && is_disk(DARWIN, 7 * 4096, data, sizeof(data)),
+	    "a read that failed there, made through the loader: %s", log_text);
+	CHECK(!ufs_native_on && ufs_native_fallbacks == 1 && switched_out == 1 && asked_n >= 1, "through the loader from now on, the "
+	    "list out: %llu, %u", (unsigned long long)ufs_native_fallbacks, switched_out);
+	CHECK(logged("ufs: darwin: bytes 28672..40959: this kernel's own read failed (5); through the loader from now on"), "said: %s",
+	    log_text);
+	native_reads = 0;
+	CHECK(fake_dev_pread("rufs_darwin", data, 4096, AT(9), &done) == 0 && native_reads == 0, "and not tried again");
+}
+
+/* a partition its own driver does not know the unit of goes through the loader */
+static void
+a_unit_not_known(void)
+{
+	static uint8_t data[4096];
+	size_t done = 0;
+
+	loader("");
+	hakios_ufs_init();
+	ufs_native_on = true;
+	native_error = 0;
+	CHECK(fake_dev_pread("rufs_super", data, sizeof(data), AT(1), &done) == 0 && is_disk(SUPER, 4096, data, sizeof(data)),
+	    "read: %s", log_text);
+	CHECK(native_reads == 0 && asked_n == 1 && ufs_native_on, "through the loader, the driver still on");
+}
+
+/* a write has the driver's list out for its length: reads meanwhile through the loader, not a failure; closed, the list back */
+static void
+writing_has_its_list_out(void)
+{
+	static uint8_t data[4096], back[4096];
+	size_t done = 0;
+
+	loader("ufs_write=1");
+	hakios_ufs_init();
+	ufs_lun[DARWIN] = 0;
+	ufs_lun_offset[DARWIN] = DARWIN_ON_ITS_UNIT;
+	ufs_native_on = true;
+	native_error = 0;
+	switch_in_error = 0;
+	memset(data, 0x3c, sizeof(data));
+	CHECK(try_as_root("var_busy", 1) == 0 && fake_dev_open("rufs_darwin", FREAD | FWRITE) == 0, "(the writer, and its device)");
+	CHECK(fake_dev_pwrite("rufs_darwin", data, sizeof(data), AT(WRITE_FIRST), &done) == 0, "written: %s", log_text);
+	CHECK(switched_out == 1 && !ufs_native_on && ufs_write_busy, "the list out for the write: %u", switched_out);
+	native_error = EIO;                     /* (its list out: a read there would fail) */
+	CHECK(fake_dev_pread("rufs_darwin", back, sizeof(back), AT(3), &done) == 0 && is_disk(DARWIN, 3 * 4096, back, sizeof(back)),
+	    "a read meanwhile, through the loader");
+	CHECK(ufs_native_fallbacks == 0 && native_reads == 0, "not a failure: %llu", (unsigned long long)ufs_native_fallbacks);
+	CHECK(fake_dev_pwrite("rufs_darwin", data, sizeof(data), AT(WRITE_FIRST + 1), &done) == 0 && switched_out == 1,
+	    "a second write: the list stays out (%u)", switched_out);
+	CHECK(fake_dev_close("rufs_darwin") == 0, "closed");
+	CHECK(switched_in == 1 && ufs_native_on && !ufs_write_busy, "the list back in, reads through it again: %u", switched_in);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -798,7 +890,8 @@ main(int argc, char **argv)
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
 		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
 		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
-		{ "off_without_the_loader", off_without_the_loader, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
+		{ "off_without_the_loader", off_without_the_loader, 1 }, { "through_its_own_driver", through_its_own_driver, 1 },
+		{ "a_unit_not_known", a_unit_not_known, 1 }, { "writing_has_its_list_out", writing_has_its_list_out, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
 		{ "reads_short_of_a_block", reads_short_of_a_block, 1 }, { "reads_that_follow", reads_that_follow, 1 }, { "its_devices", its_devices, 1 },
 		{ "the_report", the_report, 1 }, { "the_report_read_only", the_report_read_only, 1 }, { "one_past_the_last", one_past_the_last, 1 },
 	};
