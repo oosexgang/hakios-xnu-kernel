@@ -1532,7 +1532,8 @@ class Repository(unittest.TestCase):
     def test_the_repository_names_no_phone(self):
         # phones are device packages, kept on the devices branch: what the repository tracks under
         # arch/arm64/boot/dts/ is the emulator's board and the templates
-        tracked = subprocess.run(['git', 'ls-files', 'arch/arm64/boot/dts'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        import files                    # (tools/, on the path: git's list, or a release's)
+        tracked = files.listed(['arch/arm64/boot/dts'], root=ROOT)
         self.assertEqual(sorted({name.split('/')[4] for name in tracked}), ['README.md', '_template', 'qemu-virt'])
 
     def test_the_tests_phones_are_valid_packages(self):

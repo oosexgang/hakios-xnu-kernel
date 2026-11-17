@@ -45,6 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boards  # noqa: E402  (what a board file is, and whether one is right)
+import files  # noqa: E402  (the repository's own files: git's list, or a release's)
 
 BRANCH = 'devices'              # where packages are kept when nothing else is said
 NOTE = '.from'                  # arch/arm64/boot/dts/NAME/.from: where a package that was brought in is from
@@ -159,7 +160,7 @@ class Source:
 
 def tracked(name):
     """Is arch/arm64/boot/dts/NAME part of the repository itself (the emulator's board, the templates)?"""
-    return bool(git('ls-files', '--', f'arch/arm64/boot/dts/{name}', check=False).stdout.strip())
+    return bool(files.listed([f'arch/arm64/boot/dts/{name}'], root=boards.ROOT))
 
 
 def described(directory, name, board=None):

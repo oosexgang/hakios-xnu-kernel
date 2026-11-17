@@ -4,7 +4,7 @@ driver, tool, script and test belongs to a part, the parts are in order; and wha
 import contextlib
 import importlib.util
 import io
-import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -13,11 +13,11 @@ spec = importlib.util.spec_from_file_location('tests_for', ROOT / 'scripts/tests
 tests_for = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tests_for)
 
-TRACKED = [f for f in subprocess.run(['git', '-C', str(ROOT), 'ls-files'], capture_output=True, text=True,
-                                     check=True).stdout.split('\n') if f]
+sys.path.insert(0, str(ROOT / 'tools'))
+import files  # noqa: E402  (the repository's files: git's list, or a release's)
+
 # (a file being added is there before it is tracked: what git does not ignore counts too)
-TRACKED += [f for f in subprocess.run(['git', '-C', str(ROOT), 'ls-files', '--others', '--exclude-standard'],
-                                      capture_output=True, text=True, check=True).stdout.split('\n') if f]
+TRACKED = files.listed(others=True, root=ROOT)
 AREAS = tests_for.areas()
 
 
