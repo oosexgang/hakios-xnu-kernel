@@ -1020,7 +1020,8 @@ apfs_nx_open(struct apfs_nx *nx, const struct apfs_dev *dev)
 	nx->cache = apfs_alloc(APFS_CACHE_BLOCKS * sizeof(*nx->cache));
 	nx->cache_hash = apfs_alloc(APFS_CACHE_HASH * sizeof(*nx->cache_hash));
 	if (nx->cache == NULL || nx->cache_hash == NULL) {
-		return ENOMEM;                  /* apfs_nx_close() frees what there is */
+		apfs_nx_close(nx);              /* (what there is given back: a failed open leaves nothing to close) */
+		return ENOMEM;
 	}
 	for (i = 0; i < APFS_CACHE_BLOCKS; i++) {
 		nx->cache[i].addr = APFS_BUF_EMPTY;
@@ -1039,6 +1040,7 @@ apfs_nx_open(struct apfs_nx *nx, const struct apfs_dev *dev)
 	 */
 	block0 = apfs_alloc(APFS_NX_MINIMUM_BLOCK_SIZE);
 	if (block0 == NULL) {
+		apfs_nx_close(nx);
 		return ENOMEM;
 	}
 	error = nx->dev.read(nx->dev.ctx, 0, block0, APFS_NX_MINIMUM_BLOCK_SIZE);

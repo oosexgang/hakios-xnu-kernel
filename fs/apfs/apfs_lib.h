@@ -454,6 +454,7 @@ struct apfs_cfile {
 
 /* ---- container and volumes ---- */
 
+/* 0, or an errno; a failed open has given back whatever it made, and leaves nothing to close (closing is harmless) */
 int apfs_nx_open(struct apfs_nx *nx, const struct apfs_dev *dev);
 void apfs_nx_close(struct apfs_nx *nx);
 /* The hash APFS keeps with a name in its directory record (22 bits); false: the name cannot be hashed */
