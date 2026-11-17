@@ -94,6 +94,10 @@ rpmh_address(const char *name)
 {
 	const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db;
 
+	if (db == NULL) {
+		printf("goodix: the command database is not mapped\n");
+		return 0;
+	}
 	if (!hakios_cmd_db_valid(db)) {
 		printf("goodix: no command database (magic %02x %02x %02x %02x)\n", db->magic[0], db->magic[1], db->magic[2],
 		    db->magic[3]);
@@ -1136,6 +1140,11 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
+	if (!tlmm || !gcc) {
+		printf("goodix: the pins or the clock controller could not be mapped\n");
+		thread_terminate(current_thread());
+		return;
+	}
 	if (looking_only) {
 		/* (the clock controller and the pins are always reachable; the serial engine, behind its clocks, is not read) */
 		show_state("as found (touchscreen=-1: looking only)");
@@ -1149,6 +1158,11 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
 	cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);      /* memory, not registers: no alignment rules */
 
+	if (!se || !rsc || !cmd_db) {
+		printf("goodix: the serial engine, RPMh or its command database could not be mapped\n");
+		thread_terminate(current_thread());
+		return;
+	}
 	if (!bring_up()) {
 		printf("goodix: no %s touch screen\n", chip_name());
 		thread_terminate(current_thread());

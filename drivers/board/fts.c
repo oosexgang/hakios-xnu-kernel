@@ -83,6 +83,10 @@ rpmh_address(const char *name)
 {
 	const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db;
 
+	if (db == NULL) {
+		printf("fts: the command database is not mapped\n");
+		return 0;
+	}
 	if (!hakios_cmd_db_valid(db)) {
 		printf("fts: no command database (magic %02x %02x %02x %02x)\n", db->magic[0], db->magic[1], db->magic[2],
 		    db->magic[3]);
