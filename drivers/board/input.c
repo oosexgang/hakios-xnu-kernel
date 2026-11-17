@@ -167,6 +167,10 @@ touch_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	struct hakios_touch t;
 	int error = 0, moved = 0;
 
+	if (uio_resid(uio) < (user_ssize_t)sizeof(t)) {
+		/* (room for no record: refused at once, not slept on until a touch and then answered as the end of the file) */
+		return EINVAL;
+	}
 	lck_mtx_lock(&touch_lock);
 	while (touch_head == touch_tail) {
 		error = msleep(&touch_queue, &touch_lock, PZERO | PCATCH, "hakios-touch", NULL);
