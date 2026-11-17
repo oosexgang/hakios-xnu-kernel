@@ -42,6 +42,11 @@ tags yet, so the current work is one section.
 - The flashlight could be left on at the run's end when the end met a light being switched on (torch).
 - `bench` looked for the loader where it was before it moved to `arch/arm64/boot/`.
 - The phone's firmware beside the userland (`userland/fw-*/`, a Wi-Fi passphrase among it) was not kept out of commits.
+- The Bluetooth bridge (`bt_host.c`), before it has run on a phone: the channel was told after the lock was let go,
+  which a channel closing at that moment would have made a use of freed memory; the controller's packets could keep
+  bluetoothd's commands waiting without end; a write to the kernel control could leave half a packet in the line; a
+  packet without room was dropped instead of waiting; a new bluetoothd got the last one's packets; a failed start left
+  the service and the rest behind. ([bluetooth.md](Documentation/bluetooth.md))
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
