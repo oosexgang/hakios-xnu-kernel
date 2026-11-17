@@ -167,10 +167,17 @@ ask(const char *what, int message, size_t largest, const struct qmi_elem_info *r
 {
 	const struct qmi_response_type_v01 *result = reply;
 	static uint8_t bytes[QMI_HEADER_SIZE + 6400];
+	struct qmi_response_type_v01 *preset = reply;
 	struct qmi_txn txn;
 	uint64_t began = now_ms();
 	int ret;
 
+	/*
+	 * (a reply without its result -- empty, or of fields the description does not know -- is not success: the
+	 * structure is zeroed by its callers, and 0 is QMI_RESULT_SUCCESS_V01)
+	 */
+	preset->result = QMI_RESULT_FAILURE_V01;
+	preset->error = QMI_ERR_MALFORMED_MSG_V01;
 	ret = qmi_txn_init(&handle, &txn, reply_ei, reply);
 	if (ret >= 0) {
 		ret = qmi_send_request(&handle, NULL, &txn, message, largest, request_ei, request);
