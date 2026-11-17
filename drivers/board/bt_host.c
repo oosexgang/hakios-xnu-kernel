@@ -38,6 +38,7 @@
 #include <skywalk/os_skywalk_private.h>
 
 #include "bt_hci.h"
+#include "bt_queue.h"
 #include "log.h"
 
 HAKIOS_DEFINE_SAY(ml_get_interrupts_enabled())
@@ -48,14 +49,11 @@ static uint32_t quirks = BT_Q_DEFAULT;
 static LCK_GRP_DECLARE(bt_host_lck_grp, "board-bt");
 static LCK_MTX_DECLARE(bt_host_lock, &bt_host_lck_grp);
 
-/* what bluetoothd wrote, not sent yet (a run of bytes: whole packets, perhaps the start of one more) */
-#define TX_QUEUE        16384u
-static uint8_t tx_queue[TX_QUEUE];
-static unsigned tx_count;
-/* whole packets for bluetoothd, not in the channel yet (a ring) */
-#define RX_QUEUE        32768u
-static uint8_t rx_queue[RX_QUEUE];
-static unsigned rx_head, rx_count;
+/* what bluetoothd wrote, not sent yet (a line: whole packets, perhaps the start of one more), and the whole packets for
+ * bluetoothd not in the channel yet (a ring): board/bt_queue.h, under bt_host_lock */
+static uint8_t tx_bytes[16384], rx_bytes[32768];
+static struct bt_line tx_line = { tx_bytes, sizeof(tx_bytes), 0 };
+static struct bt_ring rx_ring_queue = { rx_bytes, sizeof(rx_bytes), 0, 0 };
 static uint32_t tx_dropped, rx_dropped, answered_here, sent, received;
 
 /* ---- the Skywalk pipe -------------------------------------------------------------------------------------- */
@@ -129,16 +127,14 @@ pipe_slot_init(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unus
 static void pipe_slot_fini(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, __unused kern_channel_ring_t r,
     __unused channel_slot_t s, __unused uint32_t index) { }
 
-/* bytes bluetoothd wrote into the queue for the controller; false when there is no room for them (they are dropped) */
+/* bytes bluetoothd wrote into the line for the controller; false when there is no room for them (they are dropped) */
 static bool
 tx_put_locked(const uint8_t *bytes, size_t length)
 {
-	if (length > TX_QUEUE - tx_count) {
+	if (length > tx_line.size || !bt_line_put(&tx_line, bytes, (unsigned)length)) {
 		tx_dropped += (uint32_t)length;
 		return false;
 	}
-	memcpy(tx_queue + tx_count, bytes, length);
-	tx_count += (unsigned)length;
 	return true;
 }
 
@@ -175,19 +171,6 @@ pipe_sync_tx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_cha
 	return 0;
 }
 
-/* the length of the packet at the head of the RX queue (only whole ones are queued) */
-static unsigned
-rx_head_length_locked(void)
-{
-	uint8_t header[5];
-	unsigned have = rx_count < 5 ? rx_count : 5;
-
-	for (unsigned i = 0; i < have; i++) {
-		header[i] = rx_queue[(rx_head + i) % RX_QUEUE];
-	}
-	return bt_h4_length(header, have);
-}
-
 /* the packets for bluetoothd into the RX ring's free slots, a packet a slot */
 static errno_t
 pipe_sync_rx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_channel_ring_t ring, __unused uint32_t flags)
@@ -197,14 +180,14 @@ pipe_sync_rx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_cha
 	(void)kern_channel_reclaim(ring);
 	slot = kern_channel_get_next_slot(ring, NULL, NULL);
 	lck_mtx_lock(&bt_host_lock);
-	while (slot != NULL && rx_count > 0 && rx_pool != NULL) {
+	while (slot != NULL && rx_ring_queue.count > 0 && rx_pool != NULL) {
 		kern_packet_t packet = 0;
 		kern_buflet_t buflet;
 		uint8_t *base;
-		unsigned length = rx_head_length_locked();
+		unsigned length = bt_ring_next(&rx_ring_queue);
 
-		if (length == 0 || length > rx_count) {
-			rx_count = 0;                   /* (cannot be: only whole packets are queued) */
+		if (length == 0) {
+			(void)bt_ring_take(&rx_ring_queue, NULL);      /* (cannot be: only whole packets are queued) */
 			break;
 		}
 		if (kern_pbufpool_alloc_nosleep(rx_pool, 1, &packet) != 0 || packet == 0) {
@@ -214,16 +197,11 @@ pipe_sync_rx(__unused kern_nexus_provider_t p, __unused kern_nexus_t n, kern_cha
 		base = buflet != NULL ? kern_buflet_get_data_address(buflet) : NULL;
 		if (base == NULL || kern_buflet_get_data_limit(buflet) < length) {
 			kern_pbufpool_free(rx_pool, packet);
-			rx_head = (rx_head + length) % RX_QUEUE;        /* (one that does not fit a slot: dropped) */
-			rx_count -= length;
+			(void)bt_ring_take(&rx_ring_queue, NULL);      /* (one that does not fit a slot: dropped) */
 			rx_dropped++;
 			continue;
 		}
-		for (unsigned i = 0; i < length; i++) {
-			base[i] = rx_queue[(rx_head + i) % RX_QUEUE];
-		}
-		rx_head = (rx_head + length) % RX_QUEUE;
-		rx_count -= length;
+		(void)bt_ring_take(&rx_ring_queue, base);
 		(void)kern_buflet_set_data_offset(buflet, 0);
 		(void)kern_buflet_set_data_length(buflet, (uint16_t)length);
 		(void)kern_packet_finalize(packet);
@@ -248,15 +226,11 @@ deliver(const uint8_t *packet, unsigned length)
 	kern_channel_ring_t ring;
 
 	lck_mtx_lock(&bt_host_lock);
-	if (!pipe_ready || length > RX_QUEUE - rx_count) {
+	if (!pipe_ready || !bt_ring_put(&rx_ring_queue, packet, length)) {
 		rx_dropped++;
 		lck_mtx_unlock(&bt_host_lock);
 		return;
 	}
-	for (unsigned i = 0; i < length; i++) {
-		rx_queue[(rx_head + rx_count + i) % RX_QUEUE] = packet[i];
-	}
-	rx_count += length;
 	ring = rx_ring;
 	lck_mtx_unlock(&bt_host_lock);
 	if (ring != NULL) {
@@ -490,23 +464,20 @@ carry(__unused void *parameter, __unused wait_result_t result)
 		/* what bluetoothd wrote: whole packets, to the controller or answered here */
 		for (;;) {
 			unsigned have;
+			uint8_t first;
 			int n;
 
 			lck_mtx_lock(&bt_host_lock);
-			have = tx_count;
-			if ((n = bt_h4_from_host(tx_queue, have, TX_QUEUE)) < 0) {
-				say("bt: %u bytes from bluetoothd that begin with %#x, no H4 packet a host sends: dropped\n", have, tx_queue[0]);
-				tx_dropped += have;
-				tx_count = 0;
+			have = tx_line.count;
+			first = tx_bytes[0];
+			n = bt_line_take(&tx_line, to_controller, sizeof(to_controller), &tx_dropped);
+			lck_mtx_unlock(&bt_host_lock);
+			if (n < 0) {
+				say("bt: %u bytes from bluetoothd that begin with %#x, no H4 packet a host sends: dropped\n", have, first);
 			}
 			if (n <= 0) {
-				lck_mtx_unlock(&bt_host_lock);
 				break;
 			}
-			memcpy(to_controller, tx_queue, (unsigned)n);
-			memmove(tx_queue, tx_queue + n, have - (unsigned)n);
-			tx_count = have - (unsigned)n;
-			lck_mtx_unlock(&bt_host_lock);
 			if ((length = (int)bt_answer_here(to_controller, (unsigned)n, quirks, answer, sizeof(answer))) > 0) {
 				answered_here++;
 				deliver(answer, (unsigned)length);
