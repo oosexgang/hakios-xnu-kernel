@@ -1,0 +1,358 @@
+What each part of the project is made of, and what holds it: which files, which tests, which documents.
+
+It is read by scripts/tests-for.py ("I changed this file: what do I run?") and checked by
+workbench/maintainers_test.py: every pattern names a file there is, every test is there, and every driver and every
+tool belongs to a part. Areas are in alphabetical order.
+
+	F:	Files: a path, or a pattern of them (* within a directory, a directory ending in / for all under it)
+	T:	Tests: under workbench/ (or where the path says), each one run by make check unless it says otherwise
+	D:	Documents that explain it
+	K:	The feature of a board, or the boot argument, that starts it
+
+APFS AND THE RAM DISKS
+F:	fs/apfs/
+F:	fs/ramfs/
+F:	tools/apfs/
+F:	drivers/board/image.c
+F:	drivers/board/apfs_check.c
+F:	drivers/board/sparse.c
+F:	include/board/apfs_check.h
+F:	include/board/sparse.h
+F:	include/board/virtio_blk.h
+T:	workbench/apfs_image_test.sh
+T:	workbench/image_file_test.c (run by workbench/apfs_image_test.sh)
+T:	workbench/sparse_driver_test.c
+D:	Documentation/ram-budget.md
+
+AUDIO
+F:	drivers/board/audio.c
+F:	drivers/board/sound.c
+F:	drivers/board/speaker.c
+F:	drivers/board/mic.c
+F:	drivers/board/guard.c
+F:	drivers/board/adsp.c
+F:	components/audio/
+F:	include/board/audio.h
+T:	workbench/audio_device_test.c
+T:	workbench/sound_driver_test.c
+T:	workbench/speaker_driver_test.c
+T:	workbench/mic_driver_test.c
+T:	workbench/guard_test.c
+D:	Documentation/drivers.md
+K:	speaker-aw88261, mic-wcd938x, adsp; sound=, adsp=
+
+BACKLIGHT AND BRIGHTNESS
+F:	drivers/board/backlight.c
+F:	drivers/board/backlight_core.h
+F:	components/brightness/
+T:	workbench/backlight_driver_test.c
+T:	workbench/backlight_test.c
+D:	Documentation/backlight.md
+K:	backlight { }; backlight=
+
+BATTERY
+F:	drivers/board/battery.c
+F:	drivers/board/battery_core.h
+F:	drivers/iokit/BoardBattery.cpp
+T:	workbench/battery_driver_test.c
+K:	battery-uefi; battery=
+
+BLUETOOTH
+F:	drivers/board/bt_uart.c
+F:	drivers/board/bt_host.c
+F:	drivers/board/bt_hci.h
+F:	drivers/iokit/BoardBluetooth.cpp
+F:	include/board/bt.h
+T:	workbench/bt_uart_test.c
+T:	workbench/bt_hci_test.c
+D:	Documentation/drivers.md
+K:	bluetooth-wcn-uart; bt=, bt_quirks=
+
+BOARDS AND DEVICE PACKAGES
+F:	arch/arm64/boot/dts/
+F:	tools/boards.py
+F:	tools/boardfile.py
+F:	tools/devicetree.py
+F:	tools/device.py
+F:	tools/qupclocks.py
+F:	drivers/board/board.c
+F:	drivers/board/board.h
+F:	drivers/board/soc.c
+F:	drivers/board/drivers.c
+F:	samples/device-repo/
+T:	workbench/boards_test.py
+T:	workbench/device_test.py
+T:	workbench/board_test.c
+T:	workbench/drivers_list_test.c
+T:	workbench/porting_test.sh
+T:	workbench/qupclocks_test.py
+D:	Documentation/porting.md
+D:	Documentation/features.md
+D:	arch/arm64/boot/dts/README.md
+
+BUTTONS AND INPUT
+F:	drivers/board/buttons.c
+F:	drivers/board/input.c
+F:	drivers/board/virtio_input.c
+F:	include/board/input.h
+T:	workbench/buttons_driver_test.c
+T:	workbench/input_queue_test.c
+K:	buttons-pmic; buttons=
+
+CAMERA AND FLASHLIGHT
+F:	drivers/board/camera.c
+F:	drivers/board/torch.c
+F:	components/camera/
+F:	include/board/camera.h
+T:	workbench/camera_wiring_test.c
+T:	workbench/torch_driver_test.c
+K:	camera-sm7325, torch-pm8350c; cam=, torch=
+
+DARWIN USER SPACE
+F:	darwin/
+F:	userland/
+F:	init/
+F:	lib/
+F:	components/apple-id/
+F:	components/statusbar/
+F:	components/tweaks/
+F:	components/wallpaper/
+F:	components/upstream.dts
+T:	workbench/qemu_post_test.sh (with a kernel: make qemu)
+T:	workbench/darwin_tools_test.py
+D:	darwin/README.md
+D:	Documentation/darwin26-boot.md
+D:	Documentation/darwin27-ubuntu.ru.md
+
+DEFCONFIGS AND BOOT ARGUMENTS
+F:	arch/arm64/configs/
+F:	tools/defconfig.py
+F:	tools/bootargs.py
+F:	samples/my_defconfig
+T:	make docs-check
+T:	workbench/bootargs_test.py
+D:	Documentation/boot-args.md
+
+GPU AND METAL
+F:	drivers/board/adreno.c
+F:	drivers/board/adreno_profile.h
+F:	drivers/board/gen8_regs.h
+F:	drivers/iokit/BoardGPU.cpp
+F:	drivers/iokit/MiniIOSurface.cpp
+F:	drivers/iokit/MiniIOSurface.h
+F:	drivers/iokit/MiniIOMobileFramebuffer.cpp
+F:	components/metal/
+T:	workbench/board_test.c
+T:	components/metal/plugin/Makefile (make -C components/metal/plugin test)
+D:	Documentation/metal-glass.md
+D:	Documentation/metal-plugin.md
+K:	gpu-a660; gpu=, metal=
+
+HAPTICS
+F:	drivers/board/haptic.c
+F:	drivers/iokit/BoardHaptics.cpp
+T:	workbench/haptic_driver_test.c
+K:	haptic-aw86927; haptic=
+
+IMAGES
+F:	tools/image.py
+F:	arch/arm64/boot/mkboot.py
+F:	arch/arm64/boot/mkpayload.py
+F:	arch/arm64/boot/mkidentity.py
+F:	tools/identity.py
+T:	workbench/image_test.py
+T:	workbench/mkboot_test.py
+T:	workbench/identity_test.py
+T:	workbench/loader_test.c
+D:	Documentation/images.md
+
+KERNEL SOURCES
+F:	kernel/
+F:	build.config.*
+F:	arch/arm64/kernel/
+F:	arch/arm64/include/
+F:	arch/arm64/tools/
+F:	include/external/
+T:	workbench/kernel_tools_test.sh
+T:	workbench/place_kernel_test.py
+T:	kernel/verify.sh (make verify-kernel; network)
+T:	kernel/syntax-check.sh (make syntax-kernel; network)
+D:	kernel/README.md
+D:	kernel/patches/README.md
+D:	Documentation/building.md
+
+LOADER
+F:	arch/arm64/boot/loader.c
+F:	arch/arm64/boot/efi.h
+F:	arch/arm64/boot/src/
+F:	arch/arm64/boot/uefi/
+F:	arch/arm64/boot/build.sh
+F:	bench
+F:	build.config.bench
+T:	workbench/loader_test.c
+T:	workbench/loader_window_test.c
+T:	workbench/loader_download_test.c
+T:	workbench/loader_dsu_test.c
+T:	workbench/loader_own_partition_test.c
+T:	workbench/loader_boot_test.sh
+D:	arch/arm64/boot/README.md
+
+MEASUREMENTS AND PERFORMANCE
+F:	drivers/board/cpufreq.c
+F:	drivers/board/scmi_perf.c
+F:	drivers/board/ddr.c
+F:	drivers/board/bench.c
+F:	drivers/board/cputop.c
+T:	workbench/cpufreq_driver_test.c
+T:	workbench/scmi_perf_test.c
+T:	workbench/ddr_driver_test.c
+K:	cpufreq-epss, ddr-rpmh; cpufreq=, ddr=, membench=, cpuload=, cputop=
+
+MODEM
+F:	drivers/board/mpss.c
+F:	drivers/board/nas.c
+F:	drivers/board/cell.c
+F:	drivers/board/ipa.c
+F:	include/board/ipa.h
+F:	include/board/nas.h
+T:	workbench/qmi/run.sh
+K:	mpss=
+
+QEMU
+F:	tools/qemu-kernel.sh
+F:	tools/qemu-root.sh
+F:	tools/qemu/
+F:	tools/qemu-init/
+F:	drivers/board/virtio.h
+F:	drivers/board/virtio_blk.c
+F:	drivers/board/virtio_net.c
+F:	drivers/board/virtio_sound.c
+T:	workbench/qemu_boot_test.sh (with a kernel: make qemu)
+T:	workbench/qemu_smp_test.sh (with a kernel: make qemu)
+T:	workbench/qemu_helpers_test.py
+D:	Documentation/qemu.md
+
+QUALCOMM'S BUSES AND SERVICES
+F:	drivers/board/geni_spi.h
+F:	drivers/board/i2c_gpio.h
+F:	drivers/board/tlmm.h
+F:	drivers/board/spmi.h
+F:	drivers/board/rpmh.h
+F:	drivers/board/cmd_db.h
+F:	drivers/board/smem.h
+F:	drivers/board/smp2p.h
+F:	drivers/board/smmu.h
+F:	drivers/board/scm.h
+F:	drivers/board/mdt.h
+F:	drivers/board/ipc.h
+F:	drivers/board/glink_queue.h
+F:	drivers/board/qrtr_frame.h
+F:	drivers/board/qmi.c
+F:	include/board/qmi.h
+F:	include/board/qrtr.h
+T:	workbench/geni_spi_test.c
+T:	workbench/i2c_gpio_test.c
+T:	workbench/tlmm_test.c
+T:	workbench/spmi_test.c
+T:	workbench/rpmh_test.c
+T:	workbench/cmd_db_test.c
+T:	workbench/smem_test.c
+T:	workbench/mdt_test.c
+T:	workbench/ipc_test.c
+T:	workbench/glink_queue_test.c
+T:	workbench/qrtr_frame_test.c
+T:	workbench/qmi/run.sh
+
+SECURITY AND CRYPTOGRAPHY
+F:	security/
+F:	crypto/
+F:	components/sep/
+F:	drivers/iokit/MiniAppleKeyStore.cpp
+
+STORAGE
+F:	drivers/board/ufs.c
+F:	drivers/board/ufshc.c
+F:	drivers/board/ufshc.h
+F:	drivers/board/virtio_blk.c
+T:	workbench/ufs_driver_test.c
+T:	workbench/ufs_whitelist_test.c
+T:	workbench/ufs_native_read_test.c
+D:	Documentation/porting.md
+K:	ufs=, ufs_native=
+
+THE DRIVERS' COMMON PARTS
+F:	drivers/board/kernel.h
+F:	drivers/board/log.h
+F:	drivers/board/mmio.h
+F:	drivers/board/time.h
+F:	drivers/board/cache.h
+F:	drivers/iokit/GenericARMPE.cpp
+F:	drivers/iokit/MiniDrivers.h
+F:	Documentation/examples/
+T:	Documentation/examples/example_led_test.c
+D:	Documentation/writing-a-driver.md
+
+THERMAL
+F:	drivers/board/thermal.c
+F:	drivers/board/thermal_core.h
+T:	workbench/thermal_driver_test.c
+T:	workbench/thermal_test.c
+D:	Documentation/thermal.md
+K:	thermal { }; thermal=
+
+TOOLS, CHECKS AND RELEASES
+F:	Makefile
+F:	tools/lint.sh
+F:	tools/check-links.py
+F:	tools/check-publishable.sh
+F:	tools/components.py
+F:	tools/heredoc-python.py
+F:	tools/kernel-view.sh
+F:	tools/analyze-userland.sh
+F:	tools/recording.py
+F:	tools/mk-focaltech-fw.py
+F:	tools/mk-libdeflate.sh
+F:	scripts/
+F:	workbench/run.sh
+F:	workbench/mutate.sh
+F:	workbench/mutants.py
+F:	workbench/fakekernel/
+F:	.github/
+F:	MAINTAINERS
+T:	workbench/maintainers_test.py
+T:	workbench/tools_test.py
+D:	tools/README.md
+D:	scripts/README.md
+D:	workbench/README.md
+D:	CONTRIBUTING.md
+
+TOUCH SCREENS
+F:	drivers/board/goodix.c
+F:	drivers/board/fts.c
+F:	drivers/board/fts_protocol.h
+F:	drivers/board/synaptics_report.h
+T:	workbench/touch_goodix_wiring_test.c
+T:	workbench/touch_goodix_poll_test.c
+T:	workbench/touch_reports_test.c
+T:	workbench/touch_fts_wiring_test.c
+T:	workbench/touch_fts_read_test.c
+T:	workbench/touch_fts_reports_test.c
+T:	workbench/synaptics_report_test.c
+K:	touch-goodix, touch-ft3658u; touchscreen=
+
+WI-FI AND THE NETWORK
+F:	drivers/board/wifi.c
+F:	drivers/board/wlfw.c
+F:	drivers/board/lx.c
+F:	drivers/board/sta.c
+F:	drivers/board/apple80211.c
+F:	drivers/board/net.c
+F:	drivers/iokit/BoardWLAN.cpp
+F:	drivers/iokit/MiniIONetworkStack.cpp
+F:	include/board/lx.h
+F:	include/board/net.h
+F:	include/board/sta.h
+T:	workbench/apple80211_test.c
+T:	workbench/station_test.c
+D:	Documentation/drivers.md
+K:	wifi-wcn6750; wifi=
