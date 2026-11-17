@@ -139,6 +139,7 @@ HakiosWLANStart(const char * interface, const uint8_t * address)
 		OSSafeReleaseNULL(node);
 		OSSafeReleaseNULL(match);
 		IOLog("HakiosWLAN: cannot create the services\n");
+		started = 0;                    /* (nothing made: the next attach tries again) */
 		return;
 	}
 	if ((mac = OSData::withBytes(address, 6)) != NULL) {
@@ -155,6 +156,7 @@ HakiosWLANStart(const char * interface, const uint8_t * address)
 	if (controller == NULL) {
 		wlan->release();
 		IOLog("HakiosWLAN: the controller did not start\n");
+		started = 0;                    /* (no controller under the node: the next attach tries again) */
 		return;
 	}
 
