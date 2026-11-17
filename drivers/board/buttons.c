@@ -340,7 +340,10 @@ pon_identify(void)
 	} else if (subtype == PON_SUBTYPE_PRIMARY || subtype == PON_SUBTYPE_GEN2_PRIMARY) {
 		pon_kpdpwr = PON_KPDPWR_BEFORE, pon_resin = PON_RESIN_BEFORE;
 	} else {
-		/* (a secondary block, or the half that is not the operating system's: no keys there) */
+		/*
+		 * (a secondary block, or the half that is not the operating system's: no keys there. Subtype 3, a block of
+		 * one register Linux's driver also reads, has not been seen on a phone with these PMICs: left alone too.)
+		 */
 		printf("buttons: ... a power-on block of subtype %#x, which has no keys this driver reads: left alone\n", subtype);
 		return false;
 	}
