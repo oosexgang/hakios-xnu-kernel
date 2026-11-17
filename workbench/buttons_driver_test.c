@@ -501,6 +501,44 @@ unknown_board(void)
 	CHECK(spmi.elsewhere == 0 && spmi.writes == 0, "nothing read or written");
 }
 
+/* a key held when the summary is said: it says which */
+static void
+held_in_the_summary(void)
+{
+	phone("phone-cmd");
+	fake_delay_divisor = 4;                 /* (the summary after 10 s of looks: 2.5 s here) */
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	power_down();
+	WAIT_FOR(logged("buttons: so far"), 30000);
+	CHECK(logged("; now power held;"), "the summary names the key held: %s", log_text);
+	pon_up();
+	no_write();
+}
+
+/* a PMIC silent for a moment, then answering again: more than half of the first reads failed, but not a
+ * thousand, so the keys are still watched */
+static void
+a_short_silence(void)
+{
+	phone("phone-cmd");
+	fake_delay_divisor = 40;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	pon_model.silent = true;
+	pin_model.silent = true;
+	WAIT_FOR(said_times("buttons: reading ") >= 8, 3000);
+	usleep(20 * 1000);
+	pon_model.silent = false;
+	pin_model.silent = false;
+	usleep(100 * 1000);
+	CHECK(!logged("giving up"), "not given up: %s", log_text);
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power after the silence");
+	no_write();
+}
+
 int
 main(int argc, char **argv)
 {
@@ -512,7 +550,8 @@ main(int argc, char **argv)
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
-		{ "board_without_keys", board_without_keys },
+		{ "board_without_keys", board_without_keys }, { "held_in_the_summary", held_in_the_summary },
+		{ "a_short_silence", a_short_silence },
 		{ "unknown_board", unknown_board },
 	};
 
