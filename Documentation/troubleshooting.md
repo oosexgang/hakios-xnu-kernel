@@ -261,10 +261,15 @@ software without it.
 | `image.py: ... is not what manifest.json says it is` | A file of the image changed after it was built. | Build the image again. |
 | `identity: the payload's is not one (N bytes): the one built in` | The loader found an `identity` entry it cannot read: not made by `mkidentity.py --blob`, or of another version. | `tools/image.py personalize IMAGE --identity DeviceTree.bin` again, with the same checkout's tools. |
 
-## A day with the phone (`scripts/phone-day.sh`, `tools/logcheck.py`)
+## A day with the phone (`scripts/phone-day.sh`, `scripts/phone-ready.py`, `tools/logcheck.py`)
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
+| `phone-day.sh: not ready (above): no run started` | `scripts/phone-ready.py` found something `./bench` needs MISSING; its lines are above and in `summary.md`. | What each MISSING line says; `--no-check` begins all the same. |
+| `OLD  kernel  ..., built ..., before commit ...` | The kernel (or the loader) was built before the newest change to its sources, a commit or a file not committed: the phone would run what was there before. | `make kernel` (`make loader`, then `./bench reload`). A kernel named by `BENCH_KERNEL` is not looked at. |
+| `MISSING  loader  ... does not know NAME` | The loader was built before the phone's package was brought in. | `make loader`, then `./bench reload`. |
+| `MISSING  identity  none: the loader was built without one` | Darwin would not be told which iPhone it runs on. | The `DeviceTree.bin` of your own IPSW as `firmware/NAME/identity.bin`, or `BENCH_IDENTITY=FILE`. |
+| `NOTE  phone_bt: bt firmware  no ... in userland/fw-bt` | The run at `bt=2` would find no patch for the controller. | `adb pull /vendor/bt_firmware/image/ userland/fw-bt/`, the small image again; or that run without `phone_bt`. |
 | `no log: the run did not come back` | `./bench run` left no new log: the kernel hung before the loader could fetch one, or the phone was not there. What `./bench` said is in `RUN.bench` beside it. | `./bench state`; the kernel's last words, if it hung, are in `logs/*.log.live` (`BENCH_FOLLOW`). |
 | `RUN did not go all the way (above)` | `tools/logcheck.py` found a part STOPPED, a panic or no kernel in that run's log; the day stops there. | The summary has the line that decides it; [phone-test.ru.md](phone-test.ru.md) says what each run must say. `--keep-going` runs the rest all the same. |
 | `kernel: NOT STARTED (no Darwin Kernel Version line)` | The log has nothing of the kernel: the loader did not start it (its own lines are above), or the log is not a run's. | `./bench log` for the loader's side; [porting.md](porting.md), step 4. |
