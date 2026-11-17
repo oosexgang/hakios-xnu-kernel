@@ -3447,7 +3447,7 @@ hakios_gpu_mapped(void)
 	space_commit(&core_space);
 }
 
-void
+bool
 hakios_gpu_unmap(uint64_t address, uint64_t size)
 {
 	uint32_t context = smmu_context(&core_space);
@@ -3457,7 +3457,7 @@ hakios_gpu_unmap(uint64_t address, uint64_t size)
 	}
 	space_commit(&core_space);
 	if (!gpu_kept) {
-		return;                 /* (the GPU given back: its SMMU context is off, and its registers not to be touched) */
+		return true;            /* (the GPU given back: its SMMU context is off, and its registers not to be touched) */
 	}
 	wr(smmu.base + context + SMMU_CB_TLBIASID, core_space.context);
 	wr(smmu.base + context + SMMU_CB_TLBSYNC, 1);
@@ -3466,9 +3466,11 @@ hakios_gpu_unmap(uint64_t address, uint64_t size)
 		spin_us(10);
 	}
 	if (rd(smmu.base + context + SMMU_CB_TLBSTATUS) & 1) {
-		printf("adreno: gpu: the SMMU's TLB did not say it had forgotten %#llx..%#llx: the 3D core may yet reach them\n",
-		    address, address + size);
+		printf("adreno: gpu: the SMMU's TLB did not say it had forgotten %#llx..%#llx: the 3D core may yet reach them, and they "
+		    "stay its own\n", address, address + size);
+		return false;
 	}
+	return true;
 }
 
 /* Memory that the 3D core and a program see without this processor's cache in between: out of that cache. */

@@ -125,7 +125,8 @@ void hakios_gpu_space(uint64_t *used, uint32_t *live, uint64_t *largest, unsigne
 extern uint32_t gpu_va;                 /* boot-arg gpu_va: 0 as before, 1 describe the addresses, 2 also guard them */
 bool hakios_gpu_map(uint64_t address, uint64_t phys, bool read_only);
 void hakios_gpu_mapped(void);
-void hakios_gpu_unmap(uint64_t address, uint64_t size);
+/* false: the SMMU's TLB did not say it had forgotten them -- the pages are to stay the GPU's, not go back */
+bool hakios_gpu_unmap(uint64_t address, uint64_t size);
 void hakios_gpu_to_memory(void *start, uint64_t size);
 uint32_t hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count);
 bool hakios_gpu_done(uint32_t fence);

@@ -61,7 +61,7 @@ void hakios_gpu_space(uint64_t * used, uint32_t * live, uint64_t * largest, unsi
 extern uint32_t gpu_va;                 /* boot-arg gpu_va: 0 as before, 1 describe the addresses, 2 also guard them */
 bool hakios_gpu_map(uint64_t address, uint64_t phys, bool read_only);
 void hakios_gpu_mapped(void);
-void hakios_gpu_unmap(uint64_t address, uint64_t size);
+bool hakios_gpu_unmap(uint64_t address, uint64_t size);
 void hakios_gpu_to_memory(void * start, uint64_t size);
 uint32_t hakios_gpu_submit(const uint64_t * addresses, const uint32_t * words, uint32_t count);
 extern uint32_t gpu_log;
@@ -650,8 +650,11 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * slot)
 		    keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
 			b->memory = NULL;               /* (now the kept one's) */
 		} else if (hakios_gpu_ready()) {
-			hakios_gpu_unmap(b->address, b->size);
-			hakios_gpu_address_free(b->address, b->size);
+			if (hakios_gpu_unmap(b->address, b->size)) {
+				hakios_gpu_address_free(b->address, b->size);
+			} else {
+				if (b->memory != NULL) b->memory->retain();    /* (the 3D core may still reach them: the pages, and the addresses, stay its own) */
+			}
 		}
 		if (b->map != NULL) {
 			b->map->release();
@@ -680,8 +683,11 @@ HakiosGPUUserClient::reap(void)
 		    keep(left->memory, NULL, left->address, left->size, left->flags)) {
 			left->memory = NULL;
 		} else if (hakios_gpu_ready()) {
-			hakios_gpu_unmap(left->address, left->size);
-			hakios_gpu_address_free(left->address, left->size);
+			if (hakios_gpu_unmap(left->address, left->size)) {
+				hakios_gpu_address_free(left->address, left->size);
+			} else {
+				if (left->memory != NULL) left->memory->retain(); /* (the 3D core may still reach them: the pages, and the addresses, stay its own) */
+			}
 		}
 		if (left->map != NULL) {
 			left->map->release();
@@ -800,7 +806,7 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 	}
 	hakios_gpu_mapped();
 	if (!mapped) {
-		hakios_gpu_unmap(b->address, size);
+		(void)hakios_gpu_unmap(b->address, size);
 		hakios_gpu_address_free(b->address, size);
 		IOLog("HakiosGPU: a buffer of %llu bytes cannot be entered into the GPU's address space\n", size);
 		return NULL;
@@ -828,8 +834,11 @@ HakiosGPUUserClient::dropKept(struct gpu_kept * k)
 		return;
 	}
 	if (hakios_gpu_ready()) {
-		hakios_gpu_unmap(k->address, k->size);
-		hakios_gpu_address_free(k->address, k->size);
+		if (hakios_gpu_unmap(k->address, k->size)) {
+			hakios_gpu_address_free(k->address, k->size);
+		} else {
+			k->memory->retain();    /* (the 3D core may still reach them: the pages, and the addresses, stay its own) */
+		}
 	}
 	k->memory->release();
 	k->memory = NULL;
