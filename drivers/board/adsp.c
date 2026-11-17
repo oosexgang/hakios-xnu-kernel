@@ -1186,6 +1186,8 @@ step_header(void)
 	hakios_cache_flush(page, page + PAGE_SIZE);
 	hakios_barrier();
 	result = scm("to take the audio DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_ADSP, kvtophys(page), 0, &answer);
+	/* (TrustZone has taken its copy by the time the call returns: Linux's qcom_scm_pas_init_image() frees it then too) */
+	kmem_free(kernel_map, page, PAGE_SIZE);
 	if (result != 0 || answer != 0) {
 		printf("adsp: %u: TRUSTZONE DOES NOT TAKE THE HEADER: the call returns %d, its answer is %#llx\n", step, result, answer);
 		return false;
