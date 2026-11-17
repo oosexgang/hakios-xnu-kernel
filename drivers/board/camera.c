@@ -3345,9 +3345,14 @@ darwin_session(void)
 		top = rd(ife + IFE_IRQ_STATUS0);
 		bus = rd(ife + BUS_IRQ_STATUS1);
 		if (!(top & RDI0_SOF) && !(bus & WM0_DONE)) {
-			if (now - last_frame > FRAME_TIMEOUT_MS) {
+			/*
+			 * (no frame for 1.5 s, or for two frames' time where Darwin asked for frames that long: a frame length
+			 * any process may ask for is not to give the camera up for the rest of the run)
+			 */
+			if (now - last_frame > MAX(FRAME_TIMEOUT_MS,
+			    2 * (uint64_t)darwin_now.frame_lines * darwin_line_ns / 1000000)) {
 				show_paths("no frame");
-				give_up("no frame for 1.5 s");
+				give_up("no frame in its time");
 				break;
 			}
 			if (now - darwin_last_read > IDLE_MS) {
