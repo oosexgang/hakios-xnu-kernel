@@ -332,6 +332,13 @@ setup_put_back(void)
 	CHECK(last_sent() == bl_level_to_raw(900, 1, 2047) && m.sent_n >= 2, "commands were sent: %u, the last %u", m.sent_n, last_sent());
 	CHECK(m.errors == 0, "each to this controller alone, at high speed: %s", m.error);
 	CHECK(m.dma_ctrl == left, "and the setup is as the firmware left it: %#x", m.dma_ctrl);
+	/* a send cut off half way (the other cores stopped as it ran) leaves its own setup and words in the FIFO: the run's
+	 * end's send does not take that setup for the firmware's, and starts from an empty FIFO */
+	m.dma_ctrl = (left & ~((3u << 30) | (1u << 26))) | (1u << 28);
+	m.tpg = 1;
+	hakios_backlight_quiesce();
+	CHECK(m.dma_ctrl == left, "at the run's end, the firmware's setup put back, not a cut-off send's: %#x", m.dma_ctrl);
+	CHECK(m.errors == 0, "%s", m.error);
 }
 
 /* a controller without the command FIFO (before 2.2), and one the firmware did not leave running: not touched */

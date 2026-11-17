@@ -338,6 +338,14 @@ int_clear(uint32_t bits)
 	wr(dsi + DSI_INT_CTRL, (rd(dsi + DSI_INT_CTRL) & ~INT_STATUS_BITS) | bits);
 }
 
+/*
+ * The DMA control and command mode as the firmware left them, taken once: a send cut off half way (the other cores stopped
+ * at the run's end while this one was in dcs_send()) leaves them changed, and the next send -- the run's end's own -- is not
+ * to take that for what was found and put it back so.
+ */
+static bool found_known, found_cmd_mode;
+static uint32_t found_dma_control;
+
 static bool
 dcs_send(uint32_t raw)
 {
@@ -367,16 +375,26 @@ dcs_send(uint32_t raw)
 			delay(50);
 		}
 	}
-	if (!(control & DSI_CTRL_CMD_MODE)) {
+	if (!found_known) {
+		found_dma_control = rd(dsi + DSI_COMMAND_MODE_DMA_CTRL);
+		found_cmd_mode = (control & DSI_CTRL_CMD_MODE) != 0;
+		found_known = true;
+	}
+	if (!found_cmd_mode) {
 		wr(dsi + DSI_CTRL, control | DSI_CTRL_CMD_MODE);       /* (Linux's driver does the same for a video panel) */
 	}
 	int_clear(INT_CMD_DMA_DONE);
+	/* (an empty FIFO to begin with: a send cut off half way may have left words of its own in it) */
+	wr(dsi + DSI_TEST_PATTERN_GEN_CTRL, 0);
+	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 1);
+	delay(1);
+	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 0);
 	/* the command into the FIFO, then the length, embedded mode, high speed, this controller alone, and go */
 	wr(dsi + DSI_TEST_PATTERN_GEN_CTRL, TPG_CMD_DMA_FIFO);
 	for (unsigned i = 0; i < n; i++) {
 		wr(dsi + DSI_TEST_PATTERN_GEN_CMD_DMA_INIT_VAL, words[i]);
 	}
-	dma_control = rd(dsi + DSI_COMMAND_MODE_DMA_CTRL);
+	dma_control = found_dma_control;
 	wr(dsi + DSI_COMMAND_MODE_DMA_CTRL, (dma_control & ~(DMA_CTRL_BROADCAST | DMA_CTRL_LOW_POWER)) | DMA_CTRL_EMBEDDED);
 	wr(dsi + DSI_DMA_CMD_LENGTH, length);
 	wr(dsi + DSI_CMD_MODE_DMA_SW_TRIGGER, 1);
@@ -387,7 +405,7 @@ dcs_send(uint32_t raw)
 	delay(1);
 	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 0);
 	wr(dsi + DSI_COMMAND_MODE_DMA_CTRL, dma_control);
-	if (!(control & DSI_CTRL_CMD_MODE)) {
+	if (!found_cmd_mode) {
 		wr(dsi + DSI_CTRL, rd(dsi + DSI_CTRL) & ~DSI_CTRL_CMD_MODE);
 	}
 	int_clear(INT_CMD_DMA_DONE);
