@@ -104,7 +104,7 @@ configuration), taken from the phone's own `vendor/firmware` into the small imag
 of 243 bytes, each answered as the patch's download mode says and the last always, then HCI_Reset (`board/bt_qca.h`;
 Qualcomm's protocol as Linux's `btqca.c` speaks it). The configuration is sent as it is: no in-band sleep, no faster
 UART. Without the names, or with `bt_fw=0`, the controller runs its ROM. There is no baud switch, and none of this has
-been seen on a phone yet.
+been seen on a phone yet. [bluetooth.md](bluetooth.md) has all of it.
 
 Validated against host register models only, including both wrapper sampling rates and H4 event forms.
 SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects

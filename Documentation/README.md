@@ -17,6 +17,7 @@
 | [writing-a-driver.md](writing-a-driver.md) | How a driver is written here: the rules and why, what a driver has at hand, the steps, with an example driver and its test that `make check` builds and runs. |
 | [boot-args.md](boot-args.md) | Every boot argument the kernel reads. Generated from the sources. |
 | [backlight.md](backlight.md) | Brightness and Auto-Brightness: design, boot arguments, sysctls, testing. |
+| [bluetooth.md](bluetooth.md) | Bluetooth for Darwin: how the controller reaches bluetoothd, the levels, the board's keys, the firmware, what is answered in the kernel, what the log says. |
 | [thermal.md](thermal.md) | The thermal limiter: what it does at which temperature, tuning, testing. |
 | [metal-glass.md](metal-glass.md) | What exists for Metal on the Adreno, and the steps to Liquid Glass on Darwin 27. |
 | [darwin26-boot.md](darwin26-boot.md) | The lab notebook: how Darwin 26 and 27 were brought to the home screen on Renoir, the build and boot commands, measurements. |
