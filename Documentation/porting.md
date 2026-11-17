@@ -238,7 +238,10 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 ### Or keep it in a repository of your own
 
 A phone does not have to wait for the `devices` branch: its package can live in a repository of its own, which
-anyone builds from. The repository needs nothing but the package at its top (its `board.dts` names it):
+anyone builds from. `tools/device.py init ../mido --name mido --soc sm7325` makes one (the package as
+`tools/boards.py new` starts it, and what `samples/device-repo/` has: how to build from it, a `.gitignore` for what
+never goes in, a check on every push). The repository needs nothing but the package at its top (its `board.dts` names
+it):
 
 ```
 my-phone/                 a repository on any git host, called anything
