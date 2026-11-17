@@ -285,6 +285,40 @@ lost(void)
 	CHECK(had(HAKIOS_STA_LINK, ECONNRESET), "lost: a reset connection");
 }
 
+/* the standing network lost by itself is joined again, 2 s later; while that fails, again 2 s after each try */
+static void
+lost_and_joined_again(void)
+{
+	struct hakios_sta_join home = network("home");
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join_standing(&home) == 0, "home, standing");
+	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
+	join_error = EIO;
+	hakios_sta_lost(0);
+	usleep(1000 * 1000);
+	CHECK(strcmp(calls, "join:home ") == 0, "not at once: %s", calls);
+	WAIT_FOR(called("join:home join:home join:home "), 6000);
+	CHECK(strcmp(calls, "join:home join:home join:home ") == 0, "after 2 s, and after 2 s more when that failed: %s", calls);
+	join_error = 0;
+	WAIT_FOR(called("join:home join:home join:home join:home "), 4000);
+	CHECK(had(HAKIOS_STA_JOIN_DONE, 0) && strcmp(calls, "join:home join:home join:home join:home ") == 0, "joined: %s", calls);
+}
+
+/* a network that was asked for once, not the standing one, is not joined again by itself */
+static void
+lost_without_a_standing_network(void)
+{
+	struct hakios_sta_join cafe = network("cafe");
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join(&cafe) == 0, "asked");
+	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
+	hakios_sta_lost(0);
+	usleep(2600 * 1000);
+	CHECK(strcmp(calls, "join:cafe ") == 0, "nothing more: %s", calls);
+}
+
 /* the radio going away waits for a call under way, and nothing is asked of it after */
 static void
 radio_goes(void)
@@ -406,7 +440,8 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "scan", scan }, { "too_many_heard", too_many_heard }, { "too_many_channels", too_many_channels },
 		{ "join_and_leave", join_and_leave }, { "standing_network", standing_network }, { "wrong_passphrase", wrong_passphrase },
-		{ "lost", lost }, { "radio_goes", radio_goes }, { "off_while_joined", off_while_joined }, { "power_refused", power_refused },
+		{ "lost", lost }, { "lost_and_joined_again", lost_and_joined_again },
+		{ "lost_without_a_standing_network", lost_without_a_standing_network }, { "radio_goes", radio_goes }, { "off_while_joined", off_while_joined }, { "power_refused", power_refused },
 		{ "another_standing_network", another_standing_network }, { "goes_during_a_call", goes_during_a_call }, { "address", address },
 	};
 
