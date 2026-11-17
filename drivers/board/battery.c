@@ -7,6 +7,7 @@
  * Charger limits and JEITA protection therefore remain firmware-owned.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
@@ -116,6 +117,15 @@ SYSCTL_INT(_kern_hakios, OID_AUTO, battery_shown, CTLFLAG_RD | CTLFLAG_LOCKED, &
     "the charge iOS is shown, tenths of a percent: the firmware's when the voltage agrees, else the voltage's (-1 if none)");
 
 extern void HakiosBatteryReport(const void *state, unsigned size);     /* iokit/Kernel/BoardBattery.cpp */
+
+/*
+ * HakiosBatteryReport() takes one caller at a time, and two threads call it: the loader's readings here and the audio DSP's
+ * battery manager (hakios_battery_report()). Both at once had the service's properties replaced under the other's
+ * update, or two power sources made at the first reading. The lock is held around each report, and the readings
+ * here look again under it whether the DSP has taken over.
+ */
+static LCK_GRP_DECLARE(battery_lock_group, "hakios-battery");
+static LCK_MTX_DECLARE(battery_report_lock, &battery_lock_group);
 extern void hakios_tl(const char *format, ...) __printflike(1, 2);
 
 /*
@@ -151,7 +161,11 @@ battery_tell_ios(const struct loader_battery *sample)
 	state.external = external;
 	/* (POWER_SUPPLY_STATUS_*: charging 1, discharging 2, not charging 3, full 4) */
 	state.status = !external ? 2 : gaining ? 1 : battery_shown_tenths >= 1000 ? 4 : 3;
-	HakiosBatteryReport(&state, sizeof(state));
+	lck_mtx_lock(&battery_report_lock);
+	if (!battery_source_dsp) {
+		HakiosBatteryReport(&state, sizeof(state));
+	}
+	lck_mtx_unlock(&battery_report_lock);
 	{
 		uint64_t now_ns;
 
@@ -225,9 +239,11 @@ hakios_battery_report(const struct hakios_battery_state *b)
 	if (b->cycles > 0) {
 		battery_cycles = b->cycles;
 	}
+	lck_mtx_lock(&battery_report_lock);
 	battery_source_dsp = 1;
 	battery_updates++;
 	HakiosBatteryReport(b, sizeof(*b));
+	lck_mtx_unlock(&battery_report_lock);
 }
 
 static void
