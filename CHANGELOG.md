@@ -41,6 +41,7 @@ tags yet, so the current work is one section.
 
 - The flashlight could be left on at the run's end when the end met a light being switched on (torch).
 - `bench` looked for the loader where it was before it moved to `arch/arm64/boot/`.
+- The phone's firmware beside the userland (`userland/fw-*/`, a Wi-Fi passphrase among it) was not kept out of commits.
 - The UFS driver's log lines were cut at 208 bytes, losing what said a register was not as it had been.
 
 ### For whoever works on the project
@@ -51,6 +52,10 @@ tags yet, so the current work is one section.
   defconfig of your own.
 - `tools/logcheck.py`: what a run's log says, part by part -- ok, STOPPED and why, disabled; `./bench run` ends with
   it. [phone-test.ru.md](Documentation/phone-test.ru.md): a day with the phone, the runs in order.
+- `scripts/phone-ready.py` (`make ready`): before the phone is connected, whether the runs have what they need here --
+  the kernel and the loader built and not older than their sources, the loader knowing the phone, the identity, the
+  small image, the Bluetooth firmware at `bt=2`. `scripts/phone-day.sh` begins with it. `tools/image.py build` refuses
+  a loader that does not know the phone.
 - `tools/device.py update` takes each package again from where it came; `tools/image.py verify` holds a phone's
   images to their manifests and to what may be published.
 - `SECURITY.md`, and an issue form for a run on a phone.
