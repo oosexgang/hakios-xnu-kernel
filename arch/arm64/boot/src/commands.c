@@ -226,8 +226,13 @@ fb_command(char *cmd)
 					break;
 				}
 				sent += chunk;
+				host_last_cmd = READ_SYSREG(CNTVCT_EL0);
 			}
-			fb_reply("OKAY", "");
+			if (sent == staged_len) {
+				fb_reply("OKAY", "");
+			} else {
+				fb_reply("FAIL", "upload cut short");
+			}
 		} else if (starts_with(cmd, "oem screenshot")) {
 			/* stage the raw framebuffer; "getvar screen" gives its geometry */
 			if (SCREEN.base == 0) {
