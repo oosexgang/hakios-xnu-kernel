@@ -72,6 +72,13 @@ class Readmes(unittest.TestCase):
                                 f'{directory}/{name} is not in {directory}/README.md')
 
 
+    def test_every_test_is_in_the_workbench_readme(self):
+        readme = (ROOT / 'workbench/README.md').read_text()
+        for path in TRACKED:
+            if path.startswith('workbench/') and path.count('/') == 1 and Path(path).stem.endswith('_test'):
+                self.assertTrue(f'`{Path(path).name}' in readme, f'{path} is not in workbench/README.md')
+
+
 class TestsFor(unittest.TestCase):
     def test_patterns(self):
         self.assertTrue(tests_for.covers('drivers/board/ufs.c', 'drivers/board/ufs.c'))
