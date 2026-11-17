@@ -32,6 +32,13 @@ entropy(uint8_t *out, unsigned length)
  */
 static int starts_with(const char *s, const char *prefix);
 
+/*
+ * A core of the last kernel the firmware still says is on (the check at the end of run_kernel()): it runs that kernel's
+ * code in the window the next kernel would be copied into, and would run the new one's bytes as its own. No kernel is
+ * started in this session of the loader again: the phone is restarted first (./bench fresh, ./bench reload).
+ */
+static int cores_left_on;
+
 static int
 run_kernel(int have_checkpoint, uint64_t checkpoint)
 {
@@ -40,6 +47,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint32_t desc_ver;
 	struct payload_info pi;
 
+	if (cores_left_on) {
+		print("a core of the last kernel is still running: no kernel is started over it (restart the phone: ./bench fresh)\n");
+		return 0;
+	}
 	if (!parse_payload(&pi, 1) || pi.kernel == NULL) {
 		print("no kernel in payload\n");
 		return 0;
@@ -701,11 +712,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 				    (uint64_t)SILENCE_SECONDS);
 				set_result("hung", loader_ctx[CTX_LOG_LEN], 0);
 				write_logs((const char *)loader_ctx[CTX_LOG_PA], loader_ctx[CTX_LOG_LEN]);
+				cores_left_on = 1;
 				return 1;
 			} else if (status != 0) {
 				/* the kernel was told it would be on that core (return path, device tree): no second try */
 				if (status == OTHER_CPU_NOT_STARTED) {
 					print("core %x was started but never arrived\n", kernel_mpidr);
+					cores_left_on = 1;      /* (it may yet: into a window the next kernel would be copied into) */
 				} else {
 					print("core %x did not start: PSCI error %d\n", kernel_mpidr, (uint64_t)-status);
 				}
@@ -731,13 +744,31 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		print("ufs: %d writes into darwin, %d bytes, read back the same; %d refused\n", block_writes,
 		    block_write_bytes, block_writes_refused);
 	}
-	/* ... and its other cores should all be off again: the next kernel cannot start one that is not */
+	/* ... and its other cores should all be off again: the next kernel cannot start one that is not -- the core it ran on as
+	 * well, when that was not this one (it turns itself off after it has come back: a moment is given to it) */
+	if (kernel_mpidr != this_mpidr) {
+		int64_t state = 0;
+
+		for (int tries = 0; tries < 100; tries++) {
+			state = psci_call(PSCI_AFFINITY_INFO, kernel_mpidr, 0, 0);
+			if (state == 1 || state == PSCI_NOT_SUPPORTED) {
+				break;
+			}
+			BS->stall(1000);
+		}
+		if (state != 1 && state != PSCI_NOT_SUPPORTED) {
+			print("THE KERNEL LEFT ITS OWN CORE %x RUNNING (the firmware says %d): restart before running another\n",
+			    kernel_mpidr, (uint64_t)state);
+			cores_left_on = 1;
+		}
+	}
 	for (int i = 1; i < cpu_count; i++) {
 		int64_t state = psci_call(PSCI_AFFINITY_INFO, cpu_mpidr[i], 0, 0);
 
 		if (state != 1 && state != PSCI_NOT_SUPPORTED) {
 			print("THE KERNEL LEFT CORE %x RUNNING (the firmware says %d): restart before running another\n", cpu_mpidr[i],
 			    (uint64_t)state);
+			cores_left_on = 1;
 		}
 	}
 	recording_data = NULL;

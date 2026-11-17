@@ -211,6 +211,7 @@ __asm__ (
         "  stp x2, x3, [x10, #232]\n"           /* reason, ESR */
         "  stp x4, x5, [x10, #248]\n"           /* ELR, FAR */
         "  stp x6, x7, [x10, #264]\n"           /* LR, SP */
+        "  dsb sy\n"                            /* (the log's place and the reason seen before "done": the MMU is off) */
         "  adrp x10, other_cpu_done\n"
         "  add  x10, x10, :lo12:other_cpu_done\n"
         "  mov x9, #1\n"
