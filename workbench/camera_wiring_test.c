@@ -22,10 +22,25 @@ static struct spmi_peripheral pgpio_model;
 static bool arbiter;
 static unsigned accesses;
 
+/* (and camcc, for the scenarios of its registers: memory that keeps what is written, but at one offset) */
+#define CAMCC_AT        0x30000000ul
+static uint32_t camcc_memory[0x10000 / 4];
+static unsigned camcc_writes;
+static long camcc_deaf = -1;
+
+static bool
+in_camcc(vm_offset_t address)
+{
+	return address >= CAMCC_AT && address < CAMCC_AT + sizeof(camcc_memory);
+}
+
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
 	accesses++;
+	if (in_camcc(address)) {
+		return camcc_memory[(address - CAMCC_AT) / 4];
+	}
 	return arbiter ? spmi_model_rd(address) : 0;
 }
 
@@ -33,6 +48,13 @@ void
 hakios_test_wr(vm_offset_t address, uint32_t value)
 {
 	accesses++;
+	if (in_camcc(address)) {
+		camcc_writes++;
+		if ((long)(address - CAMCC_AT) != camcc_deaf) {
+			camcc_memory[(address - CAMCC_AT) / 4] = value;
+		}
+		return;
+	}
 	if (arbiter) {
 		spmi_model_wr(address, value);
 	}
@@ -359,6 +381,74 @@ pm8008_whitelist(void)
 	CHECK(said_times("not to be written") == sizeof(refused) / sizeof(refused[0]), "the chip's enable: not refused");
 	broken = true;
 	CHECK(!pm8008_put(PM8008_CHIP, MISC_CHIP_ENABLE, 0, false), "after a fault: not even the enable");
+	/* (what switches the rails off after a fault writes all the same) */
+	{
+		unsigned before = accesses;
+
+		(void)pm8008_put(PM8008_CHIP, MISC_CHIP_ENABLE, 0, true);
+		CHECK(accesses > before, "forced: tried on the bus after a fault: %u accesses", accesses - before);
+	}
+	/* the first LDO and the seventh, when they are the sensor's (the wide one's vdig, the macro's vana) */
+	hw = &sensors[1];
+	broken = false;
+	(void)pm8008_put(PM8008_REGULATORS, LDO_BASE(1) + LDO_ENABLE, 0, false);
+	hw = &sensors[0];
+	broken = false;
+	(void)pm8008_put(PM8008_REGULATORS, LDO_BASE(7) + LDO_ENABLE, 0, false);
+	CHECK(said_times("not to be written") == sizeof(refused) / sizeof(refused[0]), "LDO1 and LDO7 when they are the sensor's: not refused");
+}
+
+/*
+ * camcc's registers a write may reach (camcc_put()): the titan top power domain, the sensor's MCLK root and branch, and
+ * PLL2 from its first register to its status; each is read back, and one that does not read back is a fault
+ */
+static void
+camcc_whitelist(void)
+{
+	CHECK(sensors_from_board(), "the board's sensors");
+	select_sensor(1);
+	camcc = CAMCC_AT;
+	const uint32_t allowed[] = { TITAN_TOP_GDSCR, MCLK_CMD_RCGR, MCLK_CFG_RCGR, MCLK_M, MCLK_N, MCLK_D, MCLK_CBCR, PLL2_BASE,
+		PLL2_BASE + PLL2_STATUS };
+	const uint32_t refused[] = { PLL2_BASE - 4, PLL2_BASE + PLL2_STATUS + 4, MCLK_D + 4, MCLK_CBCR + 4, TITAN_TOP_GDSCR + 4, 0 };
+
+	for (unsigned i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+		broken = false;
+		CHECK(camcc_put(allowed[i], 0x5a5a0000u + i, ~0u) && camcc_memory[allowed[i] / 4] == 0x5a5a0000u + i && !broken,
+		    "%#x: written and read back", allowed[i]);
+	}
+	for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+		unsigned before = camcc_writes;
+
+		broken = false;
+		CHECK(!camcc_put(refused[i], 0x77, ~0u) && camcc_writes == before && broken && camcc_memory[refused[i] / 4] != 0x77,
+		    "%#x: refused, nothing written", refused[i]);
+	}
+	CHECK(said_times("a camcc register that is not to be written") == sizeof(refused) / sizeof(refused[0]), "each said");
+	/* one that does not keep what is written: a fault; one whose other bits differ, where only some are looked at: not */
+	broken = false;
+	camcc_deaf = MCLK_M;
+	CHECK(!camcc_put(MCLK_M, 0x1234, ~0u) && broken && logged("but it reads 0x5a5a0003"), "not as written: %s", log_text);
+	broken = false;
+	CHECK(camcc_put(MCLK_M, 0x5a5a0001, 1) && !broken, "the bit looked at is as written");
+	camcc_deaf = -1;
+	/* a bit waited for: found at once, or not in the time given */
+	camcc_memory[MCLK_CBCR / 4] = 0x80000001u;
+	CHECK(wait_bits(MCLK_CBCR, 1, 1, 100) && !wait_bits(MCLK_CBCR, 1u << 31, 0, 30), "waited for");
+}
+
+/* the titan top power domain: left as it is when on and not collapsed, switched on when it is asked to collapse */
+static void
+titan_top_power_domain(void)
+{
+	CHECK(sensors_from_board(), "the board's sensors");
+	select_sensor(1);
+	camcc = CAMCC_AT;
+	camcc_memory[TITAN_TOP_GDSCR / 4] = GDSC_ON;
+	CHECK(gdsc_on() && logged("the titan top power domain was on already") && camcc_writes == 0 && !gdsc_switched, "left: %s", log_text);
+	camcc_memory[TITAN_TOP_GDSCR / 4] = GDSC_ON | GDSC_COLLAPSE;
+	CHECK(gdsc_on() && camcc_writes == 1 && gdsc_switched && camcc_memory[TITAN_TOP_GDSCR / 4] == GDSC_ON,
+	    "on but asked to collapse: the collapse taken away (%#x)", camcc_memory[TITAN_TOP_GDSCR / 4]);
 }
 
 /* a sensor's table (RWCTAB02): its head, `modes' modes, two power sequences of `power' entries, and `tables' */
@@ -428,6 +518,7 @@ main(int argc, char **argv)
 		{ "pgpio_only_anothers_channel", pgpio_only_anothers_channel }, { "pgpio_five_registers", pgpio_five_registers },
 		{ "pgpio_dropped", pgpio_dropped }, { "pgpio_given_up", pgpio_given_up }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
 		{ "clock_plan", clock_plan }, { "pm8008_whitelist", pm8008_whitelist },
+		{ "camcc_whitelist", camcc_whitelist }, { "titan_top_power_domain", titan_top_power_domain },
 		{ "camera_table", camera_table },
 	};
 
