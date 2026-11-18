@@ -752,6 +752,9 @@ layer_filter(id filter, const char *what, int depth)
 	say("hakios: layers%s: %*s  %s\n", layers_of, 2 * depth, "", line);
 }
 
+/* (what snprintf says it would have written, held to the buffer: else the next size left wraps round) */
+#define HELD_MORE(n) ((n) = (n) >= sizeof(more) ? sizeof(more) - 1 : (n))
+
 static void
 layer_line(id layer, const char *role, int depth)
 {
@@ -765,7 +768,7 @@ layer_line(id layer, const char *role, int depth)
 	size_t n = 0;
 
 	if (SEND(BOOL, layer, "isHidden")) {
-		n += (size_t)snprintf(more + n, sizeof(more) - n, " HIDDEN");
+		n += (size_t)snprintf(more + n, sizeof(more) - n, " HIDDEN"); HELD_MORE(n);
 	}
 	if (contents != NULL) {
 		id text = (id)CFCopyDescription((CFTypeRef)contents);
@@ -790,7 +793,7 @@ layer_line(id layer, const char *role, int depth)
 			flat[k++] = *from++;
 		}
 		flat[k] = 0;
-		n += (size_t)snprintf(more + n, sizeof(more) - n, " contents %s", flat);
+		n += (size_t)snprintf(more + n, sizeof(more) - n, " contents %s", flat); HELD_MORE(n);
 		CFRelease((CFTypeRef)text);
 	}
 	if (contents != NULL && class_respondsToSelector(object_getClass(layer), sel_registerName("contentsMultiplyColor")) &&
@@ -798,33 +801,33 @@ layer_line(id layer, const char *role, int depth)
 		id text = (id)CFCopyDescription(SEND(void *, layer, "contentsMultiplyColor"));
 		const char *numbers = strstr(text_of(text), "( ");
 
-		n += (size_t)snprintf(more + n, sizeof(more) - n, " times %.40s", numbers ? numbers : "?");
+		n += (size_t)snprintf(more + n, sizeof(more) - n, " times %.40s", numbers ? numbers : "?"); HELD_MORE(n);
 		CFRelease((CFTypeRef)text);
 	}
 	if (colour != NULL) {
 		id text = (id)CFCopyDescription(colour);
 		const char *numbers = strstr(text_of(text), "( ");
 
-		n += (size_t)snprintf(more + n, sizeof(more) - n, " colour %.40s", numbers ? numbers : "?");
+		n += (size_t)snprintf(more + n, sizeof(more) - n, " colour %.40s", numbers ? numbers : "?"); HELD_MORE(n);
 		CFRelease((CFTypeRef)text);
 	}
 	if (strcmp(class_name, "CAPortalLayer") == 0) {
 		n += (size_t)snprintf(more + n, sizeof(more) - n, " PORTAL of %p%s%s", (void *)SEND(id, layer, "sourceLayer"),
-		    SEND(BOOL, layer, "hidesSourceLayer") ? " (hides it)" : "", SEND(BOOL, layer, "matchesOpacity") ? " (its opacity)" : "");
+		    SEND(BOOL, layer, "hidesSourceLayer") ? " (hides it)" : "", SEND(BOOL, layer, "matchesOpacity") ? " (its opacity)" : ""); HELD_MORE(n);
 	} else if (strcmp(class_name, "CABackdropLayer") == 0) {
 		n += (size_t)snprintf(more + n, sizeof(more) - n, " BACKDROP group \"%s\" scale %g%s", text_of(SEND(id, layer, "groupName")),
-		    SEND(double, layer, "scale"), SEND(BOOL, layer, "captureOnly") ? " (capture only)" : "");
+		    SEND(double, layer, "scale"), SEND(BOOL, layer, "captureOnly") ? " (capture only)" : ""); HELD_MORE(n);
 	} else if (strcmp(class_name, "CAGradientLayer") == 0) {
 		struct { double x, y; } from = SEND(typeof(from), layer, "startPoint"), to = SEND(typeof(to), layer, "endPoint");
 		id colours = SEND(id, layer, "colors");
 
 		n += (size_t)snprintf(more + n, sizeof(more) - n, " GRADIENT %s from %g,%g to %g,%g at %.40s:", text_of(SEND(id, layer, "type")),
-		    from.x, from.y, to.x, to.y, text_of(SEND(id, layer, "locations")));
+		    from.x, from.y, to.x, to.y, text_of(SEND(id, layer, "locations"))); HELD_MORE(n);
 		for (long i = 0; colours != NULL && i < SEND(long, colours, "count") && n < sizeof(more); i++) {
 			id text = (id)CFCopyDescription((CFTypeRef)SEND1(id, colours, "objectAtIndex:", long, i));
 			const char *numbers = strstr(text_of(text), "( ");
 
-			n += (size_t)snprintf(more + n, sizeof(more) - n, " %.30s", numbers ? numbers : "?");
+			n += (size_t)snprintf(more + n, sizeof(more) - n, " %.30s", numbers ? numbers : "?"); HELD_MORE(n);
 			CFRelease((CFTypeRef)text);
 		}
 	} else if (strcmp(class_name, "CAShapeLayer") == 0) {
@@ -833,7 +836,7 @@ layer_line(id layer, const char *role, int depth)
 		const char *ns = text_stroke ? strstr(text_of(text_stroke), "( ") : NULL, *nf = text_fill ? strstr(text_of(text_fill), "( ") : NULL;
 
 		n += (size_t)snprintf(more + n, sizeof(more) - n, " SHAPE line %g stroke %.30s fill %.30s ends %g-%g", SEND(double, layer,
-		    "lineWidth"), ns ? ns : "-", nf ? nf : "-", SEND(double, layer, "strokeStart"), SEND(double, layer, "strokeEnd"));
+		    "lineWidth"), ns ? ns : "-", nf ? nf : "-", SEND(double, layer, "strokeStart"), SEND(double, layer, "strokeEnd")); HELD_MORE(n);
 		if (text_stroke != NULL) {
 			CFRelease((CFTypeRef)text_stroke);
 		}
@@ -843,7 +846,7 @@ layer_line(id layer, const char *role, int depth)
 	} else if (strcmp(class_name, "CALayerHost") == 0) {
 		n += (size_t)snprintf(more + n, sizeof(more) - n, " HOST of context %#x%s%s", SEND(unsigned, layer, "contextId"),
 		    SEND(BOOL, layer, "inheritsSecurity") ? " (inherits security)" : "",
-		    SEND(BOOL, layer, "rendersAsynchronously") ? " (asynchronously)" : "");
+		    SEND(BOOL, layer, "rendersAsynchronously") ? " (asynchronously)" : ""); HELD_MORE(n);
 	}
 	{
 		/* the view a layer belongs to, which is the only thing that names a layer UIKit left
@@ -851,18 +854,18 @@ layer_line(id layer, const char *role, int depth)
 		id delegate = SEND(id, layer, "delegate");
 
 		if (delegate != NULL) {
-			n += (size_t)snprintf(more + n, sizeof(more) - n, " of %s", object_getClassName(delegate));
+			n += (size_t)snprintf(more + n, sizeof(more) - n, " of %s", object_getClassName(delegate)); HELD_MORE(n);
 		}
 	}
 	{
 		id keys = SEND(id, layer, "animationKeys");
 
 		if (SEND(BOOL, layer, "shouldRasterize")) {
-			n += (size_t)snprintf(more + n, sizeof(more) - n, " RASTERIZED");
+			n += (size_t)snprintf(more + n, sizeof(more) - n, " RASTERIZED"); HELD_MORE(n);
 		}
 		for (long i = 0; keys != NULL && i < SEND(long, keys, "count") && n < sizeof(more); i++) {
 			n += (size_t)snprintf(more + n, sizeof(more) - n, "%s%s", i == 0 ? " ANIMATIONS " : ",",
-			    text_of(SEND1(id, keys, "objectAtIndex:", long, i)));
+			    text_of(SEND1(id, keys, "objectAtIndex:", long, i))); HELD_MORE(n);
 		}
 	}
 	say("hakios: layers%s: %*s%s%s %p \"%s\" %g,%g %gx%g opacity %g%s\n", layers_of, 2 * depth, "", role, class_name, (void *)layer,
