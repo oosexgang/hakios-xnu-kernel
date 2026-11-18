@@ -282,7 +282,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `mic_input` | mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) |
 | `mic_main` | clipped tone at about the bus clock / 560, whatever the microphone hears (mic_main=1 shows it). |
 | `mic_secs` | The main microphone listened to for mic_secs seconds (default 10, at most 600) the way Android records from it: the codec set up as wcd938x_bind() and wcd938x_init_reg() set it up (its interrupts as edges, the mic biases' 2750 mV, its bias and sleep registers); the DSP's side (a stream read through… |
-| `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's 175.5 Hz in the samples) |
+| `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening, once in a run: the motor's 175.5 Hz in the samples) |
 | `mic_test` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
 
 ### `bsd/dev/board/sound.c`

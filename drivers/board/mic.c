@@ -51,8 +51,8 @@
  *            refused stops it all. Tests: mic_input=0 (decimator 1 fed from ZERO: exact silence),
  *            mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held),
  *            mic_main=1 (the bus and ports of Android's one-microphone tables: a tone, not the room),
- *            mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's
- *            175.5 Hz in the samples)
+ *            mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening, once in a run:
+ *            the motor's 175.5 Hz in the samples)
  *
  * What is asked for is given back at the end, and before the DSP is shut down (hakios_mic_dsp_down()).
  */
@@ -221,6 +221,24 @@ put_bits(struct block *b, const char *name, uint32_t offset, uint32_t mask, uint
 #define CLOCK_HZ                                19200000
 #define CLOCK_COUPLE_NO                         1
 
+static bool unanswered;                 /* the last command() had no answer (the DSP may have done it all the same) */
+
+/*
+ * The DSP did not answer a request whose answer carries the handle it is given back with (a vote, our
+ * memory's map, a device path): if it was done, it cannot be undone. Nothing more is asked of the DSP
+ * for the microphone until the run ends, so that no more of it is left held.
+ */
+static bool dsp_held;
+
+static void
+held(const char *what)
+{
+	say("mic: %s: NO ANSWER; if the DSP did it, it cannot be given back without the answer's handle: the microphone "
+	    "stays off until the run ends\n", what);
+	dsp_held = true;
+	broken = true;
+}
+
 static bool
 command(const char *what, uint8_t service, uint32_t opcode, const void *payload, uint32_t length, uint32_t wanted,
     struct hakios_apr_answer *answer)
@@ -230,7 +248,8 @@ command(const char *what, uint8_t service, uint32_t opcode, const void *payload,
 	if (answer == NULL) {
 		answer = &local;
 	}
-	if (!hakios_adsp_apr(service, 0, 0, opcode, payload, length, APR_WAIT_MS, answer)) {
+	unanswered = !hakios_adsp_apr(service, 0, 0, opcode, payload, length, APR_WAIT_MS, answer);
+	if (unanswered) {
 		say("mic: %s (opcode %#x): NO ANSWER\n", what, opcode);
 		return false;
 	}
@@ -302,6 +321,9 @@ vote(uint32_t block, const char *client)
 	snprintf(what, sizeof(what), "the LPASS's vote for block %u (\"%s\")", block, client);
 	if (!command(what, APR_SVC_AFE, AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST, &request, sizeof(request),
 	    AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST, &answer)) {
+		if (unanswered) {
+			held(what);
+		}
 		return false;
 	}
 	vote_handle[block] = answer.words[0];
@@ -330,12 +352,16 @@ clocks_on(void)
 	if (!vote(LPASS_HW_MACRO_BLOCK, "LPASS_HW_MACRO") || !vote(LPASS_HW_DCODEC_BLOCK, "LPASS_HW_DCODEC")) {
 		return false;
 	}
-	core_clock = afe_clock("the TX macro's core clock (0x30c) at 19.2 MHz, on", CLOCK_TX_CORE, true);
-	if (!core_clock) {
+	/*
+	 * Each clock taken before it is asked for: one the DSP did not answer for may be on all the same,
+	 * and is turned off with the rest (an off for one that is not on is refused, and no harm)
+	 */
+	core_clock = true;
+	if (!afe_clock("the TX macro's core clock (0x30c) at 19.2 MHz, on", CLOCK_TX_CORE, true)) {
 		return false;
 	}
-	npl_clock = afe_clock("the TX macro's NPL clock (0x30d) at 19.2 MHz, on", CLOCK_TX_NPL, true);
-	return npl_clock;
+	npl_clock = true;
+	return afe_clock("the TX macro's NPL clock (0x30d) at 19.2 MHz, on", CLOCK_TX_NPL, true);
 }
 
 static void
@@ -1079,16 +1105,20 @@ adc1_on(void)
 #define VA_SWR_MIC_CTL1                 0x0d4
 #define VA_SWR_MIC_CTL2                 0x0d8
 
-static uint32_t found_dec[10], found_va_mic[3];
 static uint32_t smic_input = 1;         /* boot-arg mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) */
 static bool dec_taken, va_mic_taken;
 static unsigned bolero_version;         /* 20 or 21: the digital codec's own core ID (bolero_soc_codec_probe()) */
 static uint8_t hpf_cut_off;             /* the decimator's high-pass filter as it was found */
 
+/*
+ * (CFG0 and SEC2 among them: a recording that ends before the filter has settled leaves it at 150 Hz,
+ * which the next would otherwise find and keep as the decimator's own)
+ */
 static const uint32_t dec_regs[] = {
 	TX_TOP_CSR_SWR_CTRL, TX_SWR_MIC0_CTL, TX_SWR_MIC1_CTL, TX_SWR_MIC2_CTL, TX_SWR_MIC2_CTL + 4, TX_SWR_MIC2_CTL + 8,
-	TX_SWR_MIC2_CTL + 12, TX_ADC_MUX1_CFG0, TX_ADC_MUX1_CFG1, TX1_PATH_CTL,
+	TX_SWR_MIC2_CTL + 12, TX_ADC_MUX1_CFG0, TX_ADC_MUX1_CFG1, TX1_PATH_CFG0, TX1_PATH_SEC2, TX1_PATH_CTL,
 };
+static uint32_t found_dec[sizeof(dec_regs) / sizeof(dec_regs[0])], found_va_mic[3];
 
 /*
  * Which bolero this is: its core ID, as bolero_soc_codec_probe() reads it (01 0F: 2.0, 02 0E: 2.1),
@@ -1308,6 +1338,17 @@ afe_port_param(uint32_t module, uint32_t param, const void *data, uint16_t size,
 	return command(what, APR_SVC_AFE, AFE_PORT_CMD_SET_PARAM_V2, packet, 16 + (uint32_t)sizeof(*p) + size, 0, NULL);
 }
 
+/* a command of the stream's or the path's not done: refused (with what came back), or not answered at all */
+static void
+not_done(const char *what, bool answered, const struct hakios_apr_answer *answer, uint32_t status)
+{
+	if (answered) {
+		say("mic: %s: REFUSED (%#x %#x)\n", what, answer->opcode, status);
+	} else {
+		say("mic: %s: NO ANSWER\n", what);
+	}
+}
+
 /* the stream and the path, opened, mapped and routed (msm-pcm-q6 and q6adm/q6asm at a recording's open and prepare) */
 static bool
 dsp_path_on(void)
@@ -1342,6 +1383,7 @@ dsp_path_on(void)
 	} __attribute__((packed)) route = { ADM_MATRIX_AUDIO_TX, 1, MIC_SESSION, 1, { 0, 0 } };
 	struct hakios_apr_answer answer;
 	uint32_t bytes = 0;
+	bool answered;
 
 	if (!hakios_audio_dsp_memory(&mic_memory, &mic_address, &bytes) || bytes < MIC_PERIODS * 4096) {
 		say("mic: no memory the DSP can see\n");
@@ -1354,27 +1396,37 @@ dsp_path_on(void)
 	hakios_adsp_apr_events_second(mic_events);
 	if (!command("our periods for the microphone, mapped for the DSP", APR_SVC_ASM, ASM_CMD_SHARED_MEM_MAP_REGIONS, &map,
 	    sizeof(map), ASM_CMDRSP_SHARED_MEM_MAP_REGIONS, &answer)) {
+		if (unanswered) {
+			held("our periods for the microphone, mapped for the DSP");
+		}
 		return false;
 	}
 	mic_mapped = true;
 	mic_map_handle = answer.words[0];
 	say("mic: our %u KB at %#llx are the DSP's handle %#x\n", MIC_PERIODS * 4, mic_address, mic_map_handle);
-	if (!hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_STREAM_CMD_OPEN_READ_V3, &reading, sizeof(reading), APR_WAIT_MS,
-	    &answer) || answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
-		say("mic: the stream, opened for reading: %s (%#x %#x)\n", "REFUSED OR NO ANSWER", answer.opcode, answer.words[1]);
+	/* (open before it is asked for: a stream the DSP did not answer for may be open all the same, and is closed) */
+	mic_stream_open = true;
+	answered = hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_STREAM_CMD_OPEN_READ_V3, &reading, sizeof(reading),
+	    APR_WAIT_MS, &answer);
+	if (!answered || answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
+		not_done("the stream, opened for reading", answered, &answer, answer.words[1]);
 		return false;
 	}
-	mic_stream_open = true;
 	say("mic: the stream (session 2), opened for reading 16-bit linear PCM, no processing: done\n");
-	if (!hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_STREAM_CMD_SET_ENCDEC_PARAM, &encoder, sizeof(encoder), APR_WAIT_MS,
-	    &answer) || answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
-		say("mic: the stream's format: REFUSED OR NO ANSWER (%#x %#x)\n", answer.opcode, answer.words[1]);
+	answered = hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_STREAM_CMD_SET_ENCDEC_PARAM, &encoder, sizeof(encoder),
+	    APR_WAIT_MS, &answer);
+	if (!answered || answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
+		not_done("the stream's format", answered, &answer, answer.words[1]);
 		return false;
 	}
 	say("mic: the stream's format: 1 channel of 16 bits at 48 kHz: done\n");
-	if (!hakios_adsp_apr(APR_SVC_ADM, MIC_PORT, 0, ADM_CMD_DEVICE_OPEN_V5, &open, sizeof(open), APR_WAIT_MS, &answer) ||
-	    answer.opcode != ADM_CMDRSP_DEVICE_OPEN_V5 || answer.words[0] != 0) {
-		say("mic: a device path from the port: REFUSED OR NO ANSWER (%#x %#x)\n", answer.opcode, answer.words[0]);
+	answered = hakios_adsp_apr(APR_SVC_ADM, MIC_PORT, 0, ADM_CMD_DEVICE_OPEN_V5, &open, sizeof(open), APR_WAIT_MS, &answer);
+	if (!answered) {
+		held("a device path from the port");
+		return false;
+	}
+	if (answer.opcode != ADM_CMDRSP_DEVICE_OPEN_V5 || answer.words[0] != 0) {
+		not_done("a device path from the port", true, &answer, answer.words[0]);
 		return false;
 	}
 	mic_copp_open = true;
@@ -1400,8 +1452,9 @@ dsp_port_on(void)
 	    "the port TX_CDC_DMA_TX_3 (0xb037): 1 channel of 16 bits at 48 kHz, decimator 1")) {
 		return false;
 	}
-	mic_port_on = command("the port 0xb037, started", APR_SVC_AFE, AFE_PORT_CMD_DEVICE_START, start, sizeof(start), 0, NULL);
-	return mic_port_on;
+	/* (on before it is asked for: a start the DSP did not answer may have been done, and is stopped) */
+	mic_port_on = true;
+	return command("the port 0xb037, started", APR_SVC_AFE, AFE_PORT_CMD_DEVICE_START, start, sizeof(start), 0, NULL);
 }
 
 static void
@@ -1473,6 +1526,7 @@ mic_dev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 {
 	uint64_t written = __atomic_load_n(&ring_written, __ATOMIC_ACQUIRE), avail, want;
 	int error = 0;
+	bool dry;
 
 	if (ring == NULL || uio_resid(uio) < 2) {
 		return 0;
@@ -1484,26 +1538,26 @@ mic_dev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		ring_read = written - RING_KEEP;
 		avail = RING_KEEP;
 	}
-	if (!ring_primed) {
-		if (avail < RING_KEEP) {
-			return 0;
-		}
-		ring_primed = true;
+	if (!ring_primed && avail < RING_KEEP) {
+		return 0;
 	}
-	if (avail < want) {
-		ring_dry++;
-		ring_primed = false;
-	}
-	while (want > 0 && avail > 0 && error == 0) {
+	dry = avail < want;
+	/* (what a fault kept from the reader is not taken: it is there for the next read, as if this one had not been) */
+	while (want > 0 && avail > 0) {
 		uint64_t at = ring_read % RING_FRAMES, n = want < avail ? want : avail;
 
 		n = n < RING_FRAMES - at ? n : RING_FRAMES - at;
 		error = uiomove((caddr_t)&ring[at], (int)(n * 2), uio);
+		if (error != 0) {
+			return error;
+		}
 		ring_read += n;
 		want -= n;
 		avail -= n;
 	}
-	return error;
+	ring_dry += dry;
+	ring_primed = !dry;
+	return 0;
 }
 
 static int
@@ -1534,32 +1588,33 @@ static uint32_t mic_secs = 10;
 /*
  * The stream run, read for mic_secs (for_darwin: while Darwin has the device open): how loud it is, every
  * second (for Darwin: the first three, then every 30th); into the recording with rec_sound_mic=1; for
- * Darwin into the ring.
+ * Darwin into the ring. False if it broke off: the stream not run, its reads not sent, nothing heard
+ * for 1.5 s, or a write that did not read back.
  */
-static void
+static bool
 listen(bool for_darwin)
 {
 	uint32_t run[3] = { 0, 0, 0 }, frames = 0, seconds = 0, peak = 0, periods = 0, empty = 0;
 	int64_t sum = 0;
 	uint64_t squares = 0;
 	unsigned next = 0;
-	bool unmuted = false, settled = false;
-	uint64_t began = mach_absolute_time(), now, elapsed_ms;
-
-	struct hakios_apr_answer answer = { 0 };      /* (said when the DSP did not answer) */
+	bool unmuted = false, settled = false, tapping = false, heard_nothing = false;
+	uint64_t began = mach_absolute_time(), now, elapsed_ms, heard_ms = 0;   /* (heard_ms: the last period with samples) */
+	struct hakios_apr_answer answer = { 0 };
+	bool answered;
 
 	read_ready = 0;
 	reads_done = read_errors = 0;
-	if (!hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_SESSION_CMD_RUN_V2, run, sizeof(run), APR_WAIT_MS, &answer) ||
-	    answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
-		say("mic: the session, run: REFUSED OR NO ANSWER (%#x %#x)\n", answer.opcode, answer.words[1]);
-		return;
+	answered = hakios_adsp_apr(APR_SVC_ASM, MIC_STREAM_PORT, 0, ASM_SESSION_CMD_RUN_V2, run, sizeof(run), APR_WAIT_MS, &answer);
+	if (!answered || answer.opcode != APR_BASIC_RSP_RESULT || answer.words[1] != 0) {
+		not_done("the session, run", answered, &answer, answer.words[1]);
+		return false;
 	}
 	say("mic: the session 2, run: done\n");
 	for (unsigned p = 0; p < MIC_PERIODS; p++) {
 		if (!mic_read(p)) {
 			say("mic: a read could not be sent\n");
-			return;
+			return false;
 		}
 	}
 	if (for_darwin) {
@@ -1576,21 +1631,33 @@ listen(bool for_darwin)
 		if (!settled && elapsed_ms >= 300) {            /* TX_MACRO_AMIC_HPF_DELAY_MS */
 			settled = dec1_settled();
 		}
-		if (tap && elapsed_ms >= 2000 && elapsed_ms < 3000) {
+		/* (once in a run: Darwin's later recordings, mic=4, are not shaken again) */
+		if (tap == 1 && elapsed_ms >= 2000 && elapsed_ms < 3000) {
 			hakios_haptic_pretend(20000);
+			tapping = true;
 		} else if (tap == 1 && elapsed_ms >= 3000) {
 			hakios_haptic_pretend(0);
+			tapping = false;
 			tap = 2;
 		}
 		/* (and the run's end, at every level: hakios_mic_dsp_down() waits for this under mic_lock) */
 		if ((for_darwin ? !darwin_wants : elapsed_ms >= mic_secs * 1000ull) || stopping || broken) {
 			break;
 		}
-		if (!(read_ready & (1u << next))) {
-			if (elapsed_ms > 1500 && reads_done == 0) {
+		/*
+		 * Nothing with samples in it for 1.5 s: no read has come back, or the reads are refused or come
+		 * back empty, or the DSP has stopped answering them. Asking again would go on for good, saying nothing.
+		 */
+		if (elapsed_ms - heard_ms > 1500) {
+			if (reads_done == 0) {
 				say("mic: NO READ HAS COME BACK in 1.5 s\n");
-				break;
+			} else {
+				say("mic: NOTHING HEARD in 1.5 s (%u reads came back, %u errors): STOPPED\n", reads_done, read_errors);
 			}
+			heard_nothing = true;
+			break;
+		}
+		if (!(read_ready & (1u << next))) {
 			sleep_ms(2);
 			continue;
 		}
@@ -1603,6 +1670,9 @@ listen(bool for_darwin)
 			hakios_cache_invalidate((uintptr_t)samples, (uintptr_t)samples + MIC_PERIOD_BYTES);
 			got = got > MIC_PERIOD_FRAMES ? MIC_PERIOD_FRAMES : got;
 			empty += got == 0;
+			if (got > 0) {
+				heard_ms = elapsed_ms;
+			}
 			for (uint32_t i = 0; i < got; i++) {
 				int32_t v = samples[i];
 				uint32_t a = (uint32_t)(v < 0 ? -v : v);
@@ -1665,6 +1735,12 @@ listen(bool for_darwin)
 			squares = 0;
 		}
 	}
+	if (tapping) {
+		/* (a recording that ended while the motor ran: it is not run again in the next) */
+		hakios_haptic_pretend(0);
+		tap = 2;
+	}
+	return !heard_nothing && !broken;
 }
 
 static void
@@ -1680,7 +1756,10 @@ undo(void)
 	clocks_off();
 }
 
-/* Everything up to the stream's run, in a recording's order; false (and `broken') if any of it fails. */
+/*
+ * Everything up to the stream's run, in a recording's order; false if any of it fails. (Not all of it
+ * sets `broken': a vote refused, a link that does not come up, a codec that does not show up do not.)
+ */
 static bool
 path_up(void)
 {
@@ -1710,8 +1789,12 @@ path_up(void)
 
 /*
  * mic=4: the path up whenever Darwin opens /dev/hakios-mic, down when it closes it; after three
- * recordings that broke off, no more until the run ends.
+ * recordings that broke off, no more until the run ends. After one that broke off, the next waits
+ * until Darwin has closed the device and opened it again, and RETRY_MS at least: its audio server
+ * may well open it again at once.
  */
+#define RETRY_MS                1000
+
 static void
 for_darwin(void)
 {
@@ -1727,7 +1810,7 @@ for_darwin(void)
 	say("mic: THE MICROPHONE IS DARWIN'S (/dev/hakios-mic) from here on, until the run ends: it listens only while Darwin records\n");
 	while (!stopping) {
 		uint64_t began, ns;
-		bool failed;
+		bool failed, closed;
 
 		if (!darwin_wants) {
 			sleep_ms(20);
@@ -1746,24 +1829,25 @@ for_darwin(void)
 		began = mach_absolute_time();
 		say("mic: Darwin records (%u): the path up%s\n", recordings, quiet ? " (the lines that say all went well are not said again)" :
 		    "");
-		if (path_up()) {
-			listen(true);
-		}
-		failed = broken;
+		failed = !path_up() || !listen(true) || broken;
 		absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
 		say("mic: Darwin's recording %u %s after %llu.%llu s; last: %s; %llu frames skipped as too late, %llu reads found too little\n",
 		    recordings, failed ? "BROKE OFF" : "ended", ns / NSEC_PER_SEC, ns % NSEC_PER_SEC / (NSEC_PER_SEC / 10), last_write,
 		    ring_skipped, ring_dry);
 		undo();
 		lck_mtx_unlock(&mic_lock);
+		if (dsp_held) {
+			break;          /* (said where the DSP did not answer) */
+		}
 		if (failed) {
 			broken = false;
 			if (++failures >= 3) {
 				say("mic: three recordings broke off: the microphone stays off until the run ends\n");
 				break;
 			}
-			/* (not again until Darwin has closed the device and opened it again) */
-			while (darwin_wants && !stopping) {
+			closed = false;
+			for (unsigned waited = 0; (!closed || waited < RETRY_MS) && !stopping; waited += 20) {
+				closed = closed || !darwin_wants;
 				sleep_ms(20);
 			}
 		}
@@ -1792,10 +1876,9 @@ mic_thread(__unused void *parameter, __unused wait_result_t result)
 				say("mic: the clocks were not all given: the blocks are not touched\n");
 			}
 		} else {
-			if (path_up() && level >= 3) {
-				listen(false);
-			}
-			say("mic: %s; last: %s\n", broken ? "STOPPED" : level >= 3 ? "listened" : "done", last_write);
+			bool done = path_up() && (level < 3 || listen(false));
+
+			say("mic: %s; last: %s\n", !done || broken ? "STOPPED" : level >= 3 ? "listened" : "done", last_write);
 		}
 		undo();
 		lck_mtx_unlock(&mic_lock);

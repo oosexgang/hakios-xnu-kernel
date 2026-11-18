@@ -12,6 +12,7 @@
  *   mic_driver_test SCENARIO
  */
 #include "fakekernel.h"
+#include <unistd.h>
 
 extern char log_text[];
 
@@ -188,6 +189,10 @@ hakios_adsp_apr(uint8_t service __unused, uint16_t port __unused, uint32_t token
 	if (payload != NULL) {
 		memcpy(dsp_heard[n].words, payload, length < sizeof(dsp_heard[n].words) ? length : sizeof(dsp_heard[n].words));
 	}
+	if (answer == NULL) {
+		/* (a command not waited for, a read: sent, or not when the scenario says the DSP is silent) */
+		return !dsp_script[n].put || dsp_script[n].how != DSP_SILENT;
+	}
 	memset(answer, 0, sizeof(*answer));
 	switch (dsp_script[n].put ? dsp_script[n].how : DSP_RESULT) {
 	case DSP_SILENT:
@@ -208,7 +213,22 @@ hakios_adsp_apr(uint8_t service __unused, uint16_t port __unused, uint32_t token
 	return false;
 }
 void hakios_adsp_apr_events_second(hakios_apr_events_t handler __unused) { }
-bool hakios_audio_dsp_memory(uintptr_t *memory __unused, uint64_t *dsp_address __unused, uint32_t *bytes __unused) { return false; }
+
+/* the memory the DSP sees, where a scenario gives it (none otherwise) */
+static uint8_t dsp_memory[MIC_PERIODS * 4096];
+static bool dsp_memory_there;
+
+bool
+hakios_audio_dsp_memory(uintptr_t *memory, uint64_t *dsp_address, uint32_t *bytes)
+{
+	if (!dsp_memory_there) {
+		return false;
+	}
+	*memory = (uintptr_t)dsp_memory;
+	*dsp_address = 0x9e000000u;
+	*bytes = sizeof(dsp_memory);
+	return true;
+}
 void hakios_audio_dsp_memory_put(void) { }
 bool hakios_audio_recording_mic(void) { return false; }
 void hakios_audio_record_fed(const int16_t *frames __unused, uint32_t count __unused) { }
@@ -217,6 +237,19 @@ void hakios_haptic_pretend(uint32_t peak __unused) { }
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+#define WAIT_FOR(cond, ms) do { for (int waited_ = 0; !(cond) && waited_ < (ms); waited_ += 5) { usleep(5000); } } while (0)
+
+/* how many of the commands from the one numbered `from' on (of the last 16) were this one */
+static unsigned
+asked_since(unsigned from, uint32_t opcode)
+{
+	unsigned n = 0;
+
+	for (unsigned i = from; i < dsp_asked; i++) {
+		n += dsp_heard[i % 16].opcode == opcode;
+	}
+	return n;
+}
 
 /* the made-up SoC's (workbench/devices/phone-keys/soc.dtsi) */
 #define LPI             0x043c0000u
@@ -869,6 +902,267 @@ the_dsps_read_events(void)
 	    read_sizes[6] == 0 && (read_ready & 1u << 6), "a result for a read: it was refused, the period ready and empty");
 }
 
+/* ---- what is given back when the DSP does not answer -------------------------------------------------- */
+
+/* a start of the port the DSP did not answer: it may have started, and it is stopped with the rest */
+static void
+an_unanswered_start_stopped(void)
+{
+	dsp_will(DSP_RESULT, 0, 0);     /* the port's format */
+	dsp_will(DSP_SILENT, 0, 0);     /* its start */
+	dsp_port_on();
+	dsp_off();
+	CHECK(asked_since(2, AFE_PORT_CMD_DEVICE_STOP) == 1, "stopped: %u commands, %u of them a stop", dsp_asked,
+	    asked_since(2, AFE_PORT_CMD_DEVICE_STOP));
+}
+
+/* a clock the DSP did not answer for: turned off with the rest, and the votes given back */
+static void
+an_unanswered_clock_turned_off(void)
+{
+	unsigned from;
+
+	dsp_will(DSP_OWN_ANSWER, 0, 11);
+	dsp_will(DSP_OWN_ANSWER, 0, 12);
+	dsp_will(DSP_SILENT, 0, 0);     /* the core clock, on */
+	for (int i = 0; i < 3; i++) {
+		dsp_will(DSP_RESULT, 0, 0);     /* (its off, the votes given back) */
+	}
+	clocks_on();
+	from = dsp_asked;
+	clocks_off();
+	CHECK(asked_since(from, AFE_SVC_CMD_SET_PARAM) == 1 && asked_since(from, AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST) == 2,
+	    "the core clock off, the votes given back: %u clocks, %u votes", asked_since(from, AFE_SVC_CMD_SET_PARAM),
+	    asked_since(from, AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST));
+	dsp_will(DSP_OWN_ANSWER, 0, 11);
+	dsp_will(DSP_OWN_ANSWER, 0, 12);
+	dsp_will(DSP_RESULT, 0, 0);     /* the core clock, on */
+	dsp_will(DSP_SILENT, 0, 0);     /* the NPL clock, on */
+	clocks_on();
+	from = dsp_asked;
+	clocks_off();
+	CHECK(asked_since(from, AFE_SVC_CMD_SET_PARAM) == 2, "both clocks off: %u", asked_since(from, AFE_SVC_CMD_SET_PARAM));
+}
+
+/* a stream the DSP did not answer the open of: closed; and said so, not with what an earlier command was answered */
+static void
+an_unanswered_stream_closed(void)
+{
+	unsigned from;
+
+	dsp_memory_there = true;
+	dsp_will(DSP_OWN_ANSWER, 0, 0x77);      /* our memory mapped: its handle */
+	dsp_will(DSP_SILENT, 0, 0);             /* the stream's open */
+	dsp_path_on();
+	CHECK(logged("mic: the stream, opened for reading: NO ANSWER") && !logged("0x10d93"), "said: %s", log_text);
+	from = dsp_asked;
+	dsp_off();
+	CHECK(asked_since(from, ASM_STREAM_CMD_CLOSE) == 1 && asked_since(from, ASM_CMD_SHARED_MEM_UNMAP_REGIONS) == 1,
+	    "closed and unmapped: %u, %u", asked_since(from, ASM_STREAM_CMD_CLOSE), asked_since(from, ASM_CMD_SHARED_MEM_UNMAP_REGIONS));
+}
+
+/*
+ * Our memory's map and a device path the DSP did not answer: what it may hold cannot be given back without the
+ * answer's handle, and it is said that the microphone stays off
+ */
+static void
+unanswered_handles_said(void)
+{
+	unsigned from;
+
+	dsp_memory_there = true;
+	dsp_will(DSP_SILENT, 0, 0);             /* the map */
+	dsp_path_on();
+	CHECK(logged("our periods for the microphone, mapped for the DSP: NO ANSWER; if the DSP did it") &&
+	    logged("stays off until the run ends"), "said: %s", log_text);
+	from = dsp_asked;
+	dsp_off();
+	CHECK(dsp_asked == from, "nothing to unmap without the handle: %u commands", dsp_asked - from);
+	dsp_will(DSP_OWN_ANSWER, 0, 0x77);      /* the map */
+	dsp_will(DSP_RESULT, 0, 0);             /* the stream's open */
+	dsp_will(DSP_RESULT, 0, 0);             /* its format */
+	dsp_will(DSP_SILENT, 0, 0);             /* the device path's open */
+	dsp_path_on();
+	CHECK(logged("a device path from the port: NO ANSWER; if the DSP did it"), "said: %s", log_text);
+	from = dsp_asked;
+	dsp_off();
+	CHECK(asked_since(from, ASM_STREAM_CMD_CLOSE) == 1 && asked_since(from, ADM_CMD_DEVICE_CLOSE_V5) == 0,
+	    "the stream closed, no path without its handle: %u, %u", asked_since(from, ASM_STREAM_CMD_CLOSE),
+	    asked_since(from, ADM_CMD_DEVICE_CLOSE_V5));
+}
+
+/* ---- mic=4: bring-ups that fail ---------------------------------------------------------------------------- */
+
+/* the driver's thread at mic=4, Darwin's audio server with the device open */
+static void
+darwin_records(void)
+{
+	thread_t thread;
+
+	blocks_from_board();
+	level = 4;
+	running = true;
+	darwin_wants = 1;
+	CHECK(kernel_thread_start(mic_thread, NULL, &thread) == KERN_SUCCESS, "started");
+}
+
+static void
+the_run_ends(void)
+{
+	hakios_mic_dsp_down();
+	EVENTUALLY(!running, 3000, "the thread is done");
+}
+
+/*
+ * A bring-up that fails short of a write that does not read back (here the first vote not given): once while the
+ * device stays open; again only once Darwin has closed and opened it, and not within a second; after the third, no more
+ */
+static void
+darwins_bring_up_failed(void)
+{
+	darwin_records();
+	usleep(300000);
+	CHECK(dsp_asked == 1 && logged("mic: Darwin's recording 1 BROKE OFF"), "once while the device stays open: %u commands",
+	    dsp_asked);
+	darwin_wants = 0;
+	usleep(200000);
+	darwin_wants = 1;
+	usleep(200000);
+	CHECK(dsp_asked == 1, "closed and opened again: not again within a second (%u)", dsp_asked);
+	EVENTUALLY(dsp_asked == 2, 2000, "and then again: %u", dsp_asked);
+	darwin_wants = 0;
+	usleep(200000);
+	darwin_wants = 1;
+	EVENTUALLY(!running, 3000, "after the third that broke off, no more: %u commands", dsp_asked);
+	CHECK(dsp_asked == 3 && logged("three recordings broke off"), "%u commands: %s", dsp_asked, log_text);
+	the_run_ends();
+}
+
+/* the first vote not answered: the DSP may hold it, and the microphone stays off for the rest of the run */
+static void
+darwins_vote_unanswered(void)
+{
+	dsp_will(DSP_SILENT, 0, 0);
+	darwin_records();
+	EVENTUALLY(!running, 2000, "no more after it: %u commands", dsp_asked);
+	CHECK(dsp_asked == 1 && logged("NO ANSWER; if the DSP did it"), "%u commands: %s", dsp_asked, log_text);
+	the_run_ends();
+}
+
+/* ---- a stream whose reads stop -------------------------------------------------------------------------- */
+
+static volatile bool reads_go_on;
+static volatile int after_the_first;    /* 0: nothing more comes back, 1: every read refused */
+
+/* the DSP: the first period read, then nothing, or refusals */
+static void *
+the_dsps_reads(void *unused)
+{
+	uint32_t done[6] = { 0, 0, 0, 0, MIC_PERIOD_BYTES, 0 };
+	unsigned p = 1;
+
+	usleep(20000);
+	mic_events(APR_SVC_ASM, 0, ASM_DATA_EVENT_READ_DONE_V2, READ_TOKEN | 0, done, 24);
+	while (reads_go_on) {
+		usleep(3000);
+		if (after_the_first == 1) {
+			mic_events(APR_SVC_ASM, 0, APR_BASIC_RSP_RESULT, READ_TOKEN | (p++ % MIC_PERIODS), done, 8);
+		}
+	}
+	return unused;
+}
+
+/* listened to for 4 s: how long it went on */
+static uint64_t
+listened_ms(void)
+{
+	static int16_t samples[MIC_PERIODS * 4096 / 2];
+	pthread_t dsp;
+	uint64_t began = mach_absolute_time(), ns;
+
+	codec();
+	mic_memory = (uintptr_t)samples;
+	mic_secs = 4;
+	reads_go_on = true;
+	pthread_create(&dsp, NULL, the_dsps_reads, NULL);
+	listen(false);
+	reads_go_on = false;
+	pthread_join(dsp, NULL);
+	absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
+	return ns / NSEC_PER_MSEC;
+}
+
+/* the reads refused after the first: 1.5 s and it is stopped, and said */
+static void
+reads_refused_after_the_first(void)
+{
+	uint64_t ms;
+
+	after_the_first = 1;
+	ms = listened_ms();
+	CHECK(ms >= 1500 && ms < 2500 && logged("mic: NOTHING HEARD in 1.5 s (1 reads came back, "), "%llu ms: %s",
+	    (unsigned long long)ms, log_text);
+}
+
+/* the DSP stops answering the reads after the first: the same */
+static void
+reads_unanswered_after_the_first(void)
+{
+	uint64_t ms;
+
+	after_the_first = 0;
+	ms = listened_ms();
+	CHECK(ms >= 1500 && ms < 2500 && logged("mic: NOTHING HEARD in 1.5 s (1 reads came back, 0 errors)"), "%llu ms: %s",
+	    (unsigned long long)ms, log_text);
+}
+
+/* ---- the decimator, and the ring Darwin reads: put back, taken back -------------------------------------- */
+
+/* a recording that ends before the filter has settled: the cut-off as found put back, and found so by the next */
+static void
+decimator_filter_put_back(void)
+{
+	macros(0x02, 0x0e, 0x00);
+	*cell(TX_AT + TX1_PATH_SEC2) = 0x00;
+	CHECK(bolero_look() && dec1_on(), "on: %s", log_text);
+	dec1_off();                     /* (before dec1_settled()) */
+	va_mic_off();
+	CHECK((at(TX_AT + TX1_PATH_CFG0) & 0x60) == 0 && at(TX_AT + TX1_PATH_SEC2) == 0, "as found: CFG0 %#x, SEC2 %#x",
+	    at(TX_AT + TX1_PATH_CFG0), at(TX_AT + TX1_PATH_SEC2));
+	CHECK(bolero_look() && dec1_on(), "on again");
+	CHECK(hpf_cut_off == 0, "the next finds the cut-off it was: %u", hpf_cut_off);
+}
+
+/* a read that faults takes nothing: what it would have given is the next read's, and it is not counted as one */
+static void
+a_read_that_faults(void)
+{
+	struct uio uio = { .base = (char *)got, .resid = 480 * 2, .to_kernel = false };
+	bool in_order;
+
+	ring = heard;
+	hear(2000);
+	fake_uiomove_fault_at = fake_uiomove_calls + 1;
+	CHECK(mic_dev_read(0, &uio, 0) == EFAULT, "the fault");
+	CHECK(ring_read == 0 && !ring_primed && ring_dry == 0, "nothing taken: %llu, primed %d, dry %llu",
+	    (unsigned long long)ring_read, ring_primed, (unsigned long long)ring_dry);
+	CHECK(read_frames(480, 0, &in_order) == 480 && in_order, "the next read from the first frame");
+	fake_uiomove_fault_at = fake_uiomove_calls + 1;
+	uio = (struct uio){ .base = (char *)got, .resid = 4000 * 2, .to_kernel = false };
+	CHECK(mic_dev_read(0, &uio, 0) == EFAULT && ring_dry == 0 && ring_primed, "too little, and a fault: not counted dry");
+	CHECK(read_frames(480, 480, &in_order) == 480 && in_order, "and the next from where the last good one ended");
+
+	/* across the ring's end: the first part given, the second faults; the first is taken, the second not */
+	put_so_far = ring_written = RING_FRAMES - 100;
+	ring_read = RING_FRAMES - 100;
+	hear(RING_KEEP);
+	fake_uiomove_fault_at = fake_uiomove_calls + 2;
+	uio = (struct uio){ .base = (char *)got, .resid = 480 * 2, .to_kernel = false };
+	CHECK(mic_dev_read(0, &uio, 0) == EFAULT && ring_read == RING_FRAMES, "the part before the end taken: %llu",
+	    (unsigned long long)ring_read);
+	CHECK(read_frames(380, RING_FRAMES, &in_order) == 380 && in_order, "the rest the next read's");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -887,6 +1181,13 @@ main(int argc, char **argv)
 		{ "reads_at_the_edges", reads_at_the_edges }, { "the_dsps_read_events", the_dsps_read_events },
 		{ "bolero_2_1", bolero_2_1 }, { "bolero_2_0", bolero_2_0 }, { "bolero_unknown", bolero_unknown },
 		{ "decimator_filter_moved", decimator_filter_moved }, { "decimator_filter_in_place", decimator_filter_in_place },
+		{ "an_unanswered_start_stopped", an_unanswered_start_stopped },
+		{ "an_unanswered_clock_turned_off", an_unanswered_clock_turned_off },
+		{ "an_unanswered_stream_closed", an_unanswered_stream_closed }, { "unanswered_handles_said", unanswered_handles_said },
+		{ "darwins_bring_up_failed", darwins_bring_up_failed }, { "darwins_vote_unanswered", darwins_vote_unanswered },
+		{ "reads_refused_after_the_first", reads_refused_after_the_first },
+		{ "reads_unanswered_after_the_first", reads_unanswered_after_the_first },
+		{ "decimator_filter_put_back", decimator_filter_put_back }, { "a_read_that_faults", a_read_that_faults },
 	};
 
 	if (argc < 2) {
