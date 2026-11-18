@@ -4843,6 +4843,8 @@ TEST(an_occlusion_query_adds_the_draws_samples_to_its_word) {
     refusedWith(d, "a visibility result at offset 4: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
     d.visibilityOffset = 64;
     refusedWith(d, "a visibility result at offset 64: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
+    d.visibilityOffset = 0ull - 8;   // a multiple of 8 whose +8 wraps to 0: refused, so the GPU never writes before the buffer
+    refusedWith(d, "a visibility result at offset 18446744073709551608: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
 }
 
 // --- multisampling: a 4x target drawn into under the pass's count, cleared as its memory, resolved by the 2D engine -------

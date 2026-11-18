@@ -228,6 +228,10 @@ TEST(an_indirect_dispatch_reads_its_counts_when_it_runs) {
     auto past = r.queue->commandBuffer();
     CHECK(!past->dispatchIndirect(kernels::fill_id_air, *args, 56, local, b));
     CHECK(past->error().find("three words inside it") != std::string::npos);
+    // an offset a multiple of 4 whose +12 wraps past 2^64 back inside the buffer: refused, not read from before it
+    auto wrap = r.queue->commandBuffer();
+    CHECK(!wrap->dispatchIndirect(kernels::fill_id_air, *args, 0ull - 8, local, b));
+    CHECK(wrap->error().find("three words inside it") != std::string::npos);
 }
 
 TEST(a_dispatch_of_fill_id_holds_together_and_the_fake_does_not_run_it) {

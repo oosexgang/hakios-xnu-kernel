@@ -624,7 +624,7 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
 
 bool CommandBuffer::dispatchIndirect(const Kernel& k, const Buffer& args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
                                      const uint32_t* immediates, const compute::Options& options) {
-    if (offset % 4 != 0 || offset + 12 > args.length()) {
+    if (offset % 4 != 0 || offset > args.length() || 12 > args.length() - offset) {
         return fail("an indirect dispatch's counts at " + std::to_string(offset) + " of a " + std::to_string(args.length()) +
                     "-byte buffer: three words inside it, at a multiple of 4");
     }
