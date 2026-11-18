@@ -111,6 +111,7 @@ F:	drivers/board/camera.c
 F:	drivers/board/torch.c
 F:	components/camera/
 F:	include/board/camera.h
+T:	workbench/camera_driver_test.c
 T:	workbench/camera_isp_test.c
 T:	workbench/camera_wiring_test.c
 T:	workbench/torch_driver_test.c

@@ -231,8 +231,8 @@ show_pin(unsigned pin, const char *what)
 	    (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") : "input", io & 1);
 }
 
-/* The pins written while powered up, as they were found, to be put back: the reset pin, MCLK's, a supply's. */
-static uint32_t found_reset_cfg, found_reset_io, found_mclk_cfg, found_vana_cfg, found_vana_io;
+/* The pins written while powered up, as they were found, to be put back: the reset pin, MCLK's, a supply's (supply_on()). */
+static uint32_t found_reset_cfg, found_reset_io, found_mclk_cfg;
 static bool pins_found;
 
 /* the sensor's reset and MCLK pins as they are now (to be put back when it is powered down) */
@@ -1062,7 +1062,22 @@ sensor_address(void)
 	return (uint8_t)(ctab->slave >> 1);    /* (the module file's is the 8-bit one) */
 }
 
-static bool chip_enable_switched, powered, reset_driven, vana_gpio_switched;
+static bool chip_enable_switched, powered, reset_driven;
+
+/*
+ * The pins of the GPIO-switched supplies as they were found, and whether each was switched: one each of the
+ * sensor's VANA, VDIG and VIO (supply_gpio()). A sensor may have more than one so switched (tools/boards.py takes
+ * any of the three as a pin, each its own): with one record for all, the second switched on wrote over what was
+ * found of the first, the first was put back as the second had been found, and the second was left on.
+ */
+static uint32_t found_supply_cfg[3], found_supply_io[3];
+static bool supply_gpio_switched[3];
+
+static unsigned
+supply_gpio(const struct hakios_camera_supply *s)
+{
+	return s == &hw->vana ? 0 : s == &hw->vdig ? 1 : 2;
+}
 
 /* A GPIO-switched supply (the wide sensor's VANA, the ultra-wide's VDIG): the pin a high output (GPIO, no pull, 2 mA: cam_sensor_active_*). */
 static bool
@@ -1072,13 +1087,15 @@ supply_on(const struct hakios_camera_supply *s)
 		return ldo_on(s->ldo, s->mv);
 	}
 	if (s->kind == HAKIOS_SUPPLY_GPIO) {
+		unsigned which = supply_gpio(s);
+
 		if (s->gpio >= TLMM_SIZE / 0x1000) {
 			give_up("a supply's pin past the pins there are");     /* (tools/boards.py says 0 to 255; the table is not trusted past it) */
 			return false;
 		}
-		found_vana_cfg = rd(GPIO_CFG(s->gpio));
-		found_vana_io = rd(GPIO_IO(s->gpio));
-		vana_gpio_switched = true;
+		found_supply_cfg[which] = rd(GPIO_CFG(s->gpio));
+		found_supply_io[which] = rd(GPIO_IO(s->gpio));
+		supply_gpio_switched[which] = true;
 		wr(GPIO_IO(s->gpio), 2);
 		wr(GPIO_CFG(s->gpio), CFG_OUTPUT | CFG_DRIVE_MA(2));
 		if ((rd(GPIO_CFG(s->gpio)) & 0x3ff) != (CFG_OUTPUT | CFG_DRIVE_MA(2)) || !(rd(GPIO_IO(s->gpio)) & 2)) {
@@ -1098,12 +1115,14 @@ supply_off(const struct hakios_camera_supply *s)
 {
 	if (s->kind == HAKIOS_SUPPLY_LDO) {
 		ldo_off(s->ldo);
-	} else if (s->kind == HAKIOS_SUPPLY_GPIO && vana_gpio_switched) {
+	} else if (s->kind == HAKIOS_SUPPLY_GPIO && supply_gpio_switched[supply_gpio(s)]) {
+		unsigned which = supply_gpio(s);
+
 		wr(GPIO_IO(s->gpio), 0);
 		spin_us(10);
-		wr(GPIO_IO(s->gpio), found_vana_io & 2);
-		wr(GPIO_CFG(s->gpio), found_vana_cfg);
-		vana_gpio_switched = false;
+		wr(GPIO_IO(s->gpio), found_supply_io[which] & 2);
+		wr(GPIO_CFG(s->gpio), found_supply_cfg[which]);
+		supply_gpio_switched[which] = false;
 		say("camera: gpio%u back as it was found: the fixed regulator off\n", s->gpio);
 	}
 }
@@ -1169,7 +1188,7 @@ static void
 power_down(void)
 {
 	bool was = powered || mclk_switched || gdsc_switched || reset_driven || chip_enable_switched || pgpio_changed ||
-	    vana_gpio_switched;
+	    supply_gpio_switched[0] || supply_gpio_switched[1] || supply_gpio_switched[2];
 	uint32_t count = 0;
 	const struct ctab_entry *e = ctab != NULL ? ctab_block(ctab_power, 2, "pwrdn", &count) : NULL;
 
@@ -1934,6 +1953,13 @@ static uint64_t keep_bytes;
 static uint64_t frames_bytes;
 static uint32_t smmu_match = ~0u, smmu_context_n, smmu_old_smr, smmu_old_s2cr, smmu_pages_size, smmu_pages;
 static bool smmu_on;
+/*
+ * The match register found free was written (smmu_up()): only then is it ours to put back. One found and not
+ * taken -- no context left, no memory for the tables -- may be another driver's by the time the session ends
+ * (the SMMU's lock is let go in between), and "putting it back" wrote the free register's old value over that
+ * driver's stream.
+ */
+static bool smmu_match_taken;
 
 static bool
 frames_alloc(uint32_t width, uint32_t height, uint32_t stride, uint32_t source)
@@ -2097,6 +2123,7 @@ smmu_up(void)
 		return false;
 	}
 	smmu_on = true;
+	smmu_match_taken = true;
 	if (!smmu_put(smmu, SMMU_S2CR(smmu_match), smmu_context_n, 0x300ff) ||
 	    !smmu_put(smmu, SMMU_SMR(smmu_match), 1u << 31 | (uint32_t)IFE_STREAM_MASK << 16 | IFE_STREAM, ~0u)) {
 		lck_mtx_unlock(&hakios_smmu_lock);
@@ -2128,14 +2155,15 @@ smmu_faults(void)
 static void
 smmu_down(void)
 {
-	if (!smmu_on && smmu_match == ~0u) {
+	if (!smmu_on && !smmu_match_taken) {
+		smmu_match = ~0u;       /* (found, not taken: not ours to put back) */
 		return;
 	}
 	smmu_faults();
 	if (!leaving) {
 		lck_mtx_lock(&hakios_smmu_lock);
 	}
-	if (smmu_match != ~0u) {
+	if (smmu_match_taken) {
 		wr(smmu + SMMU_SMR(smmu_match), smmu_old_smr);
 		wr(smmu + SMMU_S2CR(smmu_match), smmu_old_s2cr);
 	}
@@ -2148,6 +2176,7 @@ smmu_down(void)
 		lck_mtx_unlock(&hakios_smmu_lock);
 	}
 	smmu_on = false;
+	smmu_match_taken = false;
 	smmu_match = ~0u;
 	say("camera: the SMMU's match register and context put back as they were found\n");
 }
@@ -3183,6 +3212,15 @@ static uint32_t darwin_readers;
 static struct { uint32_t lines, gain, frame_lines; bool pending; uint32_t focus; bool focus_pending; } darwin_ask;
 static struct { uint32_t lines, gain, frame_lines; uint64_t from; } darwin_now, darwin_next;
 /*
+ * The longest frame the sensor may be making now: the length in force, or a longer one written since and not yet
+ * seen to have taken over -- what "no frame in its time" is measured by. darwin_now changes at the second frame
+ * after a write (when the exposure shows in the pictures), but a sensor given a longer frame in a frame's blanking
+ * may stretch that very blanking: the frame of 0xfff0 lines any process may ask for (1.7 s in a mode of 1300 lines
+ * at 30 frames a second) was measured by the 33 ms one before it, given up on after 1.5 s, and the camera was gone
+ * for the rest of the run.
+ */
+static uint32_t darwin_longest_lines;
+/*
  * What the frames are (boot-arg cam_pattern): 0 the sensor's picture; 1 colour bars -- the sensor's own,
  * where its module file has a table for them (Android's "testPatternData"), else the CSID's; 2 the
  * CSID's colour bars (no sensor at all). The wide camera's module file has no colour bars of the
@@ -3471,6 +3509,7 @@ darwin_session(void)
 	darwin_started = true;
 	darwin_started_sensor = hw_index;
 	darwin_started_mode = darwin_mode_n;
+	darwin_longest_lines = darwin_now.frame_lines;
 	last_frame = darwin_ms();
 	blk_put(ife, "IFE", IFE_IRQ_CLEAR0, 0xffffffff, false);
 	blk_put(ife, "IFE", IFE_IRQ_GLOBAL_CLEAR, 1, false);
@@ -3492,7 +3531,7 @@ darwin_session(void)
 			 * any process may ask for is not to give the camera up for the rest of the run)
 			 */
 			if (now - last_frame > MAX(FRAME_TIMEOUT_MS,
-			    2 * (uint64_t)darwin_now.frame_lines * darwin_line_ns / 1000000)) {
+			    2 * (uint64_t)darwin_longest_lines * darwin_line_ns / 1000000)) {
 				show_paths("no frame");
 				give_up("no frame in its time");
 				break;
@@ -3520,6 +3559,7 @@ darwin_session(void)
 			if (darwin_frames_done >= darwin_next.from && darwin_next.from != 0) {
 				darwin_now = darwin_next;
 				darwin_next.from = 0;
+				darwin_longest_lines = darwin_now.frame_lines;  /* (the last written has taken over: none other is to come) */
 			}
 			(void)place_written(writing, next);
 		}
@@ -3552,6 +3592,7 @@ darwin_session(void)
 				darwin_next.gain = gain;
 				darwin_next.frame_lines = frame_lines;
 				darwin_next.from = darwin_frames_done + 2;
+				darwin_longest_lines = MAX(darwin_longest_lines, frame_lines);
 			}
 		}
 		if ((bus & WM0_DONE) && darwin_frames_done % 30 == 0) {
@@ -4062,7 +4103,14 @@ serve_darwin(void)
 	}
 	(void)PE_parse_boot_argn("cam_mode", &mode_n, sizeof(mode_n));
 	if (!darwin_select(hw_index, mode_n) && (mode_n == ~0u || !darwin_select(hw_index, ~0u))) {
-		return;                 /* (a cam_mode that cannot be used: the usual mode instead) */
+		/*
+		 * (a cam_mode that cannot be used: the usual mode instead.) Neither: no frames in this run, and said so
+		 * to whoever opens the node -- it stays there, and was opened and read as if the camera were coming, each
+		 * read waiting its 15 s for frames nothing would make, and each HAKIOS_CAMERA_SENSOR taken and never done.
+		 */
+		give_up("the sensor's tables or modes cannot be used");
+		say("camera: /dev/hakios-camera: no frames in this run\n");
+		return;
 	}
 	while (!broken) {
 		lck_mtx_lock(&darwin_lock);

@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Camera (`camera.c`, with a new host test `workbench/camera_driver_test.c` that models the sensor, the PMIC and the
+  camera's blocks): a long frame any process could ask for (up to 1.7 s) was timed by the frame before it, given up on
+  after 1.5 s, and the camera was gone for the rest of the run; a free SMMU match register found but never written was
+  "put back" at the end, over another driver's stream if one had taken it meanwhile; a sensor with two pin-switched
+  supplies got the first pin back as the second had been found and the second left on; and with no usable tables the
+  node stayed open, each read waiting 15 s for frames that would never come (now `EIO` at once).
 - The modem's link (`mpss.c`, with a new host test `workbench/mpss_driver_test.c` that plays the modem): its QRTR hello
   went unanswered after it opened the channel again, so it never learnt of our services (its files, RMTFS and TFTP,
   among them); an intent told again could be kept twice, the old size beside the new; a packet too long for our intent
