@@ -581,7 +581,10 @@ bytes_a_pixel(GLenum format, GLenum type)
 	case 0x1406:                                    /* floats */
 		return 4 * parts;
 	case 0x8368:                                    /* 2:10:10:10 in a word */
+	case 0x8367: case 0x8035:                       /* 8:8:8:8 in a word, either way round */
 		return 4;
+	case 0x1404: case 0x1405:                       /* 32-bit integers */
+		return 4 * parts;
 	default:
 		return 2;                               /* the packed 16-bit kinds */
 	}
@@ -3906,6 +3909,21 @@ my_texImageIOSurface(id self, SEL selector, IOSurfaceRef surface, unsigned long 
 	(void)selector;
 	if (e == NULL || surface == NULL) {
 		return NO;
+	}
+	{
+		/*
+		 * (no bigger than the surface, or its plane: what is read of it later is width by height of the caller's, and a
+		 * size the surface has not got would be read past its memory)
+		 */
+		size_t planes = IOSurfaceGetPlaneCount(surface);
+		size_t have_w = planes ? IOSurfaceGetWidthOfPlane(surface, plane) : IOSurfaceGetWidth(surface);
+		size_t have_h = planes ? IOSurfaceGetHeightOfPlane(surface, plane) : IOSurfaceGetHeight(surface);
+
+		if ((planes != 0 && plane >= planes) || width <= 0 || height <= 0 || (size_t)width > have_w || (size_t)height > have_h) {
+			say("hakios-gl: -texImageIOSurface: %d x %d of plane %u, the surface has %zu x %zu (%zu planes): not done\n",
+			    width, height, plane, have_w, have_h, planes);
+			return NO;
+		}
 	}
 	eagl_enter(e, 0);
 	clear_now(e);
