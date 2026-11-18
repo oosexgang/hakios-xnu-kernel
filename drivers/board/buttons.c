@@ -105,6 +105,7 @@ struct peripheral {
 	uint16_t        id;             /* slave << 8 | peripheral: the high byte of its register addresses */
 	uint16_t        channel;
 	bool            found;
+	unsigned        unread;         /* the looks in a row whose read of it has failed (up to LET_GO_LOOKS) */
 };
 /* The board's buttons { }; on both phones so far 0x013 (registers 0x1300 of slave 0) and 0x18d (0x8d00 of slave 1). */
 static struct peripheral pon = { .name = "the power-on block" };
@@ -207,6 +208,7 @@ static uint8_t pon_kpdpwr = PON_GEN3_KPDPWR, pon_resin = PON_GEN3_RESIN;   /* (t
 
 #define POLL_MS                 16
 #define MINUTE_TICKS            (60 * 1000 / POLL_MS)
+#define LET_GO_LOOKS            (1000 / POLL_MS)        /* a second of looks without a read: its held keys let go */
 
 static struct button {
 	const char *    name;
@@ -269,6 +271,27 @@ button_look(struct button *b, bool pressed)
 	hakios_touch_post(pressed ? HAKIOS_BUTTON_DOWN : HAKIOS_BUTTON_UP, b->record, 0, 0);
 }
 
+/*
+ * A look at a peripheral whose read has failed: once its reads have failed for a second in a row, a key of it that
+ * was reported held is let go. Nobody can see that key released while its peripheral does not answer, and the
+ * driver gives up on the bus only when more than half of all its reads have failed: never while the other
+ * peripheral still answers (volume up's GPIO silent, the power-on block read well), and after an hour of good
+ * reads only after another hour of failed ones. Darwin kept the side or a volume button held all that time -- a
+ * volume run to its end, a side button held into Siri. A key still held when the reads come back is pressed anew
+ * (two looks in a row that say so, as any press: what it was is forgotten here).
+ */
+static void
+button_unread(const struct peripheral *p, struct button *b)
+{
+	if (p->unread < LET_GO_LOOKS || !b->down) {
+		return;
+	}
+	b->down = false;
+	b->last = false;
+	printf("buttons: %s let go: %s has not been read for %u looks in a row\n", b->name, p->name, p->unread);
+	hakios_touch_post(HAKIOS_BUTTON_UP, b->record, 0, 0);
+}
+
 /* One look at both peripherals. */
 static void
 buttons_poll(void)
@@ -280,20 +303,31 @@ buttons_poll(void)
 	if (power.usable || volume_down.usable) {
 		problem = spmi_read(&pon, REG_RT_STATUS, &status, 1);
 		if (problem == NULL) {
+			pon.unread = 0;
 			button_look(&power, status & pon_kpdpwr);
 			button_look(&volume_down, status & pon_resin);
-		} else if (said < 8) {
-			said++;
-			printf("buttons: reading %s: %s\n", pon.name, problem);
+		} else {
+			pon.unread += pon.unread < LET_GO_LOOKS;
+			button_unread(&pon, &power);
+			button_unread(&pon, &volume_down);
+			if (said < 8) {
+				said++;
+				printf("buttons: reading %s: %s\n", pon.name, problem);
+			}
 		}
 	}
 	if (volume_up.usable) {
 		problem = spmi_read(&pin, REG_RT_STATUS, &status, 1);
 		if (problem == NULL) {
+			pin.unread = 0;
 			button_look(&volume_up, !(status & GPIO_LEVEL));
-		} else if (said < 8) {
-			said++;
-			printf("buttons: reading %s: %s\n", pin.name, problem);
+		} else {
+			pin.unread += pin.unread < LET_GO_LOOKS;
+			button_unread(&pin, &volume_up);
+			if (said < 8) {
+				said++;
+				printf("buttons: reading %s: %s\n", pin.name, problem);
+			}
 		}
 	}
 }

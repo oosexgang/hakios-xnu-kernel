@@ -384,7 +384,44 @@ held_when_the_bus_stops(void)
 	WAIT_FOR(posts() == before + 2, 2000);
 	CHECK(posts() == before + 2 && posted[before + 1].type == HAKIOS_BUTTON_UP && posted[before + 1].button == HAKIOS_BUTTON_LOCK,
 	    "power let go when the driver gives up: %u records", posts() - before);
-	CHECK(logged("power let go: it was held when the reads stopped"), "said");
+	CHECK(logged("power let go:"), "said");
+}
+
+/*
+ * Volume up held when its GPIO stops answering, while the power-on block still does: more than half of all reads
+ * never fail, so the driver never gives up -- and the key is let go all the same, a second on, rather than held
+ * for the rest of the run. Held still when the pin answers again, it is a press anew.
+ */
+static void
+held_when_its_peripheral_stops(void)
+{
+	unsigned before;
+
+	phone("phone-cmd");
+	fake_delay_divisor = 40;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	before = posts();
+	volume_up_down();
+	WAIT_FOR(posts() == before + 1, 2000);
+	CHECK(posts() == before + 1 && posted[before].type == HAKIOS_BUTTON_DOWN && posted[before].button == HAKIOS_BUTTON_VOLUME_UP,
+	    "volume up pressed");
+	pin_model.silent = true;
+	WAIT_FOR(posts() == before + 2, 3000);
+	CHECK(posts() == before + 2 && posted[before + 1].type == HAKIOS_BUTTON_UP && posted[before + 1].button == HAKIOS_BUTTON_VOLUME_UP,
+	    "volume up let go while its pin does not answer: %u records", posts() - before);
+	CHECK(logged("volume up let go: GPIO6 of the PM8350 has not been read for"), "said: %s", log_text);
+	CHECK(!logged("giving up"), "the power-on block still answers: not given up");
+	pin_model.silent = false;
+	WAIT_FOR(posts() == before + 3, 2000);
+	CHECK(posts() == before + 3 && posted[before + 2].type == HAKIOS_BUTTON_DOWN && posted[before + 2].button == HAKIOS_BUTTON_VOLUME_UP,
+	    "held when the pin answers again: pressed anew (%u records)", posts() - before);
+	volume_up_up();
+	WAIT_FOR(posts() == before + 4, 2000);
+	CHECK(posts() == before + 4 && posted[before + 3].type == HAKIOS_BUTTON_UP, "and released");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power, all along");
+	no_write();
 }
 
 /* a PMIC that stops answering while its keys are watched: said a few times, not at every look; then the driver gives up */
@@ -652,6 +689,7 @@ main(int argc, char **argv)
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
 		{ "board_without_keys", board_without_keys }, { "held_in_the_summary", held_in_the_summary },
 		{ "a_short_silence", a_short_silence }, { "held_when_the_bus_stops", held_when_the_bus_stops },
+		{ "held_when_its_peripheral_stops", held_when_its_peripheral_stops },
 		{ "unknown_board", unknown_board },
 	};
 
