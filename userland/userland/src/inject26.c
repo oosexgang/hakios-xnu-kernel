@@ -1264,7 +1264,8 @@ pb_without(id dict, const char *key)
 	}
 	id copy = ((id (*)(id, SEL))objc_msgSend)(dict, sel_registerName("mutableCopy"));
 	((void (*)(id, SEL, id))objc_msgSend)(copy, sel_registerName("removeObjectForKey:"), name);
-	return copy;
+	/* (autoreleased: mutableCopy gives it +1, and none of the three callers lets it go -- one leaked a retried call) */
+	return ((id (*)(id, SEL))objc_msgSend)(copy, sel_registerName("autorelease"));
 }
 
 /*
