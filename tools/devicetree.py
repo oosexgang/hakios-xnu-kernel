@@ -199,7 +199,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh, adreno, ipc, radio_pins, streams, lpass = {}, {}, {}, {}, {}, {}, {}, {}
+    platform, keys, rpmh, adreno, ipc, radio_pins, streams, lpass, clock = {}, {}, {}, {}, {}, {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -430,6 +430,19 @@ def from_dts(text, panel=None):
             slave, pmic = pmic_of(node)
             if slave is not None:
                 keys.update(pon=slave << 8 | unit_address(node) >> 8, pon_name=f"the {pmic}'s power-on block")
+        if not clock and strings(node.props.get('status')) != ['disabled']:
+            # the PMIC's real-time clock, its RTC_RW block: Linux's rtc-pm8xxx.c names it by its compatible
+            # (qcom,pm8941-rtc, qcom,pmk8350-rtc) at that block's unit address; the vendor's qpnp-rtc.c has a node of
+            # its own over one per block, the counter's ...rtc_rw@6000
+            slave, pmic, block = None, None, None
+            if any(re.fullmatch(r'qcom,pm[a-z0-9]+-rtc', c) for c in compatible) and unit_address(node):
+                (slave, pmic), block = pmic_of(node), unit_address(node)
+            elif 'qcom,qpnp-rtc' in compatible:
+                rw = next((child for child in node.children if 'rtc_rw' in child.name and unit_address(child)), None)
+                if rw is not None:
+                    (slave, pmic), block = pmic_of(node), unit_address(rw)
+            if slave is not None:
+                clock.update(peripheral=slave << 8 | block >> 8, name=f"the {pmic}'s RTC")
         if 'gpio-keys' in compatible:
             for key in node.children:
                 code, pins = cells(key.props.get('linux,code')), cells(key.props.get('gpios'))
@@ -467,6 +480,8 @@ def from_dts(text, panel=None):
         board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
     if keys:
         board['buttons'] = keys
+    if clock:
+        board['rtc'] = clock
     if 'smmu' in soc:
         soc['smmu'].update(streams)
     if tsens:

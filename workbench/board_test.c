@@ -44,6 +44,8 @@ known_phone(void)
 	    b->spmi.observer == 0x0e600000 && b->spmi.ee == 0, "the PMIC arbiter");
 	CHECK(b != NULL && b->buttons.pon == 0x013 && b->buttons.volume_up == 0x18d && b->buttons.volume_up_name != NULL &&
 	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its buttons { }");
+	CHECK(b != NULL && b->rtc.peripheral == 0x061 && b->rtc.name != NULL && strcmp(b->rtc.name, "the PMK8350's RTC") == 0,
+	    "its PMIC's clock (rtc { })");
 	CHECK(b != NULL && b->pins.tlmm == 0x0f100000, "the SoC's pins");
 	CHECK(hakios_board_has(HAKIOS_HAS_ADSP) && b != NULL && b->ipc.aoss == 0x0c300000 && b->ipc.ipcc == 0x00408000 &&
 	    b->ipc.smem == 0x80900000 && b->ipc.smem_size == 0x200000 && b->ipc.smem_lock == 0x01f43000,
@@ -234,6 +236,7 @@ table(void)
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_BUTTONS_PMIC) || (b->spmi.core != 0 && b->spmi.cnfg != 0 && b->spmi.observer != 0 &&
 		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without spmi { } or buttons { }", b->name);
+		CHECK(b->rtc.peripheral == 0 || b->spmi.core != 0, "%s: rtc { } without spmi { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_SM7325)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |

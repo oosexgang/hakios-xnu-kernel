@@ -1001,6 +1001,30 @@ boot_arg_preferences(void)
 
 #define EPOCH_2100      4102444800L     /* 1 January 2100, in seconds since 1970 */
 
+/*
+ * The count of the PMIC's real-time clock now (hw.rtc_seconds, bsd/dev/board/rtc.c): seconds it has run, not the time
+ * of day. 0 when the kernel gives none: no driver, a board that names no clock, rtc=0, or one it could not read.
+ */
+static int
+rtc_count(long *seconds)
+{
+	uint64_t count = 0;
+	size_t len = sizeof(count);
+
+	if (sysctlbyname("hw.rtc_seconds", &count, &len, NULL, 0) != 0 || len != sizeof(count) || count >= (uint64_t)EPOCH_2100) {
+		return 0;
+	}
+	*seconds = (long)count;
+	return 1;
+}
+
+/*
+ * What the host's time is past the PMIC clock's count (epoch= less hw.rtc_seconds), taken when epoch= set the clock:
+ * clock_rtc() keeps it in the data volume once restore_var() has put the last boot's back.
+ */
+static long host_rtc_offset;
+static int host_rtc_offset_known;
+
 static void
 mount_writable(void)
 {
@@ -1067,9 +1091,10 @@ mount_writable(void)
 	check(ok && made > 50, "create the directories of the data volume");
 
 	/*
-	 * the wall clock: the phone has no RTC driver here, so the date stays at 1 Jan 1970 and the lock
-	 * screen's wallpaper (Mercury, which follows the time of day) and every calendar are wrong; the
-	 * host passes its time as epoch=SECONDS, a little before the kernel starts
+	 * the wall clock: without a time of day the lock screen's wallpaper (Mercury, which follows it)
+	 * and every calendar are wrong; the host passes its time as epoch=SECONDS, a little before the
+	 * kernel starts. It is the one time trusted enough to measure the PMIC's clock against, for the
+	 * boots without the host (clock_rtc())
 	 */
 	{
 		const char *e = boot_arg("epoch");
@@ -1077,8 +1102,15 @@ mount_writable(void)
 
 		/* (the year 2100 and on is no time a host passes: too many digits, and the clock is left alone) */
 		tv.tv_sec = e != NULL ? decimal_at_most(e, EPOCH_2100) : 0;
+		host_rtc_offset_known = 0;
 		if (tv.tv_sec > 1600000000 && tv.tv_sec < EPOCH_2100) {
-			printf("  wall clock set to %ld: %s\n", (long)tv.tv_sec, settimeofday(&tv, NULL) == 0 ? "ok" : strerror(errno));
+			int set = settimeofday(&tv, NULL) == 0;
+			long rtc;
+
+			printf("  wall clock set to %ld: %s\n", (long)tv.tv_sec, set ? "ok" : strerror(errno));
+			/* (the count read at once: the host's time and it are of the same moment) */
+			host_rtc_offset_known = set && rtc_count(&rtc);
+			host_rtc_offset = host_rtc_offset_known ? tv.tv_sec - rtc : 0;
 		}
 	}
 
@@ -1236,25 +1268,34 @@ clock_raise_to(long now, long kernel, const long *stamps, unsigned n, unsigned *
 	return best;
 }
 
+/* the kernel's build, as the kernel reads it from its own version string (drivers/iokit/build_date.h) */
+static long
+kernel_built(void)
+{
+	char version[256] = "";
+	size_t len = sizeof(version) - 1;
+
+	if (sysctlbyname("kern.version", version, &len, NULL, 0) != 0) {
+		len = 0;
+	}
+	version[len < sizeof(version) ? len : sizeof(version) - 1] = 0;
+	return build_date_floor(version);
+}
+
 static void
 clock_floor(void)
 {
 	static const char *const places[] = { "/", "/private/var", "/private/var/db", "/private/var/preferences",
 		                              "/private/var/mobile/Library/Preferences", NULL /* our image's etc/rc */ };
 	enum { PLACES = sizeof(places) / sizeof(places[0]) };
-	char version[256] = "", image_rc[256];
+	char image_rc[256];
 	long stamps[PLACES], kernel, to;
 	const char *left_out = "";
 	unsigned which = 0;
-	size_t len = sizeof(version) - 1;
 	struct timeval now = { 0, 0 };
 	struct stat st;
 
-	if (sysctlbyname("kern.version", version, &len, NULL, 0) != 0) {
-		len = 0;
-	}
-	version[len < sizeof(version) ? len : sizeof(version) - 1] = 0;
-	kernel = build_date_floor(version);
+	kernel = kernel_built();
 	strcpy(image_rc, in_image("/etc/rc"));
 	for (unsigned i = 0; i < PLACES; i++) {
 		stamps[i] = stat(places[i] != NULL ? places[i] : image_rc, &st) == 0 ? st.st_mtimespec.tv_sec : 0;
@@ -1544,6 +1585,89 @@ forget_old_modulation(void)
 	} else {
 		printf("init: dasd's budgets: " DASD_KEY " of %ld (before 2001) taken out (dasd starts its slots from now)\n",
 		    when);
+	}
+}
+
+/*
+ * The wall clock from the PMIC's real-time clock, after the floor. The PMIC counts seconds while the phone is off, but
+ * not from 1970, and the system may not set it; so, as Android does, what the right time is past the count is kept in
+ * a file: written when the host gave the time (epoch=, trusted), saved with the rest of /private/var/db by var_store,
+ * and at a boot without the host the clock is raised to the count plus it. Never put back: a count that went back to
+ * 0 (the PMIC lost its power) comes out behind the floor and is left. Nor taken more than ten years past the kernel's
+ * build (a file of nonsense, a count of something else). After the idea of the OnePlus Nord 2 port's piece 0540
+ * (frxncyyy/ios-denniz), which read its PMIC's clock and wrote it back after setting the time from the network.
+ */
+#define RTC_OFFSET_FILE         "/private/var/db/rtc-offset"     /* the time past the count, in seconds: "1763412345\n" */
+
+/* What the file says: 1, and the number in *offset; 0 when it is not there or is not a number. */
+static int
+rtc_offset_read(long *offset)
+{
+	char text[32];
+	ssize_t n;
+	int fd = open(RTC_OFFSET_FILE, O_RDONLY | O_NOFOLLOW, 0), minus;
+	const char *digits;
+
+	if (fd < 0) {
+		return 0;
+	}
+	n = read(fd, text, sizeof(text) - 1);
+	close(fd);
+	text[n > 0 ? n : 0] = 0;
+	minus = text[0] == '-';
+	digits = text + minus;
+	if (*digits < '0' || *digits > '9') {
+		return 0;
+	}
+	*offset = decimal_at_most(digits, EPOCH_2100);
+	if (minus) {
+		*offset = -*offset;
+	}
+	return 1;
+}
+
+static void
+clock_rtc(void)
+{
+	long rtc, offset = 0, kernel, to;
+	struct timeval now = { 0, 0 };
+	int fd, good;
+
+	if (!rtc_count(&rtc)) {
+		printf("init: no count of the PMIC's clock (hw.rtc_seconds): the time is what the kernel and the floor made it\n");
+		return;
+	}
+	if (host_rtc_offset_known) {
+		/* the name removed and made anew, not followed: the store may have put anything back in its place */
+		unlink(RTC_OFFSET_FILE);
+		fd = open(RTC_OFFSET_FILE, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+		good = fd >= 0 && dprintf(fd, "%ld\n", host_rtc_offset) > 0;
+		if (fd >= 0) {
+			close(fd);
+		}
+		printf("init: the PMIC's clock reads %ld; the host's time was %ld s past it: kept in %s for a boot without the "
+		    "host: %s\n", rtc, host_rtc_offset, RTC_OFFSET_FILE, good ? "ok" : strerror(errno));
+		return;
+	}
+	if (!rtc_offset_read(&offset)) {
+		printf("init: the PMIC's clock reads %ld, and no boot with the host has said how far that is from the time of day "
+		    "(%s)\n", rtc, RTC_OFFSET_FILE);
+		return;
+	}
+	to = rtc + offset;
+	kernel = kernel_built();
+	gettimeofday(&now, NULL);
+	if (to > kernel + CLOCK_STAMP_SPAN) {
+		printf("init: the PMIC's clock reads %ld, %ld with the saved %ld: more than ten years past the kernel's build, "
+		    "left out\n", rtc, to, offset);
+	} else if (to <= now.tv_sec) {
+		printf("init: the PMIC's clock reads %ld, %ld with the saved %ld: the clock (%ld) is not behind it\n", rtc, to,
+		    offset, (long)now.tv_sec);
+	} else {
+		struct timeval tv = { to, 0 };
+
+		printf("init: the clock read %ld; the PMIC's reads %ld, %ld with the saved %ld: set to that: %s\n",
+		    (long)now.tv_sec, rtc, to, offset, settimeofday(&tv, NULL) == 0 ? "ok" : strerror(errno));
 	}
 }
 
@@ -2037,6 +2161,7 @@ main(int argc, char **argv, char **envp)
 	mount_writable();
 	restore_var();
 	clock_floor();
+	clock_rtc();
 	forget_old_modulation();
 	boot_arg_preferences();
 	test_files();

@@ -37,6 +37,12 @@
 		volume-up-name = "GPIO6 of the PM8350";
 	};
 
+	// The PMIC's real-time clock: its RTC_RW block, rtc@6100 of the PMK8350 (slave 0; Linux's pmk8350.dtsi).
+	rtc {
+		peripheral = <0x061>;
+		name = "the PMK8350's RTC";
+	};
+
 	// The audio DSP, and the battery manager behind it.
 	adsp {
 		firmware = "fw-audio-cmd";      // the root's directory with this phone's adsp.mdt and its parts

@@ -163,6 +163,10 @@ DTS = '''/dts-v1/;
 					compatible = "qcom,qpnp-power-on";
 					reg = <0x1300 0x800>;
 				};
+				pmk8350_rtc: rtc@6100 {
+					compatible = "qcom,pmk8350-rtc";
+					reg = <0x6100 0x6200>;
+				};
 			};
 			qcom,pm8350@1 {
 				compatible = "qcom,spmi-pmic";
@@ -488,6 +492,28 @@ class Check(Sandbox):
         self.assertEqual(self.problems(), '')
         self.assertIn('.channels = 0x0c600000,', boards.table_text(*boards.load()))
         self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d },', text)
+
+    def test_a_pmic_clock_is_described(self):
+        # optional: a board without it has none in the table, and its driver reads nothing
+        self.assertNotIn('.rtc =', boards.table_text(*boards.load()))
+        path = self.dir / 'devices/phone/board.dts'
+        listed = path.read_text()
+        path.write_text(listed + '/ {\n\trtc {\n\t\tperipheral = <0x061>;\n\t};\n};\n')
+        self.assertIn('rtc { } needs spmi { } in soc.dtsi', self.problems())
+        self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n\t};\n\tthermal {')
+        for section, reason in (
+                ('/ {\n\trtc {\n\t\tperipheral = <0x061>;\n\t};\n};\n', None),
+                ('/ {\n\trtc {\n\t\tperipheral = <0x6100>;\n\t};\n};\n', 'SPMI slave << 8'),
+                ('/ {\n\trtc {\n\t\tperipheral = <0x100>;\n\t};\n};\n', 'SPMI slave << 8'),
+                ('/ {\n\trtc {\n\t\tname = "the PMK8350\'s RTC";\n\t};\n};\n', '"peripheral" is missing')):
+            with self.subTest(section=section):
+                path.write_text(listed + section)
+                if reason is None:
+                    self.assertEqual(self.problems(), '')
+                else:
+                    self.assertIn(reason, self.problems())
+        path.write_text(listed + '/ {\n\trtc {\n\t\tperipheral = <0x061>;\n\t\tname = "the PMK8350\'s RTC";\n\t};\n};\n')
+        self.assertIn('.rtc = { .peripheral = 0x061, .name = "the PMK8350\'s RTC" },', boards.table_text(*boards.load()))
 
     def test_an_audio_dsp_is_described(self):
         path = self.dir / 'devices/phone/board.dts'
@@ -1304,6 +1330,23 @@ class DeviceTree(Sandbox):
             pmic@2 { compatible = "qcom,pm8150b", "qcom,spmi-pmic"; reg = <0x2 0>;
                 pon@800 { compatible = "qcom,pm8916-pon"; reg = <0x800>; status = "disabled"; }; }; }; };''')
         self.assertEqual(board['buttons']['pon'], 0x008)
+        # the PMIC's clock: Linux's node at its RTC_RW block, or the vendor's over one node a block; one switched off is not it
+        _, board, _ = devicetree.from_dts('''/ { spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            pmic@0 { compatible = "qcom,pm8150", "qcom,spmi-pmic"; reg = <0x0 0>;
+                rtc@6000 { compatible = "qcom,pm8941-rtc"; reg = <0x6000>, <0x6100>; }; }; }; };''')
+        self.assertEqual(board['rtc'], {'peripheral': 0x060, 'name': "the PM8150's RTC"})
+        _, board, _ = devicetree.from_dts('''/ { spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            qcom,pm8150@0 { compatible = "qcom,spmi-pmic"; reg = <0x0 0>;
+                qcom,pm8150_rtc { compatible = "qcom,qpnp-rtc"; qcom,qpnp-rtc-write = <0>;
+                    qcom,pm8150_rtc_rw@6000 { reg = <0x6000 0x100>; };
+                    qcom,pm8150_rtc_alarm@6100 { reg = <0x6100 0x100>; }; }; }; }; };''')
+        self.assertEqual(board['rtc'], {'peripheral': 0x060, 'name': "the PM8150's RTC"})
+        _, board, _ = devicetree.from_dts('''/ { spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            pmic@1 { compatible = "qcom,pm8350", "qcom,spmi-pmic"; reg = <0x1 0>;
+                rtc@6000 { compatible = "qcom,pm8941-rtc"; reg = <0x6000>; status = "disabled"; }; };
+            pmic@0 { compatible = "qcom,pmk8350", "qcom,spmi-pmic"; reg = <0x0 0>;
+                rtc@6100 { compatible = "qcom,pmk8350-rtc"; reg = <0x6100>, <0x6200>; }; }; }; };''')
+        self.assertEqual(board['rtc'], {'peripheral': 0x061, 'name': "the PMK8350's RTC"})
         # an RPMh sequencer whose first slot set is not an active one is said
         rsc = '''/ {{ rsc@18200000 {{ compatible = "qcom,rpmh-rsc"; reg = <0x18200000 0x10000>, <0x18210000 0x10000>,
             <0x18220000 0x10000>; reg-names = "drv-0", "drv-1", "drv-2"; qcom,drv-id = <2>; qcom,tcs-offset = <0xd00>;
@@ -1499,6 +1542,8 @@ class DeviceTree(Sandbox):
         board = self.dir / 'devices/phone2/board.dts'
         self.assertIn('\tbuttons {\n\t\tpon = <0x013>;\n\t\tpon-name = "the PMK8350\'s power-on block";\n\t\tvolume-up = <0x18d>;\n'
                       '\t\tvolume-up-name = "GPIO6 of the PM8350";\n\t};\n', board.read_text())
+        # ... and the PMIC's clock, which needs no feature
+        self.assertIn('\trtc {\n\t\tperipheral = <0x061>;\n\t\tname = "the PMK8350\'s RTC";\n\t};\n', board.read_text())
         board.write_text(board.read_text().replace('features = <>;', 'features = "buttons-pmic";'))
         self.assertEqual(self.problems(), '')
         self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d, .pon_name = "the PMK8350\'s power-on block", '

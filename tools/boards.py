@@ -148,6 +148,7 @@ BOARD_SCHEMA = {
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True),
                 'sound_pins': ([int], True), 'sound_function': (int, True), 'tdm': (int, False)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
+    'rtc': {'peripheral': (int, True), 'name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
     'gpu': {'model': (str, True), 'chip_id': (int, True), 'firmware': (str, True), 'gmem_kb': (int, True),
@@ -726,6 +727,10 @@ def load(problems=None):
                                                      "peripheral's registers (0x18d: slave 1, registers 0x8d00)")
             if keys['pon'] == keys['volume_up']:
                 problems.add(f'{rel} [buttons]', 'pon and volume_up are two peripherals')
+        clock = data.get('rtc')
+        if clock is not None and (not 0 < clock['peripheral'] <= 0xfff or clock['peripheral'] & 0xff == 0):
+            problems.add(f'{rel} [rtc]', f'peripheral = {clock["peripheral"]:#x}: SPMI slave << 8 | the high byte of the '
+                                         "RTC's registers (0x061: slave 0, registers 0x6100)")
         adsp = data.get('adsp')
         if adsp is not None:
             if adsp['memory_size'] == 0 or adsp['memory_size'] & 0xfff:
@@ -831,6 +836,9 @@ def load(problems=None):
                 problems.add(rel, '[thermal] needs [cpufreq] or [scmi_perf] in soc.dtsi')
             if len(soc.get('thermal', {}).get('tsens', [])) > TSENS_MAX:
                 problems.add(rel, f'soc.dtsi: at most {TSENS_MAX} TSENS controllers')
+        if 'rtc' in data and 'spmi' not in soc:
+            # (no feature to list: the section is the board's word that the clock is there, and the arbiter the way to it)
+            problems.add(rel, '[rtc] needs [spmi] in soc.dtsi')
     fallbacks = [name for name, data in boards.items() if 'loader' in data and 'fb_base' not in data['loader']]
     if len(fallbacks) > 1:
         problems.add('devices', 'more than one board with [loader] and no fb_base (' + ', '.join(fallbacks) +
@@ -982,6 +990,10 @@ def table_text(socs, boards):
         if keys:
             names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
             out.append(f'\t\t.buttons = {{ .pon = {keys["pon"]:#05x}, .volume_up = {keys["volume_up"]:#05x}{names} }},')
+        clock = board.get('rtc')
+        if clock:
+            name = f', .name = {c_string(clock["name"])}' if 'name' in clock else ''
+            out.append(f'\t\t.rtc = {{ .peripheral = {clock["peripheral"]:#05x}{name} }},')
         motor = board.get('haptic')
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
@@ -1408,7 +1420,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         out.comment(*title)
         out.node(node, commented)
         for key, value in values:
-            out.prop(boardfile.property_line(key, value, lambda v: f'{v:#05x}' if node in ('buttons', 'torch') else
+            out.prop(boardfile.property_line(key, value, lambda v: f'{v:#05x}' if node in ('buttons', 'torch', 'rtc') else
                                                      f'{v:#010x}' if v >= 0x10000 else str(v)))
         out.end()
 
@@ -1417,6 +1429,10 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         section(('The keys on the PMICs, for the feature "buttons-pmic": SPMI slave << 8 | the high byte of the',
                  "peripheral's registers."), 'buttons',
                 [(key, keys[key]) for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys])
+    clock = board.get('rtc', {})
+    if 'peripheral' in clock:
+        section(("The PMIC's real-time clock, read once at boot (rtc=0 leaves it alone): SPMI slave << 8 | the high byte",
+                 "of its RTC_RW block's registers."), 'rtc', [(key, clock[key]) for key in ('peripheral', 'name') if key in clock])
     torch = board.get('torch', {})
     if 'flash' in torch and 'alarm' in torch:
         section(('The flashlight\'s part on the PMIC, for the feature "torch-pm8350c": the flash LED module and that',
@@ -1563,7 +1579,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
 
     out += side(f'arch/arm64/boot/dts/{name}/soc.dtsi', soc, tree_soc, SOC_SCHEMA, lambda key, value: dts_value(key, value, soc_number))
     out += side(f'{name}/board.dts', board, tree_board, BOARD_SCHEMA,
-                lambda key, value: f'<{value:#05x}>' if key in ('pon', 'volume_up', 'flash', 'alarm') else dts_value(key, value))
+                lambda key, value: f'<{value:#05x}>' if key in ('pon', 'volume_up', 'flash', 'alarm', 'peripheral') else dts_value(key, value))
     out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +
                (' (clock offsets, the I/O window, firmware names and what was measured on the phone are never in one)'
                 if counts['unsaid'] else ''))

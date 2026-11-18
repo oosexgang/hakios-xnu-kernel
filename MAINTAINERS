@@ -115,6 +115,12 @@ T:	workbench/camera_wiring_test.c
 T:	workbench/torch_driver_test.c
 K:	camera-sm7325, torch-pm8350c; cam=, torch=
 
+CLOCK AND THE TIME OF DAY
+F:	drivers/board/rtc.c
+T:	workbench/rtc_driver_test.c
+T:	workbench/init_test.c
+K:	rtc=
+
 DARWIN USER SPACE
 F:	darwin/
 F:	userland/

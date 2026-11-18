@@ -104,6 +104,15 @@ config QCOM_BUTTONS
 	help
 	  The keys of the main PMIC's PON block and GPIOs, read through the SPMI arbiter (board/buttons.c, buttons=1).
 
+config QCOM_RTC
+	bool "The PMIC's real-time clock, read once at boot"
+	default y
+	select QCOM_SPMI
+	help
+	  The seconds counter of the PMIC's RTC, read (never written) through the SPMI arbiter where the board file's
+	  rtc { } names it, and given to process 1 as hw.rtc_seconds, which keeps the time of day across boots
+	  without the host with it (board/rtc.c, rtc=0 leaves it alone).
+
 config BATTERY_FROM_LOADER
 	bool "The battery and the charger, as the loader reads them from UEFI's charger drivers"
 	default y

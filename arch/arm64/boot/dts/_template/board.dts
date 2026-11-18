@@ -59,6 +59,16 @@
 		// volume-up-name = "GPIO6 of the PM8350";
 	// };
 
+	// The PMIC's real-time clock: a count of seconds that runs on while the phone is off, read once at boot
+	// (board/rtc.c, hw.rtc_seconds; rtc=0 leaves it alone). Nothing is ever written to it. Leave the section
+	// out and the clock is not read. A peripheral as in buttons { }; `tools/boards.py new --dts` finds it.
+	// rtc {
+		// peripheral = <0x061>;        // its RTC_RW block: rtc@6100 of the PMK8350 (SM8350, SM7325 and after), or
+		//                              // rtc@6000 of the PM8150 / PM8250 / PM8998 before it (0x060), on the slave its
+		//                              // PMIC is (qcom,pmk8350@0: 0)
+		// name = "the PMK8350's RTC";  // for the log
+	// };
+
 	// The port's own partition on the phone's storage: the one partition the kernel may write (ufs_write=1),
 	// and only from the block past what the build puts at its start. Leave the section out and nothing is
 	// ever written; reading the storage needs none of this. The partition is named "darwin"; these are its

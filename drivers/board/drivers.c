@@ -31,6 +31,7 @@ extern void hakios_prof_start(void);            /* osfmk/arm64/prof.c */
 extern void hakios_backlight_init(void);        /* bsd/dev/board/backlight.c */
 extern void hakios_thermal_init(void);          /* bsd/dev/board/thermal.c */
 extern void hakios_imu_init(void);              /* bsd/dev/board/imu.c */
+extern void hakios_rtc_init(void);              /* bsd/dev/board/rtc.c */
 
 /* The touch screen: the driver of the controller this board has, if it lists one. */
 static void
@@ -85,6 +86,9 @@ hakios_drivers_init(void)
 	}
 	if (CONFIG_QCOM_BUTTONS) {
 		hakios_buttons_init();  /* boot-arg buttons=1: the power and volume keys */
+	}
+	if (CONFIG_QCOM_RTC) {
+		hakios_rtc_init();  /* the PMIC's clock, read once for process 1: hw.rtc_seconds (rtc=0: not read) */
 	}
 	if (CONFIG_BATTERY_FROM_LOADER) {
 		hakios_battery_init();  /* boot-arg battery=1: the charger's state, from the loader */

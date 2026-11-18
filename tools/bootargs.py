@@ -133,7 +133,7 @@ AREAS = [
                                      B + 'adreno', B + 'backlight', B + 'input', B + 'drivers', B + 'goodix', B + 'fts',
                                      B + 'buttons', B + 'virtio_input', B + 'imu')),
     ('Power, CPU and temperature', (B + 'cpufreq', B + 'scmi_perf', B + 'ddr', B + 'bench', B + 'thermal', B + 'cputop',
-                                    B + 'battery', 'iokit/Kernel/BoardBattery', 'osfmk/arm64/cpu_idle', 'osfmk/arm64/psci_smp',
+                                    B + 'battery', B + 'rtc', 'iokit/Kernel/BoardBattery', 'osfmk/arm64/cpu_idle', 'osfmk/arm64/psci_smp',
                                     'iokit/Kernel/GenericARMPE', 'iokit/Kernel/IOPMrootDomain')),
     ('Sound, camera, haptics, flashlight', (B + 'adsp', B + 'audio', B + 'sound', B + 'speaker', B + 'guard', B + 'mic',
                                             B + 'virtio_sound', B + 'camera', B + 'haptic', B + 'torch')),

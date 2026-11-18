@@ -184,6 +184,7 @@ int fake_sysctl_out(struct sysctl_req *req, const void *data, size_t size);
 #define CTLFLAG_LOCKED 0
 #define CTLTYPE_INT 0
 #define CTLTYPE_STRING 0
+#define CTLTYPE_QUAD 0
 #define FAKE_OID(parent, nm, k, a1, a2, h, fl) \
 	static struct sysctl_oid fake_oid_##parent##_##nm = { #parent "." #nm, k, a1, a2, h, fl }; \
 	__attribute__((constructor)) static void fake_reg_##parent##_##nm(void) { fake_sysctl_register(&fake_oid_##parent##_##nm); }

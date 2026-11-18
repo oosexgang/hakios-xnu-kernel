@@ -81,6 +81,14 @@ tags yet, so the current work is one section.
 - **Messages can post banners**: the image says Messages' data was migrated for its own build
   (`kIMDPersistenceLastBuild` in `com.apple.imdsmsrecordstore`, mobile's Preferences and ByHost), which IMDPersistence
   waits for before posting any. After the idea of the Nord 2 port's 0277y; not yet seen on our phone.
+- **The time of day kept across boots without the host, by the PMIC's clock.** A board whose board file names its
+  PMIC's RTC (`rtc { peripheral = <0x061>; }`, the PMK8350's; `tools/boards.py new --dts` finds it) has the clock's
+  seconds count read once at boot, never written (`board/rtc.c`, `hw.rtc_seconds`; `rtc=0` leaves it alone). When the
+  host gives the time (`epoch=`), process 1 keeps how far that is past the count in `/private/var/db/rtc-offset`, which
+  `var_store` saves with the rest; at a boot without the host it raises the clock to the count plus that -- never
+  backwards, never more than ten years past the kernel's build (`init: the clock read ...; the PMIC's reads` in the
+  log). The register offsets are Linux's `rtc-pm8xxx.c`'s, not yet read on our phone. After the idea of the OnePlus
+  Nord 2 port's piece 0540.
 - **"On My iPhone" in Files:** fileproviderd keeps its files only on a volume it takes for APFS, so `/private/var`
   (ramfs) is named "apfs" to fileproviderd and to no other program (`var_apfs=0` turns it off); APFS's own requests are
   refused there with ENOTSUP. After the idea of the Nord 2 port's piece 0734; not yet seen on our phone.

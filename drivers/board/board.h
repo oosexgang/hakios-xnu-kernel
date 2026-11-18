@@ -214,6 +214,12 @@ struct hakios_board {
 		const char *pon_name, *volume_up_name;  /* for the log: "GPIO6 of the PM8350" */
 	} buttons;
 
+	/* the PMIC's real-time clock (board: rtc { }); a peripheral as in buttons { }. 0: the board names none, nothing is read */
+	struct {
+		uint16_t peripheral;            /* its RTC_RW block: the seconds counter and its control register */
+		const char *name;               /* for the log: "the PMK8350's RTC" */
+	} rtc;
+
 	/* the vibration motor's chip (board: haptic { }): which of the SoC's pins it is on, and this motor's calibration */
 	struct {
 		uint8_t sda, scl;               /* its I2C bus's two lines */

@@ -66,4 +66,10 @@
 		volume-up = <0x2c8>;            // slave 2, registers 0xc800: GPIO9 of a pinctrl@c000
 		volume-up-name = "GPIO9 of the PMX200";
 	};
+
+	// (its clock on the same third PMIC, at an older chip's place: registers 0x6000 of slave 2)
+	rtc {
+		peripheral = <0x260>;
+		name = "the PMX200's RTC";
+	};
 };

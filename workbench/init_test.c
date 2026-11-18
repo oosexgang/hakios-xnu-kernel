@@ -118,6 +118,7 @@ static int t_failures, t_checks;
 static char root[512];                  /* the test's directory: /private and /jb are in it */
 static const char *boot_line = "";
 static const char *kernel_version;      /* kern.version, when a scenario gives one */
+static long long rtc_answer = -1;       /* hw.rtc_seconds, when a scenario gives one (the PMIC clock's count) */
 
 /* PATH as the host is to see it */
 static const char *
@@ -295,6 +296,14 @@ sysctlbyname(const char *name, void *oldp, size_t *oldlenp, const void *newp, si
 		}
 		memcpy(oldp, kernel_version, n);
 		*oldlenp = n;
+		return 0;
+	}
+	if (strcmp(name, "hw.rtc_seconds") == 0 && rtc_answer >= 0 && oldp != NULL && oldlenp != NULL &&
+	    *oldlenp >= sizeof(uint64_t)) {
+		uint64_t count = (uint64_t)rtc_answer;
+
+		memcpy(oldp, &count, sizeof(count));
+		*oldlenp = sizeof(count);
 		return 0;
 	}
 	init_errno = 2;
@@ -947,6 +956,113 @@ scenario_dasd(void)
 	unlink(in_root("/bplist.py"));
 }
 
+#define RTC_FILE        "/private/var/db/rtc-offset"
+
+/*
+ * The wall clock kept across boots by the PMIC's clock: the host's time less the clock's count saved when epoch= gave
+ * it, and at a boot without the host the clock raised to the count plus what was saved -- never put back, and not
+ * taken more than ten years past the kernel's build.
+ */
+static void
+scenario_rtc_saved(void)
+{
+	mkdir(in_root("/private"), 0755);
+	mkdir(in_root("/private/var"), 0755);
+	mkdir(in_root("/private/var/db"), 0755);
+	kernel_version = KERNEL_2030;
+	unlink(in_root(RTC_FILE));
+
+	/* a kernel without the clock (or a board without one): said, nothing written, the clock left */
+	rtc_answer = -1;
+	boot_line = "rd=md0 epoch=1900000000";
+	forget_calls();
+	mount_writable();
+	clock_rtc();
+	CHECK(clock_sets == 1 && init_said("no count of the PMIC's clock"), "without hw.rtc_seconds: said, the clock as epoch= set it");
+	CHECK(file_text(in_root(RTC_FILE))[0] == 0, "and nothing saved");
+
+	/* the host gives the time: what it is past the count, at the same moment, is saved; the clock is not touched again */
+	rtc_answer = 1000;
+	forget_calls();
+	mount_writable();
+	clock_rtc();
+	CHECK(strcmp(file_text(in_root(RTC_FILE)), "1899999000\n") == 0, "the host's time less the count saved: \"%s\"",
+	    file_text(in_root(RTC_FILE)));
+	CHECK(clock_sets == 1 && clock_set_to == 1900000000 && init_said("kept in " RTC_FILE), "the clock set by epoch= alone (%d)",
+	    clock_sets);
+
+	/* a link the store put back in the file's place is not written through */
+	put_file(in_root("/victim"), "root's\n");
+	unlink(in_root(RTC_FILE));
+	CHECK(symlink(in_root("/victim"), in_root(RTC_FILE)) == 0, "a link in the file's place");
+	rtc_answer = 2000;
+	forget_calls();
+	mount_writable();
+	clock_rtc();
+	CHECK(strcmp(file_text(in_root("/victim")), "root's\n") == 0, "the link's target left as it was");
+	CHECK(strcmp(file_text(in_root(RTC_FILE)), "1899998000\n") == 0, "the file made anew: \"%s\"", file_text(in_root(RTC_FILE)));
+	unlink(in_root("/victim"));
+	rtc_answer = -1;
+}
+
+static void
+scenario_rtc_applied(void)
+{
+	kernel_version = KERNEL_2030;
+	put_file(in_root(RTC_FILE), "1899999000\n");
+
+	/* a boot without the host: the clock (at the build, or raised by the floor) raised to the count plus the saved */
+	rtc_answer = 5000;
+	boot_line = "rd=md0";
+	forget_calls();
+	mount_writable();
+	clock_now = BUILT_2030;
+	clock_rtc();
+	CHECK(clock_sets == 1 && clock_set_to == 1900004000, "the clock set to the count and the saved: %d, %ld", clock_sets,
+	    clock_set_to);
+	CHECK(init_said("set to that: ok"), "and said");
+	CHECK(strcmp(file_text(in_root(RTC_FILE)), "1899999000\n") == 0, "and the file not written without the host's time");
+
+	/* a clock already past it (the floor's, a firmware's) is not put back: a count that started again from 0 */
+	forget_calls();
+	clock_now = 1900010000;
+	clock_rtc();
+	CHECK(clock_sets == 0 && init_said("is not behind it"), "a clock ahead of the count and the saved is left: %d", clock_sets);
+
+	/* a time past ten years after the kernel's build is taken for nonsense */
+	put_file(in_root(RTC_FILE), "2300000000\n");
+	forget_calls();
+	clock_now = BUILT_2030;
+	clock_rtc();
+	CHECK(clock_sets == 0 && init_said("more than ten years past the kernel's build"), "an absurd time left out: %d, %ld",
+	    clock_sets, clock_set_to);
+	/* ... and ten years to the second is not */
+	put_file(in_root(RTC_FILE), "2209588600\n");          /* (BUILT_2030 + CLOCK_STAMP_SPAN - 5000) */
+	forget_calls();
+	clock_rtc();
+	CHECK(clock_sets == 1 && clock_set_to == BUILT_2030 + CLOCK_STAMP_SPAN, "ten years after the build to the second: %ld",
+	    clock_set_to);
+
+	/* a count ahead of the time of day: what is saved is less than 0 */
+	put_file(in_root(RTC_FILE), "-1000\n");
+	rtc_answer = 1900005000;
+	forget_calls();
+	clock_rtc();
+	CHECK(clock_sets == 1 && clock_set_to == 1900004000, "a saved difference below 0: %ld", clock_set_to);
+
+	/* a file that is not a number, and none at all: said, the clock left */
+	put_file(in_root(RTC_FILE), "soon\n");
+	forget_calls();
+	clock_rtc();
+	CHECK(clock_sets == 0 && init_said("no boot with the host has said"), "a file of words: %d", clock_sets);
+	unlink(in_root(RTC_FILE));
+	forget_calls();
+	clock_rtc();
+	CHECK(clock_sets == 0 && init_said("no boot with the host has said"), "no file: %d", clock_sets);
+	rtc_answer = -1;
+	clock_now = 0;
+}
+
 /* An exec that fails gives process 1 its standard error back; ">>" on an exec line is refused. */
 static void
 scenario_exec(void)
@@ -1002,6 +1118,8 @@ main(void)
 	scenario_build_date();
 	scenario_clock();
 	scenario_dasd();
+	scenario_rtc_saved();
+	scenario_rtc_applied();
 	scenario_exec();
 	scenario_zero_record();
 
