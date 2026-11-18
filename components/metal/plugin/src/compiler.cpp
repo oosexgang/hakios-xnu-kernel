@@ -1889,9 +1889,12 @@ bool bindArgumentBuffers(const std::vector<Resource>& resources, Bindings* b, st
             return false;
         }
         const Binding& set = sets[r.argbufSet];
-        if (set.offset + r.argbufOffset + 8 > set.buffer->length() || set.buffer->contents() == nullptr) {
+        // (the subtract form, so neither set.offset -- the app's setBuffer:offset: -- nor the member's own offset can wrap
+        // the sum past the buffer and pass; the bytes bound from set.offset on, 0 when set.offset is itself past the end)
+        const uint64_t bound = set.offset <= set.buffer->length() ? set.buffer->length() - set.offset : 0;
+        if (set.buffer->contents() == nullptr || set.offset > set.buffer->length() || r.argbufOffset > bound || 8 > bound - r.argbufOffset) {
             *why = "argument buffer " + std::to_string(r.argbufSet) + ": its member at byte " + std::to_string(r.argbufOffset) + " lies past the " +
-                   std::to_string(set.buffer->length() - set.offset) + " bytes bound";
+                   std::to_string(bound) + " bytes bound";
             return false;
         }
         uint64_t word = 0;
