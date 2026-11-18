@@ -242,9 +242,11 @@ ORIENTATION AND SENSORS
 F:	drivers/board/orientation_core.h
 F:	drivers/board/sensor_axes_core.h
 F:	drivers/board/sensors_core.h
+F:	drivers/board/lsm6dso_core.h
 T:	workbench/orientation_test.c
 T:	workbench/sensor_axes_test.c
 T:	workbench/sensors_test.c
+T:	workbench/lsm6dso_test.c
 K:	orient_
 
 QEMU
