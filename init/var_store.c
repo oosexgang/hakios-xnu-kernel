@@ -49,7 +49,8 @@
  *
  * What is left out: sockets and devices, which the daemons of a new boot make for themselves, and
  * the directories in SKIP below, which hold what only this boot can mean (its runtime sockets, its
- * swap, its logs) or what is grafted from a read-only image at every boot anyway.
+ * swap, its logs) or what is grafted from a read-only image at every boot anyway. And the keychain,
+ * unless asked for (keychain_kept below): nothing here encrypts it.
  */
 #include "mini.h"
 
@@ -176,6 +177,24 @@ boot_arg_is(const char *name, const char *value)
 		}
 	}
 	return 0;
+}
+
+/*
+ * The keychain (Keychains: securityd's database, every item with its key) is left out as well, saved and unpacked
+ * alike, unless boot-arg var_store_keychain=1 asks for it. The kernel's AppleKeyStore stand-in has no secret to wrap
+ * the items' keys with (iokit/Kernel/MiniAppleKeyStore.cpp), so in the flash the keychain is as good as plaintext to
+ * whoever reads the flash; left out, it is gone at the next start, as it always was before the volume was kept.
+ */
+#define KEYCHAIN        "Keychains"
+static int keychain_wanted = -1;        /* the boot-arg, read once */
+
+static int
+keychain_kept(void)
+{
+	if (keychain_wanted < 0) {
+		keychain_wanted = boot_arg_is("var_store_keychain", "1");
+	}
+	return keychain_wanted;
 }
 
 /*
@@ -631,7 +650,7 @@ is_skipped(const char *relative)
 			return 1;
 		}
 	}
-	return 0;
+	return strcmp(relative, KEYCHAIN) == 0 && !keychain_kept();
 }
 
 /* The name this inode was first met under, if it has one; otherwise this one is remembered. */
@@ -1021,6 +1040,8 @@ save(void)
 	slot = best < 0 ? 0 : (best + 1) % SLOTS;
 	printf("var_store: saving into slot %d (slot %d holds generation %llu)\n", slot, best,
 	    best < 0 ? 0ULL : (unsigned long long)old.generation);
+	printf("var_store: the keychain is %s\n", keychain_kept() ? "kept too (var_store_keychain=1), and not encrypted" :
+	    "left out (var_store_keychain=1 keeps it)");
 
 	/* the slot's header first, so that a save cut short cannot leave an old header over a new archive */
 	memset(block, 0, sizeof(block));
@@ -1168,6 +1189,11 @@ unpack_one(int make)
 			make = 0;
 			skipped_load++;
 		}
+	}
+	/* (nor the keychain an archive saved with var_store_keychain=1 holds, unless this boot asks for it too) */
+	if (make && strncmp(relative, KEYCHAIN "/", sizeof(KEYCHAIN)) == 0 && !keychain_kept()) {
+		make = 0;
+		skipped_load++;
 	}
 	if (make && is_launchservices_store(relative)) {
 		make = 0;
@@ -1441,18 +1467,45 @@ show(void)
 	}
 }
 
+/*
+ * Both slots forgotten, and what they held with them: a header zeroed alone would leave the archive behind it
+ * readable to anyone with the flash in hand (the keychain too, if it was kept). So the archive of a slot whose header
+ * checks out is zeroed first, as far as the header says it goes (whole blocks, never past the slot), and the header
+ * last -- an erase cut short leaves a slot whose contents no longer check out, which `load` refuses, not one that
+ * loads half. (What a save cut short left behind a zeroed header is not found this way and stays.)
+ */
 static int
 erase(void)
 {
 	static uint8_t block[BLOCK];
+	uint64_t zeroed = 0;
 
 	memset(block, 0, sizeof(block));
+	memset(buffer, 0, BUFFER);
 	for (int slot = 0; slot < SLOTS; slot++) {
+		struct head h;
+
+		if (read_head(slot, &h)) {
+			uint64_t bytes = (h.bytes + BLOCK - 1) / BLOCK * BLOCK;
+
+			if (bytes > (uint64_t)SLOT_BYTES - BLOCK) {
+				bytes = (uint64_t)SLOT_BYTES - BLOCK;
+			}
+			for (uint64_t done = 0; done < bytes;) {
+				uint64_t n = bytes - done > BUFFER ? BUFFER : bytes - done;
+
+				if (!device_write(slot_at(slot) + BLOCK + (off_t)done, buffer, n)) {
+					return 0;
+				}
+				done += n;
+			}
+			zeroed += bytes;
+		}
 		if (!device_write(slot_at(slot), block, BLOCK)) {
 			return 0;
 		}
 	}
-	printf("var_store: both slots forgotten\n");
+	printf("var_store: both slots forgotten (%llu bytes of archive zeroed)\n", (unsigned long long)zeroed);
 	return 1;
 }
 

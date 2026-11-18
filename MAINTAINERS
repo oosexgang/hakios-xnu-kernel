@@ -127,6 +127,7 @@ F:	components/upstream.dts
 T:	workbench/qemu_post_test.sh (with a kernel: make qemu)
 T:	workbench/darwin_tools_test.py
 T:	workbench/jb_preinstall_test.py
+T:	workbench/var_store_test.c
 D:	darwin/README.md
 D:	Documentation/darwin26-boot.md
 D:	Documentation/darwin27-ubuntu.ru.md

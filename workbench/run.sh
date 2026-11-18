@@ -113,6 +113,8 @@ echo "== qmi (drivers/board/qmi.c under the sanitizers)"
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"
 run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 run synaptics_report_test -I"$SRC" "$HERE/synaptics_report_test.c"
+# the data volume's store (init/var_store.c), against libmini's header as on the phone, over a sparse file for the partition
+run var_store_test -I"$HERE/../lib/libmini" "$HERE/var_store_test.c"
 
 # the loader's parts that are plain C, and the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)

@@ -8,7 +8,11 @@
  * has it wrapped by the key of the item's protection class (kAKSWrapKey) before it stores it, and
  * unwrapped (kAKSUnwrapKey) to read the item: that is answered, so that the keychain works -- but
  * with nothing secret to wrap with, the "wrapping" is a reversible transformation and protects
- * nothing (and the keychain lives in /private/var, in memory, and is gone at the next start).
+ * nothing. The keychain lives in /private/var, in memory, and is gone at the next start -- unless
+ * the data volume is kept in the phone's flash (init/var_store.c) and the keychain with it, which
+ * var_store does only when asked (var_store_keychain=1): then whoever reads the flash reads every
+ * item, as good as in plaintext. The passcode-only class is refused, as on a device without a
+ * passcode.
  * Requests that would need real keys or bags otherwise (creating or loading bags, keys kept in the
  * key store) are refused, logged once.
  *
@@ -49,6 +53,13 @@ enum {
 	kAKSNotifyStateIsSet    = 0x67,
 	kAKSPrewarm             = 0x73,
 };
+
+/*
+ * The protection classes, numbered as libaks numbers them (key_class_ak = 6, ck, dk, aku, cku, dku, akpu:
+ * Security's SecKeybagSupport.h): the last, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, is wrapped by a
+ * key only a passcode makes, and there is none.
+ */
+#define kAKSClassPasscodeOnly   12
 
 /* state flags: bit 1 no passcode, bit 2 unlocked since boot */
 #define kAKSStateFlags          0x6
@@ -170,7 +181,8 @@ AppleKeyStoreUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
 /*
  * kAKSWrapKey and kAKSUnwrapKey. A wrapped key is 8 bytes longer than the key, as with AES key
  * wrap (RFC 3394), which is what callers size their buffers for: a mark, the class, and the key
- * mixed with a fixed pattern. Not encryption: there is no secret here to encrypt with.
+ * mixed with a fixed pattern. Not encryption: there is no secret here to encrypt with. So the
+ * copies on the stack are as good as the key itself, and are cleared before the call returns.
  */
 static const uint8_t kWrapMark[4] = { 'H', 'K', 'w', 'r' };
 
@@ -278,9 +290,14 @@ AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * a
 	case kAKSWrapKey: {
 		uint8_t wrapped[8 + 64];
 		size_t length = args->structureInputSize;
+		IOReturn ret;
 
 		if (args->structureInput == NULL || length == 0 || length > 64 || args->scalarInputCount < 2) {
 			return kIOReturnBadArgument;
+		}
+		/* (the class as the wrapped key keeps it: its low byte) */
+		if ((uint8_t)args->scalarInput[1] == kAKSClassPasscodeOnly) {
+			return kIOReturnNotPermitted;
 		}
 		memcpy(wrapped, kWrapMark, sizeof(kWrapMark));
 		wrapped[4] = (uint8_t)args->scalarInput[1];
@@ -291,20 +308,29 @@ AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * a
 			out[0] = args->scalarInput[1];
 			args->scalarOutputCount = 1;
 		}
-		return answer(args, wrapped, 8 + length);
+		ret = answer(args, wrapped, 8 + length);
+		memset_s(wrapped, sizeof(wrapped), 0, sizeof(wrapped));
+		return ret;
 	}
 
 	case kAKSUnwrapKey: {
 		uint8_t key[64];
 		const uint8_t * wrapped = (const uint8_t *)args->structureInput;
 		size_t length = args->structureInputSize;
+		IOReturn ret;
 
 		if (wrapped == NULL || length <= 8 || length > 8 + sizeof(key) || memcmp(wrapped, kWrapMark, sizeof(kWrapMark)) != 0) {
 			return kIOReturnBadArgument;
 		}
+		/* a key wrapped for one class is not given out to a caller that asks for it under another */
+		if (args->scalarInputCount >= 2 && wrapped[4] != (uint8_t)args->scalarInput[1]) {
+			return kIOReturnNotPermitted;
+		}
 		memcpy(key, wrapped + 8, length - 8);
 		wrapMix(key, length - 8);
-		return answer(args, key, length - 8);
+		ret = answer(args, key, length - 8);
+		memset_s(key, sizeof(key), 0, sizeof(key));
+		return ret;
 	}
 
 	case kAKSNotifyStateIsSet:

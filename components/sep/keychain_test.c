@@ -5,13 +5,16 @@
  * -34018 "missing entitlement" (built unsigned: it is signed with keychain_test.entitlements).
  *
  * usage: keychain_test [keep|read|add|delete]
- *   (none)   the whole round trip, as before: delete, add, read back, delete
+ *   (none)   the whole round trip, as before: delete, add, read back, delete; it fails (1) if the add
+ *            failed or the bytes read back are not the ones written
  *   keep     read it; if it is not there, write one that says when -- so a later boot's "read"
- *            says which boot wrote it. For the data volume kept in the flash (var_store=1): the
+ *            says which boot wrote it. For the data volume kept in the flash (var_store=1) with the
+ *            keychain kept in it too (var_store_keychain=1: var_store leaves it out otherwise): the
  *            keychain's database is a file under /private/var like any other, and whether an item
  *            written in one boot can still be decrypted in the next is the question (the class keys
  *            are a reversible transformation in the kernel, iokit/Kernel/MiniAppleKeyStore.cpp, not
- *            a key of a Secure Enclave this phone has not got, so it should be -- and now is).
+ *            a key of a Secure Enclave this phone has not got, so it should be -- and now is; and
+ *            for the same reason the kept keychain is readable by whoever reads the flash).
  *   read     read it and print it, and nothing else
  *   add      write one that says when, over whatever is there
  *   delete   remove it
@@ -92,6 +95,15 @@ main(int argc, char **argv)
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
+	/*
+	 * Anything but one of the words, or more than one, is a mistake: the round trip below begins by deleting the item,
+	 * and a misspelt "keep" must not take away what an earlier boot wrote.
+	 */
+	if (argc > 2 || (argc == 2 && strcmp(what, "keep") != 0 && strcmp(what, "read") != 0 && strcmp(what, "add") != 0 &&
+	    strcmp(what, "delete") != 0)) {
+		fprintf(stderr, "usage: keychain_test [keep|read|add|delete]\n");
+		return 2;
+	}
 	if (strcmp(what, "keep") == 0) {
 		back = item_read(&status);
 		print_item("read", status, back);
@@ -123,6 +135,8 @@ main(int argc, char **argv)
 	/* no argument: the whole round trip, as this program always did */
 	{
 		static const char secret[] = "hello from the keychain";
+		OSStatus added;
+		int same;
 
 		q = query();
 		data = CFDataCreate(NULL, (const UInt8 *)secret, sizeof(secret) - 1);
@@ -130,12 +144,12 @@ main(int argc, char **argv)
 		printf("keychain_test: delete before: %d\n", (int)status);
 		CFDictionarySetValue(q, kSecValueData, data);
 		CFDictionarySetValue(q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
-		status = SecItemAdd(q, NULL);
-		printf("keychain_test: add: %d\n", (int)status);
+		added = SecItemAdd(q, NULL);
+		printf("keychain_test: add: %d\n", (int)added);
 		CFRelease(q);
 		back = item_read(&status);
-		printf("keychain_test: read back: %d, %s\n", (int)status, back != NULL && CFGetTypeID(back) == CFDataGetTypeID() &&
-		    CFEqual(back, data) ? "THE SAME BYTES" : back != NULL ? "other bytes" : "nothing");
+		same = back != NULL && CFGetTypeID(back) == CFDataGetTypeID() && CFEqual(back, data);
+		printf("keychain_test: read back: %d, %s\n", (int)status, same ? "THE SAME BYTES" : back != NULL ? "other bytes" : "nothing");
 		if (back != NULL) {
 			CFRelease(back);
 		}
@@ -144,6 +158,6 @@ main(int argc, char **argv)
 		printf("keychain_test: delete: %d\n", (int)status);
 		CFRelease(q);
 		CFRelease(data);
+		return added == 0 && same ? 0 : 1;
 	}
-	return 0;
 }

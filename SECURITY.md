@@ -6,6 +6,13 @@ code enforced end to end, the boot chain's measurements -- and stand-ins take it
 `components/sep/`, `kernel/overlay/bsd/kern/kern_minimac.c`), which allow what Darwin needs to start. Do not keep
 anything on a phone running it that you would not show to whoever holds it.
 
+The keychain is not encrypted. The stand-in for AppleKeyStore (`drivers/iokit/MiniAppleKeyStore.cpp`) has no secret
+to wrap the items' keys with, so its wrapping can be undone by anyone. By default that matters only while the phone
+runs: the keychain lives in `/private/var`, in memory. The data volume kept in the flash (`var_store=1 ufs_write=1`,
+`init/var_store.c`) leaves the keychain out unless `var_store_keychain=1` asks for it, and a keychain kept that way
+is in the flash as good as in plaintext: whoever reads the flash reads every item. `var_store erase` zeroes what
+the store held, not only its headers.
+
 ## Reporting
 
 A way to run code in the kernel from an application, to read another process's memory, to reach the phone's storage

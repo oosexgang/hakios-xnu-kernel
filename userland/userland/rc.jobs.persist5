@@ -1,6 +1,8 @@
 # Commands run by the launchd job com.hakios.demo (see launchd/demo.plist).
-# What persistence buys, boot after boot (var_store=1 ufs_write=1; see rc.jobs.persist0 and
-# rc.jobs.persist1, which are this list with a little before it). Everything here is a measurement,
+# What persistence buys, boot after boot (var_store=1 ufs_write=1 var_store_keychain=1; see rc.jobs.persist0 and
+# rc.jobs.persist1, which are this list with a little before it). var_store_keychain=1 is what keeps the keychain
+# with the rest of /private/var: without it var_store leaves the keychain out, and every boot's "keep" writes a new
+# item. Kept, it is in the flash as good as unencrypted (SECURITY.md). Everything here is a measurement,
 # nothing here saves: the job com.hakios.varstore writes the volume when the kernel says the run is
 # ending. Boot it five times over and compare the boots:
 #   the store at the start, and how much room the volume has;

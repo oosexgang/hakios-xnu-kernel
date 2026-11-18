@@ -49,7 +49,7 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 | Adreno 642L GPU through Mesa/freedreno (`gpu=1`, OpenGL ES for CoreAnimation) | |
 | Wi-Fi (WCN6750, ath11k): join from Settings, Safari over Wi-Fi, 55–90 Mbit/s | |
 | Sound (speakers, main microphone), camera in Camera.app (front/rear, preview, focus, HEIC photos) | |
-| Data that Darwin writes survives a reboot (`var_store=1 ufs_write=1`); Darwin root volume on the phone's flash | |
+| Data that Darwin writes survives a reboot (`var_store=1 ufs_write=1`; the keychain only with `var_store_keychain=1`, and then unencrypted: `../SECURITY.md`); Darwin root volume on the phone's flash | |
 | Sileo + Procursus (dpkg, apt), tweaks, SSH | |
 
 It is a research bench, not a ROM: a session lasts a given number of seconds, then the kernel returns to the
