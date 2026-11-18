@@ -235,6 +235,7 @@ F:	drivers/board/cell.c
 F:	drivers/board/ipa.c
 F:	include/board/ipa.h
 F:	include/board/nas.h
+T:	workbench/cell_driver_test.c
 T:	workbench/qmi/run.sh
 K:	mpss=
 

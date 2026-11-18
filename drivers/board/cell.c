@@ -138,22 +138,29 @@ arp_answer(const uint8_t *frame, size_t length)
 #define DHCP_ACK                5
 #define DHCP_NAK                6
 
-/* Is this a DHCP request (UDP 68 -> 67)? `udp` is set to its UDP header. */
+/*
+ * Is this a DHCP request (UDP 68 -> 67, to everyone or to the router)? `udp` is set to its UDP header. A packet that is
+ * not a whole datagram is not one, whatever its bytes where a port would be; nor is UDP to port 67 of a host beyond the
+ * router, which is the modem's to carry like any other packet.
+ */
 static bool
 dhcp_request(const uint8_t *frame, size_t length, const uint8_t **udp)
 {
 	const uint8_t *ip = frame + 14;
+	uint32_t to;
 	size_t ihl;
 
-	if (length < 14 + 20 + 8 + 240 || (ip[0] >> 4) != 4 || ip[9] != 17) {
+	/* (the flags' "more fragments" and the fragment's offset: both zero) */
+	if (length < 14 + 20 + 8 + 240 || (ip[0] >> 4) != 4 || ip[9] != 17 || (ip[6] & 0x3f) != 0 || ip[7] != 0) {
 		return false;
 	}
 	ihl = 4 * (ip[0] & 0xf);
-	if (ihl < 20 || 14 + ihl + 8 + 240 > length) {
+	to = get32(ip + 16);
+	if (ihl < 20 || 14 + ihl + 8 + 240 > length || (to != 0xffffffffu && to != session.router)) {
 		return false;
 	}
 	*udp = ip + ihl;
-	return ((*udp)[2] << 8 | (*udp)[3]) == 67;
+	return ((*udp)[0] << 8 | (*udp)[1]) == 68 && ((*udp)[2] << 8 | (*udp)[3]) == 67;
 }
 
 /* The answer to a DHCP request: an offer for a discover, an acknowledgement for a request, with the session's settings. */
@@ -246,6 +253,23 @@ dhcp_answer(const uint8_t *frame, size_t length, const uint8_t *udp)
 
 /* ---- the link ----------------------------------------------------------------------------------- */
 
+/*
+ * Is this IPv4 frame one for the modem? Only what the stack sends through the router: not what it sends to everyone
+ * on the link -- the limited broadcast, the subnet's broadcast, a multicast group (mDNS, SSDP, NetBIOS) -- which a LAN
+ * keeps to itself, and which the modem would carry to the network, if only to be dropped there.
+ */
+static bool
+cell_routed(const uint8_t *frame, size_t length)
+{
+	uint32_t to;
+
+	if (length < 14 + 20 || memcmp(frame, router_mac, 6) != 0) {
+		return false;
+	}
+	to = get32(frame + 14 + 16);
+	return (to >> 28) != 0xe && to != 0xffffffffu && to != (session.address | ~session.mask);
+}
+
 /* A frame from the stack: answered here, or its IP packet to the modem. */
 static bool
 cell_transmit(mbuf_t packet, size_t length)
@@ -264,8 +288,11 @@ cell_transmit(mbuf_t packet, size_t length)
 		ok = arp_answer(frame, length);
 	} else if (type == 0x0800 && dhcp_request(frame, length, &udp)) {
 		ok = session.up && dhcp_answer(frame, length, udp);
+		if (!ok) {
+			cell_count.dropped_out++;       /* (a release, say, or no session yet: not the modem's either) */
+		}
 	} else if (type == 0x0800) {
-		ok = session.up && hakios_ipa_transmit(CELL_MUX, frame + 14, length - 14);
+		ok = session.up && cell_routed(frame, length) && hakios_ipa_transmit(CELL_MUX, frame + 14, length - 14);
 		if (ok) {
 			cell_count.to_modem++;
 		} else {
@@ -286,7 +313,8 @@ cell_receive(uint8_t mux, const uint8_t *packet, size_t length)
 	uint8_t frame[HAKIOS_NET_FRAME_MAX];
 	uint32_t version = length > 0 ? packet[0] >> 4 : 0;
 
-	if (length < 20 || length + 14 > sizeof(frame) || (version != 4 && version != 6)) {
+	/* (another mux is another session's, one this interface does not stand for) */
+	if (mux != CELL_MUX || length < 20 || length + 14 > sizeof(frame) || (version != 4 && version != 6)) {
 		cell_count.dropped_in++;
 		return;
 	}
@@ -306,6 +334,25 @@ cell_poll(void)
 {
 	static unsigned ticks;
 	unsigned got = hakios_ipa_poll(cell_receive);
+	bool stopped = false;
+
+	/*
+	 * The IPA's data path stopped under a session (the modem driver stops it at the run's end, and a kept modem's session
+	 * is not said to be over): nothing more can pass, so the link goes down as if the session had ended, and the stack
+	 * stops sending on it (nor are its ARP and DHCP answered). A session told afterwards brings it up again.
+	 */
+	if (session.up && !hakios_ipa_data_ready()) {
+		lck_mtx_lock(&cell_lock);
+		stopped = session.up && !hakios_ipa_data_ready();
+		if (stopped) {
+			session.up = false;
+		}
+		lck_mtx_unlock(&cell_lock);
+	}
+	if (stopped) {
+		printf("cell: the IPA's data path is stopped: en1's link is taken down\n");
+		hakios_net_link_state_unit(CELL_UNIT, false);
+	}
 
 	if (++ticks % 30000 == 0 && (cell_count.to_modem != 0 || cell_count.from_modem != 0 || cell_count.dropped_out != 0)) {
 		char line[256];
@@ -331,12 +378,12 @@ static struct hakios_net_link cell_link = {
 void
 hakios_cell_session(bool up, uint32_t address, uint32_t mask, uint32_t gateway, uint32_t dns1, uint32_t dns2, uint32_t mtu)
 {
-	uint32_t router, was_address;
-	bool was_up;
+	bool was_up, changed;
+	uint32_t router;
 
 	lck_mtx_lock(&cell_lock);
 	was_up = session.up;
-	was_address = session.address;
+	changed = session.address != address || session.dns1 != dns1 || session.dns2 != dns2 || session.mtu != mtu;
 	session.modem_mask = mask;
 	session.modem_gateway = gateway;
 	mask = cell_mask(address);
@@ -361,8 +408,11 @@ hakios_cell_session(bool up, uint32_t address, uint32_t mask, uint32_t gateway, 
 	    dns1 >> 24, (dns1 >> 16) & 0xff, (dns1 >> 8) & 0xff, dns1 & 0xff, dns2 >> 24, (dns2 >> 16) & 0xff, (dns2 >> 8) & 0xff, dns2 & 0xff,
 	    mtu, cell_attached ? "" : " (no en1: the IPA's data path is not up)");
 	if (cell_attached) {
-		if (was_up && session.up && was_address != address) {
-			/* (another address while the link stays up: down and up again, so that DHCP is asked anew, not the old lease kept) */
+		if (was_up && session.up && changed) {
+			/*
+			 * (another address, other DNS servers or another MTU while the link stays up: down and up again, so that DHCP
+			 * is asked anew, not the old lease kept until it is renewed)
+			 */
 			hakios_net_link_state_unit(CELL_UNIT, false);
 		}
 		hakios_net_link_state_unit(CELL_UNIT, session.up);
