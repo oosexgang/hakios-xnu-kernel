@@ -215,6 +215,12 @@ tags yet, so the current work is one section.
   marked running, so it never started again; a photograph dropped for want of a buffer was counted as given. The
   brightness hook's "off" at the end of a ramp darkened the panel after it had been turned on again, and the tweak
   loader's filters matched as Substrate's do not (Bundles against the main bundle only, Mode inverted).
+- The libraries in Darwin's own daemons: the stack-size interposer made big the stacks that were big already and left
+  the small ones small (CoreAnimation's render thread still overflowed); an app's spawn log and SpringBoard's layer dump
+  wrote past their lines on long arguments or many gradient colours; waitstack=sb printed while SpringBoard's main thread
+  was stopped, perhaps holding dyld's lock; a texture from an IOSurface could be larger than the surface, and two 32-bit
+  pixel types were read as 16-bit; the Metal drawable's first use on two threads at once gave one of them no GPU; a
+  PosterBoard dictionary leaked on every retried check.
 
 ### For whoever works on the project
 
