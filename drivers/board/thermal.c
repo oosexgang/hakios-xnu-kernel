@@ -33,7 +33,8 @@
  *   th_period_ms=N     how often it looks (default 1000)
  *
  * sysctl hw.thermal: hottest (tenths of a degree), step and most (how far held back, of how far it can
- * be), trip, clear, critical (root may change them while it runs: tuning without a new kernel).
+ * be), trip, clear, critical (root may change them while it runs: tuning without a new kernel; each 0 to 125.0 C,
+ * and while the three are out of order the last policy that was in order stays in force).
  *
  * A SoC without EPSS whose firmware has SCMI performance domains (SM8845: scmi_perf=2) is held back the
  * same way, a domain's levels standing for the rows, from the highest the firmware allows down to the
@@ -50,6 +51,7 @@
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
+#include <sys/errno.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
@@ -79,6 +81,15 @@ static const struct cpufreq_hw_layout *layout = &cpufreq_hw_layouts[HAKIOS_CPUFR
 static const struct hakios_board *this_board;      /* (hakios_board(), looked up once) */
 static uint32_t mode = 1;
 static struct th_policy policy = { 700, 620, 950 };
+/*
+ * The policy the thread holds to: the last one that was in order (clear < trip < critical). root may tune the three
+ * in any order -- a trip lowered before its clear is, for a moment, under it -- and meanwhile the last good one
+ * stays in force rather than a muddle of both.
+ */
+static struct th_policy in_force = { 700, 620, 950 };
+/* No threshold above this, from a boot-arg or from root: the critical step is what keeps a phone that runs away
+ * from cooking itself, and a critical of 150 C would be none (silicon's junction limit is about 125 C). */
+#define TH_THRESHOLD_MOST       1250
 static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
 static uint32_t top_row[TH_DOMAINS], floor_row[TH_DOMAINS], row_now[TH_DOMAINS];
 static unsigned groups;                         /* how many groups of cores the board has */
@@ -226,7 +237,12 @@ th_thread(__unused void *argument, __unused wait_result_t result)
 			 * out) is asked for again at the next look -- a step held at the critical temperature is not lost to
 			 * one failed call
 			 */
-			step = th_next_step(step, most, t, &policy);
+			struct th_policy now = policy;
+
+			if (now.clear < now.trip && now.trip < now.critical) {
+				in_force = now;
+			}
+			step = th_next_step(step, most, t, &in_force);
 			apply(step);
 			if (step != said_step) {
 				char rows[48];
@@ -264,10 +280,31 @@ SYSCTL_UINT(_hw_thermal, OID_AUTO, step, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATI
     "how far held back");
 SYSCTL_UINT(_hw_thermal, OID_AUTO, most, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &most), 0,
     "how far it can be held back");
-SYSCTL_INT(_hw_thermal, OID_AUTO, trip, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.trip, 0, "held back from, tenths of a degree");
-SYSCTL_INT(_hw_thermal, OID_AUTO, clear, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.clear, 0, "given back at, tenths of a degree");
-SYSCTL_INT(_hw_thermal, OID_AUTO, critical, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.critical, 0,
-    "all the way at once, tenths of a degree");
+/* a threshold root sets: 0 to TH_THRESHOLD_MOST, or refused (EINVAL) and left as it was */
+static int
+sysctl_threshold SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg2)
+	int32_t value = *(volatile int32_t *)arg1;
+	int changed = 0;
+	int error = sysctl_io_number(req, value, sizeof(value), &value, &changed);
+
+	if (error != 0 || !changed) {
+		return error;
+	}
+	if (value < 0 || value > TH_THRESHOLD_MOST) {
+		return EINVAL;
+	}
+	*(volatile int32_t *)arg1 = value;
+	return 0;
+}
+
+SYSCTL_PROC(_hw_thermal, OID_AUTO, trip, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &policy.trip, 0, sysctl_threshold, "I",
+    "held back from, tenths of a degree");
+SYSCTL_PROC(_hw_thermal, OID_AUTO, clear, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &policy.clear, 0, sysctl_threshold, "I",
+    "given back at, tenths of a degree");
+SYSCTL_PROC(_hw_thermal, OID_AUTO, critical, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &policy.critical, 0,
+    sysctl_threshold, "I", "all the way at once, tenths of a degree");
 
 /* ---- start and end ------------------------------------------------------------------------------- */
 
@@ -313,11 +350,12 @@ hakios_thermal_init(void)
 	if (PE_parse_boot_argn("th_period_ms", &value, sizeof(value)) && value >= 100 && value <= 10000) {
 		period_ms = (uint32_t)value;
 	}
-	if (policy.clear >= policy.trip || policy.trip >= policy.critical) {
-		say("thermal: th_clear < th_trip < th_critical does not hold (%d, %d, %d): the defaults\n", policy.clear,
-		    policy.trip, policy.critical);
+	if (policy.clear < 0 || policy.clear >= policy.trip || policy.trip >= policy.critical || policy.critical > TH_THRESHOLD_MOST) {
+		say("thermal: 0 <= th_clear < th_trip < th_critical <= %d does not hold (%d, %d, %d): the defaults\n",
+		    TH_THRESHOLD_MOST, policy.clear, policy.trip, policy.critical);
 		policy = (struct th_policy){ 700, 620, 950 };
 	}
+	in_force = policy;
 	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
 		tsens[c] = this_board->thermal.tsens[c] ? ml_io_map(this_board->thermal.tsens[c], 0x200) : 0;
 	}

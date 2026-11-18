@@ -483,6 +483,28 @@ tuned_while_running(void)
 	CHECK(get("step") >= 1, "a lower trip applies at once: %u", get("step"));
 }
 
+/* root may not move a threshold out of range -- a critical of 150 C would be no critical step at all -- and three
+ * tuned out of order, for a moment, leave the last good policy in force */
+static void
+thresholds_held_to_sense(void)
+{
+	phone(685);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	CHECK(try_as_root("critical", 1500) == EINVAL && get("critical") == 950, "critical 150 C refused: %u", get("critical"));
+	CHECK(try_as_root("trip", -5) == EINVAL && get("trip") == 700, "a negative trip refused: %u", get("trip"));
+	CHECK(try_as_root("critical", 900) == 0 && get("critical") == 900, "a lower critical taken: %u", get("critical"));
+	/* 68.5 C; trip lowered to 68 C while clear is still over it at 69 C: until clear is moved too, the policy in
+	 * force is the last one in order (trip 70 C), and nothing is held back */
+	set_as_root("clear", 690);
+	set_as_root("trip", 680);
+	usleep(400000);
+	CHECK(get("step") == 0, "out of order: the last good policy holds: %u", get("step"));
+	set_as_root("clear", 600);
+	WAIT_FOR(get("step") >= 1, 2000);
+	CHECK(get("step") >= 1, "in order again (trip 68 C): held back: %u", get("step"));
+}
+
 static void
 unknown_board(void)
 {
@@ -634,7 +656,7 @@ main(int argc, char **argv)
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "osm_chip", osm_chip }, { "group_not_in_charge", group_not_in_charge },
 		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
-		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
+		{ "tuned_while_running", tuned_while_running }, { "thresholds_held_to_sense", thresholds_held_to_sense }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
 		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused }, { "scmi_refused_at_critical", scmi_refused_at_critical },
 		{ "said_every_tenth_look", said_every_tenth_look }, { "step_for_the_gpu", step_for_the_gpu },
