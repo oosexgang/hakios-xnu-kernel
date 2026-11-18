@@ -107,6 +107,25 @@ as_a_boot_loader_lays_it_out(void)
 	from_the_bottom(global_at, 137, "the boot loader's", 18, 6);
 }
 
+/* an item after the 256th of its partition: found by its number all the same */
+static void
+past_the_256th(void)
+{
+	uint32_t size = 0, at = 0;
+
+	empty();
+	partition(0x1000, 0x8000, US, DSP, 64);
+	for (unsigned i = 0; i < 300; i++) {
+		uint32_t where = from_the_bottom(0x1000, (uint16_t)(1000 + i), "word", 4, 0);
+
+		if (i == 290) {
+			at = where;
+		}
+	}
+	CHECK(hakios_smem_item(&area, US, DSP, 1290, &size) == at && size == 4, "the 291st item: at %#x, %u bytes", at, size);
+	CHECK(hakios_smem_item(&area, US, DSP, 1300, &size) == 0, "and one there is not, not found");
+}
+
 static bool
 canary_whole(void)
 {
@@ -445,7 +464,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "partitions_found", partitions_found }, { "items_found", items_found }, { "an_item_of_two", an_item_of_two },
+		{ "partitions_found", partitions_found }, { "past_the_256th", past_the_256th }, { "items_found", items_found }, { "an_item_of_two", an_item_of_two },
 		{ "smp2p_words", smp2p_words }, { "more_than_room", more_than_room },
 		{ "odd_cacheline", odd_cacheline }, { "not_an_area", not_an_area }, { "lies_about_itself", lies_about_itself }, { "items_lie_inside", items_lie_inside },
 		{ "peek_at_the_end", peek_at_the_end }, { "table_limits", table_limits }, { "items_to_the_byte", items_to_the_byte },

@@ -106,6 +106,8 @@ hakios_smem_partition(const struct hakios_smem *area, uint16_t one, uint16_t oth
 	return 0;
 }
 
+#define SMEM_ANY_ITEM           0xffffffffu     /* hakios_smem_items_of(): every item, not one */
+
 /*
  * The items of the partition at `partition': at most `max' go into `found'; returns how many
  * there are (which can be more). An item that is given out lies inside the partition's part for items
@@ -113,7 +115,8 @@ hakios_smem_partition(const struct hakios_smem *area, uint16_t one, uint16_t oth
  * itself ends the walk it is in.
  */
 static inline unsigned
-hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t cacheline, struct smem_item *found, unsigned max)
+hakios_smem_items_of(const struct hakios_smem *area, uint32_t partition, uint32_t cacheline, struct smem_item *found,
+    unsigned max, uint32_t want)
 {
 	struct smem_partition header;
 	struct smem_entry entry;
@@ -130,6 +133,10 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 		    entry.size > header.size || entry.padding_data > entry.size ||
 		    (uint64_t)at + sizeof(entry) + entry.padding_header + entry.size > header.free_uncached) {
 			break;
+		}
+		if (want != SMEM_ANY_ITEM && entry.item != want) {
+			at += sizeof(entry) + entry.padding_header + entry.size;
+			continue;
 		}
 		if (count < max) {
 			found[count].item = entry.item;
@@ -149,18 +156,24 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 		    entry.padding_data > entry.size || at - entry.size < header.free_cached) {
 			break;
 		}
-		if (count < max) {
+		if (count < max && (want == SMEM_ANY_ITEM || entry.item == want)) {
 			found[count].item = entry.item;
 			found[count].offset = partition + at - entry.size;
 			found[count].size = entry.size - entry.padding_data;
 		}
-		count++;
+		count += want == SMEM_ANY_ITEM || entry.item == want;
 		if (entry.size + step_back > at) {
 			break;
 		}
 		at -= entry.size + step_back;
 	}
 	return count;
+}
+
+static inline unsigned
+hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t cacheline, struct smem_item *found, unsigned max)
+{
+	return hakios_smem_items_of(area, partition, cacheline, found, max, SMEM_ANY_ITEM);
 }
 
 /*
@@ -170,19 +183,17 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 static inline uint32_t
 hakios_smem_item(const struct hakios_smem *area, uint16_t us, uint16_t them, uint32_t item, uint32_t *size)
 {
-	static struct smem_item found[256];             /* (one caller at a time: a driver's own thread) */
 	const uint16_t hosts[2][2] = { { us, them }, { SMEM_GLOBAL, SMEM_GLOBAL } };
 
+	/* (the walk keeps only that item: one past the 256th of a partition is found as well as the first) */
 	for (unsigned h = 0; h < 2; h++) {
+		struct smem_item found;
 		uint32_t cacheline = 0, partition_size = 0;
 		uint32_t partition = hakios_smem_partition(area, hosts[h][0], hosts[h][1], &cacheline, &partition_size);
-		unsigned count = hakios_smem_items(area, partition, cacheline, found, 256);
 
-		for (unsigned i = 0; i < count && i < 256; i++) {
-			if (found[i].item == item) {
-				*size = found[i].size;
-				return found[i].offset;
-			}
+		if (hakios_smem_items_of(area, partition, cacheline, &found, 1, item) != 0) {
+			*size = found.size;
+			return found.offset;
 		}
 	}
 	return 0;
