@@ -533,7 +533,8 @@ battery_goes_quiet_while_lit(void)
 	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
 	ask_for(1000);
-	WAIT_FOR(lit_now(), 3000);
+	/* (the light is on before its line is said: both waited for) */
+	WAIT_FOR(lit_now() && logged("the battery 30 C"), 3000);
 	CHECK(lit_now() && logged("the battery 30 C"), "lit with the battery at 30 C: %s", log_text);
 	battery_c = -273;                       /* (as battery.c has it once its source is quiet) */
 	battery_quiet = true;
