@@ -40,6 +40,9 @@
  *              again. The gain follows how loud Darwin's waveform is: Android's own (0x80) from a third
  *              of full scale up, five eighths of it for the softest, never above it (gain_for()).
  *
+ *   4 and 5 play Android's waveforms only once they are loaded: without the file (or with one that does
+ *   not add up) nothing is played, and that is said -- not whatever the chip's RAM holds after its reset.
+ *
  * Limits, whatever asks: Android's own values only (its gain 0x80, its boost and drive levels, its
  * waveforms); no effect longer than HAPTIC_MAX_MS, and the chip is told to stop and put into
  * standby when that is over whether it has stopped or not; any fault the chip reports (under-
@@ -400,12 +403,16 @@ configure(void)
 
 static uint32_t states_seen;           /* the GLBRD5 states seen by the last wait, a bit each */
 
-/* until the chip says it is in standby (GLBRD5 state 0), at most `ms' */
+/*
+ * Until the chip says it is in standby (GLBRD5 state 0), at the latest until the clock says `until' (now_us()).
+ * By the clock, not by the waits counted: each look is a read on the bus by hand, which takes its own time
+ * (more if the chip holds the clock), and counted waits would let the limit grow by all of them.
+ */
 static bool
-wait_standby(unsigned ms)
+wait_standby_until(uint64_t until)
 {
 	states_seen = 0;
-	for (unsigned waited = 0; waited <= ms; waited += 2) {
+	for (;;) {
 		uint8_t state = 0xff;
 
 		if (!get(AW_GLBRD5, &state)) {
@@ -415,9 +422,18 @@ wait_standby(unsigned ms)
 		if ((state & 0x0f) == 0) {
 			return true;
 		}
+		if (now_us() >= until) {
+			return false;
+		}
 		wait_ms(2);
 	}
-	return false;
+}
+
+/* ... at most `ms' from now (0: one look) */
+static bool
+wait_standby(unsigned ms)
+{
+	return wait_standby_until(now_us() + ms * 1000ull);
 }
 
 /*
@@ -491,7 +507,7 @@ load_waveforms(void)
 static bool
 play_effect(unsigned effect)
 {
-	uint64_t began = mach_absolute_time(), ended;
+	uint64_t began = mach_absolute_time(), ended, started;
 	bool done;
 
 	say("haptic: waveform %u is played once, at Android's gain %#x\n", effect, android_regs[AW_PLAYCFG2]);
@@ -506,9 +522,10 @@ play_effect(unsigned effect)
 			give_up("the start was not acknowledged");
 			return false;
 		}
+		started = now_us();
 	}
 	wait_ms(2);
-	done = wait_standby(HAPTIC_MAX_MS);
+	done = wait_standby_until(started + HAPTIC_MAX_MS * 1000ull);     /* (HAPTIC_MAX_MS from the start, by the clock) */
 	absolutetime_to_nanoseconds(mach_absolute_time() - began, &ended);
 	if (!done) {
 		uint8_t stop = 0x02;
@@ -709,7 +726,8 @@ serve(void)
 				if (state == TAP && !wait_standby(0) && !stop_waveform()) {
 					break;
 				}
-				if (!start_waveform(1, false, gain ? gain : 1)) {
+				/* (a fault the chip latched in the last tap, after the last look below, is found here, not once the next plays) */
+				if (!healthy("before a tap") || !start_waveform(1, false, gain ? gain : 1)) {
 					break;
 				}
 				state = TAP;
@@ -727,7 +745,7 @@ serve(void)
 				break;
 			}
 			if (active && quiet_us < tap_onset && now - since > TAP_US) {
-				if (stop_waveform() && start_waveform(11, true, gain ? gain : 1)) {
+				if (stop_waveform() && healthy("before a vibration") && start_waveform(11, true, gain ? gain : 1)) {
 					state = LOOP;
 					since = followed = now;
 					playing_gain = gain ? gain : 1;
@@ -781,7 +799,7 @@ serve(void)
 			}
 			break;
 		}
-		if (state != IDLE && state != REST && now - last_look > 50000) {
+		if (!broken && state != IDLE && state != REST && now - last_look > 50000) {
 			last_look = now;
 			if (!healthy("while playing")) {
 				break;
@@ -824,16 +842,23 @@ haptic_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 	} else {
 		show_registers();
-		if (level >= 3 && configure() && load_waveforms() && level == 4) {
-			uint32_t effect = 1;
+		if (level >= 3 && configure()) {
+			if (!load_waveforms()) {
+				if (level >= 4 && !broken) {
+					say("haptic: Android's waveforms are not in the chip's RAM: nothing is played (not whatever the RAM "
+					    "holds after the chip's reset)\n");
+				}
+			} else if (level == 4) {
+				uint32_t effect = 1;
 
-			PE_parse_boot_argn("haptic_effect", &effect, sizeof(effect));
-			if (effect < 1 || effect > 10) {
-				effect = 1;     /* (the short ones only) */
+				PE_parse_boot_argn("haptic_effect", &effect, sizeof(effect));
+				if (effect < 1 || effect > 10) {
+					effect = 1;     /* (the short ones only) */
+				}
+				(void)play_effect(effect);
+			} else if (level == 5) {
+				serve();
 			}
-			(void)play_effect(effect);
-		} else if (level == 5 && !broken) {
-			serve();
 		}
 	}
 	say("haptic: done\n");

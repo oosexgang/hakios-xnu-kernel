@@ -39,6 +39,18 @@ static unsigned ram_at;
 static int ram_wrong_at = -1;
 static unsigned ram_written_closed;             /* bytes into the RAM's data port while the RAM was not opened (0x45 bit 2) */
 
+/* the waveforms started (0x09 <- go), and with keeps_playing a chip that plays on until it is told to stop: when it
+ * was started and when told to stop, by the monotonic clock (the driver's mach_absolute_time()), in ms */
+static unsigned waveforms_started;
+static bool keeps_playing;
+static uint64_t go_ms, stop_ms;
+
+static uint64_t
+clock_ms(void)
+{
+	return mach_absolute_time() / 1000000;
+}
+
 static void
 chip_written(uint8_t reg, uint8_t value)
 {
@@ -51,6 +63,13 @@ chip_written(uint8_t reg, uint8_t value)
 	} else if (reg == 0x42) {
 		ram_written_closed += (device.reg[0x45] & 0x04) == 0;
 		ram[ram_at++ % sizeof(ram)] = value;
+	} else if (reg == 0x09 && value == 0x01) {
+		waveforms_started++;
+		go_ms = clock_ms();
+		device.reg[0x3f] = keeps_playing ? 7 : device.reg[0x3f];        /* (its state: playing) */
+	} else if (reg == 0x09 && value == 0x02 && keeps_playing) {
+		stop_ms = clock_ms();
+		device.reg[0x3f] = 0;                                           /* (standby) */
 	}
 	if (reg != deaf_register) {
 		device.reg[reg] = value;
@@ -710,6 +729,83 @@ a_whisper_is_not_played(void)
 	CHECK(!register_written[0x09], "the chip not started");
 }
 
+/* haptic=5 without Android's waveforms in the RAM: nothing is played -- not what the RAM holds after the chip's reset */
+static void
+nothing_to_play(bool corrupt)
+{
+	phone("phone-video", 0x9270);
+	if (corrupt) {
+		make_waveforms(11, 8);
+		waveforms[1] ^= 1;
+	}
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done") || logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	/* what would be a tap, and then a vibration, if the motor were Darwin's (the microphone's stand-in: no device needed) */
+	for (unsigned t = 0; t < 60; t++) {
+		hakios_haptic_pretend(20000);
+		usleep(5000);
+	}
+	usleep(100000);
+	CHECK(waveforms_started == 0 && !logged("haptic: tap") && !logged("haptic: vibration"), "no waveform started (%u): %s",
+	    waveforms_started, log_text);
+	CHECK(logged(corrupt ? "aw8697_haptic.bin does not add up" : "no aw8697_haptic.bin in fw/") &&
+	    logged("Android's waveforms are not in the chip's RAM: nothing is played"), "and why is said: %s", log_text);
+	CHECK(!logged("THE MOTOR PLAYS WHAT DARWIN PLAYS") && logged("haptic: done"), "the motor is not offered to Darwin");
+	CHECK(!register_written[0x42] && !in_reset(), "nothing of the file written, nothing wrong");
+	hakios_haptic_quiesce();
+	CHECK(in_reset(), "back in reset at the run's end");
+}
+
+static void no_waveforms_nothing_played(void) { nothing_to_play(false); }
+static void waveforms_corrupt_nothing_played(void) { nothing_to_play(true); }
+
+/* haptic=4 on a chip that plays on and is slow to read (it holds the clock before each acknowledge): the effect is
+ * stopped at HAPTIC_MAX_MS by the clock, not after HAPTIC_MAX_MS of the driver's own waits and every read besides */
+static void
+an_effect_cut_on_a_slow_bus(void)
+{
+	phone("phone-video", 0x9270);
+	fake_delay_divisor = 1;                 /* (the driver's waits as long as it asks, as on the phone) */
+	make_waveforms(3, 40);
+	device.stretch = 90;                    /* (about half a millisecond each acknowledge: a read a millisecond or more) */
+	keeps_playing = true;
+	boot_args = "haptic=4 haptic_effect=2";
+	hakios_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 30000);
+	CHECK(logged("haptic: waveform 2 is played once") && logged("STILL PLAYING after 1000 ms: stopped"), "said: %s", log_text);
+	/* (the look under way when the limit comes, and the stop's own write: a few ms past it, no more) */
+	CHECK(go_ms != 0 && stop_ms >= go_ms + HAPTIC_MAX_MS && stop_ms <= go_ms + HAPTIC_MAX_MS + 100,
+	    "told to stop %llu ms after the start, at %u ms by the clock", (unsigned long long)(stop_ms - go_ms), HAPTIC_MAX_MS);
+	CHECK(waveforms_started == 1 && !logged("PUT INTO RESET") && !in_reset(), "it stopped when told, nothing wrong");
+}
+
+/* a fault the chip latches in a tap, after the driver's last look at it while it played: found before the next tap
+ * is started, not once it plays (the model's flags do not clear when read: as if latched in the tap's last moment) */
+static void
+a_fault_after_a_tap(void)
+{
+	unsigned started;
+
+	phone("phone-video", 0x9270);
+	make_waveforms(11, 8);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	darwin_plays(20000, 20);
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	usleep(300000);                         /* (the tap over, the driver idle: it looks at the chip no more) */
+	CHECK(logged("haptic: tap 1:") && !logged("PUT INTO RESET"), "a tap, nothing wrong: %s", log_text);
+	started = waveforms_started;
+	device.reg[0x02] = 0x20;
+	darwin_plays(20000, 20);
+	WAIT_FOR(logged("PUT INTO RESET"), 2000);
+	CHECK(logged("before a tap: the chip reports 0x20: UNDER-VOLTAGE") && logged("a fault: THE CHIP IS PUT INTO RESET") &&
+	    in_reset(), "found before the tap, and into reset: %s", log_text);
+	CHECK(waveforms_started == started && !logged("haptic: tap 2:"), "the next tap is not started (%u started, %u before)",
+	    waveforms_started, started);
+}
+
 /* a board that does not list the part, and a SoC file without the pins */
 static void
 not_listed(void)
@@ -740,6 +836,8 @@ main(int argc, char **argv)
 		{ "a_vibration_that_softens", a_vibration_that_softens },
 		{ "a_vibration_cut_at_the_limit", a_vibration_cut_at_the_limit }, { "a_whisper_is_not_played", a_whisper_is_not_played },
 		{ "a_sample_at_a_time", a_sample_at_a_time }, { "pretended", pretended },
+		{ "no_waveforms_nothing_played", no_waveforms_nothing_played }, { "waveforms_corrupt_nothing_played", waveforms_corrupt_nothing_played },
+		{ "an_effect_cut_on_a_slow_bus", an_effect_cut_on_a_slow_bus }, { "a_fault_after_a_tap", a_fault_after_a_tap },
 	};
 
 	if (argc < 2) {
