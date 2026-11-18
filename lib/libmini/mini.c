@@ -57,6 +57,12 @@ lseek(int fd, off_t offset, int whence)
 }
 
 int
+dup(int fd)
+{
+	return (int)SC(SYS_dup, fd, 0, 0, 0, 0, 0);
+}
+
+int
 dup2(int from, int to)
 {
 	return (int)SC(SYS_dup2, from, to, 0, 0, 0, 0);
@@ -225,6 +231,12 @@ int
 lchown(const char *path, int uid, int gid)
 {
 	return (int)SC(SYS_lchown, path, uid, gid, 0, 0, 0);
+}
+
+int
+fchown(int fd, int uid, int gid)
+{
+	return (int)SC(SYS_fchown, fd, uid, gid, 0, 0, 0);
 }
 
 int

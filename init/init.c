@@ -601,6 +601,25 @@ parse_number(const char *text, int radix)
 }
 
 /*
+ * The decimal number TEXT starts with, but no more than MAX: a boot argument and a line of a job
+ * list are typed by hand, and digits enough to go past what a long holds would come out as any
+ * number at all (signed overflow, which C does not even promise to wrap).
+ */
+static long
+decimal_at_most(const char *text, long max)
+{
+	long value = 0;
+
+	for (; *text >= '0' && *text <= '9'; text++) {
+		if (value > (max - (*text - '0')) / 10) {
+			return max;
+		}
+		value = value * 10 + (*text - '0');
+	}
+	return value;
+}
+
+/*
  * /private/var is an empty directory of the read-only root: give it a
  * memory-backed filesystem and the directories a system expects there.
  * (/tmp is a symlink to /private/var/tmp, as on Darwin.)
@@ -656,9 +675,14 @@ own_tree(const char *path, int uid)
 		return ok;
 	}
 	while ((n = getdirentries(fd, buf, sizeof(buf), &position)) > 0) {
-		for (ssize_t at = 0; at < n; at += ((struct dirent *)(buf + at))->d_reclen) {
-			const char *name = ((struct dirent *)(buf + at))->d_name;
+		for (ssize_t at = 0; at < n;) {
+			struct dirent *de = (struct dirent *)(buf + at);
+			const char *name = de->d_name;
 
+			if (de->d_reclen == 0) {
+				break;                  /* (a record of no length: the walk would never move on) */
+			}
+			at += de->d_reclen;
 			if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 				continue;
 			}
@@ -710,9 +734,14 @@ copy_tree(const char *from, const char *to, int *files)
 		return 0;
 	}
 	while (ok && (n = getdirentries(fd, buf, sizeof(buf), &position)) > 0) {
-		for (ssize_t at = 0; ok && at < n; at += ((struct dirent *)(buf + at))->d_reclen) {
-			const char *name = ((struct dirent *)(buf + at))->d_name;
+		for (ssize_t at = 0; ok && at < n;) {
+			struct dirent *de = (struct dirent *)(buf + at);
+			const char *name = de->d_name;
 
+			if (de->d_reclen == 0) {
+				break;                  /* (a record of no length: the walk would never move on) */
+			}
+			at += de->d_reclen;
 			if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 				continue;
 			}
@@ -775,10 +804,15 @@ graft_tree(const char *from, const char *to, int top, int *made, int *linked)
 		return 0;
 	}
 	while (ok && (n = getdirentries(fd, buf, sizeof(buf), &position)) > 0) {
-		for (ssize_t at = 0; ok && at < n; at += ((struct dirent *)(buf + at))->d_reclen) {
-			const char *name = ((struct dirent *)(buf + at))->d_name;
+		for (ssize_t at = 0; ok && at < n;) {
+			struct dirent *de = (struct dirent *)(buf + at);
+			const char *name = de->d_name;
 			int copy_it = 0;
 
+			if (de->d_reclen == 0) {
+				break;                  /* (a record of no length: the walk would never move on) */
+			}
+			at += de->d_reclen;
 			if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 				continue;
 			}
@@ -831,6 +865,11 @@ graft_tree(const char *from, const char *to, int top, int *made, int *linked)
  * file does fit. The buffers are still fixed -- this is an init with no allocator worth the
  * name -- but a file that does not fit now says so instead of going quiet.
  *
+ * And what is kept of it ends where a line ends: the last line the buffer holds only part of is
+ * dropped with the rest. All three are read a line at a time, and a line cut in two looks like a
+ * whole one -- a job list would run the first half of a command, the skeleton would make a
+ * directory of half a path.
+ *
  * The length, or -1 if there is no such file.
  */
 static ssize_t
@@ -849,11 +888,53 @@ read_whole(const char *path, char *buf, size_t size)
 	}
 	/* one byte left to read means the buffer ended, not the file */
 	if (got == size - 1 && read(fd, &over, 1) > 0) {
-		printf("init: %s does not fit in %zu bytes: the rest of it is not used\n", path, size - 1);
+		while (got > 0 && buf[got - 1] != '\n') {
+			got--;
+		}
+		printf("init: %s does not fit in %zu bytes: from the line cut in two on, it is not used\n", path, size - 1);
 	}
 	close(fd);
 	buf[got] = 0;
 	return (ssize_t)got;
+}
+
+/*
+ * A preferences file of mobile's, written by process 1 as root into mobile's own directory -- which
+ * restore_var() has just brought back as the last boot left it, links included. Nothing on the way is
+ * followed: a link in the file's place (a symbolic one, or a second name of a file of root's) would
+ * have root cut that file short and give it to mobile, and so would a directory on the way that is a
+ * link to one elsewhere. The name is removed and made anew, and the owner is set on what was opened,
+ * not on the name.
+ */
+static void
+write_preferences(const char *path, const char *text, const char *what)
+{
+	char dir[256];
+	size_t len = strlen(text);
+	struct stat st;
+	int fd, good;
+
+	for (const char *slash = strchr(path + 1, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
+		size_t n = (size_t)(slash - path);
+
+		if (n >= sizeof(dir)) {
+			printf("  %s: %s: the path is too long: not written\n", what, path);
+			return;
+		}
+		memcpy(dir, path, n);
+		dir[n] = 0;
+		if (lstat(dir, &st) != 0 || (st.st_mode & S_IFMT) != S_IFDIR) {
+			printf("  %s: %s is not a directory (a link, or not there): not written\n", what, dir);
+			return;
+		}
+	}
+	unlink(path);           /* (usually there is nothing to remove) */
+	fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+	good = fd >= 0 && write(fd, text, len) == (ssize_t)len && fchown(fd, 501, 501) == 0;
+	printf("  %s: %s\n", what, good ? "set" : strerror(errno));
+	if (fd >= 0) {
+		close(fd);
+	}
 }
 
 /*
@@ -877,13 +958,8 @@ boot_arg_preferences(void)
 			    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 			    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
 			    "<plist version=\"1.0\">\n<dict>\n\t<key>UserInterfaceStyleMode</key>\n\t<integer>2</integer>\n</dict>\n</plist>\n";
-			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
 
-			if (pfd >= 0) {
-				close(pfd);
-			}
-			printf("  dark appearance: %s\n", good ? "set" : strerror(errno));
+			write_preferences(path, plist, "dark appearance");
 		}
 	}
 
@@ -905,16 +981,13 @@ boot_arg_preferences(void)
 			    "\t<key>LowPowerCoreScan</key>\n\t<false/>\n"
 			    "\t<key>EnableScanCore</key>\n\t<false/>\n"
 			    "</dict>\n</plist>\n";
-			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
 
-			if (pfd >= 0) {
-				close(pfd);
-			}
-			printf("  bluetoothd's low-power-core scan off: %s\n", good ? "set" : strerror(errno));
+			write_preferences(path, plist, "bluetoothd's low-power-core scan off");
 		}
 	}
 }
+
+#define EPOCH_2100      4102444800L     /* 1 January 2100, in seconds since 1970 */
 
 static void
 mount_writable(void)
@@ -990,11 +1063,9 @@ mount_writable(void)
 		const char *e = boot_arg("epoch");
 		struct timeval tv = { 0, 0 };
 
-		for (; e && *e >= '0' && *e <= '9'; e++) {
-			tv.tv_sec = tv.tv_sec * 10 + (*e - '0');
-		}
-
-		if (tv.tv_sec > 1600000000) {
+		/* (the year 2100 and on is no time a host passes: too many digits, and the clock is left alone) */
+		tv.tv_sec = e != NULL ? decimal_at_most(e, EPOCH_2100) : 0;
+		if (tv.tv_sec > 1600000000 && tv.tv_sec < EPOCH_2100) {
 			printf("  wall clock set to %ld: %s\n", (long)tv.tv_sec, settimeofday(&tv, NULL) == 0 ? "ok" : strerror(errno));
 		}
 	}
@@ -1135,10 +1206,14 @@ count_entries(const char *path)
 		return -1;
 	}
 	while ((n = getdirentries(fd, buf, sizeof(buf), &position)) > 0) {
-		for (ssize_t at = 0; at < n; at += ((struct dirent *)(buf + at))->d_reclen) {
-			const char *name = ((struct dirent *)(buf + at))->d_name;
+		for (ssize_t at = 0; at < n;) {
+			struct dirent *de = (struct dirent *)(buf + at);
 
-			count += strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
+			if (de->d_reclen == 0) {
+				break;                  /* (a record of no length: the walk would never move on) */
+			}
+			at += de->d_reclen;
+			count += strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0;
 		}
 	}
 	close(fd);
@@ -1282,6 +1357,8 @@ reap_background(void)
 	}
 }
 
+#define MAX_SLEEP       86400
+
 /* Run one line of /etc/rc: words separated by blanks, no quoting; a last word "&" = do not wait. */
 static void
 run_command(char *line)
@@ -1296,12 +1373,21 @@ run_command(char *line)
 	pid_t pid;
 
 	reap_background();
-	for (char *p = line; *p && argc < 63;) {
+	for (char *p = line; *p;) {
 		while (*p == ' ' || *p == '\t') {
 			*p++ = 0;
 		}
 		if (!*p) {
 			break;
+		}
+		if (argc == (int)(sizeof(argv) / sizeof(argv[0])) - 1) {
+			/*
+			 * More words than argv has room for. Stopping here used to leave the rest run together
+			 * into the last word kept, a trailing "&" or ">> FILE" with it: a job meant for the
+			 * background then held up the list. The line is not run at all.
+			 */
+			printf("\n$ %s ...: more than %d words: not run\n", argv[0], argc);
+			return;
 		}
 		argv[argc++] = p;
 		while (*p && *p != ' ' && *p != '\t') {
@@ -1331,11 +1417,9 @@ run_command(char *line)
 
 	/* "sleep seconds": nothing for that long, without starting a program (a list's pause during a boot) */
 	if (strcmp(argv[0], "sleep") == 0 && argc > 1) {
-		int seconds = 0;
+		/* (a day at most: the lists pause for a minute or two, and more digits than an int holds came out as any number) */
+		int seconds = (int)decimal_at_most(argv[1], MAX_SLEEP);
 
-		for (const char *d = argv[1]; *d >= '0' && *d <= '9'; d++) {
-			seconds = seconds * 10 + (*d - '0');
-		}
 		for (int left = seconds * 5; left > 0; left--) {
 			usleep(200000);
 			reap_background();
@@ -1345,18 +1429,31 @@ run_command(char *line)
 
 	/* "exec program args": become that program, keeping process number 1 */
 	if (strcmp(argv[0], "exec") == 0 && argc > 1) {
+		int saved = -1, err;
+
+		if (append_to != NULL) {
+			/* (">>" is done in the child of a command that is not exec; this process's own output stays where it is) */
+			printf("init: \">> %s\" on an exec line: not run\n", append_to);
+			return;
+		}
 		/*
 		 * With etc/quiet in our image (build.sh QUIET=1), what this program says on its
 		 * standard error is dropped. It is meant for launchd, which says a few thousand lines
 		 * about its own business in a couple of minutes and pushes everything else out of the
 		 * kernel's log; the daemons it starts keep their own standard error on the console
 		 * (mkjobs.py sets it), and so does everything the job runner runs.
+		 *
+		 * The console is kept aside and put back if the exec fails: otherwise process 1 would go
+		 * on, through the rest of the list and the halt, with no standard error. (The copy kept
+		 * aside goes along into the new program, one more descriptor of the console.)
 		 */
 		if (stat(in_image("/etc/quiet"), &st) == 0) {
 			int null = open("/dev/null", O_WRONLY, 0);
 
-			if (null >= 0) {
+			if (null >= 0 && (saved = dup(2)) >= 0) {
 				dup2(null, 2);
+			}
+			if (null >= 0) {
 				close(null);
 			}
 		}
@@ -1364,7 +1461,12 @@ run_command(char *line)
 			argv[1] = "/sbin/launchd";      /* the root is Darwin's own volume: its launchd is that */
 		}
 		execve(argv[1], argv + 1, envp);
-		printf("%s: %s\n", argv[1], strerror(errno));
+		err = errno;
+		if (saved >= 0) {
+			dup2(saved, 2);
+			close(saved);
+		}
+		printf("%s: %s\n", argv[1], strerror(err));
 		return;
 	}
 
