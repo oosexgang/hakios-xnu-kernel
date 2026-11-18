@@ -17,14 +17,27 @@
  * for SpringBoard). Loading it twice is harmless: the second time does nothing.
  *
  * A Filter says any of:
- *   Bundles       the identifier of the program's main bundle (com.apple.springboard)
+ *   Bundles       the identifier of a bundle the program has loaded, its main one or a framework
+ *                 (com.apple.springboard, com.apple.UIKit)
  *   Executables   the file name of the program (SpringBoard)
  *   Classes       an Objective-C class the program has
- * and takes the tweak if any of them matches, unless Mode is "Any", where all must. A list with no
- * Filter at all belongs in every program, as it does on a phone.
+ *   CoreFoundationVersion   [min] or [min, max]: the tweak is for a CoreFoundation at least min and
+ *                 below max (kCFCoreFoundationVersionNumber), and not loaded at all where it is not,
+ *                 or where the list is not one or two numbers
+ * and takes the tweak if every one of the first three that is given matches, or, with Mode "Any", if
+ * one of them does. A Filter that gives only CoreFoundationVersion takes it in every program of that
+ * CoreFoundation; one that says none of these (a misspelt key, a list where a string should be) in
+ * none. A list with no Filter at all belongs in every program, as it does on a phone.
+ *
+ * Safe mode, for a tweak that makes SpringBoard crash as it starts, over and over: with the boot-arg
+ * notweaks=1 no tweak is opened in any program. And SpringBoard leaves a mark (TWEAKS_STARTING) before
+ * it opens its tweaks and takes it away once it has run for half a minute; a SpringBoard that finds
+ * the mark there is one started after a start that did not get that far, and opens none. The mark is
+ * in /private/var, which starts empty at every boot here: the next boot tries the tweaks again.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <dirent.h>
+#include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <mach-o/dyld.h>
@@ -34,6 +47,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 /*
@@ -45,6 +59,10 @@ static const char *const tweak_dirs[] = {
 	"/var/jb/usr/lib/TweakInject",
 	"/var/jb/Library/MobileSubstrate/DynamicLibraries",
 };
+
+/* SpringBoard's mark of a start that is opening its tweaks (a directory of mobile's that every boot makes; root writes there too) */
+#define TWEAKS_STARTING "/var/mobile/tmp/tweaks-starting"
+#define TWEAKS_STARTED_AFTER 30         /* seconds of SpringBoard's main queue running, after which the mark goes */
 
 static void
 say(const char *format, ...)
@@ -94,7 +112,6 @@ bundle_identifier(char *out, size_t size)
 	return identifier != NULL && CFStringGetCString(identifier, out, (CFIndex)size, kCFStringEncodingUTF8);
 }
 
-/* Does this array of strings hold `want`? */
 /* Is one of the bundles the array names loaded in this process (as Substrate and ElleKit look: any bundle, not the main one only)? */
 static bool
 array_has_loaded_bundle(CFArrayRef array, const char *main_identifier)
@@ -119,6 +136,7 @@ array_has_loaded_bundle(CFArrayRef array, const char *main_identifier)
 	return false;
 }
 
+/* Does this array of strings hold `want`? */
 static bool
 array_has(CFArrayRef array, const char *want)
 {
@@ -170,6 +188,34 @@ filter_array(CFDictionaryRef filter, const char *key)
 	return array;
 }
 
+/*
+ * Whether this CoreFoundation is one CoreFoundationVersion names: [min] or [min, max], numbers; anything else
+ * names none.
+ */
+static bool
+core_foundation_fits(CFTypeRef versions)
+{
+	CFIndex count;
+	double bound[2];
+
+	if (CFGetTypeID(versions) != CFArrayGetTypeID()) {
+		return false;
+	}
+	count = CFArrayGetCount(versions);
+	if (count < 1 || count > 2) {
+		return false;
+	}
+	for (CFIndex i = 0; i < count; i++) {
+		CFTypeRef number = CFArrayGetValueAtIndex(versions, i);
+
+		if (number == NULL || CFGetTypeID(number) != CFNumberGetTypeID() ||
+		    !CFNumberGetValue(number, kCFNumberDoubleType, &bound[i])) {
+			return false;
+		}
+	}
+	return kCFCoreFoundationVersionNumber >= bound[0] && (count == 1 || kCFCoreFoundationVersionNumber < bound[1]);
+}
+
 /* Whether the list at `path` names this program. */
 static bool
 wanted_here(const char *path, const char *name, const char *identifier)
@@ -178,7 +224,7 @@ wanted_here(const char *path, const char *name, const char *identifier)
 	CFArrayRef bundles, executables, classes;
 	CFStringRef mode_key, filter_key;
 	CFDataRef data;
-	CFTypeRef mode;
+	CFTypeRef mode, versions;
 	bool all, hits[3], wanted;
 	int fd, used = 0;
 	uint8_t buffer[65536];
@@ -211,6 +257,11 @@ wanted_here(const char *path, const char *name, const char *identifier)
 		CFRelease(plist);                       /* no Filter: it belongs everywhere */
 		return true;
 	}
+	versions = CFDictionaryGetValue(filter, CFSTR("CoreFoundationVersion"));
+	if (versions != NULL && !core_foundation_fits(versions)) {
+		CFRelease(plist);                       /* for another CoreFoundation, or a range not understood */
+		return false;
+	}
 	bundles = filter_array(filter, "Bundles");
 	executables = filter_array(filter, "Executables");
 	classes = filter_array(filter, "Classes");
@@ -224,7 +275,11 @@ wanted_here(const char *path, const char *name, const char *identifier)
 	    CFStringCompare(mode, CFSTR("Any"), 0) == kCFCompareEqualTo);
 	used = (bundles != NULL) + (executables != NULL) + (classes != NULL);
 	if (used == 0) {
-		wanted = true;
+		/* (only a version: every program of it; nothing this knows: no program, rather than every one) */
+		wanted = versions != NULL;
+		if (!wanted) {
+			say("hakios: tweaks: %s: its Filter names no bundle, program, class or version: not loaded\n", path);
+		}
 	} else if (all) {
 		wanted = (bundles == NULL || hits[0]) && (executables == NULL || hits[1]) && (classes == NULL || hits[2]);
 	} else {
@@ -232,6 +287,65 @@ wanted_here(const char *path, const char *name, const char *identifier)
 	}
 	CFRelease(plist);
 	return wanted;
+}
+
+/* notweaks=1 among the boot-args, as a word of its own */
+static bool
+tweaks_off(void)
+{
+	char arguments[1024];
+	size_t size = sizeof(arguments) - 1;
+	const char *at;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0) {
+		return false;
+	}
+	arguments[size < sizeof(arguments) ? size : sizeof(arguments) - 1] = '\0';
+	for (at = strstr(arguments, "notweaks=1"); at != NULL; at = strstr(at + 1, "notweaks=1")) {
+		if ((at == arguments || at[-1] == ' ') && (at[10] == '\0' || at[10] == ' ')) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* (on SpringBoard's main queue, half a minute after it began to run it: this start got through) */
+static void
+tweaks_started(void *context __attribute__((unused)))
+{
+	unlink(TWEAKS_STARTING);
+}
+
+/* (the main queue's first turn: SpringBoard is running, and the half minute counts from here, not from the constructor) */
+static void
+springboard_running(void *context __attribute__((unused)))
+{
+	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, (int64_t)TWEAKS_STARTED_AFTER * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(),
+	    NULL, tweaks_started);
+}
+
+/*
+ * SpringBoard's safe mode: false (and said) when the mark of an earlier start is still there; otherwise the
+ * mark is made. Either way it is taken away once this start has run long enough: also after a start in safe
+ * mode, so that SpringBoard started again once the tweak is removed tries the tweaks again.
+ */
+static bool
+springboard_may_open_tweaks(void)
+{
+	struct stat st;
+	bool earlier = lstat(TWEAKS_STARTING, &st) == 0;
+	int fd;
+
+	if (earlier) {
+		say("hakios: tweaks: SpringBoard's last start did not run %d s past opening its tweaks (%s is there): "
+		    "none opened this time\n", TWEAKS_STARTED_AFTER, TWEAKS_STARTING);
+	} else if ((fd = open(TWEAKS_STARTING, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600)) < 0) {
+		say("hakios: tweaks: %s cannot be made: a start that fails will not be caught\n", TWEAKS_STARTING);
+	} else {
+		close(fd);
+	}
+	dispatch_async_f(dispatch_get_main_queue(), NULL, springboard_running);
+	return !earlier;
 }
 
 static void
@@ -242,6 +356,13 @@ load_the_tweaks(void)
 	const char *who = bundle_identifier(identifier, sizeof(identifier)) ? identifier : NULL;
 	int opened = 0, tried = 0;
 
+	if (tweaks_off()) {
+		say("hakios: tweaks: notweaks=1: none opened in %s\n", name != NULL ? name : "?");
+		return;
+	}
+	if (name != NULL && strcmp(name, "SpringBoard") == 0 && !springboard_may_open_tweaks()) {
+		return;
+	}
 	for (unsigned d = 0; d < sizeof(tweak_dirs) / sizeof(tweak_dirs[0]); d++) {
 		const char *where = tweak_dirs[d];
 		struct dirent *entry;

@@ -14,7 +14,12 @@ the prefix here and written into dpkg's database, replacing an older entry if th
 
 Nothing of the package's own scripts is run: these are plain file packages, and /var/jb/prep.sh does
 the little that the bootstrap's postinst scripts are needed for at every boot.
+
+A .deb whose SHA256 is not the one its stanza in the index gives is refused, and so is a package that
+would write anywhere but the prefix: through a link in the prefix that leads out of it (an absolute
+one leads into this machine's own /var/jb, not the prefix's), or as a hard link to a file outside it.
 """
+import hashlib
 import os
 import re
 import lzma
@@ -92,6 +97,55 @@ def field(stanza, name):
     return m.group(1).strip() if m else None
 
 
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def inside(path, root):
+    return path == root or path.startswith(root + os.sep)
+
+
+def in_prefix(name):
+    """A member's name, or a hard link's, as a path under var/jb, or None for one that is not under it or climbs."""
+    path = os.path.normpath(name.lstrip('./'))
+    if not path.startswith('var/jb/') or '..' in path.split('/'):
+        return None
+    return path
+
+
+def unpack(tar_path, prefix, package):
+    """The members of the data tar under var/jb, into the prefix; a member that would land outside it ends the run."""
+    root = os.path.realpath(prefix)
+    with tarfile.open(tar_path) as tar:
+        for member in tar.getmembers():
+            # only into the prefix, and never climbing out of it
+            path = in_prefix(member.name)
+            if path is None:
+                continue
+            member.name = './' + path
+            target = os.path.join(prefix, path)
+            # the directory it goes into with every link on the way followed, as the extraction will: a link the
+            # prefix (or this package, a member earlier) has there may lead anywhere on this machine
+            parent = os.path.realpath(os.path.dirname(target))
+            if not inside(parent, root):
+                sys.exit('jb-preinstall.py: %s: %s would be written in %s, outside the prefix' % (package, path, parent))
+            if member.islnk():
+                link = in_prefix(member.linkname)
+                if link is None or not inside(os.path.realpath(os.path.join(prefix, link)), root):
+                    sys.exit('jb-preinstall.py: %s: %s is a hard link to %s, outside the prefix' % (package, path, member.linkname))
+                member.linkname = './' + link
+            if os.path.islink(target) or (os.path.exists(target) and not os.path.isdir(target)):
+                os.unlink(target)                   # the older version's file makes way
+            # "fully_trusted": the prefix is full of links to absolute paths of its own
+            # (/var/jb/bin/run-parts -> /var/jb/usr/bin/run-parts), which the careful filter
+            # refuses; where the files land is checked above instead.
+            tar.extract(member, prefix, set_attrs=True, filter='fully_trusted')
+
+
 def main():
     if len(sys.argv) < 5:
         sys.exit(__doc__)
@@ -128,6 +182,13 @@ def main():
             # curl, as the rest of components/tweaks/tools/mk-jb.sh fetches: the repository turns away urllib
             if subprocess.run(['curl', '-sL', '--fail', '-o', deb, url]).returncode != 0:
                 sys.exit('jb-preinstall.py: cannot fetch %s' % url)
+        # (the index is what says which file is meant; a mirror's, or one kept here from before, is taken only if it is that one)
+        want = field(stanza, 'SHA256')
+        if want:
+            have_sha = sha256_of(deb)
+            if have_sha.lower() != want.lower():
+                sys.exit('jb-preinstall.py: %s: %s has SHA256 %s, the index says %s (remove it to fetch it again)'
+                         % (name, deb, have_sha, want))
         # a .deb is an ar archive; its data holds the tree, under ./var/jb for a rootless package.
         # The member is found in the listing: "ar p" says nothing and still succeeds for a name that
         # is not in the archive, so asking for one that may not be there tells us nothing.
@@ -146,21 +207,10 @@ def main():
         tmp = deb + '.tar'
         with open(tmp, 'wb') as f:
             f.write(data)
-        with tarfile.open(tmp) as tar:
-            for member in tar.getmembers():
-                path = os.path.normpath(member.name.lstrip('./'))
-                # only into the prefix, and never climbing out of it
-                if not path.startswith('var/jb/') or '..' in path.split('/'):
-                    continue
-                member.name = './' + path
-                target = os.path.join(prefix, path)
-                if os.path.islink(target) or (os.path.exists(target) and not os.path.isdir(target)):
-                    os.unlink(target)                   # the older version's file makes way
-                # "fully_trusted": the prefix is full of links to absolute paths of its own
-                # (/var/jb/bin/run-parts -> /var/jb/usr/bin/run-parts), which the careful filter
-                # refuses; where the files land is checked above instead.
-                tar.extract(member, prefix, set_attrs=True, filter='fully_trusted')
-        os.unlink(tmp)
+        try:
+            unpack(tmp, prefix, name)
+        finally:
+            os.unlink(tmp)
         # dpkg's database: the new stanza in place of the old one, or added
         entry = '\n'.join(line for line in stanza.split('\n')
                           if not line.startswith(('Filename:', 'Size:', 'MD5sum:', 'SHA1:', 'SHA256:', 'SHA512:',

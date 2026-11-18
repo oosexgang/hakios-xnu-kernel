@@ -10,7 +10,10 @@
  * over and over, and the screen stays black.
  *
  * Here the request still goes where it went, and once its ramp is over the interface is told it is
- * done on SpringBoard's main queue, as the driver would.
+ * done on SpringBoard's main queue, as the driver would. A transition that a newer one replaces before
+ * its ramp is over is told done as the newer one begins: each is told in the order it was asked for, and
+ * the mode Darwin hears completed last is the one it asked for last (a short "on" after a long "off"
+ * would otherwise be completed first, and the stale "off" after it).
  *
  * With display modes that complete, SpringBoard's idle timer does what it does on a phone: the lock
  * screen dims and goes dark some ten seconds after the last touch. On this phone that came seconds after
@@ -118,6 +121,38 @@ power_for(long long mode)
 static bool mode_is_32;                 /* the methods take the mode as a 32-bit integer (their type says i or I) */
 static volatile long transitions;       /* how many have begun: a ramp's end acts only if no other began since */
 
+/*
+ * The transition whose completion has not been told yet: at most one, the newest; touched on the main queue only.
+ * Its interface is kept (retained) until it is told.
+ */
+static struct {
+	id interface;
+	long long mode;
+	long number;                    /* its place in `transitions`; 0: none */
+} pending;
+static long begun;                      /* the newest transition the main queue has taken in */
+
+static void
+complete(id interface, long long mode)
+{
+	((complete_fn)objc_msgSend)(interface, complete_sel, mode, nil);
+	CFRelease((CFTypeRef)interface);
+}
+
+/* (cleared before the interface is told: what it does then may begin the next transition) */
+static void
+complete_pending(void)
+{
+	id interface = pending.interface;
+
+	if (pending.number == 0) {
+		return;
+	}
+	pending.number = 0;
+	pending.interface = nil;
+	complete(interface, pending.mode);
+}
+
 static void
 transition(id self, SEL selector, long long mode, double duration, id curve_changed)
 {
@@ -133,10 +168,28 @@ transition(id self, SEL selector, long long mode, double duration, id curve_chan
 		set_power(power);               /* lit or dimmed from the start of the ramp */
 	}
 	original_transition(self, selector, mode, duration, curve_changed);
-	/* (the object kept until the block has said its transition is complete: a block of C does not keep it) */
+	/* (the object kept until its transition has been told complete: a block of C does not keep it) */
 	CFRetain((CFTypeRef)self);
+	/*
+	 * The one this replaces is told now, ahead of this one: the main queue runs this before the end of this one's
+	 * ramp, which is put on it after. One that comes in behind a newer one (begun on another thread) is told at once.
+	 */
+	dispatch_async(dispatch_get_main_queue(), ^{
+		if (mine < begun) {
+			complete(self, mode);
+			return;
+		}
+		begun = mine;
+		complete_pending();
+		pending.interface = self;
+		pending.mode = mode;
+		pending.number = mine;
+	});
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * 1e9)),
 	    dispatch_get_main_queue(), ^{
+		if (pending.number != mine) {
+			return;                 /* replaced, and told so when the next one began */
+		}
 		/*
 		 * (dark once the ramp is over -- unless the display was turned on again meanwhile: an "off" whose ramp ends after
 		 * an "on" would leave the panel dark with Darwin believing it lit)
@@ -144,8 +197,7 @@ transition(id self, SEL selector, long long mode, double duration, id curve_chan
 		if (power == 0 && __atomic_load_n(&transitions, __ATOMIC_SEQ_CST) == mine) {
 			set_power(0);
 		}
-		((complete_fn)objc_msgSend)(self, complete_sel, mode, nil);
-		CFRelease((CFTypeRef)self);
+		complete_pending();
 	});
 }
 
@@ -196,7 +248,8 @@ idle_timer_init(void)
 		say(line);
 		return;
 	}
-	original_timeout = (timeout_fn)method_setImplementation(m, (IMP)timeout);
+	original_timeout = (timeout_fn)method_getImplementation(m);     /* (kept before ours can be called) */
+	method_setImplementation(m, (IMP)timeout);
 	say("hakios: SpringBoard: the idle timer dims and sleeps a day later\n");
 }
 
@@ -226,7 +279,8 @@ backlight_init(void)
 		return;
 	}
 	mode_is_32 = types[3] == 'i' || types[3] == 'I';
-	original_transition = (transition_fn)method_setImplementation(m, (IMP)transition);
+	original_transition = (transition_fn)method_getImplementation(m);
+	method_setImplementation(m, (IMP)transition);
 	snprintf(line, sizeof(line), "hakios: SpringBoard: display mode changes complete after their ramp (%s)\n", types);
 	say(line);
 }

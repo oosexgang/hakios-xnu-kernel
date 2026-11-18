@@ -87,6 +87,9 @@ python3 "$HERE/identity_test.py" 2>&1 | tail -3 || failed=1
 echo "== the Darwin image tool's helpers (darwin/tools/mkimage26.py)"
 python3 "$HERE/darwin_tools_test.py" 2>&1 | tail -3 || failed=1
 
+echo "== the packages put into the prefix of tweaks (components/tweaks/tools/jb-preinstall.py)"
+python3 "$HERE/jb_preinstall_test.py" 2>&1 | tail -3 || failed=1
+
 echo "== what the QEMU boot test judges with (workbench/tone_in_wav.py, workbench/screen_shows_draw.py)"
 python3 "$HERE/qemu_helpers_test.py" 2>&1 | tail -3 || failed=1
 

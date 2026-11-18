@@ -1098,6 +1098,8 @@ control_center_fades(const char *arguments)
 /*
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
+ * Whether its tweaks are opened is the loader's to say: not with the boot-arg notweaks=1, nor in a
+ * SpringBoard started after one that did not get far past opening them (components/tweaks/inject_tweaks.c).
  */
 #define HAKIOS_TWEAK_LOADER    "/hakios/lib/libhakios-tweaks.dylib"
 

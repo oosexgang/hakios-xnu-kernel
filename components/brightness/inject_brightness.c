@@ -18,12 +18,14 @@
  *
  * so the kernel decides, and every process sees the same values. Nothing else is touched. A method that is
  * not there, or whose types are not the expected ones, is left alone and said so on standard error. A class
- * whose framework is loaded later (a Control Center module's) is looked for again as each image is loaded.
+ * whose framework is loaded later (a Control Center module's) is looked for again once an image is loaded, on the
+ * main queue: the Objective-C runtime tells of a new image with its own lock held, and looking a class up takes it.
  *
  * Boot-arg bl_trace=1: every key set or asked for through these methods, with its value, on standard error
  * (to find the keys of a newer Darwin).
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdbool.h>
@@ -200,12 +202,12 @@ types_of(Method m, char *out, size_t size)
 	return true;
 }
 
-static bool looked[CLASSES];
+static bool looked[CLASSES];           /* (written on the main queue, or in the constructor before anything else runs) */
 
 static void
 hook(int which)
 {
-	Class cls = looked[which] ? NULL : objc_getClass(class_names[which]);
+	Class cls = __atomic_load_n(&looked[which], __ATOMIC_ACQUIRE) ? NULL : objc_getClass(class_names[which]);
 	Method set = cls ? class_getInstanceMethod(cls, sel_registerName("setProperty:forKey:")) : NULL;
 	Method copy = cls ? class_getInstanceMethod(cls, sel_registerName("copyPropertyForKey:")) : NULL;
 	char set_types[32] = "?", copy_types[32] = "?", line[256];
@@ -213,13 +215,16 @@ hook(int which)
 	if (cls == NULL) {
 		return;                 /* (this process has not got that half, or not yet) */
 	}
-	looked[which] = true;
+	__atomic_store_n(&looked[which], true, __ATOMIC_RELEASE);
 	if (set != NULL && types_of(set, set_types, sizeof(set_types)) &&
 	    (strcmp(set_types, "B@:@@") == 0 || strcmp(set_types, "c@:@@") == 0)) {
-		original_set[which] = (set_fn)method_setImplementation(set, set_imps[which]);
+		/* (the original kept before ours is in: another thread may call it the moment it is) */
+		original_set[which] = (set_fn)method_getImplementation(set);
+		method_setImplementation(set, set_imps[which]);
 	}
 	if (copy != NULL && types_of(copy, copy_types, sizeof(copy_types)) && strcmp(copy_types, "@@:@") == 0) {
-		original_copy[which] = (copy_fn)method_setImplementation(copy, copy_imps[which]);
+		original_copy[which] = (copy_fn)method_getImplementation(copy);
+		method_setImplementation(copy, copy_imps[which]);
 	}
 	snprintf(line, sizeof(line), "hakios-brightness: %s: %s: setProperty:forKey: %s (%s), copyPropertyForKey: %s (%s)\n",
 	    process, class_names[which], original_set[which] ? "ours" : "LEFT ALONE", set_types,
@@ -227,12 +232,32 @@ hook(int which)
 	say(line);
 }
 
-/* (the Objective-C runtime has read an image's classes: those of a framework loaded only now) */
+static bool hook_queued;                /* a look on the main queue is asked for and has not begun */
+
+static void
+hook_late(void *context __attribute__((unused)))
+{
+	__atomic_store_n(&hook_queued, false, __ATOMIC_SEQ_CST);
+	for (int which = 0; which < CLASSES; which++) {
+		hook(which);
+	}
+}
+
+/*
+ * (the Objective-C runtime has read an image's classes: those of a framework loaded only now). It calls this with
+ * its lock held, and objc_getClass and the method functions take that lock again, which aborts the process: so
+ * here only whether a class is still to be found is asked, and the looking is done on the main queue, outside it.
+ */
 static void
 image_loaded(const struct mach_header *header __attribute__((unused)))
 {
+	bool wanted = false;
+
 	for (int which = 0; which < CLASSES; which++) {
-		hook(which);
+		wanted = wanted || !__atomic_load_n(&looked[which], __ATOMIC_ACQUIRE);
+	}
+	if (wanted && !__atomic_exchange_n(&hook_queued, true, __ATOMIC_SEQ_CST)) {
+		dispatch_async_f(dispatch_get_main_queue(), NULL, hook_late);
 	}
 }
 
