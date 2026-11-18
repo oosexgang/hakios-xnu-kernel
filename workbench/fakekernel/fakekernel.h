@@ -226,6 +226,7 @@ struct cdevsw {
 #define UID_ROOT                0
 #define GID_WHEEL               0
 int cdevsw_add(int index, const struct cdevsw *devsw);
+int cdevsw_remove(int index, const struct cdevsw *devsw);
 void *devfs_make_node(dev_t dev, int type, int uid, int gid, int perms, const char *name, ...);
 /* for the tests: 0, an errno of the driver's, or -1 when no driver has made a node of that name */
 int fake_dev_write(const char *name, const void *data, size_t size);
@@ -286,6 +287,7 @@ struct bdevsw {
 #define DKIOCGETMAXBLOCKCOUNTREAD 0x40086440ul
 #define DKIOCGETPHYSICALBLOCKSIZE 0x4004644dul
 int bdevsw_add(int index, const struct bdevsw *devsw);
+int bdevsw_remove(int index, const struct bdevsw *devsw);
 int cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev);
 /*
  * For the tests. A request of `size` bytes from sector `sector` on, read or written: 0 or the driver's

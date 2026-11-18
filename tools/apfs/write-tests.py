@@ -284,7 +284,8 @@ def store_slot_bytes(image, slot):
 
 def store_head_py(image, slot, payload_max):
     """The header of a slot, or None when it holds nothing good. Checks what apfs_store.c checks:
-    the magic, its own sum, the version, that the slot says which slot it is, and the length."""
+    the magic, its own sum, the version, that the slot says which slot it is, a generation that is
+    neither 0 nor the last a 64-bit count has, and the length."""
     blk = store_slot_bytes(image, slot)
     if blk is None or len(blk) < STORE_PAYLOAD or blk[:8] != STORE_MAGIC:
         return None
@@ -292,7 +293,7 @@ def store_head_py(image, slot, payload_max):
     (generation, nbytes, seconds, note, summ, head_sum) = struct.unpack_from('<QQQQQQ', blk, 16)
     if head_sum != fnv1a(blk[:56]):
         return None
-    if version != 1 or which != slot or generation == 0 or nbytes > payload_max:
+    if version != 1 or which != slot or generation in (0, 0xFFFFFFFFFFFFFFFF) or nbytes > payload_max:
         return None
     return dict(slot=slot, generation=generation, bytes=nbytes, seconds=seconds, note=note,
                 sum=summ)

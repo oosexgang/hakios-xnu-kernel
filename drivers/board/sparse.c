@@ -288,12 +288,12 @@ hakios_sparse_init(void)
 	sparse_cmajor = cdevsw_add_with_bdev(-1, &sparse_cdevsw, sparse_bmajor);
 	if (sparse_cmajor < 0) {
 		printf("sparse: cdevsw_add failed\n");
-		return;
+		goto give_back;
 	}
 	if (devfs_make_node(makedev(sparse_bmajor, 0), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR,
 	    0600, "rsp0") == NULL) {
 		printf("sparse: devfs_make_node failed\n");
-		return;
+		goto give_back;
 	}
 	sparse_ready = true;
 	printf("sparse: /dev/rsp0 stands in for %llu blocks of %u, %llu of them here "
@@ -301,4 +301,14 @@ hakios_sparse_init(void)
 	    sparse_block_size, (unsigned long long)sparse_present,
 	    (unsigned long long)(sparse_present * sparse_block_size / (1024 * 1024)),
 	    (unsigned long long)off);
+	return;
+
+give_back:
+	/* no disk after all: the majors go back, rather than stay taken by a driver that serves nothing */
+	if (sparse_cmajor >= 0) {
+		(void)cdevsw_remove(sparse_cmajor, &sparse_cdevsw);
+		sparse_cmajor = -1;
+	}
+	(void)bdevsw_remove(sparse_bmajor, &sparse_bdevsw);
+	sparse_bmajor = -1;
 }

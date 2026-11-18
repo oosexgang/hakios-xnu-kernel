@@ -340,6 +340,64 @@ no_ram_disk(void)
 	CHECK(!there() && logged("sparse: md0 is not a memory disk this can be read from"), "no disk: %s", log_text);
 }
 
+/* switches of other drivers, to take majors and names with */
+static const struct cdevsw other_cdevsw;
+static const struct bdevsw other_bdevsw;
+
+/* the major the next block (or character) switch would get: taken to see, and given back */
+static int
+next_bmajor(void)
+{
+	int major = bdevsw_add(-1, &other_bdevsw);
+
+	(void)bdevsw_remove(major, &other_bdevsw);
+	return major;
+}
+
+static int
+next_cmajor(void)
+{
+	int major = cdevsw_add(-1, &other_cdevsw);
+
+	(void)cdevsw_remove(major, &other_cdevsw);
+	return major;
+}
+
+/* no character major left for its switch: no disk, and the block major it took is free again */
+static void
+no_char_major(void)
+{
+	int bmajor;
+
+	image();
+	for (unsigned i = 0; i < 64; i++) {
+		if (cdevsw_add(-1, &other_cdevsw) < 0) {
+			break;          /* every one taken */
+		}
+	}
+	bmajor = next_bmajor();
+	hakios_sparse_init();
+	CHECK(!there() && logged("sparse: cdevsw_add failed"), "no disk: %s", log_text);
+	CHECK(next_bmajor() == bmajor, "the block major %d is given back: the next is %d", bmajor, next_bmajor());
+}
+
+/* the node's name already taken: no disk, and both majors it took are free again */
+static void
+name_taken(void)
+{
+	int bmajor, cmajor;
+
+	image();
+	CHECK(devfs_make_node(makedev(cdevsw_add(-1, &other_cdevsw), 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0600, "rsp0") != NULL,
+	    "the name taken");
+	bmajor = next_bmajor();
+	cmajor = next_cmajor();
+	hakios_sparse_init();
+	CHECK(!there() && logged("sparse: devfs_make_node failed"), "no disk: %s", log_text);
+	CHECK(next_bmajor() == bmajor, "the block major %d is given back: the next is %d", bmajor, next_bmajor());
+	CHECK(next_cmajor() == cmajor, "the character major %d is given back: the next is %d", cmajor, next_cmajor());
+}
+
 /* only when asked for */
 static void
 off_by_default(void)
@@ -364,6 +422,7 @@ main(int argc, char **argv)
 		{ "table_points_outside", table_points_outside, 1 }, { "does_not_fit", does_not_fit, 7 },
 		{ "header_makes_no_sense", header_makes_no_sense, 6 }, { "no_image_there", no_image_there, 1 },
 		{ "offset_past_the_disk", offset_past_the_disk, 3 }, { "no_ram_disk", no_ram_disk, 1 }, { "off_by_default", off_by_default, 1 },
+		{ "no_char_major", no_char_major, 1 }, { "name_taken", name_taken, 1 },
 	};
 
 	if (argc < 2) {

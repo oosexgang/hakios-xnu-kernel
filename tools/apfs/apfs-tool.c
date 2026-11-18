@@ -609,6 +609,13 @@ struct census {
 	size_t           chunk;         /* how much each read asks for */
 	bool             meta_only;
 	int              error;
+	/*
+	 * The directories from where the walk started down to the one being walked: a record that
+	 * names one of them again (a damaged volume) is a cycle, and walked into, the census would
+	 * never end.
+	 */
+	uint64_t        *anc;
+	size_t           nanc, anc_cap;
 };
 
 static int census_dir(struct census *cs, uint64_t dir_id);
@@ -690,7 +697,28 @@ census_cb(void *ctx, const char *name, size_t name_len, uint64_t file_id, uint8_
 	    ino.mode, ino.owner, ino.group, size, h);
 
 	if (d_type == APFS_DT_DIR) {
+		for (size_t i = 0; i < cs->nanc; i++) {
+			if (cs->anc[i] == file_id) {
+				fprintf(stderr, "apfs-tool: %s: a directory that is its own ancestor (inode %" PRIu64
+				    "): not walked into\n", cs->path, file_id);
+				cs->error = ELOOP;
+				goto done;
+			}
+		}
+		if (cs->nanc == cs->anc_cap) {
+			uint64_t *grown = realloc(cs->anc, 2 * cs->anc_cap * sizeof(*grown));
+
+			if (grown == NULL) {
+				cs->path_len = saved;
+				cs->path[cs->path_len] = '\0';
+				return ENOMEM;
+			}
+			cs->anc = grown;
+			cs->anc_cap *= 2;
+		}
+		cs->anc[cs->nanc++] = file_id;
 		error = census_dir(cs, file_id);
+		cs->nanc--;
 		if (error) {
 			cs->path_len = saved;
 			cs->path[cs->path_len] = '\0';
@@ -778,6 +806,12 @@ cmd_census(const char *path, const char *where, bool meta_only)
 
 		return census_parallel(&nx, &vol, start, where, cs.chunk, meta_only, (int)(n > 16 ? 16 : n));
 	}
+	cs.anc_cap = 64;
+	cs.anc = malloc(cs.anc_cap * sizeof(*cs.anc));
+	if (cs.anc == NULL) {
+		return 1;
+	}
+	cs.anc[cs.nanc++] = start;
 	error = census_dir(&cs, start);
 	if (error && error != EEXIST) {
 		fprintf(stderr, "apfs-tool: census: %s\n", strerror(error));
@@ -799,6 +833,7 @@ cmd_census(const char *path, const char *where, bool meta_only)
 	    nx.max_data_addr * (double)nx.block_size / 1e9);
 	free(cs.path);
 	free(cs.buf);
+	free(cs.anc);
 	apfs_nx_close(&nx);
 	return cs.error ? 1 : 0;
 }
@@ -809,8 +844,10 @@ cmd_census(const char *path, const char *where, bool meta_only)
  * kernel's apfs_check prints. Lines are not printed.
  */
 struct pjob {
-	uint64_t dir_id;
-	char    *path;
+	uint64_t  dir_id;
+	char     *path;
+	uint64_t *anc;                  /* the directories from the start down to this one, as census's */
+	size_t    nanc;
 };
 
 static pthread_mutex_t pmtx = PTHREAD_MUTEX_INITIALIZER;
@@ -822,6 +859,8 @@ static int pbusy;
 struct pwalker {
 	struct apfs_vol *vol;
 	const char      *dir;           /* the directory being walked */
+	const uint64_t  *anc;           /* ... and it with the ones above it */
+	size_t           nanc;
 	uint8_t         *buf;
 	size_t           chunk;
 	bool             meta_only;
@@ -830,8 +869,17 @@ struct pwalker {
 };
 
 static void
-ppush(uint64_t dir_id, const char *path)
+ppush(uint64_t dir_id, const char *path, const uint64_t *above, size_t nabove)
 {
+	uint64_t *anc = malloc((nabove + 1) * sizeof(*anc));
+
+	if (anc == NULL) {
+		abort();
+	}
+	if (nabove != 0) {
+		memcpy(anc, above, nabove * sizeof(*anc));
+	}
+	anc[nabove] = dir_id;
 	pthread_mutex_lock(&pmtx);
 	if (pcount == pcap) {
 		pcap = pcap ? 2 * pcap : 1024;
@@ -842,6 +890,8 @@ ppush(uint64_t dir_id, const char *path)
 	}
 	pstack[pcount].dir_id = dir_id;
 	pstack[pcount].path = strdup(path);
+	pstack[pcount].anc = anc;
+	pstack[pcount].nanc = nabove + 1;
 	pcount++;
 	pthread_cond_signal(&pcond);
 	pthread_mutex_unlock(&pmtx);
@@ -908,7 +958,15 @@ pcensus_cb(void *ctx, const char *name, size_t name_len, uint64_t file_id, uint8
 	w->sum += fnv1a((const uint8_t *)line, (size_t)n, FNV_INIT);
 	w->entries++;
 	if (d_type == APFS_DT_DIR) {
-		ppush(file_id, path);
+		for (size_t i = 0; i < w->nanc; i++) {
+			if (w->anc[i] == file_id) {
+				fprintf(stderr, "apfs-tool: %s: a directory that is its own ancestor (inode %" PRIu64
+				    "): not walked into\n", path, file_id);
+				w->error = ELOOP;
+				return 0;
+			}
+		}
+		ppush(file_id, path, w->anc, w->nanc);
 	}
 	return 0;
 }
@@ -936,6 +994,8 @@ pwalker_thread(void *p)
 		pthread_mutex_unlock(&pmtx);
 
 		w->dir = j.path;
+		w->anc = j.anc;
+		w->nanc = j.nanc;
 		op_begin();
 		error = apfs_readdir(w->vol, j.dir_id, pcensus_cb, w);
 		op_end();
@@ -944,6 +1004,7 @@ pwalker_thread(void *p)
 			w->error = error;
 		}
 		free(j.path);
+		free(j.anc);
 
 		pthread_mutex_lock(&pmtx);
 		pbusy--;
@@ -961,7 +1022,7 @@ census_parallel(struct apfs_nx *nx, struct apfs_vol *vol, uint64_t start, const 
 	uint64_t sum = 0, entries = 0, bytes = 0;
 	int error = 0;
 
-	ppush(start, where != NULL ? where : "");
+	ppush(start, where != NULL ? where : "", NULL, 0);
 	for (int i = 0; i < n; i++) {
 		memset(&w[i], 0, sizeof(w[i]));
 		w[i].vol = vol;

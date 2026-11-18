@@ -207,6 +207,24 @@ struct census {
 	/* where a walker's time goes (mach ticks): lookups, getattr, reading files and links
 	 * (hashing included), readdir, waiting for a directory to walk (par); on a processor */
 	uint64_t  t_lookup, t_attr, t_read, t_readdir, t_idle, t_cpu, t_wall;
+	/*
+	 * The directories from where the walk started down to the one being walked, by inode
+	 * (0 where the filesystem did not say).  A directory record of a damaged volume that
+	 * names one of them again is a cycle: walked into, every level would hold all of the
+	 * ones above it once more, until MAX_DEPTH -- and with two such records, twice over at
+	 * every level.
+	 */
+	uint64_t  anc[MAX_DEPTH + 1];
+	uint32_t  nanc;
+	uint64_t  entry_id;             /* the inode census_entry() last looked at, or 0 */
+	/*
+	 * census_entry()'s own, kept here rather than on the stack: the walk recurses up to
+	 * MAX_DEPTH levels on a kernel stack of 16 KB, and a compiler that folds census_entry()
+	 * into census_child() keeps them in the frame of every level.  Neither is in use across
+	 * the recursion: census_entry() is done with both before census_child() goes deeper.
+	 */
+	struct vnode_attr va;
+	char      line[PATH_CAP + 128];
 };
 
 /* The boot-args both kinds of walk take the same way. */
@@ -237,19 +255,45 @@ ifmt_of(enum vtype t)
 	}
 }
 
-/* FNV-1a over a regular file's contents, read through VNOP_READ. */
+/* How big the container under the walk is, in bytes; 0 when its filesystem does not say. */
+static uint64_t
+census_container_bytes(struct census *cs)
+{
+	struct vfsstatfs *sp = (cs->mp != NULL) ? vfs_statfs(cs->mp) : NULL;
+
+	if (sp == NULL || sp->f_bsize == 0 || sp->f_blocks > UINT64_MAX / sp->f_bsize) {
+		return 0;
+	}
+	return sp->f_blocks * sp->f_bsize;
+}
+
+/*
+ * FNV-1a over a regular file's contents, read through VNOP_READ.  EFBIG for a file that says it
+ * is bigger than its whole container: the size is a damaged volume's word, and a range with no
+ * extents reads as zeros, so a size of 2^62 would be read for as long as the phone stays up.
+ * (Bigger than the container is not impossible for a file full of holes or one that compresses
+ * very well, but neither is in an image this walk is for, and either still counts as an error
+ * rather than going unseen.)
+ */
 static int
 hash_file(struct census *cs, vnode_t vp, uint64_t size, uint64_t *out)
 {
-	uint64_t h = FNV_INIT, off = 0;
+	uint64_t h = FNV_INIT, off = 0, most = census_container_bytes(cs);
 
+	if (most != 0 && size > most) {
+		return EFBIG;
+	}
 	while (off < size) {
 		int want = (int)((size - off > READ_CHUNK) ? READ_CHUNK : (size - off));
 		int resid = 0;
-		int error = vn_rdwr(UIO_READ, vp, (caddr_t)cs->buf, want, (off_t)off,
+		int error;
+
+		if (cs->stop) {
+			return ECANCELED;       /* the walk is being cut short: a part-read file says nothing */
+		}
+		error = vn_rdwr(UIO_READ, vp, (caddr_t)cs->buf, want, (off_t)off,
 		    UIO_SYSSPACE, IO_NOCACHE, vfs_context_ucred(cs->ctx), &resid,
 		    vfs_context_proc(cs->ctx));
-
 		if (error) {
 			return error;
 		}
@@ -293,14 +337,50 @@ hash_link(struct census *cs, vnode_t vp, uint64_t *out)
 	return 0;
 }
 
+/*
+ * A line of apfs_check=2 as it goes to the log.  A name may hold any byte but a zero and a '/', a
+ * newline among them, and printed as it is that would start a line of its own -- one a reader of
+ * the log takes for another entry, or for something else the kernel said.  So a control character
+ * in the path is printed as \ooo (into the read buffer, which nothing is using by now, and cut
+ * short if it fills); a line without one is printed exactly as it was hashed, which is what is
+ * compared with the host's.
+ */
+static void
+census_print_line(struct census *cs)
+{
+	const char *path = cs->path + cs->rel;
+	size_t plen = strlen(path), i, o = 0, cap = READ_CHUNK;
+	char *out = (char *)cs->buf;
+
+	for (i = 0; i < plen; i++) {
+		if ((uint8_t)path[i] < 0x20 || (uint8_t)path[i] == 0x7f) {
+			break;
+		}
+	}
+	if (i == plen) {
+		printf("apfs-line: %s", cs->line);
+		return;
+	}
+	for (i = 0; i < plen && o + 5 < cap; i++) {
+		uint8_t c = (uint8_t)path[i];
+
+		if (c < 0x20 || c == 0x7f) {
+			o += (size_t)scnprintf(out + o, cap - o, "\\%03o", c);
+		} else {
+			out[o++] = (char)c;
+		}
+	}
+	out[o] = '\0';
+	printf("apfs-line: %s%s", out, cs->line + plen);
+}
+
 static bool
 census_entry(struct census *cs, uint8_t d_type)
 {
-	struct vnode_attr va;
+	struct vnode_attr *va = &cs->va;
 	vnode_t vp = NULLVP;
 	uint64_t h = 0, size = 0;
 	uint16_t mode = 0;
-	char line[PATH_CAP + 128];
 	int error;
 	int n;
 
@@ -311,6 +391,7 @@ census_entry(struct census *cs, uint8_t d_type)
 	 * would look like a lookup failure.  Crossing mount points has to stay allowed: the
 	 * path leads from the ramfs that holds the mount point into the volume itself.
 	 */
+	cs->entry_id = 0;
 	PHASE("lookup");
 	{
 		uint64_t t0 = mach_absolute_time();
@@ -327,16 +408,17 @@ census_entry(struct census *cs, uint8_t d_type)
 		vnode_put(vp);          /* another filesystem is mounted here */
 		return false;
 	}
-	VATTR_INIT(&va);
-	VATTR_WANTED(&va, va_mode);
-	VATTR_WANTED(&va, va_uid);
-	VATTR_WANTED(&va, va_gid);
-	VATTR_WANTED(&va, va_data_size);
+	VATTR_INIT(va);
+	VATTR_WANTED(va, va_mode);
+	VATTR_WANTED(va, va_uid);
+	VATTR_WANTED(va, va_gid);
+	VATTR_WANTED(va, va_data_size);
+	VATTR_WANTED(va, va_fileid);
 	PHASE("getattr");
 	{
 		uint64_t t0 = mach_absolute_time();
 
-		error = vnode_getattr(vp, &va, cs->ctx);
+		error = vnode_getattr(vp, va, cs->ctx);
 		cs->t_attr += mach_absolute_time() - t0;
 	}
 	if (error) {
@@ -344,9 +426,10 @@ census_entry(struct census *cs, uint8_t d_type)
 		cs->errors++;
 		goto out;
 	}
-	mode = (uint16_t)(ifmt_of(vnode_vtype(vp)) | (VATTR_IS_SUPPORTED(&va, va_mode)
-	    ? (va.va_mode & 07777) : 0));
-	size = VATTR_IS_SUPPORTED(&va, va_data_size) ? va.va_data_size : 0;
+	mode = (uint16_t)(ifmt_of(vnode_vtype(vp)) | (VATTR_IS_SUPPORTED(va, va_mode)
+	    ? (va->va_mode & 07777) : 0));
+	size = VATTR_IS_SUPPORTED(va, va_data_size) ? va->va_data_size : 0;
+	cs->entry_id = VATTR_IS_SUPPORTED(va, va_fileid) ? va->va_fileid : 0;
 
 	if (vnode_vtype(vp) == VREG) {
 		cs->files++;
@@ -372,20 +455,21 @@ census_entry(struct census *cs, uint8_t d_type)
 		cs->others++;
 	}
 	if (error) {
-		printf("apfs-check: %s: reading it failed: %d\n", cs->path + cs->rel, error);
+		printf("apfs-check: %s: reading it failed: %d%s\n", cs->path + cs->rel, error,
+		    error == EFBIG ? " (it says it is bigger than its whole container: not read)" : "");
 		cs->errors++;
 		goto out;
 	}
 
-	n = scnprintf(line, sizeof(line), "%s\t%u\t%06o\t%u\t%u\t%llu\t%016llx\n",
+	n = scnprintf(cs->line, sizeof(cs->line), "%s\t%u\t%06o\t%u\t%u\t%llu\t%016llx\n",
 	    cs->path + cs->rel, d_type, mode,
-	    VATTR_IS_SUPPORTED(&va, va_uid) ? va.va_uid : 0,
-	    VATTR_IS_SUPPORTED(&va, va_gid) ? va.va_gid : 0,
+	    VATTR_IS_SUPPORTED(va, va_uid) ? va->va_uid : 0,
+	    VATTR_IS_SUPPORTED(va, va_gid) ? va->va_gid : 0,
 	    (unsigned long long)size, (unsigned long long)h);
-	cs->sum += fnv1a((const uint8_t *)line, (size_t)n, FNV_INIT);
+	cs->sum += fnv1a((const uint8_t *)cs->line, (size_t)n, FNV_INIT);
 	cs->entries++;
 	if (cs->print_lines) {
-		printf("apfs-line: %s", line);
+		census_print_line(cs);
 	}
 	if ((cs->entries % 10000) == 0) {
 		uint64_t ns = 0;
@@ -408,7 +492,7 @@ out:
 }
 
 static void census_dir(struct census *cs);
-static void par_push(const char *path, size_t len, int depth);
+static void par_push(const char *path, size_t len, int depth, const uint64_t *anc, uint32_t nanc);
 
 /* the walkers of a parallel walk, for the watch's count of progress */
 #define PAR_MAX 16
@@ -520,6 +604,29 @@ census_skipped(struct census *cs)
 	return false;
 }
 
+/*
+ * Is the directory census_entry() has just looked at one the path already goes through?  Then it
+ * is not gone into (and that is an error: only a damaged volume has a directory inside itself).
+ */
+static bool
+census_cycle(struct census *cs)
+{
+	uint32_t i;
+
+	if (cs->entry_id == 0) {
+		return false;           /* (a filesystem that does not say) */
+	}
+	for (i = 0; i < cs->nanc; i++) {
+		if (cs->anc[i] == cs->entry_id) {
+			printf("apfs-check: %s: a directory that is its own ancestor (inode %llu): "
+			    "not walked into\n", cs->path + cs->rel, (unsigned long long)cs->entry_id);
+			cs->errors++;
+			return true;
+		}
+	}
+	return false;
+}
+
 /* Add "/name" to the path, do the entry, and put the path back as it was. */
 static void
 census_child(struct census *cs, const char *name, size_t name_len, uint8_t d_type)
@@ -540,14 +647,18 @@ census_child(struct census *cs, const char *name, size_t name_len, uint8_t d_typ
 	cs->path[cs->len] = '\0';
 
 	if (census_entry(cs, d_type) && d_type == DT_DIR && cs->depth < MAX_DEPTH &&
+	    cs->nanc <= MAX_DEPTH &&
 	    (cs->max_depth == 0 || (uint32_t)cs->depth + 1 < cs->max_depth) &&
-	    !census_skipped(cs)) {
+	    !census_skipped(cs) && !census_cycle(cs)) {
+		cs->anc[cs->nanc] = cs->entry_id;
 		if (cs->par) {
-			par_push(cs->path, cs->len, cs->depth + 1);
+			par_push(cs->path, cs->len, cs->depth + 1, cs->anc, cs->nanc + 1);
 		} else {
+			cs->nanc++;
 			cs->depth++;
 			census_dir(cs);
 			cs->depth--;
+			cs->nanc--;
 		}
 	}
 	cs->len = saved;
@@ -561,6 +672,7 @@ census_dir(struct census *cs)
 	vnode_t dvp = NULLVP;
 	char *dbuf;
 	off_t offset = 0;
+	bool first = false;
 	int error;
 
 	{
@@ -579,10 +691,22 @@ census_dir(struct census *cs)
 		cs->errors++;
 		return;
 	}
+	if (cs->nanc == 0) {
+		/* where the walk starts: the first of the directories a cycle is looked for in */
+		VATTR_INIT(&cs->va);
+		VATTR_WANTED(&cs->va, va_fileid);
+		cs->anc[0] = (vnode_getattr(dvp, &cs->va, cs->ctx) == 0 &&
+		    VATTR_IS_SUPPORTED(&cs->va, va_fileid)) ? cs->va.va_fileid : 0;
+		cs->nanc = 1;
+		first = true;
+	}
 	dbuf = kalloc_data(DIR_CHUNK, Z_WAITOK);
 	if (dbuf == NULL) {
 		vnode_put(dvp);
 		cs->errors++;
+		if (first) {
+			cs->nanc = 0;
+		}
 		return;
 	}
 	for (;;) {
@@ -632,6 +756,18 @@ census_dir(struct census *cs)
 			    (de->d_namlen == 2 && de->d_name[0] == '.' && de->d_name[1] == '.')) {
 				continue;
 			}
+			/*
+			 * A name with a zero byte or a '/' in it: made into a path, the lookup would
+			 * stop at the first or go down through the second, and could come to this
+			 * directory itself.  The reader refuses such a name; this is for any other.
+			 */
+			if (memchr(de->d_name, '\0', de->d_namlen) != NULL ||
+			    memchr(de->d_name, '/', de->d_namlen) != NULL) {
+				printf("apfs-check: %s: an entry whose name has a zero byte or a '/' in "
+				    "it: passed over\n", cs->len != 0 ? cs->path + cs->rel : "/");
+				cs->errors++;
+				continue;
+			}
 			census_child(cs, de->d_name, de->d_namlen, de->d_type);
 			if (cs->stop) {
 				break;
@@ -643,6 +779,9 @@ census_dir(struct census *cs)
 	}
 	kfree_data(dbuf, DIR_CHUNK);
 	vnode_put(dvp);
+	if (first) {
+		cs->nanc = 0;
+	}
 }
 
 /*
@@ -653,9 +792,11 @@ census_dir(struct census *cs)
  * same whatever the order: the sum and the counts are those of the walk on one thread.
  */
 struct par_dir {
-	char  *path;
-	size_t len;
-	int    depth;
+	char     *path;
+	size_t    len;
+	int       depth;
+	uint64_t *anc;                  /* the directory's census anc[]: those above it, and it */
+	uint32_t  nanc;
 };
 
 static LCK_GRP_DECLARE(par_lck_grp, "apfs-check-walkers");
@@ -665,10 +806,24 @@ static uint32_t par_count, par_cap, par_busy, par_finished, par_most;
 static bool par_failed;
 
 static void
-par_push(const char *path, size_t len, int depth)
+par_push(const char *path, size_t len, int depth, const uint64_t *anc, uint32_t nanc)
 {
 	char *copy = kalloc_data(len + 1, Z_WAITOK);
+	uint64_t *anc_copy = (nanc != 0) ? kalloc_data(nanc * sizeof(*anc_copy), Z_WAITOK) : NULL;
 
+	if (copy == NULL || (nanc != 0 && anc_copy == NULL)) {
+		/* (counted below as one that could not be had, with what was had given back) */
+		if (copy != NULL) {
+			kfree_data(copy, len + 1);
+		}
+		if (anc_copy != NULL) {
+			kfree_data(anc_copy, nanc * sizeof(*anc_copy));
+		}
+		copy = NULL;
+		anc_copy = NULL;
+	} else if (nanc != 0) {
+		memcpy(anc_copy, anc, nanc * sizeof(*anc_copy));
+	}
 	lck_mtx_lock(&par_lock);
 	if (par_count == par_cap) {
 		uint32_t cap = par_cap ? par_cap * 2 : 1024;
@@ -677,7 +832,12 @@ par_push(const char *path, size_t len, int depth)
 		if (grown == NULL) {
 			par_failed = true;
 			lck_mtx_unlock(&par_lock);
-			kfree_data(copy, len + 1);
+			if (copy != NULL) {
+				kfree_data(copy, len + 1);
+			}
+			if (anc_copy != NULL) {
+				kfree_data(anc_copy, nanc * sizeof(*anc_copy));
+			}
 			return;
 		}
 		if (par_stack != NULL) {
@@ -691,7 +851,7 @@ par_push(const char *path, size_t len, int depth)
 		par_failed = true;
 	} else {
 		memcpy(copy, path, len + 1);
-		par_stack[par_count++] = (struct par_dir){ copy, len, depth };
+		par_stack[par_count++] = (struct par_dir){ copy, len, depth, anc_copy, nanc };
 		if (par_count > par_most) {
 			par_most = par_count;
 		}
@@ -731,7 +891,12 @@ par_walker(void *arg, __unused wait_result_t wr)
 		memcpy(cs->path, d.path, d.len + 1);
 		cs->len = d.len;
 		cs->depth = d.depth;
+		cs->nanc = d.nanc;
 		kfree_data(d.path, d.len + 1);
+		if (d.anc != NULL) {
+			memcpy(cs->anc, d.anc, d.nanc * sizeof(cs->anc[0]));
+			kfree_data(d.anc, d.nanc * sizeof(d.anc[0]));
+		}
 		if (!cs->stop) {
 			census_dir(cs);
 		}
@@ -775,7 +940,7 @@ par_walk(struct census *cs, uint32_t n)
 
 	par_count = par_busy = par_finished = par_most = 0;
 	par_failed = false;
-	par_push(cs->path, cs->len, cs->depth);
+	par_push(cs->path, cs->len, cs->depth, NULL, 0);
 	for (uint32_t i = 0; i < n; i++) {
 		w[i] = kalloc_type(struct census, Z_WAITOK | Z_ZERO);
 		if (w[i] == NULL) {
@@ -867,6 +1032,10 @@ par_walk(struct census *cs, uint32_t n)
 		while (par_count != 0) {
 			par_count--;
 			kfree_data(par_stack[par_count].path, par_stack[par_count].len + 1);
+			if (par_stack[par_count].anc != NULL) {
+				kfree_data(par_stack[par_count].anc,
+				    par_stack[par_count].nanc * sizeof(par_stack[par_count].anc[0]));
+			}
 		}
 	}
 	if (par_stack != NULL) {
@@ -935,48 +1104,60 @@ static void
 apfs_walk_one(void *arg, __unused wait_result_t wr)
 {
 	struct walk_job *job = arg;
-	struct census cs;
+	struct census *cs = kalloc_type(struct census, Z_WAITOK | Z_ZERO);
 	uint64_t start, end, ns = 0, hash_ns = 0;
 
-	bzero(&cs, sizeof(cs));
-	cs.ctx = vfs_context_kernel();
-	census_options(&cs);
-	PE_parse_boot_argn("apfs_depth", &cs.max_depth, sizeof(cs.max_depth));
-	PE_parse_boot_argn("apfs_max", &cs.max_entries, sizeof(cs.max_entries));
-	{
-		static char skip[256];
-
-		if (PE_parse_boot_arg_str("apfs_skip", skip, sizeof(skip)) && skip[0] != '\0') {
-			cs.skip = skip;
-			printf("apfs-check: staying out of %s\n", skip);
-		}
-	}
-	cs.lookup_flags = VNODE_LOOKUP_NOFOLLOW | VNODE_LOOKUP_NOCROSSMOUNT;
-	cs.path = kalloc_data(PATH_CAP, Z_WAITOK | Z_ZERO);
-	cs.buf = kalloc_data(READ_CHUNK, Z_WAITOK);
-	if (cs.path == NULL || cs.buf == NULL) {
+	if (cs == NULL) {
 		printf("apfs-check: reader %d: out of memory\n", job->index);
 		OSDecrementAtomic(&apfs_check_running);
 		return;
 	}
+	cs->ctx = vfs_context_kernel();
+	census_options(cs);
+	PE_parse_boot_argn("apfs_depth", &cs->max_depth, sizeof(cs->max_depth));
+	PE_parse_boot_argn("apfs_max", &cs->max_entries, sizeof(cs->max_entries));
+	{
+		static char skip[256];
+
+		if (PE_parse_boot_arg_str("apfs_skip", skip, sizeof(skip)) && skip[0] != '\0') {
+			cs->skip = skip;
+			printf("apfs-check: staying out of %s\n", skip);
+		}
+	}
+	cs->lookup_flags = VNODE_LOOKUP_NOFOLLOW | VNODE_LOOKUP_NOCROSSMOUNT;
+	cs->path = kalloc_data(PATH_CAP, Z_WAITOK | Z_ZERO);
+	cs->buf = kalloc_data(READ_CHUNK, Z_WAITOK);
+	if (cs->path == NULL || cs->buf == NULL) {
+		printf("apfs-check: reader %d: out of memory\n", job->index);
+		if (cs->path != NULL) {
+			kfree_data(cs->path, PATH_CAP);
+		}
+		if (cs->buf != NULL) {
+			kfree_data(cs->buf, READ_CHUNK);
+		}
+		kfree_type(struct census, cs);
+		OSDecrementAtomic(&apfs_check_running);
+		return;
+	}
 	start = mach_absolute_time();
-	census_dir(&cs);
+	census_dir(cs);
 	end = mach_absolute_time();
 	absolutetime_to_nanoseconds(end - start, &ns);
-	absolutetime_to_nanoseconds(cs.hash_ticks, &hash_ns);
+	absolutetime_to_nanoseconds(cs->hash_ticks, &hash_ns);
 
 	job->ms = ns / 1000000;
-	job->entries = cs.entries;
-	job->bytes = cs.bytes;
-	job->sum = cs.sum;
-	job->errors = cs.errors;
+	job->entries = cs->entries;
+	job->bytes = cs->bytes;
+	job->sum = cs->sum;
+	job->errors = cs->errors;
 	printf("apfs-check: reader %d: %llu entries  %llu bytes  sum %016llx  errors %u  "
-	    "%llu ms  hash %s%llu ms\n", job->index, cs.entries, cs.bytes,
-	    (unsigned long long)cs.sum, cs.errors, job->ms, cs.no_hash ? "off " : "",
+	    "%llu ms  hash %s%llu ms\n", job->index, cs->entries, cs->bytes,
+	    (unsigned long long)cs->sum, cs->errors, job->ms, cs->no_hash ? "off " : "",
 	    hash_ns / 1000000);
 
-	kfree_data(cs.path, PATH_CAP);
-	kfree_data(cs.buf, READ_CHUNK);
+	kfree_data(cs->path, PATH_CAP);
+	kfree_data(cs->buf, READ_CHUNK);
+	kfree_type(struct census, cs);
 	OSDecrementAtomic(&apfs_check_running);
 }
 
@@ -1149,7 +1330,11 @@ wdev_open_volume(struct apfs_nx *nx, struct apfs_vol *vol)
 	return ENOENT;
 }
 
-/* The FNV-1a of a file's contents as the census lines use it, read through apfs_lib. */
+/*
+ * The FNV-1a of a file's contents as the census lines use it, read through apfs_lib.  EFBIG, as
+ * hash_file() gives, for a size bigger than the whole container (apfs_nx_open() made sure that
+ * product does not wrap): read to its end, a damaged size of 2^62 would never be done.
+ */
 static int
 wdev_hash(struct apfs_vol *vol, const struct apfs_inode *ino, uint8_t *buf, size_t buflen,
     uint64_t *out)
@@ -1157,6 +1342,9 @@ wdev_hash(struct apfs_vol *vol, const struct apfs_inode *ino, uint8_t *buf, size
 	struct apfs_cfile cf;
 	uint64_t h = FNV_INIT, off = 0;
 
+	if (ino->size > vol->nx->block_count * (uint64_t)vol->nx->block_size) {
+		return EFBIG;
+	}
 	bzero(&cf, sizeof(cf));
 	while (off < ino->size) {
 		size_t want = (size_t)(ino->size - off), got = 0, i;
@@ -1531,36 +1719,33 @@ out:
 }
 
 static void
-apfs_check_thread(void *arg, __unused wait_result_t wr)
+apfs_check_census(uint32_t mode, struct census *cs)
 {
-	uint32_t mode = (uint32_t)(uintptr_t)arg;
 	vfs_context_t ctx = vfs_context_kernel();
-	struct census cs;
 	char devname[64] = CHECK_DEV;
 	char subtree[256] = "";
 	uint64_t start, end;
 	int error, tries;
 
-	bzero(&cs, sizeof(cs));
-	cs.ctx = ctx;
-	census_options(&cs);
-	cs.print_lines = (mode == 2);
+	cs->ctx = ctx;
+	census_options(cs);
+	cs->print_lines = (mode == 2);
 	/*
 	 * NOCROSSMOUNT only where the volume is the root (modes 4 and 5).  In mode 6 the
 	 * path leads from the root image into the mount, so crossing has to be allowed; the
 	 * walk is kept on the volume by the check against the mount it started on.
 	 */
-	PE_parse_boot_argn("apfs_depth", &cs.max_depth, sizeof(cs.max_depth));
-	PE_parse_boot_argn("apfs_max", &cs.max_entries, sizeof(cs.max_entries));
+	PE_parse_boot_argn("apfs_depth", &cs->max_depth, sizeof(cs->max_depth));
+	PE_parse_boot_argn("apfs_max", &cs->max_entries, sizeof(cs->max_entries));
 	{
 		static char skip[256];
 
 		if (PE_parse_boot_arg_str("apfs_skip", skip, sizeof(skip)) && skip[0] != '\0') {
-			cs.skip = skip;
+			cs->skip = skip;
 			printf("apfs-check: staying out of %s\n", skip);
 		}
 	}
-	cs.lookup_flags = VNODE_LOOKUP_NOFOLLOW |
+	cs->lookup_flags = VNODE_LOOKUP_NOFOLLOW |
 	    ((mode == 4 || mode == 5) ? VNODE_LOOKUP_NOCROSSMOUNT : 0);
 	if (PE_parse_boot_arg_str("apfs_dev", subtree, sizeof(subtree)) && subtree[0] != '\0') {
 		snprintf(devname, sizeof(devname), "/dev/%s", subtree);
@@ -1577,15 +1762,15 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 		return;
 	}
 
-	cs.path = kalloc_data(PATH_CAP, Z_WAITOK | Z_ZERO);
-	cs.buf = kalloc_data(READ_CHUNK, Z_WAITOK);
-	if (cs.path == NULL || cs.buf == NULL) {
+	cs->path = kalloc_data(PATH_CAP, Z_WAITOK | Z_ZERO);
+	cs->buf = kalloc_data(READ_CHUNK, Z_WAITOK);
+	if (cs->path == NULL || cs->buf == NULL) {
 		printf("apfs-check: out of memory\n");
-		if (cs.path != NULL) {
-			kfree_data(cs.path, PATH_CAP);
+		if (cs->path != NULL) {
+			kfree_data(cs->path, PATH_CAP);
 		}
-		if (cs.buf != NULL) {
-			kfree_data(cs.buf, READ_CHUNK);
+		if (cs->buf != NULL) {
+			kfree_data(cs->buf, READ_CHUNK);
 		}
 		return;
 	}
@@ -1627,27 +1812,27 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 		if (error) {
 			printf("apfs-check: mounting %s on %s failed: %d\n", devname, mnt,
 			    error);
-			kfree_data(cs.path, PATH_CAP);
-			kfree_data(cs.buf, READ_CHUNK);
+			kfree_data(cs->path, PATH_CAP);
+			kfree_data(cs->buf, READ_CHUNK);
 			return;
 		}
 		printf("apfs-check: %s mounted on %s\n", devname, mnt);
-		cs.rel = strlen(mnt);
-		strlcpy(cs.path, mnt, PATH_CAP);
-		cs.len = cs.rel;
+		cs->rel = strlen(mnt);
+		strlcpy(cs->path, mnt, PATH_CAP);
+		cs->len = cs->rel;
 		if (PE_parse_boot_arg_str("apfs_subtree", subtree, sizeof(subtree)) &&
 		    subtree[0] == '/') {
-			strlcat(cs.path, subtree, PATH_CAP);
-			cs.len = strlen(cs.path);
-			printf("apfs-check: walking %s\n", cs.path + cs.rel);
+			strlcat(cs->path, subtree, PATH_CAP);
+			cs->len = strlen(cs->path);
+			printf("apfs-check: walking %s\n", cs->path + cs->rel);
 		} else {
 			printf("apfs-check: walking the whole volume\n");
 		}
 		goto walk;
 	}
 	if (mode >= 5) {
-		kfree_data(cs.path, PATH_CAP);
-		kfree_data(cs.buf, READ_CHUNK);
+		kfree_data(cs->path, PATH_CAP);
+		kfree_data(cs->buf, READ_CHUNK);
 		apfs_check_concurrent();
 		return;
 	}
@@ -1656,9 +1841,9 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 		 * The volume is already the root: nothing to mount, and no mount point to
 		 * make, so none of what follows about /private/var applies.
 		 */
-		cs.rel = 0;
-		cs.len = 0;
-		cs.path[0] = '\0';
+		cs->rel = 0;
+		cs->len = 0;
+		cs->path[0] = '\0';
 		printf("apfs-check: walking the root filesystem\n");
 		goto walk;
 	}
@@ -1699,17 +1884,17 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 		goto give_back;
 	}
 
-	cs.rel = sizeof(CHECK_MNT) - 1;
-	strlcpy(cs.path, CHECK_MNT, PATH_CAP);
-	cs.len = cs.rel;
+	cs->rel = sizeof(CHECK_MNT) - 1;
+	strlcpy(cs->path, CHECK_MNT, PATH_CAP);
+	cs->len = cs->rel;
 	if (PE_parse_boot_arg_str("apfs_subtree", subtree, sizeof(subtree)) &&
 	    subtree[0] == '/') {
-		strlcat(cs.path, subtree, PATH_CAP);
-		cs.len = strlen(cs.path);
-		while (cs.len > cs.rel && cs.path[cs.len - 1] == '/') {
-			cs.path[--cs.len] = '\0';
+		strlcat(cs->path, subtree, PATH_CAP);
+		cs->len = strlen(cs->path);
+		while (cs->len > cs->rel && cs->path[cs->len - 1] == '/') {
+			cs->path[--cs->len] = '\0';
 		}
-		printf("apfs-check: walking %s\n", cs.path + cs.rel);
+		printf("apfs-check: walking %s\n", cs->path + cs->rel);
 	} else {
 		printf("apfs-check: walking the whole volume\n");
 	}
@@ -1717,21 +1902,21 @@ apfs_check_thread(void *arg, __unused wait_result_t wr)
 walk:
 	hakios_ufs_report("before the walk");
 	start = mach_absolute_time();
-	cs.t0 = start;
-	watch_start(&cs);
+	cs->t0 = start;
+	watch_start(cs);
 	{
 		uint32_t walkers = 1;
 
 		PE_parse_boot_argn("apfs_walkers", &walkers, sizeof(walkers));
 		if (mode == 6 && walkers > 1) {
-			par_walk(&cs, walkers > PAR_MAX ? PAR_MAX : walkers);
+			par_walk(cs, walkers > PAR_MAX ? PAR_MAX : walkers);
 		} else {
 			uint64_t cpu0 = thread_get_runtime_self(), wall0 = mach_absolute_time();
 
-			census_dir(&cs);
-			cs.t_cpu = thread_get_runtime_self() - cpu0;
-			cs.t_wall = mach_absolute_time() - wall0;
-			census_times(&cs, 0);
+			census_dir(cs);
+			cs->t_cpu = thread_get_runtime_self() - cpu0;
+			cs->t_wall = mach_absolute_time() - wall0;
+			census_times(cs, 0);
 		}
 	}
 	watch_stop();
@@ -1744,16 +1929,16 @@ walk:
 		printf("apfs-check: done in %llu ms\n", ns / 1000000);
 	}
 	printf("apfs-check: entries %llu  dirs %llu  files %llu  symlinks %llu  other %llu\n",
-	    cs.entries, cs.dirs, cs.files, cs.links, cs.others);
-	printf("apfs-check: content bytes %llu\n", cs.bytes);
-	printf("apfs-check: line-hash sum %016llx\n", (unsigned long long)cs.sum);
-	printf("apfs-check: errors %u\n", cs.errors);
+	    cs->entries, cs->dirs, cs->files, cs->links, cs->others);
+	printf("apfs-check: content bytes %llu\n", cs->bytes);
+	printf("apfs-check: line-hash sum %016llx\n", (unsigned long long)cs->sum);
+	printf("apfs-check: errors %u\n", cs->errors);
 	{
 		uint64_t hash_ns = 0;
 
-		absolutetime_to_nanoseconds(cs.hash_ticks, &hash_ns);
+		absolutetime_to_nanoseconds(cs->hash_ticks, &hash_ns);
 		printf("apfs-check: of it the checker's own hashing %llu ms%s\n", hash_ns / 1000000,
-		    cs.no_hash ? " (apfs_hash=0)" : "");
+		    cs->no_hash ? " (apfs_hash=0)" : "");
 	}
 	apfs_stats_print();
 	hakios_sparse_report();
@@ -1761,8 +1946,25 @@ walk:
 	printf("apfs-check: compare with tools/apfs/verify.py sum\n");
 
 give_back:
-	kfree_data(cs.path, PATH_CAP);
-	kfree_data(cs.buf, READ_CHUNK);
+	kfree_data(cs->path, PATH_CAP);
+	kfree_data(cs->buf, READ_CHUNK);
+}
+
+static void
+apfs_check_thread(void *arg, __unused wait_result_t wr)
+{
+	/*
+	 * Not on this thread's stack: with its line and its attributes the census is some
+	 * kilobytes, and the stack is wanted for the walk's recursion below it.
+	 */
+	struct census *cs = kalloc_type(struct census, Z_WAITOK | Z_ZERO);
+
+	if (cs == NULL) {
+		printf("apfs-check: out of memory\n");
+		return;
+	}
+	apfs_check_census((uint32_t)(uintptr_t)arg, cs);
+	kfree_type(struct census, cs);
 }
 
 static volatile int apfs_check_finished;

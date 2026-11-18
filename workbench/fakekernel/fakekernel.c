@@ -179,7 +179,9 @@ void thread_set_thread_name(thread_t thread __unused, const char *name __unused)
 
 /*
  * A driver adds its switch and gets a major number (character devices 0 to 7, block devices 8 to 11), then
- * makes nodes of it, one for each minor number. A test reaches a node by its name, as a program would.
+ * makes nodes of it, one for each minor number. A test reaches a node by its name, as a program would. A
+ * switch taken back (cdevsw_remove(), bdevsw_remove()) leaves its major free for the next to be added, and
+ * its nodes reach nothing.
  */
 #define CHAR_MAJORS             8
 #define BLOCK_MAJORS            4
@@ -194,6 +196,12 @@ static unsigned nodes_n;
 int
 cdevsw_add(int index __unused, const struct cdevsw *devsw)
 {
+	for (unsigned i = 0; i < added_n; i++) {
+		if (added[i] == NULL) {
+			added[i] = devsw;
+			return (int)i;
+		}
+	}
 	if (added_n >= CHAR_MAJORS) {
 		return -1;
 	}
@@ -204,11 +212,38 @@ cdevsw_add(int index __unused, const struct cdevsw *devsw)
 int
 bdevsw_add(int index __unused, const struct bdevsw *devsw)
 {
+	for (unsigned i = 0; i < disks_n; i++) {
+		if (disks[i] == NULL) {
+			disks[i] = devsw;
+			return CHAR_MAJORS + (int)i;
+		}
+	}
 	if (disks_n >= BLOCK_MAJORS) {
 		return -1;
 	}
 	disks[disks_n] = devsw;
 	return CHAR_MAJORS + (int)disks_n++;
+}
+
+/* (as the kernel's: the major back, if that switch is the one there; -1 if not) */
+int
+cdevsw_remove(int index, const struct cdevsw *devsw)
+{
+	if (index < 0 || (unsigned)index >= added_n || added[index] != devsw) {
+		return -1;
+	}
+	added[index] = NULL;
+	return index;
+}
+
+int
+bdevsw_remove(int index, const struct bdevsw *devsw)
+{
+	if (index < CHAR_MAJORS || (unsigned)(index - CHAR_MAJORS) >= disks_n || disks[index - CHAR_MAJORS] != devsw) {
+		return -1;
+	}
+	disks[index - CHAR_MAJORS] = NULL;
+	return index;
 }
 
 int
@@ -228,7 +263,8 @@ devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused
 	va_start(arguments, name);
 	vsnprintf(text, sizeof(text), name, arguments);
 	va_end(arguments);
-	if (nodes_n >= NODES || (index < CHAR_MAJORS ? index >= added_n : index - CHAR_MAJORS >= disks_n)) {
+	if (nodes_n >= NODES || (index < CHAR_MAJORS ? index >= added_n || added[index] == NULL :
+	    index - CHAR_MAJORS >= disks_n || disks[index - CHAR_MAJORS] == NULL)) {
 		return NULL;
 	}
 	for (unsigned i = 0; i < nodes_n; i++) {
@@ -241,12 +277,15 @@ devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused
 	return &nodes[nodes_n++];
 }
 
-/* the node of that name and of that kind: its number, or false */
+/* the node of that name and of that kind, of a switch that is still there: its number, or false */
 static bool
 node_named(const char *name, bool disk, dev_t *dev)
 {
 	for (unsigned i = 0; i < nodes_n; i++) {
 		if (strcmp(nodes[i].name, name) == 0 && (major(nodes[i].dev) >= CHAR_MAJORS) == disk) {
+			if (disk ? disks[major(nodes[i].dev) - CHAR_MAJORS] == NULL : added[major(nodes[i].dev)] == NULL) {
+				return false;
+			}
 			*dev = nodes[i].dev;
 			return true;
 		}

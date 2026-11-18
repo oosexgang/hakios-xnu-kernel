@@ -1663,6 +1663,21 @@ apfs_inode_size(struct apfs_vol *vol, const struct apfs_inode *ino, uint64_t *si
 
 /* ------------------------------------------------------------------ directories */
 
+/*
+ * Whether a directory record's name, as stored (its length counts the zero byte at its end), can
+ * be a name at all.  A zero byte before the end or a '/' cannot: handed on, the first cuts the
+ * name short wherever a path is made of it, and the second makes it a path of several names --
+ * either way it can come to name the directory it is in, which a walk then goes into forever.
+ * Nothing that writes APFS writes such a name, nor an empty one, so a record that has one is
+ * damage, however well its block sums.
+ */
+static bool
+drec_name_ok(const uint8_t *name, uint32_t stored_len)
+{
+	return stored_len >= 2 && memchr(name, '\0', stored_len - 1) == NULL &&
+	    memchr(name, '/', stored_len - 1) == NULL;
+}
+
 int
 apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 {
@@ -1706,6 +1721,9 @@ apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 			if (name_len > sizeof(name)) {
 				return EIO;
 			}
+			if (!drec_name_ok(rec.key + 12, name_len)) {
+				goto bad_name;
+			}
 			memcpy(name, rec.key + 12, name_len);
 		} else {
 			if (rec.key_len < 10) {
@@ -1717,6 +1735,9 @@ apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 			}
 			if (name_len > sizeof(name)) {
 				return EIO;
+			}
+			if (!drec_name_ok(rec.key + 10, name_len)) {
+				goto bad_name;
 			}
 			memcpy(name, rec.key + 10, name_len);
 		}
@@ -1732,6 +1753,10 @@ apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 			return error;
 		}
 	}
+bad_name:
+	apfs_log("directory %llu: a record whose name is empty or has a zero byte or a '/' in it\n",
+	    (unsigned long long)dir_id);
+	return EIO;
 }
 
 struct lookup_ctx {
@@ -1932,6 +1957,12 @@ lookup_hashed(struct apfs_vol *vol, uint64_t dir_id, const char *name, size_t na
 			return ENOENT;  /* past the records with this hash */
 		}
 		len = nlh & APFS_J_DREC_LEN_MASK;
+		if (len >= 1 && 12 + len <= rec.key_len && !drec_name_ok(rec.key + 12, len)) {
+			/* (as apfs_readdir() takes it: the lookup that reads the directory instead fails the same) */
+			apfs_log("directory %llu: a record whose name is empty or has a zero byte or a '/' in "
+			    "it\n", (unsigned long long)dir_id);
+			return EIO;
+		}
 		if (len >= 1 && 12 + len <= rec.key_len &&
 		    names_equal((const char *)rec.key + 12, len - 1, name, name_len, fold)) {
 			if (rec.val == NULL || rec.val_len < 18) {

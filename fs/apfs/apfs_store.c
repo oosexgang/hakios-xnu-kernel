@@ -131,8 +131,13 @@ head_unpack(const uint8_t *blk, int slot, uint64_t payload_max, struct apfs_stor
 	h->seconds = get_le64(blk + 32);
 	h->note = get_le64(blk + 40);
 	h->sum = get_le64(blk + 48);
+	/*
+	 * Neither generation 0 nor the last one there is is ever written (apfs_store_begin() will
+	 * not count past the one before it), so a header that says either is damaged: taken as
+	 * the newest, the next save would count on from it and wrap to 0.
+	 */
 	if (h->version != APFS_STORE_VERSION || h->slot != (uint32_t)slot || h->generation == 0 ||
-	    h->bytes > payload_max) {
+	    h->generation == UINT64_MAX || h->bytes > payload_max) {
 		return false;
 	}
 	return true;
@@ -388,6 +393,17 @@ apfs_store_begin(struct apfs_store *st, void *scratch, size_t scratch_len,
 	best = apfs_store_newest(st, scratch, scratch_len, &newest);
 	/* the slot that is not the newest good one; either, when neither is good */
 	w->slot = (best == 0) ? 1 : 0;
+	if (newest.generation >= UINT64_MAX - 1) {
+		/*
+		 * One more would be UINT64_MAX, which no reader takes (head_unpack()): the save
+		 * would be lost and the newest stay what it is, and so with every save after it.
+		 * No store is saved that many times -- a header that says so was made that way --
+		 * so the save is refused, where it can be seen, rather than lost.
+		 */
+		apfs_log("store: slot %d says generation %llu, the last there can be: not saving\n",
+		    best, (unsigned long long)newest.generation);
+		return EOVERFLOW;
+	}
 	w->generation = newest.generation + 1;
 
 	blk = apfs_alloc(APFS_STORE_PAYLOAD);
