@@ -651,27 +651,56 @@ linux_create_workqueue_common(const char *name, int cpus)
 	return (&queue->shown);
 }
 
+/*
+ * Its work done first, as Linux's does: what was queued and what runs has ended when this returns (the memory it works
+ * on is freed right after: linuxkpi_wiphy_free()). Its thread stays, asleep: queues are made once here.
+ */
 void
 linux_destroy_workqueue(struct workqueue_struct *wq)
 {
-	/* (its thread stays, asleep: queues are made once here and never given up while the kernel runs) */
+	struct lx_workqueue *queue = __containerof(wq, struct lx_workqueue, shown);
+
+	lx_os_lock();
+	while ((queue->count != 0 || queue->running != NULL) && queue->thread != lx_os_thread_self()) {
+		lx_os_sleep(&queue->running, SLICE_NS);
+	}
+	lx_os_unlock();
+}
+
+/* With lx_os_lock() held. */
+static bool
+queue_work_locked(struct workqueue_struct *wq, struct work_struct *work)
+{
+	struct lx_workqueue *queue = __containerof(wq, struct lx_workqueue, shown);
+
+	if (atomic_read(&work->state) != WORK_IDLE) {
+		return (true);                          /* (queued already: it will run, as Linux's answer means) */
+	}
+	if (queue->count >= nitems(queue->waiting)) {
+		return (false);
+	}
+	atomic_set(&work->state, WORK_QUEUED);
+	work->work_queue = wq;
+	queue->waiting[(queue->first + queue->count++) % nitems(queue->waiting)] = work;
+	lx_os_wakeup(queue);
+	return (true);
 }
 
 bool
 linux_queue_work_on(int cpu, struct workqueue_struct *wq, struct work_struct *work)
 {
 	struct lx_workqueue *queue = __containerof(wq, struct lx_workqueue, shown);
-	bool queued = false;
+	bool queued = false, full = false;
 
 	lx_os_lock();
-	if (atomic_read(&work->state) == WORK_IDLE && queue->count < nitems(queue->waiting)) {
-		atomic_set(&work->state, WORK_QUEUED);
-		work->work_queue = wq;
-		queue->waiting[(queue->first + queue->count++) % nitems(queue->waiting)] = work;
-		lx_os_wakeup(queue);
-		queued = true;
+	if (atomic_read(&work->state) == WORK_IDLE) {
+		queued = queue_work_locked(wq, work);
+		full = !queued;
 	}
 	lx_os_unlock();
+	if (full) {
+		printf("lx: the queue %s is full: a piece of work will not be done\n", queue->name);
+	}
 	return (queued);
 }
 
