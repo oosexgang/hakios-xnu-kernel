@@ -41,6 +41,15 @@ diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
  		break;
  
  	default:
+@@ -537,7 +541,7 @@ mdevinit(__unused int the_cnt)
+ 			}
+ 		}
+ 
+-		dev = mdevadd(devid, base >> 12, (unsigned)size >> 12, phys);   /* Go add the device */
++		dev = mdevadd(devid, base >> 12, (unsigned)(size >> 12), phys);   /* Go add the device (hakios: shifted, then cut: a disk of 4 GB or more) */
+ 	}
+ 
+ #endif /* CONFIG_MEMDEV_INSECURE */
 @@ -720,6 +724,26 @@ mdevlookup(int devid)
  	return mdev[devid].mdBDev;                                                      /* Return the device number */
  }
