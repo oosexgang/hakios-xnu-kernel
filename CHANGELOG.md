@@ -188,6 +188,11 @@ tags yet, so the current work is one section.
   when one is halted or stopped; it is psci_smp's now. Two drivers attaching interrupts at once could undo each other's
   group and trigger bits; an interrupt past the distributor's lines is refused at attach; an unowned extended SPI or LPI
   is no longer "masked" through registers that are not its; a signal to a core whose Aff0 is 16 or more goes to it.
+- The Linux layer under the Wi-Fi driver: a delayed work whose time had come could be queued just after a
+  cancel_delayed_work_sync() returned and run on the radio already freed; timer_delete_sync() did not wait for a timer
+  whose function was running; destroy_workqueue() did not wait for the queue's work. A group key that the access point
+  renews under the same number was taken away by the disabling of the old one (broadcasts -- ARP, DHCP -- lost until
+  the next renewal). A full work queue, and RCU readers still looking after a second, are said in the log.
 
 ### For whoever works on the project
 
