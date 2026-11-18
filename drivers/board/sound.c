@@ -42,6 +42,9 @@
  *            reckons the amplifiers N eighths of a dB under Android's level (louder than they are)
  *            and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB)
  *            what it does at the loudest can be seen in the log and the recording without a sound.
+ *            Amplifiers given up on (one would not start, or reported a fault, or did not answer)
+ *            may not have been seen to power down (board/speaker.c tries again, every 200 ms): from
+ *            then on until the run ends the DSP is sent silence in place of what Darwin plays.
  *
  * The numbers are Android's own, from the phone's live device tree (qcom,msm-dai-tdm-pri-rx and
  * its port, the pins pri_tdm_*_active), its mixer paths (the speaker: PRI_TDM_RX_0 at 48 kHz,
@@ -1024,7 +1027,8 @@ static int16_t ring[RING_FRAMES * 2];
 static volatile uint32_t ring_head, ring_tail;  /* frames: written by the sink, taken by the feeder */
 static volatile uint64_t last_sound_us;         /* when the latest write that was not silence came */
 static volatile bool feeder_runs, watcher_runs;
-static uint64_t fed_frames, silent_frames, darwin_frames;
+static uint64_t fed_frames, silent_frames, darwin_frames, dropped_frames;
+static volatile bool cut_off;                   /* the amplifiers given up on: none of Darwin's sound goes to the DSP */
 static volatile uint32_t darwin_peak;              /* the largest sample since the amplifiers last started */
 
 /* From the writer's thread, under board/audio.c's lock: never waits. */
@@ -1086,27 +1090,41 @@ guard_say(const char *when, bool quiet)
 	    db_text(t[5], hakios_guard_decibels(r.slow)));
 }
 
-/* A period from the ring, the rest of it silence. */
+/*
+ * A period from the ring, the rest of it silence; once the amplifiers have been given up on, all of it
+ * silence, and what Darwin wrote is taken from the ring and dropped.
+ */
 static void
 period_fill_darwin(unsigned period)
 {
 	int16_t *samples = (int16_t *)(buffer + 4096 * period);
 	uint32_t tail = ring_tail, available = ring_head - tail, n = available < PERIOD_FRAMES ? available : PERIOD_FRAMES;
+	uint32_t kept = cut_off ? 0 : n;
 
 	OSMemoryBarrier();
-	for (uint32_t i = 0; i < n; i++) {
+	for (uint32_t i = 0; i < kept; i++) {
 		samples[2 * i] = ring[2 * ((tail + i) % RING_FRAMES)];
 		samples[2 * i + 1] = ring[2 * ((tail + i) % RING_FRAMES) + 1];
 	}
-	bzero(samples + 2 * n, (PERIOD_FRAMES - n) * 4);
+	bzero(samples + 2 * kept, (PERIOD_FRAMES - kept) * 4);
 	OSMemoryBarrier();
 	ring_tail = tail + n;
-	fed_frames += n;
-	silent_frames += PERIOD_FRAMES - n;
 	/* the guard, on every period, silence too: its filter and its averages go on (board/guard.c) */
 	hakios_guard_process(samples, PERIOD_FRAMES);
-	if (n != 0 && hakios_audio_recording_fed()) {
-		hakios_audio_record_fed(samples, n);
+	/*
+	 * (and looked at again after it: the amplifiers given up on while this period was in the guard, it may have gone
+	 * through as nothing that reaches the speakers -- HAKIOS_GUARD_SILENT, no limit -- and is not sent)
+	 */
+	OSMemoryBarrier();
+	if (kept != 0 && cut_off) {
+		bzero(samples, PERIOD_BYTES);
+		kept = 0;
+	}
+	fed_frames += kept;
+	dropped_frames += n - kept;
+	silent_frames += PERIOD_FRAMES - kept;
+	if (kept != 0 && hakios_audio_recording_fed()) {
+		hakios_audio_record_fed(samples, kept);
 	}
 	guard_periods++;
 	hakios_cache_clean((uintptr_t)samples, (uintptr_t)samples + PERIOD_BYTES);
@@ -1152,8 +1170,8 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 		sleep_ms(2);
 	}
 	say("sound: the feeder stops: %u periods written (%u could not be sent), %u given back (%u with an error), %u underflows; "
-	    "from Darwin %llu frames came, %llu went to the DSP, %llu of silence filled in\n", sent, failed, written_done, write_errors,
-	    underflows, darwin_frames, fed_frames, silent_frames);
+	    "from Darwin %llu frames came, %llu went to the DSP, %llu were dropped (the amplifiers given up on), %llu of silence "
+	    "filled in\n", sent, failed, written_done, write_errors, underflows, darwin_frames, fed_frames, dropped_frames, silent_frames);
 	feeder_runs = false;
 	thread_terminate(current_thread());
 }
@@ -1169,7 +1187,9 @@ guard_level(uint32_t level_below)
  * The amplifiers are off. The guard goes on at their level all the same: what it lets through now reaches them
  * 160 ms later, behind the periods queued at the DSP, and if that is sound, they will have been started by then
  * (70 ms after it comes). While they are off nothing but silence comes, and the averages fall as a speaker cools.
- * Only when nothing can be heard at all -- Darwin's volume at 0, the amplifiers given up on -- is the guard told so.
+ * Only when nothing can be heard at all -- Darwin's volume at 0 (it writes silence), the amplifiers given up on
+ * (give_up(): silence is sent in place of Darwin's sound) -- is the guard told so. HAKIOS_GUARD_SILENT holds
+ * nothing back, so Darwin's sound never goes through it to amplifiers that may still be on.
  */
 static void
 guard_off(bool unheard)
@@ -1178,6 +1198,22 @@ guard_off(bool unheard)
 	if (unheard) {
 		hakios_guard_attenuation(HAKIOS_GUARD_SILENT);
 	}
+}
+
+/*
+ * The amplifiers given up on, for the rest of the run: their power-down may not have read back (board/speaker.c
+ * tries it again, here every 200 ms), so from now on none of Darwin's sound goes to the DSP -- silence in its
+ * place -- and only then is the guard told that nothing reaches the speakers.
+ */
+static void
+give_up(void)
+{
+	if (!cut_off) {
+		say("sound: THE AMPLIFIERS ARE GIVEN UP ON: silence goes to the DSP in place of what Darwin plays, until the run ends\n");
+	}
+	cut_off = true;
+	OSMemoryBarrier();
+	guard_off(true);
 }
 
 /*
@@ -1212,9 +1248,13 @@ watch(void)
 				if (on) {
 					hakios_speaker_stop();
 					on = false;
+					if (!hakios_speaker_healthy()) {
+						give_up();      /* (the stop failed: both were powered down at once) */
+						given_up = true;
+					}
 				}
 			} else if (on && !hakios_speaker_volume(below + extra, 1)) {
-				guard_off(true);
+				give_up();
 				on = false;
 				given_up = true;
 			} else if (!given_up) {
@@ -1226,9 +1266,10 @@ watch(void)
 			starts++;
 			darwin_peak = 0;
 			if (!hakios_speaker_start() || !hakios_speaker_volume(below + extra, 1)) {
-				say("sound: THE AMPLIFIERS DID NOT START; Darwin's sound goes on to the DSP, unheard\n");
-				guard_off(true);
+				say("sound: THE AMPLIFIERS DID NOT START\n");
+				give_up();
 				given_up = true;
+				last_look = now_us();
 			} else {
 				on = true;
 				guard_on = true;
@@ -1247,10 +1288,19 @@ watch(void)
 			guard_off(false);
 			hakios_speaker_stop();
 			on = false;
+			if (!hakios_speaker_healthy()) {
+				give_up();              /* (the stop failed: both were powered down at once) */
+				given_up = true;
+				last_look = now_us();
+			}
+		} else if (given_up && now - last_look >= 200000) {
+			/* a power-down that did not read back, tried again (nothing, once it has) */
+			last_look = now;
+			hakios_speaker_stop();
 		} else if (on && now - last_look >= 200000) {
 			last_look = now;
 			if (!hakios_speaker_healthy()) {
-				guard_off(true);
+				give_up();
 				on = false;
 				given_up = true;
 			} else if (now - last_monitor >= 1000000) {

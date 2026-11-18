@@ -5,11 +5,14 @@
  * the pin controller's registers and the SMMU's are modelled. What is tested: the four pins it sets up are
  * the board's speaker { } sound-pins, with the board's function; the bit clock and frame sync it watches
  * are the first two of them -- on a board whose pins are not the first phone's, too; a free match register
- * and context of the SMMU are found and set up with page tables of the buffers, and put back as found; and
- * what the boot chain set up for somebody else is left alone.
+ * and context of the SMMU are found and set up with page tables of the buffers, and put back as found;
+ * what the boot chain set up for somebody else is left alone; and once the amplifiers are given up on, none
+ * of what Darwin plays goes to the DSP.
  *
  *   sound_driver_test SCENARIO
  */
+#include <unistd.h>
+
 #include "fakekernel.h"
 
 extern char log_text[];
@@ -160,17 +163,37 @@ hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token __unused, uint32_
 void hakios_adsp_apr_events(hakios_apr_events_t handler __unused) { }
 const uint8_t *hakios_adsp_fw_file(const char *name __unused, uint64_t *size __unused) { return NULL; }
 void hakios_adsp_fw_free(const uint8_t *data __unused, uint64_t size __unused) { }
+/* the amplifiers never start; a start can be held until a scenario lets it go on, and the stops are counted */
+static volatile bool start_held, in_guard;
+static volatile unsigned speaker_stops;
 bool hakios_speaker_prepare(const uint8_t *acf __unused, uint64_t size __unused) { return false; }
-bool hakios_speaker_start(void) { return false; }
+bool
+hakios_speaker_start(void)
+{
+	for (int ms = 0; start_held && !in_guard && ms < 5000; ms++) {
+		usleep(1000);
+	}
+	return false;
+}
 bool hakios_speaker_volume(uint32_t below __unused, uint32_t step_ms __unused) { return false; }
 bool hakios_speaker_healthy(void) { return false; }
-void hakios_speaker_stop(void) { }
+void hakios_speaker_stop(void) { speaker_stops++; }
 void hakios_speaker_quiesce(void) { }
 uint32_t hakios_speaker_monitor(bool tell __unused) { return 0; }
 void hakios_guard_configure(bool hpf __unused, uint32_t gain __unused) { }
-void hakios_guard_attenuation(uint32_t below __unused) { }
+/* the level the guard was last told; a period in the guard can be held there until the guard is told it is silent */
+static volatile uint32_t guard_attenuation;
+static bool guard_holds;
+void hakios_guard_attenuation(uint32_t below) { guard_attenuation = below; }
 void hakios_guard_monitor(uint32_t below __unused) { }
-void hakios_guard_process(int16_t *frames __unused, uint32_t count __unused) { }
+void
+hakios_guard_process(int16_t *frames __unused, uint32_t count __unused)
+{
+	in_guard = true;
+	for (int ms = 0; guard_holds && guard_attenuation != HAKIOS_GUARD_SILENT && ms < 5000; ms++) {
+		usleep(1000);
+	}
+}
 /* the guard's report: as many blocks as a scenario says it has worked on since it was last taken */
 static uint32_t guard_blocks;
 void hakios_guard_take_report(struct hakios_guard_report *report) { memset(report, 0, sizeof(*report)); report->blocks = guard_blocks; guard_blocks = 0; }
@@ -186,6 +209,7 @@ void hakios_audio_record_fed(const int16_t *frames __unused, uint32_t count) { r
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+#define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
 
 static void
 start(void)
@@ -579,6 +603,79 @@ recording_fed_what_is_played(void)
 	CHECK(recorded_calls == 1, "and none without a recording: %u", recorded_calls);
 }
 
+/* the watcher of sound=4 (what starts and stops the amplifiers), on a thread of its own as on the sound's */
+static void *
+watcher(void *unused __unused)
+{
+	watch();
+	return NULL;
+}
+
+static bool
+all_silence(const int16_t *samples)
+{
+	for (unsigned i = 0; i < 2 * PERIOD_FRAMES; i++) {
+		if (samples[i] != 0) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+ * The amplifiers do not start when Darwin plays, and are given up on: from then on none of what Darwin writes
+ * goes to the DSP -- silence in its place, Darwin's frames taken from the ring all the same -- and the
+ * amplifiers' stop is tried again (a power-down that did not read back is retried there).
+ */
+static void
+given_up_darwin_not_fed(void)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	const int16_t frames[] = { 1000, -1000, 2000, -2000, 3000, -3000 };
+	pthread_t thread;
+
+	buffer = (vm_offset_t)periods;
+	CHECK(darwin_sink(frames, 3) == 3 && last_sound_us != 0, "Darwin plays");
+	pthread_create(&thread, NULL, watcher, NULL);
+	WAIT_FOR(logged("THE AMPLIFIERS DID NOT START") && guard_attenuation == HAKIOS_GUARD_SILENT, 5000);
+	CHECK(logged("THE AMPLIFIERS DID NOT START") && guard_attenuation == HAKIOS_GUARD_SILENT, "given up on: %s", log_text);
+	CHECK(darwin_sink(frames, 3) == 3, "Darwin goes on playing");
+	memset(periods, 0x55, sizeof(periods));
+	period_fill_darwin(0);
+	CHECK(all_silence(periods), "the DSP is given silence, not Darwin's sound: %d %d %d", periods[0], periods[1], periods[2]);
+	CHECK(ring_tail == ring_head, "Darwin's frames taken from the ring all the same: tail %u, head %u", ring_tail, ring_head);
+	CHECK(fed_frames == 0, "none fed: %llu", (unsigned long long)fed_frames);
+	WAIT_FOR(speaker_stops >= 2, 2000);
+	CHECK(speaker_stops >= 2, "the amplifiers' power-down tried again while given up on: %u stops", speaker_stops);
+	stopping = true;
+	pthread_join(thread, NULL);
+}
+
+/*
+ * Given up on while a period of Darwin's is in the guard: that period may have gone through it as silent -- held back
+ * by nothing -- and is not sent as it is, but as silence.
+ */
+static void
+given_up_while_a_period_is_guarded(void)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	const int16_t frames[] = { 1000, -1000, 2000, -2000, 3000, -3000 };
+	pthread_t thread;
+
+	buffer = (vm_offset_t)periods;
+	start_held = true;                      /* (the start goes on, and fails, once the period is in the guard) */
+	guard_holds = true;                     /* (... which it leaves once it is told the amplifiers are given up on) */
+	CHECK(darwin_sink(frames, 3) == 3 && last_sound_us != 0, "Darwin plays");
+	pthread_create(&thread, NULL, watcher, NULL);
+	memset(periods, 0x55, sizeof(periods));
+	period_fill_darwin(0);
+	CHECK(guard_attenuation == HAKIOS_GUARD_SILENT, "(the guard was told the amplifiers were given up on while it had the period)");
+	CHECK(all_silence(periods), "that period is silence: %d %d %d", periods[0], periods[1], periods[2]);
+	CHECK(fed_frames == 0, "none fed: %llu", (unsigned long long)fed_frames);
+	stopping = true;
+	pthread_join(thread, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -592,6 +689,8 @@ main(int argc, char **argv)
 		{ "no_amplifiers", no_amplifiers, 1 }, { "the_tone_in_both_channels", the_tone_in_both_channels, 1 },
 		{ "sound_in_one_channel", sound_in_one_channel, 1 }, { "decibels_as_text", decibels_as_text, 1 },
 		{ "the_guards_line", the_guards_line, 1 }, { "recording_fed_what_is_played", recording_fed_what_is_played, 1 },
+		{ "given_up_darwin_not_fed", given_up_darwin_not_fed, 1 },
+		{ "given_up_while_a_period_is_guarded", given_up_while_a_period_is_guarded, 1 },
 	};
 	char name[64];
 	const char *colon;
