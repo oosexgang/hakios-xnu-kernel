@@ -683,6 +683,13 @@ pack_xattrs(uint32_t *count)
 		if (strncmp(names + i, "com.apple.system.", 17) == 0) {
 			continue;
 		}
+		/*
+		 * (an attribute of that name set by whoever can write the file is not taken: the restore, as root, would install it
+		 * as the file's access control list. The real list is packed below, from lstat_extended)
+		 */
+		if (strcmp(names + i, ACL_NAME) == 0) {
+			continue;
+		}
 		size = getxattr(path, names + i, value, sizeof(value), 0, XATTR_NOFOLLOW);
 		if (size < 0) {
 			continue;
