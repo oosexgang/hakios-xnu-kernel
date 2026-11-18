@@ -49,6 +49,13 @@ psci_smp_boot_cpu(void)
 {
 	return master_processor->cpu_id;
 }
+
+/* The same, for those that cannot see processor_t's fields (iokit/Kernel/GenericARMPE.cpp) */
+int
+psci_smp_boot_cpu_number(void)
+{
+	return psci_smp_boot_cpu();
+}
 #include <arm/caches_internal.h>
 #include <arm/cpu_data_internal.h>
 #include <arm/cpu_internal.h>

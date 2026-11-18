@@ -16,6 +16,7 @@ __BEGIN_DECLS
 #define PSCI_SMP_CPU_OFF        4       /* it has switched itself off, or is about to */
 
 extern void             psci_smp_init(void);
+extern int              psci_smp_boot_cpu_number(void);   /* the boot processor's number (master_cpu is never set) */
 extern kern_return_t    psci_smp_start_cpu(int cpu);
 extern void             psci_smp_cpu_reached(uint32_t stage);
 extern void             psci_smp_cpu_running(void);

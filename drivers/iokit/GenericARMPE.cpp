@@ -10,7 +10,6 @@
 extern "C" {
 #include <pexpert/pexpert.h>
 
-extern int master_cpu;   /* hakios: boot CPU number, set by arm_init(); not in a C++-visible header on xnu-12377 */
 #include <pexpert/arm64/board_config.h>
 #include <kern/cpu_number.h>
 }
@@ -31,6 +30,7 @@ extern uint32_t processor_avail_count;
 
 /* osfmk/arm64/psci_smp.c and gic_v3_irq.c */
 void psci_smp_init(void);
+int psci_smp_boot_cpu_number(void);     /* (the kernel's master_cpu is never set on this kernel: it stays -1) */
 kern_return_t psci_smp_start_cpu(int cpu);
 void psci_smp_cpu_running(void);
 void psci_smp_cpu_off(void) __dead2;
@@ -146,7 +146,7 @@ GenericARMCPU::initCPU(bool boot)
 void
 GenericARMCPU::quiesceCPU(void)
 {
-	if (getCPUNumber() != (UInt32)master_cpu) {
+	if (getCPUNumber() != (UInt32)psci_smp_boot_cpu_number()) {
 		setCPUState(kIOCPUStateStopped);
 		psci_smp_cpu_off();
 	}
@@ -161,7 +161,7 @@ GenericARMCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 void
 GenericARMCPU::haltCPU(void)
 {
-	if (getCPUNumber() != (UInt32)master_cpu) {
+	if (getCPUNumber() != (UInt32)psci_smp_boot_cpu_number()) {
 		processor_exit(machProcessor);
 	}
 }
@@ -228,7 +228,7 @@ GenericARMPE::start(IOService * provider)
 	/*
 	 * super::start() published the /cpus children as nubs. Attach a CPU driver to each
 	 * one the kernel has a number for, register them all -- that settles the CPU count --
-	 * and then start them, the boot processor (number master_cpu) first.
+	 * and then start them, the boot processor first.
 	 */
 	static GenericARMCPU * cpus[MAX_CPUS];        /* (static: the slower cores may be started later, see below) */
 	unsigned int count = 0;
@@ -257,7 +257,9 @@ GenericARMPE::start(IOService * provider)
 		}
 		iter->release();
 	}
-	if (cpus[master_cpu] != NULL) {
+	int boot = psci_smp_boot_cpu_number();         /* (the boot processor's: the kernel's master_cpu stays -1 here) */
+
+	if (boot >= 0 && boot < MAX_CPUS && cpus[boot] != NULL) {
 		/* Unblocks everything that waits for the CPU count to be known. */
 		ml_set_max_cpus(count);
 		if (count > 1) {
@@ -276,9 +278,9 @@ GenericARMPE::start(IOService * provider)
 		static bool held;               /* (some core waits for that: not on a machine whose cores are all alike) */
 
 		PE_parse_boot_argn("small_cores_after", &later, sizeof(later));
-		cpus[master_cpu]->run();
+		cpus[boot]->run();
 		for (unsigned int number = 0; number < MAX_CPUS; number++) {
-			if (cpus[number] != NULL && number != (unsigned int)master_cpu) {
+			if (cpus[number] != NULL && number != (unsigned int)boot) {
 				if (later != 0 && ml_get_topology_info()->cpus[number].l2_access_penalty != 0) {
 					held = true;
 					continue;
@@ -309,7 +311,7 @@ GenericARMPE::start(IOService * provider)
 		 * there are, and whatever waits in ml_wait_max_cpus() would wait for good, without a word. Said, and the count
 		 * set all the same (the boot core runs whatever this says: it is the one running this).
 		 */
-		IOLog("GenericARMPE: THE BOOT PROCESSOR (%d) HAS NO CPU OBJECT: %u others made, none started\n", master_cpu, count);
+		IOLog("GenericARMPE: THE BOOT PROCESSOR (%d) HAS NO CPU OBJECT: %u others made, none started\n", boot, count);
 		ml_set_max_cpus(count ? count : 1);
 	}
 
