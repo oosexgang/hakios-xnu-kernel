@@ -53,7 +53,12 @@ hakios_cache_flush(uintptr_t start, uintptr_t end)
 static inline void
 hakios_cache_invalidate(uintptr_t start, uintptr_t end)
 {
+#if defined(FAKEKERNEL_H)
+	/* (the tests, on an aarch64 host, run at EL0, where an invalidate may only come with a clean: ivac traps) */
+	HAKIOS_CACHE_LINES("civac", start, end);
+#else
 	HAKIOS_CACHE_LINES("ivac", start, end);
+#endif
 }
 
 #endif /* _HAKIOS_CACHE_H */
