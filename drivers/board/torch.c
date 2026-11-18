@@ -44,7 +44,8 @@
  * (default 30, never more than 120), after which it stays off until it is asked for anew (0, then
  * more); while it is on, ten times a second, the module's fault and over-temperature flags, the
  * PMIC's temperature alarm and the battery's temperature (at most 45 C; from the audio DSP's battery
- * manager with adsp=1, or the firmware's with battery=1; with neither the other two guard): any of
+ * manager with adsp=1, or the firmware's with battery=1; with neither the other two guard; one that
+ * was known and is no longer reported, its source gone quiet, is trouble too): any of
  * them, a read that fails or a write that does not read back, and the light goes off and stays off
  * for the rest of the run. At the run's end (and on a panic's way out) it goes off.
  *
@@ -395,6 +396,10 @@ trouble(void)
 		    "%02x %02x %02x %02x %02x, latched %#x); the PMIC's temperature stage %u", rt, status1, status2, more[0], more[1],
 		    more[2], more[3], more[4], more[5], more[6], more[7], latched[0], stage);
 		return why;
+	}
+	/* (a battery never heard of guards nothing, as before; one heard of and gone quiet is not known to be cool) */
+	if (hakios_battery_went_quiet()) {
+		return "the battery's temperature, known earlier, is no longer reported (its source went quiet)";
 	}
 	if (hakios_battery_temperature() >= HOTTEST_BATTERY_C) {
 		snprintf(why, sizeof(why), "the battery is at %d C", hakios_battery_temperature());

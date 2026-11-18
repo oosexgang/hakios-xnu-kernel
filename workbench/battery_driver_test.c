@@ -95,12 +95,31 @@ copy_while_updated(void *to, const void *from, size_t size)
 	return memcpy((uint8_t *)to + size / 2, (const uint8_t *)from + size / 2, size - size / 2), to;
 }
 
+/*
+ * The driver's clock, which a test can put forward: a minute without news is not waited for (the fake kernel's own
+ * clock is the host's, and its waits are only shortened).
+ */
+static uint64_t clock_ahead_ns;
+static uint64_t
+driver_clock(void)
+{
+	return mach_absolute_time() + __atomic_load_n(&clock_ahead_ns, __ATOMIC_RELAXED);
+}
+
+static void
+clock_ahead(unsigned seconds)
+{
+	__atomic_store_n(&clock_ahead_ns, (uint64_t)seconds * NSEC_PER_SEC, __ATOMIC_RELAXED);
+}
+
 /* the driver's includes are the kernel's: the fake kernel answers for them */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #include "board/board.c"
 #define memcpy copy_while_updated
+#define mach_absolute_time driver_clock
 #include "board/battery.c"
+#undef mach_absolute_time
 #undef memcpy
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 
@@ -110,6 +129,18 @@ static int failures;
 #define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
 
 static int s(const char *name) { return (int)get(name); }
+
+/* how many times the log has TEXT */
+static unsigned
+times_said(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = log_text; (at = strstr(at, text)) != NULL; at += strlen(text)) {
+		n++;
+	}
+	return n;
+}
 
 static void
 phone(const char *name)
@@ -501,6 +532,110 @@ the_dsp_knows_better(void)
 	CHECK(reported == 0, "nothing more from the firmware: %u", reported);
 }
 
+/*
+ * A loader that has stopped polling (its cache whole, its polls no longer moving on): what it said last is believed
+ * for a minute, and then the temperature is no longer handed out -- said once -- until the cache moves on again.
+ */
+static void
+loader_goes_quiet(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 300, 31);
+	hakios_battery_init();
+	WAIT_FOR(hakios_battery_temperature() == 31, 2000);
+	CHECK(hakios_battery_temperature() == 31, "known: %d C", hakios_battery_temperature());
+	clock_ahead(50);
+	usleep(250 * 1000);                     /* (looks at the same cache: nothing new, still within the minute) */
+	CHECK(hakios_battery_temperature() == 31 && !logged("nothing new"), "believed for a minute: %d C", hakios_battery_temperature());
+	clock_ahead(61);
+	/* (said by the driver's own thread: nothing else need ask) */
+	EVENTUALLY(logged("battery: nothing new from xnuloader's cache for 60 s"), 2000, "a quiet loader is said: %s", log_text);
+	CHECK(hakios_battery_temperature() == -273, "and its temperature is not known any more: %d C", hakios_battery_temperature());
+	usleep(250 * 1000);
+	(void)hakios_battery_temperature();
+	CHECK(times_said("nothing new from") == 1, "said once, not at every look: %u", times_said("nothing new from"));
+	publish(VALID | PRESENT | VOLTAGE_VALID, 69, 3985, 300, 33);
+	WAIT_FOR(hakios_battery_temperature() == 33, 2000);
+	CHECK(hakios_battery_temperature() == 33, "polling again, it is known again: %d C", hakios_battery_temperature());
+	EVENTUALLY(logged("battery: xnuloader's cache has news again"), 2000, "and that is said: %s", log_text);
+	usleep(250 * 1000);
+	CHECK(times_said("has news again") == 1 && times_said("nothing new from") == 1, "once each: %s", log_text);
+}
+
+/* the audio DSP's battery manager reports, then says nothing more (the DSP gone, its channel broken): the same */
+static void
+dsp_goes_quiet(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6000, .voltage_uv = 3900000, .current_ua = -100000,
+		.temperature_hundredths = 3149, .present = 1, .external = 0, .status = 2,
+	};
+
+	phone("phone-cmd");
+	clock_ahead(120);
+	CHECK(hakios_battery_temperature() == -273 && !logged("nothing new"), "nothing ever heard: not known, and nothing to say");
+	clock_ahead(0);
+	hakios_battery_report(&state);
+	CHECK(hakios_battery_temperature() == 31, "known: %d C", hakios_battery_temperature());
+	clock_ahead(59);
+	CHECK(hakios_battery_temperature() == 31, "believed for a minute: %d C", hakios_battery_temperature());
+	clock_ahead(61);
+	CHECK(hakios_battery_temperature() == -273, "a minute without a report: not known any more (%d C)", hakios_battery_temperature());
+	CHECK(hakios_battery_temperature() == -273 && hakios_battery_temperature() == -273, "nor at the next questions");
+	CHECK(times_said("battery: nothing new from the audio DSP's battery manager for 60 s") == 1, "said once: %s", log_text);
+	hakios_battery_report(&state);
+	CHECK(hakios_battery_temperature() == 31, "a report again: known again (%d C)", hakios_battery_temperature());
+	CHECK(times_said("battery: the audio DSP's battery manager has news again") == 1, "and said once: %s", log_text);
+	(void)hakios_battery_temperature();
+	CHECK(times_said("nothing new from") == 1 && times_said("has news again") == 1, "once each: %s", log_text);
+}
+
+/*
+ * Both: while the audio DSP's battery manager reports, the loader's cache is not passed on, nor kept for the
+ * sysctls; once the DSP has been quiet for a minute and the cache is new, the cache is passed on again, until the
+ * DSP speaks again.
+ */
+static void
+dsp_quiet_loader_takes_over(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 5100, .voltage_uv = 3900000, .current_ua = -100000,
+		.temperature_hundredths = 2500, .present = 1, .external = 0, .status = 2,
+	};
+
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 64, 3960, 200, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	hakios_battery_report(&state);
+	reported = 0;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 20, 3700, 200, 35);
+	usleep(250 * 1000);
+	CHECK(reported == 0 && s("battery_from_dsp") == 1, "the DSP's: %u reports from the cache", reported);
+	CHECK(s("battery_soc") == 51 && hakios_battery_temperature() == 25, "the sysctls and the guard keep the DSP's: %d%%, %d C",
+	    s("battery_soc"), hakios_battery_temperature());
+	clock_ahead(61);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 50, 3880, 200, 36);
+	WAIT_FOR(s("battery_from_dsp") == 0 && reported > 0, 2000);
+	CHECK(s("battery_from_dsp") == 0 && reported > 0, "a quiet DSP gives way to the cache, which is new");
+	CHECK(hakios_battery_temperature() == 36 && s("battery_soc") == 50, "the cache's: %d C, %d%%", hakios_battery_temperature(),
+	    s("battery_soc"));
+	CHECK(logged("nothing new from the audio DSP's battery manager for 60 s: xnuloader's cache, which is new, is passed on again"),
+	    "and that is said: %s", log_text);
+	CHECK(told()->percent_hundredths >= 4900 && told()->percent_hundredths <= 5100, "what is shown goes on from the DSP's 51%%: %d",
+	    told()->percent_hundredths);
+	usleep(250 * 1000);
+	CHECK(hakios_battery_temperature() == 36, "not quiet: the cache is the source now, and was new a moment ago (%d C)",
+	    hakios_battery_temperature());
+	hakios_battery_report(&state);
+	CHECK(s("battery_from_dsp") == 1 && logged("battery: the audio DSP's battery manager speaks again"), "the DSP again: %s", log_text);
+	reported = 0;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 49, 3870, 200, 36);
+	usleep(250 * 1000);
+	CHECK(reported == 0 && hakios_battery_temperature() == 25, "and the cache is not passed on: %u, %d C", reported,
+	    hakios_battery_temperature());
+}
+
 /* full on the charger, taking nothing: full, not "not charging" */
 static void
 full_on_the_charger(void)
@@ -542,6 +677,8 @@ main(int argc, char **argv)
 		{ "on_a_port_that_gives_too_little", on_a_port_that_gives_too_little },
 		{ "shown_a_little_at_a_time", shown_a_little_at_a_time }, { "the_dsp_knows_better", the_dsp_knows_better },
 		{ "address_zero", address_zero }, { "full_on_the_charger", full_on_the_charger }, { "shown_as_told", shown_as_told },
+		{ "loader_goes_quiet", loader_goes_quiet }, { "dsp_goes_quiet", dsp_goes_quiet },
+		{ "dsp_quiet_loader_takes_over", dsp_quiet_loader_takes_over },
 	};
 
 	if (argc < 2) {

@@ -5,6 +5,12 @@
  * than a fuel gauge of its own, the resident UEFI carries Qualcomm's charger drivers.  xnuloader owns that firmware context on core 0,
  * polls it, and publishes a read-only cache; XNU only consumes that cache.
  * Charger limits and JEITA protection therefore remain firmware-owned.
+ *
+ * What is read is only believed while it is new: a cache whose loader has stopped polling still looks whole, and
+ * an audio DSP that has stopped answering simply says nothing more. The source in use that has said nothing new
+ * for BATTERY_QUIET_SECONDS is taken for quiet: its temperature is no longer handed out (-273), which the
+ * flashlight's guard takes for trouble (hakios_battery_went_quiet()), and this is said once, and once again when
+ * it speaks again. A quiet audio DSP gives way to the loader's cache while that is new.
  */
 #include <kern/clock.h>
 #include <kern/locks.h>
@@ -47,13 +53,6 @@ static int battery_soc_percent = -1, battery_voltage_mv = -1, battery_current_ma
 static int battery_temperature_c = -273, battery_present, battery_charger_present;
 static int battery_charging, battery_soc_estimated, battery_charger_action = -1;
 static uint64_t battery_updates, battery_failures;
-
-/* for others in the kernel (the flashlight's thermal guard): -273 while it is not known */
-int
-hakios_battery_temperature(void)
-{
-	return battery_temperature_c;
-}
 
 SYSCTL_NODE(_kern, OID_AUTO, hakios, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "the values HakiOS' drivers keep");
 SYSCTL_INT(_kern_hakios, OID_AUTO, battery_soc, CTLFLAG_RD | CTLFLAG_LOCKED,
@@ -104,6 +103,70 @@ battery_snapshot(struct loader_battery *out)
 }
 
 static int battery_source_dsp;
+
+/*
+ * When the source in use last said something new (mach_absolute_time): the loader's cache when its polls or its
+ * sequence have moved on since the last look, the audio DSP's battery manager at every report. Written under
+ * battery_report_lock; read without it (a 64-bit word: read whole).
+ */
+#define BATTERY_QUIET_SECONDS   60
+static uint64_t battery_fresh_at;
+static bool battery_heard;              /* the source in use has said something in this run */
+static bool battery_quiet_said;         /* that it went quiet was said, and not yet that it speaks again */
+static bool battery_dsp_gave_way;       /* the audio DSP went quiet and the loader's cache was passed on again */
+static uint32_t loader_polls, loader_sequence;  /* the cache's at the last whole look */
+
+static const char *
+battery_source_name(void)
+{
+	return battery_source_dsp ? "the audio DSP's battery manager" : "xnuloader's cache";
+}
+
+/* nothing new from the source in use for BATTERY_QUIET_SECONDS, at `now` */
+static bool
+battery_silent_at(uint64_t now)
+{
+	uint64_t limit, fresh_at = __atomic_load_n(&battery_fresh_at, __ATOMIC_RELAXED);
+
+	nanoseconds_to_absolutetime(BATTERY_QUIET_SECONDS * NSEC_PER_SEC, &limit);
+	return __atomic_load_n(&battery_heard, __ATOMIC_RELAXED) && now > fresh_at && now - fresh_at >= limit;
+}
+
+/* The same, and said when it changes: once on going quiet, once on speaking again. */
+static bool
+battery_quiet(void)
+{
+	bool quiet = battery_silent_at(mach_absolute_time());
+
+	if (__atomic_exchange_n(&battery_quiet_said, quiet, __ATOMIC_RELAXED) != quiet) {
+		if (quiet) {
+			printf("battery: nothing new from %s for %d s: the battery's temperature is taken for unknown until there is\n",
+			    battery_source_name(), BATTERY_QUIET_SECONDS);
+		} else {
+			printf("battery: %s has news again: the battery's temperature is known again (%d C)\n", battery_source_name(),
+			    battery_temperature_c);
+		}
+	}
+	return quiet;
+}
+
+/* for others in the kernel (the flashlight's thermal guard): -273 while it is not known, or no longer */
+int
+hakios_battery_temperature(void)
+{
+	return battery_quiet() ? -273 : battery_temperature_c;
+}
+
+/*
+ * For the flashlight's guard: a temperature known earlier in this run is no longer reported (its source went quiet
+ * holding one). Never true where no battery was ever heard of, nor where the last that was said was "not known".
+ */
+bool
+hakios_battery_went_quiet(void)
+{
+	return battery_quiet() && battery_temperature_c != -273;
+}
+
 static int battery_shown_tenths = -1;   /* what iOS is shown, tenths of a percent (-1: nothing yet) */
 /*
  * Boot-arg battery_shown=N (a test): iOS is shown N percent whatever the cell says, the rest (voltage, current, the
@@ -176,16 +239,48 @@ battery_tell_ios(const struct loader_battery *sample)
 	}
 }
 
+/*
+ * A look at the loader's cache. It is new when the loader has polled since the last look (its polls or its sequence
+ * moved on; the loader polls every 5 seconds while the kernel runs, except while the kernel's own UFS list is in).
+ * While the audio DSP's battery manager reports, the cache is only looked at: the DSP knows better, unless it has
+ * gone quiet while the cache is new -- then the cache is passed on again, until the DSP speaks again.
+ */
 static void
 battery_poll(void)
 {
 	struct loader_battery sample;
+	bool fresh, taken_over = false;
 
 	if (!battery_snapshot(&sample) || sample.magic != LOADER_BATTERY_MAGIC ||
 	    sample.version != LOADER_BATTERY_VERSION || sample.size < sizeof(sample) ||
 	    !(sample.flags & LOADER_BATTERY_VALID) || sample.soc_percent < 0 || sample.soc_percent > 100) {
 		battery_failures++;
 		return;
+	}
+	lck_mtx_lock(&battery_report_lock);
+	fresh = loader_polls != sample.polls || loader_sequence != sample.sequence || !battery_heard;
+	loader_polls = sample.polls;
+	loader_sequence = sample.sequence;
+	if (battery_source_dsp && fresh && battery_silent_at(mach_absolute_time())) {
+		battery_source_dsp = 0;
+		battery_dsp_gave_way = taken_over = true;
+		/* (what is shown goes on from the DSP's last figure, not from the cache's of before the DSP spoke) */
+		battery_shown_tenths = battery_soc_percent * 10;
+	}
+	if (battery_source_dsp) {
+		lck_mtx_unlock(&battery_report_lock);
+		return;
+	}
+	if (fresh) {
+		__atomic_store_n(&battery_fresh_at, mach_absolute_time(), __ATOMIC_RELAXED);
+		__atomic_store_n(&battery_heard, true, __ATOMIC_RELAXED);
+	}
+	lck_mtx_unlock(&battery_report_lock);
+	if (taken_over) {
+		/* (this says it, not battery_quiet(): the source is another now, and it is not quiet) */
+		__atomic_store_n(&battery_quiet_said, false, __ATOMIC_RELAXED);
+		printf("battery: nothing new from the audio DSP's battery manager for %d s: xnuloader's cache, which is new, is "
+		    "passed on again\n", BATTERY_QUIET_SECONDS);
 	}
 	battery_soc_percent = sample.soc_percent;
 	battery_voltage_mv = (sample.flags & LOADER_BATTERY_VOLTAGE_VALID) ? sample.voltage_mv : -1;
@@ -220,6 +315,7 @@ void
 hakios_battery_report(const struct hakios_battery_state *b)
 {
 	int percent = (b->percent_hundredths + 50) / 100;
+	bool back;
 
 	battery_soc_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
 	battery_voltage_mv = b->voltage_uv / 1000;
@@ -240,10 +336,18 @@ hakios_battery_report(const struct hakios_battery_state *b)
 		battery_cycles = b->cycles;
 	}
 	lck_mtx_lock(&battery_report_lock);
+	back = !battery_source_dsp && battery_dsp_gave_way;
+	battery_dsp_gave_way = false;
 	battery_source_dsp = 1;
+	__atomic_store_n(&battery_fresh_at, mach_absolute_time(), __ATOMIC_RELAXED);
+	__atomic_store_n(&battery_heard, true, __ATOMIC_RELAXED);
 	battery_updates++;
 	HakiosBatteryReport(b, sizeof(*b));
 	lck_mtx_unlock(&battery_report_lock);
+	if (back) {
+		printf("battery: the audio DSP's battery manager speaks again: its readings are passed on again\n");
+	}
+	(void)battery_quiet();          /* (that it speaks again, if it had gone quiet) */
 }
 
 static void
@@ -251,6 +355,7 @@ battery_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	for (unsigned tick = 0;; tick++) {
 		battery_poll();
+		(void)battery_quiet();  /* (said here too: nothing else may ask) */
 		if (tick % 12 == 0) {
 			printf("battery: SOC=%d%%%s, V=%d mV, I=%d mA, T=%d C, battery=%d charger=%d charging=%d "
 			    "action=%d (%llu reads, %llu failed)\n", battery_soc_percent,

@@ -53,7 +53,8 @@ void hakios_ufs_report(const char *when); /* where reading the storage has spent
 bool hakios_ufs_dev(dev_t dev);           /* one of the storage's devices */
 int hakios_ufs_read_partition(const char *name, uint64_t offset, uint8_t *dst, uint64_t len, uint64_t *bytes); /* for drivers */
 void hakios_battery_init(void);        /* boot-arg battery=1: Qualcomm UEFI charger state shared by xnuloader */
-int hakios_battery_temperature(void);  /* the battery's temperature in C, -273 while it is not known */
+int hakios_battery_temperature(void);  /* the battery's temperature in C, -273 while it is not known (or no longer) */
+bool hakios_battery_went_quiet(void);  /* its temperature was known in this run and is no longer reported */
 /* one transfer at a time through the PMIC arbiter for this system (bsd/dev/board/buttons.c) */
 void hakios_spmi_lock(void);
 void hakios_spmi_unlock(void);

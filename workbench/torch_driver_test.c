@@ -94,9 +94,14 @@ uint32_t hakios_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
 void hakios_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
-/* the battery's temperature, which the driver asks for (bsd/dev/board/battery.c in the kernel) */
+/*
+ * the battery's temperature, which the driver asks for (bsd/dev/board/battery.c in the kernel), and whether one known
+ * earlier in the run is no longer reported (its source gone quiet: the temperature is then -273 there as well)
+ */
 static int battery_c = 30;
+static bool battery_quiet;
 int hakios_battery_temperature(void) { return battery_c; }
+bool hakios_battery_went_quiet(void) { return battery_quiet; }
 
 /* the one lock of the bus is the buttons' driver's (bsd/dev/board/buttons.c) */
 static pthread_mutex_t bus = PTHREAD_MUTEX_INITIALIZER;
@@ -519,6 +524,64 @@ battery_hot(void)
 	never();
 }
 
+/* lit with the battery's temperature known, and then its source goes quiet: not known to be cool any more, off */
+static void
+battery_goes_quiet_while_lit(void)
+{
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
+	ask_for(1000);
+	WAIT_FOR(lit_now(), 3000);
+	CHECK(lit_now() && logged("the battery 30 C"), "lit with the battery at 30 C: %s", log_text);
+	battery_c = -273;                       /* (as battery.c has it once its source is quiet) */
+	battery_quiet = true;
+	WAIT_FOR(!lit_now() && logged("the light is given up on"), 3000);
+	CHECK(!lit_now(), "off once the battery's temperature is no longer reported");
+	CHECK(logged("OFF: the battery's temperature, known earlier, is no longer reported (its source went quiet)"), "why is said: %s",
+	    log_text);
+	refused(1000);
+	never();
+	dark_at_the_end();
+}
+
+/* ... and quiet before the light: never lit */
+static void
+battery_quiet_before_the_light(void)
+{
+	phone("phone-video");
+	battery_c = -273;
+	battery_quiet = true;
+	boot_args = "torch=2 torch_secs=1";
+	hakios_torch_init();
+	WAIT_FOR(logged("torch: done"), 5000);
+	CHECK(logged("not lit: the battery's temperature, known earlier, is no longer reported"), "said in the log: %s", log_text);
+	CHECK(times_lit == 0 && spmi.writes == 0, "not lit, nothing written (%u writes)", spmi.writes);
+	never();
+}
+
+/* a phone with no battery's temperature at all (no adsp=1, no battery=1): the light as before, the other two guarding */
+static void
+no_battery_at_all(void)
+{
+	phone("phone-video");
+	battery_c = -273;
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
+	ask_for(1000);
+	WAIT_FOR(lit_now(), 3000);
+	CHECK(lit_now(), "lit: %s", log_text);
+	usleep(500 * 1000);                     /* (five looks at what would put it out) */
+	CHECK(lit_now() && !logged("given up") && !logged("no longer reported"), "and stays lit: %s", log_text);
+	ask_for(0);
+	WAIT_FOR(!lit_now(), 3000);
+	CHECK(!lit_now() && times_lit == 1, "off when asked (%u times lit)", times_lit);
+	never();
+	dark_at_the_end();
+}
+
 /* the limit: on for torch_max_s at most, then dark until Darwin has asked for 0 */
 static void
 time_limit(void)
@@ -731,6 +794,8 @@ main(int argc, char **argv)
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
 		{ "dropped_and_asked_again", dropped_and_asked_again },
 		{ "light_once_read_back_fails", light_once_read_back_fails }, { "flags_read_fails_while_lit", flags_read_fails_while_lit },
+		{ "battery_goes_quiet_while_lit", battery_goes_quiet_while_lit },
+		{ "battery_quiet_before_the_light", battery_quiet_before_the_light }, { "no_battery_at_all", no_battery_at_all },
 	};
 
 	if (argc < 2) {
