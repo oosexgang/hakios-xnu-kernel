@@ -221,7 +221,7 @@ diff --git a/osfmk/ipc/mach_port.c b/osfmk/ipc/mach_port.c
 diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
 --- a/osfmk/kern/debug.c
 +++ b/osfmk/kern/debug.c
-@@ -1262,10 +1262,30 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+@@ -1262,10 +1262,33 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
  		char buf[EARLY_PANIC_BUFLEN];
  		vsnprintf(buf, EARLY_PANIC_BUFLEN, panic_format_str, *panic_args);
  		paniclog_append_noflush("panic: %s\n", buf);
@@ -236,8 +236,11 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  		panic_spin_forever();
  	}
  
-+	/* hakios: capture every panic's reason into the always-available loader log (QEMU bring-up). */
-+	{
++	/*
++	 * hakios: capture every panic's reason into the always-available loader log (QEMU bring-up). Only the first: a panic
++	 * whose own arguments fault would fault here again, and be told as that fault instead of what it was.
++	 */
++	if (CPUDEBUGGERCOUNT == 0) {
 +		extern void loader_log_line(const char *);
 +		char rbuf[256];
 +		va_list ap;
@@ -252,7 +255,7 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  	/* optionally call sync, to reduce lost logs on restart, avoid on recursive panic. Unsafe due to unbounded sync() duration */
  	if ((panic_options_mask & DEBUGGER_OPTION_SYNC_ON_PANIC_UNSAFE) && (CPUDEBUGGERCOUNT == 0)) {
  		sync_internal();
-@@ -1366,10 +1386,26 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+@@ -1366,10 +1389,26 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
  	__builtin_unreachable();
  }
  
@@ -279,7 +282,7 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  	for (;;) {
  #if defined(__arm__) || defined(__arm64__)
  		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
-@@ -1390,6 +1426,7 @@ panic_stackshot_release_lock(void)
+@@ -1390,6 +1429,7 @@ panic_stackshot_release_lock(void)
  static void
  kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
  {
