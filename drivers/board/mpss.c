@@ -2419,6 +2419,18 @@ ipa_firmware_stop(void)
 	if (!leaving) {
 		ipa_space_off();
 		ipa_clock(false);
+	} else if (ipa_space.on) {
+		/*
+		 * (on the way back to the loader no lock is taken and nothing is said on the console: the streams and the context
+		 * put back all the same, as the camera's are -- else the IPA's streams go on through tables in memory that the
+		 * loader or the next kernel reuses)
+		 */
+		wr(apps_smmu.base + SMMU_SMR(ipa_space.match), ipa_space.old_smr);
+		wr(apps_smmu.base + SMMU_S2CR(ipa_space.match), ipa_space.old_s2cr);
+		wr(apps_smmu.base + SMMU_SMR(ipa_space.match_uc), ipa_space.old_smr_uc);
+		wr(apps_smmu.base + SMMU_S2CR(ipa_space.match_uc), ipa_space.old_s2cr_uc);
+		wr(apps_smmu_context.base + SMMU_CB_SCTLR, ipa_space.old_sctlr);
+		ipa_space.on = false;
 	}
 }
 
