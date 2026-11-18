@@ -54,6 +54,15 @@ tags yet, so the current work is one section.
   default; 0 turns it off): Apple's limits of a few megabytes let the kernel kill lsd while it builds the LaunchServices
   database from nothing, and an application installed then does not start. After the OnePlus Nord 2 port of iOS (its
   piece 0732, APSL 2.0), which found it on its phone; not yet seen on ours.
+- **locationd no longer waits for fairplayd** (iOS 26/27): a library in locationd has its Mescal signer give up at once,
+  as locationd does itself when FairPlay cannot be set up, instead of waiting for a fairplayd that never answers here and
+  holding everything behind it. Settings > Privacy & Security opens, and an application that asks for its location
+  authorization at start does not stay black. After the OnePlus Nord 2 port of iOS (its locfix2), which found it on its
+  phone; not yet seen on ours.
+- **Taps of the vibration motor as one short tick at a fixed gain** (`haptic_tap_gain=N` with `haptic=5`, 1..0x80;
+  0, the default, leaves taps as they were): every tap the shortest of Android's waveforms at that gain, at once,
+  instead of a gain read from the first milliseconds of Darwin's waveform. After the OnePlus Nord 2 port of iOS, whose
+  user found 0x57 felt like a click and the rest like a buzz; not yet tried on ours.
 
 ### Fixes
 

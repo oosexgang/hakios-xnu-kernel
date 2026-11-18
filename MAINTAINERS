@@ -121,6 +121,7 @@ F:	userland/
 F:	init/
 F:	lib/
 F:	components/apple-id/
+F:	components/location/
 F:	components/statusbar/
 F:	components/tweaks/
 F:	components/wallpaper/

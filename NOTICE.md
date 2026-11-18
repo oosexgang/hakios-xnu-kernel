@@ -39,7 +39,9 @@ is credited where it is used, in the comment beside the code and in the commit: 
 iOS, `frxncyyy/ios-denniz`, branch `nord2-port-20261116` (its kernel pieces under APSL-2.0, its own credits in its
 LICENSES-AND-CREDITS.md), and through it HakiOS's MediaTek port: what bluetoothd opens and asks of a controller
 (`board/bt_hci.h`, `board/bt_host.c`, `iokit/Kernel/BoardBluetooth.cpp`), Wi-Fi's RSSI bounds, the sandbox's
-extensions, the application log's name alone. Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
+extensions, the application log's name alone. From its own findings, not its code: what holds locationd here (its FairPlay
+signer waiting on fairplayd, `components/location/inject_locationd.c`) and the motor's tap as one short tick at a low
+fixed gain (`board/haptic.c`, `haptic_tap_gain=`). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
 is taken; nor its device data.
 
 ## Excluded from this repository

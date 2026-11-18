@@ -75,6 +75,8 @@ $DYN -dynamiclib -install_name /hakios/lib/libhakios-backlight.dylib -framework 
 $DYN -O2 -DHAKIOS_IOS27 -dynamiclib -install_name /hakios/lib/libhakios-capture.dylib -framework CoreFoundation \
 	-framework CoreMedia -framework CoreVideo -framework IOSurface -lobjc -o "$O/libhakios-capture.dylib" \
 	"$RN/../components/camera/src/inject_capture.c" "$RN/../components/camera/src/camera_device.c" "$RN/../components/camera/src/camera_isp.c"
+# locationd's Mescal signer given up before it waits on fairplayd for good (components/location/inject_locationd.c)
+$DYN -dynamiclib -install_name /hakios/lib/liblocationd-silo.dylib -lobjc -o "$O/liblocationd-silo.dylib" "$RN/../components/location/inject_locationd.c"
 # the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: components/brightness/inject_brightness.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o "$O/libhakios-brightness.dylib" "$RN/../components/brightness/inject_brightness.c"
 for f in "$O"/*.dylib "$O/HakiosAudio"; do
