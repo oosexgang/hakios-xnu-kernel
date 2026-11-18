@@ -231,7 +231,7 @@ def board_files():
     old = ROOT / OLD_DEVICES
     for directory in [DEVICES] + ([old] if old.is_dir() and old != DEVICES else []) + MORE_DEVICES:
         for path in sorted(Path(directory).glob('*/board.dts')):
-            if not path.parent.name.startswith('_'):
+            if not path.parent.name.startswith(('_', '.')):
                 seen.setdefault(path.parent.name, path)
     return [seen[name] for name in sorted(seen)]
 

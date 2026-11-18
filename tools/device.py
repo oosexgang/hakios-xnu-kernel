@@ -192,13 +192,22 @@ def add(names, source):
         target = boards.DEVICES / name
         if tracked(name):
             raise SystemExit(f'arch/arm64/boot/dts/{name} is part of the repository itself: not replaced')
-        if target.exists():
-            if not (target / NOTE).exists():
-                raise SystemExit(f'arch/arm64/boot/dts/{name} is there and was not brought in by this tool: it may be work of '
-                                 f'yours. Move it away first (or tools/device.py remove {name})')
-            shutil.rmtree(target)
-        source.copy(name, target)
-        (target / NOTE).write_text(f'{source.name}\n')
+        if target.exists() and not (target / NOTE).exists():
+            raise SystemExit(f'arch/arm64/boot/dts/{name} is there and was not brought in by this tool: it may be work of '
+                             f'yours. Move it away first (or tools/device.py remove {name})')
+        # build the whole package in a hidden sibling (not a package: boards skips a name that begins with a dot), with its
+        # .from, then swap it in with one rename -- an interrupted add leaves this staging copy, never a half real package
+        staging = target.with_name('.' + name + '.new')
+        if staging.exists():
+            shutil.rmtree(staging)
+        try:
+            source.copy(name, staging)
+            (staging / NOTE).write_text(f'{source.name}\n')
+            if target.exists():
+                shutil.rmtree(target)
+            staging.rename(target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         print(f'arch/arm64/boot/dts/{name}: from {source.name}')
     problems = boards.Problems()
     boards.load(problems)

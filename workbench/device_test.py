@@ -128,6 +128,27 @@ class Packages(Sandbox):
         self.assertEqual(self.run_tool('add', 'alpha')[0], 0)
         self.assertEqual(boards.load()[1]['alpha']['description'], 'Phone alpha')
 
+    def test_an_interrupted_add_leaves_the_old_package_intact(self):
+        # a failure part way through add (a Ctrl-C, or git show erroring) must not leave a half package where the old
+        # good one was, nor a stray staging copy
+        self.assertEqual(self.run_tool('add', 'alpha')[0], 0)
+        alpha = self.dir / 'arch/arm64/boot/dts/alpha'
+        self.assertTrue((alpha / device.NOTE).exists())
+        original = device.Source.copy
+        def boom(self, name, to):
+            original(self, name, to)
+            raise KeyboardInterrupt('interrupted mid-copy')
+        device.Source.copy = boom
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                device.main(['add', 'alpha'])
+        finally:
+            device.Source.copy = original
+        self.assertTrue((alpha / 'board.dts').is_file(), 'the old package is still whole')
+        self.assertTrue((alpha / device.NOTE).exists(), 'and still marked as brought in')
+        self.assertFalse((self.dir / 'arch/arm64/boot/dts/.alpha.new').exists(), 'no staging copy left behind')
+        self.assertEqual(sorted(boards.load()[1]), ['alpha', 'emulator'])
+
     def test_work_that_this_tool_did_not_bring_in_is_not_run_over(self):
         (self.dir / 'arch/arm64/boot/dts/alpha').mkdir()
         (self.dir / 'arch/arm64/boot/dts/alpha/board.dts').write_text(board('alpha', 'My own alpha'))
