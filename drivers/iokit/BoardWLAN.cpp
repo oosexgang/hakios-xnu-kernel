@@ -132,6 +132,7 @@ HakiosWLANStart(const char * interface, const uint8_t * address)
 	HakiosWLAN * wlan = OSTypeAlloc(HakiosWLAN);
 	OSData * mac;
 	OSNumber * number;
+	unsigned long long unit = 0;
 
 	if (platform == NULL || controller == NULL || wlan == NULL || !controller->init() || !wlan->init()) {
 		OSSafeReleaseNULL(controller);
@@ -167,7 +168,11 @@ HakiosWLANStart(const char * interface, const uint8_t * address)
 		wlan->setProperty("IOInterfaceType", number);
 		number->release();
 	}
-	if ((number = OSNumber::withNumber((unsigned long long) (interface[2] - '0'), 32)) != NULL) {
+	/* (the whole number after "en": en10's unit is 10, not 1) */
+	for (const char * digit = interface + 2; *digit >= '0' && *digit <= '9'; digit++) {
+		unit = unit * 10 + (unsigned long long) (*digit - '0');
+	}
+	if ((number = OSNumber::withNumber(unit, 32)) != NULL) {
 		wlan->setProperty("IOInterfaceUnit", number);
 		number->release();
 	}

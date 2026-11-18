@@ -234,6 +234,7 @@ struct cdevsw {
 int cdevsw_add(int index, const struct cdevsw *devsw);
 int cdevsw_remove(int index, const struct cdevsw *devsw);
 void *devfs_make_node(dev_t dev, int type, int uid, int gid, int perms, const char *name, ...);
+void devfs_remove(void *handle);        /* (the node of that name reaches nothing from then on) */
 /* for the tests: 0, an errno of the driver's, or -1 when no driver has made a node of that name */
 int fake_dev_write(const char *name, const void *data, size_t size);
 int fake_dev_read(const char *name, void *data, size_t size);
@@ -261,6 +262,7 @@ typedef struct buf {
 } *buf_t;
 #define B_READ                  0x00000001
 #define B_ASYNC                 0x00000002      /* (a request whose asker does not wait: done from another thread, maybe) */
+int proc_pid(proc_t p);                 /* (fake_pid, whichever process it is) */
 #define buf_flags(bp)           ((bp)->flags)
 #define buf_device(bp)          ((bp)->dev)
 #define buf_blkno(bp)           ((bp)->blkno)
@@ -342,6 +344,11 @@ extern uint32_t fake_recommended_cores; /* the cores the scheduler was last told
  */
 typedef int errno_t;
 typedef struct fake_mbuf *mbuf_t;
+/* (an mbuf is the test's own: these, where a driver walks one, are the test's to define) */
+mbuf_t mbuf_next(mbuf_t m);
+size_t mbuf_len(mbuf_t m);
+void *mbuf_data(mbuf_t m);
+void mbuf_freem(mbuf_t m);
 typedef uint64_t user_addr_t;
 #define USER_ADDR_NULL                  ((user_addr_t)0)
 #ifndef EAUTH

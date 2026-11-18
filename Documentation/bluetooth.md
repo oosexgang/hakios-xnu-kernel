@@ -119,9 +119,11 @@ What each failure means: [troubleshooting.md](troubleshooting.md), "Bluetooth". 
 | `workbench/bt_hci_test.c` | Packets' lengths; what is answered here and what goes to the controller; the controller's events as bluetoothd is to see them. |
 | `workbench/bt_qca_test.c` | The firmware's files told apart, every byte in segments, which answers each mode leaves out, what an answer says. |
 | `workbench/bt_queue_test.c` | The line and the ring, held to a plain list over twenty thousand steps. |
+| `workbench/bt_host_test.c` | The kernel control, one socket at a time: a second refused while one is connected, and the first one's half-written packet reaching the controller whole; what comes from a socket that is not the connected one refused. |
 
 `bt_host.c` itself -- Skywalk, the kernel control, the nodes -- is the kernel's glue around those, and is compiled by the
-kernel's build only (`kernel/syntax-check.skip`).
+kernel's build only (`kernel/syntax-check.skip`); its kernel control is run on the host as well, with a Skywalk that
+never opens a channel (`bt_host_test.c`).
 
 ## Not yet
 
@@ -129,7 +131,8 @@ kernel's build only (`kernel/syntax-check.skip`).
 - A faster UART (Qualcomm's baud rate command) and the controller's in-band sleep: 115200 baud carries keyboards, mice and
   LE; audio would want more.
 - Who may talk to the controller: the kernel control is not CTL_FLAG_PRIVILEGED and the nodes are 0666, so a process
-  the sandbox lets reach them could send HCI commands, or open the channel before bluetoothd does. What bluetoothd
+  the sandbox lets reach them could send HCI commands, or take the kernel control (one socket at a time) or open the
+  channel before bluetoothd does. What bluetoothd
   runs as on a phone, and what Apple's own driver asks of it, is to be seen before this is narrowed.
 - /dev/btwake and its fellows do nothing: bluetoothd opens and writes to them, and nothing is behind them. What it
   writes is said in the log (`bt: bluetoothd wrote N bytes to /dev/btreset, the first ..`), the first forty times.

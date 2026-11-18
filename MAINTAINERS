@@ -69,6 +69,7 @@ T:	workbench/bt_uart_test.c
 T:	workbench/bt_hci_test.c
 T:	workbench/bt_qca_test.c
 T:	workbench/bt_queue_test.c
+T:	workbench/bt_host_test.c
 D:	Documentation/bluetooth.md
 D:	Documentation/drivers.md
 K:	bluetooth-wcn-uart; bt=, bt_fw=, bt_quirks=

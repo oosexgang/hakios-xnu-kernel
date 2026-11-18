@@ -365,31 +365,70 @@ _Static_assert(sizeof(struct program_termios) == 72, "an arm64 program's termios
 static struct program_termios termios = { .c_cflag = CS8 | CREAD | CLOCAL, .c_ispeed = 3000000, .c_ospeed = 3000000 };
 static kern_ctl_ref control;
 
+/*
+ * One socket at a time, the unit of the one connected (under bt_host_lock): there is one line, one UART's settings, and a
+ * second socket's connect would have emptied the line under the first one's half-written packet, its writes run into
+ * the first one's, its settings taken for the UART's. Another is refused while one is connected (EBUSY), and what is
+ * not the connected one's is refused too.
+ */
+static bool client_connected;
+static u_int32_t client_unit;
+
+/* (under bt_host_lock) */
+static bool
+is_client_locked(u_int32_t unit)
+{
+	return client_connected && client_unit == unit;
+}
+
 static errno_t
 control_connect(__unused kern_ctl_ref r, struct sockaddr_ctl *address, __unused void **context)
 {
 	char name[32] = "";
+	u_int32_t had = 0;
+	bool busy;
 
 	lck_mtx_lock(&bt_host_lock);
-	tx_line.count = 0;                      /* (nothing of a socket before this one's) */
+	if (!(busy = client_connected)) {
+		client_connected = true;
+		client_unit = address->sc_unit;
+		tx_line.count = 0;              /* (nothing of a socket before this one's) */
+	} else {
+		had = client_unit;
+	}
 	lck_mtx_unlock(&bt_host_lock);
 	proc_selfname(name, sizeof(name));
+	if (busy) {
+		say("bt: com.apple.uart.sk.bluetooth: %s (pid %d, unit %u) refused: unit %u has it\n", name, proc_selfpid(),
+		    address->sc_unit, had);
+		return EBUSY;
+	}
 	say("bt: com.apple.uart.sk.bluetooth connected by %s (pid %d, unit %u)\n", name, proc_selfpid(), address->sc_unit);
 	return 0;
 }
 
+/* (also called for a socket whose connect was refused, with its own unit: the connected one is let go only by its own) */
 static errno_t
 control_disconnect(__unused kern_ctl_ref r, u_int32_t unit, __unused void *context)
 {
-	say("bt: com.apple.uart.sk.bluetooth unit %u disconnected (%u sent, %u received, %u answered here)\n", unit, sent, received,
-	    answered_here);
+	bool was;
+
+	lck_mtx_lock(&bt_host_lock);
+	if ((was = is_client_locked(unit))) {
+		client_connected = false;
+	}
+	lck_mtx_unlock(&bt_host_lock);
+	if (was) {
+		say("bt: com.apple.uart.sk.bluetooth unit %u disconnected (%u sent, %u received, %u answered here)\n", unit, sent,
+		    received, answered_here);
+	}
 	return 0;
 }
 
 /* (written to the socket itself: the same as into the channel) -- all of a write or none of it: the start of a packet
  * left in the line would have the next one's bytes taken for the rest of it */
 static errno_t
-control_send(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *context, mbuf_t m, __unused int flags)
+control_send(__unused kern_ctl_ref r, u_int32_t unit, __unused void *context, mbuf_t m, __unused int flags)
 {
 	errno_t error = 0;
 	size_t total = 0;
@@ -398,7 +437,9 @@ control_send(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *co
 		total += mbuf_len(part);
 	}
 	lck_mtx_lock(&bt_host_lock);
-	if (total > tx_line.size - tx_line.count) {
+	if (!is_client_locked(unit)) {
+		error = ENOTCONN;
+	} else if (total > tx_line.size - tx_line.count) {
 		tx_dropped += (uint32_t)total;
 		error = ENOBUFS;
 	} else {
@@ -412,22 +453,33 @@ control_send(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *co
 }
 
 static errno_t
-control_setopt(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *context, int option, void *data, size_t length)
+control_setopt(__unused kern_ctl_ref r, u_int32_t unit, __unused void *context, int option, void *data, size_t length)
 {
 	uint32_t o = (uint32_t)option;
+	errno_t error = 0;
 
-	if ((o == OPTION_TIOCSETA || o == OPTION_TIOCSETAW || o == OPTION_TIOCSETAF) && data != NULL && length == sizeof(termios)) {
+	lck_mtx_lock(&bt_host_lock);
+	if (!is_client_locked(unit)) {
+		error = ENOTCONN;
+	} else if ((o == OPTION_TIOCSETA || o == OPTION_TIOCSETAW || o == OPTION_TIOCSETAF) && data != NULL &&
+	    length == sizeof(termios)) {
 		memcpy(&termios, data, sizeof(termios));        /* (kept, and given back by TIOCGETA) */
 	}
-	return 0;
+	lck_mtx_unlock(&bt_host_lock);
+	return error;
 }
 
 static errno_t
-control_getopt(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *context, int option, void *data, size_t *length)
+control_getopt(__unused kern_ctl_ref r, u_int32_t unit, __unused void *context, int option, void *data, size_t *length)
 {
 	uint32_t o = (uint32_t)option;
+	errno_t error = 0;
 
-	if (o == OPTION_CHANNEL_UUID && data != NULL && *length >= sizeof(uuid_t) && pipe_ready) {
+	lck_mtx_lock(&bt_host_lock);
+	if (!is_client_locked(unit)) {
+		error = ENOTCONN;
+		*length = 0;
+	} else if (o == OPTION_CHANNEL_UUID && data != NULL && *length >= sizeof(uuid_t) && pipe_ready) {
 		memcpy(data, pipe_instance, sizeof(uuid_t));
 		*length = sizeof(uuid_t);
 	} else if (o == OPTION_TIOCGETA && data != NULL && *length >= sizeof(termios)) {
@@ -436,7 +488,8 @@ control_getopt(__unused kern_ctl_ref r, __unused u_int32_t unit, __unused void *
 	} else {
 		*length = 0;
 	}
-	return 0;
+	lck_mtx_unlock(&bt_host_lock);
+	return error;
 }
 
 static int

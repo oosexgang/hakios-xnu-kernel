@@ -60,15 +60,19 @@ OSDefineMetaClassAndStructors(IONetworkStackUserClient, IOUserClient);
 bool
 IONetworkStackUserClient::start(IOService * provider)
 {
+	static unsigned said;
 	char who[32] = "?";
 
 	if (!IOUserClient::start(provider)) {
 		return false;
 	}
-	/* whether the registry is quiet at this moment is what the namer goes on to ask */
-	proc_selfname(who, sizeof(who));
-	IOLog("MiniIONetworkStack: opened by %s; the registry's busy state is %u\n", who,
-	    (unsigned) IOService::getServiceRoot()->getBusyState());
+	/* whether the registry is quiet at this moment is what the namer goes on to ask (said the first times only: any
+	 * program may open it, as often as it likes, and each open would be a line of the log) */
+	if (said++ < 8) {
+		proc_selfname(who, sizeof(who));
+		IOLog("MiniIONetworkStack: opened by %s; the registry's busy state is %u\n", who,
+		    (unsigned) IOService::getServiceRoot()->getBusyState());
+	}
 	return true;
 }
 

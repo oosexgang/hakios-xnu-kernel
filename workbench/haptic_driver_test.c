@@ -107,10 +107,12 @@ hakios_test_rd(vm_offset_t address)
 }
 
 void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
-/* the IOKit service Darwin's haptic server waits for (iokit/Kernel/BoardHaptics.cpp): counted, not made */
-static unsigned haptics_published;
+/* the IOKit service Darwin's haptic server waits for (iokit/Kernel/BoardHaptics.cpp): counted, not made; and taken away */
+static unsigned haptics_published, haptics_gone;
 void HakiosHapticsReady(void);
 void HakiosHapticsReady(void) { haptics_published++; }
+void HakiosHapticsGone(void);
+void HakiosHapticsGone(void) { haptics_gone++; }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 /*
@@ -796,6 +798,8 @@ a_fault_after_a_tap(void)
 	WAIT_FOR(logged("haptic: tap 1:"), 2000);
 	usleep(300000);                         /* (the tap over, the driver idle: it looks at the chip no more) */
 	CHECK(logged("haptic: tap 1:") && !logged("PUT INTO RESET"), "a tap, nothing wrong: %s", log_text);
+	CHECK(haptics_published == 1 && haptics_gone == 0, "the service published, and there (%u, %u taken away)", haptics_published,
+	    haptics_gone);
 	started = waveforms_started;
 	device.reg[0x02] = 0x20;
 	darwin_plays(20000, 20);
@@ -804,6 +808,9 @@ a_fault_after_a_tap(void)
 	    in_reset(), "found before the tap, and into reset: %s", log_text);
 	CHECK(waveforms_started == started && !logged("haptic: tap 2:"), "the next tap is not started (%u started, %u before)",
 	    waveforms_started, started);
+	/* the motor given up on: the service Darwin's haptic server was told of is taken away, once */
+	WAIT_FOR(logged("the motor is given up on"), 2000);
+	EVENTUALLY(haptics_gone == 1, 1000, "the service taken away (%u times)", haptics_gone);
 }
 
 /* a board that does not list the part, and a SoC file without the pins */

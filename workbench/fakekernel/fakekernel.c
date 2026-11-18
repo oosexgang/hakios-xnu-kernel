@@ -277,6 +277,14 @@ devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused
 	return &nodes[nodes_n++];
 }
 
+void
+devfs_remove(void *handle)
+{
+	if (handle != NULL) {
+		((__typeof__(nodes[0]) *)handle)->name[0] = '\0';
+	}
+}
+
 /* the node of that name and of that kind, of a switch that is still there: its number, or false */
 static bool
 node_named(const char *name, bool disk, dev_t *dev)
@@ -542,6 +550,7 @@ fake_dev_close(const char *name)
 int fake_pid = 100, fake_other_pid;
 
 int proc_selfpid(void) { return fake_pid; }
+int proc_pid(proc_t p __unused) { return fake_pid; }
 struct proc *proc_find(int pid) { return pid != 0 && (pid == fake_pid || pid == fake_other_pid) ? (struct proc *)&fake_pid : NULL; }
 void proc_rele(struct proc *p __unused) {}
 

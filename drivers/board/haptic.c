@@ -69,6 +69,7 @@
 #include "log.h"
 
 extern void HakiosHapticsReady(void);             /* iokit/Kernel/BoardHaptics.cpp */
+extern void HakiosHapticsGone(void);
 
 static vm_offset_t tlmm;
 static uint32_t level;
@@ -809,6 +810,11 @@ serve(void)
 	}
 	say("haptic: the motor is given up on (%u taps and %u vibrations played, %u cut at %u ms)\n", taps, loops, capped,
 	    HAPTIC_MAX_MS);
+	/* the service taken away: audiomxd is not to go on being told that the firmware is ready (not on the way out, where
+	 * the chip was put into reset by the run's end, not by a fault, and IOKit is not to be asked to do anything) */
+	if (!leaving) {
+		HakiosHapticsGone();
+	}
 }
 
 static void

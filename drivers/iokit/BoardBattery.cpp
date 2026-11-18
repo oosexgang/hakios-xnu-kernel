@@ -127,7 +127,9 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 	flag("AppleRawExternalConnected", b->external != 0);
 	setCurrentCapacity((unsigned) percent);
 	setMaxCapacity(100);
-	setVoltage((unsigned) (b->voltage_uv / 1000));
+	/* (the DSP's numbers are signed: one below zero, as a gauge that has not settled may give, is none for powerd, not a
+	 * voltage of four billion millivolts) */
+	setVoltage((unsigned) (b->voltage_uv > 0 ? b->voltage_uv / 1000 : 0));
 	setAmperage(b->current_ua / 1000);
 	number("InstantAmperage", b->current_ua / 1000);
 	number("Temperature", b->temperature_hundredths);
@@ -147,7 +149,9 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 
 	if (b->external) {
 		OSDictionary * adapter = OSDictionary::withCapacity(6);
-		long long mv = b->usb_voltage_uv / 1000, ma = b->usb_current_ua / 1000;
+		/* (as the battery's voltage: below zero is none, not a number near 2^64 once cast) */
+		long long mv = b->usb_voltage_uv > 0 ? b->usb_voltage_uv / 1000 : 0;
+		long long ma = b->usb_current_ua > 0 ? b->usb_current_ua / 1000 : 0;
 		OSNumber * n;
 
 		if (adapter != NULL) {

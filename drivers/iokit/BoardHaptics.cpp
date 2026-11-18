@@ -26,10 +26,11 @@ class AHSFirmwareReadyNotifier : public IOService
 OSDefineMetaClassAndStructors(AHSFirmwareReadyNotifier, IOService);
 
 extern "C" void HakiosHapticsReady(void);
+extern "C" void HakiosHapticsGone(void);
 
 static AHSFirmwareReadyNotifier * notifier;
 
-/* Once the motor plays for iOS: the service registered under the platform, for good. */
+/* Once the motor plays for iOS: the service registered under the platform, until the motor is given up on. */
 void
 HakiosHapticsReady(void)
 {
@@ -58,4 +59,16 @@ HakiosHapticsReady(void)
 	made->registerService();
 	notifier = made;
 	IOLog("HakiosHaptics: AHSFirmwareReadyNotifier registered: iOS's haptic server (com.apple.audio.hapticd) may start\n");
+}
+
+/* The motor given up on (a fault of the chip's): the service taken away, so that iOS's haptic server is not told of
+ * firmware that is ready while nothing plays. */
+void
+HakiosHapticsGone(void)
+{
+	if (notifier != NULL) {
+		notifier->terminate(kIOServiceSynchronous);
+		OSSafeReleaseNULL(notifier);
+		IOLog("HakiosHaptics: AHSFirmwareReadyNotifier taken away: the motor is given up on\n");
+	}
 }
