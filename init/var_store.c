@@ -967,8 +967,14 @@ pack_tree(const char *relative)
 		long count = gather_names(dir_fd, dirbuf[depth - 1], sizeof(dirbuf[0]), mark_a, mark_n);
 
 		if (count < 0) {
-			/* more names than the arena holds: this one goes in whatever order it is given */
+			/*
+			 * (more names than the arena holds: none of them was kept, and the walk below would pack nothing of this
+			 * directory -- the save would go on and write over the older slot without it. The save fails instead,
+			 * loudly, and the slot that holds the directory stays)
+			 */
 			unsorted_dirs++;
+			printf("var_store: %s: more names than this program holds at once: NOT SAVED (the last save stays)\n", path);
+			ok = 0;
 		}
 		for (long k = 0; ok && k < count; k++) {
 			const char *name = name_arena + name_at[mark_n + k];
