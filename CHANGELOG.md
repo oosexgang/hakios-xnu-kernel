@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The modem's link (`mpss.c`, with a new host test `workbench/mpss_driver_test.c` that plays the modem): its QRTR hello
+  went unanswered after it opened the channel again, so it never learnt of our services (its files, RMTFS and TFTP,
+  among them); an intent told again could be kept twice, the old size beside the new; a packet too long for our intent
+  kept the intent from the modem for good and had its tail taken for a message of its own; a late answer from the
+  modem's IPA service to an earlier request was taken for the answer to the latest; and an RMTFS request with no
+  pieces was logged with a read past its buffer.
 - Thermal limit (`thermal.c`): losing every sensor reading was taken as "cool", and the rows were given back a step a
   second to a phone held back because it was hot; now nothing changes until a sensor answers again. A sensor that had
   answered and then fell silent let a cooler one's reading give the rows back; now nothing is given back while one is

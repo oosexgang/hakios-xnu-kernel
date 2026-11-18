@@ -79,6 +79,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <sys/board/input.h>
 #include "board.h"
+#include "cache.h"
 #include <sys/board/ipa.h>
 #include <sys/board/nas.h>
 #include <sys/board/qrtr.h>
@@ -200,11 +201,11 @@ now_us(void)
 	return nanoseconds / 1000;
 }
 
-/* Until every write to memory so far has been carried out. */
+/* Until every write to memory so far has been carried out ("dsb sy": board/cache.h). */
 static void
 settle(void)
 {
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_barrier();
 }
 
 static bool
@@ -239,20 +240,9 @@ printable(char *to, size_t to_size, const void *from, size_t size)
 
 /* ---- register access (as in hakios_wifi.c) ------------------------------------------------------- */
 
-static uint32_t __attribute__((noinline))
-rd(vm_offset_t address)
-{
-	uint32_t value;
-
-	__asm__ volatile ("ldr %w0, [%1]" : "=r" (value) : "r" (address) : "memory");
-	return value;
-}
-
-static void __attribute__((noinline))
-wr(vm_offset_t address, uint32_t value)
-{
-	__asm__ volatile ("str %w0, [%1]" : : "r" (value), "r" (address) : "memory");
-}
+/* One access is one plain "ldr" or "str" in a function of its own (board/mmio.h; a host test puts its model behind them) */
+#define HAKIOS_MMIO_EXACT
+#include "mmio.h"
 
 struct block {
 	const char *name;
@@ -1374,6 +1364,7 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 	printf("mpss: %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
+#if defined(__arm64__) || defined(__aarch64__)            /* (a host test has no TrustZone: never answered, as below) */
 	for (int i = 0; i < 100; i++) {
 		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
 		register uint64_t x1 __asm__("x1") = arguments;
@@ -1393,6 +1384,9 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 			return (int32_t)x0;
 		}
 	}
+#else
+	(void)arguments, (void)fourth, (void)session;
+#endif
 	printf("mpss: %u: TrustZone keeps saying the call was interrupted\n", step);
 	return -1;
 }
@@ -1564,9 +1558,7 @@ step_header(void)
 		return false;
 	}
 	memcpy((void *)page, image.header, image.header_size);
-	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
+	hakios_cache_flush(page, page + PAGE_SIZE);
 	settle();
 	result = scm("to take the modem's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, pas_mpss, kvtophys(page), 0, 0, &answer);
 	if (result != 0 || answer != 0) {
@@ -2355,9 +2347,7 @@ ipa_firmware_load(void)
 		goto out;
 	}
 	memcpy((void *)page, header, header_size < PAGE_SIZE ? header_size : PAGE_SIZE);
-	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
+	hakios_cache_flush(page, page + PAGE_SIZE);
 	settle();
 	result = scm("to take the IPA's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, pas_ipa, kvtophys(page), 0, 0, &answer);
 	if (result != 0 || answer != 0) {
@@ -2714,8 +2704,10 @@ struct glink_channel {
 	struct {
 		uint32_t size, fill;
 		uint8_t *data;
+		bool dropping;                  /* a packet too long for it is being let go of, to its last piece */
 	} our_intents[24];                      /* what the DSP may send into; an intent's number is its place here + 1 */
 	uint32_t our_intent_count;
+	uint32_t openings;                      /* how many times it has been open both ways since step 9 took up the link */
 	struct glink_packet *first, *last;      /* received, in order */
 };
 
@@ -2931,6 +2923,7 @@ glink_offer(struct glink_channel *channel, uint32_t size)
 	}
 	channel->our_intents[i].size = size;
 	channel->our_intents[i].fill = 0;
+	channel->our_intents[i].dropping = false;
 	channel->our_intent_count++;
 	glink_say(GLINK_INTENT, channel->ours, 1, words, sizeof(words));
 	return true;
@@ -3053,15 +3046,28 @@ glink_pump(void)
 		case GLINK_INTENT:
 			channel = glink_theirs(message.param1);
 			for (uint32_t i = 0; channel != NULL && i < message.param2; i++) {
+				int place = -1;
+
 				glink_peek(words, 8 + 8 * i, 8);
+				/*
+				 * (an intent we know of, told again, in its place -- looked for among all of them before a free one is
+				 * taken: a free place before it, of an intent taken back, would have it twice, the old size kept beside
+				 * the new, and a message sent into it at the old)
+				 */
 				for (unsigned n = 0; n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]); n++) {
-					if (!channel->their_intents[n].there || channel->their_intents[n].id == words[1]) {
-						channel->their_intents[n].there = true;
-						channel->their_intents[n].in_use = false;
-						channel->their_intents[n].size = words[0];
-						channel->their_intents[n].id = words[1];
+					if (channel->their_intents[n].there && channel->their_intents[n].id == words[1]) {
+						place = (int)n;
 						break;
 					}
+					if (!channel->their_intents[n].there && place < 0) {
+						place = (int)n;
+					}
+				}
+				if (place >= 0) {
+					channel->their_intents[place].there = true;
+					channel->their_intents[place].in_use = false;
+					channel->their_intents[place].size = words[0];
+					channel->their_intents[place].id = words[1];
 				}
 			}
 			glink_advance(length);
@@ -3099,11 +3105,29 @@ glink_pump(void)
 			uint32_t intent = message.param2 - 1;
 
 			channel = glink_theirs(message.param1);
-			if (channel == NULL || intent >= channel->our_intent_count ||
-			    words[0] > channel->our_intents[intent].size - channel->our_intents[intent].fill) {
-				printf("mpss: glink: < data of %u bytes on channel %u for intent %u: NOT OURS OR TOO MUCH, dropped\n", words[0],
+			if (channel == NULL || intent >= channel->our_intent_count) {
+				printf("mpss: glink: < data of %u bytes on channel %u for intent %u: NOT OURS, dropped\n", words[0],
 				    message.param1, message.param2);
 				glink_advance(length);
+				break;
+			}
+			if (channel->our_intents[intent].dropping ||
+			    words[0] > channel->our_intents[intent].size - channel->our_intents[intent].fill) {
+				/*
+				 * Too much for the intent: the whole packet is let go of, the pieces still to come with it, and the
+				 * intent given back at its end (as board/adsp.c does) -- not kept by the modem as used for good, nor
+				 * half filled for the next, nor the last piece, which fits, handed on as a datagram of its own.
+				 */
+				if (!channel->our_intents[intent].dropping) {
+					printf("mpss: glink: < data of %u bytes on channel %u for intent %u: TOO MUCH, the packet dropped\n",
+					    words[0], message.param1, message.param2);
+				}
+				channel->our_intents[intent].dropping = words[1] != 0;
+				channel->our_intents[intent].fill = 0;
+				glink_advance(length);
+				if (words[1] == 0) {
+					glink_say(GLINK_DONE_REUSE, channel->ours, message.param2, NULL, 0);
+				}
 				break;
 			}
 			glink_peek(channel->our_intents[intent].data + channel->our_intents[intent].fill, 16, words[0]);
@@ -3151,6 +3175,10 @@ glink_pump(void)
 				channel->request_answered = channel->request_granted = false;
 				bzero(channel->their_intents, sizeof(channel->their_intents));
 				channel->our_intent_count = 0;  /* (their buffers kept: offered again, as they are, once it is open) */
+				for (unsigned n = 0; n < sizeof(channel->our_intents) / sizeof(channel->our_intents[0]); n++) {
+					channel->our_intents[n].fill = 0;
+					channel->our_intents[n].dropping = false;
+				}
 			}
 			break;
 		case GLINK_CLOSE_ACK:
@@ -3167,6 +3195,7 @@ glink_pump(void)
 			channel = &glink.channel[c];
 			if (channel->theirs != 0 && channel->acknowledged && !channel->open) {
 				channel->open = true;
+				channel->openings++;
 				printf("mpss: glink: THE CHANNEL \"%s\" IS OPEN both ways (ours %u, the DSP's %u); telling the DSP our intents\n",
 				    channel->name, channel->ours, channel->theirs);
 				for (unsigned i = 0; i < 3; i++) {
@@ -3287,6 +3316,7 @@ static struct {
 } qrtr_servers[64];
 static uint32_t qrtr_peer;                      /* the modem's node; 0: it has not said */
 static uint32_t qrtr_next_port = QRTR_FIRST_PORT, qrtr_in, qrtr_out, qrtr_hellos, qrtr_lookups;
+static uint32_t qrtr_hello_answered;    /* the opening of "IPCRTR" (its count) whose hello has been answered; 0: none */
 static thread_t link_thread_is;
 
 /* The name service's side: our servers, told of on hello and on lookup (the one there is: rmtfs, below). */
@@ -3365,12 +3395,24 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 {
 	struct qrtr_control hello = { .command = QRTR_HELLO };
 	int found = -1, error;
+	uint32_t opening;
 
 	switch (control->command) {
 	case QRTR_HELLO:
-		if (qrtr_hellos++ != 0) {
-			break;                                  /* (answered once: two that answer every hello never end) */
+		/*
+		 * (answered once each time the channel is opened: two that answer every hello never end. A modem that closes
+		 * "IPCRTR" and opens it again starts its router afresh on it and says hello again; until ours comes back it
+		 * takes us for a node that is not there -- tells of no service, looks for ours in vain (our services are told
+		 * of with the answer) -- as on the first opening. As board/adsp.c answers it.)
+		 */
+		qrtr_hellos++;
+		lck_mtx_lock(&glink_lock);
+		opening = glink.channel[CHANNEL_QRTR].openings;
+		lck_mtx_unlock(&glink_lock);
+		if (opening == qrtr_hello_answered) {
+			break;
 		}
+		qrtr_hello_answered = opening;
 		error = qrtr_out_packet(QRTR_HELLO, QRTR_CONTROL, header->from_node, QRTR_CONTROL, &hello, sizeof(hello));
 		printf("mpss: qrtr: HELLO FROM NODE %u; ours to it: %s\n", header->from_node, error == 0 ? "SENT" : "NOT SENT");
 		qrtr_announce_all(header->from_node);    /* (the name service's part: what we offer) */
@@ -3902,9 +3944,7 @@ rmtfs_share(bool in)
 	page->more[1] = pa + 128;                                       /* 4: the destinations */
 	page->more[2] = destinations * sizeof(page->destinations[0]);   /* 5: their size */
 	page->more[3] = 0;                                              /* 6: spare */
-	for (vm_offset_t line = memory; line < memory + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
+	hakios_cache_flush(memory, memory + PAGE_SIZE);
 	settle();
 	announce(in ? "ask TrustZone to let the modem into our buffer for its files (the memory assigned to HLOS and MSS, both "
 	    "read and write)" : "ask TrustZone to take the buffer back from the modem (assigned to HLOS alone)");
@@ -4052,7 +4092,8 @@ rmtfs_receive(__unused void *context, uint32_t node, uint32_t port, const void *
 			static bool first = true;
 			uint32_t delay = 0;
 
-			if (first && PE_parse_boot_argn("modem_rmtfs_delay", &delay, sizeof(delay)) && delay != 0) {
+			/* (what is said of it is its first piece's: a request of no pieces has none, and its bytes are past the TLV) */
+			if (first && count != 0 && PE_parse_boot_argn("modem_rmtfs_delay", &delay, sizeof(delay)) && delay != 0) {
 				tell("mpss: rmtfs: the modem's first request (%s %u pieces of %s, from sector %u, %u sectors, to %#x): waiting %u s "
 				    "before it is served\n", write ? "write" : "read", count, rmtfs_files[file].partition, le32(entries + 1),
 				    le32(entries + 9), le32(entries + 5), delay);
@@ -5144,8 +5185,12 @@ ipa_client_receive(__unused void *context, uint32_t node, uint32_t port, const v
 	if (length < 7 || m[0] != QMI_RESPONSE || node != ipa_modem_node || port != ipa_modem_port) {
 		return;
 	}
+	/*
+	 * (the answer to the INIT_DRIVER sent last, by its transaction -- as dms_receive() counts its own: a late answer to
+	 * one sent before, to a service of the modem's that has gone and come back since, is not this one's)
+	 */
 	value = qmi_tlv(m, length, 2, &size);
-	if ((m[3] | m[4] << 8) == IPA_QMI_INIT_DRIVER && value != NULL && size == 4) {
+	if ((m[3] | m[4] << 8) == IPA_QMI_INIT_DRIVER && (uint16_t)(m[1] | m[2] << 8) == ipa_transaction && value != NULL && size == 4) {
 		uint16_t result = (uint16_t)(value[0] | value[1] << 8), error = (uint16_t)(value[2] | value[3] << 8);
 
 		tell("mpss: ipa: the modem %s our INIT_DRIVER (result %u, error %u)\n", result == 0 ? "ACCEPTS" : "REFUSES", result, error);
@@ -5237,6 +5282,8 @@ ipa_client_server(__unused void *context, bool arrived, uint32_t service, __unus
 	if (arrived) {
 		ipa_modem_node = node;
 		ipa_modem_port = port;
+		/* (a new INIT_DRIVER, and its answer and the indication after it, this service's: none of the last one's kept) */
+		ipa_driver_ready = ipa_indication_sent = false;
 		ipa_init_driver();
 	} else {
 		ipa_modem_node = ipa_modem_port = 0;
@@ -5340,14 +5387,14 @@ step_link(void)
 		struct glink_channel *channel = &glink.channel[c];
 
 		channel->asked = channel->acknowledged = channel->open = false;
-		channel->theirs = channel->our_intent_count = 0;
+		channel->theirs = channel->our_intent_count = channel->openings = 0;
 		bzero(channel->their_intents, sizeof(channel->their_intents));
 	}
 	bzero(glink.others, sizeof(glink.others));
 	glink.pending_first = glink.pending_count = 0;  /* (nothing of the last link's said on this one) */
 	glink.trace = 60;
 	glink.up = true;
-	qrtr_hellos = qrtr_in = qrtr_out = qrtr_lookups = 0;
+	qrtr_hellos = qrtr_in = qrtr_out = qrtr_lookups = qrtr_hello_answered = 0;
 	doorbell.since = began = now_us();
 	glink_say(GLINK_VERSION, GLINK_VERSION_1, glink.features, NULL, 0);
 	lck_mtx_unlock(&glink_lock);
