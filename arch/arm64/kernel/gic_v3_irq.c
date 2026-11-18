@@ -251,8 +251,11 @@ gic_v3_spi_attach(uint32_t intid, bool edge, void (*handler)(void *context, uint
 	slot->context = context;
 	slot->count = 0;
 	os_atomic_store(&slot->intid, intid, release);
-	simple_unlock(&gic_spi_lock);
 
+	/*
+	 * (the group, its mode and the trigger are bits in words that 32, or 16, interrupts share: read, changed and written
+	 * back under the lock, so that two drivers attaching at once on two processors do not undo each other's)
+	 */
 	gic_v3_spi_mask(intid);
 	gic_write32(gicd_base + GICD_ICPENDR(intid / 32), 1u << (intid % 32));
 	gic_write32(gicd_base + GICD_ICACTIVER(intid / 32), 1u << (intid % 32));
@@ -263,6 +266,7 @@ gic_v3_spi_attach(uint32_t intid, bool edge, void (*handler)(void *context, uint
 	gic_write32(gicd_base + GICD_ICFGR(intid / 16), config | (edge ? 2u : 0u) << (intid % 16 * 2));
 	/* GICD_IROUTER: Aff3 in [39:32], Aff2.Aff1.Aff0 in [23:0]; bit 31 (any processor) clear */
 	*(volatile uint64_t *)(gicd_base + GICD_IROUTER(intid)) = (mpidr & 0xff00000000ull) | (mpidr & 0xffffff);
+	simple_unlock(&gic_spi_lock);
 	gic_distributor_settle();
 	gic_v3_spi_unmask(intid);
 	return KERN_SUCCESS;
