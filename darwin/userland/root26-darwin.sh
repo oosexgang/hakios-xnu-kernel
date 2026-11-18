@@ -265,6 +265,26 @@ with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'LastSystemVersion': last, 'DMLastMigrationResults': {'success': True, 'buildVersion': last}}, f,
                   fmt=plistlib.FMT_BINARY)
 PY
+# Messages' banners: IMDPersistence posts no notification for a message while it believes a migration is under way,
+# which it decides by kIMDPersistenceLastBuild in com.apple.imdsmsrecordstore against this build. Messages' own
+# migration plug-in writes it after an install or an update, and none runs here, so this image's build is written
+# for it. The domain is read for the current host: mobile's Preferences, and ByHost under the empty host id Darwin 26
+# gives (as com.apple.migration is in userland/userland/build.sh), both written. After the idea of the OnePlus Nord 2
+# port's 0277y (frxncyyy/ios-denniz), which found the check on its phone; not yet seen on ours.
+python3 - "$T/var/mobile/Library/Preferences" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
+import os, plistlib, sys
+build = plistlib.load(open(sys.argv[2], 'rb'))['ProductBuildVersion']
+os.makedirs(os.path.join(sys.argv[1], 'ByHost'), exist_ok=True)
+for name in ('com.apple.imdsmsrecordstore.plist', 'ByHost/com.apple.imdsmsrecordstore..plist'):
+    with open(os.path.join(sys.argv[1], name), 'wb') as f:
+        plistlib.dump({'kIMDPersistenceLastBuild': build}, f, fmt=plistlib.FMT_BINARY)
+print('root26-darwin.sh: Messages told its last build is ' + build)
+PY
+# (the walk that fills var.skel was earlier in this script: listed by hand)
+for name in com.apple.imdsmsrecordstore.plist ByHost/com.apple.imdsmsrecordstore..plist; do
+	rel=mobile/Library/Preferences/$name
+	printf 'f\t600\t501\t501\t/private/var/%s\t/var/%s\n' "$rel" "$rel"
+done >> "$T/etc/var.skel"
 # APPSTORED_NO_MIGRATION=1: appstored says "[Migrate] [Daemon] Migrations needed" at every launch and
 # then "Attempting to load bag"; two of its own Swift jobs then deadlock on one of its own unfair locks
 # (measured: two threads in __os_unfair_lock_lock_slow whose frames land inside appstored itself), and

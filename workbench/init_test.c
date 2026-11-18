@@ -1,7 +1,7 @@
 /*
  * Host tests of process 1 (init/init.c), as it is: the preferences files it writes into mobile's directory
- * after the store has put back the last boot's, the lines of a job list it runs, its directory walks and
- * the numbers it reads from a boot argument or a job line.
+ * after the store has put back the last boot's, the 1970 date it takes out of dasd's, the lines of a job list it
+ * runs, its directory walks and the numbers it reads from a boot argument or a job line.
  *
  * As with var_store_test.c, the program is compiled against libmini's header and the host's C library
  * answers the calls it declares. What must not reach the host is the test's: a path under /private (or
@@ -773,6 +773,180 @@ scenario_clock(void)
 	clock_now = 0;
 }
 
+/*
+ * dasd's budgets: the plists are made and read back by Python's plistlib, a reader and writer that are not ours. KIND
+ * names the dictionary: what is in it besides lastModulation, and what lastModulation is.
+ */
+#define DASD_PLIST      PREFS "/com.apple.dasd.widgetRefreshBudgets.plist"
+static const char bplist_py[] =
+    "import datetime, plistlib, sys\n"
+    "def content(kind):\n"
+    "    d = {'budgets': {'widget%d' % i: {'balance': i * 7, 'allocated': float(i)} for i in range(19)}, 'version': 3}\n"
+    "    if kind.startswith('keys'):\n"
+    "        d = {'k%02d' % i: i for i in range(int(kind[4:]) - 1)}\n"
+    "    if kind == 'big':\n"
+    "        d['budgets'] = {'widget%d' % i: {'balance': i, 'name': 'w%d' % i} for i in range(300)}\n"
+    "    when = {'new': datetime.datetime(2026, 11, 13, 22, 33), 'y1999': datetime.datetime(1999, 12, 31, 23, 59, 59),\n"
+    "            'string': '1970-01-01'}.get(kind, datetime.datetime(1970, 1, 1, 0, 0, 34))\n"
+    "    if kind != 'none':\n"
+    "        d['lastModulation'] = when\n"
+    "    return d\n"
+    "op, path, kind = sys.argv[1:4]\n"
+    "if op == 'make':\n"
+    "    fmt = plistlib.FMT_XML if kind == 'xml' else plistlib.FMT_BINARY\n"
+    "    open(path, 'wb').write(plistlib.dumps(content(kind), fmt=fmt))\n"
+    "else:\n"
+    "    want = content(kind)\n"
+    "    want.pop('lastModulation', None)\n"
+    "    got = plistlib.load(open(path, 'rb'))\n"
+    "    sys.exit(0 if got == want else 1)\n";
+
+/* the bytes of PATH (one of the test's), up to SIZE: how many, -1 when it cannot be read */
+static ssize_t
+file_bytes(const char *path, unsigned char *buf, size_t size)
+{
+	int fd = open(path, O_RDONLY, 0);
+	ssize_t got = 0, n;
+
+	if (fd < 0) {
+		return -1;
+	}
+	while ((size_t)got < size && (n = read(fd, buf + got, size - (size_t)got)) > 0) {
+		got += n;
+	}
+	close(fd);
+	return got;
+}
+
+static void
+put_bytes(const char *path, const unsigned char *data, size_t len)
+{
+	int fd = open(path, O_WRONLY | HOST_O_CREAT | HOST_O_TRUNC, 0600);
+
+	CHECK(fd >= 0 && write(fd, data, len) == (ssize_t)len, "%s written", path);
+	close(fd);
+}
+
+/* the plist of KIND made at PATH (one of the test's), or read back from there as KIND without lastModulation */
+static int
+bplist(const char *op, const char *path, const char *kind)
+{
+	char command[4600];
+
+	snprintf(command, sizeof(command), "python3 -I '%s' %s '%s' %s", in_root("/bplist.py"), op, path, kind);
+	return system(command) == 0;
+}
+
+/*
+ * A 1970 lastModulation is taken out of dasd's budgets after the clock is raised, and nothing else in the file changes;
+ * a later one, another kind of value, an XML plist and a link are left as they are.
+ */
+static void
+scenario_dasd(void)
+{
+	static const char *const dirs[] = { "/private", "/private/var", "/private/var/mobile", "/private/var/mobile/Library",
+		                            PREFS };
+	static const char *const taken[] = { "old", "y1999", "keys16", "keys15", "keys2", "big" };
+	static const char *const left[] = { "new", "string", "xml", "none" };
+	static unsigned char before[65536], after[65536];
+	char path[4096], elsewhere[4096];       /* (in_root()'s own buffers are taken again four calls later) */
+	ssize_t length;
+	struct host_statx x;
+
+	for (unsigned i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+		mkdir(in_root(dirs[i]), 0755);
+	}
+	put_file(in_root("/bplist.py"), bplist_py);
+	snprintf(path, sizeof(path), "%s", in_root(DASD_PLIST));
+	snprintf(elsewhere, sizeof(elsewhere), "%s", in_root("/private/elsewhere.plist"));
+	forget_calls();
+	forget_old_modulation();
+	CHECK(said[0] == 0, "no budgets: nothing done, nothing said: %s", said);
+
+	for (unsigned i = 0; i < sizeof(taken) / sizeof(taken[0]); i++) {
+		CHECK(bplist("make", path, taken[i]), "%s made", taken[i]);
+		chmod(path, 0640);
+		if (getuid() == 0) {
+			chown(path, 501, 20);
+		}
+		forget_calls();
+		forget_old_modulation();
+		CHECK(bplist("check", path, taken[i]), "%s: lastModulation gone, the rest as it was: %s", taken[i], said);
+		CHECK(init_said("lastModulation of ") && init_said("taken out"), "%s: and said so: %s", taken[i], said);
+		CHECK(host_statx(path, 0, &x) == 0 && (x.mode & 07777) == 0640 && x.nlink == 1, "%s: its mode kept: %o",
+		    taken[i], x.mode & 07777);
+		if (getuid() == 0) {
+			CHECK(x.uid == 501 && x.gid == 20, "%s: and its owner: %u:%u", taken[i], x.uid, x.gid);
+		}
+		if (i == 0) {
+			CHECK(init_said("lastModulation of 34 (before 2001)"), "the time said is the one stored: %s", said);
+		}
+		/* and a second time there is nothing more to do */
+		forget_calls();
+		forget_old_modulation();
+		CHECK(said[0] == 0 && bplist("check", path, taken[i]), "%s: run again, nothing changed: %s", taken[i], said);
+	}
+
+	for (unsigned i = 0; i < sizeof(left) / sizeof(left[0]); i++) {
+		CHECK(bplist("make", path, left[i]), "%s made", left[i]);
+		length = file_bytes(path, before, sizeof(before));
+		CHECK(length > 0 && host_statx(path, 0, &x) == 0, "%s looked at", left[i]);
+		{
+			uint64_t ino = x.ino;
+
+			forget_calls();
+			forget_old_modulation();
+			CHECK(host_statx(path, 0, &x) == 0 && x.ino == ino &&
+			    file_bytes(path, after, sizeof(after)) == length && memcmp(before, after, (size_t)length) == 0,
+			    "%s: the file is left as it was: %s", left[i], said);
+		}
+		CHECK(!init_said("taken out"), "%s: nothing said to be taken out: %s", left[i], said);
+		if (strcmp(left[i], "string") == 0) {
+			CHECK(init_said("is not a date"), "a value that is not a date: said: %s", said);
+		}
+	}
+
+	/* a link in the file's place: not followed, the file it leads to not touched */
+	CHECK(bplist("make", elsewhere, "old"), "the file a link leads to made");
+	unlink(path);
+	CHECK(symlink(elsewhere, path) == 0, "the link planted");
+	forget_calls();
+	forget_old_modulation();
+	CHECK(init_said("not a plain file"), "a link: left alone, and said so: %s", said);
+	CHECK(!bplist("check", elsewhere, "old"), "and the file behind it still has its 1970 date");
+
+	/* what is no plist at all, or one cut short anywhere: refused, nothing written */
+	unlink(path);
+	put_file(path, "bplist00 and then nothing that a plist has");
+	forget_calls();
+	forget_old_modulation();
+	CHECK(init_said("not a binary plist this reads") &&
+	    strcmp(file_text(path), "bplist00 and then nothing that a plist has") == 0, "a file that is no plist: left: %s", said);
+	CHECK(bplist("make", path, "old"), "the whole plist made");
+	length = file_bytes(path, before, sizeof(before));
+	for (ssize_t cut = 1; cut < length; cut++) {
+		put_bytes(path, before, (size_t)cut);
+		forget_calls();
+		forget_old_modulation();
+		CHECK(file_bytes(path, after, sizeof(after)) == cut && memcmp(before, after, (size_t)cut) == 0 &&
+		    !init_said("taken out"), "cut to %zd bytes: left as it is: %s", cut, said);
+	}
+	/* and every byte of the trailer changed in turn: whatever it then says, nothing is read or written past the file */
+	for (ssize_t at = length - 32; at < length; at++) {
+		for (unsigned v = 0; v < 256; v += 51) {
+			memcpy(after, before, (size_t)length);
+			after[at] = (unsigned char)v;
+			put_bytes(path, after, (size_t)length);
+			forget_calls();
+			forget_old_modulation();
+		}
+	}
+	CHECK(1, "a trailer that says anything: no fault");
+	unlink(path);
+	unlink(elsewhere);
+	unlink(in_root("/bplist.py"));
+}
+
 /* An exec that fails gives process 1 its standard error back; ">>" on an exec line is refused. */
 static void
 scenario_exec(void)
@@ -827,6 +1001,7 @@ main(void)
 	scenario_numbers();
 	scenario_build_date();
 	scenario_clock();
+	scenario_dasd();
 	scenario_exec();
 	scenario_zero_record();
 

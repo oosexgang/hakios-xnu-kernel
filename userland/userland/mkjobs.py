@@ -19,7 +19,8 @@ FLASHBOOT=1), the root is Apple's whole volume: --root-volume names the technica
 fairplayd, identityservicesd, passd, assistantd, callservicesd, lskdd, searchpartyd -- and were being
 refused on a flash boot for a reason true only of the thinned copy here. (fairplayd now runs on the phone
 and is never missed from a lookup again, but it does not stay: it exits 0 the moment it starts, says nothing,
-and KeepAlive brings it back every ten seconds -- 22 times in a session, not one signal. It wants the IOKit
+and launchd brought it back every ten seconds -- 22 times in a session, not one signal; it now waits ten
+minutes before it does (FAIRPLAYD_THROTTLE below). It wants the IOKit
 user client com_apple_driver_FairPlayIOKitUserClient, which this kernel has not got. The empty App Store and
 Weather were never its doing: see the network section of README.md.) Eight more, Safari's and
 AuthenticationServicesAgent, hang on the App cryptex being unpacked beside it at all (see CRYPTEXES
@@ -287,6 +288,27 @@ STDERR_LOG = {'OS_ACTIVITY_DT_MODE': 'YES', 'ACTIVITY_LOG_STDERR': '1', 'CFLOG_F
 if os.environ.get('OSLOG_LEVEL'):
     STDERR_LOG['OS_ACTIVITY_MODE'] = os.environ['OSLOG_LEVEL']
 
+# fairplayd (com.apple.fairplayd.H2) exits the moment it starts here, and launchd starts it again as soon as its
+# throttle lets it: at once for KeepAlive, which Apple's job has, and on demand too, because a message to one of its
+# Mach services is still waiting when it goes -- so every ten seconds, launchd's default ThrottleInterval, for the
+# whole session, whether the job is named or comes with --rest (which takes KeepAlive out already). The job stays,
+# with every Mach service it registers: what its clients do when a name they know is gone has not been seen on any
+# phone, and with the names there they keep doing what they do now. Only the restarts are spaced out. KeepAlive is
+# off, and ThrottleInterval -- the time launchd waits before it starts again a job that ran for less than that -- is
+# ten minutes, which costs nothing if fairplayd ever comes to work here: one that runs longer is restarted at once,
+# as before. Nothing waits on a restart: locationd's signer no longer asks it (components/location/inject_locationd.c)
+# and its other clients never had an answer. After the idea of the OnePlus Nord 2 port's respawn1
+# (frxncyyy/ios-denniz, heat-20261114), which measured the same loop and would take the job out instead.
+FAIRPLAYD_THROTTLE = 600
+
+
+def quiet_fairplayd(label, job):
+    """fairplayd's job not restarted every ten seconds (above); any other job as it is."""
+    if label.startswith('com.apple.fairplayd.'):        # (not com.apple.fairplaydeviceidentityd, a daemon of its own)
+        job['KeepAlive'] = False
+        job['ThrottleInterval'] = FAIRPLAYD_THROTTLE
+
+
 angels = f'{src_root}/System/Library/LaunchAngels'
 os.makedirs(dest, exist_ok=True)
 for label in labels:
@@ -325,6 +347,7 @@ for label in labels:
         job.setdefault('EnvironmentVariables', {})['CA_DISABLE_SECURE_INDICATOR'] = '1'
     if 'all' in oslog or label in oslog:
         job.setdefault('EnvironmentVariables', {}).update(STDERR_LOG)
+    quiet_fairplayd(label, job)
     with open(f'{dest}/{label}.plist', 'wb') as f:
         plistlib.dump(job, f, fmt=plistlib.FMT_BINARY)
     program = job.get('Program') or job['ProgramArguments'][0]
@@ -363,6 +386,7 @@ if rest:
                 job.setdefault('EnvironmentVariables', {})[var] = os.environ[var]
         if label in oslog:
             job.setdefault('EnvironmentVariables', {}).update(STDERR_LOG)
+        quiet_fairplayd(label, job)
         with open(f'{dest}/{name}', 'wb') as f:
             plistlib.dump(job, f, fmt=plistlib.FMT_BINARY)
         count += 1

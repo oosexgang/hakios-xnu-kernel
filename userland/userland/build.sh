@@ -590,6 +590,16 @@ PY
 			cp $p/com.apple.migration.plist "$home/Library/Preferences/ByHost/com.apple.migration..plist"
 			cp $p/com.apple.migration.plist "$home/Library/Preferences/ByHost/com.apple.migration.plist"
 		done
+		# ... and Messages' own record of it: IMDPersistence posts no banner for a message until
+		# kIMDPersistenceLastBuild in com.apple.imdsmsrecordstore (read for the current host, so in both places as
+		# above) is this build, which Messages' migration plug-in writes and nothing here runs. After the idea of
+		# the OnePlus Nord 2 port's 0277y (frxncyyy/ios-denniz), found on its iOS 16.7; not yet seen on ours.
+		python3 - "$p" "$build" <<'PY'
+import plistlib, sys
+for name in ('com.apple.imdsmsrecordstore.plist', 'ByHost/com.apple.imdsmsrecordstore..plist'):
+    with open(sys.argv[1] + '/' + name, 'wb') as f:
+        plistlib.dump({'kIMDPersistenceLastBuild': sys.argv[2]}, f, fmt=plistlib.FMT_BINARY)
+PY
 	fi
 	# (the ByHost directories, which the image's own skeleton does not have, before the files in them)
 	printf 'd\t755\t0\t0\t/private/var/root/Library/Preferences/ByHost\nd\t755\t501\t501\t/private/var/mobile/Library/Preferences/ByHost\n' >> root/etc/var.skel

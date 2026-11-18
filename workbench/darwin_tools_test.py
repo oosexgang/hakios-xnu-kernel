@@ -1,8 +1,8 @@
 """The parts of the Darwin image tool (darwin/tools/mkimage26.py) that need no IPSW: which files a pruned image
 leaves out, which Mach-O files are arm64e and go through pacstrip, the trimming of string tables, and
 where the stage0 it carries mounts the small image. And of the tools beside it: where they find pacstrip,
-fips26.py run again over a cache it has already changed, and aea.py's reading of an archive's metadata, which
-nothing has authenticated when it is read.
+fips26.py run again over a cache it has already changed, aea.py's reading of an archive's metadata, which
+nothing has authenticated when it is read, and the launchd jobs mkjobs.py writes for both image builders.
 
     python3 workbench/darwin_tools_test.py
 """
@@ -199,6 +199,56 @@ def deadline(test, seconds):
     signal.alarm(seconds)
     test.addCleanup(signal.signal, signal.SIGALRM, previous)
     test.addCleanup(signal.alarm, 0)
+
+
+class Jobs(unittest.TestCase):
+    """The launchd jobs both image builders write (userland/userland/mkjobs.py; root26-darwin.sh runs it with --rest)."""
+
+    MKJOBS = ROOT / 'userland/userland/mkjobs.py'
+    FAIRPLAYD = {'Label': 'com.apple.fairplayd.H2', 'Program': '/usr/sbin/fairplayd.H2', 'KeepAlive': True,
+                 'UserName': 'mobile', 'MachServices': {'com.apple.fairplayd': True, 'com.apple.fairplayd.xpc': True,
+                                                        'com.apple.unfreed': {'HostSpecialPort': 17}}}
+    IDENTITY = {'Label': 'com.apple.fairplaydeviceidentityd', 'Program': '/usr/libexec/fairplaydeviceidentityd',
+                'MachServices': {'com.apple.fairplaydeviceidentityd': True}}
+    KEPT = {'Label': 'com.apple.notifyd', 'Program': '/usr/sbin/notifyd', 'KeepAlive': True,
+            'MachServices': {'com.apple.system.notification_center': True}}
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        daemons = self.dir / 'rootfs/System/Library/LaunchDaemons'
+        daemons.mkdir(parents=True)
+        for job in (self.FAIRPLAYD, self.IDENTITY, self.KEPT):
+            (daemons / (job['Label'] + '.plist')).write_bytes(plistlib.dumps(job))
+            program = self.dir / 'rootfs' / job['Program'].lstrip('/')
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_bytes(b'')
+
+    def jobs(self, *labels, rest=False):
+        out = self.dir / 'jobs'
+        env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin')}       # (no DARWIN_FW, ALLOW or OSLOG of this shell's)
+        subprocess.run([sys.executable, str(self.MKJOBS), *(['--rest'] if rest else []), str(self.dir / 'rootfs'),
+                        str(out), *labels], env=env, check=True, stdout=subprocess.DEVNULL)
+        return {p.stem: plistlib.loads(p.read_bytes()) for p in out.glob('*.plist')}
+
+    def check_fairplayd(self, job):
+        self.assertIs(job['KeepAlive'], False)
+        self.assertEqual(job['ThrottleInterval'], 600)
+        self.assertEqual(job['MachServices'], self.FAIRPLAYD['MachServices'], 'its Mach services stay registered')
+        self.assertEqual(job['Program'], self.FAIRPLAYD['Program'])
+
+    def test_fairplayd_named_is_not_restarted_every_ten_seconds(self):
+        jobs = self.jobs('com.apple.fairplayd.H2', 'com.apple.notifyd')
+        self.check_fairplayd(jobs['com.apple.fairplayd.H2'])
+        self.assertIs(jobs['com.apple.notifyd']['KeepAlive'], True, 'another named job keeps its KeepAlive')
+        self.assertNotIn('ThrottleInterval', jobs['com.apple.notifyd'])
+
+    def test_fairplayd_on_demand_is_not_either(self):
+        jobs = self.jobs('com.apple.notifyd', rest=True)
+        self.check_fairplayd(jobs['com.apple.fairplayd.H2'])
+        identity = jobs['com.apple.fairplaydeviceidentityd']
+        self.assertNotIn('ThrottleInterval', identity, 'fairplaydeviceidentityd is another daemon')
+        self.assertNotIn('KeepAlive', identity)
 
 
 class AeaMetadata(unittest.TestCase):

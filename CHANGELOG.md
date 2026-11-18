@@ -68,6 +68,19 @@ tags yet, so the current work is one section.
   `var_store` put back -- never backwards and never more than ten years past the build (`init: the clock read` in the
   log). From 1970 the network's answer moved it 56 years at once, and dasd then kept a big core busy for the rest of
   the boot. After the idea of the OnePlus Nord 2 port's piece 0530; not yet seen on our phone.
+- **dasd's 1970 time taken out of a kept data volume.** A `/private/var` that `var_store` puts back can hold the time
+  dasd last moved its widget budgets as 1970, from a boot before the clock floor; with the clock right, dasd then
+  walked some two million fifteen-minute slots once and coreduetd held a big core. Process 1 takes `lastModulation`
+  out of `com.apple.dasd.widgetRefreshBudgets` when it is before 2001, after the clock is raised and before launchd,
+  and leaves the rest of the file as it was (`init: dasd's budgets` in the log). After the idea of the OnePlus Nord 2
+  port's dasdmod1; not yet seen on our phone.
+- **fairplayd is no longer started again every ten seconds.** It exits the moment it starts here; its job (Mach
+  services and all) stays, but launchd now waits ten minutes before starting a run that short again
+  (`ThrottleInterval`, `KeepAlive` off; `mkjobs.py`, both image builders). After the idea of the Nord 2 port's
+  respawn1, which takes the job out instead.
+- **Messages can post banners**: the image says Messages' data was migrated for its own build
+  (`kIMDPersistenceLastBuild` in `com.apple.imdsmsrecordstore`, mobile's Preferences and ByHost), which IMDPersistence
+  waits for before posting any. After the idea of the Nord 2 port's 0277y; not yet seen on our phone.
 - **"On My iPhone" in Files:** fileproviderd keeps its files only on a volume it takes for APFS, so `/private/var`
   (ramfs) is named "apfs" to fileproviderd and to no other program (`var_apfs=0` turns it off); APFS's own requests are
   refused there with ENOTSUP. After the idea of the Nord 2 port's piece 0734; not yet seen on our phone.

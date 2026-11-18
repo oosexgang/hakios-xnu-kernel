@@ -905,13 +905,13 @@ read_whole(const char *path, char *buf, size_t size)
  * followed: a link in the file's place (a symbolic one, or a second name of a file of root's) would
  * have root cut that file short and give it to mobile, and so would a directory on the way that is a
  * link to one elsewhere. The name is removed and made anew, and the owner is set on what was opened,
- * not on the name.
+ * not on the name. 0 when the file is written; -2 when the path is refused (and said so); -1 when the
+ * writing failed (errno says why).
  */
-static void
-write_preferences(const char *path, const char *text, const char *what)
+static int
+put_preferences(const char *path, const void *data, size_t len, int mode, int uid, int gid, const char *what)
 {
 	char dir[256];
-	size_t len = strlen(text);
 	struct stat st;
 	int fd, good;
 
@@ -920,21 +920,32 @@ write_preferences(const char *path, const char *text, const char *what)
 
 		if (n >= sizeof(dir)) {
 			printf("  %s: %s: the path is too long: not written\n", what, path);
-			return;
+			return -2;
 		}
 		memcpy(dir, path, n);
 		dir[n] = 0;
 		if (lstat(dir, &st) != 0 || (st.st_mode & S_IFMT) != S_IFDIR) {
 			printf("  %s: %s is not a directory (a link, or not there): not written\n", what, dir);
-			return;
+			return -2;
 		}
 	}
 	unlink(path);           /* (usually there is nothing to remove) */
-	fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-	good = fd >= 0 && write(fd, text, len) == (ssize_t)len && fchown(fd, 501, 501) == 0;
-	printf("  %s: %s\n", what, good ? "set" : strerror(errno));
+	fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
+	good = fd >= 0 && write(fd, data, len) == (ssize_t)len && fchown(fd, uid, gid) == 0;
 	if (fd >= 0) {
 		close(fd);
+	}
+	return good ? 0 : -1;
+}
+
+/* A preferences file of mobile's (mode 0600) holding TEXT, and a line saying whether it was set. */
+static void
+write_preferences(const char *path, const char *text, const char *what)
+{
+	int put = put_preferences(path, text, strlen(text), 0600, 501, 501, what);
+
+	if (put != -2) {
+		printf("  %s: %s\n", what, put == 0 ? "set" : strerror(errno));
 	}
 }
 
@@ -1261,6 +1272,278 @@ clock_floor(void)
 		    settimeofday(&tv, NULL) == 0 ? "ok" : strerror(errno));
 	} else {
 		printf("init: the clock (%ld) is not behind the volumes' times%s\n", now.tv_sec, left_out);
+	}
+}
+
+/*
+ * ---- dasd's last budget modulation, from a boot whose clock read 1970 ----
+ *
+ * dasd moves its widget refresh budgets along in fifteen-minute slots, from the time it last did so
+ * (lastModulation in mobile's com.apple.dasd.widgetRefreshBudgets) to now, one slot after another, and stores the
+ * time again only when it has walked them all; every few slots it asks coreduetd for a prediction. A boot that
+ * started in 1970 had dasd store a 1970 time there, and what restore_var() puts back keeps it: with the clock now
+ * right, the next boot walks about two million slots, and coreduetd holds a big core for as long as the phone is
+ * up. Without the key dasd takes a single slot and stores the present, so a time before 2001 -- CoreFoundation's
+ * epoch, before any clock that was ever set -- is taken out of the file and nothing else in it is changed. The
+ * file is left alone in every other case: a later time, another kind of value, a plist that is not binary (cfprefsd
+ * writes binary ones), anything this reading does not follow. After the idea of the OnePlus Nord 2 port's dasdmod1
+ * (frxncyyy/ios-denniz, heat-20261114), which found the walk and the key on its phone.
+ */
+#define DASD_BUDGETS    "/private/var/mobile/Library/Preferences/com.apple.dasd.widgetRefreshBudgets.plist"
+#define DASD_KEY        "lastModulation"
+#define BPLIST_MAX      65536
+#define CF_EPOCH        978307200L      /* 1 January 2001, in seconds since 1970: CoreFoundation's dates count from it */
+
+/* the big-endian number of N bytes (1 to 8) at P */
+static uint64_t
+be_read(const unsigned char *p, unsigned n)
+{
+	uint64_t v = 0;
+
+	while (n-- > 0) {
+		v = v << 8 | *p++;
+	}
+	return v;
+}
+
+static void
+be_write(unsigned char *p, unsigned n, uint64_t v)
+{
+	while (n-- > 0) {
+		p[n] = (unsigned char)v;
+		v >>= 8;
+	}
+}
+
+/* N bytes from SRC to DST, which is not after it: front to back, so that overlapping is no matter */
+static void
+move_down(unsigned char *dst, const unsigned char *src, uint64_t n)
+{
+	while (n-- > 0) {
+		*dst++ = *src++;
+	}
+}
+
+/* A binary plist as far as this needs it: its sizes, where its offset table is and how many objects it names. */
+struct bplist {
+	unsigned char   *data;
+	size_t          len;
+	unsigned        offset_size, ref_size;
+	uint64_t        objects, top, table;
+};
+
+/* Where object I starts, or 0 when that is not a place an object can be. */
+static uint64_t
+bplist_object(const struct bplist *b, uint64_t i)
+{
+	uint64_t at;
+
+	if (i >= b->objects) {
+		return 0;
+	}
+	at = be_read(b->data + b->table + i * b->offset_size, b->offset_size);
+	return at >= 8 && at < b->table ? at : 0;
+}
+
+/*
+ * The count of the object at AT (its marker's low four bits, or the integer after them when they are 15), and in
+ * *HEAD how many bytes the marker and that integer take; -1 when they run past the objects.
+ */
+static long
+bplist_count(const struct bplist *b, uint64_t at, unsigned *head)
+{
+	unsigned low = b->data[at] & 0xf, size;
+	uint64_t n;
+
+	if (low != 0xf) {
+		*head = 1;
+		return low;
+	}
+	if (at + 2 > b->table || (b->data[at + 1] & 0xf0) != 0x10 || (b->data[at + 1] & 0xf) > 3) {
+		return -1;
+	}
+	size = 1u << (b->data[at + 1] & 0xf);
+	if (at + 2 + size > b->table || (n = be_read(b->data + at + 2, size)) > 0xffffff) {
+		return -1;
+	}
+	*head = 2 + size;
+	return (long)n;
+}
+
+/* The trailer read and checked; 0 when this is a binary plist whose table and objects lie where they can. */
+static int
+bplist_open(struct bplist *b, unsigned char *data, size_t len)
+{
+	const unsigned char *t;
+
+	if (len < 8 + 32 || memcmp(data, "bplist00", 8) != 0) {
+		return -1;
+	}
+	t = data + len - 32;            /* (the trailer: sizes, the number of objects, the top one, the table) */
+	b->data = data;
+	b->len = len;
+	b->offset_size = t[6];
+	b->ref_size = t[7];
+	b->objects = be_read(t + 8, 8);
+	b->top = be_read(t + 16, 8);
+	b->table = be_read(t + 24, 8);
+	if (b->offset_size < 1 || b->offset_size > 8 || b->ref_size < 1 || b->ref_size > 8 || b->table < 9 ||
+	    b->table >= len - 32 || b->objects > (len - 32 - b->table) / b->offset_size) {
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * In the top dictionary of the plist DATA (LEN bytes), the entry KEY whose value is a date before 2001: taken out,
+ * the dictionary rewritten one entry shorter and everything after it moved down; the new length, the date's seconds
+ * since 1970 in *WHEN and *KNOWN 1 (0 when it is too far back, or no number at all, to say). 0 when there is no
+ * such entry, -1 when the plist is not one this follows, -2 when the key holds something else.
+ */
+static long
+bplist_drop_old_date(unsigned char *data, size_t len, const char *key, long *when, int *known)
+{
+	struct bplist b;
+	uint64_t dict, keys, values, at, bits, delta;
+	size_t key_len = strlen(key);
+	unsigned head, new_head, rs, os;
+	unsigned char header[1 + 1 + 4];
+	long count, found = -1;
+	int exponent;
+
+	if (bplist_open(&b, data, len) != 0 || (dict = bplist_object(&b, b.top)) == 0 || (data[dict] & 0xf0) != 0xd0 ||
+	    (count = bplist_count(&b, dict, &head)) < 0) {
+		return -1;
+	}
+	rs = b.ref_size;
+	os = b.offset_size;
+	keys = dict + head;
+	values = keys + (uint64_t)count * rs;
+	if (values + (uint64_t)count * rs > b.table) {
+		return -1;
+	}
+	for (long i = 0; i < count && found < 0; i++) {
+		unsigned key_head;
+
+		at = bplist_object(&b, be_read(data + keys + (uint64_t)i * rs, rs));
+		if (at != 0 && (data[at] & 0xf0) == 0x50 && bplist_count(&b, at, &key_head) == (long)key_len &&
+		    at + key_head + key_len <= b.table && memcmp(data + at + key_head, key, key_len) == 0) {
+			found = i;
+		}
+	}
+	if (found < 0) {
+		return 0;
+	}
+	at = bplist_object(&b, be_read(data + values + (uint64_t)found * rs, rs));
+	if (at == 0 || data[at] != 0x33 || at + 9 > b.table) {
+		return -2;              /* (0x33: a date, a big-endian double of seconds since 2001) */
+	}
+	bits = be_read(data + at + 1, 8);
+	if (!(bits >> 63) || (bits << 1) == 0) {
+		return 0;               /* 2001 or later (or a negative zero, which is 2001 itself) */
+	}
+	/* the whole seconds before 2001, from the double's own fields: no floating point in process 1 */
+	exponent = (int)((bits >> 52) & 0x7ff) - 1023;
+	*known = exponent <= 40;
+	if (*known) {
+		uint64_t mantissa = (bits & ((1ull << 52) - 1)) | 1ull << 52;
+
+		*when = CF_EPOCH - (long)(exponent < 0 ? 0 : mantissa >> (52 - exponent));
+	}
+
+	/* the dictionary one entry shorter, its count written as a writer of binary plists writes it */
+	count--;
+	if (count < 15) {
+		header[0] = (unsigned char)(0xd0 | count);
+		new_head = 1;
+	} else {
+		unsigned size = count < 0x100 ? 1 : count < 0x10000 ? 2 : 4;
+
+		header[0] = 0xdf;
+		header[1] = (unsigned char)(0x10 | (size == 1 ? 0 : size == 2 ? 1 : 2));
+		be_write(header + 2, size, (uint64_t)count);
+		new_head = 2 + size;
+	}
+	delta = head - new_head + 2 * (uint64_t)rs;
+	{
+		uint64_t old_end = values + ((uint64_t)count + 1) * rs;
+		uint64_t cut_value = values + (uint64_t)found * rs;
+		uint64_t cut_key = keys + (uint64_t)found * rs;
+		uint64_t to = dict;
+
+		/* (everything moves down or stays, so each piece is copied over bytes already read) */
+		memcpy(data + to, header, new_head);
+		to += new_head;
+		move_down(data + to, data + keys, cut_key - keys);
+		to += cut_key - keys;
+		move_down(data + to, data + cut_key + rs, cut_value - (cut_key + rs));
+		to += cut_value - (cut_key + rs);
+		move_down(data + to, data + cut_value + rs, old_end - (cut_value + rs));
+		to += old_end - (cut_value + rs);
+		move_down(data + to, data + old_end, len - old_end);
+	}
+	b.table -= delta;
+	for (uint64_t i = 0; i < b.objects; i++) {
+		unsigned char *entry = data + b.table + i * os;
+		uint64_t offset = be_read(entry, os);
+
+		if (offset > dict) {
+			be_write(entry, os, offset - delta);
+		}
+	}
+	be_write(data + len - delta - 32 + 24, 8, b.table);
+	return (long)(len - delta);
+}
+
+static void
+forget_old_modulation(void)
+{
+	static unsigned char data[BPLIST_MAX + 1];
+	struct stat st;
+	ssize_t got = 0, n;
+	long when = 0, left;
+	int fd, known = 0;
+
+	if (lstat(DASD_BUDGETS, &st) != 0) {
+		return;                 /* (no budgets kept: a first boot, or no store) */
+	}
+	if ((st.st_mode & S_IFMT) != S_IFREG) {
+		printf("init: dasd's budgets: %s is not a plain file: left alone\n", DASD_BUDGETS);
+		return;
+	}
+	fd = open(DASD_BUDGETS, O_RDONLY | O_NOFOLLOW, 0);
+	if (fd < 0) {
+		printf("init: dasd's budgets: %s: %s\n", DASD_BUDGETS, strerror(errno));
+		return;
+	}
+	while (got <= BPLIST_MAX && (n = read(fd, data + got, BPLIST_MAX + 1 - (size_t)got)) > 0) {
+		got += n;
+	}
+	close(fd);
+	if (got > BPLIST_MAX) {
+		printf("init: dasd's budgets: more than %d bytes: left alone\n", BPLIST_MAX);
+		return;
+	}
+	left = bplist_drop_old_date(data, (size_t)got, DASD_KEY, &when, &known);
+	if (left == 0) {
+		return;                 /* (no date before 2001 in it: the usual case) */
+	}
+	if (left < 0) {
+		printf("init: dasd's budgets: %s\n", left == -2 ? DASD_KEY " is not a date: left alone" :
+		    "not a binary plist this reads: left alone");
+		return;
+	}
+	if (put_preferences(DASD_BUDGETS, data, (size_t)left, st.st_mode & 07777, (int)st.st_uid, (int)st.st_gid,
+	    "dasd's budgets") == -1) {
+		printf("init: dasd's budgets: %s: %s\n", DASD_BUDGETS, strerror(errno));
+		return;
+	}
+	if (!known) {
+		printf("init: dasd's budgets: " DASD_KEY " of no time that can be said, before 2001, taken out "
+		    "(dasd starts its slots from now)\n");
+	} else {
+		printf("init: dasd's budgets: " DASD_KEY " of %ld (before 2001) taken out (dasd starts its slots from now)\n",
+		    when);
 	}
 }
 
@@ -1754,6 +2037,7 @@ main(int argc, char **argv, char **envp)
 	mount_writable();
 	restore_var();
 	clock_floor();
+	forget_old_modulation();
 	boot_arg_preferences();
 	test_files();
 	test_writable();

@@ -4,7 +4,7 @@
  * locationd signs some of the data it sends to Apple with a CLMescalSigner, made on one of its silos (the serial
  * queues its work is divided among). -[CLMescalSigner initInSilo:] first sets up a FairPlay SAP session, a call
  * into fairplayd that waits for the answer. fairplayd here leaves the moment it starts (it wants an IOKit user
- * client this kernel has not got: userland/userland/mkjobs.py) and launchd starts it again every ten seconds, so
+ * client this kernel has not got: userland/userland/mkjobs.py) and launchd starts it again only when asked, at most every ten minutes, so
  * the answer never comes. The silo is held for good, and whatever needs it waits behind it: the clients' XPC
  * requests, locationd's main thread, the synchronous CoreLocation calls locationd makes to itself. Settings >
  * Privacy & Security never opens, and an application that asks for its location authorization before its first
