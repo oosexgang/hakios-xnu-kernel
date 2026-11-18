@@ -229,6 +229,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		$DYN -o obj/thermald src/thermald.c
 		$DYN -framework CoreFoundation -framework AudioToolbox -framework AVFoundation -lobjc -o obj/sound_test ../../components/audio/sound_test.c
 		$DYN -framework CoreFoundation -lMobileGestalt -o obj/mg_test src/mg_test.c
+		$DYN -framework CoreFoundation -framework CoreMotion -framework CoreLocation -lMobileGestalt -o obj/sensors_probe src/sensors_probe.m
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/torch_test src/torch_test.c
 		$DYN -O2 -o obj/camera_test ../../components/camera/src/camera_test.c ../../components/camera/src/camera_isp.c
 		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest ../../components/camera/src/camera_avtest.m
@@ -401,7 +402,7 @@ if [ -d $DARWIN_FW/rootfs/usr/lib ]; then
 		fi
 	fi
 	# (drawable_test is built in the same block as surf_test, so it is copied with it)
-	cp obj/hello_dyn obj/svc_test obj/surf_test obj/drawable_test obj/rwtouch obj/mg_test root/bin/
+	cp obj/hello_dyn obj/svc_test obj/surf_test obj/drawable_test obj/rwtouch obj/mg_test obj/sensors_probe root/bin/
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
 	[ -f obj/thermald ] && cp obj/thermald root/bin/
 	[ -f obj/cow_test ] && cp obj/cow_test root/bin/
