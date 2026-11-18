@@ -13,6 +13,8 @@
 #include <corecrypto/ccmode.h>
 #include <corecrypto/ccmode_impl.h>
 #include <corecrypto/ccaes.h>
+#include <corecrypto/cc.h>
+#include <corecrypto/cc_error.h>
 #include <string.h>
 
 #include "minicrypto.h"
@@ -80,19 +82,34 @@ gmul(uint8_t a, uint8_t b)
 	return p;
 }
 
+/*
+ * A context only counts as keyed when its round count is one AES has. Callers
+ * do not all check what init returned (ESP's key schedule does not), and a
+ * context that was never keyed -- zeroed memory, or one whose key had a length
+ * AES does not take -- would otherwise run zero rounds and hand the plaintext
+ * back as the ciphertext.
+ */
+static inline bool
+mc_aes_keyed(const struct mc_aes_key *k)
+{
+	return k->rounds == 10 || k->rounds == 12 || k->rounds == 14;
+}
+
 static int
 mc_aes_setkey(struct mc_aes_key *k, size_t key_len, const uint8_t *key)
 {
 	uint32_t nk = (uint32_t)key_len / 4;
 	uint8_t rcon = 1;
+	uint8_t t[4];
 
 	if (key_len != 16 && key_len != 24 && key_len != 32) {
-		return -1;
+		/* whatever key the context held before must not stay usable */
+		cc_clear(sizeof(*k), k);
+		return CCERR_PARAMETER;
 	}
 	k->rounds = nk + 6;
 	memcpy(k->rk, key, key_len);
 	for (uint32_t i = nk; i < 4 * (k->rounds + 1); i++) {
-		uint8_t t[4];
 		memcpy(t, k->rk + 4 * (i - 1), 4);
 		if (i % nk == 0) {
 			uint8_t first = t[0];
@@ -110,6 +127,7 @@ mc_aes_setkey(struct mc_aes_key *k, size_t key_len, const uint8_t *key)
 			k->rk[4 * i + j] = k->rk[4 * (i - nk) + j] ^ t[j];
 		}
 	}
+	cc_clear(sizeof(t), t);
 	return 0;
 }
 
@@ -143,6 +161,9 @@ mc_aes_encrypt_block(const struct mc_aes_key *k, const uint8_t *in, uint8_t *out
 		}
 	}
 	memcpy(out, s, 16);
+	/* t xor the output is the last round key, from which the whole key follows */
+	cc_clear(sizeof(t), t);
+	cc_clear(sizeof(s), s);
 }
 
 static void
@@ -176,6 +197,8 @@ mc_aes_decrypt_block(const struct mc_aes_key *k, const uint8_t *in, uint8_t *out
 		memcpy(s, t, 16);
 	}
 	memcpy(out, s, 16);
+	cc_clear(sizeof(t), t);
+	cc_clear(sizeof(s), s);
 }
 
 /* ---------------------------------------------------------------- ECB --- */
@@ -186,13 +209,31 @@ mc_ecb_init(const struct ccmode_ecb *ecb __unused, ccecb_ctx *ctx, size_t key_nb
 	return mc_aes_setkey((struct mc_aes_key *)ctx, key_nbytes, key);
 }
 
+/*
+ * What the mode functions do with a context that holds no key: the output is
+ * zeroed rather than left as it was, for a caller that ignores the error and
+ * sends the buffer anyway (in place it would be the plaintext, in a fresh
+ * buffer whatever memory was there before).
+ */
+static int
+mc_aes_refuse(size_t nbytes, void *out)
+{
+	cc_clear(nbytes, out);
+	return CCMODE_INVALID_CALL_SEQUENCE;
+}
+
 static int
 mc_ecb_encrypt(const ccecb_ctx *ctx, size_t nblocks, const void *in, void *out)
 {
+	const struct mc_aes_key *k = (const struct mc_aes_key *)ctx;
 	const uint8_t *i = in;
 	uint8_t *o = out;
+
+	if (!mc_aes_keyed(k)) {
+		return mc_aes_refuse(nblocks * 16, out);
+	}
 	for (; nblocks > 0; nblocks--, i += 16, o += 16) {
-		mc_aes_encrypt_block((const struct mc_aes_key *)ctx, i, o);
+		mc_aes_encrypt_block(k, i, o);
 	}
 	return 0;
 }
@@ -200,10 +241,15 @@ mc_ecb_encrypt(const ccecb_ctx *ctx, size_t nblocks, const void *in, void *out)
 static int
 mc_ecb_decrypt(const ccecb_ctx *ctx, size_t nblocks, const void *in, void *out)
 {
+	const struct mc_aes_key *k = (const struct mc_aes_key *)ctx;
 	const uint8_t *i = in;
 	uint8_t *o = out;
+
+	if (!mc_aes_keyed(k)) {
+		return mc_aes_refuse(nblocks * 16, out);
+	}
 	for (; nblocks > 0; nblocks--, i += 16, o += 16) {
-		mc_aes_decrypt_block((const struct mc_aes_key *)ctx, i, o);
+		mc_aes_decrypt_block(k, i, o);
 	}
 	return 0;
 }
@@ -233,14 +279,18 @@ mc_cbc_init(const struct ccmode_cbc *cbc __unused, cccbc_ctx *ctx, size_t key_le
 static int
 mc_cbc_encrypt(const cccbc_ctx *ctx, cccbc_iv *iv, size_t nblocks, const void *in, void *out)
 {
+	const struct mc_aes_key *k = (const struct mc_aes_key *)ctx;
 	const uint8_t *i = in;
 	uint8_t *o = out, *chain = (uint8_t *)iv;
 
+	if (!mc_aes_keyed(k)) {
+		return mc_aes_refuse(nblocks * 16, out);
+	}
 	for (; nblocks > 0; nblocks--, i += 16, o += 16) {
 		for (int b = 0; b < 16; b++) {
 			chain[b] ^= i[b];
 		}
-		mc_aes_encrypt_block((const struct mc_aes_key *)ctx, chain, chain);
+		mc_aes_encrypt_block(k, chain, chain);
 		memcpy(o, chain, 16);
 	}
 	return 0;
@@ -249,18 +299,24 @@ mc_cbc_encrypt(const cccbc_ctx *ctx, cccbc_iv *iv, size_t nblocks, const void *i
 static int
 mc_cbc_decrypt(const cccbc_ctx *ctx, cccbc_iv *iv, size_t nblocks, const void *in, void *out)
 {
+	const struct mc_aes_key *k = (const struct mc_aes_key *)ctx;
 	const uint8_t *i = in;
 	uint8_t *o = out, *chain = (uint8_t *)iv;
+	uint8_t cipher[16], plain[16];
 
+	if (!mc_aes_keyed(k)) {
+		return mc_aes_refuse(nblocks * 16, out);
+	}
 	for (; nblocks > 0; nblocks--, i += 16, o += 16) {
-		uint8_t cipher[16], plain[16];
 		memcpy(cipher, i, 16); /* in and out may be the same buffer */
-		mc_aes_decrypt_block((const struct mc_aes_key *)ctx, cipher, plain);
+		mc_aes_decrypt_block(k, cipher, plain);
 		for (int b = 0; b < 16; b++) {
 			o[b] = plain[b] ^ chain[b];
 		}
 		memcpy(chain, cipher, 16);
 	}
+	cc_clear(sizeof(plain), plain);
+	cc_clear(sizeof(cipher), cipher);
 	return 0;
 }
 
@@ -301,10 +357,12 @@ mc_ctr_init(const struct ccmode_ctr *mode, ccctr_ctx *ctx, size_t key_len, const
 {
 	struct mc_aes_ctr *c = (struct mc_aes_ctr *)ctx;
 	int rc = mc_aes_setkey(&c->key, key_len, key);
-	if (rc == 0) {
-		rc = mc_ctr_setctr(mode, ctx, iv);
+	if (rc != 0) {
+		/* the keystream left from an earlier key goes too */
+		cc_clear(sizeof(*c), c);
+		return rc;
 	}
-	return rc;
+	return mc_ctr_setctr(mode, ctx, iv);
 }
 
 static int
@@ -314,6 +372,9 @@ mc_ctr_crypt(ccctr_ctx *ctx, size_t nbytes, const void *in, void *out)
 	const uint8_t *i = in;
 	uint8_t *o = out;
 
+	if (!mc_aes_keyed(&c->key)) {
+		return mc_aes_refuse(nbytes, out);
+	}
 	for (; nbytes > 0; nbytes--) {
 		if (c->used == 16) {
 			mc_aes_encrypt_block(&c->key, c->counter, c->stream);

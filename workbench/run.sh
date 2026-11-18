@@ -183,6 +183,38 @@ if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /de
 	fi
 fi
 
+# the kernel's stand-in for corecrypto (crypto/, as osfmk/minicrypto) with the parts of XNU's own corecrypto it rests on,
+# from the kernel tree kernel/env.sh names (XNU_SRC): on the host under the sanitizers, and under qemu-aarch64 as the
+# picture processor's (built there without the DIT register's code: gcc has no builtin for it, and it would not run).
+# Left out where that tree is not there.
+XNU=$(source "$HERE/../kernel/env.sh" > /dev/null 2>&1 && echo "$XNU_SRC") || XNU=''
+if [ -n "$XNU" ] && [ -f "$XNU/osfmk/corecrypto/cchmac.c" ] && [ -d "$XNU/EXTERNAL_HEADERS/corecrypto" ]; then
+	MINICRYPTO=$WORK/kernel/osfmk/minicrypto
+	MINICRYPTO_SOURCES=("$HERE/minicrypto_test.c" "$MINICRYPTO/mc_aes.c" "$MINICRYPTO/mc_digests.c")
+	for part in ccdigest_init ccdigest_update ccdigest_final_64be cchmac_init cchmac_update cchmac_final cchmac cc_clear cc_cmp_safe; do
+		MINICRYPTO_SOURCES+=("$XNU/osfmk/corecrypto/$part.c")
+	done
+	MINICRYPTO_FLAGS=(-std=gnu11 -Wall -Wextra -Werror -O2 -I"$MINICRYPTO" -I"$XNU/EXTERNAL_HEADERS" -I"$XNU/osfmk/corecrypto"
+		'-D__unused=__attribute__((unused))' -Wno-parentheses)
+	echo "== minicrypto_test (host${SANITIZE[0]:+, sanitizers})"
+	if "$CC" "${MINICRYPTO_FLAGS[@]}" "${SANITIZE[@]}" "${MINICRYPTO_SOURCES[@]}" -o "$WORK/minicrypto_test" && "$WORK/minicrypto_test"; then
+		:
+	else
+		failed=1
+	fi
+	if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
+		echo "== minicrypto_test (aarch64, qemu-aarch64)"
+		if aarch64-linux-gnu-gcc -static "${MINICRYPTO_FLAGS[@]}" -DCC_DIT_MAYBE_SUPPORTED=0 "${MINICRYPTO_SOURCES[@]}" -o "$WORK/minicrypto_test.a64" &&
+		    qemu-aarch64 "$WORK/minicrypto_test.a64"; then
+			:
+		else
+			failed=1
+		fi
+	fi
+else
+	echo "== (no kernel tree at ${XNU:-the place kernel/env.sh names}: minicrypto_test is left out)"
+fi
+
 # the helper that breaks a driver on purpose (workbench/mutate.sh), on the example driver: a change that
 # matters is caught, one that changes nothing is not, one that does not compile is said to be that
 echo "== mutate.sh (on Documentation/examples/example_led.c)"

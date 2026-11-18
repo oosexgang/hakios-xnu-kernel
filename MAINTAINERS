@@ -310,6 +310,7 @@ F:	security/
 F:	crypto/
 F:	components/sep/
 F:	drivers/iokit/MiniAppleKeyStore.cpp
+T:	workbench/minicrypto_test.c
 
 STORAGE
 F:	drivers/board/ufs.c
