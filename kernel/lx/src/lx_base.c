@@ -856,13 +856,17 @@ linux_dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle
 
 	size = roundup2(size, 64);
 	lx_os_lock();
-	at = pool.rings_used;
+	/*
+	 * (as Linux gives it: a piece of a page or more starts on a page -- what the firmware is handed whole, the QMI target
+	 * memory's chunks, may need it -- and a smaller one on 64 bytes)
+	 */
+	at = size >= 4096 ? roundup2(pool.rings_used, 4096) : pool.rings_used;
 	if (pool.memory == NULL || at + size > POOL_RINGS) {
 		lx_os_unlock();
 		printf("lx: no room for %zu more bytes of rings\n", size);
 		return (NULL);
 	}
-	pool.rings_used += size;
+	pool.rings_used = at + size;
 	lx_os_unlock();
 	bzero(pool.memory + at, size);
 	*dma_handle = pool.address + at;
