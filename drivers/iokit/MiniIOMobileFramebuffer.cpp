@@ -2039,7 +2039,12 @@ IOMobileFramebufferUserClient::initWithTask(task_t owningTask, void * securityID
 	if (!IOUserClient::initWithTask(owningTask, securityID, type, properties)) {
 		return false;
 	}
+	/*
+	 * (held, not only named: the send rights it makes go into this task's space. A program that hands its connection to
+	 * another and exits is gone before the connection is, and the other's calls must not find a task that has been freed)
+	 */
 	fTask = owningTask;
+	task_reference(fTask);
 	{
 		char procname[32] = "?";
 		proc_selfname(procname, sizeof(procname));
@@ -2094,6 +2099,10 @@ IOMobileFramebufferUserClient::free(void)
 	if (fLock != NULL) {
 		IOLockFree(fLock);
 		fLock = NULL;
+	}
+	if (fTask != NULL) {
+		task_deallocate(fTask);
+		fTask = NULL;
 	}
 	IOUserClient::free();
 }
@@ -2218,7 +2227,18 @@ IOReturn
 IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
     IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
 {
-	IOReturn result = method(selector, args);
+	IOReturn result;
+
+	/*
+	 * (closed: its program is gone, or let go of it. Whoever else has the connection still -- it was handed on -- is not
+	 * served in its place: the answers would be made in the space of the task that opened it)
+	 */
+	IOLockLock(fLock);
+	result = fClosed ? kIOReturnNotOpen : kIOReturnSuccess;
+	IOLockUnlock(fLock);
+	if (result == kIOReturnSuccess) {
+		result = method(selector, args);
+	}
 
 	(void) dispatch;
 	(void) target;
@@ -2451,14 +2471,18 @@ publishDisplayNode(void)
  * "HakiosMetal", MetalPluginClassName "HakiosMetalDevice" (components/metal/plugin/plugin/HakiosMetalCA.m, installed as
  * /System/Library/Extensions/HakiosMetal.bundle), and a program that asks Metal for a device gets
  * ours -- CoreAnimation in backboardd among them, which then draws the screen with the GPU. A user
- * process may also change or remove the two (setProperties below), which is the way back to the
- * software renderer without a reboot. Without metal=1 (the default) nothing changes: CoreAnimation
- * keeps its software renderer, as in the RAM-only release. See Documentation/metal-glass.md.
+ * process may also remove the two, or put them back as they were (setProperties below): removing
+ * them is the way back to the software renderer without a reboot. Without metal=1 (the default)
+ * nothing changes: CoreAnimation keeps its software renderer, as in the RAM-only release. See
+ * Documentation/metal-glass.md.
  */
 
 /* Metal's step 2 reads exactly these two, in this order, off this service (docs/metal.md 1). */
 #define kAcceleratorPluginNameKey      "MetalPluginName"
 #define kAcceleratorPluginClassNameKey "MetalPluginClassName"
+/* ... and the only values they take here: our plug-in's (components/metal/plugin) */
+#define kAcceleratorPluginName         "HakiosMetal"
+#define kAcceleratorPluginClassName    "HakiosMetalDevice"
 
 static bool gAcceleratorTakesProperties;        /* boot-arg metal=1 */
 
@@ -2500,7 +2524,11 @@ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
  * they are gone go back to the software road.
  *
  * Everything else is refused, and refused whole, before anything is set: every process on the
- * machine can reach this method and the only thing it exists for is this one switch.
+ * machine can reach this method and the only thing it exists for is this one switch. That goes for
+ * the values too: each property is either our plug-in's own name (kAcceleratorPluginName,
+ * kAcceleratorPluginClassName) or empty. Metal makes a path of the first, so any other string
+ * -- "../../../tmp/x", say -- would have every process that asks Metal for a device afterwards
+ * load a bundle of the sender's choosing; compared whole with our name, no "/" or ".." gets by.
  */
 IOReturn
 IOAcceleratorES::setProperties(OSObject * properties)
@@ -2537,9 +2565,18 @@ IOAcceleratorES::setProperties(OSObject * properties)
 			keys->release();
 			return kIOReturnUnsupported;
 		}
-		if (OSDynamicCast(OSString, dict->getObject(key)) == NULL) {
+		OSString * value = OSDynamicCast(OSString, dict->getObject(key));
+
+		if (value == NULL) {
 			IOLog("IOAcceleratorES: refusing \"%s\" from %s: Metal reads it as a CFString\n",
 			    key->getCStringNoCopy(), who);
+			keys->release();
+			return kIOReturnBadArgument;
+		}
+		if (value->getLength() != 0 && !value->isEqualTo(key->isEqualTo(kAcceleratorPluginNameKey) ?
+		    kAcceleratorPluginName : kAcceleratorPluginClassName)) {
+			IOLog("IOAcceleratorES: refusing %s from %s: it is \"%s\" or nothing\n", key->getCStringNoCopy(), who,
+			    key->isEqualTo(kAcceleratorPluginNameKey) ? kAcceleratorPluginName : kAcceleratorPluginClassName);
 			keys->release();
 			return kIOReturnBadArgument;
 		}
@@ -2576,11 +2613,11 @@ publishAccelerator(IOService * provider)
 		accelerator->setName("sgx");
 		/* (before registerService: whoever finds the service finds it with them) */
 		if (gAcceleratorTakesProperties) {
-			accelerator->setProperty(kAcceleratorPluginNameKey, "HakiosMetal");
-			accelerator->setProperty(kAcceleratorPluginClassNameKey, "HakiosMetalDevice");
+			accelerator->setProperty(kAcceleratorPluginNameKey, kAcceleratorPluginName);
+			accelerator->setProperty(kAcceleratorPluginClassNameKey, kAcceleratorPluginClassName);
 			/* the first line to look for in the log of such a boot */
 			IOLog("IOAcceleratorES: metal=%u: Metal's plug-in is HakiosMetal (HakiosMetalDevice); user space may "
-			    "change or remove " kAcceleratorPluginNameKey " and " kAcceleratorPluginClassNameKey "\n", metal);
+			    "remove or restore " kAcceleratorPluginNameKey " and " kAcceleratorPluginClassNameKey "\n", metal);
 		}
 		accelerator->registerService();
 	}
@@ -2611,6 +2648,16 @@ MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_t hei
 		memcpy((void *) (vinfo.v_baseaddr + (size_t) y * vinfo.v_rowbytes), pixels + (size_t) y * rowBytes,
 		    (size_t) columns * 4);
 	}
+}
+
+/* The panel's size in pixels, as MiniIOMobileFramebufferShow() cuts to it (0 x 0: there is no framebuffer to show on). */
+extern "C" void
+MiniIOMobileFramebufferPanel(uint32_t * width, uint32_t * height)
+{
+	bool usable = vinfo.v_baseaddr != 0 && vinfo.v_depth == 32;
+
+	*width = usable ? (uint32_t) vinfo.v_width : 0;
+	*height = usable ? (uint32_t) vinfo.v_height : 0;
 }
 
 void

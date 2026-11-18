@@ -70,7 +70,8 @@ week before these were 20 frames a second everywhere and 31–36 ms for the home
    - Publish the plug-in name on the accelerator service. On Darwin 16.5 that was the only thing keeping Metal from
      finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `drivers/iokit/MiniIOMobileFramebuffer.cpp`
      restores it. With boot-arg `metal=1`, a user process may set `MetalPluginName`/`MetalPluginClassName` on
-     `IOAcceleratorES`; nothing else is accepted, and an empty string removes them. Without it (the default),
+     `IOAcceleratorES` to this port's own `HakiosMetal`/`HakiosMetalDevice` (Metal makes a bundle path of the name, so
+     no other value is taken); nothing else is accepted, and an empty string removes them. Without it (the default),
      CoreAnimation keeps its software renderer, as in the release.
    - Keep the system image's QuartzCore `default.metallib` (mkimage26 `KEPT_FILES` already keeps it) and its
      `default.pipelinelib`. The plug-in's `newLibraryWithFile` path was the first crash on 26 (`metal_driver.m`).

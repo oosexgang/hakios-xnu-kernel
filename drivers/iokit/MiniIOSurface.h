@@ -116,6 +116,12 @@ public:
 	IOMemoryMap *                   clientMap;
 	task_t                          clientTask;     /* whose memory it is (not held: only compared) */
 	mach_vm_address_t               clientAddress;  /* ... and where it is there */
+	/*
+	 * ... and its maker may only read it (a picture that is only shown: a file mapped read-only, say), so it was held
+	 * for reading alone (kIODirectionOut). Nobody may write it through the surface then: not the GPU either, which
+	 * reaches the pages themselves and not the maker's mapping of them (BoardGPU.cpp maps them read-only).
+	 */
+	bool                            clientReadOnly;
 	uint8_t *                       kpixels;        /* where the pixel memory starts in the kernel, either way */
 	/*
 	 * ... and for a surface made around its maker's memory, a copy of the pixels as they were when it was made (or

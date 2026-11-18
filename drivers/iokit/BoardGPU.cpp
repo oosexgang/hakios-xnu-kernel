@@ -75,6 +75,7 @@ void hakios_gpu_stop(void);
 void HakiosGPUStart(void);
 void HakiosGPUStop(void);
 void MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_t height, uint32_t rowBytes);
+void MiniIOMobileFramebufferPanel(uint32_t * width, uint32_t * height);
 }
 
 /* Linux's include/uapi/drm/msm_drm.h and drm.h: the requests' numbers and structures. */
@@ -523,7 +524,7 @@ class HakiosGPUUserClient : public IOUserClient
 
 	task_t                  fTask;
 	struct gpu_buffer *     fBuffers;               /* handle n is fBuffers[n - 1] */
-	bool                    fClosed;                /* clientClose() has given everything back: nothing more is made */
+	bool                    fClosed;                /* clientClose() gives everything back: nothing more is made (under gGPULock) */
 	uint32_t                fNextQueue;
 	uint32_t                fNextBuffer;            /* where the search for a free handle starts: one given back is not the next given */
 	uint32_t                fBufferCount;
@@ -541,6 +542,7 @@ class HakiosGPUUserClient : public IOUserClient
 	struct gpu_buffer * newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint64_t size, uint32_t flags, uint32_t * handle,
 	    uint64_t shift = 0, uint64_t length = 0);
 	void freeBuffer(struct gpu_buffer * b);
+	void giveBack(void);
 	bool keep(IOMemoryDescriptor * memory, uint8_t * kernel, uint64_t address, uint64_t size, uint32_t flags);
 	IOReturn hostBuffer(struct hakios_host * request);
 	IOReturn userBuffer(struct hakios_user_memory * request);
@@ -571,7 +573,9 @@ HakiosGPUUserClient::initWithTask(task_t owningTask, void * securityID, UInt32 t
 	if (!IOUserClient::initWithTask(owningTask, securityID, type, properties)) {
 		return false;
 	}
+	/* (held: the requests that wire its pages name it, and a request from whoever has the connection may come after it is gone) */
 	fTask = owningTask;
+	task_reference(fTask);
 	return true;
 }
 
@@ -702,29 +706,44 @@ HakiosGPUUserClient::reap(void)
 	}
 }
 
+/*
+ * Everything of the client's given back, with the lock held (which freeBuffer() may let go of for a while): its buffers,
+ * those given back early that the GPU is done with now, and those kept for it.
+ */
+void
+HakiosGPUUserClient::giveBack(void)
+{
+	for (uint32_t i = 0; i < GPU_BUFFERS; i++) {
+		if (fBuffers[i].memory != NULL) {
+			freeBuffer(&fBuffers[i]);
+		}
+	}
+	reap();
+	for (uint32_t i = 0; i < GPU_KEPT; i++) {
+		dropKept(&fKept[i]);
+	}
+}
+
 IOReturn
 HakiosGPUUserClient::clientClose(void)
 {
 	if (fBuffers != NULL) {
 		IOLockLock(gGPULock);
+		/*
+		 * Closed before anything is given back, not after: the waits here and in freeBuffer() let go of the lock, and a call
+		 * on its way that took it then put its buffer into a place already passed, which nobody gave back -- wired pages,
+		 * GPU addresses and a surface held for good. Now nothing is put into the table once this is set (newBuffer,
+		 * gemNew) and nothing more is kept (keep).
+		 */
+		fClosed = true;
 		/* what the client had the GPU do last may still be going on, in these buffers */
 		if (hakios_gpu_ready()) {
 			gpuWaitAll(1000);
 		}
-		for (uint32_t i = 0; i < GPU_BUFFERS; i++) {
-			if (fBuffers[i].memory != NULL) {
-				freeBuffer(&fBuffers[i]);
-			}
-		}
-		reap();
-		for (uint32_t i = 0; i < GPU_KEPT; i++) {
-			dropKept(&fKept[i]);
-		}
+		giveBack();
 		if (fLeftCount != 0) {
 			IOLog("HakiosGPU: the GPU is not done with %u buffers of a program that is gone: they stay its own\n", fLeftCount);
 		}
-		/* (a call still on its way after this would make buffers nobody frees: free() gives back only the table) */
-		fClosed = true;
 		IOLockUnlock(gGPULock);
 	}
 	if (!isInactive()) {
@@ -737,8 +756,23 @@ void
 HakiosGPUUserClient::free(void)
 {
 	if (fBuffers != NULL) {
+		/*
+		 * (what is still here: a buffer given back by a call that was waiting for the GPU while the client closed -- early,
+		 * to be freed once the GPU is done -- or everything, for a client that never was closed. Given back as at close;
+		 * the table is empty after clientClose() otherwise, as nothing is put into it once it has closed.)
+		 */
+		if (gGPULock != NULL) {
+			IOLockLock(gGPULock);
+			fClosed = true;
+			giveBack();
+			IOLockUnlock(gGPULock);
+		}
 		IODelete(fBuffers, struct gpu_buffer, GPU_BUFFERS);
 		fBuffers = NULL;
+	}
+	if (fTask != NULL) {
+		task_deallocate(fTask);
+		fTask = NULL;
 	}
 	IOUserClient::free();
 }
@@ -767,6 +801,14 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 	struct gpu_buffer * b = NULL;
 	bool mapped = true;
 
+	/*
+	 * (the client has closed: clientClose() is giving its buffers back, or has, and one put in now -- the memory of a call
+	 * that was on its way, prepared before the lock was taken -- would be nobody's to give back: wired pages, GPU addresses
+	 * and a surface held for good. The caller undoes what it made, as for no room.)
+	 */
+	if (fClosed) {
+		return NULL;
+	}
 	for (uint32_t n = 0; n < GPU_BUFFERS; n++) {
 		uint32_t i = (fNextBuffer + n) % GPU_BUFFERS;
 
@@ -852,6 +894,9 @@ HakiosGPUUserClient::keep(IOMemoryDescriptor * memory, uint8_t * kernel, uint64_
 	if (flags & GPU_BUFFER_HOST) {
 		return false;                   /* the program's own pages: never another's */
 	}
+	if (fClosed) {
+		return false;                   /* (the kept ones were given back as the client closed: none is kept after) */
+	}
 	struct gpu_kept * place = NULL;
 
 	if (gGPUKeep == 0 || size < GPU_KEEP_FROM || size > GPU_KEPT_BYTES / 4 || memory == NULL ||
@@ -896,6 +941,10 @@ HakiosGPUUserClient::gemNew(struct msm_gem_new * request)
 	}
 	/* one kept of this size and kind, if there is one (the one kept last: likeliest still in the caches' way) */
 	IOLockLock(gGPULock);
+	if (fClosed) {
+		IOLockUnlock(gGPULock);
+		return kIOReturnNotOpen;                /* (nothing is put in the table once the client has closed: newBuffer) */
+	}
 	struct gpu_kept * found = NULL;
 	uint64_t old;
 
@@ -1213,7 +1262,10 @@ HakiosGPUUserClient::clientSurfaceBuffer(MiniIOSurface * s, struct hakios_surfac
 				copy->release();
 			}
 		}
-	} else if ((b = newBuffer(s->client, 0, size, 0, &request->handle, shift, length)) != NULL) {
+	} else if ((b = newBuffer(s->client, 0, size, s->clientReadOnly ? MSM_BO_GPU_READONLY : 0, &request->handle, shift,
+	    length)) != NULL) {
+		/* (pages its maker may only read are the GPU's to read only: it reaches them past the maker's mapping, and they
+		 * may be a file's, shared with every other program that maps it) */
 		s->client->retain();
 		b->memory = s->client;
 		b->kernel = s->kpixels;
@@ -1629,11 +1681,19 @@ out:
 	return ret;
 }
 
-/* Pixels of the caller's (32 bits each, blue first) copied to the panel: for a test to show what it has drawn. */
+/*
+ * Pixels of the caller's (32 bits each, blue first) copied to the panel: for a test to show what it has drawn.
+ *
+ * Only for root (the tests run as root, from launchd's demo job): any other program could paint what it liked over
+ * every other's on the panel -- a password prompt, say -- and have the kernel take as much memory as it asked for each
+ * time. And no more of the picture is taken in than the panel shows: the rows and columns past its edges, which
+ * MiniIOMobileFramebufferShow() would cut off, are not copied in at all.
+ */
 IOReturn
 HakiosGPUUserClient::show(const struct hakios_show * request)
 {
-	uint64_t size = (uint64_t) request->rowBytes * request->height;
+	uint32_t panelWidth = 0, panelHeight = 0, columns, rows;
+	uint64_t size;
 	uint8_t * pixels;
 	IOReturn ret = kIOReturnSuccess;
 
@@ -1641,18 +1701,43 @@ HakiosGPUUserClient::show(const struct hakios_show * request)
 	    request->rowBytes < 4 * request->width) {
 		return kIOReturnBadArgument;
 	}
-	/* rowBytes is the caller's own number: without a limit it asks for terabytes of wired memory (no more than a buffer may be) */
-	if (size > GPU_BUFFER_MAX) {
-		return kIOReturnBadArgument;
+	if (clientHasPrivilege(current_task(), kIOClientPrivilegeAdministrator) != kIOReturnSuccess) {
+		static uint32_t said;
+
+		if (said++ < 4) {
+			char name[32] = "?";
+
+			proc_name(proc_selfpid(), name, sizeof(name));
+			IOLog("HakiosGPU: %s[%d] asks to put pixels on the panel and is not root: refused\n", name, proc_selfpid());
+		}
+		return kIOReturnNotPrivileged;
 	}
+	MiniIOMobileFramebufferPanel(&panelWidth, &panelHeight);
+	if (panelWidth == 0 || panelHeight == 0) {
+		return kIOReturnSuccess;                /* (no panel to show it on: nothing is shown, as before) */
+	}
+	columns = MIN(request->width, panelWidth);
+	rows = MIN(request->height, panelHeight);
+	size = (uint64_t) columns * 4 * rows;           /* (at most the panel's own size) */
 	pixels = (uint8_t *) IOMallocData(size);
 	if (pixels == NULL) {
 		return kIOReturnNoMemory;
 	}
-	if (copyin((user_addr_t) request->pixels, pixels, size) != 0) {
-		ret = kIOReturnVMError;
+	if (request->rowBytes == 4 * columns) {
+		/* (rows that follow each other without a gap: all of them at once) */
+		if (copyin((user_addr_t) request->pixels, pixels, size) != 0) {
+			ret = kIOReturnVMError;
+		}
 	} else {
-		MiniIOMobileFramebufferShow(pixels, request->width, request->height, request->rowBytes);
+		for (uint32_t y = 0; y < rows && ret == kIOReturnSuccess; y++) {
+			if (copyin((user_addr_t) (request->pixels + (uint64_t) y * request->rowBytes), pixels + (size_t) y * columns * 4,
+			    (size_t) columns * 4) != 0) {
+				ret = kIOReturnVMError;
+			}
+		}
+	}
+	if (ret == kIOReturnSuccess) {
+		MiniIOMobileFramebufferShow(pixels, columns, rows, columns * 4);
 	}
 	IOFreeData(pixels, size);
 	return ret;
@@ -1707,7 +1792,9 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		return kIOReturnBadArgument;
 	}
 	if (fClosed) {
-		return kIOReturnNotOpen;                        /* (its buffers were all given back: none is made after) */
+		/* (its buffers were all given back. Read without the lock, this is only the quick answer: a call that passed it as
+		 * the client closed is refused under the lock, where a buffer would go into the table: newBuffer, gemNew) */
+		return kIOReturnNotOpen;
 	}
 	if (!hakios_gpu_ready() && selector != kHakiosShow) {
 		return kIOReturnNotReady;                       /* given back: the run is ending */

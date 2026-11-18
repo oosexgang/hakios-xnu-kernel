@@ -21,7 +21,8 @@
  *
  *   metal_props                 show what the service carries now
  *   metal_props on              set HakiosMetal / HakiosMetalDevice (what this port installs)
- *   metal_props on NAME CLASS   set those two instead
+ *   metal_props on NAME CLASS   set those two instead (the kernel takes only HakiosMetal / HakiosMetalDevice:
+ *                               any other name would be a path into another bundle, and is refused)
  *   metal_props off             remove both (an empty string removes, see setProperties)
  */
 #include <stdio.h>

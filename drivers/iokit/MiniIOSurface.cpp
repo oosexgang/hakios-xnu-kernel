@@ -15,6 +15,7 @@
 #include <IOKit/IOKitKeys.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOKitServer.h>                  /* ipc_port_copy_send_mqueue: a send right of its own for each waiting notification */
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSUnserialize.h>
 #include <libkern/c++/OSDictionary.h>
@@ -705,6 +706,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 			s->client = IOMemoryDescriptor::withAddressRange(s->clientAddress, alloc,
 			    attempt == 0 ? kIODirectionInOut : kIODirectionOut, s->clientTask);
 			held = s->client != NULL ? s->client->prepare() : kIOReturnNoMemory;
+			s->clientReadOnly = attempt != 0;
 		}
 		if (held == kIOReturnSuccess) {
 			s->clientMap = s->client->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
@@ -887,6 +889,12 @@ struct mini_event_wait {
 	void *                  client;         /* the user client that asked (forgotten as it closes) */
 	uint64_t                target;
 	OSAsyncReference64      ref;
+	/*
+	 * A send right of its own to the port `ref` names (the listener's wake port), given back once the notification is
+	 * sent or dropped: the listener's own right goes with the listener, which may be replaced or removed, or its client
+	 * closed, while this still waits -- or is being sent, outside the lock (eventTell).
+	 */
+	mach_port_t             port;
 	io_user_reference_t     args[3];        /* the block, the event object, the value */
 };
 static IOLock * gEventLock;
@@ -990,14 +998,21 @@ class IOSurfaceRootUserClient : public IOUserClient
 {
 	OSDeclareDefaultStructors(IOSurfaceRootUserClient);
 
-	task_t                          fTask;
+	task_t                          fTask;          /* held (initWithTask): a call may come after its program is gone */
+	bool                            fClosed;        /* clientClose(): no call is served after (set under gSurfaceLock) */
 	struct minisurf_client_ref *    fRefs;
 	uint32_t                        fRefCount;
 	uint32_t                        fRefCapacity;
 	IOExternalTrap                  fTraps[kSurfaceTrapCount];
+	/* Under gEventLock. */
 	struct {
-		uint64_t                key;            /* the listener object's address (its reference's refcon) */
+		uint64_t                key;            /* the listener object's address (its reference's refcon); 0: a free place */
 		OSAsyncReference64      ref;
+		/*
+		 * The call that added the listener handed over a send right to its wake port (which `ref` names), the driver's
+		 * once the call succeeded: kept here, and given back when the listener is replaced, removed or forgotten.
+		 */
+		mach_port_t             port;
 	}                               fListeners[16];
 	OSArray *                       fEventMaps;     /* the event pages mapped into the task */
 
@@ -1007,6 +1022,7 @@ class IOSurfaceRootUserClient : public IOUserClient
 	IOReturn returnSurface(struct minisurf_client_ref * ref, bool known, IOExternalMethodArguments * args);
 	IOReturn returnSurface26(struct minisurf_client_ref * ref, bool known, IOExternalMethodArguments * args);
 
+	IOReturn method(uint32_t selector, IOExternalMethodArguments * args);
 	IOReturn methodInit(IOExternalMethodArguments * args);
 	IOReturn methodCreate(IOExternalMethodArguments * args);
 	IOReturn methodLookup(IOExternalMethodArguments * args);
@@ -1056,7 +1072,13 @@ IOSurfaceRootUserClient::initWithTask(task_t owningTask, void * securityID, UInt
 	if (!IOUserClient::initWithTask(owningTask, securityID, type, properties)) {
 		return false;
 	}
+	/*
+	 * (held, not only named: surfaces are mapped and ports looked up and made in it. A program that hands its connection
+	 * to another and exits is gone before the connection is, and the other's calls -- refused once it has closed, but one
+	 * may be on its way -- must not find a task that has been freed)
+	 */
 	fTask = owningTask;
+	task_reference(fTask);
 	{
 		char procname[32] = "?";
 		proc_selfname(procname, sizeof(procname));
@@ -1088,6 +1110,10 @@ IOSurfaceRootUserClient::start(IOService * provider)
 IOReturn
 IOSurfaceRootUserClient::clientClose(void)
 {
+	/* (first: whoever else has the connection -- it was handed on -- is not served in the place of the program that is gone) */
+	IOLockLock(gSurfaceLock);
+	fClosed = true;
+	IOLockUnlock(gSurfaceLock);
 	forgetEventWaits();
 	IOLockLock(gSurfaceLock);
 	while (fRefCount != 0) {
@@ -1116,6 +1142,10 @@ IOSurfaceRootUserClient::free(void)
 	}
 	forgetEventWaits();
 	OSSafeReleaseNULL(fEventMaps);
+	if (fTask != NULL) {
+		task_deallocate(fTask);
+		fTask = NULL;
+	}
 	IOUserClient::free();
 }
 
@@ -1846,9 +1876,37 @@ IOSurfaceRootUserClient::methodSetBulkAttachments(const uint8_t * in, size_t inS
 	return ret;
 }
 
+/*
+ * A call made asynchronously hands over a send right to its wake port, which is the driver's once the call succeeds (MIG
+ * takes it back only on an error). Adding a listener keeps it (methodEventAddListener); no other call does, so it is
+ * given back here, or every such call would leave a port behind for good (as MiniIOMobileFramebuffer.cpp).
+ */
 IOReturn
 IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
     IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
+{
+	IOReturn ret;
+
+	(void) dispatch;
+	(void) target;
+	(void) reference;
+	/*
+	 * (closed: its program is gone, or let go of it, and whoever else has the connection -- it was handed on -- is not
+	 * served in its place. Read without the lock, which the task being held makes enough: a call that passed this as the
+	 * client closed finds the task still there, and what it leaves behind goes with free())
+	 */
+	if (fClosed) {
+		return kIOReturnNotOpen;
+	}
+	ret = method(selector, args);
+	if (ret == kIOReturnSuccess && args->asyncWakePort != MACH_PORT_NULL && selector != kSurfaceMethodEventAddListener) {
+		releaseAsyncReference64(args->asyncReference);
+	}
+	return ret;
+}
+
+IOReturn
+IOSurfaceRootUserClient::method(uint32_t selector, IOExternalMethodArguments * args)
 {
 	const uint8_t * in = (const uint8_t *) args->structureInput;
 	size_t inSize = args->structureInputSize;
@@ -2103,6 +2161,7 @@ IOSurfaceRootUserClient::eventTell(MiniSharedEvent * event, uint64_t value)
 		OSAsyncReference64 ref;
 		io_user_reference_t args[3];
 		MiniSharedEvent * event;
+		mach_port_t port;
 	} told[16];
 	unsigned count;
 
@@ -2116,6 +2175,7 @@ IOSurfaceRootUserClient::eventTell(MiniSharedEvent * event, uint64_t value)
 				memcpy(told[count].ref, w->ref, sizeof(w->ref));
 				memcpy(told[count].args, w->args, sizeof(w->args));
 				told[count].event = w->event;
+				told[count].port = w->port;
 				count++;
 				bzero(w, sizeof(*w));
 			}
@@ -2123,6 +2183,7 @@ IOSurfaceRootUserClient::eventTell(MiniSharedEvent * event, uint64_t value)
 		IOLockUnlock(gEventLock);
 		for (unsigned i = 0; i < count; i++) {
 			IOUserClient::sendAsyncResult64(told[i].ref, kIOReturnSuccess, told[i].args, 3);
+			IOUserClient::releaseNotificationPort(told[i].port);
 			told[i].event->release();
 		}
 	} while (count == 16);
@@ -2134,6 +2195,7 @@ IOSurfaceRootUserClient::methodEventNotify(IOExternalMethodArguments * args)
 	MiniSharedEvent * event;
 	uint64_t listener, target;
 	IOReturn ret = kIOReturnNoResources;
+	mach_port_t port = MACH_PORT_NULL;
 	unsigned l;
 
 	if (args->scalarInputCount < 5) {
@@ -2151,6 +2213,15 @@ IOSurfaceRootUserClient::methodEventNotify(IOExternalMethodArguments * args)
 	if (l == 16 || listener == 0) {
 		ret = kIOReturnNotFound;
 	} else {
+		/* (a right of the wait's own: see mini_event_wait. NULL for a port of the kernel's, the dead name for one that is
+		 * gone: nobody to tell either way) */
+		port = ipc_port_copy_send_mqueue(fListeners[l].port);
+		if (!IPC_PORT_VALID(port)) {
+			port = MACH_PORT_NULL;
+			ret = kIOReturnBadArgument;
+		}
+	}
+	if (port != MACH_PORT_NULL) {
 		for (unsigned i = 0; i < MINI_EVENT_WAITS; i++) {
 			struct mini_event_wait * w = &gEventWaits[i];
 
@@ -2159,6 +2230,8 @@ IOSurfaceRootUserClient::methodEventNotify(IOExternalMethodArguments * args)
 				event->retain();
 				w->client = this;
 				w->target = target;
+				w->port = port;
+				port = MACH_PORT_NULL;          /* (the wait's now) */
 				memcpy(w->ref, fListeners[l].ref, sizeof(w->ref));
 				w->args[0] = args->scalarInput[3];      /* the block */
 				w->args[1] = args->scalarInput[2];      /* the event object */
@@ -2169,6 +2242,9 @@ IOSurfaceRootUserClient::methodEventNotify(IOExternalMethodArguments * args)
 		}
 	}
 	IOLockUnlock(gEventLock);
+	if (port != MACH_PORT_NULL) {
+		releaseNotificationPort(port);          /* (no place left for the wait) */
+	}
 	if (ret == kIOReturnSuccess) {
 		eventTell(event, *event->ev->value);        /* reached already */
 	} else {
@@ -2182,70 +2258,112 @@ IOSurfaceRootUserClient::methodEventNotify(IOExternalMethodArguments * args)
 	return ret;
 }
 
+/*
+ * The wake port's send right that came with the call is the listener's from here on (on a refusal MIG takes it back);
+ * a listener of the same key that was there before is replaced, and its right given back.
+ */
 IOReturn
 IOSurfaceRootUserClient::methodEventAddListener(IOExternalMethodArguments * args)
 {
 	uint64_t key;
 	IOReturn ret = kIOReturnNoResources;
+	mach_port_t replaced = MACH_PORT_NULL;
+	unsigned l, place = 16;
 
-	if (args->asyncWakePort == MACH_PORT_NULL || args->asyncReference == NULL) {
+	if (args->asyncWakePort == MACH_PORT_NULL || args->asyncReference == NULL || args->asyncReferenceCount == 0) {
 		return kIOReturnBadArgument;
 	}
 	key = args->asyncReference[kIOAsyncCalloutRefconIndex];
+	if (key == 0) {
+		return kIOReturnBadArgument;            /* (0 marks a free place, and no notification names it: methodEventNotify) */
+	}
 	IOLockLock(gEventLock);
-	for (unsigned l = 0; l < 16; l++) {
-		if (fListeners[l].key == 0 || fListeners[l].key == key) {
-			fListeners[l].key = key;
-			bzero(fListeners[l].ref, sizeof(fListeners[l].ref));
-			memcpy(fListeners[l].ref, args->asyncReference,
-			    MIN(sizeof(fListeners[l].ref), args->asyncReferenceCount * sizeof(io_user_reference_t)));
-			ret = kIOReturnSuccess;
-			break;
+	/* (its own place again if it has one, so that a key is never in two places; else the first free one) */
+	for (l = 0; l < 16 && fListeners[l].key != key; l++) {
+		if (fListeners[l].key == 0 && place == 16) {
+			place = l;
 		}
 	}
+	if (l < 16) {
+		place = l;
+		replaced = fListeners[l].port;
+	}
+	if (place < 16) {
+		fListeners[place].key = key;
+		bzero(fListeners[place].ref, sizeof(fListeners[place].ref));
+		memcpy(fListeners[place].ref, args->asyncReference,
+		    MIN(sizeof(fListeners[place].ref), args->asyncReferenceCount * sizeof(io_user_reference_t)));
+		fListeners[place].port = args->asyncWakePort;
+		ret = kIOReturnSuccess;
+	}
 	IOLockUnlock(gEventLock);
+	if (replaced != MACH_PORT_NULL) {
+		releaseNotificationPort(replaced);      /* (a notification still waiting for it has a right of its own) */
+	}
 	return ret;
 }
 
 IOReturn
 IOSurfaceRootUserClient::methodEventRemoveListener(IOExternalMethodArguments * args)
 {
+	mach_port_t ports[16];
+	unsigned count = 0;
+
 	if (args->scalarInputCount < 1) {
 		return kIOReturnBadArgument;
+	}
+	if (args->scalarInput[0] == 0) {
+		return kIOReturnSuccess;                /* (0 is no listener's: methodEventAddListener) */
 	}
 	IOLockLock(gEventLock);
 	for (unsigned l = 0; l < 16; l++) {
 		if (fListeners[l].key == args->scalarInput[0]) {
+			ports[count++] = fListeners[l].port;
 			bzero(&fListeners[l], sizeof(fListeners[l]));
 		}
 	}
 	IOLockUnlock(gEventLock);
+	for (unsigned i = 0; i < count; i++) {
+		releaseNotificationPort(ports[i]);      /* (the waits still for it have rights of their own) */
+	}
 	return kIOReturnSuccess;
 }
 
-/* The client goes: its notifications still waiting are dropped. */
+/* The client goes: its notifications still waiting are dropped, and its listeners' wake ports given back. */
 void
 IOSurfaceRootUserClient::forgetEventWaits(void)
 {
 	MiniSharedEvent * drop[16];
-	unsigned count;
+	mach_port_t dropPorts[16], listenerPorts[16];
+	unsigned count, listeners;
 
 	if (gEventLock == NULL) {
 		return;
 	}
 	do {
 		count = 0;
+		listeners = 0;
 		IOLockLock(gEventLock);
 		for (unsigned i = 0; i < MINI_EVENT_WAITS && count < 16; i++) {
 			if (gEventWaits[i].event != NULL && gEventWaits[i].client == this) {
-				drop[count++] = gEventWaits[i].event;
+				drop[count] = gEventWaits[i].event;
+				dropPorts[count++] = gEventWaits[i].port;
 				bzero(&gEventWaits[i], sizeof(gEventWaits[i]));
+			}
+		}
+		for (unsigned l = 0; l < 16; l++) {
+			if (fListeners[l].key != 0) {
+				listenerPorts[listeners++] = fListeners[l].port;
 			}
 		}
 		bzero(fListeners, sizeof(fListeners));
 		IOLockUnlock(gEventLock);
 		for (unsigned i = 0; i < count; i++) {
+			releaseNotificationPort(dropPorts[i]);
 			drop[i]->release();
+		}
+		for (unsigned i = 0; i < listeners; i++) {
+			releaseNotificationPort(listenerPorts[i]);
 		}
 	} while (count == 16);
 }
@@ -2296,7 +2414,7 @@ IOSurfaceRootUserClient::trapEventWait(void * p1, void * p2, void * p3, void * p
 IOExternalTrap *
 IOSurfaceRootUserClient::getTargetAndTrapForIndex(IOService ** targetP, UInt32 index)
 {
-	if (index >= kSurfaceTrapCount) {
+	if (index >= kSurfaceTrapCount || fClosed) {    /* (closed: as externalMethod) */
 		return NULL;
 	}
 	*targetP = this;
