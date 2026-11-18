@@ -26,6 +26,12 @@ enum {
    BLOCKINFO_CODE_SETBID = 1,
 };
 
+/* LLVM's writer gives BLOCKINFO abbreviations for three or four block ids.
+ * Each block entered looks its id up in this list, so a long one is a cost
+ * paid per block: it is kept short.
+ */
+#define MAX_BLOCKINFO_IDS 64
+
 static void
 bs_fail(struct air_bitstream *bs, const char *fmt, ...)
 {
@@ -89,38 +95,68 @@ align32(struct air_bitstream *bs)
    bs->pos = MIN2(ALIGN_POT(bs->pos, 32), bs->size_bits);
 }
 
-static void
-list_add(void *mem_ctx, struct air_abbrev_list *l, struct air_abbrev *a)
+static bool
+list_add(struct air_bitstream *bs, struct air_abbrev_list *l, struct air_abbrev *a)
 {
    if (l->num == l->cap) {
-      l->cap = MAX2(8, l->cap * 2);
-      l->abbrevs = reralloc(mem_ctx, l->abbrevs, struct air_abbrev *, l->cap);
+      unsigned cap = MAX2(8, l->cap * 2);
+      struct air_abbrev **abbrevs = cap > l->cap ?
+         reralloc(bs->mem_ctx, l->abbrevs, struct air_abbrev *, cap) : NULL;
+      if (!abbrevs) {
+         bs_fail(bs, "no memory for %u abbreviations", l->num + 1);
+         return false;
+      }
+      l->abbrevs = abbrevs;
+      l->cap = cap;
    }
    l->abbrevs[l->num++] = a;
+   return true;
 }
 
-static struct air_abbrev_list *
-blockinfo_for(struct air_bitstream *bs, unsigned block_id, bool create)
+/* the index of block_id's BLOCKINFO entry, or -1 */
+static int
+blockinfo_index(struct air_bitstream *bs, unsigned block_id, bool create)
 {
    for (unsigned i = 0; i < bs->num_blockinfo; i++) {
       if (bs->blockinfo[i].block_id == block_id)
-         return &bs->blockinfo[i].abbrevs;
+         return i;
    }
    if (!create)
-      return NULL;
-   bs->blockinfo = reralloc(bs->mem_ctx, bs->blockinfo, __typeof__(*bs->blockinfo),
-                            bs->num_blockinfo + 1);
+      return -1;
+   if (bs->num_blockinfo == MAX_BLOCKINFO_IDS) {
+      bs_fail(bs, "BLOCKINFO for more than %u block ids", MAX_BLOCKINFO_IDS);
+      return -1;
+   }
+   __typeof__(bs->blockinfo) info = reralloc(bs->mem_ctx, bs->blockinfo, __typeof__(*bs->blockinfo),
+                                             bs->num_blockinfo + 1);
+   if (!info) {
+      bs_fail(bs, "no memory for BLOCKINFO");
+      return -1;
+   }
+   bs->blockinfo = info;
    bs->blockinfo[bs->num_blockinfo].block_id = block_id;
    memset(&bs->blockinfo[bs->num_blockinfo].abbrevs, 0, sizeof(struct air_abbrev_list));
-   return &bs->blockinfo[bs->num_blockinfo++].abbrevs;
+   return bs->num_blockinfo++;
 }
 
 static struct air_abbrev *
 read_abbrev(struct air_bitstream *bs)
 {
-   unsigned n = read_vbr(bs, 5);
+   uint64_t n = read_vbr(bs, 5);
+   /* an operand takes at least 4 bits (a literal flag and a value, or a flag
+    * and an encoding), and the count sizes the allocation below
+    */
+   if (n > air_bs_bits_left(bs) / 4) {
+      bs_fail(bs, "abbreviation of %" PRIu64 " operands, more than its block holds", n);
+      return NULL;
+   }
    struct air_abbrev *a = rzalloc(bs->mem_ctx, struct air_abbrev);
-   a->ops = rzalloc_array(bs->mem_ctx, struct air_abbrev_op, MAX2(n, 1));
+   if (a)
+      a->ops = rzalloc_array(bs->mem_ctx, struct air_abbrev_op, MAX2(n, 1));
+   if (!a || !a->ops) {
+      bs_fail(bs, "no memory for an abbreviation of %" PRIu64 " operands", n);
+      return NULL;
+   }
    for (unsigned i = 0; i < n && !bs->error[0]; i++) {
       struct air_abbrev_op *op = &a->ops[a->num_ops++];
       if (read_fixed(bs, 1)) {
@@ -148,7 +184,7 @@ read_abbrev(struct air_bitstream *bs)
          break;
       default:
          bs_fail(bs, "unknown abbreviation encoding");
-         return a;
+         return NULL;
       }
       /* a zero-width fixed or VBR field reads nothing: it is the literal 0 */
       if ((op->kind == AIR_ABBREV_FIXED || op->kind == AIR_ABBREV_VBR) && op->value == 0) {
@@ -156,15 +192,24 @@ read_abbrev(struct air_bitstream *bs)
          op->value = 0;
       }
    }
-   return a;
+   return bs->error[0] ? NULL : a;
 }
 
 static void
 push_op(struct air_bitstream *bs, unsigned *n, uint64_t v)
 {
    if (*n == bs->ops_cap) {
-      bs->ops_cap = MAX2(64, bs->ops_cap * 2);
-      bs->ops = reralloc(bs->mem_ctx, bs->ops, uint64_t, bs->ops_cap);
+      /* (the doubling stops short of wrapping: a capacity that wrapped to a
+       * small one would be written past)
+       */
+      unsigned cap = bs->ops_cap < UINT32_MAX / 2 ? MAX2(64, bs->ops_cap * 2) : 0;
+      uint64_t *ops = cap ? reralloc(bs->mem_ctx, bs->ops, uint64_t, cap) : NULL;
+      if (!ops) {
+         bs_fail(bs, "no memory for a record of %u operands", *n + 1);
+         return;
+      }
+      bs->ops = ops;
+      bs->ops_cap = cap;
    }
    bs->ops[(*n)++] = v;
 }
@@ -209,14 +254,29 @@ read_abbreviated(struct air_bitstream *bs, const struct air_abbrev *a)
             bs_fail(bs, "array not second to last in its abbreviation");
             break;
          }
-         unsigned len = read_vbr(bs, 6);
-         for (unsigned j = 0; j < len && !bs->error[0]; j++)
-            push_op(bs, &n, read_scalar(bs, &a->ops[i + 1]));
+         /* An element must be read from the stream: one that takes no bits
+          * (a literal, or a field of width 0) would let a length of 2^32 cost
+          * nothing to write and everything to read. LLVM refuses it too.
+          */
+         const struct air_abbrev_op *elt = &a->ops[i + 1];
+         if (elt->kind != AIR_ABBREV_FIXED && elt->kind != AIR_ABBREV_VBR &&
+             elt->kind != AIR_ABBREV_CHAR6) {
+            bs_fail(bs, "array whose element is not an encoding");
+            break;
+         }
+         uint64_t len = read_vbr(bs, 6);
+         if (len > air_bs_bits_left(bs)) {
+            bs_fail(bs, "array of %" PRIu64 " elements, more than its block holds", len);
+            break;
+         }
+         for (uint64_t j = 0; j < len && !bs->error[0]; j++)
+            push_op(bs, &n, read_scalar(bs, elt));
          break;
       } else if (op->kind == AIR_ABBREV_BLOB) {
          uint64_t len = read_vbr(bs, 6);
          align32(bs);
-         if (bs->pos + len * 8 > bs->size_bits) {
+         /* (len * 8 wraps for a length of 2^61; what is left does not) */
+         if (len > (bs->size_bits - bs->pos) / 8) {
             bs_fail(bs, "blob past the end");
             break;
          }
@@ -251,6 +311,10 @@ air_bs_init(struct air_bitstream *bs, void *mem_ctx, const void *data, size_t si
    bs->size_bits = (uint64_t)size * 8;
    bs->scope_cap = 16;
    bs->scopes = rzalloc_array(mem_ctx, struct air_bs_scope, bs->scope_cap);
+   if (!bs->scopes) {
+      bs_fail(bs, "no memory for the bitstream's blocks");
+      return false;
+   }
    bs->scopes[0].block_id = ~0u;
    bs->scopes[0].abbrev_width = 2;
    bs->scopes[0].end_bit = bs->size_bits;
@@ -267,32 +331,51 @@ air_bs_init(struct air_bitstream *bs, void *mem_ctx, const void *data, size_t si
 static bool
 read_blockinfo(struct air_bitstream *bs, unsigned width, uint64_t end)
 {
-   struct air_abbrev_list *target = NULL;
+   int target = -1;
    for (;;) {
-      if (bs->error[0] || bs->pos >= end)
+      if (bs->error[0])
          return false;
+      if (bs->pos >= end) {
+         bs_fail(bs, "BLOCKINFO without its END_BLOCK");
+         return false;
+      }
       unsigned id = read_fixed(bs, width);
       if (id == ABBREV_ID_END_BLOCK) {
          align32(bs);
          return true;
       } else if (id == ABBREV_ID_DEFINE_ABBREV) {
          struct air_abbrev *a = read_abbrev(bs);
-         if (!target) {
+         if (!a)
+            return false;
+         if (target < 0) {
             bs_fail(bs, "BLOCKINFO abbreviation before SETBID");
             return false;
          }
-         list_add(bs->mem_ctx, target, a);
+         if (!list_add(bs, &bs->blockinfo[target].abbrevs, a))
+            return false;
       } else if (id == ABBREV_ID_UNABBREV_RECORD) {
          unsigned code = read_vbr(bs, 6);
-         unsigned n = read_vbr(bs, 6);
+         uint64_t n = read_vbr(bs, 6);
          uint64_t first = 0;
-         for (unsigned i = 0; i < n; i++) {
+         /* (a count of 2^32 past the end would otherwise be counted out to
+          * the last, each read failing at once)
+          */
+         for (uint64_t i = 0; i < n && !bs->error[0]; i++) {
             uint64_t v = read_vbr(bs, 6);
             if (i == 0)
                first = v;
          }
-         if (code == BLOCKINFO_CODE_SETBID)
-            target = blockinfo_for(bs, first, true);
+         if (bs->error[0])
+            return false;
+         if (code == BLOCKINFO_CODE_SETBID) {
+            if (n < 1 || first > UINT32_MAX) {
+               bs_fail(bs, "SETBID without a block id");
+               return false;
+            }
+            target = blockinfo_index(bs, first, true);
+            if (target < 0)
+               return false;
+         }
          /* BLOCKNAME and SETRECORDNAME only name things for dumpers */
       } else if (id == ABBREV_ID_ENTER_SUBBLOCK) {
          bs_fail(bs, "a block inside BLOCKINFO");
@@ -354,16 +437,25 @@ air_bs_next(struct air_bitstream *bs)
          return e;
       }
 
-      case ABBREV_ID_DEFINE_ABBREV:
-         list_add(bs->mem_ctx, &s->abbrevs, read_abbrev(bs));
+      case ABBREV_ID_DEFINE_ABBREV: {
+         struct air_abbrev *a = read_abbrev(bs);
+         if (!a || !list_add(bs, &s->abbrevs, a))
+            return e;
          continue;
+      }
 
       case ABBREV_ID_UNABBREV_RECORD: {
          unsigned n = 0;
          e.kind = AIR_BS_RECORD;
          e.id = read_vbr(bs, 6);
-         unsigned count = read_vbr(bs, 6);
-         for (unsigned i = 0; i < count && !bs->error[0]; i++)
+         uint64_t count = read_vbr(bs, 6);
+         /* each operand is a VBR6, 6 bits at least */
+         if (count > air_bs_bits_left(bs) / 6) {
+            bs_fail(bs, "record of %" PRIu64 " operands, more than its block holds", count);
+            e.kind = AIR_BS_ERROR;
+            return e;
+         }
+         for (uint64_t i = 0; i < count && !bs->error[0]; i++)
             push_op(bs, &n, read_vbr(bs, 6));
          e.num_ops = n;
          e.ops = bs->ops;
@@ -372,12 +464,16 @@ air_bs_next(struct air_bitstream *bs)
          return e;
       }
 
-      default:
-         if (id - ABBREV_ID_FIRST >= s->abbrevs.num) {
+      default: {
+         unsigned k = id - ABBREV_ID_FIRST;
+         if (k < s->num_info)
+            return read_abbreviated(bs, bs->blockinfo[s->info].abbrevs.abbrevs[k]);
+         if (k - s->num_info >= s->abbrevs.num) {
             bs_fail(bs, "undefined abbreviation %u in block %u", id, s->block_id);
             return e;
          }
-         return read_abbreviated(bs, s->abbrevs.abbrevs[id - ABBREV_ID_FIRST]);
+         return read_abbreviated(bs, s->abbrevs.abbrevs[k - s->num_info]);
+      }
       }
    }
 }
@@ -386,8 +482,14 @@ bool
 air_bs_enter(struct air_bitstream *bs, unsigned block_id)
 {
    if (bs->depth + 1 == bs->scope_cap) {
+      struct air_bs_scope *scopes =
+         reralloc(bs->mem_ctx, bs->scopes, struct air_bs_scope, bs->scope_cap * 2);
+      if (!scopes) {
+         bs_fail(bs, "no memory for block nesting %u deep", bs->depth + 1);
+         return false;
+      }
+      bs->scopes = scopes;
       bs->scope_cap *= 2;
-      bs->scopes = reralloc(bs->mem_ctx, bs->scopes, struct air_bs_scope, bs->scope_cap);
    }
    struct air_bs_scope *s = &bs->scopes[++bs->depth];
    memset(s, 0, sizeof(*s));
@@ -395,10 +497,11 @@ air_bs_enter(struct air_bitstream *bs, unsigned block_id)
    s->abbrev_width = bs->pending_width;
    s->end_bit = bs->pending_end;
 
-   struct air_abbrev_list *info = blockinfo_for(bs, block_id, false);
-   if (info) {
-      for (unsigned i = 0; i < info->num; i++)
-         list_add(bs->mem_ctx, &s->abbrevs, info->abbrevs[i]);
+   /* the BLOCKINFO abbreviations as they are now: later ones are not this block's */
+   int info = blockinfo_index(bs, block_id, false);
+   if (info >= 0) {
+      s->info = info;
+      s->num_info = bs->blockinfo[info].abbrevs.num;
    }
    return true;
 }
@@ -413,7 +516,9 @@ air_bs_skip_block(struct air_bitstream *bs)
 char *
 air_bs_ops_to_string(void *mem_ctx, const uint64_t *ops, unsigned n)
 {
-   char *s = ralloc_size(mem_ctx, n + 1);
+   char *s = ralloc_size(mem_ctx, (size_t)n + 1);
+   if (!s)
+      return NULL;
    for (unsigned i = 0; i < n; i++)
       s[i] = (char)ops[i];
    s[n] = 0;

@@ -177,9 +177,13 @@ struct reader {
    unsigned num_values, cap_values;
    struct air_value **values;
 
-   /* the types the record gave for operands not yet defined, by value id */
-   unsigned cap_fwd;
-   const struct air_type **fwd;
+   /* The types the record gave for operands not yet defined, by value id.
+    * An entry is the current function's only when its fn is fn_serial: the
+    * table is not cleared between functions, which for a large table and many
+    * small functions would cost their product.
+    */
+   unsigned cap_fwd, fn_serial;
+   struct { const struct air_type *type; unsigned fn; } *fwd;
 
    /* metadata ids: the module's, then the current function's */
    unsigned num_md, cap_md;
@@ -217,7 +221,36 @@ check_bs(struct reader *r)
    return true;
 }
 
+/* Limits on what one module may ask the reader to allocate or walk. Each is
+ * far beyond what Apple's compiler writes for a shader, and each count is
+ * also checked against the bits left to read (air_bs_bits_left).
+ */
+#define MAX_TYPES (1u << 20)
+#define MAX_BLOCKS (1u << 20)
+/* how far ahead of the values defined an operand may be: the table of their
+ * types grows to it, 16 bytes a value
+ */
+#define MAX_FORWARD (1u << 20)
+#define MAX_MD_KINDS 4096
+/* struct in array in struct...: the layout functions recurse this deep */
+#define MAX_TYPE_DEPTH 256
+/* LLVM's own bound (IntegerType::MAX_INT_BITS) */
+#define MAX_INT_BITS (1u << 23)
+
 /* -- types -------------------------------------------------------------- */
+
+/* An alignment as the module records give it: log2 + 1, 0 for none. LLVM
+ * allows up to 2^32; past 2^31 it is no alignment of a shader's, and
+ * 1u << 32 or more is undefined.
+ */
+static bool
+log2_align(struct reader *r, uint64_t v, unsigned *align)
+{
+   if (v > 32)
+      return fail(r, "alignment of 2^%" PRIu64, v - 1);
+   *align = v ? 1u << (v - 1) : 0;
+   return true;
+}
 
 static const struct air_type *
 type_by_id(struct reader *r, uint64_t id)
@@ -248,12 +281,29 @@ pointer_to(struct reader *r, const struct air_type *elem, unsigned as)
    return t;
 }
 
+/* A type that a record holds by value (an array's element, a struct's
+ * member, a function's return or parameter) must be defined before it, as
+ * LLVM's writer orders them, unless it is a named struct, which may be
+ * referred to ahead of its body. Otherwise a type could be made to contain
+ * itself, and every walk of it would never end. Pointers may refer ahead.
+ */
+static const struct air_type *
+member_type(struct reader *r, uint64_t id, unsigned next, bool *ahead)
+{
+   const struct air_type *t = type_by_id(r, id);
+   if (t && id >= next)
+      ahead[id] = true;
+   return t;
+}
+
 static bool
 read_type_block(struct reader *r)
 {
    struct air_module *m = r->m;
    unsigned next = 0;
    const char *pending_name = NULL;
+   /* the types referred to by value ahead of their definition */
+   bool *ahead = NULL;
 
    for (;;) {
       struct air_bs_entry e = air_bs_next(&r->bs);
@@ -269,8 +319,16 @@ read_type_block(struct reader *r)
       if (e.id == TYPE_CODE_NUMENTRY) {
          if (e.num_ops < 1)
             return fail(r, "NUMENTRY without a count");
+         if (m->types)
+            return fail(r, "a second NUMENTRY");
+         /* each type is a record of its own, a bit at the very least */
+         if (e.ops[0] > MAX_TYPES || e.ops[0] > air_bs_bits_left(&r->bs))
+            return fail(r, "NUMENTRY of %" PRIu64 " types", e.ops[0]);
+         m->types = rzalloc_array(m, struct air_type, MAX2(e.ops[0], 1));
+         ahead = rzalloc_array(m, bool, MAX2(e.ops[0], 1));
+         if (!m->types || !ahead)
+            return fail(r, "no memory for %" PRIu64 " types", e.ops[0]);
          m->num_types = e.ops[0];
-         m->types = rzalloc_array(m, struct air_type, MAX2(m->num_types, 1));
          for (unsigned i = 0; i < m->num_types; i++) {
             m->types[i].id = i;
             m->types[i].kind = AIR_TYPE_UNKNOWN;
@@ -303,6 +361,8 @@ read_type_block(struct reader *r)
       case TYPE_CODE_INTEGER:
          if (e.num_ops < 1)
             return fail(r, "INTEGER type without a width");
+         if (e.ops[0] < 1 || e.ops[0] > MAX_INT_BITS)
+            return fail(r, "INTEGER type of %" PRIu64 " bits", e.ops[0]);
          t->kind = AIR_TYPE_INT;
          t->bits = e.ops[0];
          break;
@@ -323,9 +383,15 @@ read_type_block(struct reader *r)
             return fail(r, "ARRAY/VECTOR type without a size and element");
          t->kind = e.id == TYPE_CODE_ARRAY ? AIR_TYPE_ARRAY : AIR_TYPE_VECTOR;
          t->count = e.ops[0];
-         t->elem = type_by_id(r, e.ops[1]);
+         t->elem = member_type(r, e.ops[1], next, ahead);
          if (e.id == TYPE_CODE_VECTOR && e.num_ops > 2 && e.ops[2])
             return fail(r, "scalable vector type");
+         /* LLVM's rule, and what air_type_bit_size() and air_type_scalar() take for granted:
+          * a vector of vectors would be walked as deep as it was nested
+          */
+         if (e.id == TYPE_CODE_VECTOR && t->elem && t->elem->kind != AIR_TYPE_INT &&
+             !air_type_is_float(t->elem) && t->elem->kind != AIR_TYPE_POINTER)
+            return fail(r, "vector of type %u, which is no integer, float or pointer", t->elem->id);
          break;
       case TYPE_CODE_OPAQUE:
          t->kind = AIR_TYPE_STRUCT;
@@ -341,8 +407,10 @@ read_type_block(struct reader *r)
          t->packed = e.ops[0];
          t->num_members = e.num_ops - 1;
          t->members = ralloc_array(m, const struct air_type *, MAX2(t->num_members, 1));
+         if (!t->members)
+            return fail(r, "no memory for a struct of %u members", t->num_members);
          for (unsigned i = 0; i < t->num_members; i++)
-            t->members[i] = type_by_id(r, e.ops[1 + i]);
+            t->members[i] = member_type(r, e.ops[1 + i], next, ahead);
          if (e.id == TYPE_CODE_STRUCT_NAMED) {
             t->name = pending_name;
             pending_name = NULL;
@@ -353,32 +421,108 @@ read_type_block(struct reader *r)
             return fail(r, "FUNCTION type without vararg and return");
          t->kind = AIR_TYPE_FUNCTION;
          t->vararg = e.ops[0];
-         t->elem = type_by_id(r, e.ops[1]);
+         t->elem = member_type(r, e.ops[1], next, ahead);
          t->num_members = e.num_ops - 2;
          t->members = ralloc_array(m, const struct air_type *, MAX2(t->num_members, 1));
+         if (!t->members)
+            return fail(r, "no memory for a function of %u parameters", t->num_members);
          for (unsigned i = 0; i < t->num_members; i++)
-            t->members[i] = type_by_id(r, e.ops[2 + i]);
+            t->members[i] = member_type(r, e.ops[2 + i], next, ahead);
          break;
       default:
          return fail(r, "unknown type record %u", e.id);
       }
       if (m->error[0])
          return false;
+      /* (after the record: one that holds its own type is held ahead too) */
+      if (ahead[next] && e.id != TYPE_CODE_STRUCT_NAMED && e.id != TYPE_CODE_OPAQUE)
+         return fail(r, "type %u is held by value before it is defined, and is no named struct",
+                     next);
       next++;
    }
 }
 
+/* Named structs may still contain themselves by value (%s = { [1 x %s] }),
+ * and a chain of nested types can be made as deep as the module is long; the
+ * layout functions, and the translation's walks of a type, recurse through
+ * both. So every type's depth is worked out here, once: a type reached again
+ * while its own members are being walked contains itself, and one nested
+ * deeper than MAX_TYPE_DEPTH is refused. The walk then leaves each type's
+ * size and alignment with it (layout_known), its members' already known, so
+ * that working out a layout later is linear in the type too.
+ */
+#define DEPTH_ON_PATH UINT32_MAX
+
+static bool
+check_type(struct reader *r, struct air_type *t, unsigned *depth, unsigned path)
+{
+   struct air_module *m = r->m;
+   if (depth[t->id] == DEPTH_ON_PATH)
+      return fail(r, "type %u contains itself", t->id);
+   if (depth[t->id])
+      return true;
+   /* (a type this far down is nested deeper still: the recursion stops here) */
+   if (path > MAX_TYPE_DEPTH)
+      return fail(r, "type %u nested more than %u deep", t->id, MAX_TYPE_DEPTH);
+   depth[t->id] = DEPTH_ON_PATH;
+
+   unsigned n = 0, deepest = 0;
+   const struct air_type *const *held = NULL;
+   if (t->kind == AIR_TYPE_ARRAY || t->kind == AIR_TYPE_VECTOR) {
+      n = 1;
+      held = &t->elem;
+   } else if (t->kind == AIR_TYPE_STRUCT) {
+      n = t->num_members;
+      held = t->members;
+   }
+   for (unsigned i = 0; i < n; i++) {
+      /* (every type held by value is one of the table's: type_by_id) */
+      if (held[i]->id >= m->num_types)
+         return fail(r, "type %u holds a type outside the table", t->id);
+      if (!check_type(r, &m->types[held[i]->id], depth, path + 1))
+         return false;
+      deepest = MAX2(deepest, depth[held[i]->id]);
+   }
+   if (deepest + 1 > MAX_TYPE_DEPTH)
+      return fail(r, "type %u nested more than %u deep", t->id, MAX_TYPE_DEPTH);
+
+   t->layout_size = air_type_alloc_size(m, t);
+   t->layout_align = air_type_abi_align(m, t);
+   t->layout_known = true;
+   depth[t->id] = deepest + 1;
+   return true;
+}
+
+static bool
+check_types(struct reader *r)
+{
+   struct air_module *m = r->m;
+   unsigned *depth = rzalloc_array(m, unsigned, MAX2(m->num_types, 1));
+   if (!depth)
+      return fail(r, "no memory to check %u types", m->num_types);
+   for (unsigned i = 0; i < m->num_types; i++)
+      if (!check_type(r, &m->types[i], depth, 0))
+         return false;
+   ralloc_free(depth);
+   return true;
+}
+
 /* -- values ------------------------------------------------------------- */
 
-static void
+static bool
 push_value(struct reader *r, struct air_value *v)
 {
    if (r->num_values == r->cap_values) {
-      r->cap_values = MAX2(256, r->cap_values * 2);
-      r->values = reralloc(r->m, r->values, struct air_value *, r->cap_values);
+      unsigned cap = r->cap_values < UINT32_MAX / 2 ? MAX2(256, r->cap_values * 2) : 0;
+      struct air_value **values = cap ? reralloc(r->m, r->values, struct air_value *, cap) : NULL;
+      if (!values)
+         return fail(r, "no memory for %u values", r->num_values + 1);
+      r->values = values;
+      r->cap_values = cap;
    }
    v->id = r->num_values;
    r->values[r->num_values++] = v;
+   return true;
 }
 
 static struct air_value *
@@ -414,19 +558,27 @@ static struct air_constant *
 new_constant(struct reader *r, const struct air_type *t, enum air_const_kind k)
 {
    struct air_constant *c = rzalloc(r->m, struct air_constant);
+   if (!c) {
+      fail(r, "no memory for a constant");
+      return NULL;
+   }
    c->base.kind = AIR_VALUE_CONSTANT;
    c->base.type = t;
    c->ckind = k;
-   push_value(r, &c->base);
-   return c;
+   return push_value(r, &c->base) ? c : NULL;
 }
 
-static void
+static bool
 expr_operands(struct reader *r, struct air_constant *c, unsigned n)
 {
-   c->num_operands = n;
    c->operands = rzalloc_array(r->m, struct air_value *, MAX2(n, 1));
    c->pending = rzalloc_array(r->m, unsigned, MAX2(n, 1));
+   if (!c->operands || !c->pending) {
+      c->pending = NULL;
+      return fail(r, "no memory for a constant expression of %u operands", n);
+   }
+   c->num_operands = n;
+   return true;
 }
 
 static bool
@@ -457,18 +609,22 @@ read_constants_block(struct reader *r)
       struct air_constant *c;
       switch (e.id) {
       case CST_CODE_NULL:
-         new_constant(r, cur, AIR_CONST_NULL);
+         if (!new_constant(r, cur, AIR_CONST_NULL))
+            return false;
          break;
       case CST_CODE_UNDEF:
-         new_constant(r, cur, AIR_CONST_UNDEF);
+         if (!new_constant(r, cur, AIR_CONST_UNDEF))
+            return false;
          break;
       case CST_CODE_POISON:
-         new_constant(r, cur, AIR_CONST_POISON);
+         if (!new_constant(r, cur, AIR_CONST_POISON))
+            return false;
          break;
       case CST_CODE_INTEGER:
          if (e.num_ops < 1)
             return fail(r, "INTEGER constant without a value");
-         c = new_constant(r, cur, AIR_CONST_INT);
+         if (!(c = new_constant(r, cur, AIR_CONST_INT)))
+            return false;
          c->u = truncate_to(cur, (uint64_t)decode_signed(e.ops[0]));
          break;
       case CST_CODE_WIDE_INTEGER:
@@ -478,14 +634,20 @@ read_constants_block(struct reader *r)
             return fail(r, "FLOAT constant without a value");
          if (!air_type_is_float(cur))
             return fail(r, "FLOAT constant of a non-float type");
-         c = new_constant(r, cur, AIR_CONST_FLOAT);
+         if (!(c = new_constant(r, cur, AIR_CONST_FLOAT)))
+            return false;
          c->u = e.ops[0];
          break;
       case CST_CODE_AGGREGATE:
-         c = new_constant(r, cur, AIR_CONST_AGGREGATE);
-         c->num_elems = e.num_ops;
+         if (!(c = new_constant(r, cur, AIR_CONST_AGGREGATE)))
+            return false;
          c->elems = rzalloc_array(r->m, struct air_value *, MAX2(e.num_ops, 1));
          c->pending = rzalloc_array(r->m, unsigned, MAX2(e.num_ops, 1));
+         if (!c->elems || !c->pending) {
+            c->pending = NULL;
+            return fail(r, "no memory for an aggregate of %u elements", e.num_ops);
+         }
+         c->num_elems = e.num_ops;
          for (unsigned i = 0; i < e.num_ops; i++)
             c->pending[i] = e.ops[i];
          break;
@@ -493,9 +655,12 @@ read_constants_block(struct reader *r)
       case CST_CODE_CSTRING:
       case CST_CODE_DATA: {
          unsigned n = e.num_ops + (e.id == CST_CODE_CSTRING);
-         c = new_constant(r, cur, AIR_CONST_DATA);
-         c->num_elems = n;
+         if (!(c = new_constant(r, cur, AIR_CONST_DATA)))
+            return false;
          c->data = rzalloc_array(r->m, uint64_t, MAX2(n, 1));
+         if (!c->data)
+            return fail(r, "no memory for a constant of %u elements", n);
+         c->num_elems = n;
          for (unsigned i = 0; i < e.num_ops; i++)
             c->data[i] = e.ops[i];
          break;
@@ -503,36 +668,46 @@ read_constants_block(struct reader *r)
       case CST_CODE_CE_CAST:
          if (e.num_ops < 3)
             return fail(r, "CE_CAST too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_CAST;
          c->expr_sub = e.ops[0];
-         expr_operands(r, c, 1);
+         if (!expr_operands(r, c, 1))
+            return false;
          c->pending[0] = e.ops[2];
          break;
       case CST_CODE_CE_BINOP:
          if (e.num_ops < 3)
             return fail(r, "CE_BINOP too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_BINOP;
          c->expr_sub = e.ops[0];
-         expr_operands(r, c, 2);
+         if (!expr_operands(r, c, 2))
+            return false;
          c->pending[0] = e.ops[1];
          c->pending[1] = e.ops[2];
          break;
       case CST_CODE_CE_UNOP:
          if (e.num_ops < 2)
             return fail(r, "CE_UNOP too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_UNOP;
          c->expr_sub = e.ops[0];
-         expr_operands(r, c, 1);
+         if (!expr_operands(r, c, 1))
+            return false;
          c->pending[0] = e.ops[1];
          break;
       case CST_CODE_CE_GEP_OLD:
       case CST_CODE_CE_INBOUNDS_GEP:
       case CST_CODE_CE_GEP_WITH_INRANGE_INDEX: {
          unsigned i = 0;
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         /* (the type and flags come first: without them, num_ops - i below wraps) */
+         if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX && e.num_ops < 2)
+            return fail(r, "CE_GEP_WITH_INRANGE_INDEX too short");
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_GEP;
          if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX || (e.num_ops & 1))
             c->src_type = type_by_id(r, e.ops[i++]);
@@ -542,7 +717,8 @@ read_constants_block(struct reader *r)
             c->inbounds = e.id == CST_CODE_CE_INBOUNDS_GEP;
          if ((e.num_ops - i) & 1)
             return fail(r, "CE_GEP with an odd operand list");
-         expr_operands(r, c, (e.num_ops - i) / 2);
+         if (!expr_operands(r, c, (e.num_ops - i) / 2))
+            return false;
          for (unsigned k = 0; i < e.num_ops; i += 2, k++)
             c->pending[k] = e.ops[i + 1]; /* (type, value) pairs */
          break;
@@ -550,27 +726,33 @@ read_constants_block(struct reader *r)
       case CST_CODE_CE_SELECT:
          if (e.num_ops < 3)
             return fail(r, "CE_SELECT too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_SELECT;
-         expr_operands(r, c, 3);
+         if (!expr_operands(r, c, 3))
+            return false;
          for (unsigned i = 0; i < 3; i++)
             c->pending[i] = e.ops[i];
          break;
       case CST_CODE_CE_EXTRACTELT:
          if (e.num_ops < 3)
             return fail(r, "CE_EXTRACTELT too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_EXTRACTELT;
-         expr_operands(r, c, 2);
+         if (!expr_operands(r, c, 2))
+            return false;
          c->pending[0] = e.ops[1];
          c->pending[1] = e.ops[e.num_ops == 4 ? 3 : 2];
          break;
       case CST_CODE_CE_INSERTELT:
          if (e.num_ops < 3)
             return fail(r, "CE_INSERTELT too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_INSERTELT;
-         expr_operands(r, c, 3);
+         if (!expr_operands(r, c, 3))
+            return false;
          c->pending[0] = e.ops[0];
          c->pending[1] = e.ops[1];
          c->pending[2] = e.ops[e.num_ops == 4 ? 3 : 2];
@@ -578,19 +760,23 @@ read_constants_block(struct reader *r)
       case CST_CODE_CE_SHUFFLEVEC:
          if (e.num_ops < 3)
             return fail(r, "CE_SHUFFLEVEC too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_SHUFFLEVEC;
-         expr_operands(r, c, 3);
+         if (!expr_operands(r, c, 3))
+            return false;
          for (unsigned i = 0; i < 3; i++)
             c->pending[i] = e.ops[i];
          break;
       case CST_CODE_CE_CMP:
          if (e.num_ops < 4)
             return fail(r, "CE_CMP too short");
-         c = new_constant(r, cur, AIR_CONST_EXPR);
+         if (!(c = new_constant(r, cur, AIR_CONST_EXPR)))
+            return false;
          c->expr_op = AIR_OP_CMP;
          c->expr_sub = e.ops[3];
-         expr_operands(r, c, 2);
+         if (!expr_operands(r, c, 2))
+            return false;
          c->pending[0] = e.ops[1];
          c->pending[1] = e.ops[2];
          break;
@@ -626,12 +812,22 @@ static struct air_md *
 new_md(struct reader *r, enum air_md_kind k)
 {
    struct air_md *md = rzalloc(r->m, struct air_md);
+   if (!md) {
+      fail(r, "no memory for metadata");
+      return NULL;
+   }
    md->kind = k;
    md->id = r->num_md;
    md->function_local = r->cur_fn != NULL;
    if (r->num_md == r->cap_md) {
-      r->cap_md = MAX2(256, r->cap_md * 2);
-      r->md = reralloc(r->m, r->md, struct air_md *, r->cap_md);
+      unsigned cap = r->cap_md < UINT32_MAX / 2 ? MAX2(256, r->cap_md * 2) : 0;
+      struct air_md **mds = cap ? reralloc(r->m, r->md, struct air_md *, cap) : NULL;
+      if (!mds) {
+         fail(r, "no memory for %u metadata", r->num_md + 1);
+         return NULL;
+      }
+      r->md = mds;
+      r->cap_md = cap;
    }
    r->md[r->num_md++] = md;
    return md;
@@ -661,19 +857,47 @@ read_md_strings(struct reader *r, const struct air_bs_entry *e)
       do {
          if (lens.pos + 6 > lens.size_bits)
             return fail(r, "METADATA_STRINGS lengths run out");
+         /* (a shift of 64 or more is undefined, and no string is 2^32 long) */
+         if (shift > 30)
+            return fail(r, "METADATA_STRINGS length wider than 32 bits");
          chunk = 0;
          for (unsigned b = 0; b < 6; b++, lens.pos++)
             chunk |= (uint64_t)((lens.data[lens.pos >> 3] >> (lens.pos & 7)) & 1) << b;
          len |= (chunk & 31) << shift;
          shift += 5;
       } while (chunk & 32);
-      if (off + len > avail)
+      /* (off + len wraps for a length near 2^64; avail - off does not, off <= avail) */
+      if (len > avail - off || len > UINT32_MAX)
          return fail(r, "METADATA_STRINGS string past the blob");
       struct air_md *md = new_md(r, AIR_MD_STRING);
+      if (!md)
+         return false;
       md->str = chars + off;
       md->len = len;
       off += len;
    }
+   return true;
+}
+
+/* METADATA_KIND [id, name...]: the kind's name, in a table indexed by id */
+static bool
+set_md_kind(struct reader *r, const struct air_bs_entry *e)
+{
+   struct air_module *m = r->m;
+   /* LLVM numbers the kinds from 0 up, some forty of them; an id of
+    * 0xFFFFFFFF made id + 1 wrap to 0 and the table shrink before the write
+    */
+   if (e->ops[0] >= MAX_MD_KINDS)
+      return fail(r, "metadata kind %" PRIu64, e->ops[0]);
+   unsigned id = e->ops[0];
+   if (id >= m->num_md_kinds) {
+      const char **names = rerzalloc(m, m->md_kind_names, const char *, m->num_md_kinds, id + 1);
+      if (!names)
+         return fail(r, "no memory for metadata kind %u", id);
+      m->md_kind_names = names;
+      m->num_md_kinds = id + 1;
+   }
+   m->md_kind_names[id] = air_bs_ops_to_string(m, e->ops + 1, e->num_ops - 1);
    return true;
 }
 
@@ -710,24 +934,33 @@ read_metadata_block(struct reader *r)
             return false;
          break;
       case METADATA_STRING_OLD:
-         md = new_md(r, AIR_MD_STRING);
+         if (!(md = new_md(r, AIR_MD_STRING)))
+            return false;
          md->str = air_bs_ops_to_string(r->m, e.ops, e.num_ops);
+         if (!md->str)
+            return fail(r, "no memory for a metadata string");
          md->len = e.num_ops;
          break;
       case METADATA_VALUE:
          if (e.num_ops != 2)
             return fail(r, "METADATA_VALUE of %u operands", e.num_ops);
-         md = new_md(r, AIR_MD_VALUE);
+         if (!(md = new_md(r, AIR_MD_VALUE)))
+            return false;
          md->value_type = type_by_id(r, e.ops[0]);
          md->value_id = e.ops[1];
          break;
       case METADATA_NODE:
       case METADATA_DISTINCT_NODE:
-         md = new_md(r, AIR_MD_NODE);
+         if (!(md = new_md(r, AIR_MD_NODE)))
+            return false;
          md->distinct = e.id == METADATA_DISTINCT_NODE;
-         md->num_ops = e.num_ops;
          md->ops = rzalloc_array(r->m, struct air_md *, MAX2(e.num_ops, 1));
          md->pending = rzalloc_array(r->m, unsigned, MAX2(e.num_ops, 1));
+         if (!md->ops || !md->pending) {
+            md->pending = NULL;
+            return fail(r, "no memory for a metadata node of %u operands", e.num_ops);
+         }
+         md->num_ops = e.num_ops;
          for (unsigned i = 0; i < e.num_ops; i++)
             md->pending[i] = e.ops[i]; /* id + 1, 0 for null */
          break;
@@ -737,30 +970,43 @@ read_metadata_block(struct reader *r)
       case METADATA_NAMED_NODE: {
          if (!r->pending_md_name)
             return fail(r, "NAMED_NODE without a NAME");
+         /* Named metadata is the module's: one in a function's block would
+          * name nodes that are dropped when the function ends.
+          */
+         if (r->cur_fn)
+            return fail(r, "named metadata %s inside a function", r->pending_md_name);
          struct air_module *m = r->m;
-         m->named_md = reralloc(m, m->named_md, struct air_named_md, m->num_named_md + 1);
+         struct air_named_md *named =
+            reralloc(m, m->named_md, struct air_named_md, m->num_named_md + 1);
+         if (!named)
+            return fail(r, "no memory for named metadata");
+         m->named_md = named;
+         struct air_md **ops = rzalloc_array(m, struct air_md *, MAX2(e.num_ops, 1));
+         if (!ops)
+            return fail(r, "no memory for named metadata of %u operands", e.num_ops);
+         /* Resolved here, against the nodes read so far: LLVM writes named
+          * metadata after the nodes it names. A number kept to be resolved
+          * later was used as a pointer when nothing came to resolve it.
+          */
+         for (unsigned i = 0; i < e.num_ops; i++) {
+            if (e.ops[i] >= r->num_md)
+               return fail(r, "named metadata %s names !%" PRIu64 " of %u", r->pending_md_name,
+                           e.ops[i], r->num_md);
+            ops[i] = r->md[e.ops[i]];
+         }
          struct air_named_md *n = &m->named_md[m->num_named_md++];
          n->name = r->pending_md_name;
          r->pending_md_name = NULL;
          n->num_ops = e.num_ops;
-         n->ops = rzalloc_array(m, struct air_md *, MAX2(e.num_ops, 1));
-         /* resolved below: these ids are plain, not + 1 */
-         for (unsigned i = 0; i < e.num_ops; i++)
-            n->ops[i] = (struct air_md *)(uintptr_t)(e.ops[i] + 1);
+         n->ops = ops;
          break;
       }
-      case METADATA_KIND: {
+      case METADATA_KIND:
          if (e.num_ops < 1)
             return fail(r, "METADATA_KIND without an id");
-         struct air_module *m = r->m;
-         unsigned id = e.ops[0];
-         if (id >= m->num_md_kinds) {
-            m->md_kind_names = rerzalloc(m, m->md_kind_names, const char *, m->num_md_kinds, id + 1);
-            m->num_md_kinds = id + 1;
-         }
-         m->md_kind_names[id] = air_bs_ops_to_string(m, e.ops + 1, e.num_ops - 1);
+         if (!set_md_kind(r, &e))
+            return false;
          break;
-      }
       case METADATA_INDEX_OFFSET:
       case METADATA_INDEX:
       case METADATA_GLOBAL_DECL_ATTACHMENT:
@@ -771,7 +1017,8 @@ read_metadata_block(struct reader *r)
          return fail(r, "unsupported metadata record %u", e.id);
       default:
          if (md_other_code(e.id)) {
-            md = new_md(r, AIR_MD_OTHER);
+            if (!(md = new_md(r, AIR_MD_OTHER)))
+               return false;
             md->code = e.id;
             break;
          }
@@ -813,22 +1060,6 @@ resolve_md_values(struct reader *r, unsigned first)
 }
 
 static bool
-resolve_named_md(struct reader *r)
-{
-   struct air_module *m = r->m;
-   for (unsigned i = 0; i < m->num_named_md; i++) {
-      struct air_named_md *n = &m->named_md[i];
-      for (unsigned k = 0; k < n->num_ops; k++) {
-         uintptr_t id = (uintptr_t)n->ops[k] - 1;
-         if (id >= r->num_md)
-            return fail(r, "named metadata %s names !%u", n->name, (unsigned)id);
-         n->ops[k] = r->md[id];
-      }
-   }
-   return true;
-}
-
-static bool
 read_metadata_kind_block(struct reader *r)
 {
    for (;;) {
@@ -837,15 +1068,8 @@ read_metadata_kind_block(struct reader *r)
          return true;
       if (e.kind != AIR_BS_RECORD)
          return check_bs(r) && fail(r, "metadata kind block ends early");
-      if (e.id == METADATA_KIND && e.num_ops >= 1) {
-         struct air_module *m = r->m;
-         unsigned id = e.ops[0];
-         if (id >= m->num_md_kinds) {
-            m->md_kind_names = rerzalloc(m, m->md_kind_names, const char *, m->num_md_kinds, id + 1);
-            m->num_md_kinds = id + 1;
-         }
-         m->md_kind_names[id] = air_bs_ops_to_string(m, e.ops + 1, e.num_ops - 1);
-      }
+      if (e.id == METADATA_KIND && e.num_ops >= 1 && !set_md_kind(r, &e))
+         return false;
    }
 }
 
@@ -863,7 +1087,11 @@ as_version2(struct reader *r, const struct air_bs_entry *e, struct air_bs_entry 
 {
    if (r->m->version >= 2)
       return e;
-   uint64_t *ops = ralloc_array(r->m, uint64_t, e->num_ops + 2);
+   uint64_t *ops = ralloc_array(r->m, uint64_t, (size_t)e->num_ops + 2);
+   if (!ops) {
+      fail(r, "no memory for a record of %u operands", e->num_ops);
+      return NULL;
+   }
    ops[0] = ops[1] = 0;
    memcpy(ops + 2, e->ops, e->num_ops * sizeof(uint64_t));
    *copy = *e;
@@ -878,6 +1106,8 @@ read_globalvar(struct reader *r, const struct air_bs_entry *e1)
    struct air_module *m = r->m;
    struct air_bs_entry copy;
    const struct air_bs_entry *e = as_version2(r, e1, &copy);
+   if (!e)
+      return false;
    if (e->num_ops < 8)
       return fail(r, "GLOBALVAR too short");
 
@@ -902,7 +1132,8 @@ read_globalvar(struct reader *r, const struct air_bs_entry *e1)
    g->base.type = pointer_to(r, g->value_type, g->addrspace);
    g->init_id = e->ops[4];
    g->linkage = e->ops[5];
-   g->align = e->ops[6] ? 1u << (e->ops[6] - 1) : 0;
+   if (!log2_align(r, e->ops[6], &g->align))
+      return false;
    if (e->ops[7]) {
       if (e->ops[7] - 1 >= m->num_section_names)
          return fail(r, "GLOBALVAR names section %" PRIu64, e->ops[7] - 1);
@@ -915,10 +1146,12 @@ read_globalvar(struct reader *r, const struct air_bs_entry *e1)
    if (e->num_ops > 9 && e->ops[9])
       return fail(r, "thread-local global");
 
-   m->globals = reralloc(m, m->globals, struct air_global *, m->num_globals + 1);
+   struct air_global **globals = reralloc(m, m->globals, struct air_global *, m->num_globals + 1);
+   if (!globals)
+      return fail(r, "no memory for %u globals", m->num_globals + 1);
+   m->globals = globals;
    m->globals[m->num_globals++] = g;
-   push_value(r, &g->base);
-   return true;
+   return push_value(r, &g->base);
 }
 
 static bool
@@ -927,6 +1160,8 @@ read_function_record(struct reader *r, const struct air_bs_entry *e1)
    struct air_module *m = r->m;
    struct air_bs_entry copy;
    const struct air_bs_entry *e = as_version2(r, e1, &copy);
+   if (!e)
+      return false;
    if (e->num_ops < 8)
       return fail(r, "FUNCTION too short");
 
@@ -948,7 +1183,8 @@ read_function_record(struct reader *r, const struct air_bs_entry *e1)
    f->is_declaration = e->ops[4];
    f->linkage = e->ops[5];
    f->paramattr = e->ops[6];
-   f->align = e->ops[7] ? 1u << (e->ops[7] - 1) : 0;
+   if (!log2_align(r, e->ops[7], &f->align))
+      return false;
    if (e->ops[8]) {
       if (e->ops[8] - 1 >= m->num_section_names)
          return fail(r, "FUNCTION names section %" PRIu64, e->ops[8] - 1);
@@ -961,15 +1197,20 @@ read_function_record(struct reader *r, const struct air_bs_entry *e1)
 
    f->num_args = t->num_members;
    f->args = rzalloc_array(m, struct air_value, MAX2(f->num_args, 1));
+   if (!f->args)
+      return fail(r, "no memory for %u arguments", f->num_args);
    for (unsigned i = 0; i < f->num_args; i++) {
       f->args[i].kind = AIR_VALUE_ARGUMENT;
       f->args[i].type = t->members[i];
    }
 
-   m->functions = reralloc(m, m->functions, struct air_function *, m->num_functions + 1);
+   struct air_function **functions =
+      reralloc(m, m->functions, struct air_function *, m->num_functions + 1);
+   if (!functions)
+      return fail(r, "no memory for %u functions", m->num_functions + 1);
+   m->functions = functions;
    m->functions[m->num_functions++] = f;
-   push_value(r, &f->base);
-   return true;
+   return push_value(r, &f->base);
 }
 
 /* -- function bodies ---------------------------------------------------- */
@@ -1009,13 +1250,32 @@ take_value_type(struct reader *r, struct rec *rc)
 {
    unsigned id = (uint32_t)r->num_values - (uint32_t)take(rc);
    if (id >= r->num_values) {
+      /* A forward reference: a value of a later record of this function,
+       * each of which takes a bit at least. A relative id of num_values + 1
+       * made this 0xFFFFFFFF, its id + 1 a capacity of 0 and the write
+       * below one 32 GB past the table.
+       */
+      unsigned ahead = id - r->num_values;
+      if (ahead >= MAX_FORWARD || ahead >= air_bs_bits_left(&r->bs)) {
+         fail(r, "operand %u, past the values its function has room for", id);
+         rc->bad = true;
+         return 0;
+      }
       const struct air_type *t = type_by_id(r, take(rc));
       if (id >= r->cap_fwd) {
-         unsigned cap = MAX2(id + 1, MAX2(64, r->cap_fwd * 2));
-         r->fwd = rerzalloc(r->m, r->fwd, const struct air_type *, r->cap_fwd, cap);
+         uint64_t cap = MAX2((uint64_t)id + 1, MAX2(64, (uint64_t)r->cap_fwd * 2));
+         __typeof__(r->fwd) fwd = cap <= UINT32_MAX ?
+            rerzalloc(r->m, r->fwd, __typeof__(*r->fwd), r->cap_fwd, cap) : NULL;
+         if (!fwd) {
+            fail(r, "no memory for forward references to %u values", id + 1);
+            rc->bad = true;
+            return 0;
+         }
+         r->fwd = fwd;
          r->cap_fwd = cap;
       }
-      r->fwd[id] = t;
+      r->fwd[id].type = t;
+      r->fwd[id].fn = r->fn_serial;
    }
    return id;
 }
@@ -1024,12 +1284,18 @@ static struct air_inst *
 new_inst(struct reader *r, enum air_opcode op, const struct air_type *type, unsigned num_operands)
 {
    struct air_inst *in = rzalloc(r->m, struct air_inst);
+   if (in) {
+      in->operands = rzalloc_array(r->m, struct air_value *, MAX2(num_operands, 1));
+      in->operand_ids = rzalloc_array(r->m, unsigned, MAX2(num_operands, 1));
+   }
+   if (!in || !in->operands || !in->operand_ids) {
+      fail(r, "no memory for an instruction of %u operands", num_operands);
+      return NULL;
+   }
    in->base.kind = AIR_VALUE_INSTRUCTION;
    in->base.type = type;
    in->op = op;
    in->num_operands = num_operands;
-   in->operands = rzalloc_array(r->m, struct air_value *, MAX2(num_operands, 1));
-   in->operand_ids = rzalloc_array(r->m, unsigned, MAX2(num_operands, 1));
    return in;
 }
 
@@ -1038,8 +1304,8 @@ type_of_id(struct reader *r, unsigned id)
 {
    if (id < r->num_values && r->values[id])
       return r->values[id]->type;
-   if (id < r->cap_fwd && r->fwd[id])
-      return r->fwd[id];
+   if (id < r->cap_fwd && r->fwd[id].fn == r->fn_serial && r->fwd[id].type)
+      return r->fwd[id].type;
    fail(r, "operand %u has no type (a forward reference whose record gave none)", id);
    return NULL;
 }
@@ -1087,20 +1353,27 @@ add_inst(struct reader *r, struct air_block **block, struct air_inst *in)
    if (!b)
       return fail(r, "instruction after the last block");
    if (b->num_insts == b->cap_insts) {
-      b->cap_insts = MAX2(16, b->cap_insts * 2);
-      b->insts = reralloc(r->m, b->insts, struct air_inst *, b->cap_insts);
+      unsigned cap = b->cap_insts < UINT32_MAX / 2 ? MAX2(16, b->cap_insts * 2) : 0;
+      struct air_inst **insts = cap ? reralloc(r->m, b->insts, struct air_inst *, cap) : NULL;
+      if (!insts)
+         return fail(r, "no memory for %u instructions", b->num_insts + 1);
+      b->insts = insts;
+      b->cap_insts = cap;
+   }
+   if (r->num_fn_insts == r->cap_fn_insts) {
+      unsigned cap = r->cap_fn_insts < UINT32_MAX / 2 ? MAX2(64, r->cap_fn_insts * 2) : 0;
+      struct air_inst **insts = cap ? reralloc(r->m, r->fn_insts, struct air_inst *, cap) : NULL;
+      if (!insts)
+         return fail(r, "no memory for %u instructions", r->num_fn_insts + 1);
+      r->fn_insts = insts;
+      r->cap_fn_insts = cap;
    }
    b->insts[b->num_insts++] = in;
    in->parent = b;
-
-   if (r->num_fn_insts == r->cap_fn_insts) {
-      r->cap_fn_insts = MAX2(64, r->cap_fn_insts * 2);
-      r->fn_insts = reralloc(r->m, r->fn_insts, struct air_inst *, r->cap_fn_insts);
-   }
    r->fn_insts[r->num_fn_insts++] = in;
 
-   if (in->base.type && in->base.type->kind != AIR_TYPE_VOID)
-      push_value(r, &in->base);
+   if (in->base.type && in->base.type->kind != AIR_TYPE_VOID && !push_value(r, &in->base))
+      return false;
 
    /* terminators move on to the next block */
    if (in->op == AIR_OP_RET || in->op == AIR_OP_BR || in->op == AIR_OP_SWITCH ||
@@ -1129,6 +1402,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_BINOP, t, 2);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       in->sub = opc;
@@ -1143,6 +1418,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_UNOP, t, 1);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->sub = opc;
       if (more(&rc))
@@ -1156,6 +1433,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_CAST, t, 1);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->sub = opc;
       if (more(&rc))
@@ -1174,6 +1453,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!pt)
          return false;
       in = new_inst(r, AIR_OP_GEP, NULL, n);
+      if (!in)
+         return false;
       memcpy(in->operand_ids, ids, n * sizeof(unsigned));
       in->inbounds = inbounds;
       in->aux_type = src;
@@ -1191,6 +1472,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_SELECT, t, 3);
+      if (!in)
+         return false;
       in->operand_ids[0] = c; /* condition first, like LLVM's operand order */
       in->operand_ids[1] = a;
       in->operand_ids[2] = b;
@@ -1207,6 +1490,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (t->kind != AIR_TYPE_VECTOR)
          return fail(r, "extractelement of a non-vector");
       in = new_inst(r, AIR_OP_EXTRACTELT, t->elem, 2);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       break;
@@ -1219,6 +1504,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_INSERTELT, t, 3);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       in->operand_ids[2] = c;
@@ -1246,6 +1533,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!rt)
          return fail(r, "shufflevector result type not in the type table");
       in = new_inst(r, AIR_OP_SHUFFLEVEC, rt, 3);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       in->operand_ids[2] = c;
@@ -1277,6 +1566,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!rt)
          return fail(r, "compare result type not in the type table");
       in = new_inst(r, AIR_OP_CMP, rt, 2);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       in->sub = pred;
@@ -1287,22 +1578,34 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
    case FUNC_CODE_INST_RET:
       if (e->num_ops == 0) {
          in = new_inst(r, AIR_OP_RET, NULL, 0);
+         if (!in)
+            return false;
       } else {
          a = take_value_type(r, &rc);
          in = new_inst(r, AIR_OP_RET, NULL, 1);
+         if (!in)
+            return false;
          in->operand_ids[0] = a;
       }
       break;
    case FUNC_CODE_INST_BR:
       if (e->num_ops == 1) {
          in = new_inst(r, AIR_OP_BR, NULL, 0);
+         if (!in)
+            return false;
          in->num_targets = 1;
          in->target_ids = ralloc_array(m, unsigned, 1);
+         if (!in->target_ids)
+            return fail(r, "no memory for a branch");
          in->target_ids[0] = take(&rc);
       } else if (e->num_ops == 3) {
          in = new_inst(r, AIR_OP_BR, NULL, 1);
+         if (!in)
+            return false;
          in->num_targets = 2;
          in->target_ids = ralloc_array(m, unsigned, 2);
+         if (!in->target_ids)
+            return fail(r, "no memory for a branch");
          in->target_ids[0] = take(&rc);
          in->target_ids[1] = take(&rc);
          in->operand_ids[0] = take_value(r, &rc);
@@ -1336,8 +1639,12 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       unsigned deflt = take(&rc);
       unsigned n = (e->num_ops - 3) / 2;
       in = new_inst(r, AIR_OP_SWITCH, NULL, 1 + n);
+      if (!in)
+         return false;
       in->num_targets = 1 + n;
       in->target_ids = ralloc_array(m, unsigned, 1 + n);
+      if (!in->target_ids)
+         return fail(r, "no memory for a switch of %u cases", n);
       /* target 0 and operand 0 are the default edge and the condition; the
        * cases follow, so case k is operand k+1 and target k+1
        */
@@ -1351,15 +1658,24 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
    }
    case FUNC_CODE_INST_UNREACHABLE:
       in = new_inst(r, AIR_OP_UNREACHABLE, NULL, 0);
+      if (!in)
+         return false;
       break;
    case FUNC_CODE_INST_PHI: {
+      /* (the type first: without it, num_ops - 1 below wraps) */
+      if (e->num_ops < 1)
+         return fail(r, "phi without a type");
       const struct air_type *t = type_by_id(r, take(&rc));
       if (!t)
          return false;
       unsigned n = (e->num_ops - 1) / 2;
       in = new_inst(r, AIR_OP_PHI, t, n);
+      if (!in)
+         return false;
       in->num_targets = n;
       in->target_ids = ralloc_array(m, unsigned, MAX2(n, 1));
+      if (!in->target_ids)
+         return fail(r, "no memory for a phi of %u incoming values", n);
       for (unsigned i = 0; i < n; i++) {
          int64_t rel = decode_signed(take(&rc));
          in->operand_ids[i] = (uint32_t)((int64_t)r->num_values - rel);
@@ -1381,9 +1697,12 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
          return fail(r, "alloca without an allocated type");
       unsigned as = more(&rc) ? take(&rc) : 0;
       in = new_inst(r, AIR_OP_ALLOCA, pointer_to(r, allocated, as), 1);
+      if (!in)
+         return false;
       in->aux_type = allocated;
       in->operand_ids[0] = size; /* absolute, unlike other operands */
-      in->align = ((align & 31) | ((align >> 8) << 5)) ? 1u << (((align & 31) | ((align >> 8) << 5)) - 1) : 0;
+      if (!log2_align(r, (align & 31) | ((align >> 8) << 5), &in->align))
+         return false;
       break;
    }
    case FUNC_CODE_INST_LOAD: {
@@ -1398,6 +1717,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return fail(r, "load of unknown type");
       in = new_inst(r, AIR_OP_LOAD, t, 1);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->align = decode_align(take(&rc));
       in->is_volatile = take(&rc);
@@ -1407,6 +1728,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       a = take_value_type(r, &rc); /* the pointer */
       b = take_value_type(r, &rc); /* the value */
       in = new_inst(r, AIR_OP_STORE, NULL, 2);
+      if (!in)
+         return false;
       in->operand_ids[0] = b; /* value first, as LLVM orders them */
       in->operand_ids[1] = a;
       in->align = decode_align(take(&rc));
@@ -1420,6 +1743,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
          return false;
       unsigned n = e->num_ops - rc.i;
       uint32_t *idx = ralloc_array(m, uint32_t, MAX2(n, 1));
+      if (!idx)
+         return fail(r, "no memory for %u indices", n);
       for (unsigned i = 0; i < n; i++) {
          idx[i] = take(&rc);
          if (t->kind == AIR_TYPE_STRUCT && idx[i] < t->num_members)
@@ -1430,6 +1755,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
             return fail(r, "extractvalue index out of the aggregate");
       }
       in = new_inst(r, AIR_OP_EXTRACTVAL, t, 1);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->num_indices = n;
       in->indices = idx;
@@ -1443,10 +1770,14 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
          return false;
       unsigned n = e->num_ops - rc.i;
       in = new_inst(r, AIR_OP_INSERTVAL, t, 2);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       in->operand_ids[1] = b;
       in->num_indices = n;
       in->indices = ralloc_array(m, uint32_t, MAX2(n, 1));
+      if (!in->indices)
+         return fail(r, "no memory for %u indices", n);
       for (unsigned i = 0; i < n; i++)
          in->indices[i] = take(&rc);
       break;
@@ -1486,6 +1817,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (rc.bad || more(&rc))
          return fail(r, "call record does not match its function type");
       in = new_inst(r, AIR_OP_CALL, fty->elem, 1 + n + extra);
+      if (!in)
+         return false;
       in->operand_ids[0] = callee;
       memcpy(in->operand_ids + 1, ids, (n + extra) * sizeof(unsigned));
       in->aux_type = fty;
@@ -1500,6 +1833,8 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
       if (!t)
          return false;
       in = new_inst(r, AIR_OP_FREEZE, t, 1);
+      if (!in)
+         return false;
       in->operand_ids[0] = a;
       break;
    }
@@ -1538,7 +1873,9 @@ read_attachments(struct reader *r)
          return fail(r, "attachment to instruction %u of %u", inst, r->num_fn_insts);
       struct air_inst *in = r->fn_insts[inst];
       unsigned n = (e.num_ops - 1) / 2;
-      in->attachments = ralloc_array(r->m, __typeof__(*in->attachments), n);
+      in->attachments = ralloc_array(r->m, __typeof__(*in->attachments), MAX2(n, 1));
+      if (!in->attachments)
+         return fail(r, "no memory for %u attachments", n);
       in->num_attachments = n;
       for (unsigned i = 0; i < n; i++) {
          unsigned id = e.ops[2 + 2 * i];
@@ -1606,11 +1943,12 @@ read_function_block(struct reader *r)
    r->cur_fn = f;
    r->cur_inst_id = 0;
    r->num_fn_insts = 0;
-   if (r->cap_fwd)
-      memset(r->fwd, 0, r->cap_fwd * sizeof(*r->fwd));
+   /* (the forward types of earlier functions are no longer this one's) */
+   r->fn_serial++;
 
    for (unsigned i = 0; i < f->num_args; i++)
-      push_value(r, &f->args[i]);
+      if (!push_value(r, &f->args[i]))
+         return false;
    unsigned first_local = module_values;
 
    struct air_block *block = NULL;
@@ -1651,8 +1989,13 @@ read_function_block(struct reader *r)
       if (e.id == FUNC_CODE_DECLAREBLOCKS) {
          if (e.num_ops < 1 || f->blocks)
             return fail(r, "bad DECLAREBLOCKS");
+         /* every block holds an instruction, a record of a bit at least */
+         if (e.ops[0] > MAX_BLOCKS || e.ops[0] > air_bs_bits_left(&r->bs))
+            return fail(r, "DECLAREBLOCKS of %" PRIu64 " blocks", e.ops[0]);
+         f->blocks = rzalloc_array(r->m, struct air_block, MAX2(e.ops[0], 1));
+         if (!f->blocks)
+            return fail(r, "no memory for %" PRIu64 " blocks", e.ops[0]);
          f->num_blocks = e.ops[0];
-         f->blocks = rzalloc_array(r->m, struct air_block, MAX2(f->num_blocks, 1));
          for (unsigned i = 0; i < f->num_blocks; i++)
             f->blocks[i].index = i;
          block = f->num_blocks ? &f->blocks[0] : NULL;
@@ -1673,6 +2016,8 @@ read_function_block(struct reader *r)
             if (id >= r->num_md)
                return fail(r, "metadata argument !%u", id);
             struct air_value *v = rzalloc(r->m, struct air_value);
+            if (!v)
+               return fail(r, "no memory for a metadata argument");
             v->kind = AIR_VALUE_METADATA;
             v->type = in->aux_type->members[k - 1];
             v->id = id;
@@ -1685,6 +2030,8 @@ read_function_block(struct reader *r)
       }
       if (in->num_targets) {
          in->targets = ralloc_array(r->m, struct air_block *, in->num_targets);
+         if (!in->targets)
+            return fail(r, "no memory for %u branch targets", in->num_targets);
          for (unsigned k = 0; k < in->num_targets; k++) {
             if (in->target_ids[k] >= f->num_blocks)
                return fail(r, "branch to block %u of %u", in->target_ids[k], f->num_blocks);
@@ -1749,6 +2096,9 @@ read_module_block(struct reader *r)
          bool ok = true;
          switch (e.id) {
          case TYPE_BLOCK_ID_NEW:
+            /* a second table would redefine types that values already have */
+            if (m->types)
+               return fail(r, "two type tables");
             air_bs_enter(&r->bs, e.id);
             ok = read_type_block(r);
             break;
@@ -1768,7 +2118,7 @@ read_module_block(struct reader *r)
             if (!module_md_resolved) {
                /* module-level values are complete once bodies begin */
                m->num_module_values = r->num_values;
-               ok = resolve_md_values(r, 0) && resolve_named_md(r);
+               ok = resolve_md_values(r, 0);
                m->num_md = r->num_md;
                module_md_resolved = true;
             }
@@ -1811,10 +2161,14 @@ read_module_block(struct reader *r)
       case MODULE_CODE_SOURCE_FILENAME:
          m->source_filename = air_bs_ops_to_string(m, e.ops, e.num_ops);
          break;
-      case MODULE_CODE_SECTIONNAME:
-         m->section_names = reralloc(m, m->section_names, const char *, m->num_section_names + 1);
+      case MODULE_CODE_SECTIONNAME: {
+         const char **names = reralloc(m, m->section_names, const char *, m->num_section_names + 1);
+         if (!names)
+            return fail(r, "no memory for %u section names", m->num_section_names + 1);
+         m->section_names = names;
          m->section_names[m->num_section_names++] = air_bs_ops_to_string(m, e.ops, e.num_ops);
          break;
+      }
       case MODULE_CODE_GLOBALVAR:
          if (!read_globalvar(r, &e))
             return false;
@@ -1834,7 +2188,7 @@ read_module_block(struct reader *r)
 
    if (!module_md_resolved) {
       m->num_module_values = r->num_values;
-      if (!resolve_md_values(r, 0) || !resolve_named_md(r))
+      if (!resolve_md_values(r, 0))
          return false;
       m->num_md = r->num_md;
    }
@@ -1891,7 +2245,8 @@ read_identification_block(struct reader *r)
 static const char *
 strtab_name(struct reader *r, uint64_t off, uint64_t size)
 {
-   if (!r->strtab || off + size > r->strtab_size) {
+   /* (off + size wraps for an offset and size of 2^63 each) */
+   if (!r->strtab || off > r->strtab_size || size > r->strtab_size - off) {
       fail(r, "name at %" PRIu64 "+%" PRIu64 " outside the string table", off, size);
       return NULL;
    }
@@ -1928,7 +2283,11 @@ air_module_read(void *mem_ctx, const void *data, size_t size, const char **error
       if (e.kind == AIR_BS_END)
          break;
       if (e.kind != AIR_BS_ENTER_BLOCK) {
-         check_bs(&r) || fail(&r, "a record at the top level");
+         /* (an error whether or not the bitstream has one: what was read of the module so
+          * far, its names and types not yet checked, is not a module to return)
+          */
+         if (check_bs(&r))
+            fail(&r, "a record at the top level");
          goto out;
       }
       bool ok;
@@ -1961,6 +2320,9 @@ air_module_read(void *mem_ctx, const void *data, size_t size, const char **error
       fail(&r, "no module block");
       goto out;
    }
+   /* once the datalayout is known: it is a module record, and may follow the types */
+   if (!check_types(&r))
+      goto out;
 
    /* the string table comes after the module, so names come last (a version 1
     * module named them from its symbol table already, read_module_vst)

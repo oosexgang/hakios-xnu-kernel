@@ -119,6 +119,19 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The audio DSP's link (`adsp.c`, with a new host test `workbench/adsp_driver_test.c` that plays the DSP): the answer to
+  an intent request was matched by our channel number as well as the DSP's, so a refusal on the DSP's channel 1 failed
+  a send on our channel 1; an intent told again could be kept twice, the old size beside the new; once the DSP said it
+  had given up, every send still waited five seconds for it (now `ENOTCONN` at once); text the DSP writes (its last
+  words, entry and channel names) reached the log raw, escape sequences and all; and the DSP's QRTR hello went
+  unanswered after it opened the channel again.
+- The Metal shader reader (both copies of the AIR bitcode reader, `components/metal`): a fuzzer found 135 inputs that
+  crashed it -- writes far out of bounds, numbers from the file used as pointers, unbounded recursion on types, counts
+  never checked, quadratic time. Every count is now bounded by the bits left, forward references and metadata ids are
+  checked, recursive and too-deep types are refused, layouts are cached, and `.metallib` offsets are checked. A new
+  sanitizer check, `components/metal/tools/air/readercheck.sh`, reads the 35 good modules and refuses 70 bad ones;
+  ten minutes of fuzzing each copy afterwards found nothing. Over the 41146 shader modules of Darwin 27's own
+  `.metallib` files the reader prints the same as before for every module it read before, and refuses none it read.
 - Wi-Fi's WPA2 handshake (`kernel/lx`): a forged message 1 from anyone in range between the access point's messages 1
   and 3 changed the keys the real message 3 was checked with, and the join failed; a group-key message sent again
   installed the same key again and set its replay counter back to 0; message 3's RSN element was not compared with the

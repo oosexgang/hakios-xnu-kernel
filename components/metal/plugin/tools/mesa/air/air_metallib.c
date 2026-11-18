@@ -37,6 +37,16 @@ rd16(const uint8_t *p)
    return p[0] | p[1] << 8;
 }
 
+/* [off, off + len) inside [0, size), worked out without the sum, which wraps
+ * for the offsets a file may give (and a pointer past the buffer is not one
+ * that may be compared)
+ */
+static bool
+inside(uint64_t off, uint64_t len, uint64_t size)
+{
+   return off <= size && len <= size - off;
+}
+
 bool
 air_metallib_parse(void *mem_ctx, const void *data, size_t size, struct air_metallib *lib,
                    const char **error)
@@ -55,23 +65,34 @@ air_metallib_parse(void *mem_ctx, const void *data, size_t size, struct air_meta
    uint64_t funcs = rd64(b + 0x18);
    uint64_t bc_off = rd64(b + 0x48);
    uint64_t bc_len = rd64(b + 0x50);
-   if (total > size || funcs + 4 > size || bc_off + bc_len > size) {
+   if (total > size || !inside(funcs, 4, size) || !inside(bc_off, bc_len, size)) {
       *error = "MTLB header points past the file";
       return false;
    }
 
-   const uint8_t *p = b + funcs;
-   uint32_t count = rd32(p);
+   uint64_t p = funcs;
+   uint32_t count = rd32(b + p);
    p += 4;
+   /* an entry is 4 bytes at least: a count beyond what the file holds would
+    * size the array below (0xFFFFFFFF of them: 128 GB) before any is read
+    */
+   if (count > (size - p) / 4) {
+      *error = "function list counts more functions than the file holds";
+      return false;
+   }
    lib->functions = rzalloc_array(mem_ctx, struct air_metallib_function, count ? count : 1);
+   if (!lib->functions) {
+      *error = "no memory for the function list";
+      return false;
+   }
    for (uint32_t i = 0; i < count; i++) {
-      if (p + 4 > b + size) {
+      if (!inside(p, 4, size)) {
          *error = "function list runs past the file";
          return false;
       }
-      uint32_t len = rd32(p);
-      const uint8_t *q = p + 4, *end = p + len;
-      if (len < 4 || end > b + size) {
+      uint32_t len = rd32(b + p);
+      uint64_t q = p + 4, end = p + len;
+      if (len < 4 || !inside(p, len, size)) {
          *error = "function entry runs past the file";
          return false;
       }
@@ -79,30 +100,30 @@ air_metallib_parse(void *mem_ctx, const void *data, size_t size, struct air_meta
       f->type = -1;
       uint64_t module_off = 0, module_size = 0;
       bool have_off = false;
-      while (q + 6 <= end && memcmp(q, "ENDT", 4) != 0) {
-         uint16_t vlen = rd16(q + 4);
-         const uint8_t *v = q + 6;
-         if (v + vlen > end) {
+      while (inside(q, 6, end) && memcmp(b + q, "ENDT", 4) != 0) {
+         uint16_t vlen = rd16(b + q + 4);
+         const uint8_t *v = b + q + 6;
+         if (!inside(q + 6, vlen, end)) {
             *error = "function field runs past its entry";
             return false;
          }
-         if (!memcmp(q, "NAME", 4)) {
+         if (!memcmp(b + q, "NAME", 4)) {
             f->name = ralloc_strndup(mem_ctx, (const char *)v, vlen);
-         } else if (!memcmp(q, "TYPE", 4) && vlen >= 1) {
+         } else if (!memcmp(b + q, "TYPE", 4) && vlen >= 1) {
             f->type = v[0];
-         } else if (!memcmp(q, "OFFT", 4) && vlen >= 24) {
+         } else if (!memcmp(b + q, "OFFT", 4) && vlen >= 24) {
             module_off = rd64(v + 16);
             have_off = true;
-         } else if (!memcmp(q, "MDSZ", 4) && vlen >= 8) {
+         } else if (!memcmp(b + q, "MDSZ", 4) && vlen >= 8) {
             module_size = rd64(v);
          }
-         q = v + vlen;
+         q += 6 + vlen;
       }
       if (!f->name || !have_off || !module_size) {
          *error = "function entry without NAME, OFFT or MDSZ";
          return false;
       }
-      if (module_off + module_size > bc_len) {
+      if (!inside(module_off, module_size, bc_len)) {
          *error = "function module outside the bitcode section";
          return false;
       }

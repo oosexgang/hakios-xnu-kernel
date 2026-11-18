@@ -92,8 +92,8 @@ store_size(const struct air_module *m, const struct air_type *t)
    }
 }
 
-unsigned
-air_type_abi_align(const struct air_module *m, const struct air_type *t)
+static unsigned
+abi_align(const struct air_module *m, const struct air_type *t)
 {
    bool found;
    switch (t->kind) {
@@ -116,7 +116,10 @@ air_type_abi_align(const struct air_module *m, const struct air_type *t)
       unsigned a = layout_lookup(m, 'v', bits, &found);
       if (found)
          return a / 8;
-      return MAX2(1, util_next_power_of_two64(store_size(m, t)));
+      /* (a vector of 2^40 elements is not one, but its power of two must
+       * not come out as 0 when it is made an unsigned)
+       */
+      return MIN2(util_next_power_of_two64(store_size(m, t)), 1u << 30);
    }
    case AIR_TYPE_ARRAY:
       return air_type_abi_align(m, t->elem);
@@ -131,6 +134,17 @@ air_type_abi_align(const struct air_module *m, const struct air_type *t)
    default:
       return 1;
    }
+}
+
+unsigned
+air_type_abi_align(const struct air_module *m, const struct air_type *t)
+{
+   if (t->layout_known)
+      return t->layout_align;
+   /* The datalayout is the module's: "f32:4" makes an alignment of 4 bits,
+    * which is 0 bytes, and every ALIGN_NPOT by it a division by zero.
+    */
+   return MAX2(abi_align(m, t), 1);
 }
 
 uint64_t
@@ -151,6 +165,8 @@ air_struct_member_offset(const struct air_module *m, const struct air_type *t, u
 uint64_t
 air_type_alloc_size(const struct air_module *m, const struct air_type *t)
 {
+   if (t->layout_known)
+      return t->layout_size;
    switch (t->kind) {
    case AIR_TYPE_ARRAY:
       return t->count * air_type_alloc_size(m, t->elem);

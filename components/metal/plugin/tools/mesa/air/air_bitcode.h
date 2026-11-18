@@ -49,7 +49,13 @@ struct air_bs_scope {
    unsigned block_id;
    unsigned abbrev_width;
    uint64_t end_bit;
-   struct air_abbrev_list abbrevs;
+   /* The BLOCKINFO abbreviations come first and are not copied into every
+    * block entered: a file of many small blocks and many BLOCKINFO
+    * abbreviations would otherwise cost the product of the two in memory.
+    * They are the first num_info of the list at blockinfo[info].
+    */
+   unsigned info, num_info;
+   struct air_abbrev_list abbrevs; /* the block's own, after those */
 };
 
 enum air_bs_entry_kind {
@@ -109,6 +115,20 @@ bool air_bs_init(struct air_bitstream *bs, void *mem_ctx,
 struct air_bs_entry air_bs_next(struct air_bitstream *bs);
 bool air_bs_enter(struct air_bitstream *bs, unsigned block_id);
 bool air_bs_skip_block(struct air_bitstream *bs);
+
+/* What is left of the current block, in bits. Every count a record gives
+ * (operands, types, blocks, values ahead) is checked against it: each thing
+ * counted takes at least a bit, so a count beyond this is a lie, and the
+ * allocation it would size is refused before it is made.
+ */
+static inline uint64_t
+air_bs_bits_left(const struct air_bitstream *bs)
+{
+   uint64_t end = bs->scopes[bs->depth].end_bit;
+   if (end > bs->size_bits)
+      end = bs->size_bits;
+   return bs->pos < end ? end - bs->pos : 0;
+}
 
 /* Word offset (32-bit units) of the current position, for VSTOFFSET and
  * function-entry offsets.

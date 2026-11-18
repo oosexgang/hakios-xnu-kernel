@@ -59,6 +59,13 @@ struct air_type {
    bool opaque;                   /* STRUCT without a body */
    bool vararg;                   /* FUNCTION */
    const char *name;              /* named STRUCT */
+   /* Size and alignment, worked out once when the module has been read. A
+    * struct of n structs of n structs... costs n^depth when worked out again
+    * at every level, which a module can ask for; these make it linear.
+    */
+   bool layout_known;
+   unsigned layout_align;
+   uint64_t layout_size;
 };
 
 enum air_value_kind {

@@ -885,6 +885,15 @@ attributes (`nounwind`, `captures(none)`, the attribute groups) and the order of
 because the translation uses neither. Everything else — types, constants, every instruction,
 metadata, fast-math flags, alignments, calling conventions, linkage — comes back byte for byte.
 
+The reader runs in the process of whatever app hands it a shader, and in backboardd's, so it is
+also checked against bitcode no compiler wrote: `tools/air/readercheck.sh` builds both copies of it
+(`tools/mesa/air` and the plug-in's) with AddressSanitizer and UndefinedBehaviorSanitizer and gives
+them malformed modules and containers — counts of billions, ids that wrap, types that contain
+themselves, the byte changes a fuzzer found crashes with — each of which must be refused without a
+crash, a hang or an allocation of more than 256 MB, and the plug-in's 35 kernel fixtures, which
+must still be read. Every count a record gives is bounded by the bits left in its block before it
+sizes anything.
+
 What would reverse this: if a later AIR (a newer `.metallib` corpus) turned out to need large
 parts of LLVM's auto-upgrade machinery, or if translation turned out to need LLVM's own passes
 before NIR. Neither is true of Darwin 16.5.
