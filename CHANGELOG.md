@@ -260,6 +260,14 @@ tags yet, so the current work is one section.
   neither was powered down at the run's end; the motion sensor could leave its I2C bus held low at the run's end; a
   damaged APFS directory (a name with a zero byte or a '/', a directory that is its own ancestor, a file larger than
   the disk) made the kernel's census walk without end at boot.
+- And more: mobile data sent multicast and broadcast (mDNS among it) over the radio and swallowed fragments that
+  looked like DHCP; any process could switch Wi-Fi off or join a network of its choosing through Apple80211 (set
+  requests are root's now); the run's end could free the Wi-Fi firmware's QMI handle under a waiting request, and the
+  modem's file transfers under the thread still sending them; the firmware chose the register window the kernel mapped;
+  with `scmi_perf=1`, which only looks, a hot phone raised the cores; the camera daemon leaked memory with every
+  photograph and could run two frame threads; the audio plug-in's real-time thread waited on a lock held across system
+  calls; a missing class aborted SpringBoard from the brightness hook; and a crashing tweak had no way to be skipped
+  (`notweaks=1`, and a SpringBoard start that never got past its tweaks skips them the next time).
 
 ### For whoever works on the project
 
