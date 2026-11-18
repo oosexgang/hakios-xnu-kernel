@@ -2902,6 +2902,7 @@ hakios_adsp_stop(void)
 {
 	battmgr_stop();
 	hakios_sound_dsp_down();               /* the amplifiers, the stream and the port first, while the DSP still listens */
+	hakios_mic_dsp_down();                 /* ... and the microphones' path: its stream, its votes and clocks, the codec */
 	lck_mtx_lock(&dsp_lock);
 	if (dsp_started) {
 		unsigned services = 0;
