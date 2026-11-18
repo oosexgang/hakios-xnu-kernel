@@ -80,6 +80,8 @@
 #define GIC_PRIORITY_DEFAULT    0xa0
 
 static vm_offset_t gicd_base, gicr_base;
+#define GICD_TYPER              0x0004  /* [4:0] ITLinesNumber: SPIs up to 32 * (N + 1) - 1 */
+static uint32_t gic_intid_most = 1019;  /* the last INTID the distributor has, from GICD_TYPER */
 static vm_size_t   gicr_size;
 static vm_offset_t gicr_cpu_base[MAX_CPUS]; /* each processor's redistributor frame */
 
@@ -230,8 +232,9 @@ gic_v3_spi_attach(uint32_t intid, bool edge, void (*handler)(void *context, uint
 	struct gic_spi *slot = NULL;
 	uint32_t config;
 
-	if (gicd_base == 0 || intid < GIC_INTID_SPI_MIN || intid >= GIC_INTID_SPURIOUS_MIN || handler == NULL) {
-		return KERN_INVALID_ARGUMENT;
+	if (gicd_base == 0 || intid < GIC_INTID_SPI_MIN || intid >= GIC_INTID_SPURIOUS_MIN || intid > gic_intid_most ||
+	    handler == NULL) {
+		return KERN_INVALID_ARGUMENT;   /* (past the distributor's lines: never raised, and its registers ignore writes) */
 	}
 	simple_lock(&gic_spi_lock, LCK_GRP_NULL);
 	for (unsigned i = 0; i < GIC_SPI_MOST; i++) {
@@ -453,6 +456,11 @@ gic_v3_irq_cpu_init(void)
 		}
 		if (gicd_base == 0 || gicr_base == 0) {
 			panic("gic: cannot map the distributor/redistributor");
+		}
+		{
+			uint32_t lines = gic_read32(gicd_base + GICD_TYPER) & 0x1f, most = 32 * (lines + 1) - 1;
+
+			gic_intid_most = most < GIC_INTID_SPURIOUS_MIN - 1 ? most : GIC_INTID_SPURIOUS_MIN - 1;
 		}
 	} else if (gicr_cpu_base[cpu] != 0) {
 		return;
