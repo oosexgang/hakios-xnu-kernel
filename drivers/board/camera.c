@@ -3759,12 +3759,16 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	return error;
 }
 
+/* one picture kept at a time: two writers at once would leave one's header over the other's pixels */
+static LCK_MTX_DECLARE(keep_lock, &darwin_lck_grp);
+
 /* HAKIOS_CAMERA_KEEP: a picture for the host, in one piece of memory the loader hands over. */
 static int
 keep_picture(const struct hakios_camera_command *c, struct uio *uio)
 {
 	struct cam_header *h;
 	uint64_t want = round_page(CAM_HEADER_BYTES + (uint64_t)c->bytes);
+	int error;
 
 	if (c->bytes == 0 || c->d < 1 || c->d > 3 || (uint64_t)c->c * c->b > (uint64_t)c->bytes * 2) {
 		return EINVAL;
@@ -3772,6 +3776,7 @@ keep_picture(const struct hakios_camera_command *c, struct uio *uio)
 	if (keep == 0 || keep_bytes < want) {
 		return ENOSPC;                  /* (the piece is made when the device is, while there is memory in one piece) */
 	}
+	lck_mtx_lock(&keep_lock);
 	h = (struct cam_header *)keep;
 	bzero(h, CAM_HEADER_BYTES);
 	memcpy(h->magic, "RWCAM001", 8);
@@ -3783,12 +3788,13 @@ keep_picture(const struct hakios_camera_command *c, struct uio *uio)
 	h->frame_bytes = c->bytes;
 	h->source = 2;
 	strlcpy(h->sensor, "Darwin", sizeof(h->sensor));
-	int error = uiomove((caddr_t)(keep + CAM_HEADER_BYTES), (int)MIN((uint64_t)c->bytes, (uint64_t)uio_resid(uio)), uio);
+	error = uiomove((caddr_t)(keep + CAM_HEADER_BYTES), (int)MIN((uint64_t)c->bytes, (uint64_t)uio_resid(uio)), uio);
 	h->frames = error == 0 ? 1 : 0;
 	hakios_cache_clean(keep, keep + want);
 	loader_recording[0] = kvtophys(keep);
 	loader_recording[1] = want;
 	loader_recording[2] = (uint64_t)keep;
+	lck_mtx_unlock(&keep_lock);
 	say("camera: a picture from Darwin for the host: %ux%u, format %u, %u bytes\n", c->a, c->b, c->d, c->bytes);
 	return error;
 }
