@@ -2283,6 +2283,11 @@ apr_input(const uint8_t *data, uint32_t length)
 	if (header.token == 0 || header.token != __atomic_load_n(&apr_waited_for, __ATOMIC_ACQUIRE)) {
 		return;
 	}
+	if (__atomic_load_n(&apr_answer.there, __ATOMIC_ACQUIRE)) {
+		/* the first answer to the question stands: a second packet with the same token (a basic result after the
+		 * command's own) would be written over it while the asker on another core is copying it out */
+		return;
+	}
 	bzero(apr_answer.words, sizeof(apr_answer.words));
 	memcpy(apr_answer.words, data + header_length, payload < sizeof(apr_answer.words) ? payload : sizeof(apr_answer.words));
 	apr_answer.length = payload;
