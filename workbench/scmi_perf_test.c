@@ -54,6 +54,8 @@ static int top_below_level = -1;
 static unsigned attribute_words = 4;    /* the words a domain's attributes are answered with */
 static unsigned extra_words;            /* words more than asked for, after each answer that has any */
 static bool level_fails_after_a_set;    /* a level asked for once one has been set: an error, with a word all the same */
+static int refuse_first_set_of = -1;    /* a domain whose first level set is refused (and the level left) */
+static int not_indexed = -1;            /* a domain whose attributes say no level indexing */
 
 static void
 answer(uint32_t status, const uint32_t *words, unsigned n)
@@ -111,13 +113,16 @@ firmware(void *unused __unused)
 			uint32_t level = levels[in];
 
 			answer(level_fails_after_a_set && sets > 0 ? (uint32_t)-3 : 0, &level, missing_level && in == 1 ? 0 : 1);
+		} else if (message == 0x7 && (int)in == refuse_first_set_of) {
+			refuse_first_set_of = -1;
+			answer((uint32_t)-6, NULL, 0);          /* SCMI_BUSY */
 		} else if (message == 0x7) {
 			levels[in] = shmem[0x20 / 4];
 			sets++;
 			answer(0, NULL, 0);
 		} else if (message == 0x3) {
 			/* set limits, set level, fast channels, level indexing; rate limit; sustained kHz and level */
-			uint32_t attributes[4] = { 0xea000000u, 0, 2000000 + in, 20 + in };
+			uint32_t attributes[4] = { (int)in == not_indexed ? 0xe8000000u : 0xea000000u, 0, 2000000 + in, 20 + in };
 
 			answer(0, attributes, attribute_words);
 		} else if (message == 0x6) {
@@ -157,6 +162,7 @@ channel(void)
 #pragma GCC diagnostic ignored "-Wformat"
 #include "board/board.c"
 #include "board/scmi_perf.c"
+#include "board/thermal_core.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -396,9 +402,9 @@ static void
 sets_are_clamped_and_errors_preserve_state(void)
 {
 	channel();
-	boot_args = "scmi_perf=1";
+	boot_args = "scmi_perf=2";
 	hakios_scmi_perf_init();
-	CHECK(sets == 0, "mode 1 only reads");
+	CHECK(sets == 3, "each raised: %u", sets);
 	CHECK(hakios_scmi_perf_set(0, UINT32_MAX) == 0 && levels[0] == 3000, "clamped to the top");
 	CHECK(hakios_scmi_perf_set(0, 1200) == 0 && levels[0] == 1200, "a lower thermal level accepted");
 	behaviour = REFUSES;
@@ -416,14 +422,14 @@ static void
 taken_without_an_answer(void)
 {
 	channel();
-	boot_args = "scmi_perf=1";
+	boot_args = "scmi_perf=2";
 	hakios_scmi_perf_init();
 	behaviour = OTHER_TOKEN;                /* (the firmware sets the level; its answer carries another token) */
 	CHECK(hakios_scmi_perf_set(0, 2500) == -103 && levels[0] == 2500, "the level taken, the answer not ours");
 	behaviour = ANSWERS;
 	hakios_scmi_perf_quiesce();
 	CHECK(levels[0] == 1000, "back at the level found at the run's end: %u", levels[0]);
-	CHECK(levels[1] == 1001 && levels[2] == 1002, "and the others, never set, left: %u %u", levels[1], levels[2]);
+	CHECK(levels[1] == 1001 && levels[2] == 1002, "and the others, raised, back too: %u %u", levels[1], levels[2]);
 }
 
 /* an incomplete reply leaves a gap: later domains cannot be renumbered into its place */
@@ -443,7 +449,7 @@ incomplete_domains_are_not_exposed(void)
 }
 
 /* answers one word short: of the version or the attributes, no protocol; of a level or the limits, not that domain;
- * a domain's attributes with none: not said, the domain all the same */
+ * a domain's attributes with none: not said, and with no level indexing known the domain not handed on either */
 static void
 short_answers(void)
 {
@@ -454,7 +460,7 @@ short_answers(void)
 
 	channel();
 	short_of = messages[i];
-	boot_args = "scmi_perf=1";
+	boot_args = "scmi_perf=2";
 	hakios_scmi_perf_init();
 	if (i < 2) {
 		CHECK(logged("SCMI performance protocol unavailable") && !hakios_scmi_perf_domain(0, &found, &top), "case %u: none: %s", i,
@@ -462,8 +468,8 @@ short_answers(void)
 	} else if (i < 4) {
 		CHECK(!hakios_scmi_perf_domain(0, &found, &top), "case %u: the first domain not handed on: %s", i, log_text);
 	} else {
-		CHECK(hakios_scmi_perf_domain(0, &found, &top) && !logged("domain 0 attributes"),
-		    "case %u: no attributes said, the domain all the same: %s", i, log_text);
+		CHECK(!hakios_scmi_perf_domain(0, &found, &top) && !logged("domain 0 attributes") && sets == 0 &&
+		    logged("domain 0: its levels are not known to be steps"), "case %u: no attributes said, the domain left: %s", i, log_text);
 	}
 }
 
@@ -476,10 +482,107 @@ top_at_the_level(void)
 	channel();
 	top_at_level = 0;
 	top_below_level = 1;
-	boot_args = "scmi_perf=1";
+	boot_args = "scmi_perf=2";
 	hakios_scmi_perf_init();
 	CHECK(hakios_scmi_perf_domain(0, &found, &top) && found == 1000 && top == 1000, "the top at the level: %u, %u", found, top);
 	CHECK(!hakios_scmi_perf_domain(1, &found, &top), "a top under the level: not handed on");
+}
+
+/* scmi_perf=1 only looks: thermal=2 is given no domain, and a level it asked for all the same is not set */
+static void
+only_looked_none_handed_on(void)
+{
+	uint32_t found = 0, top = 0;
+
+	channel();
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	for (unsigned d = 0; d < 3; d++) {
+		CHECK(!hakios_scmi_perf_domain(d, &found, &top), "domain %u not handed on: %u..%u", d, found, top);
+	}
+	unsigned before = asked_n;
+
+	CHECK(hakios_scmi_perf_set(0, 2999) == -1 && asked_n == before && sets == 0 && levels[0] == 1000,
+	    "a set refused, nothing asked: %u sets, level %u", sets, levels[0]);
+	only_reads();
+}
+
+/* scmi_perf=2, a domain whose raise the firmware refused: thermal=2 takes it as at its top, and its first step must not
+ * raise it -- its top is where it was found */
+static void
+failed_raise_not_raised_by_thermal(void)
+{
+	uint32_t found = 0, top = 0;
+
+	channel();
+	refuse_first_set_of = 1;
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(levels[0] == 3000 && levels[1] == 1001 && levels[2] == 3002, "the others raised: %u %u %u", levels[0], levels[1], levels[2]);
+	CHECK(hakios_scmi_perf_domain(0, &found, &top) && top == 3000, "a raised one handed on with its top: %u", top);
+	if (hakios_scmi_perf_domain(1, &found, &top)) {
+		CHECK(top == found && found == 1001, "the one not raised: its top the level found: %u..%u", found, top);
+		/* (thermal's first step, as board/thermal.c asks it) */
+		hakios_scmi_perf_set(1, th_row(top, found, 1));
+	}
+	CHECK(levels[1] == 1001, "thermal's first step leaves it where it was found: %u", levels[1]);
+	CHECK(hakios_scmi_perf_domain(2, &found, &top) && top == 3002, "and the one after it handed on all the same: %u", top);
+}
+
+/* thermal asks for levels down to its floor: below the level found is clamped to it */
+static void
+set_below_the_floor_clamped(void)
+{
+	channel();
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(hakios_scmi_perf_set(0, 0) == 0 && levels[0] == 1000, "clamped to the level found: %u", levels[0]);
+	CHECK(hakios_scmi_perf_set(2, 999) == 0 && levels[2] == 1002, "and just under it: %u", levels[2]);
+	CHECK(hakios_scmi_perf_set(1, 1500) == 0 && levels[1] == 1500, "between the two, as asked: %u", levels[1]);
+}
+
+/* a domain without level indexing: its levels are not steps thermal can count down; not raised, not handed on, and
+ * the ones after it neither (no gap in the numbering) */
+static void
+not_indexed_not_handed_on(void)
+{
+	uint32_t found = 0, top = 0;
+
+	channel();
+	not_indexed = 1;
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(hakios_scmi_perf_domain(0, &found, &top) && levels[0] == 3000, "the indexed one before it as before");
+	CHECK(!hakios_scmi_perf_domain(1, &found, &top) && !hakios_scmi_perf_domain(2, &found, &top), "it and the next not handed on");
+	CHECK(sets == 1 && levels[1] == 1001 && levels[2] == 1002, "nor raised: %u sets", sets);
+	CHECK(logged("scmi-perf: domain 1: its levels are not known to be steps (no level indexing)"), "said why: %s", log_text);
+}
+
+/* the run's end came while a core was between taking the channel and ringing for its message (the free bit clear, the
+ * lock held): the doorbell rung for it once, and each domain put back all the same */
+static void
+quiesce_with_the_channel_left_busy(void)
+{
+	channel();
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	CHECK(levels[0] == 3000 && levels[2] == 3002, "raised");
+	unsigned rung = rings;
+
+	lck_mtx_lock(&scmi_lock);
+	/* (what scmi_query() had written: a level of domain 0, then the channel taken; the doorbell not rung) */
+	shmem[0x10 / 4] = 0;
+	shmem[0x14 / 4] = 12;
+	shmem[0x18 / 4] = ((scmi_token + 1) & 0x3ff) << 18 | 0x13 << 10 | 0x7;
+	shmem[0x1c / 4] = 0;
+	shmem[0x20 / 4] = 2000;
+	shmem[0x04 / 4] = 0;
+	hakios_scmi_perf_quiesce();
+	lck_mtx_unlock(&scmi_lock);
+	CHECK(levels[0] == 1000 && levels[1] == 1001 && levels[2] == 1002, "each back where it was found: %u %u %u", levels[0], levels[1],
+	    levels[2]);
+	CHECK(rings == rung + 4 && logged("never rung for: rung"), "rung once for it, then once a domain: %u rings: %s", rings - rung,
+	    log_text);
 }
 
 /* (the board is looked up once a process: another board is another scenario) */
@@ -509,6 +612,11 @@ main(int argc, char **argv)
 		{ "taken_without_an_answer", taken_without_an_answer, 1 },
 		{ "incomplete_domains_are_not_exposed", incomplete_domains_are_not_exposed, 1 },
 		{ "short_answers", short_answers, 5 }, { "top_at_the_level", top_at_the_level, 1 },
+		{ "only_looked_none_handed_on", only_looked_none_handed_on, 1 },
+		{ "failed_raise_not_raised_by_thermal", failed_raise_not_raised_by_thermal, 1 },
+		{ "set_below_the_floor_clamped", set_below_the_floor_clamped, 1 },
+		{ "not_indexed_not_handed_on", not_indexed_not_handed_on, 1 },
+		{ "quiesce_with_the_channel_left_busy", quiesce_with_the_channel_left_busy, 1 },
 	};
 
 	if (argc < 2) {

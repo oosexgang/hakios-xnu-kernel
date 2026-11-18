@@ -246,7 +246,7 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("bench sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
 | `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (board/guard.c, on the phone): what reaches the amplifiers. |
-| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (board/mic.c, mic=3), in both channels. |
+| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (board/mic.c, mic=3), in both channels; not with rec_sound_fed=1 too, which then has the recording (two streams in one file would be neither). |
 
 ### `bsd/dev/board/camera.c`
 

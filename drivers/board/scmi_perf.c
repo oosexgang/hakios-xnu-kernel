@@ -3,7 +3,7 @@
  * Transport adapted from hakios-sm8845 (805567b), macan power driver.
  * The firmware owns the clocks and its own (LMh) limits; it clamps every level asked for to them.
  *
- *   scmi_perf=1   the levels and limits are logged, nothing changed
+ *   scmi_perf=1   the levels and limits are logged, nothing changed (thermal=2 is given no domain)
  *   scmi_perf=2   each domain is also asked for its highest level (the UI is drawn by the CPUs);
  *                 the level it was found at stays the floor that thermal=2 holds it back to
  *
@@ -38,8 +38,10 @@
 
 static vm_offset_t scmi_shmem, scmi_mailbox;
 static uint32_t scmi_token, scmi_doorbell;
-static unsigned scmi_domains;                   /* domains with both their level and limits known */
+static unsigned scmi_domains;                   /* domains with their level, limits and level indexing known */
+static unsigned scmi_handed;                    /* of those, the ones thermal=2 may set: scmi_perf=2's, once raised */
 static uint32_t scmi_found[SCMI_DOMAINS_MAX], scmi_top[SCMI_DOMAINS_MAX], scmi_now[SCMI_DOMAINS_MAX];
+static uint32_t scmi_floor[SCMI_DOMAINS_MAX];   /* the level found, or the firmware's lowest if that is higher */
 static LCK_GRP_DECLARE(scmi_lock_group, "hakios-scmi-perf");
 static LCK_MTX_DECLARE(scmi_lock, &scmi_lock_group);   /* one message on the channel at a time */
 
@@ -47,6 +49,14 @@ static volatile uint32_t *
 scmi_word(unsigned offset)
 {
 	return (volatile uint32_t *)(scmi_shmem + offset);
+}
+
+static void
+scmi_ring(void)
+{
+	hakios_barrier();
+	*(volatile uint32_t *)(scmi_mailbox + scmi_doorbell) = 1;
+	hakios_barrier();
 }
 
 /*
@@ -75,9 +85,7 @@ scmi_query(uint32_t message, const uint32_t *in, unsigned nin, uint32_t *out, un
 	}
 	hakios_barrier();
 	*scmi_word(0x4) = 0;
-	hakios_barrier();
-	*(volatile uint32_t *)(scmi_mailbox + scmi_doorbell) = 1;
-	hakios_barrier();
+	scmi_ring();
 	for (i = 0; i < 5000 && !(*scmi_word(0x4) & 1); i++) {
 		delay_for_interval(10, NSEC_PER_USEC);
 	}
@@ -107,6 +115,7 @@ scmi_query(uint32_t message, const uint32_t *in, unsigned nin, uint32_t *out, un
 void hakios_scmi_perf_init(void);
 int hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top);
 int hakios_scmi_perf_set(unsigned domain, uint32_t level);
+static int scmi_set(unsigned domain, uint32_t level);
 
 void
 hakios_scmi_perf_init(void)
@@ -142,13 +151,14 @@ hakios_scmi_perf_init(void)
 	    version >> 16, version & 0xffff, domains);
 	for (uint32_t domain = 0; domain < domains; domain++) {
 		uint32_t level = 0, limits[2] = { 0, 0 }, attr[4];
-		bool have_level, have_limits;
+		bool have_level, have_limits, indexed = false;
 
 		/* what this agent may do with the domain, as the firmware says (PERFORMANCE_DOMAIN_ATTRIBUTES) */
 		if (scmi_query(SCMI_PERF_DOMAIN_ATTRIBUTES, &domain, 1, attr, 4, &words) == 0 && words >= 1) {
 			hakios_say("scmi-perf: domain %u attributes %#x: set limits %u, set level %u, fast channels %u, "
 			    "level indexing %u, sustained %u kHz at level %u\n", domain, attr[0], attr[0] >> 31, (attr[0] >> 30) & 1,
 			    (attr[0] >> 27) & 1, (attr[0] >> 25) & 1, words >= 4 ? attr[2] : 0, words >= 4 ? attr[3] : 0);
+			indexed = (attr[0] >> 25) & 1;
 		}
 
 		have_level = scmi_query(SCMI_PERF_LEVEL_GET, &domain, 1, &level, 1, &words) == 0 && words >= 1;
@@ -163,13 +173,24 @@ hakios_scmi_perf_init(void)
 		if (!have_level || !have_limits || domain != scmi_domains || limits[0] < level) {
 			continue;
 		}
+		/*
+		 * Without level indexing a level is one of the values the firmware lists (PERFORMANCE_DESCRIBE_LEVELS), not
+		 * a step: the top less one, the first that thermal=2 would ask for, is none of them. Such a domain is neither
+		 * raised nor handed on, and with it the prefix ends.
+		 */
+		if (!indexed) {
+			hakios_say("scmi-perf: domain %u: its levels are not known to be steps (no level indexing): left as found, "
+			    "and not held back by thermal\n", domain);
+			continue;
+		}
 		scmi_found[domain] = scmi_now[domain] = level;
 		scmi_top[domain] = limits[0];
+		scmi_floor[domain] = MAX(level, limits[1]);
 		scmi_domains++;
 	}
 	if (enabled >= 2) {
 		for (unsigned domain = 0; domain < scmi_domains; domain++) {
-			int status = hakios_scmi_perf_set(domain, scmi_top[domain]);
+			int status = scmi_set(domain, scmi_top[domain]);
 			uint32_t level = 0;
 
 			lck_mtx_lock(&scmi_lock);
@@ -179,7 +200,16 @@ hakios_scmi_perf_init(void)
 			lck_mtx_unlock(&scmi_lock);
 			hakios_say("scmi-perf: domain %u asked for level %u: status %d, now %d\n", domain,
 			    scmi_top[domain], status, (int)level);
+			/*
+			 * Not raised (or not known to be): thermal=2 starts from the top, and its first step down would ask for
+			 * the top less one -- above where the domain is, while the phone is hot. Its top is the level found, so
+			 * it is never moved; one the firmware took without an answer is put back at the run's end.
+			 */
+			if (status != 0) {
+				scmi_top[domain] = scmi_found[domain];
+			}
 		}
+		scmi_handed = scmi_domains;
 	}
 }
 
@@ -192,7 +222,37 @@ hakios_scmi_perf_init(void)
 void
 hakios_scmi_perf_quiesce(void)
 {
-	for (unsigned domain = 0; domain < scmi_domains; domain++) {
+	unsigned domain, i;
+
+	for (domain = 0; domain < scmi_domains && scmi_now[domain] == scmi_found[domain]; domain++) {
+	}
+	if (domain == scmi_domains) {
+		return;
+	}
+	/*
+	 * A core stopped in scmi_query() after the channel's free bit was cleared and before the doorbell was rung leaves a
+	 * message the firmware was never told of, and the channel busy for good: every level below would be given up on.
+	 * The lock held by nobody who will run again says a message is under way; once the firmware has had as long as it
+	 * is given to answer one, the doorbell is rung for it, once, and the answer waited for as long again.
+	 */
+	if (!(*scmi_word(0x4) & 1)) {
+		bool held = !lck_mtx_try_lock(&scmi_lock);
+
+		if (!held) {
+			lck_mtx_unlock(&scmi_lock);
+		}
+		for (i = 0; held && i < 5000 && !(*scmi_word(0x4) & 1); i++) {
+			delay_for_interval(10, NSEC_PER_USEC);
+		}
+		if (held && !(*scmi_word(0x4) & 1)) {
+			hakios_say("scmi-perf: at the run's end: the channel busy with a message never rung for: rung\n");
+			scmi_ring();
+			for (i = 0; i < 5000 && !(*scmi_word(0x4) & 1); i++) {
+				delay_for_interval(10, NSEC_PER_USEC);
+			}
+		}
+	}
+	for (domain = 0; domain < scmi_domains; domain++) {
 		uint32_t in[2] = { domain, scmi_found[domain] };
 		unsigned words;
 		int status;
@@ -208,11 +268,11 @@ hakios_scmi_perf_quiesce(void)
 	}
 }
 
-/* A domain's levels for the thermal limiter: 0 when there is no such domain. */
+/* A domain's levels for the thermal limiter: 0 when there is no such domain, or none it may set (scmi_perf=1). */
 int
 hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)
 {
-	if (domain >= scmi_domains) {
+	if (domain >= scmi_handed) {
 		return 0;
 	}
 	*found = scmi_found[domain];
@@ -220,18 +280,25 @@ hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)
 	return 1;
 }
 
-/* Ask for a domain's level (clamped to what was found and the top); the SCMI status, 0: done. */
+/* Ask for a level of a domain handed on to thermal (clamped to its floor and its top); the SCMI status, 0: done. */
 int
 hakios_scmi_perf_set(unsigned domain, uint32_t level)
+{
+	if (domain >= scmi_handed) {
+		return -1;
+	}
+	return scmi_set(domain, level);
+}
+
+static int
+scmi_set(unsigned domain, uint32_t level)
 {
 	uint32_t in[2], was;
 	unsigned words;
 	int status;
 
-	if (domain >= scmi_domains) {
-		return -1;
-	}
-	level = MIN(level, scmi_top[domain]);
+	/* (the top wins over a floor above it: a domain not raised has the level found for its top) */
+	level = MIN(MAX(level, scmi_floor[domain]), scmi_top[domain]);
 	in[0] = domain;
 	in[1] = level;
 	lck_mtx_lock(&scmi_lock);

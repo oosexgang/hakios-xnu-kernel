@@ -19,7 +19,8 @@
  *               With rec_sound_fed=1 as well, the recording has instead what the speakers' guard
  *               let through (board/guard.c, on the phone): what reaches the amplifiers. With
  *               rec_sound_mic=1, what the main microphone hears (board/mic.c, mic=3), in both
- *               channels.
+ *               channels; not with rec_sound_fed=1 too, which then has the recording (two streams
+ *               in one file would be neither).
  *
  * When the writer has stopped, a line in the log says how long it wrote, at what rate, how much
  * of it was not silence and how loud: the only way to "hear" a machine one cannot listen to.
@@ -333,10 +334,11 @@ audio_recording_init(void)
 	rec_fed = fed != 0;
 	fed = 0;
 	PE_parse_boot_argn("rec_sound_mic", &fed, sizeof(fed));
-	rec_mic = fed != 0;
-	printf("hakios-audio: recording the first %u s of sound%s, into %llu MB at %#llx\n", seconds,
-	    rec_fed ? " as the speakers' guard lets it through" : rec_mic ? " the microphone hears (in both channels)" : "", size >> 20,
-	    loader_sound[0]);
+	/* (the guard and the microphone each give their sound as it comes: both in one recording would interleave them) */
+	rec_mic = fed != 0 && !rec_fed;
+	printf("hakios-audio: recording the first %u s of sound%s%s, into %llu MB at %#llx\n", seconds,
+	    rec_fed ? " as the speakers' guard lets it through" : rec_mic ? " the microphone hears (in both channels)" : "",
+	    rec_fed && fed != 0 ? " (not the microphone's: rec_sound_fed=1 comes first)" : "", size >> 20, loader_sound[0]);
 }
 
 void

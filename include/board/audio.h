@@ -142,7 +142,8 @@ bool hakios_audio_dsp_memory(uintptr_t *memory, uint64_t *dsp_address, uint32_t 
 void hakios_audio_dsp_memory_put(void);
 /* a second handler of the DSP's events (the microphones'), asked when the first does not take one */
 void hakios_adsp_apr_events_second(hakios_apr_events_t handler);
-/* boot-arg rec_sound_mic=1: the recording (rec_sound=N) has what the microphone hears (given with hakios_audio_record_fed()) */
+/* boot-arg rec_sound_mic=1: the recording (rec_sound=N) has what the microphone hears (given with hakios_audio_record_fed()),
+ * unless rec_sound_fed=1 is given too: that one comes first */
 bool hakios_audio_recording_mic(void);
 void hakios_mic_dsp_up(void);          /* the DSP's audio services are up (adsp=1): boot-arg mic=N begins */
 void hakios_mic_dsp_down(void);        /* before the DSP is shut down at the run's end: what the microphones' path asked for given back */

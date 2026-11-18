@@ -61,6 +61,7 @@ typedef struct fake_lock lck_mtx_t;
 #define LCK_MTX_DECLARE(lock, group)    struct fake_lock lock = { PTHREAD_MUTEX_INITIALIZER }
 #define lck_mtx_lock(lock)              pthread_mutex_lock(&(lock)->mutex)
 #define lck_mtx_unlock(lock)            pthread_mutex_unlock(&(lock)->mutex)
+#define lck_mtx_try_lock(lock)          (pthread_mutex_trylock(&(lock)->mutex) == 0)
 /* sleeping on a channel with a mutex given up meanwhile, and its wake-up: a short sleep here, for whoever asks looks again */
 #define PRIBIO                          16
 int msleep(void *channel, struct fake_lock *lock, int priority, const char *why, void *time);

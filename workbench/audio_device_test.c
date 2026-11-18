@@ -207,6 +207,17 @@ mic_recording(void)
 	CHECK(play(4800, 1000) == 0 && loader_sound[1] == 24, "what a program writes is not recorded");
 }
 
+/* rec_sound_fed=1 and rec_sound_mic=1 together: the guard's sound only, the two never interleaved in one recording,
+ * and the log says the microphone's was left out */
+static void
+fed_and_mic_recording(void)
+{
+	boot_args = "rec_sound=1 rec_sound_fed=1 rec_sound_mic=1";
+	hakios_audio_init();
+	CHECK(hakios_audio_recording_fed() && !hakios_audio_recording_mic(), "the guard's sound wanted, the microphone's not");
+	CHECK(logged("as the speakers' guard lets it through (not the microphone's: rec_sound_fed=1 comes first)"), "said: %s", log_text);
+}
+
 /* without a recording, neither is wanted */
 static void
 no_recording(void)
@@ -303,6 +314,7 @@ main(int argc, char **argv)
 		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume }, { "rate_said", rate_said }, { "silence_ends_at_8", silence_ends_at_8 },
 		{ "rec_sound_zero", rec_sound_zero }, { "full_takes_no_more", full_takes_no_more },
 		{ "fed_recording", fed_recording }, { "mic_recording", mic_recording }, { "no_recording", no_recording },
+		{ "fed_and_mic_recording", fed_and_mic_recording },
 	};
 
 	if (argc < 2) {
