@@ -351,7 +351,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/board/sta.h: Darwin's Wi-Fi side does, through bsd/dev/board/apple80211.c), the network of fw/network joined if… |
 | `wifi_again` | wifi_again=1 start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two |
 | `wifi_ask` | wifi_ask=1 step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer |
-| `wifi_dirty` | wifi_dirty=1 the DSP is not stopped: left as a kernel that died leaves it |
+| `wifi_dirty` | A kernel that ends otherwise (or with wifi_dirty=1) leaves its match register for the stream valid, and a second one for the same stream is a conflict to the SMMU: the next kernel takes that one over, with its context, instead of adding one -- the stream sent to fault at once, as the tables it leads… |
 | `wifi_file` | wifi_file=0 with wifi=1: the network of fw/network is not joined at the start |
 | `wifi_fine` | wifi_fine=1 such a step waits like that before every single write and call |
 | `wifi_listen` | wifi_listen=S how long step 14 waits for the Wi-Fi firmware's service (default 3) |
