@@ -36,6 +36,7 @@ static unsigned times_lit;              /* the channel switched on with the modu
 static bool stuck;                      /* the module does not take what is written (a write that does not read back) */
 static bool led_reads_otherwise;        /* the channels' register takes a write and then reads back with bit 1 set as well */
 static bool lit_too_bright;             /* lit with a resolution or a target that is not Android's */
+static bool led_read_back_fails;        /* the channel switched on, and the reads after it (its read-back's three tries) dropped, once */
 
 static bool
 is_lit(void)
@@ -61,6 +62,10 @@ flash_written(struct spmi_peripheral *p, uint8_t reg, uint8_t value)
 	}
 	if (led_reads_otherwise && reg == REG_EN_LED) {
 		p->reg[reg] |= 0x02;
+	}
+	if (led_read_back_fails && reg == REG_EN_LED && (value & 0x01)) {
+		led_read_back_fails = false;
+		spmi.drop_reads = 3;            /* (the model's lock is held: this is called from spmi_model_wr()) */
 	}
 	if (is_lit()) {
 		if (!was) {
@@ -572,6 +577,60 @@ lit_and_then_given_up(void)
 	never();
 }
 
+/*
+ * torch=2, the channel switched on and its read-back failing: the light was lit by that write all the same, and is
+ * put out, not left on with no time limit for the rest of the run
+ */
+static void
+light_once_read_back_fails(void)
+{
+	phone("phone-video");
+	led_read_back_fails = true;
+	boot_args = "torch=2 torch_secs=1";
+	hakios_torch_init();
+	WAIT_FOR(logged("torch: done"), 5000);
+	CHECK(logged("torch: done") && logged("a write that failed"), "the read-back failed, and that is said: %s", log_text);
+	CHECK(!led_read_back_fails && times_lit == 1, "lit by the write whose read-back failed (%u)", times_lit);
+	CHECK(!lit_now() && spmi_get(&flash_model, REG_MODULE_EN) == 0 && spmi_get(&flash_model, REG_EN_LED) == 0,
+	    "and put out: enable %#x, channels %#x", spmi_get(&flash_model, REG_MODULE_EN), spmi_get(&flash_model, REG_EN_LED));
+	usleep(300 * 1000);
+	CHECK(!lit_now() && times_lit == 1, "and dark after the thread has ended (%u times lit)", times_lit);
+	never();
+	dark_at_the_end();
+}
+
+/*
+ * torch=3, lit, and then no read of the module goes through (the flags cannot be read, nor anything else): put out
+ * all the same, by writes that wait on no read, and dark for the rest of the run
+ */
+static void
+flags_read_fails_while_lit(void)
+{
+	phone("phone-video");
+	boot_args = "torch=3";
+	hakios_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS DARWIN'S"), 20000);
+	ask_for(1000);
+	WAIT_FOR(lit_now(), 3000);
+	CHECK(lit_now(), "lit");
+	pthread_mutex_lock(&spmi.lock);
+	spmi.drop_reads = 1u << 30;             /* every read from here on dropped, each time it is asked for again */
+	pthread_mutex_unlock(&spmi.lock);
+	WAIT_FOR(!lit_now() && logged("the light is given up on"), 3000);
+	CHECK(logged("a read of the flags that failed"), "why is said: %s", log_text);
+	CHECK(!lit_now() && spmi_get(&flash_model, REG_MODULE_EN) == 0 && spmi_get(&flash_model, REG_EN_LED) == 0,
+	    "put out, both enables written 0: enable %#x, channels %#x", spmi_get(&flash_model, REG_MODULE_EN),
+	    spmi_get(&flash_model, REG_EN_LED));
+	refused(1000);
+	usleep(300 * 1000);
+	CHECK(!lit_now() && times_lit == 1, "and stays dark for the rest of the run (%u times lit)", times_lit);
+	pthread_mutex_lock(&spmi.lock);
+	spmi.drop_reads = 0;                    /* (the reads back, for the run's end to find the module as it was) */
+	pthread_mutex_unlock(&spmi.lock);
+	never();
+	dark_at_the_end();
+}
+
 /* a write of less than a level is refused, not taken as nothing; a read gives the level once, then the end */
 static void
 short_writes_and_reads(void)
@@ -671,6 +730,7 @@ main(int argc, char **argv)
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
 		{ "dropped_and_asked_again", dropped_and_asked_again },
+		{ "light_once_read_back_fails", light_once_read_back_fails }, { "flags_read_fails_while_lit", flags_read_fails_while_lit },
 	};
 
 	if (argc < 2) {

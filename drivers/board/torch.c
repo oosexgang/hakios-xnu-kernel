@@ -17,8 +17,12 @@
  * Writing to a PMIC is not like writing anywhere else: the PMICs make the phone's supplies. So
  * every write goes through one function that takes only this module's registers above (the
  * peripheral the arbiter's channel is checked to be, the registers by a list), every write is
- * read back, and any surprise ends all writing for the run. Transfers through the arbiter are made
- * one at a time with the buttons' driver (hakios_spmi_lock()): two at once, and it drops one.
+ * read back, and any surprise ends all writing for the run -- all but the light's going off, which
+ * has a function of its own that takes only the two registers that put it out, and only 0: the
+ * module's enable and then the channel's are written 0 whatever went before, with nothing read
+ * first (off never waits on a read that may fail), then both read back, and written again, a few
+ * times, until they read back off. Transfers through the arbiter are made one at a time with the
+ * buttons' driver (hakios_spmi_lock()): two at once, and it drops one.
  *
  * What Darwin's flashlight is on this machine: the loader says the camera has a flash (with torch=N,
  * /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and
@@ -221,6 +225,23 @@ give_up(const char *why)
 	}
 }
 
+/* One byte to the module, made (a dropped write has not been: asked for again); NULL, or what went wrong. */
+static const char *
+send(uint8_t reg, uint8_t value)
+{
+	const char *problem = NULL;
+
+	for (int tries = 0; tries < 3; tries++) {
+		lock();
+		problem = hakios_spmi_write(flash.write, reg, value);
+		unlock();
+		if (problem == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
+			break;
+		}
+	}
+	return problem;
+}
+
 /*
  * One register of the flash module (and of the six above only) written and read back: false, and
  * no more writing, if it cannot be or does not read back.
@@ -244,15 +265,7 @@ put(uint8_t reg, uint8_t value)
 		give_up("the arbiter's channel is no longer the flash module's");
 		return false;
 	}
-	for (int tries = 0; tries < 3; tries++) {
-		lock();
-		problem = hakios_spmi_write(flash.write, reg, value);
-		unlock();
-		if (problem == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
-			break;          /* (a dropped write has not been made: asked for again, then read back) */
-		}
-	}
-	if (problem != NULL || (problem = spmi_read(&flash, reg, &back, 1)) != NULL) {
+	if ((problem = send(reg, value)) != NULL || (problem = spmi_read(&flash, reg, &back, 1)) != NULL) {
 		say("torch: 0x%02x <- 0x%02x: %s\n", reg, value, problem);
 		give_up("a write that failed");
 		return false;
@@ -260,6 +273,32 @@ put(uint8_t reg, uint8_t value)
 	if (back != value) {
 		say("torch: 0x%02x <- 0x%02x, but it reads 0x%02x\n", reg, value, back);
 		give_up("a register that did not read back as written");
+		return false;
+	}
+	return true;
+}
+
+/*
+ * One of the two registers that put the light out, written 0: the way off, and nothing else. Not refused
+ * once writing has been given up on, and nothing read first, so that off never waits on what else went
+ * wrong; read back by dark(), after both. Still only through the module's own channel.
+ */
+static bool
+put_off(uint8_t reg)
+{
+	const char *problem;
+
+	if ((reg != FLASH_MODULE_EN && reg != FLASH_EN_LED_CTRL) || !flash.writable || flash.write == 0 || flash.id == 0) {
+		give_up("a write that may not be made");
+		return false;
+	}
+	if (SPMI_ID_OF(hakios_spmi_channel_map(&arb, flash.channel)) != flash.id) {
+		give_up("the arbiter's channel is no longer the flash module's");
+		return false;
+	}
+	if ((problem = send(reg, 0x00)) != NULL) {
+		say("torch: 0x%02x <- 0x00, to put the light out: %s\n", reg, problem);
+		give_up("a write that failed");
 		return false;
 	}
 	return true;
@@ -411,7 +450,15 @@ light(uint32_t permille)
 	return true;
 }
 
-/* Off, in Android's order: the channel, the module, the target current, the timer's bit. */
+#define DARK_TRIES              5
+
+/*
+ * Off: the module (its enable alone puts the light out, so it goes first), then the channel, each written 0 with
+ * nothing read first and whatever the other did, then both read back; all of it again, DARK_TRIES times at most,
+ * until they read back off. Then the target current and the timer's bit back as they were found (these read
+ * first: the light is out without them). True if all of it was done and read back as written; `lit' cleared as
+ * soon as the light reads back off.
+ */
 static bool
 dark(void)
 {
@@ -419,13 +466,30 @@ dark(void)
 	 * Off is tried whatever went wrong before: a light left on would stay on for the rest of the run with its safety
 	 * timer off. (broken stops every other write; it is put back as it was, or set if this failed too.)
 	 */
-	bool was_broken = broken, ok;
+	bool was_broken = broken, written = true, off = false, ok;
+	uint8_t module = 0xff, channels = 0xff;
 
+	for (int tries = 0; tries < DARK_TRIES && !off; tries++) {
+		if (tries > 0) {
+			wait_ms(5);
+		}
+		written = put_off(FLASH_MODULE_EN) & written;
+		written = put_off(FLASH_EN_LED_CTRL) & written;
+		module = channels = 0xff;
+		off = get(&flash, FLASH_MODULE_EN, &module) && get(&flash, FLASH_EN_LED_CTRL, &channels) && (module & 0x80) == 0 &&
+		    (channels & 0x01) == 0;
+	}
+	if (!off) {
+		note("THE LIGHT IS NOT SEEN TO GO OUT after %d tries: enable 0x%02x, channels 0x%02x", DARK_TRIES, module, channels);
+	} else if (module != 0 || channels != 0) {
+		say("torch: put out, but the module reads: enable 0x%02x, channels 0x%02x\n", module, channels);
+		give_up("a register that did not read back as written");
+		written = false;
+	}
 	broken = false;
-	ok = put_bits(FLASH_EN_LED_CTRL, 0x01, 0x00) && put(FLASH_MODULE_EN, 0x00) && put_bits(FLASH_ITARGET0, 0x7f, 0x00) &&
-	    put_bits(FLASH_SAFETY_TIMER0, 0x80, 0x00);
+	ok = put_bits(FLASH_ITARGET0, 0x7f, 0x00) && put_bits(FLASH_SAFETY_TIMER0, 0x80, 0x00) && off && written;
 	broken = was_broken || !ok;
-	lit = !ok && lit;
+	lit = lit && !off;
 	return ok;
 }
 
@@ -641,6 +705,9 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 				note("off again after %u s", secs);
 			}
 			show_registers();
+		} else if (lit) {
+			/* (lit by a write that then did not read back as written: put out all the same, not left on with no limit) */
+			(void)dark();
 		}
 	} else {
 		serve();
