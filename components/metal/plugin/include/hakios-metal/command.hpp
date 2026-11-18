@@ -243,7 +243,7 @@ private:
     bool dispatchAny(const Kernel& kernel, const uint32_t* groups, const Buffer* args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
                      const uint32_t* immediates, const compute::Options& options);
     // the end of it, however it ends: the status, the handlers (which see that status), and only then the waiters
-    void finish(Status s);
+    void finish(Status s, bool recycle = true);
     void use(const Buffer& b, bool write) { uses_.push_back(BoUse{&b.bo(), write}); }
 public:
     // What each register written in a pass holds, for appendDeduped: a draw writes some 500 of them and almost all
@@ -388,6 +388,9 @@ public:
     ~CommandQueue();
 
     std::shared_ptr<CommandBuffer> commandBuffer();
+    // the number of command buffers held in quarantine: ones whose wait timed out with the GPU neither finishing nor
+    // reset, their memory never reused (for tests and diagnostics)
+    size_t quarantinedCount();
     Gpu& gpu() { return gpu_; }
     // the buffers kept for command streams, idle (to see that they are given back and used again)
     size_t idleCommandBuffers();
@@ -481,6 +484,9 @@ private:
     std::unordered_map<uint64_t, Touched> touched_;
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
+    // (under lock_) command buffers whose wait timed out with the GPU neither finishing nor reset: it may still be
+    // reading their memory, so they are held here for the queue's life -- never freed, never returned to a pool
+    std::vector<std::shared_ptr<CommandBuffer>> quarantined_;
     std::vector<std::unique_ptr<Bo>> idle_;
     // (under lock_) command buffers' streams' memory, given back at submit for the next command buffer (pm4::Stream::release)
     std::vector<std::vector<uint32_t>> spareStreams_;

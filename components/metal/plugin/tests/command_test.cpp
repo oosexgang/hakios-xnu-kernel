@@ -293,6 +293,28 @@ TEST(without_recovery_the_first_hang_ends_every_later_wait) {
     CHECK(cb->error().find("without gpu_recover=1") != std::string::npos);
 }
 
+TEST(a_hang_with_no_reset_quarantines_the_command_buffers_memory) {
+    // Without gpu_recover=1 a wait times out with the GPU neither finishing the work nor reset: it may still be reading
+    // the command buffer's command BO, slabs and stamps. They must not go back to a pool for the next buffer to overwrite
+    // -- the queue holds the whole command buffer in quarantine instead.
+    Rig r(false, 0, false);
+    int e = 0;
+    auto bo = r.gpu->newBo(4096, 0, &e);
+    static_cast<uint32_t*>(bo->cpu())[0] = pm4::type7(0x7f, 0) ^ (1u << 15);   // a packet the GPU hangs on
+    uint32_t fence = 0;
+    CHECK_EQ(r.gpu->submit(0, *bo, 0, 1, {}, &fence), 0);
+    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), ETIMEDOUT);   // wedged, no reset
+    CHECK_EQ(r.gpu->faults(), 0ull);
+    CHECK_EQ(r.queue->quarantinedCount(), size_t(0));
+    auto b = buffer(r, 4096);
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->fill(*b, 0, 4096, 0x11));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kError);
+    CHECK_EQ(r.queue->quarantinedCount(), size_t(1));   // its memory held, not pooled
+}
+
 TEST(a_fence_never_handed_out_is_a_hang) {
     // the kernel does not know such a fence: it waits the whole patience, and that is a hang like any other
     Rig r;
