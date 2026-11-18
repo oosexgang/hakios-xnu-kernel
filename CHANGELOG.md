@@ -222,6 +222,22 @@ tags yet, so the current work is one section.
   pixel types were read as 16-bit; the Metal drawable's first use on two threads at once gave one of them no GPU; a
   PosterBoard dictionary leaked on every retried check.
 
+- The Metal driver's core (`components/metal/plugin`), all found in review before a phone has run it: an indirect
+  draw's, an indirect dispatch's, a visibility result's and an argument-buffer member's offset were each added to a
+  size and the sum could wrap past the buffer and still pass the bounds test, so the GPU read or wrote just before a
+  buffer (one client's memory is every client's); a surface wrapped again while its `Buffer` was being destroyed
+  built a second owner of the one kernel handle and closed it twice; a command buffer whose wait timed out with the
+  GPU neither finishing nor reset had its command stream, slabs and stamps returned to the pools while the GPU might
+  still be reading them; and a deferred command buffer freed inside its own completion handler, on the deferrer's
+  thread, had its job counter written to after free (caught under AddressSanitizer).
+- The host tools for a day with the phone, found in review: `tools/qemu-kernel.sh --then` could run past `--seconds`
+  (a guest that never answers hung the run) and threw QEMU's own errors away; `bench` recorded a run whose log it had
+  not fetched and left a dangling `logs/last.log` that crashed `tools/logcheck.py`, replaced a whole staged file with
+  a part one, and stored a relative path in the record every working copy shares; `tools/device.py add` left a half
+  package behind when interrupted; `tools/image.py verify` gave a traceback on a malformed manifest and would read a
+  file a manifest named with a path out of the image; and `scripts/new-driver.py` left its files behind when it could
+  not extend `workbench/run.sh`, so every retry refused.
+
 ### For whoever works on the project
 
 - `Kconfig`, `tools/kconfig.py` (check, list, config, header, savedefconfig) and the fragments of
