@@ -363,6 +363,30 @@ presses_are_counted(void)
 	no_write();
 }
 
+/* a key held when the PMIC stops answering: when the driver gives up it lets the key go, so Darwin does not keep it held */
+static void
+held_when_the_bus_stops(void)
+{
+	unsigned before;
+
+	phone("phone-cmd");
+	fake_delay_divisor = 40;
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	before = posts();
+	power_down();
+	WAIT_FOR(posts() == before + 1, 2000);
+	CHECK(posts() == before + 1 && posted[before].type == HAKIOS_BUTTON_DOWN, "power pressed");
+	pon_model.silent = true;
+	pin_model.silent = true;
+	WAIT_FOR(logged("giving up"), 20000);
+	WAIT_FOR(posts() == before + 2, 2000);
+	CHECK(posts() == before + 2 && posted[before + 1].type == HAKIOS_BUTTON_UP && posted[before + 1].button == HAKIOS_BUTTON_LOCK,
+	    "power let go when the driver gives up: %u records", posts() - before);
+	CHECK(logged("power let go: it was held when the reads stopped"), "said");
+}
+
 /* a PMIC that stops answering while its keys are watched: said a few times, not at every look; then the driver gives up */
 static void
 bus_stops_answering(void)
@@ -627,7 +651,7 @@ main(int argc, char **argv)
 		{ "pin_an_output", pin_an_output }, { "pin_switched_off", pin_switched_off }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
 		{ "board_without_keys", board_without_keys }, { "held_in_the_summary", held_in_the_summary },
-		{ "a_short_silence", a_short_silence },
+		{ "a_short_silence", a_short_silence }, { "held_when_the_bus_stops", held_when_the_bus_stops },
 		{ "unknown_board", unknown_board },
 	};
 

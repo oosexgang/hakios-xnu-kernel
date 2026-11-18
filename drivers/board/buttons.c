@@ -490,6 +490,16 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 		}
 		if (bus.failed >= 1000 && bus.failed * 2 > bus.reads) {
 			printf("buttons: more than half of %llu reads have failed: giving up\n", bus.reads);
+			/* a key that was held when the reads stopped is let go: nobody will see it released any more, and Darwin
+			 * would keep the side or volume button held for the rest of the run */
+			struct button *keys[] = { &power, &volume_down, &volume_up };
+			for (unsigned k = 0; k < sizeof(keys) / sizeof(keys[0]); k++) {
+				if (keys[k]->down) {
+					keys[k]->down = false;
+					printf("buttons: %s let go: it was held when the reads stopped\n", keys[k]->name);
+					hakios_touch_post(HAKIOS_BUTTON_UP, keys[k]->record, 0, 0);
+				}
+			}
 			break;
 		}
 		delay_for_interval(POLL_MS, NSEC_PER_MSEC);
