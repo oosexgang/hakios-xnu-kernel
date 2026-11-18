@@ -1061,7 +1061,8 @@ frame_metadata(const struct isp *isp, const struct hakios_camera_frame *f, const
 	return m;
 }
 
-static void
+/* True: a picture went to the output (no buffer free, or one of a shape this does not draw: false) */
+static bool
 deliver(struct stream *s, struct output *out, const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw,
     CFDictionaryRef metadata)
 {
@@ -1070,7 +1071,7 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 
 	(void)s;
 	if (pb == NULL) {
-		return;
+		return false;
 	}
 	pf = CVPixelBufferGetPixelFormatType(pb);
 	width = (uint32_t)CVPixelBufferGetWidth(pb);
@@ -1082,7 +1083,7 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 			    pf >> 8 & 255, pf & 255);
 		}
 		CVPixelBufferRelease(pb);
-		return;
+		return false;
 	}
 	CVPixelBufferLockBaseAddress(pb, 0);
 
@@ -1153,6 +1154,7 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 		say("%s: the first picture given (%ux%u %c%c%c%c)", out->name, width, height, pf >> 24, pf >> 16 & 255,
 		    pf >> 8 & 255, pf & 255);
 	}
+	return true;
 }
 
 /*
@@ -1574,7 +1576,10 @@ worker(void *context)
 			if (still && s->stills_wanted == 0) {
 				continue;
 			}
-			deliver(s, out, &isp, f, raw, metadata);
+			/* (a photograph is given only when it went: one asked for and dropped -- no buffer free -- is asked for still) */
+			if (!deliver(s, out, &isp, f, raw, metadata)) {
+				still = false;
+			}
 			if (still) {
 				s->stills_wanted--;
 				say("the photograph is given (%llu so far)", (unsigned long long)++s->stills_given);
