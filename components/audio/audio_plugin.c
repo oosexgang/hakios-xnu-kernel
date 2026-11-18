@@ -209,8 +209,7 @@ struct device {
 	UInt32 output_channels, input_channels;
 	/* its clock, running while anybody does I/O */
 	unsigned running;               /* how many clients have started I/O */
-	UInt64 anchor;                  /* mach_absolute_time() when the first of them did */
-	UInt64 periods;                 /* whole timestamp periods since */
+	UInt64 anchor;                  /* mach_absolute_time() when the first of them did (read and written atomically) */
 };
 
 #define MIC_SOURCE              'imic'
@@ -261,7 +260,16 @@ static struct device devices[] = {
 #define TIMESTAMP_PERIOD        16384
 
 static AudioServerPlugInHostRef host;
+/*
+ * The properties' values. Held only while they are read or changed: the HAL asks for properties while the
+ * I/O runs, and nothing slow -- a system call, a line to the log -- is done with it held. The I/O thread
+ * never takes a lock (see get_zero_time_stamp()).
+ */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* the starts and stops of the devices' I/O, one at a time, with what they open, close and say */
+static pthread_mutex_t io_lock = PTHREAD_MUTEX_INITIALIZER;
+/* the volume's changes, one at a time, so that the kernel is given them in the order they were made */
+static pthread_mutex_t volume_lock = PTHREAD_MUTEX_INITIALIZER;
 static int sink = -1;                   /* /dev/hakios-audio */
 static Float64 ticks_per_frame;
 static UInt64 written, refused;         /* frames since the speaker's I/O started */
@@ -300,17 +308,17 @@ db_to_scalar(Float32 db)
 	return scalar < 0 ? 0 : scalar > 1 ? 1 : scalar;
 }
 
-/* The volume, to the kernel. With the lock held. */
+/* The volume, to the kernel. With volume_lock held. */
 static void
-volume_to_kernel(void)
+volume_to_kernel(Float32 level)
 {
-	struct hakios_audio_volume v = { (uint32_t)lround(-scalar_to_db(volume) * 8), volume <= 0 };
+	struct hakios_audio_volume v = { (uint32_t)lround(-scalar_to_db(level) * 8), level <= 0 };
 
 	if (sink < 0 || ioctl(sink, HAKIOS_AUDIO_SET_VOLUME, &v) < 0) {
-		say("hakios: audio: the volume %.3f could not be given to the kernel (%s)\n", volume, strerror(errno));
+		say("hakios: audio: the volume %.3f could not be given to the kernel (%s)\n", level, strerror(errno));
 		return;
 	}
-	say("hakios: audio: the volume is %.3f: %s%.1f dB under the loudest\n", volume, v.muted ? "silence, " : "",
+	say("hakios: audio: the volume is %.3f: %s%.1f dB under the loudest\n", level, v.muted ? "silence, " : "",
 	    v.below / 8.0);
 }
 
@@ -710,24 +718,34 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
 #define UNKNOWN_TOLD            256
 static UInt32 unknown_told[UNKNOWN_TOLD][3];
 static unsigned unknown_count;
+/*
+ * (the HAL asks from several threads at once: two at the last free place both took it, the second one past
+ * the end. Never taken by the I/O thread, which asks for no property)
+ */
+static pthread_mutex_t unknown_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void
 unknown(AudioObjectID object, const AudioObjectPropertyAddress *address)
 {
 	UInt32 s = address->mSelector, c = address->mScope;
+	bool told = false;
 
-	for (unsigned i = 0; i < unknown_count; i++) {
-		if (unknown_told[i][0] == object && unknown_told[i][1] == s && unknown_told[i][2] == c) {
-			return;
-		}
+	pthread_mutex_lock(&unknown_lock);
+	for (unsigned i = 0; i < unknown_count && !told; i++) {
+		told = unknown_told[i][0] == object && unknown_told[i][1] == s && unknown_told[i][2] == c;
 	}
-	if (unknown_count >= UNKNOWN_TOLD) {
+	if (!told && unknown_count < UNKNOWN_TOLD) {
+		unknown_told[unknown_count][0] = object;
+		unknown_told[unknown_count][1] = s;
+		unknown_told[unknown_count][2] = c;
+		unknown_count++;
+	} else {
+		told = true;
+	}
+	pthread_mutex_unlock(&unknown_lock);
+	if (told) {
 		return;
 	}
-	unknown_told[unknown_count][0] = object;
-	unknown_told[unknown_count][1] = s;
-	unknown_told[unknown_count][2] = c;
-	unknown_count++;
 	say("hakios: audio: asked of object %u (%s) what it does not have: '%c%c%c%c' (%#x), scope '%c%c%c%c', element %u\n",
 	    (unsigned)object, device_of(object) ? CFStringGetCStringPtr(device_of(object)->uid, kCFStringEncodingUTF8) : "-",
 	    (int)(s >> 24 & 0xff), (int)(s >> 16 & 0xff), (int)(s >> 8 & 0xff), (int)(s & 0xff), (unsigned)s,
@@ -853,10 +871,12 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
 		wanted = *(const Float32 *)data;
 		wanted = address->mSelector == kAudioLevelControlPropertyDecibelValue ? db_to_scalar(wanted) :
 		    wanted < 0 ? 0 : wanted > 1 ? 1 : wanted;
+		pthread_mutex_lock(&volume_lock);
 		pthread_mutex_lock(&lock);
 		volume = wanted;
-		volume_to_kernel();
 		pthread_mutex_unlock(&lock);
+		volume_to_kernel(wanted);
+		pthread_mutex_unlock(&volume_lock);
 		if (host != NULL) {
 			host->PropertiesChanged(host, OBJECT_SPEAKER_VOLUME, 2, changed);
 		}
@@ -920,13 +940,14 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
  */
 static int mic = -1;
 static UInt64 mic_frames, mic_heard, mic_short;
+static UInt64 mic_first;                /* the frames asked for before the first samples came (said at the stop) */
 static int mic_peak;
 
 static void
 codec_open(void)
 {
 	mic = open("/dev/hakios-mic", O_RDONLY | O_NONBLOCK);
-	mic_frames = mic_heard = mic_short = 0;
+	mic_frames = mic_heard = mic_short = mic_first = 0;
 	mic_peak = 0;
 	say("hakios: audio: the microphone is listened to (/dev/hakios-mic: %s)\n", mic < 0 ? strerror(errno) : "open");
 }
@@ -937,6 +958,10 @@ codec_close(void)
 	say("hakios: audio: the microphone stops: %llu.%02llu s asked for, %llu.%02llu s of it from the kernel (peak %d of 32768), "
 	    "%llu reads short\n", mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE,
 	    mic_heard / HAKIOS_AUDIO_RATE, mic_heard % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, mic_peak, mic_short);
+	if (mic_heard > 0) {
+		say("hakios: audio: the microphone's first samples were %llu.%02llu s after the input started\n",
+		    mic_first / HAKIOS_AUDIO_RATE, mic_first % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE);
+	}
 	if (mic >= 0) {
 		close(mic);
 	}
@@ -949,9 +974,9 @@ codec_read_mono(int16_t *samples, UInt32 frames)
 	ssize_t got = mic >= 0 ? read(mic, samples, (size_t)frames * 2) : -1;
 	UInt32 have = got > 0 ? (UInt32)got / 2 : 0;
 
+	/* (said when the input stops: this is the I/O thread, which must not wait on the log) */
 	if (have > 0 && mic_heard == 0) {
-		say("hakios: audio: the microphone's first samples, %llu.%02llu s after the input started\n",
-		    mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE);
+		mic_first = mic_frames;
 	}
 	for (UInt32 i = 0; i < have; i++) {
 		int v = samples[i] < 0 ? -samples[i] : samples[i];
@@ -989,27 +1014,40 @@ codec_read(int16_t *samples, UInt32 frames)
 #endif
 }
 
+static void haptic_open(void);
+static void haptic_stopped(void);
+
 static OSStatus
 start_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unused UInt32 client)
 {
 	struct device *d = device_of(object);
+	bool first;
 
 	if (d == NULL || object != d->object) {
 		return kAudioHardwareBadObjectError;
 	}
+	pthread_mutex_lock(&io_lock);
 	pthread_mutex_lock(&lock);
-	if (d->running++ == 0) {
-		d->anchor = mach_absolute_time();
-		d->periods = 0;
+	first = d->running++ == 0;
+	if (first) {
+		__atomic_store_n(&d->anchor, mach_absolute_time(), __ATOMIC_RELEASE);
 		if (d->output != 0) {
 			written = refused = 0;
+		}
+	}
+	pthread_mutex_unlock(&lock);
+	if (first) {
+		if (d->output != 0) {
 			say("hakios: audio: playing\n");
+		}
+		if (d->object == OBJECT_ACTUATOR) {
+			haptic_open();
 		}
 		if (d->object == OBJECT_CODEC) {
 			codec_open();
 		}
 	}
-	pthread_mutex_unlock(&lock);
+	pthread_mutex_unlock(&io_lock);
 	return 0;
 }
 
@@ -1017,43 +1055,58 @@ static OSStatus
 stop_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unused UInt32 client)
 {
 	struct device *d = device_of(object);
+	bool last;
 
 	if (d == NULL || object != d->object) {
 		return kAudioHardwareBadObjectError;
 	}
+	pthread_mutex_lock(&io_lock);
 	pthread_mutex_lock(&lock);
-	if (d->running != 0 && --d->running == 0) {
+	last = d->running != 0 && --d->running == 0;
+	pthread_mutex_unlock(&lock);
+	if (last) {
 		if (d->object == OBJECT_CODEC) {
 			codec_close();
+		} else if (d->object == OBJECT_ACTUATOR) {
+			haptic_stopped();
 		} else if (d->output != 0) {
 			say("hakios: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / HAKIOS_AUDIO_RATE,
 			    written % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, refused, HAKIOS_AUDIO_DEVICE);
 		}
 	}
-	pthread_mutex_unlock(&lock);
+	pthread_mutex_unlock(&io_lock);
 	return 0;
 }
 
-/* Where the device's clock was last at a multiple of TIMESTAMP_PERIOD frames, and when. */
+/*
+ * Where the device's clock was last at a multiple of TIMESTAMP_PERIOD frames, and when. The I/O thread asks
+ * every cycle, at real-time priority, and takes no lock here: the one it took was held elsewhere across an
+ * ioctl, an open, a close and lines to the log, any of which could keep it waiting past its cycle. The whole
+ * periods since the anchor are worked out from the anchor alone each time, as the count kept did.
+ */
 static OSStatus
 get_zero_time_stamp(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unused UInt32 client,
     Float64 *sample_time, UInt64 *host_time, UInt64 *seed)
 {
 	Float64 ticks_per_period = ticks_per_frame * TIMESTAMP_PERIOD;
-	UInt64 now = mach_absolute_time();
+	UInt64 now = mach_absolute_time(), anchor, periods;
 	struct device *d = device_of(object);
 
 	if (d == NULL) {
 		return kAudioHardwareBadObjectError;
 	}
-	pthread_mutex_lock(&lock);
-	while (now >= d->anchor + (UInt64)((Float64)(d->periods + 1) * ticks_per_period)) {
-		d->periods++;
+	anchor = __atomic_load_n(&d->anchor, __ATOMIC_ACQUIRE);
+	periods = now > anchor ? (UInt64)((Float64)(now - anchor) / ticks_per_period) : 0;
+	/* (the last period that began at or before now, its start rounded as the host time given is) */
+	while (periods > 0 && now < anchor + (UInt64)((Float64)periods * ticks_per_period)) {
+		periods--;
 	}
-	*sample_time = (Float64)d->periods * TIMESTAMP_PERIOD;
-	*host_time = d->anchor + (UInt64)((Float64)d->periods * ticks_per_period);
+	while (now >= anchor + (UInt64)((Float64)(periods + 1) * ticks_per_period)) {
+		periods++;
+	}
+	*sample_time = (Float64)periods * TIMESTAMP_PERIOD;
+	*host_time = anchor + (UInt64)((Float64)periods * ticks_per_period);
 	*seed = 1;
-	pthread_mutex_unlock(&lock);
 	return 0;
 }
 
@@ -1078,33 +1131,56 @@ begin_end_io_operation(__unused AudioServerPlugInDriverRef driver, __unused Audi
  * CoreHaptics' patterns, UIKit's feedbacks, as waveforms of one channel -- goes to the kernel's motor
  * driver (/dev/hakios-haptic, bsd/dev/board/haptic.c, haptic=5), which plays Android's own
  * waveforms on the phone's motor by it. (Darwin plays on this device at all only because the device
- * tree says the phone's haptics are "closed-loop": see mkidentity.py.) Said the first times, with
- * how loud.
+ * tree says the phone's haptics are "closed-loop": see mkidentity.py.) Said the first time, and when
+ * the actuator stops how often and how loud.
  */
 static int haptic = -1;          /* the motor driver; -2: not there (the kernel runs without haptic=5) */
-static unsigned haptic_said;
+static unsigned haptic_played;   /* I/O cycles with something to feel in them, since the actuator started */
+static int haptic_peak;
+
+/* (when the actuator starts, not on the I/O thread: an open() there could keep it past its deadline) */
+static void
+haptic_open(void)
+{
+	if (__atomic_load_n(&haptic, __ATOMIC_ACQUIRE) == -1) {
+		int fd = open("/dev/hakios-haptic", O_WRONLY | O_NONBLOCK);
+
+		__atomic_store_n(&haptic, fd >= 0 ? fd : -2, __ATOMIC_RELEASE);
+	}
+	haptic_played = 0;
+	haptic_peak = 0;
+}
+
+static void
+haptic_stopped(void)
+{
+	say("hakios: audio: the actuator stops: %u cycles played, peak %d of 32768%s\n", haptic_played, haptic_peak,
+	    __atomic_load_n(&haptic, __ATOMIC_ACQUIRE) >= 0 ? "" : " (no /dev/hakios-haptic: not felt)");
+}
 
 static void
 actuator_write(const int16_t *samples, UInt32 frames)
 {
-	int peak = 0;
+	static bool said;
+	int peak = 0, fd = __atomic_load_n(&haptic, __ATOMIC_ACQUIRE);
 
 	for (UInt32 i = 0; i < frames; i++) {
 		int v = samples[i] < 0 ? -samples[i] : samples[i];
 
 		peak = v > peak ? v : peak;
 	}
-	if (haptic == -1) {
-		haptic = open("/dev/hakios-haptic", O_WRONLY | O_NONBLOCK);
-		haptic = haptic >= 0 ? haptic : -2;
+	if (fd >= 0) {
+		(void)write(fd, samples, (size_t)frames * 2);
 	}
-	if (haptic >= 0) {
-		(void)write(haptic, samples, (size_t)frames * 2);
+	if (peak > 0) {
+		haptic_played++;
+		haptic_peak = peak > haptic_peak ? peak : haptic_peak;
 	}
-	if (peak > 0 && haptic_said < 12) {
-		haptic_said++;
+	/* (said once, the first time: the rest when the actuator stops, off this thread) */
+	if (peak > 0 && !said) {
+		said = true;
 		say("hakios: audio: the actuator plays: %u frames, peak %d of 32768%s\n", (unsigned)frames, peak,
-		    haptic >= 0 ? "" : " (no /dev/hakios-haptic: not felt)");
+		    fd >= 0 ? "" : " (no /dev/hakios-haptic: not felt)");
 	}
 }
 

@@ -35,6 +35,19 @@ isp_init(struct isp *isp)
 	}
 }
 
+bool
+isp_frame_readable(const struct hakios_camera_frame *f)
+{
+	/*
+	 * Two cells each way: crop() keeps at least two, and of a frame with one it would begin before the frame's
+	 * first line (a height of 2 or 3 had the still picture start some four billion lines down). A line's pixels
+	 * are read four at a time with the fifth byte of their group, by unpack_line() also where the width ends
+	 * one pixel into a group: (width + 3) / 4 groups of five bytes, one group more than cell() reads when the
+	 * width is one more than a multiple of 4.
+	 */
+	return f->format == 1 && f->width >= 4 && f->height >= 4 && f->stride >= ((uint64_t)f->width + 3) / 4 * 5;
+}
+
 /* where red and blue are in a cell (0 top left, 1 top right, 2 bottom left, 3 bottom right) */
 static void
 cell_places(uint32_t bayer, int *r, int *b)
@@ -684,21 +697,19 @@ isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_frame *f,
 	uint32_t width = f->width;
 	int colour[4];
 	struct pipe p;
-	static __thread int *lines[4];
-	static __thread uint8_t *rgb[2];
-	static __thread uint32_t have;
+	/* (this call's own lines, given back at its end: see isp_render_still_nv12()) */
+	int *lines[4], *unpacked = isp_frame_readable(f) ? malloc(sizeof(int) * 4 * (size_t)width) : NULL;
+	uint8_t *rgb[2], *made = unpacked != NULL ? malloc(3 * 2 * (size_t)width) : NULL;
 
-	if (width > have) {
-		for (int i = 0; i < 4; i++) {
-			free(lines[i]);
-			lines[i] = malloc(sizeof(int) * width);
-		}
-		for (int i = 0; i < 2; i++) {
-			free(rgb[i]);
-			rgb[i] = malloc(3 * (size_t)width);
-		}
-		have = width;
+	if (made == NULL) {
+		free(unpacked);
+		return;
 	}
+	for (int i = 0; i < 4; i++) {
+		lines[i] = unpacked + (size_t)i * width;
+	}
+	rgb[0] = made;
+	rgb[1] = made + 3 * (size_t)width;
 	cfa(f->bayer, colour);
 	pipe_init(isp, &p);
 	for (uint32_t row = first_row & ~1u; row < end_row && row < f->height; row += 2) {
@@ -714,9 +725,11 @@ isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_frame *f,
 		nv12_pair(rgb[0], rgb[1], width, y + (size_t)row * y_stride, second ? y + (size_t)(row + 1) * y_stride : NULL,
 		    uv + (size_t)(row / 2) * uv_stride, video_range);
 	}
+	free(made);
+	free(unpacked);
 }
 
-/* one line (y) of the sensor demosaiced, as 8-bit R, G, B (the unpacked lines around it in this thread's l) */
+/* one line (y) of the sensor demosaiced, as 8-bit R, G, B (the unpacked lines around it in the call's l) */
 static void
 demosaic_row(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint32_t row, const int colour[4],
     const struct pipe *p, int *const l[3], uint8_t *rgb)
@@ -734,32 +747,27 @@ isp_render_still_nv12(const struct isp *isp, const struct hakios_camera_frame *f
 	uint32_t x0, y0, cw, ch, fw = f->width;
 	int colour[4];
 	struct pipe p;
-	static __thread int *lines[3];
-	static __thread uint8_t *rows[2], *out[2];
-	static __thread uint32_t have_fw, have_width;
 	int32_t cached[2] = { -1, -1 };
+	/*
+	 * The lines this call works in, its own and given back at its end. They were kept from call to call in
+	 * the thread, but the calls come on dispatch's worker threads, which come and go: each thread that ended
+	 * left its 96 KB behind, a photograph's pieces at a time. Two allocations of a call are nothing beside
+	 * the demosaic of its rows.
+	 */
+	int *lines[3], *unpacked = isp_frame_readable(f) && width > 0 ? malloc(sizeof(int) * 3 * (size_t)fw) : NULL;
+	uint8_t *rows[2], *out[2], *made = unpacked != NULL ? malloc(3 * 2 * ((size_t)fw + width)) : NULL;
 
-	if (fw > have_fw) {
-		for (int i = 0; i < 3; i++) {
-			free(lines[i]);
-			lines[i] = malloc(sizeof(int) * fw);
-		}
-		for (int i = 0; i < 2; i++) {
-			free(rows[i]);
-			rows[i] = malloc(3 * (size_t)fw);
-		}
-		have_fw = fw;
-	}
-	if (width > have_width) {
-		for (int i = 0; i < 2; i++) {
-			free(out[i]);
-			out[i] = malloc(3 * (size_t)width);
-		}
-		have_width = width;
-	}
-	if (lines[2] == NULL || rows[1] == NULL || out[1] == NULL) {
+	if (made == NULL) {
+		free(unpacked);
 		return;
 	}
+	for (int i = 0; i < 3; i++) {
+		lines[i] = unpacked + (size_t)i * fw;
+	}
+	rows[0] = made;
+	rows[1] = made + 3 * (size_t)fw;
+	out[0] = made + 3 * 2 * (size_t)fw;
+	out[1] = out[0] + 3 * (size_t)width;
 	crop(isp, f, width, height, &x0, &y0, &cw, &ch);
 	cfa(f->bayer, colour);
 	pipe_init(isp, &p);
@@ -812,6 +820,8 @@ isp_render_still_nv12(const struct isp *isp, const struct hakios_camera_frame *f
 		nv12_pair(out[0], out[1], width, y + (size_t)row * y_stride, second ? y + (size_t)(row + 1) * y_stride : NULL,
 		    uv + (size_t)(row / 2) * uv_stride, video_range);
 	}
+	free(made);
+	free(unpacked);
 }
 
 /* ---- lens shading from a flat field --------------------------------------------------------------------- */

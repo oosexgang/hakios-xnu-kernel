@@ -84,6 +84,12 @@ struct isp {
 
 void isp_init(struct isp *isp);
 /*
+ * Whether a frame's header is one these functions can read within its lines: RAW10 (format 1), at least 4x4
+ * pixels, and each line at least the five bytes of every four pixels long. What the kernel's header says is to
+ * be checked with this before a frame is handed to any of them.
+ */
+bool isp_frame_readable(const struct hakios_camera_frame *f);
+/*
  * How sharp the picture is in a part of the frame (fractions of it, x0 < x1, y0 < y1): the squares of
  * green's steps between neighbouring blocks of 4x4 cells, over green's level squared -- higher is sharper,
  * the same scene at any exposure the same; and green's mean level there (level, may be NULL).

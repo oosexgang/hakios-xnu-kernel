@@ -158,6 +158,24 @@ for test in bt_uart_test bt_hci_test bt_qca_test bt_queue_test loader_test loade
 	fi
 done
 
+# the cameras' picture processor of Darwin's capture device (components/camera/src/camera_isp.c), plain C as libhakios-media
+# builds it: a scenario a process, on the host under the sanitizers and under qemu-aarch64 as the drivers' tests are, with
+# the maths library and without the fake kernel
+echo "== camera_isp_test (host${SANITIZE[0]:+, sanitizers})"
+if "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" "$HERE/camera_isp_test.c" -o "$WORK/camera_isp_test" -lm; then
+	scenarios "" "$WORK/camera_isp_test"
+else
+	failed=1
+fi
+if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
+	echo "== camera_isp_test (aarch64, qemu-aarch64)"
+	if aarch64-linux-gnu-gcc -static -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "$HERE/camera_isp_test.c" -o "$WORK/camera_isp_test.a64" -lm; then
+		scenarios qemu-aarch64 "$WORK/camera_isp_test.a64"
+	else
+		failed=1
+	fi
+fi
+
 # the helper that breaks a driver on purpose (workbench/mutate.sh), on the example driver: a change that
 # matters is caught, one that changes nothing is not, one that does not compile is said to be that
 echo "== mutate.sh (on Documentation/examples/example_led.c)"

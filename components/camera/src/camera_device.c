@@ -439,6 +439,7 @@ struct output {
 	CVPixelBufferRef held[HELD];            /* the pictures given last, kept from the pool (see deliver) */
 	unsigned        held_next;
 	bool            said_pool;
+	bool            said_lock;
 };
 
 static void let_go(struct output *out);
@@ -516,9 +517,11 @@ struct stream {
 	struct output   out[OUTPUTS];
 	pthread_mutex_t lock;
 	pthread_t       worker;
-	volatile bool   running;
+	/* (running and worker_started change only under run_lock, in the starts and stops: see stream_begin()) */
+	bool            running;        /* the worker is to go on: false asks it to end */
+	bool            worker_started; /* there is a worker to be joined */
+	bool            worker_done;    /* the worker has ended, by itself or asked to: set by the worker alone, as it ends */
 	volatile bool   graph_running;  /* the capture graph has started this stream: frames may be given out */
-	bool            worker_started;
 	int             torch;
 	uint64_t        frames, stills_given;
 };
@@ -1061,6 +1064,19 @@ frame_metadata(const struct isp *isp, const struct hakios_camera_frame *f, const
 	return m;
 }
 
+/* a locked buffer's planes, as render_piece() writes them: each there, with the rows and the bytes of a row drawn */
+static bool
+planes_drawable(CVPixelBufferRef pb, uint32_t pf, uint32_t width, uint32_t height)
+{
+	if (pf == PF_BGRA) {
+		return CVPixelBufferGetBaseAddress(pb) != NULL && CVPixelBufferGetBytesPerRow(pb) >= 4 * (size_t)width;
+	}
+	return CVPixelBufferGetPlaneCount(pb) >= 2 && CVPixelBufferGetBaseAddressOfPlane(pb, 0) != NULL &&
+	    CVPixelBufferGetBaseAddressOfPlane(pb, 1) != NULL && CVPixelBufferGetBytesPerRowOfPlane(pb, 0) >= width &&
+	    CVPixelBufferGetBytesPerRowOfPlane(pb, 1) >= ((size_t)width + 1) / 2 * 2 && CVPixelBufferGetHeightOfPlane(pb, 0) >= height &&
+	    CVPixelBufferGetHeightOfPlane(pb, 1) >= ((size_t)height + 1) / 2;
+}
+
 /* True: a picture went to the output (no buffer free, or one of a shape this does not draw: false) */
 static bool
 deliver(struct stream *s, struct output *out, const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw,
@@ -1085,7 +1101,25 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 		CVPixelBufferRelease(pb);
 		return false;
 	}
-	CVPixelBufferLockBaseAddress(pb, 0);
+	/*
+	 * (the planes the pieces will write, there and as large as they are drawn: a buffer that cannot be locked,
+	 * or whose planes are not, would have them write through a null or short plane -- it is let go, and the frame
+	 * is not given to this output)
+	 */
+	bool locked = CVPixelBufferLockBaseAddress(pb, 0) == kCVReturnSuccess;
+
+	if (!locked || !planes_drawable(pb, pf, width, height)) {
+		if (!out->said_lock) {
+			out->said_lock = true;
+			say("%s: a %ux%u buffer %s: frames not given to it", out->name, width, height,
+			    locked ? "with a plane missing or too small" : "that cannot be locked");
+		}
+		if (locked) {
+			CVPixelBufferUnlockBaseAddress(pb, 0);
+		}
+		CVPixelBufferRelease(pb);
+		return false;
+	}
 
 	struct render_job job = { isp, f, raw, pb, pf, width, height, 8, strcmp(out->name, "StillImage") == 0 && pf != PF_BGRA };
 	uint64_t began = mach_absolute_time();
@@ -1426,6 +1460,14 @@ load_tuning(struct isp *isp, const struct hakios_camera_frame *f)
 	}
 }
 
+/* a frame's header as the one its buffer was sized by: whatever the buffer's size and the ISP's reading follow from */
+static bool
+same_shape(const struct hakios_camera_frame *f, const struct hakios_camera_frame *head)
+{
+	return f->header_bytes == head->header_bytes && f->sensor == head->sensor && f->format == head->format &&
+	    f->width == head->width && f->height == head->height && f->stride == head->stride;
+}
+
 static void *
 worker(void *context)
 {
@@ -1445,11 +1487,12 @@ worker(void *context)
 	pthread_setname_np("hakios-camera");
 	if (device < 0) {
 		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
-		s->running = false;     /* (the next start makes a worker anew: not taken for one still running) */
+		/* (the next start takes this one back and makes a worker anew: not taken for one still running) */
+		__atomic_store_n(&s->worker_done, true, __ATOMIC_RELEASE);
 		return NULL;
 	}
 	isp_init(&isp);
-	while (s->running && failures < 5) {
+	while (__atomic_load_n(&s->running, __ATOMIC_ACQUIRE) && failures < 5) {
 		ssize_t n;
 
 		if (buffer == NULL) {
@@ -1473,10 +1516,15 @@ worker(void *context)
 				}
 				continue;
 			}
-			if (head.header_bytes < sizeof(head) || head.header_bytes > 4096 || head.height == 0 || head.width == 0 ||
-			    head.stride < head.width || (uint64_t)head.stride * head.height > (64u << 20)) {
+			/*
+			 * (a header that no buffer is to be sized from, or whose frame the ISP would read past the end of: anything
+			 * but RAW10, too small, or lines too short for their pixels -- any stride of at least the width was taken
+			 * here, where RAW10 takes five bytes for four pixels)
+			 */
+			if (head.header_bytes < sizeof(head) || head.header_bytes > 4096 || !isp_frame_readable(&head) ||
+			    (uint64_t)head.stride * head.height > (64u << 20)) {
 				failures++;
-				continue;               /* (a header that no buffer is to be sized from) */
+				continue;
 			}
 			bytes = head.header_bytes + (size_t)head.stride * head.height;
 			buffer = malloc(bytes);
@@ -1488,6 +1536,21 @@ worker(void *context)
 			continue;
 		}
 		n = read(device, buffer, bytes);
+
+		const struct hakios_camera_frame *f = (const void *)buffer;
+
+		/*
+		 * (each frame the shape the buffer was sized for: a sensor or mode changed meanwhile -- another opener's
+		 * HAKIOS_CAMERA_SENSOR -- would have the ISP read past the buffer's end. Back to the header, sized anew.
+		 * A smaller frame comes as a short read, its header whole: that is a change of shape too, not a failure --
+		 * five of them in a row ended the frames for good)
+		 */
+		if (n >= (ssize_t)sizeof(head) && !same_shape(f, &head)) {
+			say("the kernel's frames changed shape (%ux%u, camera %u): sized again", f->width, f->height, f->sensor);
+			free(buffer);
+			buffer = NULL;
+			continue;
+		}
 		if (n != (ssize_t)bytes) {
 			if (n < 0 && errno == EIO) {
 				say("the kernel's camera has had a fault: no more frames");
@@ -1498,21 +1561,8 @@ worker(void *context)
 		}
 		failures = 0;
 
-		const struct hakios_camera_frame *f = (const void *)buffer;
 		const uint8_t *raw = buffer + f->header_bytes;
 		struct hakios_camera_command c;
-
-		/*
-		 * (each frame the shape the buffer was sized for: a sensor or mode changed meanwhile -- another opener's
-		 * HAKIOS_CAMERA_SENSOR -- would have the ISP read past the buffer's end. Back to the header, sized anew)
-		 */
-		if (f->header_bytes != head.header_bytes || f->sensor != head.sensor || f->width != head.width ||
-		    f->height != head.height || f->stride != head.stride) {
-			say("the kernel's frames changed shape (%ux%u, camera %u): sized again", f->width, f->height, f->sensor);
-			free(buffer);
-			buffer = NULL;
-			continue;
-		}
 
 		isp_measure(&isp, f, raw, &st);
 		isp_awb(&isp, &st);
@@ -1598,8 +1648,8 @@ worker(void *context)
 	free(buffer);
 	close(device);
 	say("the frames stopped (%llu)", s->frames);
-	/* (ended by itself -- faults, reads that kept failing -- or asked to: either way not running, so a start starts it again) */
-	s->running = false;
+	/* (ended by itself -- faults, reads that kept failing -- or asked to: either way ended, so a start starts it again) */
+	__atomic_store_n(&s->worker_done, true, __ATOMIC_RELEASE);
 	return NULL;
 }
 
@@ -1610,27 +1660,40 @@ worker(void *context)
  * stream itself (`graph` true, the FigCaptureStream start method).
  */
 static CMBaseObjectRef all_streams[2];  /* the device's, back and front */
-static OSStatus stream_stop(CMBaseObjectRef o);
+/*
+ * The starts and stops of both streams, one at a time, each whole: they come from the capture graph's threads,
+ * the device's RequestStreams and the streams' finalizing, and a start stops the other stream's frames. Two at
+ * once, each reading "running" before the other had written it, could make two workers of a stream (one of them
+ * never joined, reading frames into a stream freed under it) or join one twice. The workers never take it: a stop
+ * waits for its worker with it held. Also all_streams[] is changed only under it.
+ */
+static pthread_mutex_t run_lock = PTHREAD_MUTEX_INITIALIZER;
+static void stream_stop_locked(CMBaseObjectRef o);
 
 static OSStatus
 stream_begin(CMBaseObjectRef o, bool graph)
 {
 	struct stream *s = stream_of(o);
+	OSStatus status = 0;
 
+	pthread_mutex_lock(&run_lock);
 	if (graph) {
 		pthread_mutex_lock(&s->lock);
 		s->graph_running = true;
 		pthread_mutex_unlock(&s->lock);
 		say("stream: the graph starts the stream (format %d)", s->format_index);
 	}
-	if (s->running) {
-		return 0;
+	if (s->worker_started && !__atomic_load_n(&s->worker_done, __ATOMIC_ACQUIRE)) {
+		pthread_mutex_unlock(&run_lock);
+		return 0;               /* (its frames are coming) */
 	}
 	/* one camera at a time: the kernel gives one sensor's frames (the other stream's worker stopped first) */
 	for (int i = 0; i < 2; i++) {
-		if (all_streams[i] != NULL && all_streams[i] != o && stream_of(all_streams[i])->running) {
-			say("stream: the %s's frames stop for the %s's", stream_of(all_streams[i])->camera->name, s->camera->name);
-			(void)stream_stop(all_streams[i]);
+		struct stream *other = all_streams[i] != NULL && all_streams[i] != o ? stream_of(all_streams[i]) : NULL;
+
+		if (other != NULL && other->worker_started && !__atomic_load_n(&other->worker_done, __ATOMIC_ACQUIRE)) {
+			say("stream: the %s's frames stop for the %s's", other->camera->name, s->camera->name);
+			stream_stop_locked(all_streams[i]);
 		}
 	}
 	if (s->worker_started) {
@@ -1638,15 +1701,18 @@ stream_begin(CMBaseObjectRef o, bool graph)
 		pthread_join(s->worker, NULL);
 		s->worker_started = false;
 	}
-	s->running = true;
+	__atomic_store_n(&s->running, true, __ATOMIC_RELEASE);
+	__atomic_store_n(&s->worker_done, false, __ATOMIC_RELEASE);
 	s->frames = 0;
 	say("stream: frames begin (format %d)", s->format_index);
 	if (pthread_create(&s->worker, NULL, worker, o) != 0) {
-		s->running = false;
-		return ERR_UNSUPPORTED;
+		__atomic_store_n(&s->running, false, __ATOMIC_RELEASE);
+		status = ERR_UNSUPPORTED;
+	} else {
+		s->worker_started = true;
 	}
-	s->worker_started = true;
-	return 0;
+	pthread_mutex_unlock(&run_lock);
+	return status;
 }
 
 static OSStatus
@@ -1655,8 +1721,9 @@ stream_start(CMBaseObjectRef o)
 	return stream_begin(o, true);
 }
 
-static OSStatus
-stream_stop(CMBaseObjectRef o)
+/* a stop, with run_lock held (by a stop, or by a start stopping the other stream's frames) */
+static void
+stream_stop_locked(CMBaseObjectRef o)
 {
 	struct stream *s = stream_of(o);
 
@@ -1668,11 +1735,19 @@ stream_stop(CMBaseObjectRef o)
 		let_go(&s->out[i]);
 	}
 	pthread_mutex_unlock(&s->lock);
-	s->running = false;
+	__atomic_store_n(&s->running, false, __ATOMIC_RELEASE);
 	if (s->worker_started) {
 		pthread_join(s->worker, NULL);
 		s->worker_started = false;
 	}
+}
+
+static OSStatus
+stream_stop(CMBaseObjectRef o)
+{
+	pthread_mutex_lock(&run_lock);
+	stream_stop_locked(o);
+	pthread_mutex_unlock(&run_lock);
 	return 0;
 }
 
@@ -1745,13 +1820,15 @@ stream_finalize(CMBaseObjectRef o)
 {
 	struct stream *s = stream_of(o);
 
-	(void)stream_stop(o);
-	/* (out of the streams' list: the other stream's next start would look at this one after it is freed) */
+	/* (stopped and out of the streams' list in one go: the other stream's next start would look at it after it is freed) */
+	pthread_mutex_lock(&run_lock);
+	stream_stop_locked(o);
 	for (int i = 0; i < 2; i++) {
 		if (all_streams[i] == o) {
 			all_streams[i] = NULL;
 		}
 	}
+	pthread_mutex_unlock(&run_lock);
 	for (int i = 0; i < OUTPUTS; i++) {
 		if (s->out[i].config) {
 			CFRelease(s->out[i].config);
@@ -1989,8 +2066,10 @@ hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, C
 	d = derived_storage(device);
 	memset(d, 0, sizeof(*d));
 	d->streams = CFArrayCreate(NULL, (const void **)stream, 2, &kCFTypeArrayCallBacks);
+	pthread_mutex_lock(&run_lock);
 	all_streams[0] = stream[0];             /* (kept by the device's array) */
 	all_streams[1] = stream[1];
+	pthread_mutex_unlock(&run_lock);
 	d->supported = supported(device_props, sizeof(device_props) / sizeof(device_props[0]));
 	CFRelease(stream[0]);
 	CFRelease(stream[1]);
