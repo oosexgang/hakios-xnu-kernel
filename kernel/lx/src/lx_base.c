@@ -224,8 +224,18 @@ linux_rcu_read_unlock(unsigned type)
 void
 linux_synchronize_rcu(unsigned type)
 {
-	for (unsigned ms = 0; rcu_readers != 0 && ms < 1000; ms++) {
+	static unsigned said;
+	unsigned ms;
+
+	/*
+	 * (bounded: every reader is counted, those that came after too, so one that is always looking would hold this for good;
+	 * the time it gave up is said -- what the caller frees then may still be read)
+	 */
+	for (ms = 0; rcu_readers != 0 && ms < 1000; ms++) {
 		lx_pause_ms(1);
+	}
+	if (rcu_readers != 0 && said++ < 4) {
+		printf("lx: synchronize_rcu: %d readers still look after %u ms: what is freed now may still be read\n", rcu_readers, ms);
 	}
 }
 
