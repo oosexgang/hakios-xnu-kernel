@@ -3,6 +3,7 @@
 extracted Darwin 26 root filesystem and cryptexes; size the result raw and as mkapfs -z stores it."""
 import os, zlib, importlib.util, collections, pickle
 from multiprocessing import Pool
+import cachedir
 
 DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
 spec = importlib.util.spec_from_file_location(
@@ -103,7 +104,7 @@ def main():
     for d, b in dirs.most_common(40):
         print(f'  {b/M:7.1f}  {d}')
     print('\nskipped by the 16.5 rules (raw MiB):', {k: round(v / M) for k, v in skipped.most_common(15)})
-    pickle.dump(big, open('/tmp/rb_rootfs26.pkl', 'wb'))
+    pickle.dump(big, open(cachedir.path('rootfs26.pkl'), 'wb'))
 
 
 if __name__ == '__main__':

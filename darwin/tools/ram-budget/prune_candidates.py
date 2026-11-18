@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import pickle, collections, re
-big = pickle.load(open('/tmp/rb_rootfs26.pkl', 'rb'))   # (z bytes, raw, rel)
+import cachedir
+big = pickle.load(open(cachedir.path('rootfs26.pkl'), 'rb'))   # (z bytes, raw, rel), from rootfs_select.py
 M = 1 << 20
 apps = collections.Counter(); appsr = collections.Counter()
 for b, s, rel in big:

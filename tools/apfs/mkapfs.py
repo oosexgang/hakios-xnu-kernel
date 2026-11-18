@@ -922,7 +922,15 @@ def main():
         vols.append(Volume(i, name, root, args.compress, args.time * 1000000000, spool, args.plain))
     c = Container(vols, args.slack, os.path.basename(args.output))
     c.layout()
-    free = c.write(args.output)
+    # written beside it and put in its place when whole: a run that stops half way leaves the image of the
+    # run before (or none), never one cut short under the name the loader is given
+    partial = args.output + '.tmp'
+    try:
+        free = c.write(partial)
+        os.replace(partial, args.output)
+    finally:
+        if os.path.lexists(partial):
+            os.unlink(partial)
     if spool is not None:
         spool.close()
         os.unlink(args.output + '.spool')

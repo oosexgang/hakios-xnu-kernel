@@ -116,7 +116,7 @@ exactly. It was checked byte-exact against three files in the 16.5 image (Spring
 | not needed: `.atlas` | 1 | 2.7 | n/a | |
 
 Compared with 16.5, the cache is 1.84× larger stored (1741 vs 948 MiB). Per-file numbers:
-`/tmp/rb_dyld26.txt` (regenerate with the commands below). The PAC rewrite turns instructions into
+`$RB/dyld26.txt` (regenerate with the commands below). The PAC rewrite turns instructions into
 NOP/RET/BR/BLR, so the stored size should stay the same or shrink slightly [INFERENCE].
 
 ## 3. Which cache files must exist, and what zero-filling would save
@@ -254,14 +254,17 @@ The scenarios B–D at the top subtract the measured savings from A:
 
 ## Reproduce
 
-Run in WSL. Scripts are in `darwin/tools/ram-budget/`; intermediate files go to `/tmp`.
+Run in WSL. Scripts are in `darwin/tools/ram-budget/`; intermediate files go to a directory of your own,
+`$RB` below: `ram-budget` in `$XDG_CACHE_HOME` (`~/.cache`), or `RAM_BUDGET_CACHE`, which `cachedir.py` makes
+0700 and prints. They are pickles, which run code as they are read: not in a shared `/tmp`.
 
 ```
+RB=$(python3 .../cachedir.py)
 cd /home/wannq/darwin_kernel/darwin26/dyld
-python3 .../zchunks.py /tmp/rb_dyld26.pkl $(ls $PWD/dyld_shared_cache_arm64e* | grep -v -E '\.(symbols|atlas)$')
-python3 .../cache_images.py /tmp/rb_dyld26.pkl jobs|apps|broad
-python3 .../rootfs_select.py            # writes /tmp/rb_rootfs26.pkl
-python3 .../loctable_trim.py            # needs /tmp/rb_rootfs26.pkl
-python3 .../prune_candidates.py         # needs /tmp/rb_rootfs26.pkl
-7z l -slt userland/userland/system.apfs > /tmp/sys165.slt && python3 .../slt_summary.py /tmp/sys165.slt
+python3 .../zchunks.py $RB/dyld26.pkl $(ls $PWD/dyld_shared_cache_arm64e* | grep -v -E '\.(symbols|atlas)$')
+python3 .../cache_images.py $RB/dyld26.pkl jobs|apps|broad     # writes $RB/used_MODE.pkl
+python3 .../rootfs_select.py            # writes $RB/rootfs26.pkl
+python3 .../loctable_trim.py            # needs $RB/rootfs26.pkl
+python3 .../prune_candidates.py         # needs $RB/rootfs26.pkl
+7z l -slt userland/userland/system.apfs > $RB/sys165.slt && python3 .../slt_summary.py $RB/sys165.slt
 ```

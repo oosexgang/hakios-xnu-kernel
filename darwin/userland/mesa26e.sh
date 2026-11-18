@@ -9,6 +9,9 @@ source $DR/xnu-env.sh
 B=$DR/xnu-deps/build/mesa
 SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}   # (DARWIN_SDK: as kernel/build.sh takes it)
 CC=$DR/xnu-deps/host/bin/xnu-clang
+# pacstrip is built by darwin/userland/env.sh (arch/arm64/tools/pacstrip), or PACSTRIP=FILE; looked for before the build
+PACSTRIP=${PACSTRIP:-$RN/../arch/arm64/tools/pacstrip}
+[ -x "$PACSTRIP" ] || { echo "mesa26e.sh: no pacstrip at $PACSTRIP (darwin/userland/env.sh builds it)" >&2; exit 1; }
 cd $B
 [ -d mesa-26.2.5 ] || { echo "run darwin-renoir tools/mk-mesa.sh once first"; exit 1; }
 export PATH=$B/venv/bin:$PATH
@@ -43,7 +46,7 @@ ninja -C $BUILD src/gallium/targets/osmesa/libOSMesa.8.dylib > ninja-arm64e.log
 O=$RN/userland/obj26; mkdir -p $O
 llvm-strip -x -o $O/libOSMesa.8.dylib.tmp $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
 install_name_tool -id /hakios/lib/libOSMesa.8.dylib $O/libOSMesa.8.dylib.tmp
-$RN/tools/pacstrip macho $O/libOSMesa.8.dylib.tmp $O/libOSMesa.8.dylib | tail -6
+"$PACSTRIP" macho "$O/libOSMesa.8.dylib.tmp" "$O/libOSMesa.8.dylib" | tail -6
 rm $O/libOSMesa.8.dylib.tmp
 $THEOS/toolchain/linux/iphone/bin/ldid -S $O/libOSMesa.8.dylib
 file -b $O/libOSMesa.8.dylib; ls -la $O/libOSMesa.8.dylib

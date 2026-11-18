@@ -21,6 +21,8 @@
 # with LZBITMAP (kernel/deps/build/lzbitmap/unzbm.c expands them) and symbolic links that lead out of
 # their directory, which it writes as empty files.
 set -euo pipefail
+# (and inside $(...) as well: image's path is taken that way, and a failed unzip there went by unnoticed)
+shopt -s inherit_errexit
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 [ $# -ge 1 ] && [ $# -le 2 ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1; }
@@ -79,20 +81,29 @@ PY
 image() { # image PATH-IN-IPSW: the disk image out of the IPSW, decrypted, in WORK; its path on stdout
 	local image
 	image=$WORK/$(basename "$1")
-	unzip -o -q -j "$IPSW" "$1" -d "$WORK"
+	unzip -o -q -j "$IPSW" "$1" -d "$WORK" || return 1
 	if [ "${image%.aea}" != "$image" ]; then
-		(cd "$WORK" && ipsw fw aea "$image" -o "$WORK" > /dev/null 2>&1)
+		(cd "$WORK" && ipsw fw aea "$image" -o "$WORK" > /dev/null 2>&1) || { echo "unpack.sh: ipsw could not decrypt $1" >&2; return 1; }
 		rm "$image"
 		image=${image%.aea}
 	fi
+	[ -s "$image" ] || { echo "unpack.sh: $1: no image came out of the IPSW" >&2; return 1; }
 	echo "$image"
 }
 
 # The template of /private/var with its owners and modes, which extraction on Linux does not keep: from the
 # system volume's listing (mkvarskel.py). init makes the directories from it at every boot.
+# A listing without /private/var (7z could not read the image) would still give the few directories mkvarskel.py
+# adds by itself, and root26-darwin.sh takes any var.skel that is not empty: that stops here instead, and the
+# file is put in its place only when whole.
 var_skel() { # var_skel IMAGE
 	7z l -slt "$1" > "$WORK/listing" 2> /dev/null || true
-	python3 "$HERE/mkvarskel.py" "$WORK/listing" > "$OUT/var.skel"
+	if ! grep -q '^Path = private/var/' "$WORK/listing"; then
+		echo "unpack.sh: 7z lists nothing of /private/var in $1: no var.skel" >&2
+		return 1
+	fi
+	python3 "$HERE/mkvarskel.py" "$WORK/listing" > "$OUT/var.skel.tmp"
+	mv "$OUT/var.skel.tmp" "$OUT/var.skel"
 	rm "$WORK/listing"
 	echo "unpack.sh: var.skel: $(grep -c . "$OUT/var.skel") entries"
 }

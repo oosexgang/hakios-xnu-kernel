@@ -25,6 +25,8 @@ on /hakios and runs its init), the real one /sbin/launchd.darwin. With LAUNCHDAE
 the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
 System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /hakios/LaunchDaemons,
 as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
+
+PACSTRIP=FILE: the pacstrip the arm64e files go through, by default arch/arm64/tools/pacstrip (darwin/userland/env.sh builds it).
 """
 import importlib.util
 import os
@@ -43,7 +45,7 @@ ROOT = I + '/rootfs'
 CACHE = I + '/dyld-strip'
 OBJ = os.environ.get('OBJ') or I + '/obj'           # what darwin/userland/root26-darwin.sh built: stage0
 APFS = REPO + '/tools/apfs/mkapfs.py'
-PACSTRIP = HERE + '/pacstrip'
+PACSTRIP = os.environ.get('PACSTRIP') or REPO + '/arch/arm64/tools/pacstrip'    # (darwin/userland/env.sh builds it)
 WORK = os.environ.get("WORK", I + "/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
 IMAGE_ROOT = 'hakios'                            # where stage0 mounts the small image
@@ -448,6 +450,8 @@ def main():
     if len(out) != 1:
         sys.exit(__doc__)
     wallpaper_identifier(os.environ.get('WALLPAPER', 'yellow'))     # (a wrong name stops the build here, not after it)
+    if not os.access(PACSTRIP, os.X_OK):                            # (and so does a missing pacstrip)
+        sys.exit(f'mkimage26: no pacstrip at {PACSTRIP} (darwin/userland/env.sh builds it; or PACSTRIP=FILE)')
     if os.path.exists(WORK):
         shutil.rmtree(WORK)
     os.makedirs(WORK)

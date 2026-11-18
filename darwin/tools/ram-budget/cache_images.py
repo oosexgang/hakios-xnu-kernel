@@ -9,6 +9,7 @@ usage: cache_images.py PIECES.pkl MODE   (PIECES.pkl from zchunks.py over the ca
 Static closure over LC_LOAD/WEAK/REEXPORT/UPWARD_DYLIB only: dlopen() is not seen.
 """
 import os, sys, struct, pickle, plistlib, glob, collections
+import cachedir
 
 DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
 I = os.environ.get('DARWIN_FW', DK + '/darwin26')
@@ -384,4 +385,4 @@ cat = collections.Counter()
 for p in used:
     cat[p.split('/')[1] + '/' + (p.split('/')[3] if p.startswith('/System/Library/') else p.split('/')[2])] += 1
 print('used images by directory:', cat.most_common(12))
-pickle.dump({'used': sorted(used), 'mode': mode}, open(f'/tmp/rb_used_{mode}.pkl', 'wb'))
+pickle.dump({'used': sorted(used), 'mode': mode}, open(cachedir.path(f'used_{mode}.pkl'), 'wb'))

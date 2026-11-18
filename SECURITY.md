@@ -28,4 +28,5 @@ and say so in their heads), or that a phone running this can be read by whoever 
 - Write to a phone's storage, but for the one partition its board file names, and only when asked
   (`arch/arm64/boot/src/own_partition.c`, `dsu_write.c`, held by `workbench/loader_own_partition_test.c`).
 - Put Apple's files, a phone maker's firmware or a Wi-Fi passphrase into the repository or into a published image
-  (`tools/check-publishable.sh`, `tools/image.py publish`, `userland/userland/build.sh` with `SHARE=1`).
+  (`tools/check-publishable.sh`, `tools/image.py publish`, `userland/userland/build.sh` and
+  `darwin/userland/root26-darwin.sh` with `SHARE=1`).

@@ -1,22 +1,36 @@
 """The parts of the Darwin image tool (darwin/tools/mkimage26.py) that need no IPSW: which files a pruned image
 leaves out, which Mach-O files are arm64e and go through pacstrip, the trimming of string tables, and
-where the stage0 it carries mounts the small image.
+where the stage0 it carries mounts the small image. And of the tools beside it: where they find pacstrip,
+fips26.py run again over a cache it has already changed, and aea.py's reading of an archive's metadata, which
+nothing has authenticated when it is read.
 
     python3 workbench/darwin_tools_test.py
 """
 import importlib.util
+import io
 import os
 import plistlib
 import shutil
+import signal
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('mkimage26', ROOT / 'darwin/tools/mkimage26.py')
-mkimage26 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mkimage26)
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / 'darwin/tools' / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+mkimage26 = load('mkimage26')
 
 ARM64, ARM64E = (0x0100000c, 0), (0x0100000c, 2)
 
@@ -110,6 +124,128 @@ class Loctable(unittest.TestCase):
         (d / 'not.loctable').write_text('not a property list')
         self.assertFalse(mkimage26.trim_loctable(d / 'not.loctable', d / 'c.loctable'))
         self.assertFalse(os.path.exists(d / 'c.loctable'))
+
+
+class Pacstrip(unittest.TestCase):
+    """pacstrip is arch/arm64/tools/pacstrip (darwin/userland/env.sh builds it there), or PACSTRIP"""
+    def test_the_tools_find_it_where_it_is_built(self):
+        self.assertTrue((ROOT / 'arch/arm64/tools/pacstrip.c').exists())
+        with mock.patch.dict(os.environ):
+            os.environ.pop('PACSTRIP', None)
+            for name in ('mkimage26', 'fips26'):
+                self.assertEqual(Path(load(name).PACSTRIP), ROOT / 'arch/arm64/tools/pacstrip', name)
+
+    def test_pacstrip_names_another(self):
+        with mock.patch.dict(os.environ, PACSTRIP='/elsewhere/pacstrip'):
+            for name in ('mkimage26', 'fips26'):
+                self.assertEqual(load(name).PACSTRIP, '/elsewhere/pacstrip', name)
+
+
+class Fips26(unittest.TestCase):
+    """with a pacstrip that writes down what it was asked"""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.cache = self.dir / 'dyld-strip'
+        self.cache.mkdir()
+        self.calls = self.dir / 'calls'
+        self.pacstrip = self.dir / 'pacstrip'
+        self.pacstrip.write_text(f'#!/bin/sh\necho "$@" >> "{self.calls}"\n')
+        self.pacstrip.chmod(0o755)
+        self.fips26 = load('fips26')
+
+    def run_fips26(self, pacstrip):
+        return subprocess.run([sys.executable, str(ROOT / 'darwin/tools/fips26.py'), str(self.cache)],
+                              env=dict(os.environ, PACSTRIP=str(pacstrip)), capture_output=True, text=True, timeout=60)
+
+    def test_the_stored_value_is_replaced_and_the_file_resigned(self):
+        part = self.cache / 'dyld_shared_cache_arm64e.01'
+        part.write_bytes(bytes(100) + self.fips26.STORED + bytes(100))
+        r = self.run_fips26(self.pacstrip)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(part.read_bytes(), bytes(100) + self.fips26.COMPUTED + bytes(100))
+        self.assertEqual(self.calls.read_text().split(), ['resign', str(part)])
+
+    def test_run_again_it_resigns_what_has_the_computed_value(self):
+        # (an earlier run that replaced the value and stopped before its resign: the pages' hashes are still the old)
+        part = self.cache / 'dyld_shared_cache_arm64e.01'
+        part.write_bytes(bytes(100) + self.fips26.COMPUTED + bytes(100))
+        (self.cache / 'dyld_shared_cache_arm64e.02').write_bytes(bytes(300))
+        r = self.run_fips26(self.pacstrip)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.calls.exists(), 'not resigned')
+        self.assertEqual(self.calls.read_text().split(), ['resign', str(part)])
+
+    def test_without_pacstrip_nothing_is_written(self):
+        part = self.cache / 'dyld_shared_cache_arm64e.01'
+        before = bytes(100) + self.fips26.STORED + bytes(100)
+        part.write_bytes(before)
+        r = self.run_fips26(self.dir / 'no-pacstrip')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(part.read_bytes(), before)
+
+    def test_a_cache_with_neither_value_is_refused(self):
+        (self.cache / 'dyld_shared_cache_arm64e.01').write_bytes(bytes(300))
+        r = self.run_fips26(self.pacstrip)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(self.calls.exists())
+
+
+def deadline(test, seconds):
+    """a SIGALRM that fails the test, where a loop would otherwise hold the run for ever"""
+    def expired(signum, frame):
+        raise AssertionError(f'still running after {seconds} s')
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.alarm(seconds)
+    test.addCleanup(signal.signal, signal.SIGALRM, previous)
+    test.addCleanup(signal.alarm, 0)
+
+
+class AeaMetadata(unittest.TestCase):
+    """the metadata of an AEA archive, read before anything in it has been authenticated"""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.aea = load('aea')
+        except ImportError as e:            # (Python's cryptography package)
+            raise unittest.SkipTest(f'aea.py does not load here: {e}')
+
+    @staticmethod
+    def archive(*fields, raw=b''):
+        auth = b''.join(struct.pack('<I', 4 + len(f)) + f for f in fields) + raw
+        return io.BytesIO(struct.pack('<4sII', b'AEA1', 1, len(auth)) + auth)
+
+    def test_fields_are_read(self):
+        _, _, meta = self.aea.header(self.archive(b'a\0one', b'bee\0two'))
+        self.assertEqual(meta, {'a': b'one', 'bee': b'two'})
+
+    def test_a_field_of_length_zero_stops_the_reading(self):
+        deadline(self, 5)
+        with self.assertRaises(SystemExit):
+            self.aea.header(self.archive(b'a\0one', raw=struct.pack('<I', 0) + b'more'))
+
+    def test_a_length_under_four_or_past_the_end_is_refused(self):
+        deadline(self, 5)
+        for raw in (struct.pack('<I', 2) + b'abcdefgh', struct.pack('<I', 50) + b'k\0v', b'\x01\x00'):
+            with self.assertRaises(SystemExit, msg=raw):
+                self.aea.header(self.archive(b'a\0one', raw=raw))
+
+    def test_the_key_is_fetched_over_https_only(self):
+        fetched = mock.Mock(side_effect=AssertionError('fetched'))
+        with mock.patch.object(self.aea.urllib.request, 'urlopen', fetched), \
+                mock.patch.object(self.aea.urllib.request, 'build_opener', fetched):
+            for url in (b'http://example.com/key.pem', b'file:///etc/passwd', b'ftp://example.com/key.pem',
+                        b'/etc/passwd', b''):
+                with self.assertRaises(SystemExit, msg=url):
+                    self.aea.symmetric_key({'com.apple.wkms.fcs-key-url': url, 'com.apple.wkms.fcs-response': b'{}'})
+        fetched.assert_not_called()
+
+    def test_a_redirect_away_from_https_is_not_followed(self):
+        handler = self.aea.HttpsOnly()
+        request = self.aea.urllib.request.Request('https://example.com/key.pem')
+        with self.assertRaises(self.aea.urllib.error.HTTPError):
+            handler.redirect_request(request, None, 302, 'Found', {}, 'http://example.com/key.pem')
+        self.assertIsNotNone(handler.redirect_request(request, None, 302, 'Found', {}, 'https://example.com/k.pem'))
 
 
 if __name__ == '__main__':

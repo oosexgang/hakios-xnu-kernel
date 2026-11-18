@@ -10,7 +10,9 @@
 # Writes $IOS/root26-darwin.apfs, $IOS/jobs26, $OBJ/stage0 (the system image's /sbin/launchd) and $IOS/flashboot.apfs
 # (the RAM part of a boot whose system image is on the flash).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py; RC_JOBS=FILE: what com.hakios.demo runs.
-set -e
+# SHARE=1: an image that is going to somebody else, without the Wi-Fi network and this machine's ssh keys.
+# (pipefail: mkapfs.py's output goes through tail, which would otherwise hide a failed image)
+set -eo pipefail
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=env.sh
 source "$RN/userland/env.sh"
@@ -152,6 +154,16 @@ CONF
 PLAIN=()
 if [ -n "$BOARD" ] && [ -d "$IOS_REPO/firmware/$BOARD/fw" ]; then
 	cp -r "$IOS_REPO/firmware/$BOARD/fw" "$T/fw"
+	# the network the radio is to join (its name, then its passphrase) is a secret, as userland/userland/build.sh
+	# treats it: left out with SHARE=1, and otherwise readable by its owner alone
+	rm -f "$T/fw/network"
+	if [ -f "$IOS_REPO/firmware/$BOARD/fw/network" ]; then
+		if [ -z "${SHARE:-}" ]; then
+			install -m 0600 "$IOS_REPO/firmware/$BOARD/fw/network" "$T/fw/network"
+		else
+			echo "  SHARE=1: fw/network left out"
+		fi
+	fi
 	PLAIN=(--plain fw)
 	echo "  firmware of $BOARD: $(find "$T/fw" -type f | wc -l) files"
 else
@@ -294,13 +306,14 @@ printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/p
 # -[MTTimerStorage coreDataReady] is always false, every request fails with MTTimerStorage error 4 and
 # nothing is kept; on, the store loads (seen with 24B119: a 10-second timer ran and fired).
 mkdir -p $T/var/preferences/FeatureFlags/Domain
-python3 - "$T/var/preferences/FeatureFlags/Domain" "$DARWIN_FW/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
+python3 - "$T/var/preferences/FeatureFlags/Domain" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
 import plistlib, sys
+# (a version that cannot be read stops the build: taken for 26, Darwin 27's timers would have no store)
 try:
     with open(sys.argv[2], 'rb') as f:
         major = int(plistlib.load(f)['ProductVersion'].split('.')[0])
-except (OSError, KeyError, ValueError):
-    major = 26                      # (the version cannot be read: as it always was)
+except (OSError, KeyError, ValueError, plistlib.InvalidFileException) as e:
+    raise SystemExit(f'root26-darwin.sh: the system version is not in {sys.argv[2]}: {e}')
 flags = {'MobileTimerFlags': {'core_data': {'Enabled': major >= 27}}}
 for domain, features in flags.items():
     with open(f'{sys.argv[1]}/{domain}.plist', 'wb') as f:
@@ -361,7 +374,7 @@ if [ -n "${SIGNIN:-}" ]; then
 	echo "/hakios/lib/libhakios-kc.dylib akd accountsd" >> $T/etc/inject.conf
 fi
 # The kernel matches executable names, not the build template's @apps token.
-python3 - "$T/etc/inject.conf" "$DARWIN_FW/rootfs" <<'PY'
+python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys
 conf, root = map(pathlib.Path, sys.argv[1:])
 names = set()
@@ -372,6 +385,9 @@ for base in ('Applications', 'private/var/staged_system_apps'):
             name = info.get('CFBundleExecutable') if 'hidden' not in info.get('SBAppTags', []) else None
         if name and ' ' not in name:        # (names are separated by blanks in kern.exec_inject)
             names.add(name)
+# (none found is a root file system that is not there: an image without the status bar in any application)
+if not names:
+    raise SystemExit(f'root26-darwin.sh: no applications in {root}/Applications: @apps would name none')
 lines = []
 for line in conf.read_text().splitlines():
     words = line.split()
@@ -438,7 +454,21 @@ EOF
 fi
 # (first: /private/var saved as the run ends, with boot-arg var_store=1; without it var_store ends at once)
 { echo "/hakios/bin/var_store watch &"; cat $T/etc/rc.jobs; } > $T/etc/rc.jobs.new && mv $T/etc/rc.jobs.new $T/etc/rc.jobs
-python3 "$IOS_REPO/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-darwin.apfs" hakios="$T" | tail -1
+# The image is what somebody would be handed to run this on a second phone, and two of the things put in it
+# are secrets: the Wi-Fi network's name and passphrase, and this machine's ssh keys. One small file each in
+# an image of megabytes: said here, and the image is then readable by its owner alone.
+secrets=
+[ -f "$T/fw/network" ] && secrets="$secrets fw/network (the name and passphrase of your Wi-Fi)"
+[ -f "$T/etc/ssh/dropbear_ed25519_host_key" ] && secrets="$secrets /etc/ssh/dropbear_ed25519_host_key (a private key)"
+(
+	if [ -n "$secrets" ]; then umask 077; fi
+	python3 "$IOS_REPO/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-darwin.apfs" hakios="$T" | tail -1
+)
+if [ -n "$secrets" ]; then
+	chmod 600 "$IOS/root26-darwin.apfs"
+	echo "root26-darwin.sh: this image carries:$secrets"
+	echo "root26-darwin.sh: do not pass it on as it is; SHARE=1 builds the same image without them."
+fi
 ls -la "$IOS/root26-darwin.apfs"
 
 # The RAM part of a boot whose system image is on the phone's flash (boot-arg root_apfs=DEV): the kernel's first

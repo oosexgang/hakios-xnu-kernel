@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# (pipefail: mkapfs.py's output goes through tail, which would otherwise hide a failed image)
+set -eo pipefail
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, darwin-renoir and darwin26
 DR=${DR:-$DK/darwin-renoir}

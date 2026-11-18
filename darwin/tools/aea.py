@@ -30,6 +30,8 @@ import json
 import os
 import struct
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
 
@@ -214,16 +216,36 @@ def header(f):
         sys.exit('aea: not an AEA1 archive')
     auth = f.read(auth_size)
     meta, p = {}, 0
+    # each field: its length (its own four bytes included), then KEY NUL VALUE. A length under 4 would read the
+    # next field from inside this one (0: this one again, for ever), one past the end of the metadata a field
+    # that is not all there: either is an archive that is not what it says
     while p < len(auth):
+        if len(auth) - p < 4:
+            sys.exit(f'aea: the metadata ends inside a field\'s length, at {p}')
         length, = struct.unpack_from('<I', auth, p)
+        if not 4 <= length <= len(auth) - p:
+            sys.exit(f'aea: a metadata field of {length} bytes at {p}, in {len(auth)}')
         key, _, value = auth[p + 4:p + length].partition(b'\0')
         meta[key.decode()] = value
         p += length
     return profile, auth, meta
 
 
+class HttpsOnly(urllib.request.HTTPRedirectHandler):
+    """redirects followed to https:// alone"""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme != 'https':
+            raise urllib.error.HTTPError(newurl, code, 'aea: a redirect away from https:// is not followed', headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def symmetric_key(meta):
-    with urllib.request.urlopen(meta['com.apple.wkms.fcs-key-url'].decode(), timeout=60) as response:
+    # The URL comes from the archive's metadata, which nothing has authenticated yet: https:// only (no file://,
+    # no plain http:// that anyone on the way could answer), redirects included.
+    url = meta.get('com.apple.wkms.fcs-key-url', b'').decode(errors='replace')
+    if urllib.parse.urlsplit(url).scheme != 'https':
+        sys.exit(f'aea: the key URL is not https://: {url!r}')
+    with urllib.request.build_opener(HttpsOnly).open(url, timeout=60) as response:
         private_key = serialization.load_pem_private_key(response.read(), None)
     wrapped = json.loads(meta['com.apple.wkms.fcs-response'])
     return hpke_open(private_key, base64.b64decode(wrapped['enc-request']), base64.b64decode(wrapped['wrapped-key']))
