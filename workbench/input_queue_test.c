@@ -2,7 +2,8 @@
  * The queue between the touch and key drivers and Darwin (drivers/board/input.c, /dev/hakios-touch),
  * run as a host program: what a driver posts reaches a reader whole and in order, a queue nobody reads
  * keeps the newest, and the way out of a run with five fingers held is a driver's fingers' alone -- a
- * program that writes samples to the device (inject.c does) cannot end the run with them.
+ * program that writes samples to the device (rwtouch does) cannot end the run with them; only root
+ * writes to it, and one program reads it.
  *
  *   input_queue_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
@@ -279,6 +280,51 @@ latency_lines_on(void)
 	CHECK(logged("tl: p 2 2 300 400 at "), "the line: %s", log_text);
 }
 
+/* samples written by a program not root's are refused, at the open for writing and at the write: they would be taps on the screen */
+static void
+only_root_writes(void)
+{
+	struct hakios_touch got;
+
+	hakios_input_init();
+	fake_uid = 501;
+	CHECK(inject(HAKIOS_TOUCH_DOWN, 0, 100, 200) == EPERM, "a write by user 501");
+	CHECK(fake_dev_open(NODE, FWRITE) == EPERM, "an open for writing by user 501");
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "an open for reading by user 501 (the window server's)");
+	fake_uid = 0;
+	CHECK(fake_dev_open(NODE, FREAD | FWRITE) == 0, "an open for writing by root");
+	CHECK(inject(HAKIOS_TOUCH_DOWN, 0, 100, 200) == 0, "a write by root");
+	CHECK(take(&got, 1) == 1 && got.x == 100 && got.y == 200, "root's sample, and only it, in the queue");
+}
+
+/* the first to open the node for reading reads it: another gets EBUSY while it lives, root aside; once it is gone, or the node closed, the next */
+static void
+one_reader(void)
+{
+	hakios_input_init();
+	fake_uid = 501;
+	fake_pid = 200;
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "the window server opens it");
+	fake_other_pid = 200;           /* (and lives on) */
+	fake_pid = 300;
+	CHECK(fake_dev_open(NODE, FREAD) == EBUSY, "an application, after it");
+	CHECK(logged("pid 300 may not read the touches: pid 200 does"), "said: %s", log_text);
+	fake_pid = 200;
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "the window server again (a second descriptor)");
+	fake_uid = 0;
+	fake_pid = 300;
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "root, to look");
+	fake_uid = 501;
+	CHECK(fake_dev_open(NODE, FREAD) == EBUSY, "root's look did not make pid 300 the reader");
+	fake_other_pid = 0;             /* the window server ended, the node still open somewhere else */
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "the next window server, once the first is gone");
+	fake_other_pid = 300;
+	fake_pid = 400;
+	CHECK(fake_dev_open(NODE, FREAD) == EBUSY, "and it is now the reader");
+	CHECK(fake_dev_close(NODE) == 0, "the node's last close");
+	CHECK(fake_dev_open(NODE, FREAD) == 0, "after it, whoever opens it first");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -289,7 +335,7 @@ main(int argc, char **argv)
 		{ "a_sixth_finger_changes_nothing", a_sixth_finger_changes_nothing }, { "a_fault_halfway", a_fault_halfway },
 		{ "six_and_one_lifted", six_and_one_lifted }, { "finger_32_is_none", finger_32_is_none },
 		{ "fingers_before_the_start", fingers_before_the_start }, { "latency_lines_not_asked", latency_lines_not_asked },
-		{ "latency_lines_zero", latency_lines_zero },
+		{ "latency_lines_zero", latency_lines_zero }, { "only_root_writes", only_root_writes }, { "one_reader", one_reader },
 	};
 
 	if (argc < 2) {

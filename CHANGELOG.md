@@ -119,6 +119,10 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- `/dev/hakios-touch` took samples from any program and gave every touch to any program that read it: an
+  application could tap what the screen showed (an "Allow", a purchase) or watch the passcode typed, and a second
+  reader took touches away from the window server. Only root writes now (`rwtouch`), and the first program to open
+  it for reading (the window server) is its one reader while it lives; another gets `EBUSY`, root aside.
 - The flashlight could be left on at the run's end when the end met a light being switched on (torch).
 - `bench` looked for the loader where it was before it moved to `arch/arm64/boot/`.
 - The phone's firmware beside the userland (`userland/fw-*/`, a Wi-Fi passphrase among it) was not kept out of commits.

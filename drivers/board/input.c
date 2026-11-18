@@ -1,5 +1,16 @@
 /*
  * /dev/hakios-touch: a queue of touch samples (see sys/board/input.h).
+ *
+ * The node is open to every user, as the window server reading it (inject26.c, in backboardd) is
+ * not root; but what goes through it is every touch on the screen, a passcode's among them, and
+ * what is written to it is taken for touches. So:
+ *   - only root writes (rwtouch, from the run's jobs or a shell): any other program's samples
+ *     would be taps on whatever the screen shows -- an "Allow", a purchase -- refused with EPERM;
+ *   - one program reads, the first to open the node for reading (the window server, at its
+ *     start): a second gets EBUSY while the first is alive. Two readers would share the queue,
+ *     each taking samples from the other -- touches lost to the screen -- and a second could be
+ *     any application, watching the passcode typed. Root is let through (a look with rwtouch
+ *     read, knowing that it takes them).
  */
 #include <kern/clock.h>
 #include <kern/locks.h>
@@ -8,6 +19,8 @@
 #include <miscfs/devfs/devfs.h>
 #include <sys/conf.h>
 #include <sys/errno.h>
+#include <sys/fcntl.h>
+#include <sys/kauth.h>
 #include <sys/proc.h>
 #include <sys/board/input.h>
 #include <sys/systm.h>
@@ -153,15 +166,53 @@ hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 	touch_post(type, finger, x, y, true);
 }
 
-static int
-touch_open(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
+/* the program reading the queue (its process ID), 0: none yet; with touch_lock held */
+static int touch_reader;
+
+static bool
+touch_root(void)
 {
-	return 0;
+	return suser(kauth_cred_get(), NULL) == 0;
 }
 
 static int
+touch_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
+{
+	int me = proc_selfpid(), held = 0, error = 0;
+
+	if ((flags & FWRITE) != 0 && !touch_root()) {
+		return EPERM;
+	}
+	if ((flags & FREAD) == 0 || touch_root()) {
+		return 0;
+	}
+	lck_mtx_lock(&touch_lock);
+	if (touch_reader != 0 && touch_reader != me) {
+		proc_t reader = proc_find(touch_reader);
+
+		if (reader != NULL) {
+			proc_rele(reader);
+			held = touch_reader;
+			error = EBUSY;
+		}
+	}
+	if (error == 0) {
+		touch_reader = me;      /* (the one before gone: its process ended without the node's last close) */
+	}
+	lck_mtx_unlock(&touch_lock);
+	if (error != 0) {
+		printf("hakios-touch: pid %d may not read the touches: pid %d does\n", me, held);
+	}
+	return error;
+}
+
+/* (the node's last close: nobody has it open any more) */
+static int
 touch_close(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
 {
+	lck_mtx_lock(&touch_lock);
+	touch_reader = 0;
+	lck_mtx_unlock(&touch_lock);
 	return 0;
 }
 
@@ -203,6 +254,9 @@ touch_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	struct hakios_touch t;
 	int error = 0;
 
+	if (!touch_root()) {
+		return EPERM;           /* (also for a descriptor root opened and handed on) */
+	}
 	while (uio_resid(uio) >= (user_ssize_t)sizeof(t)) {
 		error = uiomove((caddr_t)&t, sizeof(t), uio);
 		if (error) {
