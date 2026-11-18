@@ -341,6 +341,7 @@ static const struct {
 	{ "xattr", "FILE [NAME VALUE] | -d FILE NAME extended attributes: listed, set, taken away", command_xattr },
 	{ "files", "[LIMIT] files opened until the kernel's limit on descriptors says no", command_files },
 	{ "fsize", "FILE BYTES files no larger than BYTES (RLIMIT_FSIZE): writes cut, then refused", command_fsize },
+	{ "appends", "FILE COUNT two processes adding to the file at once (O_APPEND): every record whole", command_appends },
 	{ "opens", "FILE O_EXCL, O_NOFOLLOW, O_DIRECTORY and a directory to write, as BSD has them", command_opens },
 	{ "dir-walk", "DIR COUNT a directory of COUNT files read a little at a time; emptied as it is read", command_dir_walk },
 	{ "descriptors", "FILE lseek, pread, pwrite, dup, dup2, O_APPEND, a non-blocking pipe", command_descriptors },

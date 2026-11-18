@@ -194,6 +194,11 @@ typed=(
 	'truncate /tmp/notes/cut 4000000000'
 	'stat /tmp/notes/cut'
 	'truncate /tmp/notes/cut 0'
+	'df'
+	'truncate /tmp/notes/cut 34359738368'
+	'df'
+	'truncate /tmp/notes/cut 0'
+	'df'
 	'truncate /etc/motd 3'
 	'touch /tmp/notes/old 1000000000'
 	'touch /tmp/notes/new'
@@ -205,6 +210,8 @@ typed=(
 	'byte-locks /tmp/notes/private'
 	'vectors /tmp/notes/vectors'
 	'fsize /tmp/notes/limited 1000'
+	'appends /tmp/notes/appended 1000'
+	'rm /tmp/notes/appended'
 	'opens /tmp/notes/opened'
 	'watch /tmp/notes/watched'
 	'dir-walk /tmp/notes/many 300'
@@ -495,6 +502,26 @@ check "a file cut short keeps its start, and grown again reads as zeros past it,
 		grep -aq '^truncate: /tmp/notes/cut: 70000 bytes, now 4000000000; what it grew by reads as zeros (its first and last 64 KB)' '$shell' &&
 		grep -aqE '^/tmp/notes/cut: -rw-r--r-- 1 link, inode [0-9]+, 4000000000 bytes' '$shell' &&
 		grep -aq '^truncate: /etc/motd: error 30 (EROFS)' '$shell'"
+# (a file's table of its pages is made for its size, holes and all -- 16 MB for 32 GB in pages of 16 KB -- and ramfs charges it to its
+# room: the truncate takes that much room or is refused, and the cut back to nothing gives it all back)
+table_charged() {
+	awk '/^# truncate \/tmp\/notes\/cut 34359738368$/ { phase = 1; before = last }
+		/^# truncate \/tmp\/notes\/cut 0$/ && phase == 2 { phase = 3 }
+		/^truncate: \/tmp\/notes\/cut: 0 bytes, now 34359738368; what it grew by reads as zeros/ && phase == 1 { grew = 1 }
+		/^truncate: \/tmp\/notes\/cut: error 28 \(ENOSPC\)/ && phase == 1 { refused = 1 }
+		/^\/tmp: ramfs / {
+			last = $0
+			if (phase == 1) { during = $0; phase = 2 } else if (phase == 3) { after = $0; phase = 4 }
+		}
+		END {
+			split(before, b, " "); split(during, d, " ")
+			exit !(before != "" && after == before && (grew && b[7] - d[7] >= 16384 || refused && during == before))
+		}' "$shell"
+}
+check "a file in ramfs grown to 32 GB: the table of its pages charged to the room while it is there (or the truncate refused, ENOSPC), and all given back when it is cut to nothing" \
+	table_charged
+check "two processes adding to one file in ramfs at once (O_APPEND): each write starts at the end as it is then, none over another" \
+	grep -aq '^appends: /tmp/notes/appended: 2000000 bytes of 2000000; whole records 1000 of this process and 1000 of the child, 0 torn' "$shell"
 check "the kernel says when it started (kern.boottime): under a quarter of an hour before a file was touched" bash -c "
 	booted=\$(grep -aoE '^kern.boottime: [0-9]+ s [0-9]+ us since 1970' '$shell' | awk '{ print \$2 }' | head -1)
 	touched=\$(grep -a '^touch: /tmp/notes/new: ' '$shell' | awk '{ print \$6 + 0 }' | head -1)

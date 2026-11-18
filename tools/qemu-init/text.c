@@ -113,6 +113,18 @@ parse_number(const char *text)
 	return *text == '\0' ? n : 0;
 }
 
+/* the same, for numbers past 4 GB (a file's size) */
+uint64_t
+parse_number64(const char *text)
+{
+	uint64_t n = 0;
+
+	while (*text >= '0' && *text <= '9') {
+		n = n * 10 + (uint64_t)(*text++ - '0');
+	}
+	return *text == '\0' ? n : 0;
+}
+
 #define SYS_select              93
 
 /* microseconds since 1970 */
@@ -153,7 +165,7 @@ say_error(long error)
 		{ 1, "EPERM" }, { 2, "ENOENT" }, { 3, "ESRCH" }, { 4, "EINTR" }, { 5, "EIO" }, { 7, "E2BIG" },
 		{ 8, "ENOEXEC" }, { 9, "EBADF" }, { 10, "ECHILD" }, { 12, "ENOMEM" }, { 13, "EACCES" },
 		{ 14, "EFAULT" }, { 16, "EBUSY" }, { 17, "EEXIST" }, { 18, "EXDEV" }, { 20, "ENOTDIR" },
-		{ 21, "EISDIR" }, { 22, "EINVAL" }, { 24, "EMFILE" }, { 28, "ENOSPC" }, { 30, "EROFS" },
+		{ 21, "EISDIR" }, { 22, "EINVAL" }, { 24, "EMFILE" }, { 27, "EFBIG" }, { 28, "ENOSPC" }, { 30, "EROFS" },
 		{ 31, "EMLINK" }, { 32, "EPIPE" }, { 35, "EAGAIN" }, { 36, "EINPROGRESS" }, { 45, "ENOTSUP" },
 		{ 48, "EADDRINUSE" }, { 49, "EADDRNOTAVAIL" }, { 50, "ENETDOWN" }, { 51, "ENETUNREACH" },
 		{ 54, "ECONNRESET" }, { 60, "ETIMEDOUT" }, { 61, "ECONNREFUSED" }, { 62, "ELOOP" },

@@ -118,6 +118,7 @@ size_t append(char *line, size_t at, size_t size, const char *text);       /* (a
 size_t append_number(char *line, size_t at, size_t size, uint64_t n);      /*  which the kernel's own lines do not cut) */
 void say_padded(uint64_t n, int width);
 unsigned parse_number(const char *text);
+uint64_t parse_number64(const char *text);
 int split(char *text, char **words);
 int64_t now_us(void);
 void sleep_us(int64_t us);
@@ -170,6 +171,7 @@ void command_chflags(int argc, char **argv);
 void command_access(int argc, char **argv);
 void command_cp(int argc, char **argv);
 void command_fsize(int argc, char **argv);
+void command_appends(int argc, char **argv);
 void command_opens(int argc, char **argv);
 void command_dir_walk(int argc, char **argv);
 void command_id(int argc, char **argv);

@@ -715,7 +715,7 @@ command_truncate(int argc, char **argv)
 {
 	struct stat64_head st;
 	char buffer[512], line[200];
-	unsigned bytes = argc == 3 ? parse_number(argv[2]) : 0;
+	uint64_t bytes = argc == 3 ? parse_number64(argv[2]) : 0;
 	uint64_t was, nonzero = 0;
 	size_t at;
 	long error, fd;
@@ -1009,6 +1009,92 @@ command_fsize(int argc, char **argv)
 		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
 	}
 	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+}
+
+/*
+ * FILE COUNT: this process and a child each add COUNT records of 1000 bytes to the file (O_APPEND) at the same
+ * time; where each write starts is the end of the file as it is then, so every record must end up whole, none
+ * written over another, and the file 2000 * COUNT bytes long
+ */
+void
+command_appends(int argc, char **argv)
+{
+	static char record[1000];
+	struct stat64_head st;
+	unsigned count = argc == 3 ? parse_number(argv[2]) : 0;
+	uint64_t whole[2] = { 0, 0 }, torn = 0;
+	int in_child = 0;
+	int32_t status = 0;
+	char line[200];
+	size_t at;
+	long fd, pid, error;
+
+	if (argc != 3 || count == 0 || count > 100000) {
+		say("appends FILE COUNT (1 to 100000)\n");
+		return;
+	}
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0, 0)) < 0) {
+		say_failed("appends", argv[1], fd);
+		return;
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	if ((pid = syscall_fork(&in_child)) < 0) {
+		say("appends: no child\n");
+		return;
+	}
+	for (size_t i = 0; i < sizeof(record); i++) {
+		record[i] = in_child ? 'b' : 'a';
+	}
+	if ((fd = syscall6(SYS_open, (long)argv[1], O_WRONLY | O_APPEND, 0, 0, 0, 0)) >= 0) {
+		for (unsigned i = 0; i < count; i++) {
+			if (syscall6(SYS_write, fd, (long)record, sizeof(record), 0, 0, 0) != (long)sizeof(record)) {
+				break;
+			}
+		}
+		syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	}
+	if (in_child) {
+		syscall6(SYS_exit, 0, 0, 0, 0, 0, 0);
+	}
+	syscall6(SYS_wait4, pid, (long)&status, 0, 0, 0, 0);
+
+	if ((error = syscall6(SYS_lstat64, (long)argv[1], (long)&st, 0, 0, 0, 0)) != 0 ||
+	    (error = syscall6(SYS_open, (long)argv[1], O_RDONLY, 0, 0, 0, 0)) < 0) {
+		say_failed("appends", argv[1], error);
+		return;
+	}
+	fd = error;
+	for (uint64_t off = 0; off + sizeof(record) <= (uint64_t)st.size; off += sizeof(record)) {
+		size_t same_bytes = 0;
+
+		if (syscall6(SYS_pread, fd, (long)record, sizeof(record), (long)off, 0, 0) != (long)sizeof(record)) {
+			torn++;
+			break;
+		}
+		for (size_t i = 0; i < sizeof(record); i++) {
+			same_bytes += record[i] == record[0];
+		}
+		if (same_bytes == sizeof(record) && (record[0] == 'a' || record[0] == 'b')) {
+			whole[record[0] == 'b']++;
+		} else {
+			torn++;
+		}
+	}
+	syscall6(SYS_close, fd, 0, 0, 0, 0, 0);
+	at = append(line, 0, sizeof(line), "appends: ");
+	at = append(line, at, sizeof(line), argv[1]);
+	at = append(line, at, sizeof(line), ": ");
+	at = append_number(line, at, sizeof(line), (uint64_t)st.size);
+	at = append(line, at, sizeof(line), " bytes of ");
+	at = append_number(line, at, sizeof(line), 2 * (uint64_t)count * sizeof(record));
+	at = append(line, at, sizeof(line), "; whole records ");
+	at = append_number(line, at, sizeof(line), whole[0]);
+	at = append(line, at, sizeof(line), " of this process and ");
+	at = append_number(line, at, sizeof(line), whole[1]);
+	at = append(line, at, sizeof(line), " of the child, ");
+	at = append_number(line, at, sizeof(line), torn);
+	at = append(line, at, sizeof(line), " torn\n");
+	say(line);
 }
 
 #define O_EXCL                  0x800

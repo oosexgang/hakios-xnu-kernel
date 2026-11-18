@@ -52,8 +52,9 @@
 #include <vm/vm_kern_xnu.h>
 
 #define RAMFS_MAX_NAME          255
-#define RAMFS_MAX_XATTR         (16u * 1024 * 1024)
+#define RAMFS_MAX_XATTR         (16u * 1024 * 1024)  /* of a node's extended attributes together, names and values */
 #define RAMFS_ROOT_INO          2
+#define RAMFS_MAX_FILE          (1ull << 40)    /* 1 TB: a table of its pages is 2 GB, past any room there is */
 
 struct ramfs_mount;
 struct ramfs_node;
@@ -91,6 +92,14 @@ struct ramfs_node {
 	struct timespec     rn_atime, rn_mtime, rn_ctime, rn_btime;
 	uint64_t            rn_size;            /* file: bytes; symlink: target length */
 
+	/*
+	 * Held across a write() and a change of size, which drop the mount lock while they copy and allocate:
+	 * without it two appenders could both take the same end of the file, and a truncate could land in the
+	 * middle of a write. Page-in and page-out never take it (a write's own copy from user memory can fault
+	 * on a mapping of this very file); it is taken before the mount lock, never under it.
+	 */
+	lck_rw_t            rn_io_lock;
+
 	/* directory */
 	struct ramfs_node  *rn_parent;          /* NULL once the directory has been removed */
 	TAILQ_HEAD(, ramfs_dirent) rn_entries;  /* in the order they were made: their cookies rising */
@@ -110,6 +119,7 @@ struct ramfs_node {
 	bool                rn_hashed;
 
 	TAILQ_HEAD(, ramfs_xattr) rn_xattrs;
+	size_t              rn_xattr_bytes;     /* their names and values: charged to the mount's pages */
 };
 #define RAMFS_N_CREATING        0x1         /* a thread is in vnode_create() for this node */
 #define RAMFS_N_WANTED          0x2         /* somebody sleeps on the node */
@@ -120,7 +130,8 @@ struct ramfs_mount {
 	struct ramfs_node  *rm_root;
 	uint64_t            rm_next_ino;
 	uint64_t            rm_nodes;
-	uint64_t            rm_pages;           /* file pages in use */
+	uint64_t            rm_pages;           /* file pages in use, extended attributes' bytes in pages, rm_slot_bytes in pages */
+	uint64_t            rm_slot_bytes;      /* the files' tables of their pages, together */
 	uint64_t            rm_max_pages;
 	uint64_t            rm_alloc_failures;
 	struct ramfs_node **rm_hash;            /* every node by its number, for vfs_vget */
@@ -163,6 +174,7 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
 	node->rn_atime = node->rn_mtime = node->rn_ctime = node->rn_btime = now;
 	TAILQ_INIT(&node->rn_entries);
 	TAILQ_INIT(&node->rn_xattrs);
+	lck_rw_init(&node->rn_io_lock, &ramfs_lck_grp, LCK_ATTR_NULL);
 
 	if (vap != NULL) {
 		if (VATTR_IS_ACTIVE(vap, va_mode)) {
@@ -313,6 +325,37 @@ ramfs_page_free(void *page)
 }
 
 /*
+ * A file's table of its pages is made for its size, holes and all: 8 bytes for every page (16 KB here), so a truncate to
+ * terabytes would take the kernel's memory in the table alone. The tables are charged to the mount's room,
+ * all of them together rounded up to pages (one table of a small file would otherwise cost a whole page). The
+ * mount lock is held.
+ */
+static uint64_t
+ramfs_slot_pages(uint64_t bytes)
+{
+	return (bytes + PAGE_MASK) / PAGE_SIZE;
+}
+
+/* whether a table of `slots` may take the place of one of `had` */
+static bool
+ramfs_slots_fit(struct ramfs_mount *rm, uint64_t had, uint64_t slots)
+{
+	uint64_t now = ramfs_slot_pages(rm->rm_slot_bytes);
+	uint64_t then = ramfs_slot_pages(rm->rm_slot_bytes - had * sizeof(void *) + slots * sizeof(void *));
+
+	return then <= now || rm->rm_pages + (then - now) <= rm->rm_max_pages;
+}
+
+static void
+ramfs_slots_charge(struct ramfs_mount *rm, uint64_t had, uint64_t slots)
+{
+	uint64_t now = ramfs_slot_pages(rm->rm_slot_bytes);
+
+	rm->rm_slot_bytes = rm->rm_slot_bytes - had * sizeof(void *) + slots * sizeof(void *);
+	rm->rm_pages = rm->rm_pages - now + ramfs_slot_pages(rm->rm_slot_bytes);
+}
+
+/*
  * Make the page array big enough for page `index`, before the mount lock is taken: under it the
  * array can only grow by an allocation that does not wait (ramfs_grow_slots), and one that failed
  * under memory pressure failed the write with ENOSPC. Nothing is promised: ramfs_store looks again.
@@ -337,7 +380,14 @@ ramfs_reserve_slots(struct ramfs_mount *rm, struct ramfs_node *node, uint64_t in
 			return;
 		}
 		lck_mtx_lock(&rm->rm_lock);
+		if (node->rn_nslots == have && !ramfs_slots_fit(rm, have, want)) {
+			/* (no room for it: ramfs_store finds the same and says ENOSPC) */
+			lck_mtx_unlock(&rm->rm_lock);
+			kfree_type(void *, want, slots);
+			return;
+		}
 		if (node->rn_nslots == have) {
+			ramfs_slots_charge(rm, have, want);
 			if (node->rn_pages != NULL) {
 				memcpy(slots, node->rn_pages, have * sizeof(void *));
 				kfree_type(void *, have, node->rn_pages);
@@ -367,6 +417,16 @@ ramfs_free_pages(struct ramfs_node *node, uint64_t from)
 			os_atomic_dec(&ramfs_pages_in_use, relaxed);
 		}
 	}
+}
+
+/*
+ * The pages a node's extended attributes are charged as, against the mount's budget: they are kernel memory
+ * as much as a file's pages are, and with nothing counted anybody could set attributes until it ran out.
+ */
+static uint64_t
+ramfs_xattr_pages(size_t bytes)
+{
+	return ((uint64_t)bytes + PAGE_MASK) / PAGE_SIZE;
 }
 
 static void
@@ -425,14 +485,17 @@ ramfs_node_free(struct ramfs_node *node)
 		TAILQ_REMOVE(&node->rn_xattrs, xa, rx_link);
 		ramfs_xattr_free(xa);
 	}
+	node->rn_mount->rm_pages -= ramfs_xattr_pages(node->rn_xattr_bytes);
 	ramfs_free_pages(node, 0);
 	if (node->rn_pages != NULL) {
 		kfree_type(void *, node->rn_nslots, node->rn_pages);
+		ramfs_slots_charge(node->rn_mount, node->rn_nslots, 0);
 	}
 	if (node->rn_target != NULL) {
 		kfree_data(node->rn_target, node->rn_size + 1);
 	}
 	node->rn_mount->rm_nodes--;
+	lck_rw_destroy(&node->rn_io_lock, &ramfs_lck_grp);
 	kfree_type(struct ramfs_node, node);
 }
 
@@ -598,6 +661,9 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index, bool can_wait)
 	if (want > SIZE_MAX / sizeof(void *)) {
 		return EFBIG;
 	}
+	if (!ramfs_slots_fit(rm, node->rn_nslots, want)) {
+		return ENOSPC;
+	}
 	if (can_wait) {
 		lck_mtx_unlock(&rm->rm_lock);
 	}
@@ -616,6 +682,11 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index, bool can_wait)
 		kfree_type(void *, want, slots);
 		return 0;
 	}
+	if (!ramfs_slots_fit(rm, node->rn_nslots, want)) {
+		kfree_type(void *, want, slots);        /* (the room was taken meanwhile) */
+		return ENOSPC;
+	}
+	ramfs_slots_charge(rm, node->rn_nslots, want);
 	if (node->rn_pages != NULL) {
 		memcpy(slots, node->rn_pages, node->rn_nslots * sizeof(void *));
 		kfree_type(void *, node->rn_nslots, node->rn_pages);
@@ -623,6 +694,50 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index, bool can_wait)
 	node->rn_pages = slots;
 	node->rn_nslots = want;
 	return 0;
+}
+
+/*
+ * After a file was cut: its table made as small as its size needs, and the room it took given back -- a
+ * truncate to 32 GB and back to nothing must leave nothing charged. Only where a page of room is saved, so a
+ * file cut and grown by a little does not make its table anew each time. The mount lock is held on entry and
+ * return and dropped for the allocation; the node's I/O lock is held, so the size cannot move meanwhile.
+ */
+static void
+ramfs_shrink_slots(struct ramfs_node *node)
+{
+	struct ramfs_mount *rm = node->rn_mount;
+	uint64_t need = (node->rn_size + PAGE_MASK) / PAGE_SIZE, have = node->rn_nslots, want = 4;
+	void **slots = NULL;
+
+	if (have == 0) {
+		return;
+	}
+	if (need != 0) {
+		while (want < need) {
+			want *= 2;
+		}
+		if (ramfs_slot_pages(want * sizeof(void *)) >= ramfs_slot_pages(have * sizeof(void *))) {
+			return;
+		}
+		lck_mtx_unlock(&rm->rm_lock);
+		slots = kalloc_type(void *, want, Z_WAITOK | Z_ZERO);
+		lck_mtx_lock(&rm->rm_lock);
+		if (slots == NULL || node->rn_nslots != have) {
+			/* (no memory for the smaller one: the big one stays, still charged) */
+			if (slots != NULL) {
+				kfree_type(void *, want, slots);
+			}
+			return;
+		}
+		/* (the slots past `need` are empty: ramfs_resize freed their pages) */
+		memcpy(slots, node->rn_pages, want * sizeof(void *));
+	} else {
+		want = 0;
+	}
+	kfree_type(void *, have, node->rn_pages);
+	node->rn_pages = slots;
+	node->rn_nslots = want;
+	ramfs_slots_charge(rm, have, want);
 }
 
 /*
@@ -852,9 +967,17 @@ ramfs_make(vnode_t dvp, vnode_t *vpp, struct componentname *cnp, struct vnode_at
 	error = ramfs_vget_locked(rm, node, dvp, cnp, vpp);
 	if (error) {
 		lck_mtx_lock(&rm->rm_lock);
-		ramfs_dir_remove(dir, de);
-		if (type == VDIR) {
-			dir->rn_nlink--;
+		/*
+		 * The name may no longer be this node's: a rename onto it while the lock was dropped takes the
+		 * entry over and drops the node's link itself. The entry is found again by name rather than
+		 * trusted: it may be gone. Nothing else can name the node (a link needs its vnode).
+		 */
+		de = ramfs_dir_find(dir, cnp->cn_nameptr, (size_t)cnp->cn_namelen);
+		if (de != NULL && de->rd_node == node) {
+			ramfs_dir_remove(dir, de);
+			if (type == VDIR) {
+				dir->rn_nlink--;
+			}
 		}
 		ramfs_node_free(node);
 		lck_mtx_unlock(&rm->rm_lock);
@@ -1011,7 +1134,17 @@ ramfs_rename(struct vnop_rename_args *ap)
 	fde = ramfs_dir_find(fdir, fcnp->cn_nameptr, (size_t)fcnp->cn_namelen);
 	tde = ramfs_dir_find(tdir, tcnp->cn_nameptr, (size_t)tcnp->cn_namelen);
 
-	if (fde == NULL || fde->rd_node != node || tdir->rn_nlink == 0) {
+	/*
+	 * The names were looked up, and what they name authorized, before the lock was taken: if either now
+	 * names something else (or the target names something where there was nothing), VFS looks them up
+	 * again (ERECYCLE) rather than have this replace a file nobody was allowed to remove.
+	 */
+	if (fde == NULL || fde->rd_node != node ||
+	    (tde == NULL ? ap->a_tvp != NULLVP : ap->a_tvp == NULLVP || tde->rd_node != RAMFS_NODE(ap->a_tvp))) {
+		error = ERECYCLE;
+		goto out;
+	}
+	if (tdir->rn_nlink == 0) {
 		error = ENOENT;
 		goto out;
 	}
@@ -1104,6 +1237,7 @@ ramfs_renamex(struct vnop_renamex_args *ap)
 		if (ap->a_tvp != NULLVP) {
 			return EEXIST;
 		}
+		/* (a target made since the lookup: ERECYCLE there, and the next lookup finds it: EEXIST) */
 		return ramfs_rename(&plain);
 	}
 	if (ap->a_flags != VFS_RENAME_SWAP) {
@@ -1123,7 +1257,7 @@ ramfs_renamex(struct vnop_renamex_args *ap)
 	fde = ramfs_dir_find(fdir, fcnp->cn_nameptr, (size_t)fcnp->cn_namelen);
 	tde = ramfs_dir_find(tdir, tcnp->cn_nameptr, (size_t)tcnp->cn_namelen);
 	if (fde == NULL || fde->rd_node != fnode || tde == NULL || tde->rd_node != tnode) {
-		error = ENOENT;
+		error = ERECYCLE;               /* changed since VFS looked them up: it looks again */
 		goto out;
 	}
 	/* neither may end up inside itself */
@@ -1243,16 +1377,21 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 	struct vnode_attr *vap = ap->a_vap;
 	struct ramfs_node *node = RAMFS_NODE(vp);
 	struct ramfs_mount *rm = node->rn_mount;
-	bool resized = false;
+	bool sizing = VATTR_IS_ACTIVE(vap, va_data_size), resized = false;
 	uint64_t size = 0;
 
-	if (VATTR_IS_ACTIVE(vap, va_data_size)) {
+	if (sizing) {
 		if (node->rn_type == VDIR) {
 			return EISDIR;
 		}
 		if (node->rn_type != VREG) {
 			return EINVAL;
 		}
+		/* (the table of a larger file's pages could not be charged, or even counted, safely) */
+		if ((uint64_t)vap->va_data_size > RAMFS_MAX_FILE) {
+			return EFBIG;
+		}
+		lck_rw_lock_exclusive(&node->rn_io_lock);
 		/* what a mapping changed must reach us before the size moves under it */
 		ramfs_sync_mapping(vp, node);
 	}
@@ -1266,10 +1405,16 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 			int error = ramfs_grow_slots(node, (size - 1) / PAGE_SIZE, true);
 			if (error) {
 				lck_mtx_unlock(&rm->rm_lock);
+				lck_rw_unlock_exclusive(&node->rn_io_lock);
 				return error;
 			}
 		}
-		ramfs_resize(node, size);
+		if (size < node->rn_size) {
+			ramfs_resize(node, size);
+			ramfs_shrink_slots(node);
+		} else {
+			ramfs_resize(node, size);
+		}
 		resized = true;
 		VATTR_SET_SUPPORTED(vap, va_data_size);
 		/* (cut or grown by anybody but root: as a write, no longer run as its owner or its group) */
@@ -1319,6 +1464,9 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 
 	if (resized) {
 		(void)ubc_setsize(vp, (off_t)size);
+	}
+	if (sizing) {
+		lck_rw_unlock_exclusive(&node->rn_io_lock);
 	}
 	return 0;
 }
@@ -1382,6 +1530,8 @@ ramfs_write(struct vnop_write_args *ap)
 	if (uio_resid(uio) == 0) {
 		return 0;
 	}
+	/* (to the end: where an append starts, the pages it fills and the size it leaves are one writer's) */
+	lck_rw_lock_exclusive(&node->rn_io_lock);
 	ramfs_sync_mapping(vp, node);
 
 	lck_mtx_lock(&rm->rm_lock);
@@ -1397,6 +1547,11 @@ ramfs_write(struct vnop_write_args *ap)
 		uint64_t off = (uint64_t)uio_offset(uio);
 		size_t len = MIN((size_t)uio_resid(uio), PAGE_SIZE - (size_t)(off & PAGE_MASK));
 
+		/* no further than a truncate may go (ramfs_setattr); the limit is a page boundary, so no piece crosses it */
+		if (off >= RAMFS_MAX_FILE) {
+			error = EFBIG;
+			break;
+		}
 		error = uiomove(bounce, (int)len, uio);
 		if (error) {
 			break;
@@ -1448,10 +1603,11 @@ ramfs_write(struct vnop_write_args *ap)
 			ramfs_refresh_cache(vp, node, start, (uint64_t)uio_offset(uio));
 		}
 		/* a partial write is a success */
-		if (error == ENOSPC || error == ENOMEM) {
+		if (error == ENOSPC || error == ENOMEM || error == EFBIG) {
 			error = 0;
 		}
 	}
+	lck_rw_unlock_exclusive(&node->rn_io_lock);
 	return error;
 }
 
@@ -1855,13 +2011,26 @@ ramfs_setxattr(struct vnop_setxattr_args *ap)
 	} else if (xa == NULL && (ap->a_options & XATTR_REPLACE)) {
 		error = ENOATTR;
 	} else {
-		if (xa != NULL) {
-			TAILQ_REMOVE(&node->rn_xattrs, xa, rx_link);
-			old = xa;
+		/* what the node's attributes come to with this one in place of the one it replaces */
+		size_t bytes = node->rn_xattr_bytes - (xa != NULL ? xa->rx_namelen + xa->rx_size : 0) + namelen + size;
+		uint64_t had = ramfs_xattr_pages(node->rn_xattr_bytes), need = ramfs_xattr_pages(bytes);
+
+		/* a cap on each node as well as the mount's room: one file may not hold any number of large attributes */
+		if (bytes > RAMFS_MAX_XATTR) {
+			error = E2BIG;
+		} else if (need > had && rm->rm_pages + (need - had) > rm->rm_max_pages) {
+			error = ENOSPC;
+		} else {
+			if (xa != NULL) {
+				TAILQ_REMOVE(&node->rn_xattrs, xa, rx_link);
+				old = xa;
+			}
+			TAILQ_INSERT_TAIL(&node->rn_xattrs, fresh, rx_link);
+			fresh = NULL;
+			node->rn_xattr_bytes = bytes;
+			rm->rm_pages = rm->rm_pages - had + need;
+			ramfs_touch(node, false);
 		}
-		TAILQ_INSERT_TAIL(&node->rn_xattrs, fresh, rx_link);
-		fresh = NULL;
-		ramfs_touch(node, false);
 	}
 	lck_mtx_unlock(&rm->rm_lock);
 
@@ -1884,7 +2053,11 @@ ramfs_removexattr(struct vnop_removexattr_args *ap)
 	lck_mtx_lock(&rm->rm_lock);
 	xa = ramfs_xattr_find(node, ap->a_name);
 	if (xa != NULL) {
+		uint64_t had = ramfs_xattr_pages(node->rn_xattr_bytes);
+
 		TAILQ_REMOVE(&node->rn_xattrs, xa, rx_link);
+		node->rn_xattr_bytes -= xa->rx_namelen + xa->rx_size;
+		rm->rm_pages -= had - ramfs_xattr_pages(node->rn_xattr_bytes);
 		ramfs_touch(node, false);
 	}
 	lck_mtx_unlock(&rm->rm_lock);
