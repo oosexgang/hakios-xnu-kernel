@@ -66,6 +66,34 @@ class LogCheck(unittest.TestCase):
         self.assertRegex(said, r'Storage \(own driver\) +STOPPED +ufs: native check: .*DIFFERENT at byte 4096')
         self.assertNotIn('back in the loader', said)
 
+    def test_a_dangling_last_log_does_not_crash_the_newest_pick(self):
+        # a fetch that failed can leave logs/last.log pointing at a file that is not there; auto-pick must skip it, not
+        # crash stat()-ing it
+        with tempfile.TemporaryDirectory() as work:
+            logs = Path(work) / 'logs'
+            logs.mkdir()
+            (logs / '0001-run.log').write_text(GOOD)
+            (logs / 'last.log').symlink_to('does-not-exist.log')
+            old = logcheck.ROOT
+            logcheck.ROOT = Path(work)
+            try:
+                said = io.StringIO()
+                with contextlib.redirect_stdout(said):
+                    code = logcheck.main([])
+            finally:
+                logcheck.ROOT = old
+            self.assertEqual(code, 0, said.getvalue())
+            self.assertIn('0001-run.log', said.getvalue())
+
+    def test_a_named_log_that_cannot_be_read_is_reported_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as work:
+            missing = Path(work) / 'gone.log'
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said):
+                code = logcheck.main([str(missing)])
+            self.assertEqual(code, 1, said.getvalue())
+            self.assertIn('not read', said.getvalue())
+
     def test_what_the_common_drivers_say_of_a_block_they_do_not_know(self):
         code, said = run('Darwin Kernel Version 12377.121.6: ...\n'
                          'cpufreq: group 0 (4 of our cores): row 2 -> 7 of the frequency table, 1804 MHz\n'

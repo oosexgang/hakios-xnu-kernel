@@ -249,8 +249,8 @@ staged() {
 	# shellcheck disable=SC2086  # (the command's words: "oem log" is two of them for fastboot)
 	(flock -w 90 9 || exit 1
 		timeout 10 fastboot $2 2>&1 | grep -q OKAY || exit 1
-		timeout "$wait" fastboot get_staged "$file.new" > /dev/null 2>&1) 9> "$PHONE.lock"
-	[ -s "$file.new" ] && mv "$file.new" "$file"
+		timeout "$wait" fastboot get_staged "$file.new" > /dev/null 2>&1) 9> "$PHONE.lock" &&
+		[ -s "$file.new" ] && mv "$file.new" "$file"
 }
 
 fetch_log() { # fetch_log FILE: the loader's log, and the last run's kernel log after it, as text
@@ -363,7 +363,10 @@ run() { # run OEM-COMMAND LABEL
 		recover_phone
 		return 2
 	fi
-	fetch_log "$log"
+	if ! fetch_log "$log"; then
+		say "the log was not fetched (the phone may have reset mid-fetch): nothing recorded for this run"
+		return 1
+	fi
 	touch "$PHONE.ran"
 	ln -sf "$(basename "$log")" logs/last.log
 	echo "$result  [$log]"
@@ -423,7 +426,9 @@ ramdisk() { # ramdisk [FILE|none]
 	FB_TIMEOUT=1800 fb stage "$1" | grep -q OKAY || die "the upload failed"
 	dt=$(($(date +%s) - t0)); [ $dt -lt 1 ] && dt=1
 	say "$((size / 1048576)) MB sent in $dt s ($((size / 1048576 / dt)) MB/s)"
-	printf '%s\t%s\t%s\n' "$TOP" "$1" "$size" > "$PHONE.ramdisk"
+	# an absolute path: the record is shared by every working copy, and a relative one would be read against each
+	# copy's own directory (bench runs from the repository), not the one the file was named from
+	printf '%s\t%s\t%s\n' "$TOP" "$(readlink -f "$1")" "$size" > "$PHONE.ramdisk"
 }
 
 screenshot() { # screenshot [FILE.png]

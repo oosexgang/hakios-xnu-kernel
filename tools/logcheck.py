@@ -138,14 +138,21 @@ def main(arguments=None):
         return 1 if against(Path(options.against).read_text(errors='replace'), Path(options.logs[0]).read_text(errors='replace')) else 0
     logs = [Path(p) for p in options.logs]
     if not logs:
-        found = sorted((ROOT / 'logs').glob('*.log'), key=lambda p: p.stat().st_mtime)
+        # the files that exist (a dangling logs/last.log from a fetch that failed must not crash the stat below), newest last
+        found = sorted((p for p in (ROOT / 'logs').glob('*.log') if p.is_file()), key=lambda p: p.stat().st_mtime)
         if not found:
             parser.error('no log named, and none in logs/ (./bench run leaves them there)')
         logs = found[-1:]
     bad = False
     for log in logs:
         print(f'{log}:')
-        bad |= check(log.read_text(errors='replace'), options.all)
+        try:
+            text = log.read_text(errors='replace')
+        except OSError as error:
+            print(f'  (not read: {error})')
+            bad = True
+            continue
+        bad |= check(text, options.all)
     return 1 if bad else 0
 
 
