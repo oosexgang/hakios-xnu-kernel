@@ -170,6 +170,43 @@ struct apple80211_assoc {
 #define CIPHER_PMK              6
 #define CIPHER_PASSPHRASE       10
 
+/*
+ * The kind of authentication a join asks for (auth_upper), a bit each. 2 and 8 are WPA and WPA2 with a passphrase
+ * (apple80211_var.h), what the station does. The others below were read out of IO80211 and eapolclient of iOS 16.7 by
+ * the OnePlus Nord 2 port; that Darwin 26 and 27 number them the same is not known. The layout of the request itself
+ * is the same there up to the key (its kind at 0x40, the passphrase at 0x48).
+ */
+#define AUTH_UPPER_PASSPHRASE   (0x2u | 0x8u)
+
+static const struct {
+	uint16_t bits;
+	const char *name, *why;
+} auth_unbuilt[] = {
+	{ 0x1000, "WPA3 Personal (SAE)", "the radio's firmware leaves SAE's exchange to the host, and the station has none" },
+	{ 0x0400, "WPA2 with a passphrase and SHA-256 (PSK-SHA256)", "the station's handshake is HMAC-SHA1's alone, and the "
+	  "protected management frames this kind comes with are not done" },
+	{ 0x1 | 0x4 | 0x80 | 0x800 | 0x4000 | 0x8000, "an enterprise network (802.1X)", "the station has no EAP" },
+};
+
+/*
+ * Which of auth_unbuilt[] a join asks for when it asks for nothing the station does (-1: none of them, or WPA2 with a
+ * passphrase as well, as Darwin may ask of a network that takes both: that is joined as before). Only kinds whose number
+ * is known are refused; any other is left to the station, which says itself why a network cannot be joined.
+ */
+static int
+auth_refused(uint32_t upper)
+{
+	if ((upper & AUTH_UPPER_PASSPHRASE) != 0) {
+		return -1;
+	}
+	for (unsigned i = 0; i < sizeof(auth_unbuilt) / sizeof(auth_unbuilt[0]); i++) {
+		if (upper & auth_unbuilt[i].bits) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
 /* the link event's data (at least 32 bytes, or the framework drops the event) */
 struct apple80211_link_changed {
 	uint8_t down, unused_0[3];
@@ -324,7 +361,8 @@ get(struct apple80211req *request)
 		 * bits alone, from the first (the framework hands in a buffer that begins after the old
 		 * header's version word). AES, AES-CCM, power management, short slot and preamble, WPA2, WME,
 		 * short guard interval at 20 MHz. Read wrong, the framework sees no WPA2 and builds no join
-		 * for a WPA2 network ("Unable to join").
+		 * for a WPA2 network ("Unable to join"). Not 52 (protected management frames) nor 75 (SAE): the
+		 * station does neither, and with them Darwin would build joins of the kinds set_join() refuses.
 		 */
 		uint8_t bits[13] = { 0 };
 		static const uint8_t has[] = { 2, 3, 6, 9, 10, 14, 17, 19 };
@@ -558,7 +596,7 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
 {
 	struct apple80211_assoc *asked;
 	struct hakios_sta_join *what;
-	int error = 0;
+	int error = 0, refused;
 
 	if (request->req_len < offsetof(struct apple80211_assoc, rest)) {
 		return EINVAL;
@@ -573,6 +611,16 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
 	snprintf(said, said_size, " (a join: a name of %u bytes, %s access point, authentication %#x/%#x, a key of %u bytes of kind %u)",
 	    asked->ssid_length, asked->bssid[0] | asked->bssid[1] | asked->bssid[2] | asked->bssid[3] | asked->bssid[4] |
 	    asked->bssid[5] ? "a given" : "any", asked->auth_lower, asked->auth_upper, asked->key_length, asked->key_cipher);
+	/*
+	 * Refused here, with the reason said, rather than handed to the station as WPA2 with a passphrase: it would scan, find
+	 * the network cannot be joined that way and give back only "failed", after leaving the network joined before.
+	 */
+	if ((refused = auth_refused(asked->auth_upper)) >= 0) {
+		hakios_say("apple80211: A JOIN OF %s IS REFUSED (authentication %#x): %s; the station joins WPA2 networks with a "
+		    "passphrase\n", auth_unbuilt[refused].name, asked->auth_upper, auth_unbuilt[refused].why);
+		error = EINVAL;
+		goto out;
+	}
 	if (asked->ssid_length == 0 || asked->ssid_length > sizeof(what->ssid)) {
 		error = EINVAL;
 		goto out;
@@ -590,6 +638,8 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
 		what->security = HAKIOS_STA_WPA2_PSK;
 		memcpy(what->pmk, asked->key, sizeof(what->pmk));
 	} else {
+		hakios_say("apple80211: A JOIN WITH A KEY OF KIND %u (%u bytes) IS REFUSED: the station takes a passphrase of 8 to 63 "
+		    "bytes (kind 10) or its key of 32 (kind 6), nothing else (WEP is not done)\n", asked->key_cipher, asked->key_length);
 		error = EINVAL;
 		goto out;
 	}

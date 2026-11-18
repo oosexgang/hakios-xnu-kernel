@@ -649,6 +649,80 @@ join_not_darwins(void)
 	CHECK(fake_events == events, "and no event 9 for a join Darwin did not ask for: %u events", fake_events - events);
 }
 
+/*
+ * a join of a kind the station does not do -- WPA3's SAE, PSK-SHA256, an enterprise network -- is refused at once, the kind
+ * named in the log and nothing of the passphrase; asked together with WPA2 and a passphrase it is joined that way
+ */
+static void
+join_kinds_not_built(void)
+{
+	static const struct { uint16_t upper; const char *said; } refused[] = {
+		{ 0x1000, "A JOIN OF WPA3 Personal (SAE) IS REFUSED (authentication 0x1000)" },
+		{ 0x0400, "A JOIN OF WPA2 with a passphrase and SHA-256 (PSK-SHA256) IS REFUSED (authentication 0x400)" },
+		{ 0x1400, "A JOIN OF WPA3 Personal (SAE) IS REFUSED (authentication 0x1400)" },
+		{ 0x0004, "A JOIN OF an enterprise network (802.1X) IS REFUSED (authentication 0x4)" },
+		{ 0x0800, "A JOIN OF an enterprise network (802.1X) IS REFUSED (authentication 0x800)" },
+	};
+	struct apple80211_assoc assoc;
+	struct apple80211req answered;
+
+	memset(&assoc, 0, sizeof(assoc));
+	assoc.ssid_length = 4;
+	memcpy(assoc.ssid, "home", 4);
+	assoc.auth_lower = 1;
+	assoc.key_cipher = CIPHER_PASSPHRASE;
+	assoc.key_length = 12;
+	memcpy(assoc.key, "secretpass12", 12);
+	assoc.auth_upper = 8;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && joins == 1, "WPA2 with a passphrase, as before");
+	hakios_apple80211_event(HAKIOS_STA_JOIN_DONE, 0);
+	for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+		assoc.auth_upper = refused[i].upper;
+		/* (802.1X brings no key of its own: as such a request came, it was taken for an open network) */
+		assoc.key_length = refused[i].upper == 0x0004 || refused[i].upper == 0x0800 ? 0 : 12;
+		CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL, "%#x refused", refused[i].upper);
+		CHECK(strstr(log_text, refused[i].said) != NULL, "and said: %s", refused[i].said);
+	}
+	CHECK(joins == 1, "none of them reached the station: %u joins", joins);
+	CHECK(strstr(log_text, "secretpass12") == NULL && !printed_has("secretpass12") && strstr(log_text, "home") == NULL,
+	    "neither the passphrase nor the name in the log");
+	CHECK(request(false, 21, NULL, 0, &answered) == 0 && answered.req_val == 1, "the join before stays as it went: %d",
+	    answered.req_val);
+
+	/* a network that takes both: Darwin may ask for either, and the station joins it with the passphrase */
+	assoc.key_length = 12;
+	assoc.auth_upper = 0x1000 | 0x8;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && joins == 2 && asked_join.security == HAKIOS_STA_WPA2_PSK &&
+	    asked_join.passphrase_length == 12, "SAE or WPA2: WPA2");
+	assoc.auth_upper = 0x0400 | 0x8;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && joins == 3, "PSK-SHA256 or WPA2: WPA2");
+	/* a kind whose number is not known is left to the station, as before */
+	assoc.auth_upper = 0x2000;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && joins == 4, "a kind not known");
+
+	/* a key of a kind the station does not take (WEP's 104 bits): refused, and said */
+	assoc.auth_upper = 0;
+	assoc.key_cipher = 2;
+	assoc.key_length = 13;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EINVAL && joins == 4, "WEP");
+	CHECK(strstr(log_text, "A JOIN WITH A KEY OF KIND 2 (13 bytes) IS REFUSED") != NULL, "and said: %s", log_text);
+}
+
+/* what the card says it can do: WPA2 among it, and neither protected management frames (52) nor SAE (75), not done */
+static void
+capabilities(void)
+{
+	uint8_t bits[16];
+	struct apple80211req answered;
+
+	memset(bits, FILL, sizeof(bits));
+	CHECK(request(false, 12, bits, sizeof(bits), &answered) == 0, "answered");
+	CHECK(untouched(bits, 13, sizeof(bits)), "13 bytes, no more");
+	CHECK((bits[3 / 8] & 1u << 3 % 8) != 0, "WPA2 (3)");
+	CHECK((bits[52 / 8] & 1u << 52 % 8) == 0 && (bits[75 / 8] & 1u << 75 % 8) == 0, "not 52 (MFP) nor 75 (SAE): %#x %#x",
+	    bits[52 / 8], bits[75 / 8]);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -658,7 +732,7 @@ main(int argc, char **argv)
 		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
 		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked }, { "rssi_bounds", rssi_bounds }, { "link_changes", link_changes }, { "the_most_rates", the_most_rates },
 		{ "sets_by_root_alone", sets_by_root_alone }, { "scan_asked_while_read", scan_asked_while_read },
-		{ "join_not_darwins", join_not_darwins },
+		{ "join_not_darwins", join_not_darwins }, { "join_kinds_not_built", join_kinds_not_built }, { "capabilities", capabilities },
 	};
 
 	if (argc < 2) {

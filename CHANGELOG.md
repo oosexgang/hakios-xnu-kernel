@@ -50,6 +50,14 @@ tags yet, so the current work is one section.
   (every byte against the loader's) and `phone_ufs_bench` to try it first.
 - Wi-Fi answers Darwin's RSSI bounds request (`wifi_rssi_threshold=`); the sandbox stand-in issues and consumes
   extensions; `applog_name=` works without `applog`.
+- **A Wi-Fi join the station cannot do is refused with the reason in the log**: WPA3 Personal (SAE), WPA2 with
+  SHA-256 (PSK-SHA256) and enterprise (802.1X) networks, and keys other than a passphrase or its key (WEP), each
+  named in a line `apple80211: A JOIN OF ... IS REFUSED`, at once and without leaving the network joined. A network
+  that takes WPA2 with a passphrase as well is joined that way, as before. SAE and protected management frames are
+  not built: ath11k leaves SAE's exchange and the checking of protected broadcast frames to the host, and our
+  station has neither; the card does not say it can do them. The kinds' numbers are iOS 16.7's, after the idea of
+  the OnePlus Nord 2 port's pieces 0432-0434 (and 0450 for 802.1X); that Darwin 26 and 27 use the same is not yet
+  seen on a phone.
 - **A floor under the memory limits of lsd, installd, pkd, fileproviderd and containermanagerd** (`memfloor=`, 128 MB by
   default; 0 turns it off): Apple's limits of a few megabytes let the kernel kill lsd while it builds the LaunchServices
   database from nothing, and an application installed then does not start. After the OnePlus Nord 2 port of iOS (its
