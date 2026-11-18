@@ -102,9 +102,15 @@ void     hakios_sta_lost(int error);                                   /* the ne
 bool     hakios_sta_present(void);
 int      hakios_sta_ask_power(bool on);
 int      hakios_sta_ask_scan(const struct hakios_sta_scan *what);
-int      hakios_sta_ask_join(const struct hakios_sta_join *what);
-/* ... and joined again whenever the radio is turned on, until some other network is asked for */
+int      hakios_sta_ask_join(const struct hakios_sta_join *what);     /* Darwin's (Apple80211) */
+/* ... and joined again whenever the radio is turned on, until some other network is asked for (the kernel's) */
 int      hakios_sta_ask_join_standing(const struct hakios_sta_join *what);
+/*
+ * While JOIN_DONE is told: whether the join that is over was asked for with hakios_sta_ask_join(). Not when it was the
+ * standing network's, or one this layer asked for itself (the standing network again after a join that failed, after
+ * it was lost, or as the radio came on), which Darwin knows nothing of.
+ */
+bool     hakios_sta_join_by_darwin(void);
 int      hakios_sta_ask_leave(void);
 bool     hakios_sta_busy(void);                                        /* something asked for is not over yet */
 bool     hakios_sta_powered(void);

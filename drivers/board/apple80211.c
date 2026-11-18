@@ -36,6 +36,7 @@
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
 #include <sys/errno.h>
+#include <sys/kauth.h>
 #include <sys/kern_event.h>
 #include <sys/kernel.h>
 #include <sys/proc.h>
@@ -203,7 +204,7 @@ static const char interface_name[16] = "en0";   /* (drivers/net/hakios_net.c mak
 static LCK_GRP_DECLARE(apple80211_lock_group, "hakios-apple80211");
 static LCK_MTX_DECLARE(apple80211_lock, &apple80211_lock_group);
 static unsigned result_next;                    /* which of what the last scan heard a SCAN_RESULT request gets next */
-static uint32_t join_result;                    /* of the last join asked for: 0 while it runs, then Apple80211's number */
+static uint32_t join_result;                    /* of the last join Darwin asked for: 0 while it runs, then Apple80211's number */
 
 /* ---- channels ---------------------------------------------------------------------------------------- */
 
@@ -536,9 +537,10 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	if (asked->channel_count != 0 && asked->channel_count <= 64 && what->frequency_count == 0) {
 		error = EINVAL;                 /* (nothing of what is asked for is a channel of this radio's) */
 	} else {
-		lck_mtx_lock(&apple80211_lock);
-		result_next = 0;
-		lck_mtx_unlock(&apple80211_lock);
+		/*
+		 * (the list being read is not started again here: what it holds stays until the scan is over, and whoever is
+		 * reading it -- the asker itself, maybe -- reads on; the scan's end starts it again)
+		 */
 		error = hakios_sta_ask_scan(what);
 	}
 out:
@@ -675,6 +677,14 @@ hakios_apple80211_event(enum hakios_sta_event event, int status)
 		post(EVENT_SCAN_DONE, NULL, 0);
 		break;
 	case HAKIOS_STA_JOIN_DONE:
+		/*
+		 * Only the end of a join Darwin asked for is its outcome: one the kernel asked for itself (its own network, as
+		 * the radio comes on, after it was lost, or after Darwin's join failed) would be taken for that of Darwin's,
+		 * as joined when it failed. Darwin hears of those by the link's events.
+		 */
+		if (!hakios_sta_join_by_darwin()) {
+			break;
+		}
 		lck_mtx_lock(&apple80211_lock);
 		join_result = status == 0 ? 1 : status == EAUTH ? 21 : status == ETIMEDOUT ? 9 : 2;
 		lck_mtx_unlock(&apple80211_lock);
@@ -770,7 +780,12 @@ hakios_apple80211_ioctl(u_long command, void *data)
 		return EOPNOTSUPP;
 	}
 	proc_selfname(who, sizeof(who));
-	error = is_set ? set(request, what, sizeof(what)) : get(request);
+	/*
+	 * A set changes the radio for everybody: its power, the network joined -- and with a join the network the kernel
+	 * was given, which it replaces -- or a scan. Only wifid has that say, and it runs as root; what the radio is and
+	 * what it heard anybody may read.
+	 */
+	error = !is_set ? get(request) : suser(kauth_cred_get(), NULL) != 0 ? EPERM : set(request, what, sizeof(what));
 	note(request, is_set, error);
 	/* (a request that is repeated for ever is said a few hundred times) */
 	if (said < 800) {

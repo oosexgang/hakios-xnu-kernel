@@ -128,6 +128,11 @@ extern int fake_pid, fake_other_pid;
 int proc_selfpid(void);
 struct proc *proc_find(int pid);
 void proc_rele(struct proc *p);
+/* ... and its credentials (sys/kauth.h): its user ID is fake_uid, 0 -- root -- unless a test says otherwise */
+extern int fake_uid;
+typedef struct fake_cred *kauth_cred_t;
+kauth_cred_t kauth_cred_get(void);
+int suser(kauth_cred_t cred, unsigned short *acflag);   /* 0 for root, else EPERM */
 
 void assert_wait(void *event, int interruptible);
 void assert_wait_timeout(void *event, int interruptible, uint32_t interval, uint64_t scale);

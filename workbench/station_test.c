@@ -53,6 +53,7 @@ static char calls[512];
 static pthread_mutex_t calls_lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile enum hakios_sta_phase phase = HAKIOS_STA_IDLE;
 static volatile int join_error;
+static volatile unsigned join_takes_ms;          /* a join that takes a while */
 static volatile unsigned networks = 3, radio_channels = 20;
 static struct hakios_sta_join joined_with;
 
@@ -105,6 +106,7 @@ radio_join(const struct hakios_sta_join *what)
 
 	snprintf(line, sizeof(line), "join:%.*s ", what->ssid_length, (const char *)what->ssid);
 	call(line);
+	usleep(join_takes_ms * 1000);
 	joined_with = *what;
 	if (join_error == 0) {
 		phase = HAKIOS_STA_JOINED;
@@ -139,7 +141,29 @@ static const struct hakios_sta_ops radio = {
 	.state = radio_state, .channels = radio_channels_of, .address = { 2, 0, 0, 0, 0, 1 },
 };
 
+/*
+ * The layer's wakeup of its thread, which a scenario can have wait, once, on the asker's side, for the join it woke the
+ * thread for to be over and the next begun: what the layer does with its lock let go of before the wakeup, a busy
+ * machine may do too.
+ */
+static volatile bool hold_after_wakeup;
+static bool called(const char *what);
+
+static void
+wakeup_then_hold(void *event)
+{
+	thread_wakeup(event);
+	if (hold_after_wakeup) {
+		hold_after_wakeup = false;
+		for (int waited = 0; !called("join:other join:home ") && waited < 3000; waited += 5) {
+			usleep(5000);
+		}
+	}
+}
+
+#define thread_wakeup(event) wakeup_then_hold(event)
 #include "board/sta.c"
+#undef thread_wakeup
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -436,6 +460,54 @@ address(void)
 	CHECK(hakios_sta_address(mac) && mac[0] == 2 && mac[5] == 1, "the radio's: %02x..%02x", mac[0], mac[5]);
 }
 
+/* a rejoin under way when the radio goes, which fails: the next radio is not asked for it, nor for anything else */
+static void
+rejoin_survives_detach(void)
+{
+	struct hakios_sta_join home = network("home");
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join_standing(&home) == 0, "home, standing");
+	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
+	join_error = EIO;
+	join_takes_ms = 500;
+	hakios_sta_lost(0);
+	WAIT_FOR(called("join:home join:home "), 4000);         /* the rejoin, under way */
+	CHECK(called("join:home join:home "), "the rejoin begun: %s", calls);
+	hakios_sta_attach(NULL);                                 /* the radio goes while it runs, and it fails */
+	join_error = 0;
+	join_takes_ms = 0;
+	pthread_mutex_lock(&calls_lock);
+	calls[0] = 0;
+	pthread_mutex_unlock(&calls_lock);
+	hakios_sta_attach(&radio);                               /* a new radio, which nobody asks for anything */
+	usleep(3000 * 1000);
+	CHECK(!called("join:"), "the new radio is asked for nothing: %s", calls);
+}
+
+/*
+ * another standing network whose join fails at once, before the asker is back: the one before is the standing network
+ * still, and the one that failed is not joined when the radio comes on
+ */
+static void
+standing_set_with_its_join(void)
+{
+	struct hakios_sta_join home = network("home"), other = network("other");
+
+	hakios_sta_attach(&radio);
+	CHECK(hakios_sta_ask_join_standing(&home) == 0, "home, standing");
+	WAIT_FOR(had(HAKIOS_STA_LINK, 1), 3000);
+	join_error = EACCES;
+	hold_after_wakeup = true;
+	CHECK(hakios_sta_ask_join_standing(&other) == 0, "other, whose passphrase is wrong");
+	CHECK(called("join:home join:other join:home "), "other failed, and home was asked for again: %s", calls);
+	join_error = 0;
+	WAIT_FOR(!hakios_sta_busy(), 3000);
+	CHECK(hakios_sta_ask_power(false) == 0 && hakios_sta_ask_power(true) == 0, "off, on");
+	WAIT_FOR(called("on join:"), 3000);
+	CHECK(strstr(calls, "on join:home ") != NULL, "home is the one joined: %s", calls);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -445,6 +517,7 @@ main(int argc, char **argv)
 		{ "lost", lost }, { "lost_and_joined_again", lost_and_joined_again },
 		{ "lost_without_a_standing_network", lost_without_a_standing_network }, { "radio_goes", radio_goes }, { "off_while_joined", off_while_joined }, { "power_refused", power_refused },
 		{ "another_standing_network", another_standing_network }, { "goes_during_a_call", goes_during_a_call }, { "address", address },
+		{ "rejoin_survives_detach", rejoin_survives_detach }, { "standing_set_with_its_join", standing_set_with_its_join },
 	};
 
 	if (argc < 2) {

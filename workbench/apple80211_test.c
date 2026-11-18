@@ -20,14 +20,16 @@ static unsigned heard_n;
 static struct hakios_sta_state state = { .phase = HAKIOS_STA_IDLE };
 static struct hakios_sta_join asked_join;
 static struct hakios_sta_scan asked_scan;
-static unsigned joins, scans;
+static unsigned joins, scans, leaves;
 
 bool hakios_sta_present(void) { return true; }
 static bool powered = true;
 bool hakios_sta_powered(void) { return powered; }
 static int power_asked = -1;              /* (what the last power request asked for: 1 on, 0 off) */
 int hakios_sta_ask_power(bool on) { power_asked = on; return 0; }
-int hakios_sta_ask_leave(void) { return 0; }
+int hakios_sta_ask_leave(void) { leaves++; return 0; }
+static bool join_by_darwin = true;         /* (whether the join told over is one Darwin asked for) */
+bool hakios_sta_join_by_darwin(void) { return join_by_darwin; }
 void hakios_sta_state(struct hakios_sta_state *out) { *out = state; }
 
 bool
@@ -559,6 +561,94 @@ refusals(void)
 	CHECK(strstr(log_text, line) != NULL && !printed_has(line), "said at the end, to the loader's log: %s", log_text);
 }
 
+/* only root changes the radio: another user's sets are refused and change nothing; what it reads it is given */
+static void
+sets_by_root_alone(void)
+{
+	static struct apple80211_scan_request scan;
+	struct { uint32_t version, radios, state[4]; } power = { 1, 1, { 0 } };
+	struct apple80211_scan_result result;
+	struct apple80211_assoc assoc;
+	struct apple80211req answered;
+
+	memset(&assoc, 0, sizeof(assoc));
+	assoc.ssid_length = 4;
+	memcpy(assoc.ssid, "cafe", 4);
+	memset(&scan, 0, sizeof(scan));
+	heard[heard_n++] = network("home", false);
+	hakios_apple80211_event(HAKIOS_STA_JOIN_DONE, 0);
+	fake_uid = 501;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == EPERM, "a join");
+	CHECK(request(true, 19, &power, sizeof(power), NULL) == EPERM, "the power off");
+	CHECK(request(true, 22, NULL, 0, NULL) == EPERM, "a leave");
+	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == EPERM, "a scan");
+	CHECK(joins == 0 && power_asked == -1 && leaves == 0 && scans == 0, "nothing reached the station: %u %d %u %u", joins,
+	    power_asked, leaves, scans);
+	CHECK(request(false, 21, NULL, 0, &answered) == 0 && answered.req_val == 1, "the join before stays as it went: %d",
+	    answered.req_val);
+	memset(&power, 0, sizeof(power));
+	CHECK(request(false, 19, &power, sizeof(power), NULL) == 0 && power.state[0] == 1, "the power read: on (%u)", power.state[0]);
+	memset(&result, FILL, sizeof(result));
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0 && memcmp(result.ssid, "home", 4) == 0, "what a scan heard");
+	CHECK(request(false, 15, NULL, 0, &answered) == 0 && answered.req_val == 1, "the mode");
+	fake_uid = 0;
+	power.state[0] = 0;
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && joins == 1, "root's join");
+	CHECK(request(true, 19, &power, sizeof(power), NULL) == 0 && power_asked == 0, "root's power off");
+	CHECK(request(true, 22, NULL, 0, NULL) == 0 && leaves == 1, "root's leave");
+	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == 0 && scans == 1, "root's scan");
+}
+
+/* a scan asked for while the last one's networks are being read: the reader reads on, and the scan's end starts it again */
+static void
+scan_asked_while_read(void)
+{
+	static struct apple80211_scan_request scan;
+	struct apple80211_scan_result result;
+
+	heard[heard_n++] = network("home", false);
+	heard[heard_n++] = network("cafe", false);
+	memset(&scan, 0, sizeof(scan));
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0 && memcmp(result.ssid, "home", 4) == 0, "the first");
+	CHECK(request(true, 10, &scan, sizeof(scan), NULL) == 0 && scans == 1, "a scan asked for");
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0 && memcmp(result.ssid, "cafe", 4) == 0,
+	    "then the second, not the first again: %.4s", (const char *)result.ssid);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == EIO, "and that was all");
+	hakios_apple80211_event(HAKIOS_STA_SCAN_DONE, 0);
+	result.elements_length = sizeof(result.elements);
+	CHECK(request(false, 11, &result, sizeof(result), NULL) == 0 && memcmp(result.ssid, "home", 4) == 0, "over: the first again");
+}
+
+/*
+ * a join Darwin asked for fails, and the station joins its own network again: what Darwin is told of is its join, failed,
+ * and the station's join is no answer of Apple80211's at all
+ */
+static void
+join_not_darwins(void)
+{
+	struct apple80211_assoc assoc;
+	struct apple80211req answered;
+	unsigned events;
+
+	memset(&assoc, 0, sizeof(assoc));
+	assoc.ssid_length = 4;
+	memcpy(assoc.ssid, "cafe", 4);
+	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0, "asked");
+	CHECK(request(false, 21, NULL, 0, &answered) == 0 && answered.req_val == 0, "not over yet: %d", answered.req_val);
+	join_by_darwin = true;
+	hakios_apple80211_event(HAKIOS_STA_JOIN_DONE, EAUTH);
+	CHECK(fake_events == 1 && fake_last_event.event_code == EVENT_ASSOC_DONE, "event 9: %u events", fake_events);
+	events = fake_events;
+	join_by_darwin = false;
+	hakios_apple80211_event(HAKIOS_STA_JOIN_DONE, 0);       /* (the station's own network, joined again) */
+	CHECK(request(false, 21, NULL, 0, &answered) == 0 && answered.req_val == 21, "failed, a wrong passphrase: %d",
+	    answered.req_val);
+	CHECK(fake_events == events, "and no event 9 for a join Darwin did not ask for: %u events", fake_events - events);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -567,6 +657,8 @@ main(int argc, char **argv)
 		{ "short_buffer", short_buffer }, { "join", join }, { "scan_request", scan_request }, { "channels_by_number", channels_by_number },
 		{ "rates_in_two_elements", rates_in_two_elements }, { "a_cut_off_element", a_cut_off_element }, { "refusals", refusals },
 		{ "power_and_state", power_and_state }, { "channels_marked", channels_marked }, { "rssi_bounds", rssi_bounds }, { "link_changes", link_changes }, { "the_most_rates", the_most_rates },
+		{ "sets_by_root_alone", sets_by_root_alone }, { "scan_asked_while_read", scan_asked_while_read },
+		{ "join_not_darwins", join_not_darwins },
 	};
 
 	if (argc < 2) {

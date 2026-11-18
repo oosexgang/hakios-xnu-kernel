@@ -545,6 +545,11 @@ int proc_selfpid(void) { return fake_pid; }
 struct proc *proc_find(int pid) { return pid != 0 && (pid == fake_pid || pid == fake_other_pid) ? (struct proc *)&fake_pid : NULL; }
 void proc_rele(struct proc *p __unused) {}
 
+int fake_uid;
+
+kauth_cred_t kauth_cred_get(void) { return (kauth_cred_t)&fake_uid; }
+int suser(kauth_cred_t cred, unsigned short *acflag __unused) { return *(const int *)cred == 0 ? 0 : EPERM; }
+
 int
 msleep(void *channel __unused, struct fake_lock *lock, int priority __unused, const char *why __unused, void *time __unused)
 {

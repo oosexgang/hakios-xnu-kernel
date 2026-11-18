@@ -50,11 +50,13 @@ static bool sta_on;                             /* the radio's power, as last as
 static bool asked_power, asked_power_on, asked_scan, asked_join, asked_leave;
 static struct hakios_sta_scan asked_scan_what;
 static struct hakios_sta_join asked_join_what;
+static bool asked_join_by_darwin;               /* ... asked for with hakios_sta_ask_join(), not by this file itself */
 static struct hakios_sta_join standing;        /* the network joined whenever the radio comes on (ssid_length 0: none) */
 static struct hakios_sta_join fallback;        /* ... as it was before a join that has not come through yet */
 static uint64_t rejoin_at;                      /* when the standing network is joined again after it was lost (0: not) */
 static unsigned rejoin_tries;                   /* ... and how many times that has been tried since it was last joined */
 static bool rejoining;                          /* the join under way is such a one */
+static bool join_by_darwin;                     /* the join under way, or the last, was asked_join_by_darwin (the thread's) */
 
 static struct hakios_sta_bss *heard;           /* by the last scan that came to an end */
 static unsigned heard_count;
@@ -107,6 +109,7 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 				if (standing.ssid_length != 0 && sta_on) {
 					asked_join_what = standing;
 					asked_join = rejoining = true;
+					asked_join_by_darwin = false;
 				}
 				continue;
 			}
@@ -130,6 +133,7 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			do_join = true;
 			do_rejoin = rejoining;
 			rejoining = false;
+			join_by_darwin = asked_join_by_darwin;
 			join = asked_join_what;
 			bzero(&asked_join_what, sizeof(asked_join_what));
 			asked_join = false;
@@ -166,6 +170,7 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			if (error == 0 && power_on && standing.ssid_length != 0 && !asked_join) {
 				asked_join_what = standing;
 				asked_join = true;
+				asked_join_by_darwin = false;
 			}
 			lck_mtx_unlock(&sta_lock);
 		} else if (leave) {
@@ -183,6 +188,7 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			if (error != 0 && fallback.ssid_length != 0 && !asked_join && !asked_leave && !asked_power) {
 				standing = asked_join_what = fallback;
 				asked_join = true;
+				asked_join_by_darwin = false;
 			}
 			bzero(&fallback, sizeof(fallback));
 			if (error == 0) {
@@ -218,17 +224,31 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 void
 hakios_sta_attach(const struct hakios_sta_ops *ops)
 {
+	struct hakios_sta_channel given[CHANNELS_MOST];
+	unsigned count;
 	thread_t thread;
 
 	if (ops == NULL) {
 		lck_mtx_lock(&sta_lock);
 		sta_ops = NULL;
-		asked_power = asked_scan = asked_join = asked_leave = false;
-		rejoin_at = 0;                  /* (a rejoin of the station gone: not tried by the next) */
-		rejoining = false;
 		while (sta_calls || sta_reads != 0) {
 			lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_calls, THREAD_UNINT);
 		}
+		/*
+		 * What was asked for and not begun is forgotten only now that no call is under way: such a call, as it ends,
+		 * asks for what comes after it (the standing network after a join that failed, its rejoin later, its join
+		 * once the radio is on), and the next station is not to act on any of that. A rejoin of the station gone is
+		 * not tried by the next either.
+		 */
+		asked_power = asked_scan = asked_join = asked_leave = false;
+		bzero(&asked_join_what, sizeof(asked_join_what));
+		rejoin_at = 0;
+		rejoining = false;
+		/* (a join that was asked for and never begun did not come through: the standing network is as it was before it) */
+		if (standing.ssid_length == 0) {
+			standing = fallback;
+		}
+		bzero(&fallback, sizeof(fallback));
 		heard_count = channel_count = 0;
 		lck_mtx_unlock(&sta_lock);
 		return;
@@ -249,11 +269,14 @@ hakios_sta_attach(const struct hakios_sta_ops *ops)
 		thread_deallocate(thread);
 		sta_thread_made = true;
 	}
-	channel_count = ops->channels(channels, CHANNELS_MOST);
-	if (channel_count > CHANNELS_MOST) {
-		channel_count = CHANNELS_MOST;  /* (the radio's driver is built elsewhere: what it says is held to the list's room) */
+	/* (filled aside, then put in place under the lock: an ioctl may be reading the list at any time) */
+	count = ops->channels(given, CHANNELS_MOST);
+	if (count > CHANNELS_MOST) {
+		count = CHANNELS_MOST;          /* (the radio's driver is built elsewhere: what it says is held to the list's room) */
 	}
 	lck_mtx_lock(&sta_lock);
+	memcpy(channels, given, count * sizeof(*channels));
+	channel_count = count;
 	sta_ops = ops;
 	sta_on = true;
 	lck_mtx_unlock(&sta_lock);
@@ -333,25 +356,11 @@ hakios_sta_ask_scan(const struct hakios_sta_scan *what)
 	return 0;
 }
 
-int
-hakios_sta_ask_join_standing(const struct hakios_sta_join *what)
+/* A join asked for (sta_lock held). */
+static int
+ask_join(const struct hakios_sta_join *what, bool by_darwin)
 {
-	int error = hakios_sta_ask_join(what);
-
-	lck_mtx_lock(&sta_lock);
-	if (error == 0) {
-		standing = *what;
-	}
-	lck_mtx_unlock(&sta_lock);
-	return error;
-}
-
-int
-hakios_sta_ask_join(const struct hakios_sta_join *what)
-{
-	lck_mtx_lock(&sta_lock);
 	if (sta_ops == NULL || !sta_on) {
-		lck_mtx_unlock(&sta_lock);
 		return sta_ops == NULL ? ENXIO : ENETDOWN;
 	}
 	if (standing.ssid_length != 0) {
@@ -361,10 +370,50 @@ hakios_sta_ask_join(const struct hakios_sta_join *what)
 	rejoin_at = 0;
 	asked_join_what = *what;
 	asked_join = true;
+	asked_join_by_darwin = by_darwin;
 	asked_leave = false;
-	lck_mtx_unlock(&sta_lock);
-	thread_wakeup((event_t)&sta_ops);
 	return 0;
+}
+
+int
+hakios_sta_ask_join_standing(const struct hakios_sta_join *what)
+{
+	int error;
+
+	/*
+	 * (made the standing network in the same hold of the lock as its join is asked for: in between, the thread could
+	 * take the join, fail it and put back the standing network it replaced -- and this would then make the network
+	 * that failed the standing one)
+	 */
+	lck_mtx_lock(&sta_lock);
+	if ((error = ask_join(what, false)) == 0) {
+		standing = *what;
+	}
+	lck_mtx_unlock(&sta_lock);
+	if (error == 0) {
+		thread_wakeup((event_t)&sta_ops);
+	}
+	return error;
+}
+
+int
+hakios_sta_ask_join(const struct hakios_sta_join *what)
+{
+	int error;
+
+	lck_mtx_lock(&sta_lock);
+	error = ask_join(what, true);
+	lck_mtx_unlock(&sta_lock);
+	if (error == 0) {
+		thread_wakeup((event_t)&sta_ops);
+	}
+	return error;
+}
+
+bool
+hakios_sta_join_by_darwin(void)
+{
+	return join_by_darwin;
 }
 
 int
