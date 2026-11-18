@@ -87,7 +87,13 @@ def clone(given):
     # each is given after -- besides)
     if url.startswith('-') or ref.startswith('-'):
         raise SystemExit(f'{given}: not a repository\'s address (it begins with a dash)')
-    cache = boards.ROOT / 'build/device-sources' / (re.sub(r'[^A-Za-z0-9.-]+', '_', url).strip('_') + (f'@{ref}' if ref else ''))
+    # (the ref's own characters too: one of '../..' would have named the repository itself, or its parent, and both are
+    # removed below when a clone fails -- the cache is a plain name inside build/device-sources/, or nothing is done)
+    sources = (boards.ROOT / 'build/device-sources').resolve()
+    name = re.sub(r'[^A-Za-z0-9.-]+', '_', url).strip('_') + ('@' + re.sub(r'[^A-Za-z0-9.-]+', '_', ref) if ref else '')
+    cache = sources / name
+    if name in ('', '.', '..') or cache.resolve().parent != sources:
+        raise SystemExit(f'{given}: not a repository\'s address this can keep a copy of')
     if cache.exists():
         shutil.rmtree(cache)            # (taken again whole: what is brought in is what the repository has now)
     cache.parent.mkdir(parents=True, exist_ok=True)

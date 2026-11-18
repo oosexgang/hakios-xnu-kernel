@@ -289,6 +289,18 @@ class Packages(Sandbox):
             self.assertIn('not a repository\'s address', str(stop.exception), given)
         self.assertFalse(marker.exists(), 'nothing of it run')
 
+    def test_a_ref_that_climbs_out_removes_nothing_outside(self):
+        marker = boards.ROOT / 'still-here'
+        marker.write_text('x')
+        # ('NAME@..', then up: three more reach build/, four the repository -- here this test's own directory, which is
+        # as far as a broken one would reach; one more would be past it)
+        for given in ('file:///nowhere/phone.git#../../..', 'file:///nowhere/phone.git#../../../..'):
+            with self.assertRaises(SystemExit) as stop:
+                device.clone(given)
+            self.assertIn('cannot be cloned', str(stop.exception), given)
+            self.assertTrue(marker.exists(), f'{given}: the repository itself was removed')
+            self.assertTrue((boards.ROOT / 'build').is_dir(), given)
+
     def test_a_phone_s_repository_made_then_brought_in(self):
         target = Path(tempfile.mkdtemp()) / 'my-phone'
         self.addCleanup(shutil.rmtree, target.parent)
