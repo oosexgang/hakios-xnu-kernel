@@ -757,7 +757,9 @@ if [ "$ARCH" = arm64e ]; then
 fi
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (bsd/dev/board/image.c)
-python3 ../../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
+python3 ../../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1; [ "${PIPESTATUS[0]}" = 0 ] || { echo "build.sh: mkapfs failed" >&2; exit 1; }
+# (readable by its owner alone while it carries a secret)
+[ -z "$secrets" ] || chmod 600 root.apfs
 [ -z "$CHECK" ] || ../../tools/apfs/check-image.sh root.apfs hakios=root
 
 # --- the RAM part of a boot off the flash: FLASHBOOT=1 -> flashboot.apfs --------------------------------
@@ -818,7 +820,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 		done
 		echo "  the package manager's prefix: $(du -sh flashboot/jb | cut -f1) as /jb of the boot volume"
 	fi
-	python3 ../../tools/apfs/mkapfs.py -z --plain fw -o flashboot.boot.apfs Boot=flashboot | tail -1
+	python3 ../../tools/apfs/mkapfs.py -z --plain fw -o flashboot.boot.apfs Boot=flashboot | tail -1; [ "${PIPESTATUS[0]}" = 0 ] || { echo "build.sh: mkapfs failed" >&2; exit 1; }
 	[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh flashboot.boot.apfs Boot=flashboot
 	# the third container: Apple's App cryptex as it is (10 MB; fetch.sh), for the boot volume's Cryptexes/App
 	APP=""
@@ -828,7 +830,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	elif [ -n "$CRYPTEX_IMAGE" ]; then
 		cat flashboot.boot.apfs "$CRYPTEX_IMAGE" $APP > flashboot.apfs
 	else
-		python3 ../../tools/apfs/mkapfs.py -z -o flashboot.os.apfs OS=flashboot.os | tail -1
+		python3 ../../tools/apfs/mkapfs.py -z -o flashboot.os.apfs OS=flashboot.os | tail -1; [ "${PIPESTATUS[0]}" = 0 ] || { echo "build.sh: mkapfs failed" >&2; exit 1; }
 		[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh flashboot.os.apfs OS=flashboot.os
 		cat flashboot.boot.apfs flashboot.os.apfs $APP > flashboot.apfs
 		rm -f flashboot.os.apfs
@@ -977,7 +979,7 @@ if [ -f $DARWIN_FW/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	done
 	# zlib where it saves room, as Apple keeps the root (a small file whole in its attribute): 5.4 GB of
 	# files in 2.5 GB, what fits into the phone's RAM beside Darwin
-	python3 ../../tools/apfs/mkapfs.py -z -o system.apfs "System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest" | tail -1
+	python3 ../../tools/apfs/mkapfs.py -z -o system.apfs "System=$(cd sysroot && pwd -P),manifest=$DARWIN_FW/system.manifest" | tail -1; [ "${PIPESTATUS[0]}" = 0 ] || { echo "build.sh: mkapfs failed" >&2; exit 1; }
 	[ -z "$CHECK" ] || ../../tools/apfs/check-image.sh system.apfs System=sysroot,manifest=$DARWIN_FW/system.manifest
 	rm -rf sysroot
 fi
