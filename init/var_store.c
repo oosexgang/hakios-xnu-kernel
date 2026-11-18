@@ -53,6 +53,9 @@
  */
 #include "mini.h"
 
+#define VS_O_NOFOLLOW   0x100           /* Darwin's O_NOFOLLOW (mini.h has not got it) */
+static unsigned changed_under;          /* files that were another by the time they were opened: left out */
+
 #define BLOCK           4096
 #define BUFFER          (4u << 20)              /* the loader's own buffer: one request a write */
 #define STORE_AT        8589934592LL            /* darwin's block 2097152: past the cryptexes, with room to spare */
@@ -762,9 +765,24 @@ pack_one(const char *relative, const struct stat *st)
 				break;
 			}
 		}
-		in_fd = open(path, O_RDONLY, 0);
+		/*
+		 * (not through a symbolic link, and the very file that was looked at: one swapped for a link to a file of
+		 * root's between the lstat and here would go into the archive with this one's owner and mode)
+		 */
+		in_fd = open(path, O_RDONLY | VS_O_NOFOLLOW, 0);
 		if (in_fd < 0) {
 			return 1;       /* gone, or not ours to read: it is not in the archive */
+		}
+		{
+			struct stat now;
+
+			if (fstat(in_fd, &now) != 0 || now.st_dev != st->st_dev || now.st_ino != st->st_ino ||
+			    (now.st_mode & S_IFMT) != S_IFREG) {
+				close(in_fd);
+				changed_under++;
+				return 1;
+			}
+			size = (uint64_t)now.st_size;
 		}
 		break;
 	default:
@@ -933,8 +951,8 @@ pack_tree(const char *relative)
 		printf("var_store: %s: deeper than this program walks\n", path);
 		return 1;
 	}
-	if ((dir_fd = open(path, O_RDONLY | O_DIRECTORY, 0)) < 0) {
-		return 1;
+	if ((dir_fd = open(path, O_RDONLY | O_DIRECTORY | VS_O_NOFOLLOW, 0)) < 0) {
+		return 1;       /* (gone, or swapped for a link meanwhile: not followed out of the tree) */
 	}
 	depth++;
 	{
@@ -1005,6 +1023,7 @@ save(void)
 	/* a watcher saves more than once: nothing of the save before is carried into this one */
 	memset(links, 0, LINKS * sizeof(*links));
 	skipped_kinds = skipped_big = 0;
+	changed_under = 0;
 	strcpy(path, ROOT);
 	if (!pack_tree("") || !out_flush(1)) {
 		return 0;
@@ -1046,6 +1065,9 @@ save(void)
 	printf("var_store: %llu blocks into the flash, %llu left alone (they held this already)%s\n",
 	    (unsigned long long)written_blocks, (unsigned long long)skipped_blocks,
 	    unsorted_dirs ? " (a directory was too big to put in order)" : "");
+	if (changed_under != 0) {
+		printf("var_store: %u files were another by the time they were opened: left out\n", changed_under);
+	}
 	return 1;
 }
 
