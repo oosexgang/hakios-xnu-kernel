@@ -59,6 +59,43 @@ set_xreg(arm_saved_state_t *ss, unsigned n, uint64_t value, bool sp)
 	set_saved_state_reg(ss, n, value);
 }
 
+/*
+ * The emulated loads and stores. An access of 4 or 8 bytes at an address that is a multiple of its size is one
+ * access, as the instruction's own would be: copyin() and copyout() go a byte at a time under 16 bytes, and another
+ * thread would see, or make, a value half old and half new -- a pointer or a counter of a lock-free structure torn.
+ * (A load of 2 bytes reads the word they are in; a store of 2 bytes, or anything not so aligned, is a plain copy.)
+ */
+static int
+user_load(user_addr_t address, uint64_t *value, unsigned size)
+{
+	uint32_t word;
+	int error;
+
+	if (size == 8 && (address & 7) == 0) {
+		return copyin_atomic64(address, value);
+	}
+	if ((size == 4 && (address & 3) == 0) || (size == 2 && (address & 1) == 0)) {
+		error = copyin_atomic32(address & ~(user_addr_t)3, &word);
+		if (error == 0) {
+			*value = size == 4 ? word : (word >> ((address & 2) * 8)) & 0xffff;
+		}
+		return error;
+	}
+	return copyin(address, value, size);
+}
+
+static int
+user_store(user_addr_t address, uint64_t value, unsigned size)
+{
+	if (size == 8 && (address & 7) == 0) {
+		return copyout_atomic64(value, address);
+	}
+	if (size == 4 && (address & 3) == 0) {
+		return copyout_atomic32((uint32_t)value, address);
+	}
+	return copyout(&value, address, size);
+}
+
 /* JavaScript's ToInt32 of a double, as FJCVTZS: the result modulo 2^32, and whether it was exact */
 static uint32_t
 js_int32(uint64_t bits, bool *exact)
@@ -122,7 +159,9 @@ emulate(arm_context_t *context, uint32_t instr, unsigned *kind)
 		set_saved_state_pc(ss, target);
 		return true;
 	}
-	if ((instr & 0xffffc000U) == 0xdac10000U || (instr & 0xfffffbe0U) == 0xdac143e0U) {      /* PAC*, AUT*, XPACI/XPACD */
+	/* (PACIZA..AUTDZB, opcode 8 to 15, only with Rn 31: with another register they are unallocated, as pacstrip has them) */
+	if (((instr & 0xffffc000U) == 0xdac10000U && ((instr & (1U << 13)) == 0 || rn == 31)) ||
+	    (instr & 0xfffffbe0U) == 0xdac143e0U) {                     /* PAC*, AUT*, XPACI/XPACD */
 		*kind = EMU_PAC;
 		set_saved_state_pc(ss, pc + 4);
 		return true;
@@ -138,7 +177,7 @@ emulate(arm_context_t *context, uint32_t instr, unsigned *kind)
 		uint64_t address = xreg(ss, rn, true) + (uint64_t)offset, value;
 
 		*kind = EMU_LDRA;
-		if (copyin((user_addr_t)address, &value, sizeof(value)) != 0) {
+		if (user_load((user_addr_t)address, &value, sizeof(value)) != 0) {
 			return false;                   /* (a bad address: the undefined instruction stands) */
 		}
 		if (instr & (1U << 11)) {
@@ -157,14 +196,14 @@ emulate(arm_context_t *context, uint32_t instr, unsigned *kind)
 		if (opc == 0) {                                         /* STLUR: release, then the store */
 			value = xreg(ss, rd, false);
 			__builtin_arm_dmb(0xb);                         /* DMB ISH */
-			if (copyout(&value, (user_addr_t)address, size) != 0) {
+			if (user_store((user_addr_t)address, value, size) != 0) {
 				return false;
 			}
 		} else {
 			if ((size == 8 && opc != 1) || (size == 4 && opc == 3)) {
 				return false;                           /* (unallocated) */
 			}
-			if (copyin((user_addr_t)address, &value, size) != 0) {
+			if (user_load((user_addr_t)address, &value, size) != 0) {
 				return false;
 			}
 			__builtin_arm_dmb(0x9);                         /* DMB ISHLD: acquire */
