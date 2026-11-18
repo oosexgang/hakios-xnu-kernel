@@ -43,6 +43,7 @@ said(const char *format, ...)
 /* (the kernel's printf takes %llu for a uint64_t, which on this host is an unsigned long of the same size) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat"
+LCK_MTX_DECLARE(hakios_rsc_lock, 0);       /* (board/soc.c's, which this test does not take in: the RPMh slots' lock) */
 #define printf said
 #include "board/input.c"
 #undef printf

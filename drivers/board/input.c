@@ -61,10 +61,14 @@ latency_lines(void)
 static LCK_GRP_DECLARE(touch_lck_grp, "hakios-touch");
 static LCK_MTX_DECLARE(touch_lock, &touch_lck_grp);
 
-/* the application processor's RPMh command slots (DRV2, TCS0): the touch driver's, the Wi-Fi's and the memory vote's, one at a time */
-static LCK_MTX_DECLARE(rpmh_slot_lock, &touch_lck_grp);
-void hakios_rpmh_lock(void) { lck_mtx_lock(&rpmh_slot_lock); }
-void hakios_rpmh_unlock(void) { lck_mtx_unlock(&rpmh_slot_lock); }
+/*
+ * the application processor's RPMh command slots (DRV2, TCS0): the touch driver's, the Wi-Fi's, the memory vote's -- and the
+ * modem's rails (mpss.c), which take the SoC's lock for the same slots: one lock for all of them, soc.c's (two locks let
+ * the modem and the others write one slot at once)
+ */
+extern lck_mtx_t hakios_rsc_lock;
+void hakios_rpmh_lock(void) { lck_mtx_lock(&hakios_rsc_lock); }
+void hakios_rpmh_unlock(void) { lck_mtx_unlock(&hakios_rsc_lock); }
 static struct hakios_touch touch_queue[TOUCH_QUEUE];
 static uint32_t touch_head, touch_tail;        /* read from head, add at tail */
 
