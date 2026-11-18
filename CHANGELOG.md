@@ -8,6 +8,10 @@ tags yet, so the current work is one section.
 
 ### For whoever brings up a phone
 
+- **The phone's orientation from an LSM6DSO on the SoC's own pins.** A board that lists `imu-lsm6dso` and says in
+  `imu { }` where the chip is and how it is turned gets `sensors=1` (its identity read, nothing written) and
+  `sensors=2` (the accelerometer on at 104 Hz, the orientation followed and said, `hw.sensors.orientation` and
+  `hw.sensors.accel`); powered down at the run's end. Not run on a phone yet. ([drivers.md](Documentation/drivers.md))
 - **The common drivers on every Snapdragon since the SDM845.** The cores' speed (`cpufreq=1`) and the thermal limiter
   speak both layouts of the frequency block, EPSS (SM8350 and later) and the OSM's firmware before it (SDM845 to
   SM8250), with each group's block where the SoC file says (`cpufreq { block; domains; }`), and leave a group whose

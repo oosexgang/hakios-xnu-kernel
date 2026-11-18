@@ -7,7 +7,7 @@
 	description = "Test phone, video-mode panel";
 	soc = "sm7325";
 
-	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750", "mic-wcd938x", "gpu-a660", "bluetooth-wcn-uart";
+	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "speaker-aw88261", "haptic-aw86927", "imu-lsm6dso", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750", "mic-wcd938x", "gpu-a660", "bluetooth-wcn-uart";
 
 	// A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
 	backlight {
@@ -92,6 +92,17 @@
 		reset = <35>;
 		interrupt = <18>;
 		f0-calibration = <0x0d>;
+	};
+
+	// Its motion sensor: an LSM6DSO on GPIO 116/117 at 0x6a, INT1 on 112, at +-4 g, turned a quarter on the board
+	// (Darwin's x is the chip's -y, its y the chip's x; the chip reads +1 g up, Darwin -1 g: its z is the chip's -z).
+	imu {
+		sda = <116>;
+		scl = <117>;
+		interrupt = <112>;
+		address = <0x6a>;
+		full-scale = <4>;
+		mount = "-y", "x", "-z";
 	};
 
 	// Its flashlight: the flash LED module and the temperature alarm of the PM8350C, which is slave 2 here.

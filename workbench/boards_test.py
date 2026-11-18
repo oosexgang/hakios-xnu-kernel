@@ -873,6 +873,36 @@ class Generate(Sandbox):
         self.assertEqual(self.problems(), '')
         self.assertIn('.analog_enable = -1, .vendor_pin = { -1, -1 },', boards.table_text(*boards.load()))
 
+    def test_the_motion_sensor_needs_its_wiring_and_a_real_turn_of_the_chip(self):
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "imu-lsm6dso"')
+        said = self.problems()
+        self.assertIn('feature "imu-lsm6dso" needs pins { } in soc.dtsi', said)
+        self.assertIn('feature "imu-lsm6dso" needs imu { } in the board file', said)
+        self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tthermal {')
+        path = self.dir / 'devices/phone/board.dts'
+        plain = path.read_text()
+        good = {'sda': '<116>', 'scl': '<117>', 'interrupt': '<112>', 'address': '<0x6a>', 'full-scale': '<4>', 'mount': '"-y", "x", "-z"'}
+
+        def wired(**changed):
+            keys = {**good, **{key.replace('_', '-'): value for key, value in changed.items()}}
+            path.write_text(plain + '/ {\n\timu {\n' + ''.join(f'\t\t{key} = {value};\n' for key, value in keys.items() if value) +
+                            '\t};\n};\n')
+            return self.problems()
+
+        self.assertEqual(wired(), '')
+        self.assertIn('.imu = { .sda = 116, .scl = 117, .interrupt = 112, .address = 0x6a, .full_scale = 4, '
+                      '.axis = { 1, 0, 2 }, .sign = { -1, 1, -1 } },', boards.table_text(*boards.load()))
+        self.assertIn('sda, scl and interrupt are three different pins of the SoC, 0 to 255', wired(interrupt='<117>'))
+        self.assertIn('three different pins', wired(sda='<256>'))
+        self.assertIn('address is the chip\'s 7-bit I2C address', wired(address='<0xd4>'))     # (the 8-bit form: refused)
+        self.assertIn('full-scale is the accelerometer\'s range in g: one of 2, 4, 8, 16', wired(full_scale='<3>'))
+        self.assertIn('"full-scale" is missing', wired(full_scale=''))
+        for mount in ('"x", "x", "z"', '"x", "y"', '"x", "y", "z", "x"', '"x", "y", "w"', '"--x", "y", "z"', '"x", "-y", "z "'):
+            self.assertIn('mount is Darwin\'s x, y and z as the chip\'s axes', wired(mount=mount), mount)
+        self.assertEqual(wired(mount='"x", "y", "z"'), '')
+        self.assertEqual(wired(mount='"+z", "-x", "y"'), '')
+        self.assertIn('.axis = { 2, 0, 1 }, .sign = { 1, -1, 1 } },', boards.table_text(*boards.load()))
+
     def test_the_table_carries_the_way_to_the_other_processors(self):
         self.soc('\tthermal {', '\tipc {\n\t\taoss = <0xc300000>;\n\t\tipcc = <0x408000>;\n\t\tsmem = <0x80900000>;\n\t\tsmem-size = <0x200000>;\n\t\tsmem-lock = <0x1f43000>;\n\t};\n\tthermal {')
         self.assertEqual(self.problems(), '')

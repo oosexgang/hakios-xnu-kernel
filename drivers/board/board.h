@@ -59,6 +59,8 @@ enum {
 	HAKIOS_HAS_BLUETOOTH_WCN_UART = 1u << 17, /* Qualcomm Bluetooth over a GENI UART (board/bt_uart.c) */
 	HAKIOS_HAS_MODEM_SM7325    = 1u << 18,  /* an SM7325's modem, its packet engine and the SIM as this phone has them
 	                                         * (board/mpss.c, board/ipa.c, board/nas.c, board/cell.c) */
+	HAKIOS_HAS_IMU_LSM6DSO     = 1u << 19,  /* an ST LSM6DSO accelerometer on I2C, wired and mounted as the board's
+	                                         * imu { } says: the phone's orientation (board/imu.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
@@ -219,6 +221,19 @@ struct hakios_board {
 		uint8_t interrupt;              /* low when the chip has something to say (only looked at) */
 		uint8_t f0_calibration;         /* what Android's driver found for this motor's resonance (its trim register) */
 	} haptic;
+
+	/*
+	 * The motion sensor (board: imu { }): an ST LSM6DSO on two of the SoC's pins, and how the chip is turned on
+	 * the board -- Darwin's axis i is the chip's axis axis[i] times sign[i] (board/sensor_axes_core.h).
+	 */
+	struct {
+		uint8_t sda, scl;               /* its I2C bus's two lines */
+		uint8_t interrupt;              /* its INT1 pin (only looked at: the driver polls) */
+		uint8_t address;                /* its I2C address: 0x6a or 0x6b, by how its SA0 pin is strapped */
+		uint8_t full_scale;             /* the accelerometer's range, in g: 2, 4, 8 or 16 */
+		uint8_t axis[3];                /* each of Darwin's axes x, y, z is the chip's axis 0, 1 or 2 ... */
+		int8_t sign[3];                 /* ... with this sign, +1 or -1 */
+	} imu;
 
 	/*
 	 * The touch controller's wiring (board: touch { }): the serial engine it is on, that engine's clocks in

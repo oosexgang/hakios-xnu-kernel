@@ -11,6 +11,7 @@ adsp=0
 sound=0
 cam=0
 haptic=0
+sensors=0
 backlight=1             # the DSI controller read when its clocks run; none turned on
 thermal=1
 ddr=1

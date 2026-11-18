@@ -31,7 +31,8 @@ known_phone(void)
 	    "its panel's readout: %#x", b ? b->display.intf : 0);
 	CHECK(!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927) && !hakios_board_has(HAKIOS_HAS_TORCH_PM8350C) &&
 	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_SM7325) &&
-	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750) && !hakios_board_has(HAKIOS_HAS_MIC_WCD938X),
+	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750) && !hakios_board_has(HAKIOS_HAS_MIC_WCD938X) &&
+	    !hakios_board_has(HAKIOS_HAS_IMU_LSM6DSO),
 	    "no driver wired for another phone's parts");
 	CHECK(b != NULL && b->backlight.type == HAKIOS_BACKLIGHT_DCS && b->backlight.dsi != 0 && b->clocks.dispcc != 0 &&
 	    b->backlight.raw_min < b->backlight.raw_max, "a DCS panel has what the driver needs");
@@ -81,6 +82,10 @@ every_feature_said(void)
 	    b->bluetooth.clock_source == 0x1e77c && b->bluetooth.wrapper == 0x8c0000 && b->bluetooth.enable_ppid == 0x38a &&
 	    b->bluetooth.supply_count == 6 && b->bluetooth.supply_mv[5] == 2156 &&
 	    !strcmp(b->bluetooth.supplies[0], "L2D_E0") && !strcmp(b->bluetooth.rf_clock, "C1A_E0"), "Bluetooth board data");
+	/* the motion sensor's mounting as the board file writes it ("-y", "x", "-z"): which of the chip's axes, and the sign */
+	CHECK(b && hakios_board_has(HAKIOS_HAS_IMU_LSM6DSO) && b->imu.sda == 116 && b->imu.scl == 117 && b->imu.address == 0x6a &&
+	    b->imu.full_scale == 4 && b->imu.axis[0] == 1 && b->imu.axis[1] == 0 && b->imu.axis[2] == 2 && b->imu.sign[0] == -1 &&
+	    b->imu.sign[1] == 1 && b->imu.sign[2] == -1, "the motion sensor's board data");
 	hakios_board_init();
 	for (unsigned bit = 0; b != NULL && bit < hakios_feature_count; bit++) {
 		if (b->features & (1u << bit)) {
@@ -232,8 +237,8 @@ table(void)
 		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_SM7325)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750)) ||
-		    b->pins.tlmm != 0,
+		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750 |
+		    HAKIOS_HAS_IMU_LSM6DSO)) || b->pins.tlmm != 0,
 		    "%s: a driver that drives the SoC's pins without pins { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_CAMERA_SM7325)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without clocks { }",
@@ -256,6 +261,10 @@ table(void)
 		    "%s: the microphones' driver without the audio subsystem's blocks", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_HAPTIC_AW86927) || (b->haptic.sda != b->haptic.scl && b->haptic.reset != b->haptic.sda &&
 		    b->haptic.reset != b->haptic.scl), "%s: the vibration motor's driver without its pins", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_IMU_LSM6DSO) || (b->imu.sda != b->imu.scl && b->imu.address != 0 &&
+		    b->imu.axis[0] + b->imu.axis[1] + b->imu.axis[2] == 3 && b->imu.axis[0] != b->imu.axis[1] &&
+		    b->imu.axis[1] != b->imu.axis[2] && b->imu.axis[0] != b->imu.axis[2]), "%s: the motion sensor's driver without its "
+		    "pins, its address or a turn of the chip", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U)) || (b->touch.serial_engine != 0 &&
 		    b->touch.se_clock != 0 && b->touch.io_supply != NULL && b->touch.data_in != b->touch.data_out &&
 		    b->touch.clock != b->touch.chip_select && b->touch.interrupt != b->touch.reset),

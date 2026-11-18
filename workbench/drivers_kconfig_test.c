@@ -20,7 +20,7 @@ STARTS(hakios_input_init) STARTS(hakios_cpufreq_init) STARTS(hakios_virtio_input
 STARTS(hakios_goodix_init) STARTS(hakios_prof_start) STARTS(hakios_buttons_init) STARTS(hakios_battery_init)
 STARTS(hakios_ufs_init) STARTS(hakios_net_init) STARTS(hakios_adreno_init) STARTS(hakios_backlight_init)
 STARTS(hakios_thermal_init) STARTS(hakios_wifi_init) STARTS(hakios_adsp_init) STARTS(hakios_mpss_init) STARTS(hakios_audio_init)
-STARTS(hakios_virtio_sound_init) STARTS(hakios_speaker_init) STARTS(hakios_haptic_init) STARTS(hakios_torch_init)
+STARTS(hakios_virtio_sound_init) STARTS(hakios_speaker_init) STARTS(hakios_haptic_init) STARTS(hakios_imu_init) STARTS(hakios_torch_init)
 STARTS(hakios_camera_init) STARTS(hakios_virtio_blk_init) STARTS(hakios_sparse_init) STARTS(hakios_apfs_check_init)
 
 /* a kernel of a fragment that leaves the GPU, the Goodix touch screen, the modem and QEMU's disk out */

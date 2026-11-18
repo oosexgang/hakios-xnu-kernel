@@ -23,7 +23,7 @@
 	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (drivers/board/board.h, Documentation/drivers.md):
-	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
+	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, imu-lsm6dso, torch-pm8350c, camera-sm7325,
 	// wifi-wcn6750, mic-wcd938x, modem-sm7325
 	features = <>;
 
@@ -155,6 +155,23 @@
 		// reset = <35>;                // the chip's node: reset-gpio
 		// interrupt = <18>;            // ... and irq-gpio
 		// f0-calibration = <0x0d>;     // Android's log at boot: "f0_cali_data = 0x0D" (per motor: read it on your phone)
+	// };
+
+	// The motion sensor, for the feature "imu-lsm6dso": an ST LSM6DSO (or LSM6DSOX) accelerometer and gyroscope on
+	// two of the SoC's pins (I2C by hand), and how the chip is turned on the board. Only where the application
+	// processor has the chip's bus: on most phones it is the sensor DSP's, and this is not for them.
+	// imu {
+		// sda = <116>;                 // the I2C bus's data line: the first pin of the bus's pinctrl node
+		// scl = <117>;                 // ... and its clock, the second
+		// interrupt = <112>;           // the chip's node: st,int1-gpio (only looked at: the driver polls)
+		// address = <0x6a>;            // the chip's node: reg (0x6a with its SA0 pin low, 0x6b high)
+		// full-scale = <4>;            // the accelerometer's range in g: 2, 4, 8 or 16 (4 is enough to tell which way is down)
+		// mount = "-x", "-y", "-z";    // Darwin's x, y and z (right, up, out of the screen) as the chip's axes, "-"
+		//                              // where Darwin's is the other way. The chip reads +1 g along the axis that
+		//                              // points up and Darwin -1 g (board/orientation_core.h), so a chip square on
+		//                              // the board is this; turned a quarter, "-y", "x", "-z". The chip's node's
+		//                              // mount-matrix, a row of it each, says how it is turned (the signs then
+		//                              // all the other way). Check it on the phone: sensors=2 says each orientation
 	// };
 
 	// The flashlight, for the feature "torch-pm8350c": the PM8350C's flash LED module and that PMIC's

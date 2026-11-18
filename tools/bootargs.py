@@ -131,7 +131,7 @@ B = 'bsd/dev/board/'
 AREAS = [
     ('Display, graphics and input', ('iokit/Kernel/MiniIOMobileFramebuffer', 'iokit/Kernel/MiniIOSurface', 'iokit/Kernel/BoardGPU',
                                      B + 'adreno', B + 'backlight', B + 'input', B + 'drivers', B + 'goodix', B + 'fts',
-                                     B + 'buttons', B + 'virtio_input')),
+                                     B + 'buttons', B + 'virtio_input', B + 'imu')),
     ('Power, CPU and temperature', (B + 'cpufreq', B + 'scmi_perf', B + 'ddr', B + 'bench', B + 'thermal', B + 'cputop',
                                     B + 'battery', 'iokit/Kernel/BoardBattery', 'osfmk/arm64/cpu_idle', 'osfmk/arm64/psci_smp',
                                     'iokit/Kernel/GenericARMPE', 'iokit/Kernel/IOPMrootDomain')),

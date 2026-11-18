@@ -36,6 +36,7 @@ PARTS = [
      [r'DIFFERENT at byte', r': STOP', r'NOT AS IT WAS', r"this kernel's own read failed"]),
     ('Flashlight', 'torch', [r"THE LIGHT IS DARWIN'S"], [r'COULD NOT BE SWITCHED OFF', r'given up on', r'not lit:']),
     ('Vibration', 'haptic', [r'THE MOTOR PLAYS WHAT DARWIN PLAYS'], [r'STILL PLAYING']),
+    ('Motion sensor', 'imu', [r'the orientation is followed from here on'], [r'NOTHING MORE IS DONE', r'COULD NOT BE POWERED DOWN']),
     ('Microphones', 'mic', [r"THE MICROPHONE IS DARWIN'S", r'LISTENING'], [r'NO READ HAS COME BACK']),
     ('Sound', 'sound', [r'WHAT DARWIN PLAYS GOES TO THE SPEAKERS', r'THE TONE PLAYS NOW'],
      [r'DID NOT START', r'HAS GIVEN NO PERIOD', r'HAS NOT GIVEN EVERY PERIOD', r'REFUSED', r'DID NOT TAKE']),

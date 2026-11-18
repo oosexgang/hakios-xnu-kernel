@@ -133,6 +133,8 @@ BOARD_SCHEMA = {
     'torch': {'flash': (int, True), 'alarm': (int, True)},
     'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
                'f0_calibration': (int, True)},
+    'imu': {'sda': (int, True), 'scl': (int, True), 'interrupt': (int, True), 'address': (int, True),
+            'full_scale': (int, True), 'mount': ([str], True)},
     'touch': {'serial_engine': (int, True), 'clocks': ([int], True), 'vote_register': (int, True), 'votes': ([int], True),
               'bus_pins': ([int], True),
               'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
@@ -179,6 +181,7 @@ FEATURE_NEEDS = {'bluetooth-wcn-uart': ('pins', 'clocks', 'rpmh', 'spmi'), 'virt
                  # for a part's supply, and give a device its addresses in the SMMU
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
                  'speaker-aw88261': ('pins', 'clocks', 'rpmh', 'smmu'), 'haptic-aw86927': ('pins',),
+                 'imu-lsm6dso': ('pins',),
                  'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins', 'lpass')}
 # ... and the stream of the SMMU that a part's DMA comes in on: [stream ID, mask], from the device tree's iommus
 STREAM_OF = {'speaker-aw88261': 'audio_stream', 'wifi-wcn6750': 'wifi_stream', 'camera-sm7325': 'camera_stream'}
@@ -200,6 +203,7 @@ FEATURE_BOOTARGS = {
     'touch-ft3658u': 'touchscreen=1',
     'speaker-aw88261': 'speaker_probe=N looks; sound=N with adsp=1',
     'haptic-aw86927': 'haptic=N',
+    'imu-lsm6dso': 'sensors=1 looks; sensors=2 follows the orientation',
     'torch-pm8350c': 'torch=1 looks; torch=3 is the light for Darwin',
     'camera-sm7325': 'cam=N',
     'wifi-wcn6750': 'wifi=1',
@@ -207,14 +211,30 @@ FEATURE_BOOTARGS = {
     'modem-sm7325': 'modem=1',
 }
 # features that are a driver of one part as one phone has it wired, by the first word of their names
-PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic', 'modem')
+PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'imu', 'torch', 'camera', 'wifi', 'mic', 'modem')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'bluetooth-wcn-uart': 'bluetooth', 'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
                           'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',
-                          'touch-ft3658u': 'touch', 'camera-sm7325': 'camera'}
+                          'touch-ft3658u': 'touch', 'camera-sm7325': 'camera', 'imu-lsm6dso': 'imu'}
 # ... and what a controller's driver uses of [touch] beyond what every one needs
 TOUCH_NEEDS = {'touch-goodix': ('analog_enable', 'vendor_pins', 'coordinates'), 'touch-ft3658u': ('analog_supply',)}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
+# the accelerometer's ranges an LSM6DSO has (board/lsm6dso_core.h), in g
+IMU_FULL_SCALES = (2, 4, 8, 16)
+# one of Darwin's axes as the chip's: "x", "-y", ... (imu { } mount; board/sensor_axes_core.h)
+IMU_AXIS = re.compile(r'([+-]?)([xyz])')
+
+
+def imu_mounting(mount):
+    """An imu { } mount (three of "x", "-y", ...: Darwin's x, y and z as the chip's axes) as (axis, sign), the two
+    lists of struct hakios_board's imu; None when it is not a turn of the chip (each of the chip's axes once)."""
+    found = [IMU_AXIS.fullmatch(text) if isinstance(text, str) else None for text in mount]
+    if len(found) != 3 or None in found:
+        return None
+    axis = ['xyz'.index(m[2]) for m in found]
+    if sorted(axis) != [0, 1, 2]:
+        return None
+    return axis, [-1 if m[1] == '-' else 1 for m in found]
 
 
 def shown(path):
@@ -622,6 +642,18 @@ def load(problems=None):
                 problems.add(f'{rel} [haptic]', 'sda, scl, reset and interrupt are four different pins of the SoC, 0 to 255')
             if not 0 <= motor['f0_calibration'] <= 0x3f:
                 problems.add(f'{rel} [haptic]', 'f0_calibration is the six bits of the chip\'s trim register')
+        imu = data.get('imu')
+        if imu is not None:
+            wires = [imu[key] for key in ('sda', 'scl', 'interrupt')]
+            if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
+                problems.add(f'{rel} [imu]', 'sda, scl and interrupt are three different pins of the SoC, 0 to 255')
+            if not 0x08 <= imu['address'] <= 0x77:
+                problems.add(f'{rel} [imu]', 'address is the chip\'s 7-bit I2C address, 0x08 to 0x77 (an LSM6DSO: 0x6a or 0x6b)')
+            if imu['full_scale'] not in IMU_FULL_SCALES:
+                problems.add(f'{rel} [imu]', f'full_scale is the accelerometer\'s range in g: one of {", ".join(map(str, IMU_FULL_SCALES))}')
+            if imu_mounting(imu['mount']) is None:
+                problems.add(f'{rel} [imu]', 'mount is Darwin\'s x, y and z as the chip\'s axes, each "x", "y" or "z" with "-" '
+                             'where it points the other way, each of the chip\'s axes once: "x", "y", "z" when it is not turned')
         written = data.get('storage')
         if written is not None:
             for key in ('type_guid', 'unique_guid'):
@@ -953,6 +985,12 @@ def table_text(socs, boards):
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
                        f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
+        imu = board.get('imu')
+        if imu:
+            axis, sign = imu_mounting(imu['mount'])
+            out.append(f'\t\t.imu = {{ .sda = {imu["sda"]}, .scl = {imu["scl"]}, .interrupt = {imu["interrupt"]}, '
+                       f'.address = {imu["address"]:#04x}, .full_scale = {imu["full_scale"]}, '
+                       f'.axis = {{ {", ".join(map(str, axis))} }}, .sign = {{ {", ".join(map(str, sign))} }} }},')
         if board.get('mic'):
             out.append(f'\t\t.mic = {{ .wired = 1, .codec_reset = {board["mic"]["codec_reset"]} }},')
         own = board.get('storage')

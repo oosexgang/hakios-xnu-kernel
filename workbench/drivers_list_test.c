@@ -20,7 +20,7 @@ STARTS(hakios_input_init) STARTS(hakios_cpufreq_init) STARTS(hakios_virtio_input
 STARTS(hakios_goodix_init) STARTS(hakios_prof_start) STARTS(hakios_buttons_init) STARTS(hakios_battery_init)
 STARTS(hakios_ufs_init) STARTS(hakios_net_init) STARTS(hakios_adreno_init) STARTS(hakios_backlight_init)
 STARTS(hakios_thermal_init) STARTS(hakios_wifi_init) STARTS(hakios_adsp_init) STARTS(hakios_mpss_init) STARTS(hakios_audio_init)
-STARTS(hakios_virtio_sound_init) STARTS(hakios_speaker_init) STARTS(hakios_haptic_init) STARTS(hakios_torch_init)
+STARTS(hakios_virtio_sound_init) STARTS(hakios_speaker_init) STARTS(hakios_haptic_init) STARTS(hakios_imu_init) STARTS(hakios_torch_init)
 STARTS(hakios_camera_init) STARTS(hakios_virtio_blk_init) STARTS(hakios_sparse_init) STARTS(hakios_apfs_check_init)
 
 #pragma GCC diagnostic ignored "-Wformat"
@@ -65,7 +65,7 @@ all_once(const char *touch)
 		"hakios_bt_uart_init ", "hakios_input_init ", "hakios_board_init ", "hakios_scmi_perf_init ", "hakios_cpufreq_init ", "hakios_virtio_input_init ", "hakios_prof_start ",
 		"hakios_buttons_init ", "hakios_battery_init ", "hakios_ufs_init ", "hakios_net_init ", "hakios_adreno_init ",
 		"hakios_backlight_init ", "hakios_thermal_init ", "hakios_wifi_init ", "hakios_adsp_init ", "hakios_mpss_init ", "hakios_audio_init ",
-		"hakios_virtio_sound_init ", "hakios_speaker_init ", "hakios_haptic_init ", "hakios_torch_init ", "hakios_camera_init ",
+		"hakios_virtio_sound_init ", "hakios_speaker_init ", "hakios_haptic_init ", "hakios_imu_init ", "hakios_torch_init ", "hakios_camera_init ",
 		"hakios_virtio_blk_init ", "hakios_sparse_init ", "hakios_apfs_check_init ",
 	};
 

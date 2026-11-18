@@ -233,6 +233,16 @@ software without it.
 | `haptic: nobody answers at 0x5a on the bus of gpioN/N`, then `(the reset pin does not drive high: the chip is held in reset or not powered)` | With `haptic=1` this is expected: a look leaves the chip in reset. | `haptic=2` releases the reset and reads the chip, still writing nothing to it. |
 | `haptic: ...: THE CHIP IS PUT INTO RESET (gpioN low) and nothing more is done` | A write was not acknowledged or did not read back, the chip reported a fault, or it is not the chip expected. The reason is the start of the line. | For "NOT THE AW86927 EXPECTED": another chip needs its own driver. For a write that does not stick: check the pins in `haptic { }`. |
 
+### Motion sensor
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `imu: disabled: the board file does not say which pins the chip is on, its address, its range and how it is turned (imu { })` | The feature is listed without a usable `imu { }`; `tools/boards.py check` refuses such a board. | The chip's I2C lines and interrupt as pins of the SoC, its address (`reg` of its node), its range, and `mount` (the template explains it). |
+| `imu: nobody answers at 0x6a on the bus of gpioN/N` | No chip acknowledges its address on those pins. | Check the pins and the address (0x6a or 0x6b, by how SA0 is strapped). On most phones the chip is the sensor DSP's, on a bus the application processor does not drive: then this driver is not for that phone. |
+| `imu: the chip at 0x.. answers WHO_AM_I 0x..: NOT THE LSM6DSO'S 0x6c` | Something answers, but it is another chip. | Another chip needs its own driver; `sensors=2` writes nothing to it. |
+| `imu: ...: NOTHING MORE IS DONE with the chip in this run` | A byte was not acknowledged, a write did not read back, the reset did not end or the bus was not at rest. The reason is the start of the line. | For a bus not at rest: something else uses those pins (check that no serial engine of the SoC is set up on them). |
+| `imu: portrait (...)` when the phone lies on its side | The board's `mount` is not how the chip is turned. | Read the chip's own numbers in the same line, held each way, and write `mount` from them. |
+
 ### Flashlight
 
 | What you see | What it means | What to do |

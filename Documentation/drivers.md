@@ -60,6 +60,7 @@ global surfaces.
 | `bsd/dev/board/fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1`; `touchscreen=-1` only looks | part; which engine, its clocks, the pins and the supplies are data (`touch { }`) |
 | `bsd/dev/board/buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`spmi { }`, `buttons { }`); arbiter version 5 |
 | `bsd/dev/board/virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
+| `bsd/dev/board/imu.c` | An ST LSM6DSO accelerometer on I2C: the phone's orientation, `hw.sensors.*`. | `imu-lsm6dso` / `sensors=` | part; which pins it is on, its address, its range and how it is turned on the board are data (`imu { }`); the chip's facts, the turn and the orientation are `board/lsm6dso_core.h`, `board/sensor_axes_core.h`, `board/sensors_core.h` |
 
 ## Power, CPU, temperature
 
@@ -183,6 +184,7 @@ says what each test covers and what it leaves out.
 | `board/torch.c` | `torch_driver_test.c` | the PMIC arbiter with a flash module behind it |
 | `board/battery.c` | `battery_driver_test.c` | the page the loader writes the battery's state into |
 | `board/haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
+| `board/imu.c` | `imu_driver_test.c` | the SoC's pins with an LSM6DSO on them |
 | `board/speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
 | `board/guard.c` | `guard_test.c` | (none: tones in, samples out) |
 | `board/ufs.c` | `ufs_driver_test.c` | the loader on core 0: its page and buffer over a made-up disk, noting every write and whether the port may make it |

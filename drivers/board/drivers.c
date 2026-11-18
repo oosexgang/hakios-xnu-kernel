@@ -30,6 +30,7 @@ extern void hakios_scmi_perf_init(void);
 extern void hakios_prof_start(void);            /* osfmk/arm64/prof.c */
 extern void hakios_backlight_init(void);        /* bsd/dev/board/backlight.c */
 extern void hakios_thermal_init(void);          /* bsd/dev/board/thermal.c */
+extern void hakios_imu_init(void);              /* bsd/dev/board/imu.c */
 
 /* The touch screen: the driver of the controller this board has, if it lists one. */
 static void
@@ -123,6 +124,9 @@ hakios_drivers_init(void)
 	}
 	if (CONFIG_HAPTIC) {
 		hakios_haptic_init();  /* boot-arg haptic=N: the vibration motor */
+	}
+	if (CONFIG_IMU_LSM6DSO) {
+		hakios_imu_init();  /* boot-arg sensors=N: the motion sensor, the phone's orientation */
 	}
 	if (CONFIG_TORCH) {
 		hakios_torch_init();  /* boot-arg torch=N: the flashlight */
