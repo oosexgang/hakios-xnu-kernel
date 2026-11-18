@@ -377,6 +377,7 @@ T:	workbench/touch_reports_test.c
 T:	workbench/touch_fts_wiring_test.c
 T:	workbench/touch_fts_read_test.c
 T:	workbench/touch_fts_reports_test.c
+T:	workbench/touch_fts_thread_test.c
 T:	workbench/synaptics_report_test.c
 K:	touch-goodix, touch-ft3658u; touchscreen=
 

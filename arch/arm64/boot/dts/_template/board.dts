@@ -92,7 +92,8 @@
 		// analog-enable = <107>;       // touch-goodix: the GPIO that switches its analog supply on (avdd-gpio)
 		// vendor-pins = <68 96>;       // touch-goodix: the two straps that say whose controller is fitted
 		// coordinates = <10800 24000>; // touch-goodix: the largest x and y it reports (goodix,panel-max-x and -y,
-		//                              // or focaltech,display-coords' last two, of the controller's node)
+		//                              // or focaltech,display-coords' last two, of the controller's node);
+		//                              // touch-ft3658u the same, 1080 x 2400 when it is left out
 	// };
 
 	// The microphones' codec, for the feature "mic-wcd938x": a WCD938x on the SoC's SoundWire.

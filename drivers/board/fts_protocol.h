@@ -10,8 +10,9 @@
 #define FTS_READ_PREFIX 7
 #define FTS_MAX_DATA FTS_REPORT_BYTES
 #define FTS_SPI_BYTES (FTS_READ_PREFIX + FTS_MAX_DATA + 2)
-#define FTS_MAX_X 1080
+#define FTS_MAX_X 1080               /* the first phone's panel: a board's touch { } coordinates say another's */
 #define FTS_MAX_Y 2400
+#define FTS_COORDINATE_MAX 0xfff     /* a report's coordinates are 12 bits */
 
 struct fts_frame {
 	uint16_t active;
@@ -42,9 +43,10 @@ fts_crc(const uint8_t *data, uint32_t length)
 	return crc;
 }
 
-/* Decode completely before publishing any events. Malformed frames change no contacts. */
+/* Decode completely before publishing any events. Malformed frames change no contacts, nor do positions off a panel
+ * whose largest coordinates are max_x and max_y. */
 static bool
-fts_decode(const uint8_t *data, uint32_t length, struct fts_frame *frame)
+fts_decode(const uint8_t *data, uint32_t length, uint32_t max_x, uint32_t max_y, struct fts_frame *frame)
 {
 	struct fts_frame result = { 0 };
 	uint16_t ids = 0;
@@ -72,7 +74,7 @@ fts_decode(const uint8_t *data, uint32_t length, struct fts_frame *frame)
 		}
 		result.x[id] = (point[0] & 0xf) << 8 | point[1];
 		result.y[id] = (point[2] & 0xf) << 8 | point[3];
-		if (result.x[id] > FTS_MAX_X || result.y[id] > FTS_MAX_Y) {
+		if (result.x[id] > max_x || result.y[id] > max_y) {
 			return false;
 		}
 		result.active |= 1u << id;

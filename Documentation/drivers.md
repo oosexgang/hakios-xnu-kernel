@@ -201,13 +201,15 @@ says what each test covers and what it leaves out.
 | `board/sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `board/goodix.c`, `board/fts.c` (their wiring) | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 | `board/goodix.c`, `board/fts.c` (their reports), `board/fts_protocol.h` | `touch_reports_test.c`, `touch_fts_reports_test.c` | (none: a controller's reports in, touches out) |
+| `board/fts.c` (its thread: bring-up, polling, powering off) | `touch_fts_thread_test.c` | the controller behind its SPI transfer (its identity, a report, reads that fail, slowly or at once, or never end); the pins' and the clock controller's registers; RPMh and its command database |
 | `board/geni_spi.h` (the touch drivers' SPI) | `geni_spi_test.c` | the serial engine in its FIFO mode, with a device that answers each byte, and that can say an error, stay busy or take no cancel |
 
 The two touch drivers, the camera's, the sound's and the microphones' are compiled into host programs too, but
 not all of their parts are modelled: the touch drivers' tests cover their wiring and what they make of a
-controller's reports, not the talk with the controller; the others' cover their wiring, and the sound's and the
-microphones' the rings Darwin writes and reads. The Wi-Fi, DSP, GPU and storage drivers have no such test: they
-are checked for syntax, types and the formats of what they print only (`kernel/syntax-check.sh`), and on the phone.
+controller's reports, and the FocalTech driver's thread against a model of its controller, not the talk on the
+wire; the others' cover their wiring, and the sound's and the microphones' the rings Darwin writes and reads. The
+Wi-Fi, DSP, GPU and storage drivers have no such test: they are checked for syntax, types and the formats of what
+they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one
 

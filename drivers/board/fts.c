@@ -11,6 +11,11 @@
  * No firmware flashing or bootloader
  * commands; the chip must boot its installed application firmware (0x5652).
  * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.
+ * The panel's size is the board's touch { } coordinates, 1080 x 2400 (the first phone's) where it says none.
+ *
+ * When bring-up fails, when the polling gives up, and at the run's end (and on a panic's way out) the controller is
+ * powered off as far as this driver powered it: held in reset, the votes for its analog and then its I/O supply
+ * withdrawn, the clock votes this driver added (only those) dropped, and its pins configured as bring-up found them.
  */
 #include <kern/clock.h>
 #include <kern/thread.h>
@@ -23,10 +28,30 @@
 
 static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
+/*
+ * The thread and the run's end (hakios_fts_quiesce()): the thread holds `busy' around each transaction with the
+ * controller and starts none once `leaving' is set; `in_transfer' is set while the chip is selected, so that the run's
+ * end knows a transfer was cut off in its middle.
+ */
+static bool leaving, busy, in_transfer;
+
 #define HAKIOS_MMIO_SYNC
 #include "kernel.h"
 #include "board.h"
 #include "mmio.h"
+#include "time.h"
+
+/* On the way out every wait spins: interrupts are off and the other cores stopped (as in board/bt_uart.c). */
+static void
+fts_wait_us(uint32_t us)
+{
+	if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+		spin_us(us);
+	} else {
+		sleep_us(us);
+	}
+}
+#define sleep_us fts_wait_us             /* (for RPMh's and the serial engine's waits, included below) */
 
 /*
  * What the driver says goes to the loader's log as it is said, and to the kernel's: the kernel's own
@@ -107,17 +132,28 @@ rpmh_write_locked(const uint32_t *address, const uint32_t *data, unsigned count)
 	return problem == NULL;
 }
 
+/* (not on the way out: the other cores are stopped, one of them perhaps holding the lock -- as in board/bt_uart.c) */
 static bool
 rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	hakios_rpmh_lock();
-	bool ok=rpmh_write_locked(address,data,count);
-	hakios_rpmh_unlock();return ok;
+	bool locking = !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST), ok;
+
+	if (locking) {
+		hakios_rpmh_lock();
+	}
+	ok = rpmh_write_locked(address, data, count);
+	if (locking) {
+		hakios_rpmh_unlock();
+	}
+	return ok;
 }
+
+/* each supply's RPMh address once it has been asked for, whether the request went through or not; 0: not asked */
+static uint32_t io_supply_at, analog_supply_at;
 
 /* The board's two regulators (hakios: L2C = I/O at 1.8 V, L7C = analog at 3.3 V). */
 static bool
-supply_on(const char *name, uint32_t millivolts)
+supply_on(const char *name, uint32_t millivolts, uint32_t *asked)
 {
     uint32_t base = rpmh_address(name);
     uint32_t address[3] = { base + VRM_VOLTAGE, base + VRM_ENABLE, base + VRM_MODE };
@@ -128,7 +164,22 @@ supply_on(const char *name, uint32_t millivolts)
         return false;
     }
     printf("fts: regulator %s at %#x: %u mV\n", name, base, millivolts);
+    *asked = base;
     return rpmh_write(address, data, 3);
+}
+
+/* this driver's vote for a supply withdrawn, if it voted (only the enable, as board/bt_uart.c does: another may want it on) */
+static void
+supply_off(const char *name, uint32_t *asked)
+{
+    uint32_t address = *asked + VRM_ENABLE, off = 0;
+
+    if (*asked == 0) {
+        return;
+    }
+    *asked = 0;
+    printf("fts: regulator %s: vote withdrawn\n", name);
+    (void)rpmh_write(&address, &off, 1);
 }
 
 /* ---- clocks (GCC) -------------------------------------------------------------------------------- */
@@ -156,6 +207,7 @@ supply_on(const char *name, uint32_t millivolts)
 #define XO_HZ                   19200000
 
 static uint32_t se_source_hz, se_clock_select;
+static uint32_t added_votes;            /* the votes bring-up found off and set: the only ones powering off drops */
 
 /* clk-branch.c skips the halt bit for an AHB branch in hardware gated mode:
  * it may report OFF while idle, even after our GCC vote was accepted.
@@ -173,7 +225,11 @@ fts_ahb_clock_ready(uint32_t status)
 static bool
 clocks_on(uint32_t target_hz)
 {
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB);
+	const uint32_t wrapper_votes = VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB;
+
+	/* (the wrapper's votes may be another engine's of the same wrapper already: those are left when this driver is done) */
+	added_votes |= wrapper_votes & ~rd(GCC_VOTE);
+	wr(GCC_VOTE, rd(GCC_VOTE) | wrapper_votes);
 	if (rd(GCC_SE_DFSR) & 1) {
 		/* Pick a source no lower than the requested SPI frequency. */
 		for (uint32_t level = 0; level < 8; level++) {
@@ -203,8 +259,9 @@ clocks_on(uint32_t target_hz)
 		se_source_hz = XO_HZ;
 		se_clock_select = 0;
 	}
+	added_votes |= VOTE_SE & ~rd(GCC_VOTE);
 	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_SE);
-	const uint32_t votes = VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB | VOTE_SE;
+	const uint32_t votes = wrapper_votes | VOTE_SE;
 	if ((rd(GCC_VOTE) & votes) != votes) {
 		printf("fts: GCC clock votes not accepted (%#x)\n", rd(GCC_VOTE));
 		return false;
@@ -226,8 +283,12 @@ clocks_on(uint32_t target_hz)
 #define SE_PHYS                 ((vm_offset_t)WIRED->serial_engine)
 #define SE_SIZE                 0x4000UL
 
-/* GPIO mode-0 fallback when boot firmware leaves GENI restricted to GPI DMA. */
-static unsigned bitbang_in, bitbang_out;
+/*
+ * GPIO mode-0 fallback when boot firmware leaves GENI restricted to GPI DMA. Which data pin is which is the board's
+ * (bus-pins: data in, the chip's MISO, then data out): the chip's output is only read, never driven against.
+ */
+#define bitbang_in              PIN_DATA0
+#define bitbang_out             PIN_DATA1
 static void
 fts_bitbang_init(void)
 {
@@ -263,6 +324,7 @@ fts_bitbang_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 static bool (*spi_transfer)(const uint8_t *, uint8_t *, uint32_t) = geni_transfer;
 static uint8_t fts_tx[FTS_SPI_BYTES], fts_rx[FTS_SPI_BYTES];
 static uint32_t flip, spi_hz = 12000000, trace;
+static uint32_t panel_x = FTS_MAX_X, panel_y = FTS_MAX_Y;      /* the largest coordinates: the board's, or the first phone's */
 static struct { bool down; uint32_t x, y; } contact[FTS_CONTACTS];
 static struct { uint32_t polls, reports, bad, transfers_failed, positions; } seen;
 
@@ -281,8 +343,13 @@ fts_read(uint8_t address, uint8_t *data, uint32_t length)
     fts_tx[2] = (uint8_t)(length >> 8);
     fts_tx[3] = (uint8_t)length;
     for (unsigned attempt = 0; attempt < 3; attempt++) {
+        if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+            return false;               /* (the run's end has the bus) */
+        }
         memset(fts_rx, 0, sizeof(fts_rx));
+        __atomic_store_n(&in_transfer, true, __ATOMIC_SEQ_CST);
         bool transferred = spi_transfer(fts_tx, fts_rx, FTS_READ_PREFIX + length + 2);
+        __atomic_store_n(&in_transfer, false, __ATOMIC_SEQ_CST);
         sleep_us(150);
         if (!transferred || (fts_rx[3] & 0xa0)) {
             continue;
@@ -310,8 +377,8 @@ fts_report(const struct fts_frame *frame)
             }
             continue;
         }
-        uint32_t x = (uint32_t)frame->x[id] * 65535 / FTS_MAX_X;
-        uint32_t y = (uint32_t)frame->y[id] * 65535 / FTS_MAX_Y;
+        uint32_t x = (uint32_t)frame->x[id] * 65535 / panel_x;
+        uint32_t y = (uint32_t)frame->y[id] * 65535 / panel_y;
         if (flip & 1) { x = 65535 - x; }
         if (flip & 2) { y = 65535 - y; }
         if (!contact[id].down) {
@@ -349,7 +416,7 @@ static bool
 fts_probe(void)
 {
     uint8_t high = 0, low = 0, version = 0, mode = 0xff;
-    for (unsigned attempt = 0; attempt < 10; attempt++) {
+    for (unsigned attempt = 0; attempt < 10 && !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST); attempt++) {
         if (fts_read(0xa3, &high, 1) && fts_read(0x9f, &low, 1) && high == 0x56 && low == 0x52) {
             if (!fts_read(0x00, &mode, 1)) {
                 /* (one read that failed is not the chip's mode: asked again as the ID was) */
@@ -372,17 +439,66 @@ fts_probe(void)
     return false;
 }
 
+/* The six pins as bring-up found them, before it changed any: what powering off configures them back to. */
+#define PINS                    6
+static unsigned pin_number[PINS];
+static uint32_t pin_found_cfg[PINS], pin_found_io[PINS];
+static bool pins_found;
+
+static void
+pins_record(void)
+{
+    const unsigned pins[PINS] = { PIN_DATA0, PIN_DATA1, PIN_CLK, PIN_CS, PIN_INT, PIN_RESET };
+
+    for (unsigned i = 0; i < PINS; i++) {
+        pin_number[i] = pins[i];
+        pin_found_cfg[i] = rd(GPIO_CFG(pins[i]));
+        pin_found_io[i] = rd(GPIO_IO(pins[i]));
+    }
+    __atomic_store_n(&pins_found, true, __ATOMIC_SEQ_CST);
+}
+
+/*
+ * The controller powered off, as far as this driver powered it (this file's head): bounded, and without sleeping on
+ * the way out. The reset pin keeps its level low under the configuration it is given back.
+ */
+static void
+fts_power_off(void)
+{
+    uint32_t dropped = added_votes;
+
+    if (!__atomic_load_n(&pins_found, __ATOMIC_SEQ_CST)) {
+        return;                         /* (nothing was touched, or it has been done already) */
+    }
+    gpio_output(PIN_RESET, false, PULL_UP, 8);
+    supply_off(WIRED->analog_supply, &analog_supply_at);
+    supply_off(WIRED->io_supply, &io_supply_at);
+    if (dropped != 0) {
+        wr(GCC_VOTE, rd(GCC_VOTE) & ~dropped);
+        added_votes = 0;
+    }
+    for (unsigned i = 0; i < PINS; i++) {
+        if (pin_number[i] != PIN_RESET) {
+            wr(GPIO_IO(pin_number[i]), pin_found_io[i] & 2);    /* (the level first, as gpio_output()) */
+        }
+        wr(GPIO_CFG(pin_number[i]), pin_found_cfg[i]);
+    }
+    __atomic_store_n(&pins_found, false, __ATOMIC_SEQ_CST);
+    printf("fts: powered off: in reset, clock votes %#x dropped, pins as found\n", dropped);
+}
+
 static bool
 fts_bring_up(void)
 {
     printf("fts: serial engine at %#x; reset gpio%u, IRQ gpio%u; supplies %s and %s\n", WIRED->serial_engine, PIN_RESET, PIN_INT,
         WIRED->io_supply, WIRED->analog_supply);
+    pins_record();
     gpio_output(PIN_RESET, false, PULL_UP, 8);
     gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
     fts_sleep_ms(1);
-    if (!supply_on(WIRED->io_supply, 1800)) { return false; }
+    if (!supply_on(WIRED->io_supply, 1800, &io_supply_at)) { return false; }
     fts_sleep_ms(1);
-    if (!supply_on(WIRED->analog_supply, 3300)) { return false; }
+    if (!supply_on(WIRED->analog_supply, 3300, &analog_supply_at)) { return false; }
     fts_sleep_ms(15);
     const char *problem = "SPI clocks unavailable";
     if (clocks_on(spi_hz)) {
@@ -405,18 +521,13 @@ fts_bring_up(void)
         printf("fts: %s; trying GPIO SPI mode 0\n", problem);
     }
     spi_transfer = fts_bitbang_transfer;
-    /* Accept a data-pin orientation only once the chip's ID and CRC read back right.
-     * CS stays high while directions change; use the minimum 2 mA drive. */
-    for (unsigned attempt = 0; attempt < 2; attempt++) {
-        bitbang_in = attempt == 0 ? PIN_DATA0 : PIN_DATA1;
-        bitbang_out = attempt == 0 ? PIN_DATA1 : PIN_DATA0;
-        fts_bitbang_init();
-        fts_reset();
-        if (fts_probe()) {
-            printf("fts: GPIO SPI ready: MISO gpio%u, MOSI gpio%u, CLK gpio%u, CS gpio%u\n",
-                bitbang_in, bitbang_out, PIN_CLK, PIN_CS);
-            return true;
-        }
+    /* CS stays high while the pins change; use the minimum 2 mA drive. */
+    fts_bitbang_init();
+    fts_reset();
+    if (fts_probe()) {
+        printf("fts: GPIO SPI ready: MISO gpio%u, MOSI gpio%u, CLK gpio%u, CS gpio%u\n",
+            bitbang_in, bitbang_out, PIN_CLK, PIN_CS);
+        return true;
     }
     gpio_set(PIN_CS, true);
     return false;
@@ -437,11 +548,109 @@ fts_look(void)
     printf("fts: touchscreen=-1: nothing powered, configured or sent\n");
 }
 
+/* The controller is the thread's from here until it calls fts_done(); false once the run's end has it. */
+static bool
+fts_begin(void)
+{
+    __atomic_store_n(&busy, true, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+        __atomic_store_n(&busy, false, __ATOMIC_SEQ_CST);
+        return false;
+    }
+    return true;
+}
+
+static void
+fts_done(void)
+{
+    __atomic_store_n(&busy, false, __ATOMIC_SEQ_CST);
+}
+
+/*
+ * A finger is lifted once the controller has said nothing believable for FTS_LIFT_US, however many polls failed in that
+ * time: counted in polls, a transfer that fails slowly held it down for seconds to minutes. The resets counted are
+ * forgotten after FTS_TROUBLE_FORGOTTEN_US without a failed poll: an idle phone reads few reports, and a count kept
+ * until enough of them arrived would end the polling over troubles of hours before.
+ */
+#define FTS_LIFT_US             250000
+#define FTS_TROUBLE_FORGOTTEN_US (60 * 1000000ull)
+
+/* consecutive bad polls, recoveries made, and when the controller last said something believable and last failed */
+static struct { unsigned failures, resets; uint64_t last_good_us, last_failure_us; } trouble;
+
+static void
+fts_heard(uint64_t now)
+{
+    trouble.failures = 0;
+    trouble.last_good_us = now;
+    if (trouble.resets != 0 && now - trouble.last_failure_us >= FTS_TROUBLE_FORGOTTEN_US) {
+        trouble.resets = 0;
+    }
+}
+
+/* One look at the controller; false: it is given up. */
+static bool
+fts_poll(unsigned tick)
+{
+    uint8_t report[FTS_REPORT_BYTES];
+    struct fts_frame frame;
+    /* Falling-edge IRQ can be a brief pulse: read periodically even if GPIO is high. */
+    bool pending = !gpio_get(PIN_INT), active = false;
+    for (unsigned id = 0; id < FTS_CONTACTS; id++) { active |= contact[id].down; }
+    if (!pending && !active && tick % 10 != 0) {
+        return true;
+    }
+    seen.polls++;
+    bool read_ok = fts_read(0x01, report, sizeof(report));
+    uint64_t now = now_us();
+    /* This chip returns a CRC-valid all-ff frame while idle. Android reads
+     * only on IRQ; our periodic fallback must not reset an idle controller.
+     * (With a finger down it is decoded below: no finger, its lift posted.) */
+    if (read_ok && !pending && !active && fts_report_empty(report, sizeof(report))) {
+        fts_heard(now);
+        return true;
+    }
+    if (read_ok && fts_decode(report, sizeof(report), panel_x, panel_y, &frame)) {
+        fts_heard(now);
+        seen.reports++;
+        fts_report(&frame);
+    } else {
+        seen.bad++;
+        trouble.last_failure_us = now;
+        if (seen.bad <= 4) {
+            if (read_ok) {
+                printf("fts: rejected report: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                    report[0], report[1], report[2], report[3], report[4], report[5], report[6], report[7]);
+            } else {
+                printf("fts: report SPI/status/CRC failure\n");
+            }
+        }
+        if (active && now - trouble.last_good_us >= FTS_LIFT_US) {
+            printf("fts: nothing believable for %u ms with a finger down: lifted\n",
+                (unsigned)((now - trouble.last_good_us) / 1000));
+            fts_release();
+        }
+        if (++trouble.failures >= 125) {
+            fts_release();
+            printf("fts: %u consecutive invalid reports (%u SPI failures); previous recoveries %u/3\n",
+                trouble.failures, seen.transfers_failed, trouble.resets);
+            if (trouble.resets++ >= 3) { return false; }
+            fts_reset();
+            if (!fts_probe()) { return false; }
+            trouble.failures = 0;
+        }
+    }
+    if (tick % (60 * 125) == 0) {
+        printf("fts: polls %u, reports %u, invalid %u, failed SPI reads %u, positions %u, IRQ %s\n",
+            seen.polls, seen.reports, seen.bad, seen.transfers_failed, seen.positions,
+            gpio_get(PIN_INT) ? "high" : "low");
+    }
+    return true;
+}
+
 static void
 fts_thread(__unused void *parameter, __unused wait_result_t result)
 {
-    uint8_t report[FTS_REPORT_BYTES];
-    unsigned failures = 0, resets = 0, good = 0;
     tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
     gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
     if (looking_only) {
@@ -452,68 +661,32 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
     se = ml_io_map(SE_PHYS, SE_SIZE);
     rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
     cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
-    if (!tlmm || !gcc || !se || !rsc || !cmd_db || !fts_bring_up()) {
-        printf("fts: touchscreen unavailable\n");
+    if (!fts_begin()) {
         thread_terminate(current_thread());
         return;
     }
-    printf("fts: touchscreen ready, 1080x2400, ten contacts; polling at 125 Hz\n");
-    for (unsigned tick = 1;; tick++) {
-        /* Falling-edge IRQ can be a brief pulse: read periodically even if GPIO is high. */
-        bool pending = !gpio_get(PIN_INT), active = false;
-        for (unsigned id = 0; id < FTS_CONTACTS; id++) { active |= contact[id].down; }
-        if (!pending && !active && tick % 10 != 0) {
-            fts_sleep_ms(8);
-            continue;
+    if (!tlmm || !gcc || !se || !rsc || !cmd_db || !fts_bring_up()) {
+        printf("fts: touchscreen unavailable\n");
+        fts_power_off();
+        fts_done();
+        thread_terminate(current_thread());
+        return;
+    }
+    fts_done();
+    printf("fts: touchscreen ready, %ux%u, ten contacts; polling at 125 Hz\n", panel_x, panel_y);
+    trouble.last_good_us = now_us();
+    for (unsigned tick = 1; fts_begin(); tick++) {
+        if (!fts_poll(tick)) {
+            fts_release();
+            printf("fts: stopped after repeated controller errors\n");
+            fts_power_off();
+            fts_done();
+            break;
         }
-        seen.polls++;
-        struct fts_frame frame;
-        bool read_ok = fts_read(0x01, report, sizeof(report));
-        /* This chip returns a CRC-valid all-ff frame while idle. Android reads
-         * only on IRQ; our periodic fallback must not reset an idle controller.
-         * (With a finger down it is decoded below: no finger, its lift posted.) */
-        if (read_ok && !pending && !active && fts_report_empty(report, sizeof(report))) {
-            failures = 0;
-            fts_sleep_ms(8);
-            continue;
-        }
-        if (read_ok && fts_decode(report, sizeof(report), &frame)) {
-            failures = 0;
-            seen.reports++;
-            fts_report(&frame);
-            if (resets != 0 && ++good >= 60 * 125) {
-                /* (a minute of good reports since: the recoveries counted are of a trouble that passed) */
-                resets = good = 0;
-            }
-        } else {
-            seen.bad++;
-            if (seen.bad <= 4) {
-                if (read_ok) {
-                    printf("fts: rejected report: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                        report[0], report[1], report[2], report[3], report[4], report[5], report[6], report[7]);
-                } else {
-                    printf("fts: report SPI/status/CRC failure\n");
-                }
-            }
-            if (++failures >= 125) {
-                fts_release();
-                printf("fts: %u consecutive invalid reports (%u SPI failures); previous recoveries %u/3\n",
-                    failures, seen.transfers_failed, resets);
-                if (resets++ >= 3) { break; }
-                fts_reset();
-                if (!fts_probe()) { break; }
-                failures = good = 0;
-            }
-        }
-        if (tick % (60 * 125) == 0) {
-            printf("fts: polls %u, reports %u, invalid %u, failed SPI reads %u, positions %u, IRQ %s\n",
-                seen.polls, seen.reports, seen.bad, seen.transfers_failed, seen.positions,
-                gpio_get(PIN_INT) ? "high" : "low");
-        }
+        fts_done();
         fts_sleep_ms(8);
     }
-    fts_release();
-    printf("fts: stopped after repeated controller errors\n");
+    /* (or the run's end has the controller: hakios_fts_quiesce() powers it off) */
     thread_terminate(current_thread());
 }
 
@@ -534,6 +707,14 @@ hakios_fts_init(void)
         printf("fts: disabled: the board file does not say how the controller is wired (touch { }, with analog_supply)\n");
         return;
     }
+    /* (a report carries 12 bits of a coordinate: a panel larger than that is one the board file has wrong) */
+    panel_x = WIRED->max_x != 0 ? WIRED->max_x : FTS_MAX_X;
+    panel_y = WIRED->max_y != 0 ? WIRED->max_y : FTS_MAX_Y;
+    if (panel_x > FTS_COORDINATE_MAX || panel_y > FTS_COORDINATE_MAX) {
+        printf("fts: disabled: touch { } coordinates %u x %u are more than a report can say (%u)\n", panel_x, panel_y,
+            FTS_COORDINATE_MAX);
+        return;
+    }
     /*
      * touch_flip=N: bit 0 mirrors the touches left to right, bit 1 top to bottom.
      * fts_trace=1: the first 40 touches' positions as the controller gives them, in the log.
@@ -551,4 +732,30 @@ hakios_fts_init(void)
     } else {
         printf("fts: cannot start touchscreen thread\n");
     }
+}
+
+/*
+ * At the run's end and on a panic's way out (osfmk/arm64/loader_return.c): no more polling, a transfer cut off in its
+ * middle ended, and the controller powered off (this file's head). Spins, with interrupts off, a bounded time.
+ */
+void
+hakios_fts_quiesce(void)
+{
+    __atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
+    for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
+        spin_us(1000);                  /* (the thread finishing a transaction: 100 ms at most, a stopped core's never ends) */
+    }
+    if (!__atomic_load_n(&pins_found, __ATOMIC_SEQ_CST)) {
+        return;
+    }
+    if (__atomic_load_n(&in_transfer, __ATOMIC_SEQ_CST)) {
+        if (spi_transfer == geni_transfer) {
+            printf("fts: at the run's end: a transfer cut off: the serial engine's command cancelled\n");
+            geni_recover();
+        } else {
+            printf("fts: at the run's end: a transfer cut off: chip select raised\n");
+            gpio_set(PIN_CS, true);
+        }
+    }
+    fts_power_off();
 }

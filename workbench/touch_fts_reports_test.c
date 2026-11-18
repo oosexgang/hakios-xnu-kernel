@@ -74,7 +74,7 @@ point(unsigned slot, unsigned id, unsigned event, unsigned x, unsigned y)
 static bool
 decodes(struct fts_frame *frame)
 {
-	return fts_decode(report, sizeof(report), frame);
+	return fts_decode(report, sizeof(report), FTS_MAX_X, FTS_MAX_Y, frame);
 }
 
 /* two fingers, one lifted by its event (no position needed), and the slot after the last ends the report */
@@ -111,7 +111,7 @@ refused(void)
 
 	blank(1);
 	point(0, 1, 0, 10, 10);
-	CHECK(!fts_decode(report, sizeof(report) - 1, &frame), "a report of the wrong length");
+	CHECK(!fts_decode(report, sizeof(report) - 1, FTS_MAX_X, FTS_MAX_Y, &frame), "a report of the wrong length");
 	blank(11);
 	CHECK(!decodes(&frame), "more fingers than there are");
 	blank(2);
@@ -197,7 +197,7 @@ idle_lifts(void)
 	CHECK(decodes(&frame) && frame.active == 0, "all 0xff is a frame of no finger: %#x", frame.active);
 	fts_report(&frame);
 	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 2, "and the finger lifted");
-	CHECK(!fts_decode(report, sizeof(report) - 1, &frame), "not of the report's length: refused");
+	CHECK(!fts_decode(report, sizeof(report) - 1, FTS_MAX_X, FTS_MAX_Y, &frame), "not of the report's length: refused");
 }
 
 int

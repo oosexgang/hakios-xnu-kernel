@@ -41,6 +41,7 @@
 		analog-supply = "ldob9";
 		analog-enable = <77>;
 		vendor-pins = <150 151>;
+		coordinates = <1440 3200>;     // (a larger panel than the first phones' 1080 x 2400)
 	};
 
 	speaker {
