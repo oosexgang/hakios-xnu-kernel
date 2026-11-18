@@ -243,6 +243,11 @@ isp_ae(struct isp *isp, const struct hakios_camera_frame *f, const struct isp_st
 	} else if (want <= (double)fast * 16) {
 		lines = fast;
 		gain = (uint32_t)(want / fast * f->gain_unity);
+		/*
+		 * (held to the sensor's most: a sensor whose most is under 16x -- 15.5x on two of them -- is held there by the
+		 * kernel, and the frames' gain would never again be what was asked: the exposure would stop for good)
+		 */
+		gain = gain > f->gain_max ? f->gain_max : gain;
 	} else {
 		lines = (uint32_t)(want / 16);
 		lines = lines > longest - f->margin ? longest - f->margin : lines < fast ? fast : lines;
