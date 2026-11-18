@@ -37,6 +37,7 @@
  * transactions are ours (board/qmi.c).
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
 #include <sys/errno.h>
@@ -77,6 +78,19 @@ hakios_wlfw_exchange(uint32_t step)
 #define MODE_COLD_BOOT          7               /* core.h: ATH11K_FIRMWARE_MODE_COLD_BOOT */
 #define ATH11K_FIRMWARE_MODE_NORMAL 0           /* core.h: the mode "mission" */
 
+/*
+ * The exchange runs on the steps' thread, and the stop on the thread that ends a run, which does
+ * not wait for step 15 to be over (hakios_wifi_stop() gives a radio on its way up 40 s, and a
+ * calibration alone may take 60): both use the one handle. The lock is held where the handle is
+ * opened and given up, over the whole of the stop, and around the mode "mission"; the exchange
+ * does not hold it while it waits, so that the stop can cut that short: the release of the handle
+ * ends every wait on it, and with `stopping` set the exchange asks for nothing more.
+ */
+static LCK_GRP_DECLARE(wlfw_lock_group, "wlfw");
+static LCK_MTX_DECLARE(wlfw_lock, &wlfw_lock_group);
+static LCK_MTX_DECLARE(refused_lock, &wlfw_lock_group);         /* ask()'s one buffer for a refused request */
+static volatile bool stopping;
+
 static struct qmi_handle handle;
 static bool handle_open, in_mission;
 static bool mission_asked;              /* the mode "mission" sent: the firmware may have taken it, answered or not */
@@ -85,6 +99,7 @@ static uint32_t registers_size;         /* ... how many bytes of them; 0: it has
 static struct {
 	volatile bool server, gone, init_done, ready, cal_done;
 	uint64_t began, init_done_at, ready_at, cal_done_at;
+	uint32_t init_dones, readies, cal_dones;        /* how many times each came: the first is said, the rest counted */
 	uint32_t step;
 } wlfw;
 
@@ -116,33 +131,60 @@ wlfw_del_server(__unused struct qmi_handle *qmi, struct qmi_service *service)
 	wlfw.gone = true;
 }
 
+/* (said the first time only: a firmware that says it again and again is not to fill the log) */
 static void
-wlfw_indication(volatile bool *flag, uint64_t *when, const char *name, unsigned id)
+wlfw_indication(volatile bool *flag, uint64_t *when, uint32_t *count, const char *name, unsigned id)
 {
+	if ((*count)++ != 0) {
+		return;
+	}
 	*when = now_ms();
 	*flag = true;
 	say("wifi: %u: +%llu ms: THE FIRMWARE INDICATES \"%s\" (%#x)\n", wlfw.step, *when - wlfw.began, name, id);
 }
 
 static void
+say_repeats(void)
+{
+	if (wlfw.init_dones > 1 || wlfw.readies > 1 || wlfw.cal_dones > 1) {
+		say("wifi: %u:   the firmware's indications, each said once above, came: \"init done\" %u times, \"ready\" %u, "
+		    "\"calibration done\" %u\n", wlfw.step, wlfw.init_dones, wlfw.readies, wlfw.cal_dones);
+	}
+}
+
+/* A string of the firmware's, for the log: whatever is no printable character is shown as '?'. */
+static const char *
+printable(char *out, const char *in, size_t size)
+{
+	size_t i;
+
+	for (i = 0; i + 1 < size && in[i] != '\0'; i++) {
+		out[i] = (unsigned char)in[i] >= 0x20 && (unsigned char)in[i] < 0x7f ? in[i] : '?';
+	}
+	out[i] = '\0';
+	return out;
+}
+
+static void
 wlfw_init_done(__unused struct qmi_handle *qmi, __unused struct sockaddr_qrtr *sq, __unused struct qmi_txn *txn,
     __unused const void *decoded)
 {
-	wlfw_indication(&wlfw.init_done, &wlfw.init_done_at, "firmware init done", QMI_WLFW_FW_INIT_DONE_IND_V01);
+	wlfw_indication(&wlfw.init_done, &wlfw.init_done_at, &wlfw.init_dones, "firmware init done", QMI_WLFW_FW_INIT_DONE_IND_V01);
 }
 
 static void
 wlfw_ready(__unused struct qmi_handle *qmi, __unused struct sockaddr_qrtr *sq, __unused struct qmi_txn *txn,
     __unused const void *decoded)
 {
-	wlfw_indication(&wlfw.ready, &wlfw.ready_at, "firmware ready", QMI_WLFW_FW_READY_IND_V01);
+	wlfw_indication(&wlfw.ready, &wlfw.ready_at, &wlfw.readies, "firmware ready", QMI_WLFW_FW_READY_IND_V01);
 }
 
 static void
 wlfw_cal_done(__unused struct qmi_handle *qmi, __unused struct sockaddr_qrtr *sq, __unused struct qmi_txn *txn,
     __unused const void *decoded)
 {
-	wlfw_indication(&wlfw.cal_done, &wlfw.cal_done_at, "cold boot calibration done", QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01);
+	wlfw_indication(&wlfw.cal_done, &wlfw.cal_done_at, &wlfw.cal_dones, "cold boot calibration done",
+	    QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01);
 }
 
 static const struct qmi_ops wlfw_ops = { .new_server = wlfw_new_server, .del_server = wlfw_del_server };
@@ -173,6 +215,10 @@ ask(const char *what, int message, size_t largest, const struct qmi_elem_info *r
 	uint64_t began = now_ms();
 	int ret;
 
+	if (stopping) {
+		say("wifi: %u: %s (message %#x): not asked: the exchange is being stopped\n", wlfw.step, what, message);
+		return false;
+	}
 	/*
 	 * (a reply without its result -- empty, or of fields the description does not know -- is not success: the
 	 * structure is zeroed by its callers, and 0 is QMI_RESULT_SUCCESS_V01)
@@ -201,6 +247,7 @@ ask(const char *what, int message, size_t largest, const struct qmi_elem_info *r
 		say("wifi: %u: %s (message %#x): THE FIRMWARE REFUSES: result %u, error %u (%#x), after %llu ms\n", wlfw.step, what,
 		    message, result->result, result->error, result->error, now_ms() - began);
 	}
+	lck_mtx_lock(&refused_lock);
 	ret = hakios_qmi_encode(QMI_REQUEST, (uint16_t)message, 0, request_ei, request, bytes, sizeof(bytes));
 	for (int at = 0; at < ret && at < 96; at += 24) {
 		char text[3 * 24 + 1] = "";
@@ -210,6 +257,7 @@ ask(const char *what, int message, size_t largest, const struct qmi_elem_info *r
 		}
 		say("wifi: %u:   the request, %d bytes, from %d:%s\n", wlfw.step, ret, at, text);
 	}
+	lck_mtx_unlock(&refused_lock);
 	return false;
 }
 
@@ -266,7 +314,7 @@ send_file(const char *what, const char *name, uint8_t type, uint32_t board_id)
 static bool
 wait_for(volatile bool *flag, uint32_t ms)
 {
-	for (uint32_t i = 0; i < ms && !*flag && !wlfw.gone; i++) {
+	for (uint32_t i = 0; i < ms && !*flag && !wlfw.gone && !stopping; i++) {
 		delay_for_interval(1, NSEC_PER_MSEC);
 	}
 	return *flag;
@@ -284,14 +332,19 @@ hakios_wlfw_registers(uint64_t *address, uint32_t *size, bool *mission)
 static bool ask(const char *what, int message, size_t largest, const struct qmi_elem_info *request_ei, const void *request,
     const struct qmi_elem_info *reply_ei, void *reply, bool quiet);
 
-/* ath11k_qmi_firmware_stop(): the mode "off"; and our handle given up. Before the DSP is stopped, while the link is up. */
+/*
+ * ath11k_qmi_firmware_stop(): the mode "off"; and our handle given up. Before the DSP is stopped, while the link is up.
+ * Also while the exchange still runs: it is then made to end (see wlfw_lock).
+ */
 void
 hakios_wlfw_stop(uint32_t step)
 {
 	struct qmi_wlanfw_wlan_mode_req_msg_v01 mode;
 	struct qmi_wlanfw_wlan_mode_resp_msg_v01 mode_reply;
 
+	lck_mtx_lock(&wlfw_lock);
 	if (!handle_open) {
+		lck_mtx_unlock(&wlfw_lock);
 		return;
 	}
 	wlfw.step = step;
@@ -304,8 +357,12 @@ hakios_wlfw_stop(uint32_t step)
 		    qmi_wlanfw_wlan_mode_req_msg_v01_ei, &mode, qmi_wlanfw_wlan_mode_resp_msg_v01_ei, &mode_reply, false);
 		in_mission = mission_asked = false;
 	}
+	/* (only now: the request above is the stop's own, and the mode "mission" cannot be asked for after it, see mission()) */
+	stopping = true;
+	say_repeats();
 	qmi_handle_release(&handle);
 	handle_open = false;
+	lck_mtx_unlock(&wlfw_lock);
 }
 
 /*
@@ -321,6 +378,7 @@ mission(void)
 	struct qmi_wlanfw_wlan_ini_resp_msg_v01 ini_reply;
 	struct qmi_wlanfw_wlan_mode_req_msg_v01 mode;
 	struct qmi_wlanfw_wlan_mode_resp_msg_v01 mode_reply;
+	bool taken;
 
 	if (WLFW_SENDS_INI) {
 		bzero(&ini, sizeof(ini));
@@ -365,10 +423,17 @@ mission(void)
 	mode.mode = ATH11K_FIRMWARE_MODE_NORMAL;
 	mode.hw_debug_valid = 1;
 	mode.hw_debug = 0;
-	/* (from here the firmware may be in mission mode though no answer says so: hakios_wlfw_stop() sends "off" all the same) */
-	mission_asked = true;
-	if (!ask("the mode: mission", QMI_WLANFW_WLAN_MODE_REQ_V01, QMI_WLANFW_WLAN_MODE_REQ_MSG_V01_MAX_LEN,
-	    qmi_wlanfw_wlan_mode_req_msg_v01_ei, &mode, qmi_wlanfw_wlan_mode_resp_msg_v01_ei, &mode_reply, false)) {
+	/*
+	 * (from here the firmware may be in mission mode though no answer says so: hakios_wlfw_stop() sends "off" all the same.
+	 * Under the lock, so that a stop comes either before, and the mode is not asked for, or after, and its "off" is the
+	 * last word)
+	 */
+	lck_mtx_lock(&wlfw_lock);
+	mission_asked = !stopping;
+	taken = mission_asked && ask("the mode: mission", QMI_WLANFW_WLAN_MODE_REQ_V01, QMI_WLANFW_WLAN_MODE_REQ_MSG_V01_MAX_LEN,
+	    qmi_wlanfw_wlan_mode_req_msg_v01_ei, &mode, qmi_wlanfw_wlan_mode_resp_msg_v01_ei, &mode_reply, false);
+	lck_mtx_unlock(&wlfw_lock);
+	if (!taken) {
 		return false;
 	}
 	say("wifi: %u: THE FIRMWARE IS IN MISSION MODE\n", wlfw.step);
@@ -390,11 +455,15 @@ hakios_wlfw_exchange(uint32_t step)
 	struct qmi_wlanfw_wlan_mode_resp_msg_v01 mode_reply;
 	uint32_t calibrate = 0, seconds = 5, to_mission = 0, board_id;
 	bool far = false, board = false;
+	char build_id[sizeof(target.fw_build_id)], built[sizeof(target.fw_version_info.fw_build_timestamp)];
 	int ret;
 
+	lck_mtx_lock(&wlfw_lock);
 	if (handle_open) {
+		lck_mtx_unlock(&wlfw_lock);
 		return false;
 	}
+	stopping = false;
 	bzero(&wlfw, sizeof(wlfw));
 	wlfw.step = step;
 	wlfw.began = now_ms();
@@ -408,10 +477,12 @@ hakios_wlfw_exchange(uint32_t step)
 	PE_parse_boot_argn("wifi_mission", &to_mission, sizeof(to_mission));
 	ret = qmi_handle_init(&handle, ATH11K_QMI_RESP_LEN_MAX, &wlfw_ops, wlfw_handlers);
 	if (ret < 0) {
+		lck_mtx_unlock(&wlfw_lock);
 		say("wifi: %u: no handle on the router: %d\n", step, ret);
 		return false;
 	}
 	handle_open = true;
+	lck_mtx_unlock(&wlfw_lock);
 	ret = qmi_add_lookup(&handle, ATH11K_QMI_WLFW_SERVICE_ID_V01, ATH11K_QMI_WLFW_SERVICE_VERS_V01,
 	    ATH11K_QMI_WLFW_SERVICE_INS_ID_V01_WCN6750);
 	if (ret < 0 || !wait_for(&wlfw.server, 3000)) {
@@ -467,8 +538,8 @@ hakios_wlfw_exchange(uint32_t step)
 	    target.chip_info.chip_family, target.chip_info_valid ? "given" : "not given", board_id, target.board_info_valid ?
 	    "given" : "not given: ath11k takes 0xff", target.soc_info.soc_id, target.soc_info_valid ? "given" : "not given");
 	say("wifi: %u:   firmware version %#x, built \"%s\" (%s); BUILD ID \"%s\" (%s)\n", step, target.fw_version_info.fw_version,
-	    target.fw_version_info.fw_build_timestamp, target.fw_version_info_valid ? "given" : "not given", target.fw_build_id,
-	    target.fw_build_id_valid ? "given" : "not given");
+	    printable(built, target.fw_version_info.fw_build_timestamp, sizeof(built)), target.fw_version_info_valid ? "given" :
+	    "not given", printable(build_id, target.fw_build_id, sizeof(build_id)), target.fw_build_id_valid ? "given" : "not given");
 	say("wifi: %u:   also:%s%s%s%s%s numbers: macs %u, voltage %u mV, time %u Hz, otp %#x, eeprom timeout %u\n", step,
 	    target.num_macs_valid ? " macs" : "", target.voltage_mv_valid ? " voltage" : "", target.time_freq_hz_valid ? " time" : "",
 	    target.otp_version_valid ? " otp" : "", target.eeprom_read_timeout_valid ? " eeprom" : "", target.num_macs,
@@ -480,13 +551,23 @@ hakios_wlfw_exchange(uint32_t step)
 	    qmi_wlanfw_device_info_req_msg_v01_ei, &where, qmi_wlfw_device_info_resp_msg_v01_ei, &device, false)) {
 		goto out;
 	}
-	if (device.bar_addr_valid && device.bar_size_valid && device.bar_addr != 0 && device.bar_size != 0) {
-		registers_at = device.bar_addr;
-		registers_size = device.bar_size;
-	}
 	say("wifi: %u:   registers at %#llx (%s), %#x bytes (%s; ath11k wants exactly %#x)\n", step,
 	    (unsigned long long)device.bar_addr, device.bar_addr_valid ? "given" : "not given", device.bar_size,
 	    device.bar_size_valid ? "given" : "not given", ATH11K_QMI_DEVICE_BAR_SIZE);
+	/* (step 16 maps what is kept here, and reads there: only the window the radio's registers can be in, board/wifi.c) */
+	if (device.bar_addr_valid && device.bar_size_valid) {
+		uint64_t window = 0, window_size = 0;
+
+		if (hakios_wifi_radio_window(&window, &window_size) && device.bar_addr == window && device.bar_size == window_size) {
+			registers_at = device.bar_addr;
+			registers_size = device.bar_size;
+		} else if (window_size != 0) {
+			say("wifi: %u:   THAT IS NOT THE WINDOW THE RADIO'S REGISTERS ARE IN (%#llx bytes at %#llx): not kept, not mapped\n",
+			    step, (unsigned long long)window_size, (unsigned long long)window);
+		} else {
+			say("wifi: %u:   NO WINDOW IS KNOWN FOR THIS RADIO'S REGISTERS (board/wifi.c): not kept, not mapped\n", step);
+		}
+	}
 
 	/*
 	 * ath11k_qmi_event_load_bdf(): the regulatory database, whose fate qmi.c does not look at, then
@@ -552,10 +633,13 @@ out:
 	say("wifi: %u: the exchange ends %llu ms after it began: \"init done\" %s, \"ready\" %s, \"calibration done\" %s, mission "
 	    "mode %s\n", step, now_ms() - wlfw.began, wlfw.init_done ? "yes" : "no", wlfw.ready ? "yes" : "no", wlfw.cal_done ? "yes" :
 	    "no", in_mission ? "YES" : "no");
-	if (!in_mission && !mission_asked) {
+	say_repeats();
+	lck_mtx_lock(&wlfw_lock);
+	if (handle_open && !in_mission && !mission_asked) {
 		qmi_handle_release(&handle);
 		handle_open = false;
 	}
+	lck_mtx_unlock(&wlfw_lock);
 	return far && wlfw.init_done;
 }
 

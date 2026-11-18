@@ -123,12 +123,24 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	return (void *)uncached;
 }
 
+/*
+ * The driver maps what the radio's firmware says its registers are (qmi.c: the device-info
+ * reply), and reads and writes there as the radio's: only inside the window the radio's
+ * registers can be in (board/wifi.c) is that let through.
+ */
 void *
 lx_os_map_registers(unsigned long long physical, unsigned long size)
 {
 	unsigned long long page = trunc_page(physical);
-	vm_offset_t mapped = ml_io_map_unmappable(page, round_page(physical + size) - page, VM_WIMG_IO);
+	uint64_t window = 0, window_size = 0;
+	vm_offset_t mapped;
 
+	if (!hakios_wifi_radio_window(&window, &window_size) || size == 0 || physical < window || physical - window > window_size ||
+	    size > window_size - (physical - window)) {
+		say("lx: %#lx bytes at %#llx are not where the radio's registers can be: not mapped\n", size, physical);
+		return NULL;
+	}
+	mapped = ml_io_map_unmappable(page, round_page(physical + size) - page, VM_WIMG_IO);
 	return mapped == 0 ? NULL : (void *)(mapped + (physical - page));
 }
 

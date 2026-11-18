@@ -37,10 +37,24 @@
 #include <sys/time.h>
 
 static LCK_GRP_DECLARE(qmi_lck_grp, "hakios-qmi");
+static LCK_MTX_DECLARE(qmi_handles_mutex, &qmi_lck_grp);
 
 struct os_lock {
 	lck_mtx_t mutex;
 };
+
+/* The one lock of all handles, under which a handle's state is found and taken away. */
+static void
+os_handles_lock(void)
+{
+	lck_mtx_lock(&qmi_handles_mutex);
+}
+
+static void
+os_handles_unlock(void)
+{
+	lck_mtx_unlock(&qmi_handles_mutex);
+}
 
 static void *
 os_alloc(size_t size)
@@ -118,6 +132,20 @@ struct os_lock {
 	pthread_mutex_t mutex;
 	pthread_cond_t woken;
 };
+
+static pthread_mutex_t handles_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void
+os_handles_lock(void)
+{
+	pthread_mutex_lock(&handles_mutex);
+}
+
+static void
+os_handles_unlock(void)
+{
+	pthread_mutex_unlock(&handles_mutex);
+}
 
 static void *
 os_alloc(size_t size)
@@ -602,8 +630,10 @@ struct qmi_state {
 	struct qmi_service *services;
 	bool connected;
 	uint32_t peer_node, peer_port;
+	bool dead;                              /* being released: nothing new is begun, nobody is told anything */
+	unsigned users;                         /* calls that have the state by enter() and have not left it */
 	/* said in the log once each, so that a firmware that talks a lot cannot fill it */
-	bool said_malformed, said_undecoded, said_unknown, said_other_message;
+	bool said_malformed, said_undecoded, said_unknown, said_other_message, said_stranger;
 };
 
 static const struct hakios_qrtr_ops *qmi_transport;
@@ -614,10 +644,46 @@ hakios_qmi_set_transport(const struct hakios_qrtr_ops *ops)
 	qmi_transport = ops;
 }
 
+/*
+ * The state behind a handle, for a call made through it, which gives it back with leave(); NULL
+ * once the handle has been released. It is looked up under the lock of all handles, under which
+ * qmi_handle_release() takes it away, and counted under its own: the release waits for every call
+ * that has it to leave before it frees it.
+ */
 static struct qmi_state *
-state_of(struct qmi_handle *qmi)
+enter(struct qmi_handle *qmi)
 {
-	return qmi != NULL ? (struct qmi_state *)(void *)qmi->sock : NULL;
+	struct qmi_state *s;
+
+	if (qmi == NULL) {
+		return NULL;
+	}
+	os_handles_lock();
+	s = (struct qmi_state *)(void *)qmi->sock;
+	if (s != NULL) {
+		os_lock(&s->lock);
+		s->users++;
+		os_unlock(&s->lock);
+	}
+	os_handles_unlock();
+	return s;
+}
+
+/* With the lock held: the call is done with the state. */
+static void
+left(struct qmi_state *s)
+{
+	if (--s->users == 0 && s->dead) {
+		os_wake(&s->lock, &s->users);
+	}
+}
+
+static void
+leave(struct qmi_state *s)
+{
+	os_lock(&s->lock);
+	left(s);
+	os_unlock(&s->lock);
 }
 
 /* With the lock held. */
@@ -682,6 +748,7 @@ qmi_receive(void *context, uint32_t node, uint32_t port, const void *data, size_
 	struct qmi_txn **found, *txn;
 	uint16_t id, message;
 	uint8_t type;
+	bool stranger;
 
 	if (length < QMI_HEADER_SIZE || length > s->largest + QMI_HEADER_SIZE ||
 	    (size_t)(header[5] | header[6] << 8) > length - QMI_HEADER_SIZE) {
@@ -694,10 +761,33 @@ qmi_receive(void *context, uint32_t node, uint32_t port, const void *data, size_
 	type = header[0];
 	id = (uint16_t)(header[1] | header[2] << 8);
 	message = (uint16_t)(header[3] | header[4] << 8);
+	os_lock(&s->lock);
+	if (s->dead) {
+		os_unlock(&s->lock);
+		return;
+	}
+	/*
+	 * A reply is its request's only if it comes from where the request went; anything else, once the
+	 * handle is connected, only from the server it is connected to. (A number and a message id are
+	 * easily guessed by another port of the router.)
+	 */
+	found = type == QMI_RESPONSE ? find_transaction(s, NULL, id) : NULL;
+	txn = found != NULL ? *found : NULL;
+	if (txn != NULL) {
+		stranger = !txn->sent || node != txn->node || port != txn->port;
+	} else {
+		stranger = type != QMI_RESPONSE && s->connected && (node != s->peer_node || port != s->peer_port);
+	}
+	if (stranger) {
+		if (!s->said_stranger) {
+			s->said_stranger = true;
+			os_log("qmi: a message of type %u, id %#x, from %u:%u, which is not where it may come from: dropped (said once)\n",
+			    type, message, node, port);
+		}
+		os_unlock(&s->lock);
+		return;
+	}
 	if (type == QMI_RESPONSE) {
-		os_lock(&s->lock);
-		found = find_transaction(s, NULL, id);
-		txn = found != NULL ? *found : NULL;
 		if (txn != NULL && txn->message != message) {
 			/* (a reply with the number of a request of another message: not its reply, nothing decoded into it) */
 			if (!s->said_other_message) {
@@ -715,11 +805,12 @@ qmi_receive(void *context, uint32_t node, uint32_t port, const void *data, size_
 			os_unlock(&s->lock);
 			return;
 		}
-		os_unlock(&s->lock);
 		if (txn == NULL) {
+			os_unlock(&s->lock);
 			return;                         /* a reply to nothing: late, after its transaction was given up */
 		}
 	}
+	os_unlock(&s->lock);
 	to_handler(s, type, id, message, node, port, data, length);
 }
 
@@ -731,6 +822,10 @@ qmi_server(void *context, bool arrived, uint32_t service, uint32_t version, uint
 	struct qmi_service *svc, **p;
 
 	os_lock(&s->lock);
+	if (s->dead) {
+		os_unlock(&s->lock);
+		return;
+	}
 	for (p = &s->services; *p != NULL; p = &(*p)->next) {
 		if ((*p)->node == node && (*p)->port == port) {
 			break;
@@ -807,22 +902,49 @@ qmi_handle_init(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *op
 	return hakios_qmi_handle_init_transport(qmi, largest, ops, handlers, qmi_transport);
 }
 
-/* Nobody may be waiting in qmi_txn_wait() on this handle any more. */
+/*
+ * May be called while other threads use the handle: a transaction that is waited for ends with
+ * -ENETRESET, and every call that has the state is let leave it before the state is freed. (On
+ * XNU, a lock that is destroyed and freed does not wait for whoever sleeps on it.) Of two releases
+ * at once, one does it and the other returns.
+ */
 void
 qmi_handle_release(struct qmi_handle *qmi)
 {
-	struct qmi_state *s = state_of(qmi);
+	struct qmi_state *s;
 	struct qmi_service *svc;
+	struct qmi_txn *txn;
 
+	if (qmi == NULL) {
+		return;
+	}
+	os_handles_lock();
+	s = (struct qmi_state *)(void *)qmi->sock;
+	qmi->sock = NULL;                               /* from here no call finds it */
+	os_handles_unlock();
 	if (s == NULL) {
 		return;
 	}
+	os_lock(&s->lock);
+	s->dead = true;
+	while ((txn = s->transactions) != NULL) {
+		s->transactions = txn->next;
+		if (!txn->done) {
+			txn->result = -ENETRESET;
+			txn->done = true;
+		}
+		os_wake(&s->lock, txn);
+	}
+	/* (a waiter woken above; a request on its way to the router, which must not find the port closed under it) */
+	while (s->users > 0) {
+		os_wait(&s->lock, &s->users, 100);
+	}
+	os_unlock(&s->lock);
 	s->transport->close(s->port);                   /* no callback after this */
 	while ((svc = s->services) != NULL) {
 		s->services = svc->next;
 		os_free(svc, sizeof(*svc));
 	}
-	qmi->sock = NULL;
 	os_lock_destroy(&s->lock);
 	os_free(s, sizeof(*s));
 }
@@ -830,13 +952,14 @@ qmi_handle_release(struct qmi_handle *qmi)
 int
 qmi_add_lookup(struct qmi_handle *qmi, unsigned int service, unsigned int version, unsigned int instance)
 {
-	struct qmi_state *s = state_of(qmi);
+	struct qmi_state *s = enter(qmi);
 	int error;
 
 	if (s == NULL) {
 		return -EINVAL;
 	}
 	error = s->transport->lookup(s->port, service, version, instance);
+	leave(s);
 	return error > 0 ? -error : error;
 }
 
@@ -859,7 +982,7 @@ hakios_qmi_connect(struct socket *sock, uint32_t node, uint32_t port)
 int
 qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn, const struct qmi_elem_info *ei, void *structure)
 {
-	struct qmi_state *s = state_of(qmi);
+	struct qmi_state *s = enter(qmi);
 	uint16_t id;
 
 	memset(txn, 0, sizeof(*txn));
@@ -870,6 +993,11 @@ qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn, const struct qmi_elem_
 	txn->ei = ei;
 	txn->dest = structure;
 	os_lock(&s->lock);
+	if (s->dead) {
+		left(s);
+		os_unlock(&s->lock);
+		return -ENETRESET;
+	}
 	/* the next number nobody else has (0 to 65534, round and round) */
 	for (id = (uint16_t)(s->last_id + 1);; id++) {
 		if (id == 0xffff) {
@@ -879,6 +1007,7 @@ qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn, const struct qmi_elem_
 			break;
 		}
 		if (id == s->last_id) {
+			left(s);
 			os_unlock(&s->lock);
 			return -ENOMEM;                 /* 65535 of them at once */
 		}
@@ -887,6 +1016,7 @@ qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn, const struct qmi_elem_
 	txn->id = id;
 	txn->next = s->transactions;
 	s->transactions = txn;
+	left(s);
 	os_unlock(&s->lock);
 	return id;
 }
@@ -895,14 +1025,14 @@ int
 qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi_txn *txn, int msg_id, size_t largest,
     const struct qmi_elem_info *ei, const void *structure)
 {
-	struct qmi_state *s = state_of(qmi);
+	struct qmi_state *s;
 	uint32_t node, port;
 	bool connected;
 	size_t size = largest + QMI_HEADER_SIZE;
 	void *buffer;
 	int length, error;
 
-	if (s == NULL || txn == NULL) {
+	if (txn == NULL || (s = enter(qmi)) == NULL) {
 		return -EINVAL;
 	}
 	os_lock(&s->lock);
@@ -914,29 +1044,40 @@ qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi_tx
 		node = sq->sq_node;
 		port = sq->sq_port;
 	} else if (!connected) {
+		leave(s);
 		return -ENOTCONN;
 	}
 	buffer = os_alloc(size);
 	if (buffer == NULL) {
+		leave(s);
 		return -ENOMEM;
 	}
 	length = hakios_qmi_encode(QMI_REQUEST, (uint16_t)msg_id, txn->id, ei, structure, buffer, size);
 	if (length < 0) {
 		os_free(buffer, size);
+		leave(s);
 		return length;
 	}
+	/* (before it goes: the reply may come before send() returns) */
 	os_lock(&s->lock);
 	txn->message = (uint16_t)msg_id;
+	txn->node = node;
+	txn->port = port;
+	txn->sent = true;
+	error = s->dead ? ENETRESET : 0;
 	os_unlock(&s->lock);
-	error = s->transport->send(s->port, node, port, buffer, (size_t)length);
+	if (error == 0) {
+		error = s->transport->send(s->port, node, port, buffer, (size_t)length);
+	}
 	os_free(buffer, size);
+	leave(s);
 	return error > 0 ? -error : error;
 }
 
 void
 qmi_txn_cancel(struct qmi_txn *txn)
 {
-	struct qmi_state *s = state_of(txn->qmi);
+	struct qmi_state *s = enter(txn->qmi);
 	struct qmi_txn **found;
 
 	if (s == NULL) {
@@ -947,13 +1088,14 @@ qmi_txn_cancel(struct qmi_txn *txn)
 	if (found != NULL) {
 		*found = txn->next;
 	}
+	left(s);
 	os_unlock(&s->lock);
 }
 
 int
 hakios_qmi_txn_wait_ms(struct qmi_txn *txn, uint64_t milliseconds)
 {
-	struct qmi_state *s = state_of(txn->qmi);
+	struct qmi_state *s = enter(txn->qmi);
 	uint64_t now = os_now_ms(), until = now + milliseconds;
 	struct qmi_txn **found;
 	int result;
@@ -962,7 +1104,7 @@ hakios_qmi_txn_wait_ms(struct qmi_txn *txn, uint64_t milliseconds)
 		return -EINVAL;
 	}
 	os_lock(&s->lock);
-	while (!txn->done && now < until) {
+	while (!txn->done && !s->dead && now < until) {
 		os_wait(&s->lock, txn, until - now);
 		now = os_now_ms();
 	}
@@ -970,7 +1112,8 @@ hakios_qmi_txn_wait_ms(struct qmi_txn *txn, uint64_t milliseconds)
 	if (found != NULL) {
 		*found = txn->next;
 	}
-	result = txn->done ? txn->result : -ETIMEDOUT;
+	result = txn->done ? txn->result : s->dead ? -ENETRESET : -ETIMEDOUT;
+	left(s);
 	os_unlock(&s->lock);
 	return result;
 }

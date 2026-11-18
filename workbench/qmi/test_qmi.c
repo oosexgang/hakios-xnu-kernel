@@ -38,6 +38,20 @@
 
 static int checks, failures;
 
+/*
+ * The kernel's lck_mtx_destroy() does not wait for the threads asleep on the lock; glibc's
+ * pthread_cond_destroy() waits until every thread in pthread_cond_wait() on it has left. With
+ * glibc's, a handle released under a waiter would be freed only once the waiter had gone, and
+ * the address sanitizer could not see what the kernel would do. So the helpers (and these tests)
+ * get one that returns at once, as the kernel's does.
+ */
+int
+pthread_cond_destroy(pthread_cond_t *cond)
+{
+	(void)cond;
+	return 0;
+}
+
 static void
 check(bool ok, const char *format, ...)
 {
@@ -1035,6 +1049,19 @@ test_helpers(void)
 	result = hakios_qmi_txn_wait_ms(&txn, 200);
 	check(result == -EINVAL, "a reply that cannot be decoded gives %d", result);
 
+	/* a reply from another node or port than the request went to is not its reply */
+	id = qmi_txn_init(&qmi, &txn, answer_ei, &answer);
+	check(qmi_send_request(&qmi, NULL, &txn, MESSAGE_ASK, 16, ask_ei, &ask) == 0, "the request is not sent");
+	n = plain_reply(reply, router.last, 0, 0);
+	memset(&answer, 0x55, sizeof(answer));
+	router.receive(router.context, 99, 99, reply, n);
+	router.receive(router.context, SERVER_NODE, SERVER_PORT + 1, reply, n);
+	router.receive(router.context, SERVER_NODE + 1, SERVER_PORT, reply, n);
+	check(answer.resp.result == 0x5555 && !txn.done, "a reply from another node or port is taken as the request's");
+	deliver(reply, n);
+	result = hakios_qmi_txn_wait_ms(&txn, 200);
+	check(result == 14 && answer.resp.result == 0, "the reply from the server is not taken after one from elsewhere (%d)", result);
+
 	/* three at once have three numbers; two threads ask, the replies come in the other order */
 	{
 		struct qmi_txn t1, t2, t3;
@@ -1089,6 +1116,10 @@ test_helpers(void)
 		    "the indication does not reach its handler as sent");
 		check(router.sent == sent + 1, "the handler's own request did not go out");
 		seen.news_sends = false;
+		/* not from the server the handle is connected to */
+		router.receive(router.context, 99, 99, news, sizeof(news));
+		router.receive(router.context, SERVER_NODE, SERVER_PORT + 1, news, sizeof(news));
+		check(seen.news == 1, "an indication from another node or port than the server's reached the handler");
 		deliver(nobody, sizeof(nobody));
 		deliver(request_to_us, sizeof(request_to_us));          /* the same id, but a request: no handler is for that */
 		deliver(bad_news, sizeof(bad_news));
@@ -1125,8 +1156,28 @@ test_helpers(void)
 	seen.answer = 0;
 	router.server(router.context, true, 0x45, 1, 3, SERVER_NODE, SERVER_PORT);      /* (one left behind for release to free) */
 
-	qmi_handle_release(&qmi);
+	/*
+	 * Released while another thread waits for a reply that will not come: the wait ends at once,
+	 * with an error, and nothing of the handle is used after it is freed (the address sanitizer
+	 * would say so: the waiter's lock is in what is freed).
+	 */
+	{
+		struct asker waiter = { .qmi = &qmi, .number = 300 };
+		pthread_t thread;
+
+		router.peer = NULL;
+		start = now_ms();
+		pthread_create(&thread, NULL, asker_thread, &waiter);
+		usleep(100000);                         /* (it has sent its request and waits) */
+		qmi_handle_release(&qmi);
+		pthread_join(thread, NULL);
+		check(waiter.result == -ENETRESET && now_ms() - start < 1000, "a wait under a release: %d after %llu ms", waiter.result,
+		    (unsigned long long)(now_ms() - start));
+	}
 	check(router.closed == 1 && !router.open && qmi.sock == NULL, "release does not close the port");
+	check(qmi_txn_init(&qmi, &txn, NULL, NULL) == -EINVAL && hakios_qmi_txn_wait_ms(&txn, 10) == -EINVAL, "a released handle is still used");
+	qmi_handle_release(&qmi);                       /* (twice: nothing) */
+	check(router.closed == 1, "a second release closes the port again");
 	hakios_qmi_set_transport(NULL);
 }
 

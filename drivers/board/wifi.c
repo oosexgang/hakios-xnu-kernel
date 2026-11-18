@@ -3089,6 +3089,27 @@ step_exchange(void)
 #define RADIO_DATA_PATH         0x00a00000u     /* hal.h: HAL_SEQ_WCSS_UMAC_OFFSET */
 #define RADIO_COPY_ENGINES      0x01b80000u     /* hw.c: wcn6750_regs.hal_seq_wcss_umac_ce0_src_reg */
 
+/*
+ * Where the radio's registers may be, to hold what the firmware says against: the firmware's
+ * word is all ath11k goes by, and a map of whatever address it gave would be read and written as
+ * the radio's. Neither the board file nor the SoC file has the window (the tree has no node for
+ * it, see above), so it is the one the firmware has given on this SoC, 2 MB at 0x61e00000 in the
+ * first PCIe controller's memory window -- written here, once, for board/wlfw.c, board/lx.c and
+ * step 16 below. Not known for any other radio.
+ */
+#define RADIO_REGISTERS         0x61e00000u
+
+bool
+hakios_wifi_radio_window(uint64_t *physical, uint64_t *size)
+{
+	if (!hakios_board_has(HAKIOS_HAS_WIFI_WCN6750)) {
+		return false;
+	}
+	*physical = RADIO_REGISTERS;
+	*size = 4 * RADIO_WINDOW;
+	return true;
+}
+
 static bool
 step_registers(void)
 {
@@ -3113,17 +3134,17 @@ step_registers(void)
 		{ 0x00000224, "hardware version (if this chip has it where its siblings do)" },
 	};
 	static struct block radio = { "radio", 0, 0 };
-	uint64_t address = 0;
+	uint64_t address = 0, window = 0, window_size = 0;
 	uint32_t size = 0, asked = 0;
 	bool mission = false;
 
-	/*
-	 * The firmware chooses the window: it must be inside the first 4 GB (radio.phys is 32 bits) and no larger than the
-	 * 2 MB it is said to be, or the map below would cover whatever lies there.
-	 */
-	if (!hakios_wlfw_registers(&address, &size, &mission) || address > 0xffffffffull || size < 3 * RADIO_WINDOW ||
-	    size > 4 * RADIO_WINDOW || address + size > 0x100000000ull) {
+	if (!hakios_wlfw_registers(&address, &size, &mission)) {
 		printf("wifi: %u: the firmware has not said where the radio's registers are (step 15)\n", step);
+		return false;
+	}
+	/* (board/wlfw.c keeps only the window above; the map below would cover whatever lies at another) */
+	if (!hakios_wifi_radio_window(&window, &window_size) || address != window || size != window_size) {
+		printf("wifi: %u: THE RADIO'S REGISTERS ARE NOT WHERE THEY CAN BE (%#x bytes at %#llx): not mapped\n", step, size, address);
 		return false;
 	}
 	PE_parse_boot_argn("wifi_radio_read", &asked, sizeof(asked));
