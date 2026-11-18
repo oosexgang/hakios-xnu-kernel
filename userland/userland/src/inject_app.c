@@ -210,9 +210,13 @@ watched_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac
 	char line[1200];
 	int n = snprintf(line, sizeof(line), "hakios: %s: (uid %d) spawns %s", who, (int)getuid(),
 	    path != NULL ? path : "?");
+	/* (snprintf says how long the whole would have been: held to the line, or the next size left would wrap round) */
+#define LINE_HELD(n) ((n) = (n) < 0 ? 0 : (n) >= (int)sizeof(line) - 2 ? (int)sizeof(line) - 2 : (n))
+	LINE_HELD(n);
 
 	for (int i = 0; argv != NULL && argv[i] != NULL && n < (int)sizeof(line) - 40; i++) {
 		n += snprintf(line + n, sizeof(line) - (size_t)n, " %s", argv[i]);
+		LINE_HELD(n);
 	}
 	/*
 	 * The size of what it is about to move, while the file is still there: apt refuses the
@@ -228,8 +232,13 @@ watched_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac
 		} else {
 			n += snprintf(line + n, sizeof(line) - (size_t)n, " [no such file]");
 		}
+		LINE_HELD(n);
 	}
 	n += snprintf(line + n, sizeof(line) - (size_t)n, "\n");
+	LINE_HELD(n);
+	line[n] = '\n';                 /* (a line cut short still ends as one) */
+	n++;
+#undef LINE_HELD
 	say(line, (size_t)n);
 	if (apt_install(argv)) {
 		return spawn_apt_said(pid, actions, attr, argv, envp);
