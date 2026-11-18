@@ -49,15 +49,23 @@
  * byte nobody acknowledges, or a fault in the status register (under-voltage, over-current of
  * the boost or the output, over-temperature, no clock, the watchdog, over-voltage) has both
  * amplifiers powered down at once (amplifier power-down and power-down, bits 1 and 0 of 0x04)
- * and nothing more done. What is not done, compared with Android: the DSP's Awinic algorithm,
- * which protects the speakers with their calibration (aw882xx_rx_switch); in its place the
- * samples go through board/guard.c on their way here. The driver's monitor is done
- * (hakios_speaker_monitor(), below): once a second the chips' temperature and the battery's
- * voltage, and the reduction that the file's table asks for at either.
+ * and nothing more done but that. An amplifier counts as powered down only once 0x04 reads back
+ * with both bits set; until it does, the power-down is tried again whenever the amplifiers are
+ * stopped (hakios_speaker_stop()) and on a panic's way out (hakios_speaker_quiesce()), and
+ * board/sound.c sends the DSP silence in place of Darwin's sound. What is not done, compared
+ * with Android: the DSP's Awinic algorithm, which protects the speakers with their calibration
+ * (aw882xx_rx_switch); in its place the samples go through board/guard.c on their way here.
+ * The driver's monitor is done (hakios_speaker_monitor(), below): once a second the chips'
+ * temperature and the battery's voltage, and the reduction that the file's table asks for at
+ * either.
  *
  * I2C is done by hand: a pin is either pulled low or let go (and the pull-ups raise it), at 100
  * kHz at most. For each register read or written the two pins are taken from the serial engine
- * (function qup03) as GPIOs and given back as they were found right after.
+ * (function qup03) as GPIOs and given back as they were found right after. A bus that is not at
+ * rest is not touched -- but for a power-down: an amplifier cut off in the middle of a byte (by a
+ * panic on another CPU, say) holds the data line low, and is clocked until it lets go
+ * (i2c_gpio_unwedge()), then the power-down done. On a panic's way out the pins are given back as
+ * the transaction it stopped found them.
  *
  * Register layouts: the files above, and Linux's sound/soc/codecs/aw88261.c; pins:
  * drivers/pinctrl/qcom/pinctrl-yupik.c of the same kernel and the phone's own device tree.
@@ -129,11 +137,32 @@ show_pins(void)
 
 /* ---- I2C by hand ----------------------------------------------------------------------------------- */
 
+static bool powering_down;              /* both are being powered down at once: a bus held low is clocked free first */
+static bool hushed;                     /* a power-down tried again and again: what fails is not said every time */
+static volatile bool in_transaction;    /* the pins are taken (on a panic's way out: by a CPU that was stopped there) */
+
+/*
+ * The bus taken for one transaction; false if it is not at rest. Only for a power-down, a bus whose data line
+ * is held low -- an amplifier cut off in the middle of a byte, by a transfer that a panic stopped on another
+ * CPU, or by one of ours -- is clocked until it lets go (i2c_gpio_unwedge()); otherwise nothing is driven.
+ */
 static bool
 bus_take(void)
 {
+	unsigned clocks;
+
 	if (i2c_gpio_take(&i2c_bus)) {
+		in_transaction = true;
 		return true;
+	}
+	if (powering_down && i2c_gpio_unwedge(&i2c_bus, &clocks)) {
+		say("speaker: the I2C bus was held low: an amplifier let go of the data line after %u clocks\n", clocks);
+		in_transaction = true;
+		return true;
+	}
+	if (!hushed) {
+		say("speaker: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): %s\n", PIN_SDA, i2c_gpio_level(PIN_SDA),
+		    PIN_SCL, i2c_gpio_level(PIN_SCL), powering_down ? "nine clocks did not free it" : "not touched");
 	}
 	return false;
 }
@@ -142,6 +171,7 @@ static void
 bus_give_back(void)
 {
 	i2c_gpio_give_back(&i2c_bus);
+	in_transaction = false;
 }
 
 /* A 16-bit register of an Awinic amplifier, most significant byte first. Returns false if nobody answers. */
@@ -151,8 +181,6 @@ register_read(uint8_t address, uint8_t reg, uint16_t *value)
 	bool answered;
 
 	if (!bus_take()) {
-		say("speaker: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-		    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
 		return false;
 	}
 	i2c_gpio_start(&i2c_bus);
@@ -176,8 +204,6 @@ register_write(uint8_t address, uint8_t reg, uint16_t value)
 	bool answered;
 
 	if (!bus_take()) {
-		say("speaker: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-		    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
 		return false;
 	}
 	i2c_gpio_start(&i2c_bus);
@@ -275,6 +301,8 @@ struct amplifier {
 	uint16_t volume;                /* where it is now */
 	uint16_t volume_high;           /* the profile's bits 15:10 of 0x05, which the volume leaves as they are */
 	bool prepared, started;
+	bool down_pending;              /* told to power down, and not yet read back so: tried again (stop, quiesce) */
+	unsigned down_tries;
 	/* the monitor's tables (from the file) and what was last seen */
 	struct { int16_t min, max; uint16_t less; } temp_rows[MONITOR_ROWS], vbat_rows[MONITOR_ROWS];
 	unsigned temp_count, vbat_count;
@@ -287,7 +315,7 @@ static struct amplifier amplifiers[2] = {
 	{ .device = 0, .temp_row = -1, .vbat_row = -1 },
 	{ .device = 1, .temp_row = -1, .vbat_row = -1 },
 };
-static bool broken;                     /* something went wrong: both have been powered down, nothing more is done */
+static bool broken;                     /* something went wrong: both are powered down (or that is tried again), nothing more is done */
 
 /* The board's speaker { } taken: the bus's pins, each amplifier's address. False if the board file has none. */
 static bool
@@ -496,30 +524,79 @@ acf_profiles(const uint8_t *acf, uint64_t size)
 	return true;
 }
 
+/*
+ * One amplifier powered down at once: amplifier power-down, power-down and mute set in 0x04. It counts as
+ * stopped only once 0x04 reads back with both power-down bits set; until then it is a power-down still to
+ * be done, which hakios_speaker_stop() and hakios_speaker_quiesce() try again.
+ */
+static bool
+power_down_one(struct amplifier *a)
+{
+	uint16_t value = 0, after = 0;
+	bool down;
+
+	a->down_pending = true;
+	a->down_tries++;
+	if (!register_read(a->address, AW_SYSCTRL, &value)) {
+		value = a->sysctrl;
+	}
+	value |= SYSCTRL_PWDN | SYSCTRL_AMPPD | SYSCTRL_HMUTE;
+	if (!register_write(a->address, AW_SYSCTRL, value) || !register_read(a->address, AW_SYSCTRL, &after)) {
+		if (!hushed) {
+			say("speaker: the amplifier %s: 0x04 <- 0x%04x NOT ACKNOWLEDGED: NOT KNOWN TO BE POWERED DOWN, to be tried again\n",
+			    a->where, value);
+		}
+		return false;
+	}
+	down = (after & (SYSCTRL_PWDN | SYSCTRL_AMPPD)) == (SYSCTRL_PWDN | SYSCTRL_AMPPD);
+	say("speaker: the amplifier %s: 0x04 <- 0x%04x, reads 0x%04x%s\n", a->where, value, after, down ? "" :
+	    ": NOT POWERED DOWN, to be tried again");
+	if (!down) {
+		return false;
+	}
+	if (a->down_tries > 1) {
+		say("speaker: THE AMPLIFIER %s IS POWERED DOWN, at try %u\n", a->where, a->down_tries);
+	}
+	a->down_pending = false;
+	a->down_tries = 0;
+	a->started = false;
+	return true;
+}
+
 /* Both powered down at once, without the driver's ceremony: a fault, or a value that did not stick. */
 static void
 power_down_now(const char *why)
 {
 	broken = true;
 	say("speaker: %s: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE (0x04: amplifier power-down and power-down set)\n", why);
+	powering_down = true;
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
-		uint16_t value = 0, after = 0;
 
-		if (!a->prepared && !a->started) {
+		if (!a->prepared && !a->started && !a->down_pending) {
 			continue;
 		}
-		if (!register_read(a->address, AW_SYSCTRL, &value)) {
-			value = a->sysctrl;
-		}
-		value |= SYSCTRL_PWDN | SYSCTRL_AMPPD | SYSCTRL_HMUTE;
-		if (!register_write(a->address, AW_SYSCTRL, value) || !register_read(a->address, AW_SYSCTRL, &after)) {
-			say("speaker: the amplifier %s: 0x04 <- 0x%04x NOT ACKNOWLEDGED\n", a->where, value);
-		} else {
-			say("speaker: the amplifier %s: 0x04 <- 0x%04x, reads 0x%04x\n", a->where, value, after);
-		}
-		a->started = false;
+		(void)power_down_one(a);
 	}
+	powering_down = false;
+}
+
+/* The power-downs that did not read back, tried again: said the first few times, and when one takes. */
+static void
+power_down_again(void)
+{
+	powering_down = true;
+	for (unsigned i = 0; i < 2; i++) {
+		struct amplifier *a = &amplifiers[i];
+
+		if (!a->down_pending) {
+			continue;
+		}
+		hushed = a->down_tries >= 3;
+		(void)power_down_one(a);
+	}
+	hushed = false;
+	powering_down = false;
 }
 
 /* One register written, said and read back; false (and both powered down) if it did not stick. */
@@ -892,7 +969,9 @@ hakios_speaker_monitor(bool tell)
 			continue;
 		}
 		if (!get(a, AW_VBAT, &vbat) || !get(a, AW_TEMP, &temp)) {
-			continue;
+			/* (as a status that could not be read, faulty(): a byte nobody acknowledges) */
+			power_down_now("an amplifier's temperature or the battery could not be read");
+			return wanted;
 		}
 		a->temps[a->looks % 3] = (temp & 0x200) ? (int)(temp & 0x3ff) - 0x400 : (int)(temp & 0x3ff);
 		a->vbats[a->looks % 3] = (int)(vbat & 0x3ff) * 6025 / 1023;
@@ -910,9 +989,10 @@ hakios_speaker_monitor(bool tell)
 			wanted = less;
 		}
 		if (tell) {
-			(void)get(a, AW_PVDD, &pvdd);
-			(void)get(a, AW_ISNDAT, &isn);
-			(void)get(a, AW_VSNDAT, &vsn);
+			if (!get(a, AW_PVDD, &pvdd) || !get(a, AW_ISNDAT, &isn) || !get(a, AW_VSNDAT, &vsn)) {
+				power_down_now("an amplifier's supply or sense could not be read");
+				return wanted;
+			}
 			say("speaker: the amplifier %s: %d degrees, the battery %d mV (0x%03x, 0x%03x; supply 0x%03x, sense 0x%04x 0x%04x): "
 			    "%u.%03u dB less\n", a->where, t, v, temp, vbat, pvdd, isn, vsn, less / 8, less % 8 * 125);
 		}
@@ -924,7 +1004,8 @@ void
 hakios_speaker_stop(void)
 {
 	if (broken) {
-		return;                 /* (already powered down) */
+		power_down_again();     /* (already powered down, but for one that was not read back so) */
+		return;
 	}
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
@@ -958,16 +1039,28 @@ hakios_speaker_stop(void)
 void
 hakios_speaker_quiesce(void)
 {
-	bool any = false;
+	bool any = false, interrupted;
+	struct i2c_gpio as_found;
 
 	for (unsigned i = 0; i < 2; i++) {
-		any |= amplifiers[i].started;
+		any |= amplifiers[i].started || amplifiers[i].down_pending;
 	}
 	if (!any || tlmm == 0) {
 		return;
 	}
 	leaving = true;
+	hushed = false;                 /* (as a power-down tried again on a CPU the panic stopped may have left it) */
+	/*
+	 * A transaction that the panic stopped on another CPU has the pins as GPIOs, and perhaps an amplifier holding
+	 * the data line in the middle of a byte (clocked free by the power-down's first take). What it found them as
+	 * -- the serial engine's -- is what they are given back as at the end, not what this one finds.
+	 */
+	interrupted = in_transaction;
+	as_found = i2c_bus;
 	power_down_now("the kernel is on its way out");
+	if (interrupted) {
+		i2c_gpio_give_back(&as_found);
+	}
 }
 
 /* ---- speaker_probe=N: a look ------------------------------------------------------------------------ */

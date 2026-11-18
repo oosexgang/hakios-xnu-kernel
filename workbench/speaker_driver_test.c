@@ -5,7 +5,8 @@
  * look, speaker_probe=1 and 2, which is to read and nothing else; and preparing the amplifiers for
  * sound from Awinic's configuration file, where a wrong value could reach a speaker -- what is
  * written, in which order; starting them, the volume, stopping; and that both are powered down
- * at once when anything is not as expected.
+ * at once when anything is not as expected -- and the power-down tried again until it reads back,
+ * a bus held low clocked free for it.
  *
  *   speaker_driver_test SCENARIO     one scenario a process: the driver keeps its state in statics
  */
@@ -741,17 +742,26 @@ volume_and_stop(void)
 	never();
 }
 
-/* the bus stops answering as the amplifiers are stopped: neither is left started (unmuted, powered), and it is said */
+/*
+ * the bus stops answering as the amplifiers are stopped: it is said, nothing more is asked of them -- and they are not
+ * taken for powered down: once they answer again, the next stop powers both down
+ */
 static void
 stop_without_an_answer(void)
 {
 	running();
 	device.absent = true;
 	hakios_speaker_stop();
-	CHECK(logged("0x04 could not be read: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
-	CHECK(!amplifiers[0].started && !amplifiers[1].started, "neither left started: %d %d", amplifiers[0].started,
-	    amplifiers[1].started);
-	CHECK(!hakios_speaker_volume(0, 0), "and nothing more asked of them");
+	CHECK(logged("0x04 could not be read: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE") &&
+	    logged("NOT KNOWN TO BE POWERED DOWN"), "said: %s", log_text);
+	CHECK(!hakios_speaker_volume(0, 0) && !hakios_speaker_healthy(), "and nothing more asked of them");
+	CHECK(!down(device.reg) && !down(device.reg_b), "(the model: neither heard the power-down)");
+	device.absent = false;
+	hakios_speaker_stop();
+	CHECK(down(device.reg) && down(device.reg_b), "powered down once they answer: %#x, %#x", reads(device.reg, 0x04),
+	    reads(device.reg_b, 0x04));
+	CHECK(logged("THE AMPLIFIER 0x35, slot 0 IS POWERED DOWN, at try 2"), "said: %s", log_text);
+	never();
 }
 
 /* a slow fade, as sound.c asks for one at level 3 (a step every 50 ms): the status looked at after every step, and a
@@ -977,6 +987,157 @@ run_ends(void)
 	never();
 }
 
+/* how many times the log has a line with `text' in it */
+static unsigned
+times_logged(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = strstr(log_text, text); at != NULL; at = strstr(at + 1, text)) {
+		n++;
+	}
+	return n;
+}
+
+/*
+ * A power-down whose write nobody acknowledges (the amplifiers stopped answering as a fault was seen) is not taken
+ * for done: the amplifiers' stop tries it again, until 0x04 reads back powered down -- and then not again.
+ */
+static void
+power_down_tried_again_by_stop(void)
+{
+	running();
+	CHECK(hakios_speaker_volume(0, 0), "playing: %s", log_text);
+	device.absent = true;
+	CHECK(!hakios_speaker_healthy(), "a status that cannot be read is a fault: %s", log_text);
+	CHECK(logged("NOT ACKNOWLEDGED: NOT KNOWN TO BE POWERED DOWN"), "said: %s", log_text);
+	hakios_speaker_stop();
+	CHECK(!down(device.reg) && !down(device.reg_b), "(the model: still nobody there)");
+	device.absent = false;
+	hakios_speaker_stop();
+	CHECK(down(device.reg) && down(device.reg_b) && (reads(device.reg, 0x04) & reads(device.reg_b, 0x04) & 0x100),
+	    "both powered down and muted at last: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	CHECK(logged("THE AMPLIFIER 0x34, slot 1 IS POWERED DOWN, at try 3"), "said: %s", log_text);
+	{
+		unsigned before = writes_into[0] + writes_into[1];
+
+		hakios_speaker_stop();
+		hakios_speaker_quiesce();
+		CHECK(writes_into[0] + writes_into[1] == before, "nothing more written once they read back powered down");
+	}
+	never();
+}
+
+/* a power-down that is acknowledged but does not read back powered down (0x04 kept nothing): tried again too */
+static void
+power_down_that_does_not_read_back(void)
+{
+	running();
+	deaf_register = 0x04;                   /* (the first amplifier's 0x04 keeps what it had: running) */
+	wide(device.reg_b, 0x01, 0x0311 | 1u << 3);
+	CHECK(!hakios_speaker_healthy(), "the fault is seen: %s", log_text);
+	CHECK(logged("NOT POWERED DOWN, to be tried again") && down(device.reg_b) && !down(device.reg), "said: %s", log_text);
+	deaf_register = -1;
+	hakios_speaker_stop();
+	CHECK(down(device.reg), "the first powered down when it is tried again: %#x", reads(device.reg, 0x04));
+	never();
+}
+
+/* on a panic's way out after a power-down that was not acknowledged: tried again, though neither counts as running */
+static void
+power_down_tried_again_on_the_way_out(void)
+{
+	running();
+	device.absent = true;
+	CHECK(!hakios_speaker_healthy(), "a status that cannot be read is a fault: %s", log_text);
+	device.absent = false;
+	hakios_speaker_quiesce();
+	CHECK(logged("the kernel is on its way out: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	never();
+}
+
+/* an amplifier cut off in the middle of a byte holds the data line: clocked free, and both powered down */
+static void
+bus_held_in_the_middle_of_a_byte(void)
+{
+	running();
+	CHECK(hakios_speaker_volume(0, 0), "playing: %s", log_text);
+	device.midbyte = 5;
+	lines();
+	device.was_sda = false;
+	hakios_speaker_stop();
+	CHECK(logged("the I2C bus is not at rest (gpio12 reads 0, gpio13 reads 1): not touched") &&
+	    logged("0x04 could not be read: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK(logged("the I2C bus was held low: an amplifier let go of the data line after 5 clocks"), "clocked free: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	never();
+}
+
+/*
+ * The data line held for good: the power-down is tried again at every stop, said the first few times only, and once
+ * the line is let go it is done.
+ */
+static void
+bus_held_for_good(void)
+{
+	running();
+	device.stuck = true;
+	lines();
+	device.was_sda = false;
+	for (int stop = 0; stop < 20; stop++) {
+		hakios_speaker_stop();
+	}
+	CHECK(logged("nine clocks did not free it"), "said: %s", log_text);
+	CHECK(times_logged("nine clocks did not free it") <= 12, "not said at every try: %u times", times_logged("nine clocks did not free it"));
+	CHECK(!down(device.reg) && !down(device.reg_b), "(the model: nothing reached them)");
+	device.stuck = false;
+	lines();
+	hakios_speaker_stop();
+	CHECK(down(device.reg) && down(device.reg_b), "both are down once it is let go: %#x, %#x", reads(device.reg, 0x04),
+	    reads(device.reg_b, 0x04));
+	never();
+}
+
+/*
+ * A panic while another CPU was in the middle of a transaction, an amplifier holding the data line in the middle of a
+ * byte: clocked free, both powered down, and the pins given back to the serial engine as that transaction found them.
+ */
+static void
+panic_in_the_middle_of_a_transaction(void)
+{
+	running();
+	CHECK(bus_take(), "(the other CPU's transaction)");
+	i2c_gpio_start(&i2c_bus);
+	i2c_gpio_write(&i2c_bus, (uint8_t)(0x35 << 1));
+	device.midbyte = 3;
+	lines();
+	device.was_sda = false;
+	hakios_speaker_quiesce();
+	CHECK(logged("the kernel is on its way out: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK(logged("the I2C bus was held low"), "clocked free: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	never();
+}
+
+/* the monitor cannot read an amplifier's temperature or the battery: a byte nobody acknowledges, both powered down */
+static void
+monitor_without_an_answer(void)
+{
+	running();
+	measures(device.reg, 25, 4000);
+	measures(device.reg_b, 25, 4000);
+	CHECK(hakios_speaker_monitor(false) == 0, "a look: %s", log_text);
+	device.absent = true;
+	hakios_speaker_monitor(false);
+	CHECK(logged("could not be read: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	device.absent = false;
+	CHECK(!hakios_speaker_healthy() && !hakios_speaker_volume(0, 0), "and nothing more asked of them");
+	hakios_speaker_stop();
+	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	never();
+}
+
 /* a board that does not list the part, and a chip whose file does not say where the pins are */
 static void
 not_listed(void)
@@ -1059,6 +1220,12 @@ main(int argc, char **argv)
 		{ "status_never_ready", status_never_ready },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
 		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "monitor_size_that_wraps", monitor_size_that_wraps }, { "run_ends", run_ends }, { "not_listed", not_listed },
+		{ "power_down_tried_again_by_stop", power_down_tried_again_by_stop },
+		{ "power_down_that_does_not_read_back", power_down_that_does_not_read_back },
+		{ "power_down_tried_again_on_the_way_out", power_down_tried_again_on_the_way_out },
+		{ "bus_held_in_the_middle_of_a_byte", bus_held_in_the_middle_of_a_byte }, { "bus_held_for_good", bus_held_for_good },
+		{ "panic_in_the_middle_of_a_transaction", panic_in_the_middle_of_a_transaction },
+		{ "monitor_without_an_answer", monitor_without_an_answer },
 		{ "acf_edges", acf_edges }, { "eight_bit_numbers", eight_bit_numbers }, { "eight_bit_values", eight_bit_values },
 		{ "a_register_fewer", a_register_fewer },
 	};

@@ -70,7 +70,8 @@ bool hakios_speaker_prepare(const uint8_t *acf, uint64_t size);       /* found, 
 bool hakios_speaker_start(void);       /* powered up and unmuted at the lowest volume: only while the I2S clock runs */
 bool hakios_speaker_volume(uint32_t below, uint32_t step_ms); /* below Android's level, in eighths of a dB; 6 dB a step */
 bool hakios_speaker_healthy(void);     /* no fault reported; on one, both are powered down at once */
-void hakios_speaker_stop(void);        /* faded out, muted, powered down, in Android's order */
+void hakios_speaker_stop(void);        /* faded out, muted, powered down, in Android's order; after a power-down at once
+                                         * that did not read back, that tried again */
 void hakios_speaker_quiesce(void);     /* powered down at once, without sleeping: on a panic's way out */
 /* the amplifiers' own temperature and battery voltage read (every second while they play): the reduction they call for */
 uint32_t hakios_speaker_monitor(bool tell);
@@ -79,7 +80,8 @@ uint32_t hakios_speaker_monitor(bool tell);
  * The speakers' guard (bsd/dev/board/guard.c): what the samples go through in the feeder on their
  * way to the amplifiers, for want of the DSP's speaker protection. Levels in eighths of a dB.
  */
-#define HAKIOS_GUARD_SILENT    0xffffffffu     /* the amplifiers are off: nothing reaches the speakers */
+#define HAKIOS_GUARD_SILENT    0xffffffffu     /* nothing reaches the speakers (the amplifiers off, or given up on and
+                                                 * sent silence): nothing is held back */
 struct hakios_guard_report {
 	uint32_t blocks, rms_blocks, fast_blocks, slow_blocks;  /* blocks done, and in how many each average held the level down */
 	uint32_t limited_frames;        /* frames in which the peak limiter turned the level down */
