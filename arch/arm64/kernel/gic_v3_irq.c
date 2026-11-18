@@ -140,16 +140,20 @@ gic_mask(uint32_t intid)
 {
 	if (intid < 32) {
 		gic_write32(gicr_cpu_base[cpu_number()] + GICR_ICENABLER0, 1u << intid);
-	} else {
+	} else if (intid < GIC_INTID_SPURIOUS_MIN) {
 		gic_write32(gicd_base + GICD_ICENABLER(intid / 32), 1u << (intid % 32));
 	}
+	/*
+	 * (an extended SPI or an LPI the firmware left enabled is not one of these registers': written as if it were, it
+	 * would land on others -- the active or the priority registers -- or past the distributor's mapping. Only counted.)
+	 */
 }
 
 /*
  * A software-generated interrupt for the processor with that MPIDR (its two
  * low affinity fields, as in the device tree's "reg").
  * ICC_SGI1R_EL1: Aff1 in [23:16], the interrupt in [27:24], and in [15:0] a
- * bit for every Aff0 addressed -- which is why Aff0 has to be below 16.
+ * bit for every Aff0 addressed within the range of sixteen RS in [47:44] says.
  */
 static void
 gic_send_sgi(uint32_t phys_id, uint32_t sgi)
@@ -157,7 +161,9 @@ gic_send_sgi(uint32_t phys_id, uint32_t sgi)
 	uint64_t aff0 = phys_id & 0xff, aff1 = (phys_id >> 8) & 0xff, aff2 = (phys_id >> 16) & 0xff;
 
 	/* (Aff2 in [39:32]: cluster affinity level 2) */
-	__builtin_arm_wsr64("ICC_SGI1R_EL1", ((uint64_t)sgi << 24) | (aff2 << 32) | (aff1 << 16) | (1ULL << (aff0 & 15)));
+	/* (an Aff0 of 16 or more: its range of sixteen in RS, else the signal goes to another core, or to none) */
+	__builtin_arm_wsr64("ICC_SGI1R_EL1", ((aff0 >> 4) << 44) | ((uint64_t)sgi << 24) | (aff2 << 32) | (aff1 << 16) |
+	    (1ULL << (aff0 & 15)));
 	__builtin_arm_isb(ISB_SY);
 }
 
