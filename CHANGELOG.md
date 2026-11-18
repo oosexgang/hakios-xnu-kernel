@@ -204,6 +204,17 @@ tags yet, so the current work is one section.
   version across an exec, and with it the audit token a setuid program would then have; a panic inside the panic's own
   logging logged again; a boot-arg memory disk of 4 GB or more was sized as nothing. An SMEM item past the 256th of its
   partition is found; a sealed APFS node's hash is checked apart from the Fletcher checksum's flag.
+- Process 1 and the data volume's store: a long root_apfs= boot argument, a long name in a walked tree or a long line
+  of etc/var.skel overran init's buffers; background jobs were left as zombies; dark=1 and btnolpcore=1 were written
+  before the store was restored over them. The store's save opened files and directories through symbolic links
+  swapped in after it had looked (a file of root's saved with another's owner), took an attribute named as its own
+  access control list from whoever could write the file, and saved a directory too big for it as nothing; it fails
+  the save instead.
+- The camera's user side: auto-exposure stopped for good on the two sensors whose most gain is under 16x; a frame of
+  another shape than the buffer was sized for was read past its end; a worker that ended by itself left the stream
+  marked running, so it never started again; a photograph dropped for want of a buffer was counted as given. The
+  brightness hook's "off" at the end of a ramp darkened the panel after it had been turned on again, and the tweak
+  loader's filters matched as Substrate's do not (Bundles against the main bundle only, Mode inverted).
 
 ### For whoever works on the project
 
