@@ -29,6 +29,10 @@ in_image(const char *path)
 {
 	static char buf[256];
 
+	if (strlen(base) + strlen(path) >= sizeof(buf)) {
+		buf[0] = 0;             /* (a line of etc/var.skel longer than a path can be: no path, not memory past this one) */
+		return buf;
+	}
 	strcpy(buf, base);
 	strcpy(buf + strlen(buf), path);
 	return buf;
@@ -148,7 +152,7 @@ synthetic_dir(const char *path)
 static void
 mount_cryptex(const char *name, const char *container, const char *flashdev)
 {
-	char at[64], spec[128], what[200];
+	char at[64], spec[200], what[200];
 	int err;
 
 	strcpy(at, join("/private/preboot/Cryptexes/", name, ""));
@@ -183,6 +187,11 @@ flash_root(const char *dev)
 	int fd, ok, apps = 0, bound = 0;
 
 	printf("\n-- the Darwin root volume on /dev/%s as the root --\n", dev);
+	if (strlen(dev) + strlen("/dev/") >= sizeof(devpath)) {
+		/* (the boot argument is up to 127 characters: one that a device's name cannot be is not copied over the stack) */
+		check(0, "the root_apfs= device's name is longer than a device's");
+		return;
+	}
 	strcpy(devpath, join("/dev/", dev, ""));
 	ok = mount("apfs", "/flash", MNT_RDONLY, devpath) == 0;
 	if (!ok) {
@@ -361,8 +370,15 @@ list_tree(const char *path, int depth)
 			char full[256], mode[12], target[128];
 			struct stat st;
 
+			if (de->d_reclen == 0) {
+				break;                  /* (a record of no length: the walk would never move on) */
+			}
 			at += de->d_reclen;
 			if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+				continue;
+			}
+			if (strlen(path) + 1 + strlen(de->d_name) >= sizeof(full)) {
+				printf("  %s/%s: a path longer than %zu: not looked at\n", path, de->d_name, sizeof(full) - 1);
 				continue;
 			}
 			strcpy(full, path);
