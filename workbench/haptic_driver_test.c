@@ -133,24 +133,26 @@ hakios_wifi_file(const char *name, uint64_t *size)
 	return waveforms;
 }
 
+/* ... each waveform `lengths[w]' bytes long, or `each' for all of them when there is no `lengths' */
 static void
-make_waveforms(unsigned count, unsigned each)
+make_waveforms_of(unsigned count, unsigned each, const unsigned *lengths)
 {
-	unsigned at = 4, first = 0x0800 + 1 + 4 * count, sum = 0;
+	unsigned at = 4, start = 0x0800 + 1 + 4 * count, sum = 0;
 
 	waveforms[2] = 0x08;
 	waveforms[3] = 0x00;
 	waveforms[at++] = 0x01;
 	for (unsigned w = 0; w < count; w++) {
-		unsigned start = first + w * each, end = start + each - 1;
+		unsigned length = lengths != NULL ? lengths[w] : each, end = start + length - 1;
 
 		waveforms[at++] = (uint8_t)(start >> 8);
 		waveforms[at++] = (uint8_t)start;
 		waveforms[at++] = (uint8_t)(end >> 8);
 		waveforms[at++] = (uint8_t)end;
+		start = end + 1;
 	}
 	for (unsigned w = 0; w < count; w++) {
-		for (unsigned i = 0; i < each; i++) {
+		for (unsigned i = 0; i < (lengths != NULL ? lengths[w] : each); i++) {
 			waveforms[at++] = (uint8_t)(w * 31 + i * 7);
 		}
 	}
@@ -160,6 +162,12 @@ make_waveforms(unsigned count, unsigned each)
 	waveforms[0] = (uint8_t)(sum >> 8);
 	waveforms[1] = (uint8_t)sum;
 	waveforms_size = at;
+}
+
+static void
+make_waveforms(unsigned count, unsigned each)
+{
+	make_waveforms_of(count, each, NULL);
 }
 void hakios_haptic_init(void);
 void hakios_haptic_quiesce(void);
@@ -584,6 +592,70 @@ a_tap_for_darwin(void)
 	CHECK(!logged("haptic: vibration"), "a tap, not a vibration");
 }
 
+/*
+ * Android's waveforms of different lengths: the third the shortest of the short ones, the eleventh (the looped one,
+ * not a tap's) shorter still
+ */
+static const unsigned uneven[11] = { 40, 30, 12, 50, 20, 30, 30, 30, 30, 30, 8 };
+
+/* haptic_tap_gain=0x57: a loud tap and a soft one, each at 0x57, both the shortest short waveform */
+static void
+a_tap_at_a_fixed_gain(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms_of(11, 0, uneven);
+	boot_args = "haptic=5 haptic_tap_gain=0x57";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	CHECK(logged("haptic: taps at the fixed gain 0x57 (haptic_tap_gain), as waveform 3, the shortest (12 samples"),
+	    "the tap chosen by its length, and said: %s", log_text);
+	darwin_plays(30000, 20);
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	CHECK(logged("haptic: tap 1: Darwin's waveform peaks at 30000 of 32768: Android's waveform 3 at gain 0x57"), "said: %s",
+	    log_text);
+	CHECK(device.reg[0x0a] == 3 && device.reg[0x12] == 0 && device.reg[0x07] == 0x57, "waveform 3, once, at 0x57: %u %#x %#x",
+	    device.reg[0x0a], device.reg[0x12], device.reg[0x07]);
+	usleep(150000);                         /* (a pause: the next is a tap of its own) */
+	darwin_plays(1500, 20);
+	WAIT_FOR(logged("haptic: tap 2:"), 2000);
+	CHECK(logged("haptic: tap 2: Darwin's waveform peaks at 1500 of 32768: Android's waveform 3 at gain 0x57"),
+	    "a soft one no softer: %s", log_text);
+	CHECK(device.reg[0x07] == 0x57 && !logged("haptic: vibration"), "the same gain, taps only: %#x", device.reg[0x07]);
+}
+
+/* without haptic_tap_gain the same file plays as before: waveform 1, at gain_for()'s gain */
+static void
+a_tap_by_default_unchanged(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms_of(11, 0, uneven);
+	boot_args = "haptic=5";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	darwin_plays(20000, 20);
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	CHECK(logged("haptic: tap 1: Darwin's waveform peaks at 20000 of 32768: Android's waveform 1 at gain 0x80"), "said: %s",
+	    log_text);
+	CHECK(device.reg[0x0a] == 1 && device.reg[0x07] == 0x80, "waveform 1 at 0x80: %u %#x", device.reg[0x0a], device.reg[0x07]);
+	CHECK(!logged("haptic_tap_gain"), "nothing said of a fixed gain: %s", log_text);
+}
+
+/* a fixed gain above Android's is held to Android's */
+static void
+a_tap_gain_bounded(void)
+{
+	phone("phone-video", 0x9270);
+	make_waveforms_of(11, 0, uneven);
+	boot_args = "haptic=5 haptic_tap_gain=0x200";
+	hakios_haptic_init();
+	WAIT_FOR(logged("THE MOTOR PLAYS WHAT DARWIN PLAYS"), 20000);
+	CHECK(logged("haptic: haptic_tap_gain=0x200 is above Android's gain: 0x80"), "said: %s", log_text);
+	darwin_plays(1500, 20);
+	WAIT_FOR(logged("haptic: tap 1:"), 2000);
+	CHECK(logged("Android's waveform 3 at gain 0x80") && device.reg[0x07] == 0x80, "at Android's gain, no more: %#x",
+	    device.reg[0x07]);
+}
+
 /* Darwin's waveform a sample a write, the least there is: heard all the same */
 static void
 a_sample_at_a_time(void)
@@ -860,6 +932,8 @@ main(int argc, char **argv)
 		{ "a_sample_at_a_time", a_sample_at_a_time }, { "pretended", pretended },
 		{ "no_waveforms_nothing_played", no_waveforms_nothing_played }, { "waveforms_corrupt_nothing_played", waveforms_corrupt_nothing_played },
 		{ "an_effect_cut_on_a_slow_bus", an_effect_cut_on_a_slow_bus }, { "a_fault_after_a_tap", a_fault_after_a_tap },
+		{ "a_tap_at_a_fixed_gain", a_tap_at_a_fixed_gain }, { "a_tap_by_default_unchanged", a_tap_by_default_unchanged },
+		{ "a_tap_gain_bounded", a_tap_gain_bounded },
 	};
 
 	if (argc < 2) {

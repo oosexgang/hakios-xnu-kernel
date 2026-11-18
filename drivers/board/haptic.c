@@ -40,6 +40,16 @@
  *              again. The gain follows how loud Darwin's waveform is: Android's own (0x80) from a third
  *              of full scale up, five eighths of it for the softest, never above it (gain_for()).
  *
+ *   haptic_tap_gain=N  with 5: every tap at this one gain (1..0x80, Android's; more is taken as 0x80), whatever
+ *              Darwin's loudness, and as the shortest of Android's short waveforms (1..10, by their lengths
+ *              in the file), started as soon as Darwin's waveform is heard. 0, the default: taps as above.
+ *              Vibrations are played as above either way. A tap chosen by the first milliseconds of
+ *              Darwin's waveform comes out strong or weak by chance, a tap of 23 to 35 ms is felt as a
+ *              buzz rather than a click, and so is the short one played strong: one short tick at a low
+ *              fixed gain is what felt like a click. After the OnePlus Nord 2 port of iOS
+ *              (frxncyyy/ios-denniz, its haptic pieces 0611 to 0618, the finding only), whose user settled
+ *              on an 11.8 ms tick at gain 0x57 for an AW8697.
+ *
  *   4 and 5 play Android's waveforms only once they are loaded: without the file (or with one that does
  *   not add up) nothing is played, and that is said -- not whatever the chip's RAM holds after its reset.
  *
@@ -74,6 +84,8 @@ extern void HakiosHapticsGone(void);
 static vm_offset_t tlmm;
 static uint32_t level;
 static bool broken, released, leaving;
+static uint32_t tap_gain;                       /* haptic_tap_gain=: every tap's gain, 0 for gain_for()'s */
+static unsigned tap_waveform = 1;               /* the waveform a tap plays: 1, or with tap_gain the shortest */
 
 /* every line to the loader's log as well (and to the console when that may be written) */
 HAKIOS_DEFINE_SAY(!leaving && ml_get_interrupts_enabled())
@@ -438,6 +450,29 @@ wait_standby(unsigned ms)
 }
 
 /*
+ * With haptic_tap_gain=: the shortest of Android's short waveforms (1..10; the first of them on a tie) for every
+ * tap. The RAM's contents begin with a version byte, then each waveform's start and end address, two bytes each.
+ */
+static void
+choose_tap(const uint8_t *file, uint64_t size, uint32_t base)
+{
+	uint32_t first = (uint32_t)(file[5] << 8 | file[6]), shortest = 0;
+	unsigned count = first > base ? (first - base - 1) / 4 : 0;
+
+	for (unsigned w = 1; w <= 10 && w <= count && 5 + 4ull * w <= size; w++) {
+		const uint8_t *entry = file + 5 + 4 * (w - 1);
+		uint32_t start = (uint32_t)(entry[0] << 8 | entry[1]), end = (uint32_t)(entry[2] << 8 | entry[3]);
+
+		if (end >= start && (shortest == 0 || end - start + 1 < shortest)) {
+			shortest = end - start + 1;
+			tap_waveform = w;
+		}
+	}
+	say("haptic: taps at the fixed gain 0x%02x (haptic_tap_gain), as waveform %u, the shortest (%u samples, about %u ms "
+	    "at 24 kHz)\n", tap_gain, tap_waveform, shortest, (shortest + 12) / 24);
+}
+
+/*
  * Android's waveforms into the chip's RAM: the file is a checksum (16 bits, of all that follows), the
  * address the RAM's contents begin at (0x0800), and those contents -- a version byte, the start and end
  * address of each waveform, the waveforms. Written through the data port with the address counting up,
@@ -501,6 +536,9 @@ load_waveforms(void)
 		return false;
 	}
 	say("haptic: Android's waveforms are in the chip's RAM and read back as written\n");
+	if (tap_gain != 0) {
+		choose_tap(file, size, base);
+	}
 	return healthy("after the waveforms");
 }
 
@@ -712,6 +750,8 @@ serve(void)
 		bool active = heard_us != 0 && now - heard_us < ACTIVE_US;
 		uint32_t peak = heard_peak;
 		uint8_t gain = gain_for(peak);
+		uint8_t tap = tap_gain != 0 ? (uint8_t)tap_gain : gain ? gain : 1;
+		uint64_t settle = tap_gain != 0 ? 0 : SETTLE_US;        /* (a fixed gain needs no loudness heard first) */
 
 		switch (state) {
 		case IDLE:
@@ -721,14 +761,14 @@ serve(void)
 			 * a tap -- once its first milliseconds are heard: a waveform begins softly, and they say how
 			 * loud it is; one that goes on without a pause, a vibration.
 			 */
-			if (active && onset_us != tap_onset && now - onset_us >= SETTLE_US) {
+			if (active && onset_us != tap_onset && now - onset_us >= settle) {
 				uint64_t began = onset_us;
 
 				if (state == TAP && !wait_standby(0) && !stop_waveform()) {
 					break;
 				}
 				/* (a fault the chip latched in the last tap, after the last look below, is found here, not once the next plays) */
-				if (!healthy("before a tap") || !start_waveform(1, false, gain ? gain : 1)) {
+				if (!healthy("before a tap") || !start_waveform(tap_waveform, false, tap)) {
 					break;
 				}
 				state = TAP;
@@ -737,8 +777,8 @@ serve(void)
 				taps++;
 				if (taps + loops <= TOLD_EVENTS) {
 					wait_ms(4);
-					say("haptic: tap %u: Darwin's waveform peaks at %u of 32768: Android's waveform 1 at gain 0x%02x; the "
-					    "chip's state %u\n", taps, peak, gain ? gain : 1, chip_state());
+					say("haptic: tap %u: Darwin's waveform peaks at %u of 32768: Android's waveform %u at gain 0x%02x; the "
+					    "chip's state %u\n", taps, peak, tap_waveform, tap, chip_state());
 				}
 				break;
 			}
@@ -899,6 +939,10 @@ hakios_haptic_init(void)
 	i2c_bus.scl = PIN_SCL;
 	if (level > 5) {
 		level = 5;
+	}
+	if (PE_parse_boot_argn("haptic_tap_gain", &tap_gain, sizeof(tap_gain)) && tap_gain > android_regs[AW_PLAYCFG2]) {
+		say("haptic: haptic_tap_gain=%#x is above Android's gain: 0x%02x\n", tap_gain, android_regs[AW_PLAYCFG2]);
+		tap_gain = android_regs[AW_PLAYCFG2];
 	}
 	if (kernel_thread_start(haptic_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
