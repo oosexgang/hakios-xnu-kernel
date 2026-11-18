@@ -119,6 +119,19 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Thermal limit (`thermal.c`): losing every sensor reading was taken as "cool", and the rows were given back a step a
+  second to a phone held back because it was hot; now nothing changes until a sensor answers again. A sensor that had
+  answered and then fell silent let a cooler one's reading give the rows back; now nothing is given back while one is
+  silent (said once: `thermal: 1 sensor that answered before is silent`), though a hot one still holds back further.
+  Temperatures between 0 and -1 C were logged without their sign.
+- Battery (`battery.c`): a current no cell can carry (beyond 20 A either way) was believed, and 60 A into the cell
+  showed a 70% battery as 0%, which can make iOS shut the phone down; a temperature outside -40..100 C was used for the
+  flashlight's guard (-400 C counted as cool) and overflowed in the report to Darwin; and the DSP's report coming as the
+  loader's cache took over left the cache's figures shown for ten seconds. A temperature known before and impossible
+  now counts for the flashlight as one gone quiet.
+- Buttons (`buttons.c`): a key held when its peripheral stopped answering stayed held for good while the other one
+  still answered (a volume run to its end, the side button held into Siri); now it is let go after a second of failed
+  reads, and pressed anew if it is still held when they come back.
 - The audio DSP's link (`adsp.c`, with a new host test `workbench/adsp_driver_test.c` that plays the DSP): the answer to
   an intent request was matched by our channel number as well as the DSP's, so a refusal on the DSP's channel 1 failed
   a send on our channel 1; an intent told again could be kept twice, the old size beside the new; once the DSP said it
