@@ -24,7 +24,7 @@
  *            events say whether it takes the samples at 48 kHz. The amplifiers stay off.
  *   sound=3  ... and the amplifiers, with the tone playing: set up as Android's driver sets them
  *            up, started once the clock runs, faded in to sound_below eighths of a dB under
- *            Android's own level (default 240: 30 dB under, the least it may be is 0), faded
+ *            Android's own level (default 240: 30 dB under, the least it may be is 0, the most 960), faded
  *            out and powered down at the end. Audible.
  *   sound=4  what Darwin plays (/dev/hakios-audio, board/audio.c), until the run ends: the port
  *            and the stream as above, kept running (silence when Darwin writes nothing); the
@@ -546,7 +546,15 @@ space_find(void)
 		return false;
 	}
 	apps_smmu_second.phys = apps_smmu.phys + space.page;
-	apps_smmu_context.phys = apps_smmu.phys + (space.pages + space.context) * space.page;
+	if (apps_smmu_context.phys != apps_smmu.phys + (space.pages + space.context) * space.page) {
+		/*
+		 * A context other than the one an earlier look found (that look came to nothing, or the one it found was
+		 * given back and taken by somebody else since): mapped where it is. The mapping of the old one would have
+		 * this one's registers written into that one -- which may be the Wi-Fi's or the modem's by now.
+		 */
+		apps_smmu_context.phys = apps_smmu.phys + (space.pages + space.context) * space.page;
+		apps_smmu_context.base = 0;
+	}
 	say("sound: the boot chain has set nothing up for stream %#x; free: match register %u (smr %#x, s2cr %#x) and context %u, at "
 	    "%#x\n", AUDIO_STREAM, space.match, space.old_smr, space.old_s2cr, space.context, apps_smmu_context.phys);
 	space.old_sctlr = get(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR);
@@ -660,6 +668,12 @@ space_off(void)
 	put(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR, space.old_sctlr);
 	get(&apps_smmu, "smr", SMMU_SMR(space.match));
 	space.on = false;
+	/*
+	 * The match register and the context are free again, and the Wi-Fi's start or the modem's (board/wifi.c,
+	 * board/mpss.c) may take them before the next user of ours comes: that one looks for free ones again, and does
+	 * not write its stream over somebody's.
+	 */
+	space.found = false;
 }
 
 /*
@@ -683,6 +697,7 @@ shared_get(unsigned user)
 			return false;
 		}
 		if (!space.passed && !space.on && !space_on()) {
+			space.found = false;    /* (the next try looks for free ones again, as after space_off()) */
 			return false;
 		}
 		buffer_address = space.passed ? (kvtophys(buffer) | AUDIO_STREAM_BITS) : (AUDIO_ADDRESSES | AUDIO_STREAM_BITS);
@@ -1134,14 +1149,26 @@ static void
 feeder_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	uint32_t sent = 0, failed = 0;
+	/*
+	 * The periods whose write could not be sent (the link found no room at the DSP for five seconds, say): the DSP
+	 * never gives those back, so they are written again on the next pass, filled anew. Were they not, every period
+	 * that once failed would be gone for good -- and after eight, nothing would be queued at the DSP and nothing
+	 * would ever come back to be written: silence until the run ends.
+	 */
+	uint32_t unsent = 0;
 
 	returned = 0;
 	for (unsigned p = 0; p < PERIODS; p++) {
 		period_fill_darwin(p);
-		sent += period_write(p);
+		if (period_write(p)) {
+			sent++;
+		} else {
+			failed++;
+			unsent |= 1u << p;
+		}
 	}
 	while (!stopping) {
-		uint32_t back = returned;
+		uint32_t back = returned, due;
 		static bool was_on;
 
 		if (guard_on && !was_on) {
@@ -1156,14 +1183,18 @@ feeder_thread(__unused void *parameter, __unused wait_result_t result)
 		was_on = guard_on;
 		if (back != 0) {
 			OSBitAndAtomic(~back, &returned);
-			for (unsigned p = 0; p < PERIODS; p++) {
-				if (back & 1u << p) {
-					period_fill_darwin(p);
-					if (period_write(p)) {
-						sent++;
-					} else {
-						failed++;
-					}
+		}
+		/* (filled anew also when it is one that could not be sent: not Darwin's sound of long ago, nor any once given up on) */
+		due = (back | unsent) & ((1u << PERIODS) - 1);
+		for (unsigned p = 0; p < PERIODS; p++) {
+			if (due & 1u << p) {
+				period_fill_darwin(p);
+				if (period_write(p)) {
+					sent++;
+					unsent &= ~(1u << p);
+				} else {
+					failed++;
+					unsent |= 1u << p;
 				}
 			}
 		}
@@ -1231,9 +1262,19 @@ watch(void)
 	guard_level(below);                     /* (from the first sample on: see guard_off()) */
 
 	while (!stopping) {
-		uint64_t now = now_us(), sounded = last_sound_us;
+		/*
+		 * When the latest sound came, then the time: in that order. The other way round, a write that came between
+		 * the two looks (on the writer's thread, at any moment) would be one from after `now', and `now - sounded'
+		 * would wrap to centuries -- "three seconds of silence", and the amplifiers stopped in the middle of the
+		 * sound. (And should one still seem to come from later than now, it is taken as just now.)
+		 */
+		uint64_t sounded = last_sound_us, now = now_us();
 		uint32_t extra_now, generation_now;
 		bool muted_now;
+
+		if (sounded > now) {
+			sounded = now;
+		}
 
 		if (hakios_audio_volume(&extra_now, &muted_now, &generation_now) && generation_now != generation) {
 			generation = generation_now;
@@ -1514,6 +1555,15 @@ hakios_sound_dsp_up(void)
 	}
 	PE_parse_boot_argn("sound_secs", &seconds, sizeof(seconds));
 	PE_parse_boot_argn("sound_below", &below, sizeof(below));
+	if (below > HAKIOS_AUDIO_BELOW_MOST) {
+		/*
+		 * Further under than the amplifiers go is as far as they go. Not left as it was: sound=4 adds Darwin's own
+		 * volume to it (up to HAKIOS_AUDIO_BELOW_MOST, from any process), and a sum past 32 bits -- a sound_below of -8,
+		 * say, which reads as 0xfffffff8 -- would wrap to a level near Android's loudest: Darwin turning it down
+		 * would turn the speakers up.
+		 */
+		below = HAKIOS_AUDIO_BELOW_MOST;
+	}
 	/* boot-arg sound_pause=MS: the pause after each step is said, for the loader to note it (default 1000; 0: none) */
 	PE_parse_boot_argn("sound_pause", &pause_ms, sizeof(pause_ms));
 	PE_parse_boot_argn("sound_guard_as", &guard_as, sizeof(guard_as));

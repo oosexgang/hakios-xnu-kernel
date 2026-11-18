@@ -6,8 +6,10 @@
  * the board's speaker { } sound-pins, with the board's function; the bit clock and frame sync it watches
  * are the first two of them -- on a board whose pins are not the first phone's, too; a free match register
  * and context of the SMMU are found and set up with page tables of the buffers, and put back as found;
- * what the boot chain set up for somebody else is left alone; and once the amplifiers are given up on, none
- * of what Darwin plays goes to the DSP.
+ * what the boot chain set up for somebody else is left alone, and so is what somebody took after it was put back;
+ * once the amplifiers are given up on, none of what Darwin plays goes to the DSP; a period whose write could not
+ * be sent is written again; and the amplifiers are neither stopped in the middle of the sound by a write that
+ * comes as the watcher looks, nor turned up by Darwin turning its volume down.
  *
  *   sound_driver_test SCENARIO
  */
@@ -133,11 +135,22 @@ dsp_will(enum dsp_answer how, uint32_t status)
 	dsp_put++;
 }
 
+/* a period's write (not waited for): sent, unless a scenario says the link takes none now; both counted */
+static volatile bool writes_refused;
+static volatile unsigned writes_tried, writes_sent;
+
 bool
 hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token __unused, uint32_t opcode, const void *payload __unused,
     uint32_t length __unused, uint32_t wait_ms __unused, struct hakios_apr_answer *answer)
 {
-	unsigned n = dsp_asked++ % 16;
+	unsigned n;
+
+	if (opcode == ASM_DATA_CMD_WRITE_V2) {
+		writes_tried++;
+		writes_sent += !writes_refused;
+		return !writes_refused;
+	}
+	n = dsp_asked++ % 16;
 
 	dsp_heard[n].service = service;
 	dsp_heard[n].port = port;
@@ -163,9 +176,13 @@ hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token __unused, uint32_
 void hakios_adsp_apr_events(hakios_apr_events_t handler __unused) { }
 const uint8_t *hakios_adsp_fw_file(const char *name __unused, uint64_t *size __unused) { return NULL; }
 void hakios_adsp_fw_free(const uint8_t *data __unused, uint64_t size __unused) { }
-/* the amplifiers never start; a start can be held until a scenario lets it go on, and the stops are counted */
-static volatile bool start_held, in_guard;
+/*
+ * the amplifiers never start, unless a scenario says they play (then they start, take any volume and stay healthy); a
+ * start can be held until a scenario lets it go on, the stops are counted, and the least level under Android's asked for kept
+ */
+static volatile bool start_held, in_guard, speakers_play;
 static volatile unsigned speaker_stops;
+static volatile uint32_t least_asked = UINT32_MAX;
 bool hakios_speaker_prepare(const uint8_t *acf __unused, uint64_t size __unused) { return false; }
 bool
 hakios_speaker_start(void)
@@ -173,10 +190,17 @@ hakios_speaker_start(void)
 	for (int ms = 0; start_held && !in_guard && ms < 5000; ms++) {
 		usleep(1000);
 	}
-	return false;
+	return speakers_play;
 }
-bool hakios_speaker_volume(uint32_t below __unused, uint32_t step_ms __unused) { return false; }
-bool hakios_speaker_healthy(void) { return false; }
+bool
+hakios_speaker_volume(uint32_t level_below, uint32_t step_ms __unused)
+{
+	if (level_below < least_asked) {
+		least_asked = level_below;
+	}
+	return speakers_play;
+}
+bool hakios_speaker_healthy(void) { return speakers_play; }
 void hakios_speaker_stop(void) { speaker_stops++; }
 void hakios_speaker_quiesce(void) { }
 uint32_t hakios_speaker_monitor(bool tell __unused) { return 0; }
@@ -199,7 +223,16 @@ static uint32_t guard_blocks;
 void hakios_guard_take_report(struct hakios_guard_report *report) { memset(report, 0, sizeof(*report)); report->blocks = guard_blocks; guard_blocks = 0; }
 int hakios_guard_decibels(uint64_t ratio __unused) { return 0; }
 void hakios_audio_set_sink(const char *name __unused, hakios_audio_sink_t sink __unused) { }
-bool hakios_audio_volume(uint32_t *below __unused, bool *muted __unused, uint32_t *generation __unused) { return false; }
+/* the volume Darwin has set (HAKIOS_AUDIO_SET_VOLUME): none, unless a scenario sets one */
+static volatile uint32_t darwin_below, darwin_generation;
+bool
+hakios_audio_volume(uint32_t *level_below, bool *muted, uint32_t *generation)
+{
+	*level_below = darwin_below;
+	*muted = false;
+	*generation = darwin_generation;
+	return darwin_generation != 0;
+}
 /* what is played, fed to a recording (board/audio.c) while a scenario says one is fed */
 static bool recording;
 static unsigned recorded_calls, recorded_frames;
@@ -676,6 +709,128 @@ given_up_while_a_period_is_guarded(void)
 	pthread_join(thread, NULL);
 }
 
+/*
+ * The match register and the context, put back when the last user left, are taken by somebody else before the next
+ * user comes (the Wi-Fi's start, board/wifi.c, finds them free): that one looks again, takes the next free ones, and
+ * leaves the Wi-Fi's alone -- its match register, its context's registers, through a mapping of the right context.
+ */
+static void
+smmu_taken_meanwhile(void)
+{
+	uintptr_t at;
+	uint64_t dsp;
+	uint32_t bytes;
+
+	an_smmu();
+	CHECK(memory(&at, &dsp, &bytes) && *smmu(SMMU_AT + SMMU_SMR(2)) == (1u << 31 | AUDIO), "given, through match register 2");
+	hakios_audio_dsp_memory_put();
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(2)) == 0x0333 && *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == 0, "put back as found");
+	/* the Wi-Fi's start: its stream through match register 2 and context 2, on, with its own tables */
+	*smmu(SMMU_AT + SMMU_SMR(2)) = 1u << 31 | 0x0c80;
+	*smmu(SMMU_AT + SMMU_S2CR(2)) = 2;
+	*smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0) = 0xabc000;
+	*smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) = SMMU_SCTLR_ON;
+	CHECK(memory(&at, &dsp, &bytes), "given again: %s", log_text);
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(2)) == (1u << 31 | 0x0c80) && *smmu(SMMU_AT + SMMU_S2CR(2)) == 2,
+	    "the Wi-Fi's match register left alone: %#x %#x", *smmu(SMMU_AT + SMMU_SMR(2)), *smmu(SMMU_AT + SMMU_S2CR(2)));
+	CHECK(*smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0) == 0xabc000 && *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == SMMU_SCTLR_ON,
+	    "the Wi-Fi's context left alone: ttbr0 %#x", *smmu(CONTEXT_AT(2) + SMMU_CB_TTBR0));
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(3)) == (1u << 31 | AUDIO) && *smmu(SMMU_AT + SMMU_S2CR(3)) == 3 &&
+	    (*smmu(CONTEXT_AT(3) + SMMU_CB_SCTLR) & 1), "the next free ones taken: match register 3, context 3: %#x %#x %#x",
+	    *smmu(SMMU_AT + SMMU_SMR(3)), *smmu(SMMU_AT + SMMU_S2CR(3)), *smmu(CONTEXT_AT(3) + SMMU_CB_SCTLR));
+	hakios_audio_dsp_memory_put();
+	CHECK(*smmu(SMMU_AT + SMMU_SMR(3)) == 0 && *smmu(CONTEXT_AT(3) + SMMU_CB_SCTLR) == 0 &&
+	    *smmu(SMMU_AT + SMMU_SMR(2)) == (1u << 31 | 0x0c80) && *smmu(CONTEXT_AT(2) + SMMU_CB_SCTLR) == SMMU_SCTLR_ON,
+	    "and those put back as found, the Wi-Fi's still as it has them");
+}
+
+/*
+ * The writes of Darwin's periods cannot be sent for a while (the link finds no room at the DSP): the DSP never gives
+ * those periods back, and they are written again once the link takes them -- not lost for good, which after eight
+ * would leave nothing queued at the DSP and the stream silent until the run ends.
+ */
+static void
+a_write_not_sent_is_tried_again(void)
+{
+	static int16_t periods[PERIODS * 4096 / 2] __attribute__((aligned(4096)));
+	thread_t thread;
+
+	buffer = (vm_offset_t)periods;
+	writes_refused = true;
+	feeder_runs = true;
+	CHECK(kernel_thread_start(feeder_thread, NULL, &thread) == KERN_SUCCESS, "the feeder");
+	thread_deallocate(thread);
+	WAIT_FOR(writes_tried >= PERIODS, 2000);
+	CHECK(writes_tried >= PERIODS && writes_sent == 0, "none sent: %u tried", writes_tried);
+	writes_refused = false;
+	WAIT_FOR(writes_sent >= PERIODS, 2000);
+	usleep(50000);
+	CHECK(writes_sent == PERIODS, "every period written again once the link takes them, and once: %u", writes_sent);
+	stopping = true;
+	WAIT_FOR(!feeder_runs, 2000);
+	CHECK(!feeder_runs, "the feeder stops");
+}
+
+/* the watcher of sound=4 on a thread of its own, the amplifiers playing as asked, Darwin playing */
+static void
+playing(pthread_t *thread)
+{
+	static int16_t periods[4096 * 2 / 2] __attribute__((aligned(4096)));
+	const int16_t frames[] = { 1000, -1000, 2000, -2000, 3000, -3000 };
+
+	buffer = (vm_offset_t)periods;
+	speakers_play = true;
+	CHECK(darwin_sink(frames, 3) == 3 && last_sound_us != 0, "Darwin plays");
+	pthread_create(thread, NULL, watcher, NULL);
+	WAIT_FOR(logged("the amplifiers are up"), 5000);
+	CHECK(logged("the amplifiers are up"), "started: %s", log_text);
+}
+
+/*
+ * A write that comes between the watcher's look at the clock and its look at when the latest sound came is, to the
+ * watcher, sound from after its now: not three seconds of silence, and the amplifiers are not stopped in the middle
+ * of the sound. (Here a fifth of a second after, so that the watcher sees it at more than one look; the race itself
+ * makes it a few microseconds.)
+ */
+static void
+a_write_as_the_watcher_looks(void)
+{
+	pthread_t thread;
+
+	playing(&thread);
+	last_sound_us = now_us() + 200000;
+	usleep(100000);
+	CHECK(!logged("three seconds of silence") && speaker_stops == 0, "the amplifiers were stopped: %u stops, %s", speaker_stops,
+	    log_text);
+	stopping = true;
+	pthread_join(thread, NULL);
+}
+
+/*
+ * sound_below past 32 bits' end as a negative number reads (sound_below=-8: 0xfffffff8), and Darwin's own volume 2 dB
+ * under the loudest: the amplifiers are asked for no level nearer Android's than the lowest, not for a sum that
+ * wrapped to 1 dB under it.
+ */
+static void
+far_under_and_darwin_under_that(void)
+{
+	pthread_t thread;
+
+	boot_args = "sound=4 sound_below=-8";
+	hakios_sound_dsp_up();
+	/* (no configuration file for the amplifiers here: the level ends there, and is taken down) */
+	WAIT_FOR(logged("STOPPED SHORT"), 5000);
+	CHECK(logged("STOPPED SHORT"), "the level ended: %s", log_text);
+	stopping = false;
+	darwin_below = 16;
+	darwin_generation = 1;
+	playing(&thread);
+	WAIT_FOR(logged("Darwin sets the volume"), 2000);
+	CHECK(least_asked >= 90 * 8, "the amplifiers asked for %u eighths of a dB under Android's level", least_asked);
+	stopping = true;
+	pthread_join(thread, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -691,6 +846,9 @@ main(int argc, char **argv)
 		{ "the_guards_line", the_guards_line, 1 }, { "recording_fed_what_is_played", recording_fed_what_is_played, 1 },
 		{ "given_up_darwin_not_fed", given_up_darwin_not_fed, 1 },
 		{ "given_up_while_a_period_is_guarded", given_up_while_a_period_is_guarded, 1 },
+		{ "smmu_taken_meanwhile", smmu_taken_meanwhile, 1 }, { "a_write_not_sent_is_tried_again", a_write_not_sent_is_tried_again, 1 },
+		{ "a_write_as_the_watcher_looks", a_write_as_the_watcher_looks, 1 },
+		{ "far_under_and_darwin_under_that", far_under_and_darwin_under_that, 1 },
 	};
 	char name[64];
 	const char *colon;

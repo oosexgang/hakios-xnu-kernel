@@ -119,6 +119,23 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Wi-Fi's WPA2 handshake (`kernel/lx`): a forged message 1 from anyone in range between the access point's messages 1
+  and 3 changed the keys the real message 3 was checked with, and the join failed; a group-key message sent again
+  installed the same key again and set its replay counter back to 0; message 3's RSN element was not compared with the
+  beacon's (a downgrade went unseen); key material was left in memory. Message 1 now signs message 2 with keys that are
+  wiped at once, keys are kept only once message 3 passes every check, a repeated group key is answered and not
+  installed, a different RSN element refuses the join, and the PMK and temporary keys are wiped. Frames are now dropped
+  when they fail the radio's checksum, and after keys are set when they come unciphered (counted in the station's line).
+  Two Michael failures within 60 s now leave the network for 60 s (TKIP countermeasures). New test
+  `workbench/lx_wpa_test.c` with vectors made outside the driver.
+- Sound (`sound.c`): a match register and context of the SMMU given back by the sound were taken again later without
+  looking, though the Wi-Fi or the modem might have taken them meanwhile, so the sound wrote its stream over theirs and
+  their DMA broke. At `sound=4` a period whose write was not sent was lost for good, and after eight the speakers stayed
+  silent until the run ended. A write coming as the watcher looked could make it see "three seconds of silence" and stop
+  the amplifiers mid-sound. A negative `sound_below` plus Darwin's volume wrapped to near full loudness. All four fixed,
+  each with a test.
+- Speaker amplifiers (`speaker.c`): a start after a preparation that stopped at the second amplifier powered up and
+  unmuted the first and then said it had not started. Both must now be prepared before either starts.
 - `/dev/hakios-touch` took samples from any program and gave every touch to any program that read it: an
   application could tap what the screen showed (an "Allow", a purchase) or watch the passcode typed, and a second
   reader took touches away from the window server. Only root writes now (`rwtouch`), and the first program to open
