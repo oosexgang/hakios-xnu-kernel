@@ -95,6 +95,30 @@ bundle_identifier(char *out, size_t size)
 }
 
 /* Does this array of strings hold `want`? */
+/* Is one of the bundles the array names loaded in this process (as Substrate and ElleKit look: any bundle, not the main one only)? */
+static bool
+array_has_loaded_bundle(CFArrayRef array, const char *main_identifier)
+{
+	CFIndex count = array != NULL ? CFArrayGetCount(array) : 0;
+
+	for (CFIndex i = 0; i < count; i++) {
+		CFStringRef string = CFArrayGetValueAtIndex(array, i);
+		char text[256];
+
+		if (CFGetTypeID(string) != CFStringGetTypeID()) {
+			continue;
+		}
+		if (main_identifier != NULL && CFStringGetCString(string, text, sizeof(text), kCFStringEncodingUTF8) &&
+		    strcmp(text, main_identifier) == 0) {
+			return true;
+		}
+		if (CFBundleGetBundleWithIdentifier(string) != NULL) {
+			return true;            /* (com.apple.UIKit and the like: the frameworks the program has loaded) */
+		}
+	}
+	return false;
+}
+
 static bool
 array_has(CFArrayRef array, const char *want)
 {
@@ -190,14 +214,14 @@ wanted_here(const char *path, const char *name, const char *identifier)
 	bundles = filter_array(filter, "Bundles");
 	executables = filter_array(filter, "Executables");
 	classes = filter_array(filter, "Classes");
-	hits[0] = bundles != NULL && identifier != NULL && array_has(bundles, identifier);
+	hits[0] = bundles != NULL && array_has_loaded_bundle(bundles, identifier);
 	hits[1] = executables != NULL && name != NULL && array_has(executables, name);
 	hits[2] = classes != NULL && array_has_class(classes);
-	/* Mode "Any" means every kind that is given has to match; by default one is enough. */
+	/* As Substrate and ElleKit: by default every kind that is given has to match; Mode "Any": one is enough. */
 	mode_key = CFSTR("Mode");
 	mode = CFDictionaryGetValue(filter, mode_key);
-	all = mode != NULL && CFGetTypeID(mode) == CFStringGetTypeID() &&
-	    CFStringCompare(mode, CFSTR("Any"), 0) == kCFCompareEqualTo;
+	all = !(mode != NULL && CFGetTypeID(mode) == CFStringGetTypeID() &&
+	    CFStringCompare(mode, CFSTR("Any"), 0) == kCFCompareEqualTo);
 	used = (bundles != NULL) + (executables != NULL) + (classes != NULL);
 	if (used == 0) {
 		wanted = true;
