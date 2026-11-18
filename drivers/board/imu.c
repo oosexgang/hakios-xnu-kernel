@@ -28,10 +28,12 @@
  * Limits, whatever asks: another chip's identity, a byte nobody acknowledges, a write that does not read
  * back or a bus that is not at rest, and nothing more is done for the rest of the run, with a line that
  * says why. At the run's end (and on a panic's way out) the reading stops and the accelerometer is
- * powered down (CTRL1_XL 0), if it was switched on, and the pins are as they were found. Nothing is
- * written anywhere but to the chip's two control registers and the bus's two pins.
+ * powered down (CTRL1_XL 0), if it was switched on, a bus the chip holds down (cut off in a byte it was
+ * sending) is clocked free, at a look too, and the pins are as they were found. Nothing is written
+ * anywhere but to the chip's two control registers and the bus's two pins.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
@@ -51,7 +53,7 @@ static uint32_t level;
 static bool switched_on;                /* the accelerometer was (or may have been) switched on: the run's end switches it off */
 static bool leaving;                    /* the run's end has the chip (hakios_imu_quiesce()) */
 static bool busy;                       /* the thread is using the bus: the run's end waits for it */
-static bool on_bus;                     /* ... between taking the pins and giving them back */
+static bool on_bus;                     /* ... from just before it takes the pins until it gives them back */
 
 /* every line to the loader's log as well (and to the console when that may be written) */
 HAKIOS_DEFINE_SAY(!__atomic_load_n(&leaving, __ATOMIC_SEQ_CST) && ml_get_interrupts_enabled())
@@ -100,24 +102,52 @@ static struct i2c_gpio i2c_bus;          /* (its two pins: the board's, at the s
 static const char not_at_rest[] = "the I2C bus is not at rest", not_acknowledged[] = "a byte was not acknowledged";
 static const char *failed;              /* why the last transfer did not go through: one of the two */
 
-static bool
-bus_take(void)
+/*
+ * The two pins as the run's first transaction found them, which is what every transaction and the run's end give
+ * back. Not what each take finds: a take after one that was cut off half way (its core stopped at the run's end)
+ * would find the pins as plain GPIOs and hand them back so.
+ */
+static uint32_t pins_found_cfg[2], pins_found_io[2];
+static bool pins_found;
+
+static void
+pins_record(void)
 {
-	if (i2c_gpio_take(&i2c_bus)) {
-		on_bus = true;
-		return true;
+	if (__atomic_load_n(&pins_found, __ATOMIC_SEQ_CST)) {
+		return;
 	}
-	say("imu: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-	    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
-	failed = not_at_rest;
-	return false;
+	pins_found_cfg[0] = rd(GPIO_CFG(i2c_bus.sda));
+	pins_found_cfg[1] = rd(GPIO_CFG(i2c_bus.scl));
+	pins_found_io[0] = rd(GPIO_IO(i2c_bus.sda));
+	pins_found_io[1] = rd(GPIO_IO(i2c_bus.scl));
+	__atomic_store_n(&pins_found, true, __ATOMIC_SEQ_CST);
 }
 
 static void
 bus_give_back(void)
 {
+	for (unsigned i = 0; i < 2; i++) {
+		i2c_bus.found_cfg[i] = pins_found_cfg[i];
+		i2c_bus.found_io[i] = pins_found_io[i];
+	}
 	i2c_gpio_give_back(&i2c_bus);
-	on_bus = false;
+	__atomic_store_n(&on_bus, false, __ATOMIC_SEQ_CST);
+}
+
+static bool
+bus_take(void)
+{
+	pins_record();
+	/* (on the bus before the pins are touched: a thread stopped inside the take leaves them to the run's end to give back) */
+	__atomic_store_n(&on_bus, true, __ATOMIC_SEQ_CST);
+	if (i2c_gpio_take(&i2c_bus)) {
+		return true;
+	}
+	bus_give_back();
+	say("imu: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
+	    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
+	failed = not_at_rest;
+	return false;
 }
 
 /* `count' registers from `reg' on (the chip counts the address up: IF_INC, on from its reset) */
@@ -255,7 +285,10 @@ configure(void)
 
 static struct sensors_accel accel;      /* the board's mounting and scale, and the orientation detector */
 static volatile int32_t shown_orientation;      /* hw.sensors.orientation: ORIENT_* */
-static volatile int32_t shown_mg[3];            /* hw.sensors.accel: the latest sample, milli-g on Darwin's axes */
+static int32_t shown_mg[3];                     /* hw.sensors.accel: the latest sample, milli-g on Darwin's axes */
+static LCK_GRP_DECLARE(imu_lock_group, "imu");
+/* the three of a sample and its orientation, put out together: a reader never sees x of one sample and y of the next */
+static LCK_SPIN_DECLARE(shown_lock, &imu_lock_group);
 static volatile uint32_t samples;               /* hw.sensors.samples: how many were read */
 static unsigned changes;
 
@@ -272,8 +305,14 @@ sysctl_accel SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg1, arg2)
 	char text[48];
+	int32_t mg[3];
 
-	snprintf(text, sizeof(text), "%d %d %d", shown_mg[0], shown_mg[1], shown_mg[2]);
+	lck_spin_lock(&shown_lock);
+	for (unsigned i = 0; i < 3; i++) {
+		mg[i] = shown_mg[i];
+	}
+	lck_spin_unlock(&shown_lock);
+	snprintf(text, sizeof(text), "%d %d %d", mg[0], mg[1], mg[2]);
 	return SYSCTL_OUT(req, text, strlen(text) + 1);
 }
 
@@ -318,16 +357,18 @@ sample(void)
 	raw = lsm6dso_decode(out);
 	mg = sensor_to_darwin(&accel.mount, &accel.scale, (struct sensor_sample){ { raw.accel[0], raw.accel[1], raw.accel[2] } });
 	now = sensors_accel_raw(&accel, raw.accel[0], raw.accel[1], raw.accel[2]);
-	for (unsigned i = 0; i < 3; i++) {
-		shown_mg[i] = mg.v[i];
-	}
-	samples++;
 	if (now != shown_orientation) {
 		changes++;
 		say("imu: %s (%d %d %d milli-g; the chip's %d %d %d)\n", orientation_names[now], mg.v[0], mg.v[1], mg.v[2],
 		    raw.accel[0], raw.accel[1], raw.accel[2]);
-		shown_orientation = now;
 	}
+	lck_spin_lock(&shown_lock);
+	for (unsigned i = 0; i < 3; i++) {
+		shown_mg[i] = mg.v[i];
+	}
+	shown_orientation = now;
+	lck_spin_unlock(&shown_lock);
+	samples++;
 	return true;
 }
 
@@ -406,14 +447,14 @@ hakios_imu_init(void)
 }
 
 /*
- * At the run's end and on a panic's way out: the reading stopped, the accelerometer powered down if it was
- * switched on, the pins as they were found.
+ * At the run's end and on a panic's way out: the reading stopped, the bus at rest, the accelerometer powered
+ * down if it was switched on, the pins as they were found.
  */
 void
 hakios_imu_quiesce(void)
 {
 	unsigned clocks = 0;
-	bool off;
+	bool off, came_back;
 
 	if (level == 0 || tlmm == 0) {
 		return;
@@ -422,21 +463,34 @@ hakios_imu_quiesce(void)
 	for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
 		wait_ms(1);             /* (the thread finishing what it reads: 100 ms at most, a stopped core's never ends) */
 	}
-	if (on_bus) {
-		/* the thread stopped in the middle of a transfer (a panic, its core stopped): ended, the pins as it found them */
+	if (__atomic_load_n(&on_bus, __ATOMIC_SEQ_CST)) {
+		/*
+		 * the thread stopped in the middle of a transfer, or of taking the pins (a panic, its core stopped): ended, the
+		 * pins as the run found them
+		 */
 		i2c_gpio_stop(&i2c_bus);
 		bus_give_back();
+	}
+	if (!i2c_gpio_level(PIN_SDA) || !i2c_gpio_level(PIN_SCL)) {
+		/*
+		 * A chip cut off in the middle of a byte it was sending holds the data line down until it has sent it. Clocked
+		 * free whether or not there is anything to power down: a look leaves the bus as it found it too, and whoever
+		 * has the pins next finds it at rest.
+		 */
+		pins_record();
+		came_back = i2c_gpio_unwedge(&i2c_bus, &clocks);
+		bus_give_back();
+		if (came_back) {
+			say("imu: at the run's end: the bus came back after %u clocks\n", clocks);
+		} else {
+			say("imu: at the run's end: THE I2C BUS IS NOT AT REST (gpio%u reads %u, gpio%u reads %u)\n", PIN_SDA,
+			    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
+		}
 	}
 	if (!switched_on) {
 		return;
 	}
 	off = reg_write(LSM6DSO_REG_CTRL1_XL, 0);
-	if (!off && i2c_gpio_unwedge(&i2c_bus, &clocks)) {
-		/* (a chip cut off in the middle of a byte it was sending holds the data line down until it has sent it) */
-		bus_give_back();
-		say("imu: at the run's end: the bus came back after %u clocks\n", clocks);
-		off = reg_write(LSM6DSO_REG_CTRL1_XL, 0);
-	}
 	say("imu: at the run's end: %u samples read, the orientation changed %u times; the accelerometer %s\n", samples, changes,
 	    off ? "is powered down (CTRL1_XL 0)" : "COULD NOT BE POWERED DOWN");
 }

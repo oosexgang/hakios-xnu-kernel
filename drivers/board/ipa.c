@@ -800,13 +800,33 @@ hakios_ipa_data_stop(bool leaving)
 	printf("ipa: the data path is stopped: nothing more is sent or looked for\n");
 }
 
+/*
+ * The channels' states are the GSI's registers: looked at only while the data path is up, under the lock
+ * hakios_ipa_data_stop() takes, since en1's poll goes on asking for this line after the IPA's clock is off.
+ */
 void
 hakios_ipa_status(char *to, size_t size)
 {
-	snprintf(to, size, "to the modem %llu packets (%llu bytes, %llu dropped), from it %llu (%llu bytes), %llu to the LAN endpoint; "
-	    "errors %llu/%llu/%llu; channels %u/%u/%u/%u", modem_tx.packets, modem_tx.bytes, modem_tx.dropped, modem_rx.packets, modem_rx.bytes,
-	    lan_rx.packets, modem_tx.errors, modem_rx.errors, lan_rx.errors, channel_state(&command), channel_state(&lan_rx),
-	    channel_state(&modem_tx), channel_state(&modem_rx));
+	bool locked = ready;            /* (stopped: no lock, as on the way out, where none may be taken) */
+	int length;
+
+	if (locked) {
+		lck_mtx_lock(&ipa_lock);
+	}
+	length = snprintf(to, size, "to the modem %llu packets (%llu bytes, %llu dropped), from it %llu (%llu bytes), %llu to the LAN "
+	    "endpoint; errors %llu/%llu/%llu", modem_tx.packets, modem_tx.bytes, modem_tx.dropped, modem_rx.packets, modem_rx.bytes,
+	    lan_rx.packets, modem_tx.errors, modem_rx.errors, lan_rx.errors);
+	if (length >= 0 && (size_t)length < size) {
+		if (locked && ready) {
+			snprintf(to + length, size - (size_t)length, "; channels %u/%u/%u/%u", channel_state(&command),
+			    channel_state(&lan_rx), channel_state(&modem_tx), channel_state(&modem_rx));
+		} else {
+			snprintf(to + length, size - (size_t)length, "; the data path is stopped");
+		}
+	}
+	if (locked) {
+		lck_mtx_unlock(&ipa_lock);
+	}
 }
 
 /* ---- setting up ---------------------------------------------------------------------------------- */

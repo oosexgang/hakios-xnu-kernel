@@ -6,7 +6,8 @@
  * chip, nobody answering, a bus that is not at rest or a write that does not stick stop the driver with
  * nothing more written; the chip is configured as the file's head says, and its samples come out as the
  * right orientation through the board's turned mounting; at the run's end it is powered down and the pins
- * are as they were found.
+ * are as they were found, also when the driver's thread was stopped (as the run's end stops the other cores)
+ * while it took the pins or while the chip was sending it a byte.
  *
  *   imu_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
@@ -79,7 +80,30 @@ hakios_test_rd(vm_offset_t address)
 	return tlmm_model_rd(address);
 }
 
-void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
+/*
+ * The driver's thread stopped where a scenario says, as the run's end stops the other cores: after each of its
+ * writes to the pins `stop_after' is asked, with what the register held before, and once it says so the thread
+ * does nothing more. The scenario's own thread is never stopped.
+ */
+static pthread_t scenario_thread;
+static bool (*volatile stop_after)(vm_offset_t address, uint32_t before);
+static volatile bool stopped;
+
+void
+hakios_test_wr(vm_offset_t address, uint32_t value)
+{
+	uint32_t offset = (uint32_t)(address - model.base), pin = offset / 0x1000;
+	uint32_t before = address >= model.base && pin < PINS ? (offset % 0x1000 == 0 ? model.cfg[pin] : model.io[pin]) : 0;
+
+	tlmm_model_wr(address, value);
+	if (stop_after != NULL && !pthread_equal(pthread_self(), scenario_thread) && stop_after(address, before)) {
+		stopped = true;
+		for (;;) {
+			usleep(100000);
+		}
+	}
+}
+
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 void hakios_imu_init(void);
@@ -403,6 +427,80 @@ reset_does_not_end(void)
 	CHECK(!register_written[CTRL1_XL] && written_after_reset == 0, "nothing written after the reset");
 }
 
+/* stopped inside i2c_gpio_take(): the data pin has just been made a GPIO from what it was found as */
+static bool
+taking_the_pins(vm_offset_t address, uint32_t before)
+{
+	return address == GPIO_CFG(I2C_DEVICE_SDA) && before == AS_FOUND;
+}
+
+/* stopped in a byte the chip is sending, the clock just down and the chip holding the data line low for its next bit */
+static bool
+chip_holding_the_data_line(vm_offset_t address, uint32_t before)
+{
+	return device.reading && device.sda_low;
+}
+
+/* the thread stopped in the identity's read, the chip holding the data line low: the bus clocked free, the pins given back */
+static void
+stopped_in_a_read(const char *args)
+{
+	phone("phone-video", 0x6c);
+	stop_after = chip_holding_the_data_line;
+	boot_args = args;
+	hakios_imu_init();
+	WAIT_FOR(stopped, 5000);
+	CHECK(stopped && !model.input[I2C_DEVICE_SDA], "stopped while the chip holds the data line low: %s", log_text);
+	hakios_imu_quiesce();
+	CHECK(model.input[I2C_DEVICE_SDA] && model.input[I2C_DEVICE_SCL], "the bus at rest after the run's end: data %u, clock %u",
+	    model.input[I2C_DEVICE_SDA], model.input[I2C_DEVICE_SCL]);
+	CHECK(logged("imu: at the run's end: the bus came back after"), "said: %s", log_text);
+	CHECK(device.writes == 0, "nothing written to the chip: %u bytes", device.writes);
+	pins_as_found();
+}
+
+/* ... at a look, where nothing is to be powered down */
+static void
+stopped_in_a_read_at_a_look(void)
+{
+	stopped_in_a_read("sensors=1");
+}
+
+/* ... and before the accelerometer is switched on */
+static void
+stopped_in_a_read_before_switched_on(void)
+{
+	stopped_in_a_read("sensors=2");
+}
+
+/* the thread stopped inside its first take of the pins, the data pin a GPIO already: the pins given back as found */
+static void
+stopped_taking_the_pins_first(void)
+{
+	phone("phone-video", 0x6c);
+	stop_after = taking_the_pins;
+	boot_args = "sensors=1";
+	hakios_imu_init();
+	WAIT_FOR(stopped, 5000);
+	CHECK(stopped && model.cfg[I2C_DEVICE_SDA] != AS_FOUND, "stopped with the data pin taken: %#x", model.cfg[I2C_DEVICE_SDA]);
+	hakios_imu_quiesce();
+	CHECK(device.writes == 0, "nothing written to the chip: %u bytes", device.writes);
+	pins_as_found();
+}
+
+/* ... and inside a take while it follows the orientation: the pins given back as found, the accelerometer powered down */
+static void
+stopped_taking_the_pins(void)
+{
+	following();
+	stop_after = taking_the_pins;
+	WAIT_FOR(stopped, 5000);
+	CHECK(stopped && model.cfg[I2C_DEVICE_SDA] != AS_FOUND, "stopped with the data pin taken: %#x", model.cfg[I2C_DEVICE_SDA]);
+	hakios_imu_quiesce();
+	CHECK(device.reg[CTRL1_XL] == 0 && logged("is powered down (CTRL1_XL 0)"), "powered down: %s", log_text);
+	pins_as_found();
+}
+
 /* a level past the last is the last */
 static void
 level_past_the_last(void)
@@ -439,8 +537,12 @@ main(int argc, char **argv)
 		{ "teardown", teardown }, { "lost_while_following", lost_while_following }, { "wedged_at_the_end", wedged_at_the_end },
 		{ "write_does_not_stick", write_does_not_stick }, { "reset_does_not_end", reset_does_not_end },
 		{ "level_past_the_last", level_past_the_last }, { "not_listed", not_listed },
+		{ "stopped_in_a_read_at_a_look", stopped_in_a_read_at_a_look },
+		{ "stopped_in_a_read_before_switched_on", stopped_in_a_read_before_switched_on },
+		{ "stopped_taking_the_pins_first", stopped_taking_the_pins_first }, { "stopped_taking_the_pins", stopped_taking_the_pins },
 	};
 
+	scenario_thread = pthread_self();
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			printf("%s\n", scenarios[i].name);
