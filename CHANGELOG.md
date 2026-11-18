@@ -198,6 +198,12 @@ tags yet, so the current work is one section.
   vote, the GPU, the panel...) were never run; it goes to the loader's log. After a panic the IPA's SMMU streams are put
   back without the lock, the GPU's bus is halted only while the 3D core has its power, and an SCMI level being set when
   the core stopped is put back. The modem's rails and the other drivers' RPMh requests share one lock for the one slot.
+- The kernel's own patches: a crash report read the process's memory under its lock (under memory pressure jetsam's
+  kill of that same process waited behind it for good); a non-root caller could give a persona spawn group 0 (the
+  entitlement check being gone, the way round the uid/gid-0 check); any program named xpcproxy kept its identity
+  version across an exec, and with it the audit token a setuid program would then have; a panic inside the panic's own
+  logging logged again; a boot-arg memory disk of 4 GB or more was sized as nothing. An SMEM item past the 256th of its
+  partition is found; a sealed APFS node's hash is checked apart from the Fletcher checksum's flag.
 
 ### For whoever works on the project
 
