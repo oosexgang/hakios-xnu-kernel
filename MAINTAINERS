@@ -37,6 +37,7 @@ T:	workbench/audio_device_test.c
 T:	workbench/sound_driver_test.c
 T:	workbench/speaker_driver_test.c
 T:	workbench/mic_driver_test.c
+T:	workbench/adsp_driver_test.c
 T:	workbench/guard_test.c
 D:	Documentation/drivers.md
 K:	speaker-aw88261, mic-wcd938x, adsp; sound=, adsp=

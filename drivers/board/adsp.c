@@ -177,6 +177,29 @@ tell(const char *format, ...)
 }
 #define printf say
 
+/*
+ * Text the DSP writes (its last words, the names of its entries and of the channels it opens), made fit
+ * for the log, as board/wifi.c makes the Wi-Fi DSP's: at most `size` bytes of `from`, up to a zero, into
+ * `to`, every byte that is not printable ASCII (0x20 to 0x7e) a '?', so that none of it moves the
+ * console's cursor, colours it or begins a line of its own in the log the loader shows. `to` may be
+ * `from`. Returns `to`.
+ */
+static char *
+printable(char *to, size_t to_size, const void *from, size_t size)
+{
+	const uint8_t *in = from;
+	size_t n;
+
+	if (to_size == 0) {
+		return to;
+	}
+	for (n = 0; n < size && n < to_size - 1 && in[n] != 0; n++) {
+		to[n] = in[n] >= 0x20 && in[n] <= 0x7e ? (char)in[n] : '?';
+	}
+	to[n] = 0;
+	return to;
+}
+
 static bool
 option(const char *name)
 {
@@ -388,7 +411,10 @@ show_words(const char *prefix, const struct smp2p *words)
 
 	line[0] = 0;
 	for (unsigned i = 0; i < words->valid && i < 16 && at < (int)sizeof(line) - 40; i++) {
-		at += snprintf(line + at, sizeof(line) - (size_t)at, " %.16s = %#x;", words->entry[i].name, words->entry[i].value);
+		char name[sizeof(words->entry[i].name) + 1];
+
+		at += snprintf(line + at, sizeof(line) - (size_t)at, " %s = %#x;", printable(name, sizeof(name), words->entry[i].name,
+		    sizeof(words->entry[i].name)), words->entry[i].value);
 	}
 	printf("adsp: %u: %s: SMP2P version %u, features %#x, from processor %u to %u, flags %#x, %u of %u entries:%s\n", step, prefix,
 	    words->version & 0xff, words->version >> 8, words->local, words->remote, words->flags, words->valid, words->total, line);
@@ -406,6 +432,7 @@ show_crash_reason(void)
 	}
 	bzero(text, sizeof(text));
 	smem_peek(at, text, size < sizeof(text) - 1 ? size : sizeof(text) - 1);
+	printable(text, sizeof(text), text, sizeof(text));
 	if (text[0] == 0) {
 		printf("adsp: %u: item %u, the DSP's last words (%u bytes): none\n", step, ITEM_CRASH_REASON, size);
 	} else {
@@ -1586,12 +1613,14 @@ struct glink_channel {
 	} our_intents[24];                      /* what the DSP may send into; an intent's number is its place here + 1 */
 	uint32_t our_intent_count;
 	struct glink_packet *first, *last;      /* received, in order */
+	uint32_t openings;                      /* how many times it has been open both ways since step 9 took up the link */
 };
 
 static LCK_MTX_DECLARE(glink_lock, &adsp_lock_group);
 static struct {
 	uint32_t descriptor, ours, ours_size, theirs, theirs_size;
 	bool up, broken;
+	bool given_up;                          /* the DSP has said it has given up: nothing sent waits for it any more */
 	uint32_t features;
 	bool agreed;
 	struct glink_channel channel[CHANNELS];
@@ -1822,6 +1851,7 @@ glink_pump(void)
 				}
 			}
 			if (channel == NULL) {
+				printable(name, sizeof(name), name, sizeof(name));      /* (for the log, here and in step 9's) */
 				printf("adsp: glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n", name,
 				    message.param1);
 				for (unsigned i = 0; i < 4; i++) {
@@ -1856,15 +1886,28 @@ glink_pump(void)
 		case GLINK_INTENT:
 			channel = glink_theirs(message.param1);
 			for (uint32_t i = 0; channel != NULL && i < message.param2; i++) {
+				int place = -1;
+
 				glink_peek(words, 8 + 8 * i, 8);
+				/*
+				 * (an intent we know of, told again, in its place -- looked for among all of them before a free one is
+				 * taken: a free place before it, of an intent taken back, would have it twice, the old size kept beside
+				 * the new, and a message sent into it at the old)
+				 */
 				for (unsigned n = 0; n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]); n++) {
-					if (!channel->their_intents[n].there || channel->their_intents[n].id == words[1]) {
-						channel->their_intents[n].there = true;
-						channel->their_intents[n].in_use = false;
-						channel->their_intents[n].size = words[0];
-						channel->their_intents[n].id = words[1];
+					if (channel->their_intents[n].there && channel->their_intents[n].id == words[1]) {
+						place = (int)n;
 						break;
 					}
+					if (!channel->their_intents[n].there && place < 0) {
+						place = (int)n;
+					}
+				}
+				if (place >= 0) {
+					channel->their_intents[place].there = true;
+					channel->their_intents[place].in_use = false;
+					channel->their_intents[place].size = words[0];
+					channel->their_intents[place].id = words[1];
 				}
 			}
 			glink_advance(length);
@@ -1889,12 +1932,15 @@ glink_pump(void)
 			}
 			break;
 		case GLINK_INTENT_REQUEST_ACK:
+			/*
+			 * (the DSP answers with its own number for the channel, as it names it in everything it sends -- Linux's
+			 * qcom_glink_handle_intent_req_ack() looks it up among the remote's numbers --, and its numbers and ours
+			 * are counted apart: its refusal on its channel 1 is not the answer to what our channel 1 waits for)
+			 */
 			glink_advance(length);
-			for (unsigned c = 0; c < CHANNELS; c++) {
-				if (message.param1 == glink.channel[c].theirs || message.param1 == glink.channel[c].ours) {
-					glink.channel[c].request_answered = true;
-					glink.channel[c].request_granted = message.param2 != 0;
-				}
+			if ((channel = glink_theirs(message.param1)) != NULL) {
+				channel->request_answered = true;
+				channel->request_granted = message.param2 != 0;
 			}
 			break;
 		case GLINK_DATA:
@@ -1987,6 +2033,7 @@ glink_pump(void)
 			channel = &glink.channel[c];
 			if (channel->theirs != 0 && channel->acknowledged && !channel->open) {
 				channel->open = true;
+				channel->openings++;
 				printf("adsp: glink: THE CHANNEL \"%s\" IS OPEN both ways (ours %u, the DSP's %u); telling the DSP our intents\n",
 				    channel->name, channel->ours, channel->theirs);
 				for (unsigned i = 0; i < 3; i++) {
@@ -1999,7 +2046,10 @@ glink_pump(void)
 	}
 }
 
-/* One whole message to the DSP on a channel; waits up to five seconds for an intent of the DSP's that it fits. */
+/*
+ * One whole message to the DSP on a channel; waits up to five seconds for an intent of the DSP's that it fits, and
+ * not at all once the DSP has said it has given up: a DSP that has died gives no intent back (board/wifi.c).
+ */
 static int
 glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 {
@@ -2017,7 +2067,7 @@ glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 	}
 	for (unsigned waited = 0;; waited++) {
 		glink_pump();
-		if (!glink.up || !channel->open || glink.broken) {
+		if (!glink.up || !channel->open || glink.broken || glink.given_up) {
 			lck_mtx_unlock(&glink_lock);
 			return ENOTCONN;
 		}
@@ -2065,6 +2115,7 @@ static struct {
 	bool there;
 } qrtr_servers[64];
 static uint32_t qrtr_peer, qrtr_in, qrtr_out, qrtr_hellos, qrtr_lookups;
+static uint32_t qrtr_hello_answered;    /* the opening of "IPCRTR" (its count) whose hello has been answered; 0: none */
 
 static int
 qrtr_out_packet(uint32_t type, uint32_t from_port, uint32_t to_node, uint32_t to_port, const void *data, uint32_t length)
@@ -2096,12 +2147,23 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 {
 	struct qrtr_control hello = { .command = QRTR_HELLO };
 	int found = -1, error;
+	uint32_t opening;
 
 	switch (control->command) {
 	case QRTR_HELLO:
-		if (qrtr_hellos++ != 0) {
+		/*
+		 * (answered once each time the channel is opened: two that answer every hello never end. A DSP that closes
+		 * "IPCRTR" and opens it again starts its router afresh on it, says hello again, and until ours comes back
+		 * takes us for a node that is not there -- tells nothing, answers nothing -- as on the first opening)
+		 */
+		qrtr_hellos++;
+		lck_mtx_lock(&glink_lock);
+		opening = glink.channel[CHANNEL_QRTR].openings;
+		lck_mtx_unlock(&glink_lock);
+		if (opening == qrtr_hello_answered) {
 			break;
 		}
+		qrtr_hello_answered = opening;
 		error = qrtr_out_packet(QRTR_HELLO, QRTR_CONTROL, header->from_node, QRTR_CONTROL, &hello, sizeof(hello));
 		printf("adsp: qrtr: HELLO FROM NODE %u; ours to it: %s\n", header->from_node, error == 0 ? "SENT" : "NOT SENT");
 		break;
@@ -2648,6 +2710,14 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 			dsp_listen(&words);
 			if ((dsp_state(&words) & DSP_FATAL) && !gave_up) {
 				gave_up = true;
+				/*
+				 * (whoever sends to it would wait five seconds for an intent it never gives, and a question over APR
+				 * for an answer that never comes -- the sound's and the microphones' way down, a command after another,
+				 * and the battery's every round: they fail at once from here, as on Linux once the DSP has crashed)
+				 */
+				lck_mtx_lock(&glink_lock);
+				glink.given_up = true;
+				lck_mtx_unlock(&glink_lock);
 				printf("adsp: link: THE AUDIO DSP SAYS IT HAS GIVEN UP (\"slave-kernel\" = %#x)\n", dsp_state(&words));
 				show_crash_reason();
 			}
@@ -2745,7 +2815,7 @@ step_queues(void)
 			length += message.param2;
 		}
 		printf("adsp: %u:   in the DSP's queue at %#x: %s %u %#x %s\n", step, at, glink_name(message.command), message.param1,
-		    message.param2, name);
+		    message.param2, printable(name, sizeof(name), name, sizeof(name)));
 		if (message.command != GLINK_VERSION && message.command != GLINK_OPEN) {
 			break;
 		}
@@ -2775,13 +2845,13 @@ step_link(void)
 	snprintf(last_write, sizeof(last_write), "step %u took up GLINK", step);
 	lck_mtx_lock(&glink_lock);
 	glink.features = GLINK_INTENT_REUSE;
-	glink.agreed = glink.broken = false;
+	glink.agreed = glink.broken = glink.given_up = false;
 	glink.said = glink.heard = 0;
 	for (unsigned c = 0; c < CHANNELS; c++) {
 		struct glink_channel *channel = &glink.channel[c];
 
 		channel->asked = channel->acknowledged = channel->open = false;
-		channel->theirs = channel->our_intent_count = 0;
+		channel->theirs = channel->our_intent_count = channel->openings = 0;
 		bzero(channel->their_intents, sizeof(channel->their_intents));
 	}
 	apr_in = apr_out = 0;
@@ -2789,7 +2859,7 @@ step_link(void)
 	bzero(glink.others, sizeof(glink.others));
 	glink.trace = 60;
 	glink.up = true;
-	qrtr_hellos = qrtr_in = qrtr_out = qrtr_lookups = 0;
+	qrtr_hellos = qrtr_in = qrtr_out = qrtr_lookups = qrtr_hello_answered = 0;
 	doorbell.since = began = now_us();
 	glink_say(GLINK_VERSION, GLINK_VERSION_1, glink.features, NULL, 0);
 	lck_mtx_unlock(&glink_lock);
