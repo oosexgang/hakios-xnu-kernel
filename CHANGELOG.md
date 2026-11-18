@@ -193,6 +193,11 @@ tags yet, so the current work is one section.
   whose function was running; destroy_workqueue() did not wait for the queue's work. A group key that the access point
   renews under the same number was taken away by the disabling of the old one (broadcasts -- ARP, DHCP -- lost until
   the next renewal). A full work queue, and RCU readers still looking after a second, are said in the log.
+- The way back to the loader: Wi-Fi's summary of Darwin's Apple80211 requests was printed on the console with interrupts
+  off, which panics -- and the quiesces after it (the Wi-Fi DSP's shutdown, the audio DSP's, the modem's, the memory
+  vote, the GPU, the panel...) were never run; it goes to the loader's log. After a panic the IPA's SMMU streams are put
+  back without the lock, the GPU's bus is halted only while the 3D core has its power, and an SCMI level being set when
+  the core stopped is put back. The modem's rails and the other drivers' RPMh requests share one lock for the one slot.
 
 ### For whoever works on the project
 
