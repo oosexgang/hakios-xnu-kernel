@@ -359,7 +359,8 @@ snapshotters_init_longer(id self, SEL selector, unsigned long most, double captu
 	    "and %.0f s a request instead of %.1f and %.1f (rwa_software=1)\n", most, capture * SNAPSHOT_STRETCH,
 	    request * SNAPSHOT_STRETCH, capture, request);
 	say(line);
-	return original_snapshotters_init(self, selector, most, capture * SNAPSHOT_STRETCH, request * SNAPSHOT_STRETCH);
+	return __atomic_load_n(&original_snapshotters_init, __ATOMIC_ACQUIRE)(self, selector, most, capture * SNAPSHOT_STRETCH,
+	    request * SNAPSHOT_STRETCH);
 }
 
 static void
@@ -395,9 +396,14 @@ snapshot_timeouts_longer(void)
 				say(line);
 				continue;
 			}
+			/* (the original stored before the method is replaced: from then on another thread may call it) */
+			IMP was = method_getImplementation(methods[k]);
+			if (was == (IMP)snapshotters_init_longer) {
+				continue;
+			}
 			snapshotters_class = classes[i];
-			original_snapshotters_init = (snapshotters_init_fn)method_setImplementation(methods[k],
-			    (IMP)snapshotters_init_longer);
+			__atomic_store_n(&original_snapshotters_init, (snapshotters_init_fn)was, __ATOMIC_RELEASE);
+			method_setImplementation(methods[k], (IMP)snapshotters_init_longer);
 			snprintf(line, sizeof(line), "hakios: PosterBoard: -[%s %s] stretches its timeouts (rwa_software=1)\n",
 			    class_getName(classes[i]), sel_getName(sel));
 			say(line);
@@ -415,31 +421,32 @@ snapshot_timeouts_longer(void)
  * is not only its own: PosterUIFoundation asks its render sessions for -pui_renderSessionTimeoutInterval,
  * and its snapshot classes carry more. Every getter of a time-out (a selector with "TimeoutInterval" in
  * or "imeout" in it, returning a double) of a PUI, PBF or PR class, and pui_renderSessionTimeoutInterval wherever it
- * is, answers SNAPSHOT_STRETCH times what it would have. Each replaced method keeps its own original:
- * the table is looked up by class and selector.
+ * is, answers SNAPSHOT_STRETCH times what it would have. Each replaced method gets a getter of its own
+ * that holds its own original: one shared getter looking its original up by the object's class found the
+ * subclass's again when that called its superclass's, and called it forever. The table only keeps a
+ * method from being replaced twice.
  */
 #define STRETCHED_MAX 48
 
 static struct {
 	Class cls;
 	SEL sel;
-	double (*original)(id, SEL);
+	IMP getter;             /* ours, which the method has now */
 } stretched[STRETCHED_MAX];
 static unsigned stretched_count;
 
-static double
-timeout_longer(id self, SEL selector)
-{
-	Class c = object_getClass(self);
+static __thread unsigned stretching;    /* > 0 inside a stretched getter: one that it calls is not stretched again */
 
-	for (; c != Nil; c = class_getSuperclass(c)) {
-		for (unsigned i = 0; i < stretched_count; i++) {
-			if (stretched[i].cls == c && stretched[i].sel == selector) {
-				return stretched[i].original(self, selector) * SNAPSHOT_STRETCH;
-			}
-		}
-	}
-	return 0;
+static IMP
+timeout_longer(SEL sel, double (*original)(id, SEL))
+{
+	double (^longer)(id) = ^double (id self) {
+		stretching++;
+		double t = original(self, sel);
+		stretching--;
+		return stretching == 0 ? t * SNAPSHOT_STRETCH : t;
+	};
+	return imp_implementationWithBlock((id)(void *)longer);
 }
 
 static bool
@@ -464,6 +471,7 @@ stretch_in(Class cls, bool meta)
 
 	for (unsigned k = 0; k < n && stretched_count < STRETCHED_MAX; k++) {
 		SEL sel = method_getName(methods[k]);
+		IMP was = method_getImplementation(methods[k]);
 		bool done = false;
 
 		if (!timeout_getter(name, sel_getName(sel)) || !types_of(methods[k], types, sizeof(types)) ||
@@ -471,15 +479,16 @@ stretch_in(Class cls, bool meta)
 			continue;
 		}
 		for (unsigned i = 0; i < stretched_count; i++) {
-			done |= stretched[i].cls == cls && stretched[i].sel == sel;
+			done |= (stretched[i].cls == cls && stretched[i].sel == sel) || stretched[i].getter == was;
 		}
 		if (done) {
 			continue;
 		}
+		/* (the getter holds the original before the method has it: another thread may call it at once) */
 		stretched[stretched_count].cls = cls;
 		stretched[stretched_count].sel = sel;
-		stretched[stretched_count].original = (double (*)(id, SEL))method_setImplementation(methods[k],
-		    (IMP)timeout_longer);
+		stretched[stretched_count].getter = timeout_longer(sel, (double (*)(id, SEL))was);
+		method_setImplementation(methods[k], stretched[stretched_count].getter);
 		stretched_count++;
 		snprintf(line, sizeof(line), "hakios: PosterBoard: %c[%s %s] answers %.0f times longer (rwa_software=1)\n",
 		    meta ? '+' : '-', name, sel_getName(sel), SNAPSHOT_STRETCH);
@@ -504,16 +513,18 @@ static id
 request_init_longer(id self, SEL selector, id path, id applicator, long priority, id descriptor,
     unsigned long retries, double timeout)
 {
-	return original_request_init(self, selector, path, applicator, priority, descriptor, retries,
-	    timeout * SNAPSHOT_STRETCH);
+	return __atomic_load_n(&original_request_init, __ATOMIC_ACQUIRE)(self, selector, path, applicator, priority,
+	    descriptor, retries, timeout * SNAPSHOT_STRETCH);
 }
 
 static id
 copy_with_time_longer(id self, SEL selector, double timeout)
 {
-	return original_copy_with_time(self, selector, timeout * SNAPSHOT_STRETCH);
+	return __atomic_load_n(&original_copy_with_time, __ATOMIC_ACQUIRE)(self, selector, timeout * SNAPSHOT_STRETCH);
 }
 
+/* (each original stored before its method is replaced, as for the snapshotters above, and a method that
+ * is ours already left as it is) */
 static void
 stretch_arguments(void)
 {
@@ -523,16 +534,20 @@ stretch_arguments(void)
 	if (original_request_init == NULL) {
 		m = class_getInstanceMethod(objc_getClass("PUIPosterSnapshotRequest"),
 		    sel_registerName("initWithPath:sceneSettingsApplicator:priority:snapshotDescriptor:retryCount:timeout:"));
-		if (m != NULL && types_of(m, types, sizeof(types)) && strcmp(types, "@@:@@?q@Qd") == 0) {
-			original_request_init = (request_init_fn)method_setImplementation(m, (IMP)request_init_longer);
+		if (m != NULL && method_getImplementation(m) != (IMP)request_init_longer &&
+		    types_of(m, types, sizeof(types)) && strcmp(types, "@@:@@?q@Qd") == 0) {
+			__atomic_store_n(&original_request_init, (request_init_fn)method_getImplementation(m), __ATOMIC_RELEASE);
+			method_setImplementation(m, (IMP)request_init_longer);
 			say("hakios: PosterBoard: a snapshot request's timeout argument is stretched (rwa_software=1)\n");
 		}
 	}
 	if (original_copy_with_time == NULL) {
 		m = class_getInstanceMethod(objc_getClass("PUIPosterSnapshotHostConfigurationDescriptor"),
 		    sel_registerName("copyWithCaptureTimeoutInterval:"));
-		if (m != NULL && types_of(m, types, sizeof(types)) && strcmp(types, "@@:d") == 0) {
-			original_copy_with_time = (copy_with_time_fn)method_setImplementation(m, (IMP)copy_with_time_longer);
+		if (m != NULL && method_getImplementation(m) != (IMP)copy_with_time_longer &&
+		    types_of(m, types, sizeof(types)) && strcmp(types, "@@:d") == 0) {
+			__atomic_store_n(&original_copy_with_time, (copy_with_time_fn)method_getImplementation(m), __ATOMIC_RELEASE);
+			method_setImplementation(m, (IMP)copy_with_time_longer);
 			say("hakios: PosterBoard: a capture timeout handed to a copy is stretched (rwa_software=1)\n");
 		}
 	}
@@ -592,7 +607,9 @@ render_timeouts_longer(void)
 
 /* FrontBoard's classes are not all there when this library is loaded: looked for again once
  * PosterBoard is running, and once more later, off its main thread (realizing every class is slow under
- * the emulator; each method found again is replaced with the same) */
+ * the emulator; a method that is ours already is left as it is). Both on one serial queue: a pass that
+ * took longer than the time between them would otherwise run beside the next, and both could replace
+ * the same method, the second taking the first's hook for the original. */
 static void
 watchdogs_off_later(void *context)
 {
@@ -609,10 +626,10 @@ poster_init(void)
 		watchdogs_off();
 		snapshot_timeouts_longer();
 		render_timeouts_longer();
-		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
-		    watchdogs_off_later);
-		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL,
-		    watchdogs_off_later);
+		dispatch_queue_t later = dispatch_queue_create("poster timeouts",
+		    dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), later, NULL, watchdogs_off_later);
+		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), later, NULL, watchdogs_off_later);
 	}
 
 	Method initial = method_of("PBFInitialPosterHelper", true, "initialPosterConfigurationsWithModelCoordinatorProvider:role:", "@@:@@");

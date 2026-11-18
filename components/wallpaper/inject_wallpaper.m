@@ -82,11 +82,12 @@ mode(void)
 	return m;
 }
 
-/* what LAYER's shapes are: their paths' extents, frames, colours and opacities, in their order */
+/* what LAYER's shapes are: its bounds, then their paths' extents, frames, colours and opacities, in their order */
 static NSString *
 shapesOf(CALayer *layer)
 {
-	NSMutableString *sig = [NSMutableString string];
+	const CGRect b = [layer bounds];
+	NSMutableString *sig = [NSMutableString stringWithFormat:@"%.2f %.2f %.2f %.2f:", b.origin.x, b.origin.y, b.size.width, b.size.height];
 
 	for (CALayer *l in [layer sublayers]) {
 		if (![l isKindOfClass:[CAShapeLayer class]]) continue;
@@ -101,6 +102,9 @@ shapesOf(CALayer *layer)
 	}
 	return sig;
 }
+
+/* (the most pixels a picture is drawn with, 16 M: 64 MB of it; a layer larger than that is left as it is) */
+#define PICTURE_MAX (16.0 * 1024 * 1024)
 
 static unsigned
 picture(CALayer *layer, unsigned depth)
@@ -117,10 +121,34 @@ picture(CALayer *layer, unsigned depth)
 		if ([s isKindOfClass:[CAShapeLayer class]]) shapes++, scale = MAX(scale, [s contentsScale]);
 	}
 	NSString *sig = shapes >= 2 ? shapesOf(layer) : nil;
-	if (sig != nil && ![sig isEqualToString:[drawn objectForKey:layer]]) {
+	NSString *had = [drawn objectForKey:layer];
+	if (sig == nil) {
+		/* (a layer drawn before that has not got its shapes any more: its picture taken away, the shape layers it has shown) */
+		if (had != nil) {
+			[CATransaction begin];
+			[CATransaction setDisableActions:YES];
+			[layer setContents:nil];
+			for (CALayer *s in [layer sublayers]) {
+				if ([s isKindOfClass:[CAShapeLayer class]]) [s setHidden:NO];
+			}
+			[CATransaction commit];
+			[drawn removeObjectForKey:layer];
+		}
+	} else if ([sig isEqualToString:had]) {
+		/* (a layer that keeps its picture: its shape layers hidden again, should SwiftUI have shown them since) */
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		for (CALayer *s in [layer sublayers]) {
+			if ([s isKindOfClass:[CAShapeLayer class]] && ![s isHidden]) [s setHidden:YES];
+		}
+		[CATransaction commit];
+	} else {
 		const CGRect b = [layer bounds];
 		const CGFloat k = scale > 0 ? scale : 2;
-		const size_t w = (size_t)ceil(b.size.width * k), h = (size_t)ceil(b.size.height * k);
+		/* (a size that is not a number, is nothing or is past PICTURE_MAX is not drawn) */
+		const double fw = ceil(b.size.width * k), fh = ceil(b.size.height * k);
+		const BOOL fits = isfinite(fw) && isfinite(fh) && fw > 0 && fh > 0 && fw * fh <= PICTURE_MAX;
+		const size_t w = fits ? (size_t)fw : 0, h = fits ? (size_t)fh : 0;
 		CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
 		CGContextRef cx = w && h ? CGBitmapContextCreate(NULL, w, h, 8, 0, rgb, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little) : NULL;
 
@@ -196,6 +224,7 @@ look(void)
 			if (shapes != 0) [now appendFormat:@"; %u shapes under a %.0fx%.0f %s", shapes, [l bounds].size.width, [l bounds].size.height, class_getName([l class])];
 		}
 		if (![now isEqualToString:said]) {
+			[said release];
 			said = [now copy];
 			say([NSString stringWithFormat:@"hakios: wallpaper: %s[%d]: %@", getprogname(), getpid(), now]);
 		}

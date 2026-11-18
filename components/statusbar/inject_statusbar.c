@@ -81,8 +81,9 @@ statusbar26_init(void)
 	for (size_t i = 0; i < sizeof(providers) / sizeof(providers[0]); i++) {
 		Class cls = objc_getClass(providers[i]);
 		Method method = cls ? own_class_method(cls, sel) : NULL;
+		const char *types = method ? method_getTypeEncoding(method) : NULL;
 
-		if (method == NULL || strcmp(method_getTypeEncoding(method), "d16@0:8") != 0) continue;
+		if (types == NULL || strcmp(types, "d16@0:8") != 0) continue;
 		double (*original)(id, SEL) = (double (*)(id, SEL))method_getImplementation(method);
 		double (^shifted)(id) = ^double (id self) {
 			depth++;
