@@ -694,7 +694,22 @@ a_vibration_that_softens(void)
 		usleep(300000);
 	}
 	CHECK(logged("Darwin stopped, and so does the motor after") && logged("last to gain 0x58)"), "said: %s", log_text);
-	CHECK(!logged("changed 0 times"), "it changed: %s", log_text);
+	{
+		/* (the vibration that reached 0x58 changed; an earlier try a pause cut short may have said 0) */
+		const char *last = strstr(log_text, "last to gain 0x58)"), *start = last;
+
+		while (start != NULL && start > log_text && start[-1] != '\n') {
+			start--;
+		}
+		char line[512] = "";
+
+		if (start != NULL) {
+			size_t n = (size_t)(last - start) < sizeof(line) - 1 ? (size_t)(last - start) : sizeof(line) - 1;
+			memcpy(line, start, n);
+			line[n] = 0;
+		}
+		CHECK(start != NULL && strstr(line, "changed 0 times") == NULL, "it changed: %s", log_text);
+	}
 	CHECK(device.reg[0x07] == 0x58, "the gain followed: %#x", device.reg[0x07]);
 }
 
