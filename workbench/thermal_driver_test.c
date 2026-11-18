@@ -452,9 +452,16 @@ sensor_between_readings(void)
 	CHECK(writes == 0 && foreign == 0, "looking only");
 }
 
+/*
+ * Every sensor of a phone held back because it is hot goes silent (nonsense or nothing): not knowing how hot it is,
+ * nothing is given back -- the rows stay where they were held, look after look -- until a sensor answers again and
+ * says it has cooled
+ */
 static void
 silent_sensors(void)
 {
+	uint32_t held, rows[3];
+
 	phone(720);
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
@@ -464,9 +471,50 @@ silent_sensors(void)
 			sensor[c][s] = s & 1 ? (1u << 21) | 0x7ff : 0;     /* nonsense or nothing */
 		}
 	}
-	WAIT_FOR(get("step") == 0 && (int32_t)get("hottest") == TH_NONE, 3000);
-	CHECK(get("step") == 0, "no reading is no reason to stay slow: %u", get("step"));
+	WAIT_FOR((int32_t)get("hottest") == TH_NONE, 2000);
+	usleep(150000);                         /* (the look that saw the last reading is done) */
+	held = get("step");
+	rows[0] = perf[0], rows[1] = perf[1], rows[2] = perf[2];
+	usleep(800000);                         /* eight looks or so without a reading */
 	CHECK((int32_t)get("hottest") == TH_NONE, "%d", (int32_t)get("hottest"));
+	CHECK(held >= 3 && get("step") == held, "no reading is no reason to give back: step %u, was %u", get("step"), held);
+	CHECK(perf[0] == rows[0] && perf[1] == rows[1] && perf[2] == rows[2] && perf[0] < ROWS - 1, "the rows held: %u %u %u",
+	    perf[0], perf[1], perf[2]);
+	temperature(0, 3, 500);                 /* the sensors answer again: cool (the rows left as the driver wrote them) */
+	temperature(1, 1, 450);
+	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1, 3000);
+	CHECK(get("step") == 0 && perf[0] == ROWS - 1, "cool and said so: given back: step %u, row %u", get("step"), perf[0]);
+}
+
+/*
+ * The sensor the phone is held back for goes silent while another, cooler one still answers: the cooler one's word is
+ * not taken for the silent one's -- nothing is given back until the silent one answers again and says it has cooled
+ */
+static void
+hottest_sensor_silent(void)
+{
+	uint32_t held;
+
+	phone(720);                             /* 72.0 C, the other sensor 67.0 C */
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(get("step") >= 3, 2000);
+	sensor[0][3] = 0;                       /* the hot one: no reading */
+	temperature(1, 1, 550);                 /* the other: 55.0 C, under the clear */
+	WAIT_FOR((int32_t)get("hottest") == 550, 1000);
+	usleep(150000);
+	held = get("step");
+	usleep(600000);
+	CHECK((int32_t)get("hottest") == 550, "the other sensor's reading: %d", (int32_t)get("hottest"));
+	CHECK(held >= 3 && get("step") == held, "the hot one silent: nothing given back: step %u, was %u", get("step"), held);
+	CHECK(logged("thermal: 1 sensor that answered before is silent: held back"), "why it is held is said: %s", log_text);
+	temperature(1, 1, 960);                 /* the other one critical meanwhile: held back all the way all the same */
+	WAIT_FOR(get("step") == 5, 1000);
+	CHECK(get("step") == 5, "a hot one that answers still counts: %u", get("step"));
+	temperature(1, 1, 550);
+	temperature(0, 3, 550);                 /* the silent one answers again: cool */
+	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1, 3000);
+	CHECK(get("step") == 0 && perf[0] == ROWS - 1, "both cool and said so: given back: step %u, row %u", get("step"), perf[0]);
 }
 
 static void
@@ -606,6 +654,19 @@ said_every_tenth_look(void)
 	CHECK(logged("hottest sensor 91.0 C"), "the tenth is: %s", log_text);
 }
 
+/* a phone left out in the frost, -0.5 C its hottest: said with its sign, not as half a degree above freezing */
+static void
+below_freezing_said(void)
+{
+	phone(-5);                              /* the other sensor at -5.5 C */
+	boot_args = "thermal=1 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(logged("thermal: hottest sensor"), 1000);
+	CHECK((int32_t)get("hottest") == -5, "%d", (int32_t)get("hottest"));
+	CHECK(logged("thermal: hottest sensor -0.5 C (thermal=1: looking only)"), "said: %s", log_text);
+	CHECK(!logged("hottest sensor 0.5 C"), "not as above freezing: %s", log_text);
+}
+
 /* what the GPU's driver asks: how far the processors are held back, and of how many steps */
 static void
 step_for_the_gpu(void)
@@ -655,11 +716,11 @@ main(int argc, char **argv)
 		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "osm_chip", osm_chip }, { "group_not_in_charge", group_not_in_charge },
-		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
+		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors }, { "hottest_sensor_silent", hottest_sensor_silent },
 		{ "tuned_while_running", tuned_while_running }, { "thresholds_held_to_sense", thresholds_held_to_sense }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
 		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused }, { "scmi_refused_at_critical", scmi_refused_at_critical },
-		{ "said_every_tenth_look", said_every_tenth_look }, { "step_for_the_gpu", step_for_the_gpu },
+		{ "said_every_tenth_look", said_every_tenth_look }, { "below_freezing_said", below_freezing_said }, { "step_for_the_gpu", step_for_the_gpu },
 		{ "scmi_without_levels", scmi_without_levels }, { "quiesce_when_cool", quiesce_when_cool },
 	};
 

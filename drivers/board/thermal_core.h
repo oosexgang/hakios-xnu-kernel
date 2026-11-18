@@ -52,8 +52,12 @@ th_hottest(const int32_t *tenths, unsigned n)
  * How far the processors are held back: 0 not at all, each step one row of every group's frequency
  * table lower, up to `most`. Above `trip` a step more each look; at or below `clear` a step less; in
  * between it stays (so it does not go up and down around one temperature); at `critical` all the way at
- * once. No reading at all: one step less, as if it were cool -- a sensor gone silent is no reason to keep
- * the phone slow, and the critical point is guarded by the hardware's own reset as well.
+ * once. No reading at all: it stays where it is, neither more nor less. It used to be one step less, as if it
+ * were cool -- but a sensor goes silent for reasons that have nothing to do with the phone being cool (a
+ * TSENS controller that stops answering, sensors that read nonsense as they get hot), and taken for cool
+ * that gave every row back, a step a look, to a phone that was held back because it was hot, with nothing
+ * left to hold it back but the hardware's own reset. Not knowing how hot it is is no reason to let it run
+ * faster: what was held back stays held back until a sensor answers again and says it has cooled.
  */
 struct th_policy {
 	int32_t trip, clear, critical;
@@ -63,7 +67,7 @@ static inline uint32_t
 th_next_step(uint32_t step, uint32_t most, int32_t hottest, const struct th_policy *p)
 {
 	if (hottest == TH_NONE) {
-		return step > 0 ? step - 1 : 0;
+		return step > most ? most : step;
 	}
 	if (hottest >= p->critical) {
 		return most;

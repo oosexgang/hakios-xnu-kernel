@@ -17,7 +17,8 @@ writes to them, and it ignores implausible readings (below −40 °C or above 15
 | between `th_clear` and `th_trip` | stays where it is (hysteresis) | stays |
 | ≤ `th_clear` (62.0 °C) | one row back each second | the cap rises with it |
 | ≥ `th_critical` (95.0 °C) | the floor at once | 60 % |
-| no reading at all | given back as if cool: a silent sensor is no reason to stay slow; the hardware's own reset still guards the critical point | |
+| no reading at all | stays where it is: not knowing how hot it is is no reason to give rows back to a phone held back because it was hot | stays |
+| a sensor that had readings silent, the others cool | nothing given back (held further if another is hot) until it answers again: the silent one may be the hot one | stays |
 
 The limiter never raises a group above the row it found at start: without `cpufreq=1` the groups stay at their
 300 MHz and it never writes. At the end of the run the rows are restored, so the loader is not left slow.
@@ -62,7 +63,7 @@ told so and nothing is read. Without `cpufreq { }` in its SoC file the limiter o
   - hysteresis
   - critical, with restore at the run's end
   - never raising when `cpufreq` is off
-  - silent sensors
+  - silent sensors (all of them, or the hot one alone): nothing given back
   - tuning at run time
   - an unknown board
   - a contradictory policy

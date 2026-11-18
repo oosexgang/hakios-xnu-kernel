@@ -113,12 +113,35 @@ rows_text(const uint32_t *rows, char *text, size_t size)
 	return text;
 }
 
-/* the hottest reading of every sensor of every controller, and which it is (controller * 16 + sensor) */
+/*
+ * tenths of a degree as text, "72.0" or "-0.5": the sign said by itself, as the tenths alone would lose it between 0 and -1 C
+ * (-5 tenths divided by ten is 0, and "0.5" is warm where -0.5 is a phone left out in the frost)
+ */
+static const char *
+tenths_text(int32_t t, char *text, size_t size)
+{
+	snprintf(text, size, "%s%d.%d", t < 0 ? "-" : "", t / 10 < 0 ? -(t / 10) : t / 10, t % 10 < 0 ? -(t % 10) : t % 10);
+	return text;
+}
+
+/*
+ * The sensors that have had a reading at some look. One of them silent now (no reading in four tries) is not a sensor
+ * that is not wired up: it is one whose temperature is not known this look -- and it may well be the hottest, the one
+ * the phone was held back for. Its silence is no reason to give anything back (th_thread).
+ */
+static bool answered[TH_CONTROLLERS * TH_SENSORS];
+
+/*
+ * the hottest reading of every sensor of every controller, and which it is (controller * 16 + sensor); `*silent`: how many
+ * of the sensors that answered at an earlier look have no reading now
+ */
 static int32_t
-read_hottest(unsigned *which)
+read_hottest(unsigned *which, unsigned *silent)
 {
 	int32_t readings[TH_CONTROLLERS * TH_SENSORS], hot;
 	unsigned n = 0;
+
+	*silent = 0;
 
 	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
 		for (unsigned s = 0; s < TH_SENSORS; s++) {
@@ -127,6 +150,11 @@ read_hottest(unsigned *which)
 			/* a sensor caught between two readings has none for a moment: asked again */
 			for (unsigned again = 0; tsens[c] != 0 && again < 4 && t == TH_NONE; again++) {
 				t = th_tsens_tenths(rd(tsens[c] + TSENS_STATUS(s)));
+			}
+			if (t != TH_NONE) {
+				answered[n] = true;
+			} else if (answered[n]) {
+				(*silent)++;
 			}
 			readings[n++] = t;
 		}
@@ -223,10 +251,11 @@ static void
 th_thread(__unused void *argument, __unused wait_result_t result)
 {
 	uint32_t looks = 0, said_step = 0;
+	bool held_for_silence = false;          /* (said once each time it begins) */
 
 	for (;;) {
-		unsigned which = 0;
-		int32_t t = read_hottest(&which);
+		unsigned which = 0, silent = 0;
+		int32_t t = read_hottest(&which, &silent);
 
 		hottest = t;
 		tell_look(t, which);
@@ -238,22 +267,42 @@ th_thread(__unused void *argument, __unused wait_result_t result)
 			 * one failed call
 			 */
 			struct th_policy now = policy;
+			uint32_t next;
 
 			if (now.clear < now.trip && now.trip < now.critical) {
 				in_force = now;
 			}
-			step = th_next_step(step, most, t, &in_force);
+			next = th_next_step(step, most, t, &in_force);
+			/*
+			 * nothing given back while a sensor that has answered before is silent: the hottest of the others may be
+			 * cool, but the silent one may be the one that was hot -- the processors' own, under them -- and taking the
+			 * others' word for it gave the rows back, a step a look, to a phone that was held back because that one was
+			 * hot. Held more when another is hot, given back once every sensor that answers answers again.
+			 */
+			if (silent != 0 && next < step) {
+				if (!held_for_silence) {
+					say("thermal: %u sensor%s that answered before %s silent: held back %u of %u, nothing given back until "
+					    "every one answers again\n", silent, silent == 1 ? "" : "s", silent == 1 ? "is" : "are", step, most);
+				}
+				held_for_silence = true;
+				next = step;
+			} else if (silent == 0) {
+				held_for_silence = false;
+			}
+			step = next;
 			apply(step);
 			if (step != said_step) {
-				char rows[48];
+				char rows[48], degrees[16];
 
-				say("thermal: %d.%d C: held back %u of %u (rows %s)\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
+				say("thermal: %s C: held back %u of %u (rows %s)\n", tenths_text(t, degrees, sizeof(degrees)),
 				    step, most, rows_text(row_now, rows, sizeof(rows)));
 				said_step = step;
 			}
 		}
 		if (looks++ % 10 == 0) {
-			say("thermal: hottest sensor %d.%d C%s\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
+			char degrees[16];
+
+			say("thermal: hottest sensor %s C%s\n", tenths_text(t, degrees, sizeof(degrees)),
 			    mode >= 2 ? "" : " (thermal=1: looking only)");
 		}
 		assert_wait_timeout(&poke, THREAD_UNINT, period_ms, NSEC_PER_MSEC);

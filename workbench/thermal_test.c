@@ -34,7 +34,13 @@ main(void)
 	CHECK(th_next_step(2, 5, 620, &p) == 1, "at clear: one less");
 	CHECK(th_next_step(0, 5, 300, &p) == 0, "never below 0");
 	CHECK(th_next_step(1, 5, 950, &p) == 5, "critical: all at once");
-	CHECK(th_next_step(3, 5, TH_NONE, &p) == 2, "no reading: as if cool");
+	CHECK(th_next_step(3, 5, TH_NONE, &p) == 3, "no reading: held where it is, not given back as if cool: %u", th_next_step(3, 5, TH_NONE, &p));
+	CHECK(th_next_step(0, 5, TH_NONE, &p) == 0, "no reading from cool: not held back either");
+	s = 5;
+	for (int i = 0; i < 10; i++) {
+		s = th_next_step(s, 5, TH_NONE, &p);
+	}
+	CHECK(s == 5, "held back all the way, then ten looks without a reading: still all the way: %u", s);
 	CHECK(th_next_step(9, 5, 650, &p) == 5, "a step beyond most comes back within");
 	/* a run: heating holds back a step a look, cooling gives back a step a look, hysteresis between */
 	s = 0;
