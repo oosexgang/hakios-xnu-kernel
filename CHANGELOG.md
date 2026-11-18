@@ -268,6 +268,16 @@ tags yet, so the current work is one section.
   photograph and could run two frame threads; the audio plug-in's real-time thread waited on a lock held across system
   calls; a missing class aborted SpringBoard from the brightness hook; and a crashing tweak had no way to be skipped
   (`notweaks=1`, and a SpringBoard start that never got past its tweaks skips them the next time).
+- Still more: with `var_store=1` the keychain (a Wi-Fi passphrase among it) reached the flash under a key anyone can
+  undo, and `var_store erase` left the archive readable (the keychain is now kept only with `var_store_keychain=1`, and
+  erase zeroes it); PID 1 wrote a boot-arg's preferences through a link the last boot left, handing mobile any root
+  file; a small image built with `SHARE=1` still carried the Wi-Fi passphrase; any user could fill the kernel's memory
+  through ramfs (a truncate to tens of GB, extended attributes), and `RENAME_EXCL` was not exclusive; a key of the wrong
+  length made IPsec's AES the identity, and DES, 3DES or ChaCha20 SAs panicked the kernel; an interrupt numbered past
+  1023 was never ended, which stopped the tick; a panic on the core that held the log's lock took hours to write the
+  log; the GPU's second stream stayed matched to a context without translation at the run's end; the Wi-Fi driver's
+  start and stop raced; any second socket on Bluetooth's kernel control broke bluetoothd's stream; and backboardd read
+  16.5's QuartzCore addresses blind on 26 and 27.
 
 ### For whoever works on the project
 
