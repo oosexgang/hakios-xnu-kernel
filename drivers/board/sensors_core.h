@@ -13,8 +13,8 @@
 #ifndef _HAKIOS_SENSORS_CORE_H
 #define _HAKIOS_SENSORS_CORE_H
 
-#include "board/sensor_axes_core.h"
-#include "board/orientation_core.h"
+#include "sensor_axes_core.h"
+#include "orientation_core.h"
 
 struct sensors_accel {
 	struct sensor_mount    mount;    /* the chip's mounting on this board (chip axes -> Darwin axes) */
