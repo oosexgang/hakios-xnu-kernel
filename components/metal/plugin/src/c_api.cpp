@@ -53,29 +53,45 @@ public:
         more_.notify_all();
         thread_.join();
     }
-    void post(std::atomic<int>* pending, std::function<void()> f) {
+    void post(std::shared_ptr<std::atomic<int>> pending, std::function<void()> f) {
+        reapRetired();
         pending->fetch_add(1);
         {
             std::lock_guard<std::mutex> g(m_);
-            q_.push_back(Job{pending, std::move(f)});
+            q_.push_back(Job{std::move(pending), std::move(f)});
         }
         more_.notify_one();
     }
     // until the jobs posted for one command buffer are done
     void drain(std::atomic<int>* pending) {
         if (pending->load() == 0 || inWorker()) return;
+        reapRetired();
         std::unique_lock<std::mutex> g(m_);
         done_.wait(g, [&] { return pending->load() == 0; });
     }
     // until every job is done (before the caller records something itself)
     void drainAll() {
         if (inWorker()) return;
+        reapRetired();
         std::unique_lock<std::mutex> g(m_);
         done_.wait(g, [&] { return q_.empty() && !busy_; });
     }
     static bool inWorker() { return worker_; }
+    // hand a Deferrer reference that would otherwise be dropped on its own worker thread to a graveyard, let go later
+    // from a non-worker thread (reapRetired); joining a thread to itself would terminate the process
+    static void retire(std::shared_ptr<Deferrer> d) {
+        std::lock_guard<std::mutex> g(retireLock());
+        retired().push_back(std::move(d));
+    }
 private:
-    struct Job { std::atomic<int>* pending; std::function<void()> f; };
+    static std::mutex& retireLock() { static std::mutex m; return m; }
+    static std::vector<std::shared_ptr<Deferrer>>& retired() { static std::vector<std::shared_ptr<Deferrer>> v; return v; }
+    static void reapRetired() {
+        std::vector<std::shared_ptr<Deferrer>> dead;
+        { std::lock_guard<std::mutex> g(retireLock()); dead.swap(retired()); }
+        // (cleared here, off any worker thread: each Deferrer's own thread is joined by this one, never by itself)
+    }
+    struct Job { std::shared_ptr<std::atomic<int>> pending; std::function<void()> f; };
     void run() {
         worker_ = true;
         std::unique_lock<std::mutex> g(m_);
@@ -132,7 +148,9 @@ struct hakios_metal_cb {
     std::vector<CommandBuffer::DrawTime> drawTimes;   // hakios_metal_cb_draw_time's, read at its first call (I 0)
     uint64_t indirectOffset = 0;
     std::shared_ptr<Deferrer> deferrer;   // the queue's, when it records deferred
-    std::atomic<int> pending{0};          // jobs posted for this buffer and not yet done
+    // jobs posted for this buffer and not yet done; shared so a job counting itself done keeps the counter alive even
+    // if the command buffer was freed inside that job (a completion handler releasing the last reference)
+    std::shared_ptr<std::atomic<int>> pending = std::make_shared<std::atomic<int>>(0);
 };
 struct hakios_metal_texture {
     std::shared_ptr<Texture> texture;   // its Buffer is kept by every command buffer that dispatched over it
@@ -150,7 +168,7 @@ namespace {
 // the caller's (the handles are a shared_ptr each: a copy keeps the object alive whatever the caller frees meanwhile)
 bool deferring(hakios_metal_cb* cb) { return cb->deferrer != nullptr && !Deferrer::inWorker(); }
 void syncAll(hakios_metal_cb* cb) { if (cb->deferrer != nullptr) cb->deferrer->drainAll(); }
-void syncOne(hakios_metal_cb* cb) { if (cb->deferrer != nullptr) cb->deferrer->drain(&cb->pending); }
+void syncOne(hakios_metal_cb* cb) { if (cb->deferrer != nullptr) cb->deferrer->drain(cb->pending.get()); }
 template <class H>
 struct Handles {
     std::vector<H> copies;
@@ -809,6 +827,11 @@ void hakios_metal_cb_free(hakios_metal_cb* cb) {
     if (s == CommandBuffer::kCommitted || s == CommandBuffer::kScheduled) {
         cb->cb->waitUntilCompleted();
     }
+    if (Deferrer::inWorker() && cb->deferrer != nullptr) {
+        // freed from inside a deferred job, on the deferrer's own thread: hand its reference to the graveyard so that
+        // delete cb below cannot drop the last one here and join the worker thread to itself
+        Deferrer::retire(std::move(cb->deferrer));
+    }
     delete cb;
 }
 
@@ -862,12 +885,12 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from
 }
 
 void hakios_metal_cb_skip_refused(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setSkipRefused(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setSkipRefused(on != 0); });
     cb->cb->setSkipRefused(on != 0);
 }
 
 void hakios_metal_cb_set_profile(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setProfile(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setProfile(on != 0); });
     cb->cb->setProfile(on != 0);
 }
 
@@ -894,37 +917,37 @@ void hakios_metal_cb_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* dra
 }
 
 void hakios_metal_cb_set_gmem(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setGmem(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setGmem(on != 0); });
     cb->cb->setGmem(on != 0);
 }
 
 void hakios_metal_cb_set_gmem_off(hakios_metal_cb* cb, unsigned bits) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, bits] { cb->cb->setGmemOff(bits); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, bits] { cb->cb->setGmemOff(bits); });
     cb->cb->setGmemOff(bits);
 }
 
 void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setGmemTuned(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setGmemTuned(on != 0); });
     cb->cb->setGmemTuned(on != 0);
 }
 
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb* cb, unsigned draws) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, draws] { cb->cb->setGmemMinDraws(draws); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, draws] { cb->cb->setGmemMinDraws(draws); });
     cb->cb->setGmemMinDraws(draws);
 }
 
 void hakios_metal_cb_set_gmem_binning(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setGmemBinning(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setGmemBinning(on != 0); });
     cb->cb->setGmemBinning(on != 0);
 }
 
 void hakios_metal_cb_set_null_fs_textures(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setNullFsTextures(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setNullFsTextures(on != 0); });
     cb->cb->setNullFsTextures(on != 0);
 }
 
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setProfileDraws(on != 0); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, on] { cb->cb->setProfileDraws(on != 0); });
     cb->cb->setProfileDraws(on != 0);
 }
 
@@ -976,7 +999,7 @@ int hakios_metal_cb_pass_tiles(hakios_metal_cb* cb, unsigned i) {
 int hakios_metal_cb_refuse(hakios_metal_cb* cb, const char* why) {
     if (deferring(cb)) {
         std::string w = why != nullptr ? why : "refused";
-        cb->deferrer->post(&cb->pending, [cb, w] { cb->cb->refuseWork(w); });
+        cb->deferrer->post(cb->pending, [cb, w] { cb->cb->refuseWork(w); });
         return -1;
     }
     cb->cb->refuseWork(why != nullptr ? why : "refused");
@@ -1079,7 +1102,7 @@ int hakios_metal_cb_dispatch_indirect(hakios_metal_cb* cb, hakios_metal_kernel* 
 }
 
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb* cb, unsigned length) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, length] { cb->threadgroupLength = length; });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, length] { cb->threadgroupLength = length; });
     cb->threadgroupLength = length;
 }
 
@@ -1095,7 +1118,7 @@ int hakios_metal_cb_append(hakios_metal_cb* cb, hakios_metal_cb* other) {
 void hakios_metal_cb_set_indirect(hakios_metal_cb* cb, hakios_metal_buffer* args, uint64_t offset) {
     if (deferring(cb)) {
         std::shared_ptr<Buffer> b = args != nullptr ? args->buffer : nullptr;
-        return cb->deferrer->post(&cb->pending, [cb, b, offset] { cb->indirect = b; cb->indirectOffset = offset; });
+        return cb->deferrer->post(cb->pending, [cb, b, offset] { cb->indirect = b; cb->indirectOffset = offset; });
     }
     cb->indirect = args != nullptr ? args->buffer : nullptr;
     cb->indirectOffset = offset;
@@ -1520,7 +1543,7 @@ void hakios_metal_cb_set_vertex_textures(hakios_metal_cb* cb, hakios_metal_textu
         auto m = std::make_shared<Handles<hakios_metal_sampler>>();
         t->take(textures, textureCount);
         m->take(samplers, samplerCount);
-        return cb->deferrer->post(&cb->pending, [cb, t, m, textureCount, samplerCount] {
+        return cb->deferrer->post(cb->pending, [cb, t, m, textureCount, samplerCount] {
             hakios_metal_cb_set_vertex_textures(cb, t->get(), textureCount, m->get(), samplerCount);
         });
     }
@@ -1580,7 +1603,7 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
     if (deferring(cb)) {
         auto c = std::make_shared<DrawCopy>();
         c->take(p, pass, viewport, scissor, vsBuffers, vsOffsets, vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
-        cb->deferrer->post(&cb->pending, [=] {
+        cb->deferrer->post(cb->pending, [=] {
             refusedThere(cb, hakios_metal_cb_draw2(cb, &c->program, c->pass.get(), c->vp(), c->sc(), primitive, vertexStart, vertexCount, instanceCount,
                                                    c->vs.get(), c->vso(), vsCount, c->fs.get(), c->fso(), fsCount, c->fsTextures.get(), fsTextureCount,
                                                    c->fsSamplers.get(), fsSamplerCount));
@@ -1600,7 +1623,7 @@ int hakios_metal_cb_draw3(hakios_metal_cb* cb, hakios_metal_program* p, const st
     if (deferring(cb)) {
         auto c = std::make_shared<DrawCopy>();
         c->take(p, pass, viewport, scissor, vsBuffers, vsOffsets, vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
-        cb->deferrer->post(&cb->pending, [=] {
+        cb->deferrer->post(cb->pending, [=] {
             refusedThere(cb, hakios_metal_cb_draw3(cb, &c->program, c->pass.get(), c->vp(), c->sc(), primitive, vertexStart, vertexCount, instanceCount,
                                                    baseInstance, c->vs.get(), c->vso(), vsCount, c->fs.get(), c->fso(), fsCount, c->fsTextures.get(),
                                                    fsTextureCount, c->fsSamplers.get(), fsSamplerCount));
@@ -1621,7 +1644,7 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, c
         auto c = std::make_shared<DrawCopy>();
         c->take(p, pass, viewport, scissor, vsBuffers, vsOffsets, vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
         c->index = *indexBuffer;
-        cb->deferrer->post(&cb->pending, [=] {
+        cb->deferrer->post(cb->pending, [=] {
             refusedThere(cb, hakios_metal_cb_draw_indexed(cb, &c->program, c->pass.get(), c->vp(), c->sc(), primitive, indexCount, indexType, &c->index,
                                                           indexOffset, instanceCount, baseVertex, baseInstance, c->vs.get(), c->vso(), vsCount,
                                                           c->fs.get(), c->fso(), fsCount, c->fsTextures.get(), fsTextureCount, c->fsSamplers.get(),
@@ -1644,7 +1667,7 @@ int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_
     if (deferring(cb) && pass != nullptr) {
         auto c = std::make_shared<PassCopy>();
         c->take(pass);
-        cb->deferrer->post(&cb->pending, [cb, c] { refusedThere(cb, hakios_metal_cb_clear(cb, c->get())); });
+        cb->deferrer->post(cb->pending, [cb, c] { refusedThere(cb, hakios_metal_cb_clear(cb, c->get())); });
         return 0;
     }
     if (!cb->cb->clear(passOf(pass))) {
@@ -1658,13 +1681,13 @@ int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_
 void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) {
     if (deferring(cb)) {
         std::string w = why != nullptr ? why : "refused";
-        return cb->deferrer->post(&cb->pending, [cb, w] { cb->cb->refuse(w); });
+        return cb->deferrer->post(cb->pending, [cb, w] { cb->cb->refuse(w); });
     }
     cb->cb->refuse(why != nullptr ? why : "refused");
 }
 
 void hakios_metal_cb_commit(hakios_metal_cb* cb, void (*callback)(hakios_metal_cb*, void*), void* context) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, callback, context] { hakios_metal_cb_commit(cb, callback, context); });
+    if (deferring(cb)) return cb->deferrer->post(cb->pending, [cb, callback, context] { hakios_metal_cb_commit(cb, callback, context); });
     if (callback != nullptr) {
         cb->cb->addCompletedHandler([cb, callback, context](CommandBuffer&) { callback(cb, context); });
     }

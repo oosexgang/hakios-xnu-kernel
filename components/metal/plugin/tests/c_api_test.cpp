@@ -91,6 +91,30 @@ TEST(c_api_free_inside_its_callback) {
     hakios_metal_close(d);
 }
 
+TEST(c_api_a_deferred_buffer_freed_in_its_callback_is_safe) {
+    // With deferred recording the commit runs on the Deferrer's worker thread. A refused buffer finishes in error there
+    // and its completion handler frees the command buffer, on that same worker. The job counter must outlive the freed
+    // buffer (it is shared), and freeing the buffer must not join the worker thread to itself. Run under ASAN this
+    // catches the use-after-free; without the fix the worker read the freed buffer's counter.
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    hakios_metal_queue_set_deferred(q, 1);
+    std::atomic<int> done{0};
+    for (int i = 0; i < 20; i++) {
+        hakios_metal_cb* c = hakios_metal_cb_new(q);
+        hakios_metal_cb_fail(c, "a buffer not in the GPU's memory");   // finishes in error when the commit runs
+        hakios_metal_cb_commit(c, freeItself, &done);                  // deferred: the callback frees c on the worker
+    }
+    hakios_metal_cb* last = hakios_metal_cb_new(q);
+    hakios_metal_cb_commit(last, nullptr, nullptr);
+    hakios_metal_cb_wait(last);
+    hakios_metal_cb_free(last);
+    CHECK_EQ(done.load(), 20);
+    hakios_metal_queue_set_deferred(q, 0);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
 TEST(c_api_fail_ends_in_error) {
     hakios_metal_device* d = hakios_metal_open_fake();
     hakios_metal_queue* q = hakios_metal_queue_new(d);
