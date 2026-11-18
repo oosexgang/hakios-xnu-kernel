@@ -177,6 +177,17 @@ tags yet, so the current work is one section.
   log); the kernel's part of a staged log was lost for good once the loader's own log had grown by 8 KB. A free block
   that ends inside the payload's place keeps what is below it, an unaligned physbase= is refused, and the memory for
   32-bit devices is not put over the payload.
+- APFS, with the disk not trusted: a B-tree whose index entries name the same leaf (or a few, round and round) had one
+  walk go on for good under the mount's lock; a child is now one level below its parent, a leaf is level 0, and a walk
+  steps into no more leaves than the tree has nodes. The live superblock's block count, and a container's size that
+  wraps, are checked against the device; an extended attribute's size off the disk past 2 GB is refused, not
+  allocated. Two lookups of one inode at once no longer make two vnodes for it.
+- The camera keeps one picture for the host at a time.
+- The platform: the CPU driver took the boot processor's number from the kernel's master_cpu, which nothing sets on
+  this kernel (it stays -1) -- the CPU objects were indexed at -1, and the boot processor was not told from the others
+  when one is halted or stopped; it is psci_smp's now. Two drivers attaching interrupts at once could undo each other's
+  group and trigger bits; an interrupt past the distributor's lines is refused at attach; an unowned extended SPI or LPI
+  is no longer "masked" through registers that are not its; a signal to a core whose Aff0 is 16 or more goes to it.
 
 ### For whoever works on the project
 
