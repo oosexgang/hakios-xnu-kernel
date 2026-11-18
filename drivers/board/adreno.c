@@ -138,6 +138,14 @@ HAKIOS_DEFINE_SAY(true)
 #define HAKIOS_MMIO_EXACT
 #include "mmio.h"
 
+#if defined(HAKIOS_MMIO_TEST)
+/* (a test's model of the registers answers by words: a byte is taken out of the word it lies in) */
+static uint32_t
+rd8(vm_offset_t address)
+{
+	return hakios_test_rd(address & ~(vm_offset_t)3) >> 8 * (address & 3) & 0xff;
+}
+#else
 static uint32_t __attribute__((noinline))
 rd8(vm_offset_t address)
 {
@@ -146,6 +154,7 @@ rd8(vm_offset_t address)
 	__asm__ volatile ("ldrb %w0, [%1]" : "=r" (value) : "r" (address) : "memory");
 	return value;
 }
+#endif
 
 /* A stretch of registers; mapped when a step first needs it. */
 struct block {
@@ -460,6 +469,7 @@ cx_is_on(void)
 }
 
 static void stale_stop(void);
+static bool cx_ours;                    /* step 4 switched CX on: gpu_block_stop() switches it off if a step failed */
 
 /*
  * The switch hangs on the rail "cx.lvl", which is up for as long as the SoC runs at all; the
@@ -497,6 +507,7 @@ step_cx_power(void)
 		return false;
 	}
 	put(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR, gdscr & ~GDSC_SW_COLLAPSE);
+	cx_ours = true;
 	for (int i = 0; i < 500 && !cx_is_on(); i++) {
 		sleep_us(100);
 	}
@@ -1165,6 +1176,12 @@ space_new_table(struct gpu_space *space)
 	}
 	table = (uint64_t *)(spare + PAGE_SIZE - 4096 * spare_left--);
 	space->tables[space->table_count].phys = kvtophys((vm_offset_t)table);
+	/*
+	 * (zeroed in this processor's cache: memory under it holds whatever was there before. Once an entry leads here
+	 * the SMMU reads that, so it goes out with the next commit even if nothing is ever written into it -- a mapping
+	 * that fails at the level below leaves it so)
+	 */
+	space->tables[space->table_count].changed = true;
 	space->tables[space->table_count++].table = table;
 	return table;
 }
@@ -1200,7 +1217,7 @@ space_commit(struct gpu_space *space)
 }
 
 static uint64_t *
-space_next(struct gpu_space *space, uint64_t *entry)
+space_next(struct gpu_space *space, uint64_t *entry, bool make)
 {
 	uint64_t *table;
 
@@ -1212,6 +1229,9 @@ space_next(struct gpu_space *space, uint64_t *entry)
 		}
 		return NULL;
 	}
+	if (!make) {
+		return NULL;
+	}
 	table = space_new_table(space);
 	if (table != NULL) {
 		*entry = kvtophys((vm_offset_t)table) | PTE_TABLE;
@@ -1220,31 +1240,35 @@ space_next(struct gpu_space *space, uint64_t *entry)
 	return table;
 }
 
-/* One 4K page. */
+/* One 4K page; with phys and attributes 0, none there any more (an address without tables had none: none are made for it). */
 static bool
 space_map(struct gpu_space *space, uint64_t address, uint64_t phys, uint64_t attributes)
 {
+	bool unmap = phys == 0 && attributes == 0;
 	uint64_t *level2, *level3;
 
-	if (address >> 39 || (space->root == NULL && (space->root = space_new_table(space)) == NULL)) {
+	if (address >> 39) {
 		return false;
 	}
-	level2 = space_next(space, &space->root[address >> 30 & 0x1ff]);
+	if (space->root == NULL && (unmap || (space->root = space_new_table(space)) == NULL)) {
+		return unmap;
+	}
+	level2 = space_next(space, &space->root[address >> 30 & 0x1ff], !unmap);
 	if (level2 == NULL) {
-		return false;
+		return unmap;
 	}
 	if (space->last_entry == &level2[address >> 21 & 0x1ff]) {
 		level3 = space->last_table;             /* page after page of one buffer: the same table */
 	} else {
-		level3 = space_next(space, &level2[address >> 21 & 0x1ff]);
+		level3 = space_next(space, &level2[address >> 21 & 0x1ff], !unmap);
 		space->last_entry = &level2[address >> 21 & 0x1ff];
 		space->last_table = level3;
 	}
 	if (level3 == NULL) {
 		space->last_entry = NULL;
-		return false;
+		return unmap;
 	}
-	level3[address >> 12 & 0x1ff] = phys == 0 && attributes == 0 ? 0 : phys | attributes | PTE_PAGE;
+	level3[address >> 12 & 0x1ff] = unmap ? 0 : phys | attributes | PTE_PAGE;
 	space_changed(space, level3);
 	return true;
 }
@@ -1530,8 +1554,12 @@ zap_header(uint64_t *phys)
 		return false;
 	}
 	/* a 32-bit ELF: the count of segments at 44, the table of them at 52, 32 bytes each, the file size of one at +16 */
-	segments = size >= 52 + 2 * 32 ? header[44] | header[45] << 8 : 0;
-	if (memcmp(header, "\177ELF\1", 5) != 0 || segments < 2 || size > PAGE_SIZE) {
+	if (size < 52 + 2 * 32 || size > PAGE_SIZE) {
+		printf("adreno: %u: that is not such a header (%llu bytes)\n", step, size);
+		return false;
+	}
+	segments = header[44] | header[45] << 8;
+	if (memcmp(header, "\177ELF\1", 5) != 0 || segments < 2) {
 		printf("adreno: %u: that is not such a header (%02x %02x %02x %02x, %u segments)\n", step, header[0], header[1],
 		    header[2], header[3], segments);
 		return false;
@@ -2003,13 +2031,22 @@ hfi_receive(unsigned which, uint32_t number, uint32_t *verdict)
 		}
 		queue->read = (at + 3) / 4 * 4 % HFI_QUEUE_WORDS;
 		if ((message[0] >> 16 & 0xf) == HFI_ANSWER && message[1] >> 20 == number) {
-			*verdict = message[2];
+			/* (fewer than three words hold no verdict: the 0 in its place would be ours, not the GMU's yes) */
+			*verdict = words >= 3 ? message[2] : ~0u;
 			answered = true;
 		} else {
-			message[7] = 0;
 			if ((message[0] & 0xff) == HFI_ERROR) {         /* vendor's adreno_a6xx_receive_err_req */
+				/* (the GMU's bytes, not text of ours: what is not printable goes into the log as '?') */
+				const uint8_t *bytes = (const uint8_t *)&message[2];
+				char text[21];
+				unsigned n;
+
+				for (n = 0; n < sizeof(text) - 1 && bytes[n] != 0; n++) {
+					text[n] = bytes[n] >= 0x20 && bytes[n] <= 0x7e ? (char)bytes[n] : '?';
+				}
+				text[n] = 0;
 				printf("adreno: %u: THE GMU REPORTS AN ERROR: %u, %u, \"%s\"\n", step, message[1] >> 16,
-				    message[1] & 0xffff, (const char *)&message[2]);
+				    message[1] & 0xffff, text);
 			} else {
 				printf("adreno: %u: the GMU says (queue %u, %u words): %#x %#x %#x %#x %#x %#x\n", step, which, words,
 				    message[0], message[1], message[2], message[3], message[4], message[5]);
@@ -2896,6 +2933,15 @@ gpucc_running(uint32_t cbcr)
 	return (rd(gpucc.base + cbcr) & (CBCR_ENABLE | CBCR_OFF)) == CBCR_ENABLE;
 }
 
+/* The register bus's clock, whose control register says nothing on this phone: measured, as cx_ready() does */
+static bool
+ahb_running(void)
+{
+	uint32_t hz = measure_quietly(GPUCC_DEBUG_AHB);
+
+	return hz != MEASURE_FAILED && hz >= 1000000;
+}
+
 static void
 stale_stop(void)
 {
@@ -2904,7 +2950,7 @@ stale_stop(void)
 	 * or failed in it, leaves CX on with them off -- and a register of a block whose clock is off hangs the bus. Then CX
 	 * alone is switched off: a GMU without its clock does not run anyway.)
 	 */
-	if (!gpucc_running(GPUCC_CX_GMU_CBCR) || !gpucc_running(GPUCC_AHB_CBCR) || !gpucc_running(GPUCC_HUB_AON_CBCR)) {
+	if (!gpucc_running(GPUCC_CX_GMU_CBCR) || !gpucc_running(GPUCC_HUB_AON_CBCR) || !ahb_running()) {
 		printf("adreno: %u: the GMU's clocks are off: the GMU, the RSCC and the SMMU are not touched, CX alone switched off\n",
 		    step);
 		put(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR, rd(gpucc.base + GPUCC_CX_GDSCR) | GDSC_SW_COLLAPSE);
@@ -2984,7 +3030,7 @@ static void
 gpu_block_stop(void)
 {
 	uint32_t slumber[3] = { 0, 0, 0 };
-	bool power_off = false;
+	bool power_off = cx_ours;               /* (also where a step failed before the GMU had its memory: steps 5 to 12) */
 
 	step = 0;
 	newest_step = ~0u;
@@ -3067,6 +3113,7 @@ gpu_block_stop(void)
 		get(&gpucc, "cx_gdscr", GPUCC_CX_GDSCR);
 		get(&gpucc, "cx_hw_ctrl", GPUCC_CX_HW_CTRL);
 		cx_off = !cx_is_on();
+		cx_ours = false;
 	}
 	/* (and what step 5 turned on in the global controller, once nothing of the GPU's runs: as the phone's start leaves it) */
 	if (cx_off) {
@@ -3121,6 +3168,12 @@ hakios_adreno_quiesce(void)
 		wr(smmu.base + SMMU_S2CR(GMU_MATCH), SMMU_S2CR_FAULT);
 		wr(smmu.base + smmu_context(&gmu_space) + SMMU_CB_SCTLR, 0);
 		gmu_space_is_on = false;
+	}
+	/* (the core's second stream goes through context 0 too: sent to fault before that context stops translating) */
+	if (second_stream_is_on) {
+		wr(smmu.base + SMMU_SMR(SECOND_MATCH), 0);
+		wr(smmu.base + SMMU_S2CR(SECOND_MATCH), SMMU_S2CR_FAULT);
+		second_stream_is_on = false;
 	}
 	if (core_space_is_on) {
 		wr(smmu.base + SMMU_SMR(CORE_MATCH), 0);
@@ -4015,12 +4068,13 @@ display_probe(void)
 	lines[0] = get(&disp_intf, "line_count", INTF_LINE_COUNT);
 	/* the two counters together, twice, a second apart by our own clock */
 	quiet = true;
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0, again = 0; i < 2; i++) {
 		frames[i] = rd(disp_intf.base + INTF_FRAME_COUNT);
 		lines[i] = rd(disp_intf.base + INTF_LINE_COUNT);
 		absolutetime_to_nanoseconds(mach_absolute_time(), &times[i]);
-		if (rd(disp_intf.base + INTF_FRAME_COUNT) != frames[i]) {
-			i--;                            /* (a frame began between the two reads: once more) */
+		/* (a frame began between the two reads: once more; but not for ever, for a counter that never holds still) */
+		if (rd(disp_intf.base + INTF_FRAME_COUNT) != frames[i] && again++ < 16) {
+			i--;
 			continue;
 		}
 		if (i == 0) {
@@ -4309,7 +4363,7 @@ hakios_adreno_init(void)
 	}
 	PE_parse_boot_argn("adreno_keep", &keep, sizeof(keep));
 	if (keep) {
-		if (done >= 21 && core_runs) {
+		if (done >= 21 && failed == 0 && core_runs) {        /* (step 22 asked for and failed: a core not to be kept) */
 			gpu_free[0].start = GPU_ADDRESSES_START;
 			gpu_free[0].size = GPU_ADDRESSES_SIZE;
 			gpu_free_count = 1;
@@ -4349,6 +4403,13 @@ hakios_adreno_init(void)
 	for (uint32_t second = 1; second <= watch_seconds; second++) {
 		sleep_ms(1000);
 		printf("adreno: alive %u s after step %u; %s\n", second, done, last_write);
+	}
+	/*
+	 * (a run that stopped where adreno=N asked, no step failed, leaves CX and its clocks as they are for the next kernel's
+	 * adreno_only=N+1; the CX of one whose step failed is switched off again, as is everything after step 13's)
+	 */
+	if (failed == 0) {
+		cx_ours = false;
 	}
 	gpu_block_stop();
 	if (PE_parse_boot_argn("adreno_return", &only, sizeof(only)) && only) {

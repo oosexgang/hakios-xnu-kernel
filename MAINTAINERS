@@ -149,6 +149,7 @@ F:	drivers/iokit/MiniIOSurface.cpp
 F:	drivers/iokit/MiniIOSurface.h
 F:	drivers/iokit/MiniIOMobileFramebuffer.cpp
 F:	components/metal/
+T:	workbench/adreno_driver_test.c
 T:	workbench/board_test.c
 T:	components/metal/plugin/Makefile (make -C components/metal/plugin test)
 D:	Documentation/metal-glass.md
