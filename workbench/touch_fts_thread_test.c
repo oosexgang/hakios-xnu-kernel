@@ -531,6 +531,7 @@ bring_up_fails(void)
 	chip = ANOTHER_ID;
 	start();
 	CHECK(logged("touchscreen unavailable"), "given up: %s", log_text);
+	WAIT_FOR(logged("fts: powered off"), 5000);  /* (said after "unavailable") */
 	powered_off("after a failed bring-up");
 	no_more_polling("after a failed bring-up");
 }
@@ -543,6 +544,7 @@ analog_supply_refused(void)
 	refused_supply = supply_base(hakios_board()->touch.analog_supply);
 	start();
 	CHECK(logged("touchscreen unavailable"), "given up: %s", log_text);
+	WAIT_FOR(logged("fts: powered off"), 5000);  /* (said after "unavailable") */
 	powered_off("after the analog supply was refused");
 }
 
@@ -553,7 +555,8 @@ four_troubles_stop(void)
 	phone("phone-cmd");
 	started();
 	chip = REPORTS_FAIL;
-	WAIT_FOR(logged("stopped after repeated controller errors"), 20000);
+	/* (it says it stops before it powers the controller off: both waited for) */
+	WAIT_FOR(logged("stopped after repeated controller errors") && logged("fts: powered off"), 20000);
 	CHECK(logged("stopped after repeated controller errors") && times_logged("consecutive invalid reports") == 4,
 	    "given up at the fourth: %s", log_text);
 	powered_off("after the polling was given up");
