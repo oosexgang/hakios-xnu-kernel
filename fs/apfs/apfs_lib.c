@@ -1059,7 +1059,7 @@ apfs_nx_open(struct apfs_nx *nx, const struct apfs_dev *dev)
 	}
 	nx->block_size = bs;
 	nx->block_count = le64(block0 + 40);
-	if (nx->block_count < 16) {
+	if (nx->block_count < 16 || nx->block_count > UINT64_MAX / bs) {
 		goto out;
 	}
 	if (nx->dev.size != 0 && nx->block_count * (uint64_t)bs > nx->dev.size) {
@@ -1107,6 +1107,17 @@ apfs_nx_open(struct apfs_nx *nx, const struct apfs_dev *dev)
 	}
 	nx->xid = obj_xid(blk);
 	nx->block_count = le64(blk + 40);
+	/*
+	 * (the live superblock's count is the one every address is checked against: held to what block 0 was, so that an
+	 * address past the container -- into the next one on the device, or wrapped round to its start -- is none)
+	 */
+	if (le32(blk + 36) != bs || nx->block_count < 16 || nx->block_count > UINT64_MAX / bs ||
+	    (nx->dev.size != 0 && nx->block_count * (uint64_t)bs > nx->dev.size)) {
+		apfs_log("the live superblock claims %llu blocks of %u: not this container's\n",
+		    (unsigned long long)nx->block_count, le32(blk + 36));
+		error = EINVAL;
+		goto out;
+	}
 	memcpy(nx->uuid, blk + 72, sizeof(nx->uuid));
 	nx->xp_desc_blocks = le32(blk + 104);
 	nx->xp_data_blocks = le32(blk + 108);

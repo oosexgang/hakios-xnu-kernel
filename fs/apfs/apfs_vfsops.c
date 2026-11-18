@@ -600,6 +600,26 @@ apfs_node_vnode(struct apfs_mount *am, uint64_t obj_id, vnode_t dvp,
 	vnode_settag(an->an_vp, VT_OTHER);
 
 	apfs_lock(am);
+	/*
+	 * (another lookup of the same id may have made its vnode while the lock was let go of for vnode_create: one vnode
+	 * an inode, else two copies with caches of their own -- and a mount on one the other does not show. Ours goes.)
+	 */
+	for (struct apfs_node *other = am->am_hash[b]; other != NULL; other = other->an_next) {
+		if (other->an_id == obj_id && other->an_attached) {
+			vnode_t vp = other->an_vp, ours = an->an_vp;
+			uint32_t vid = vnode_vid(vp);
+
+			apfs_unlock(am);
+			vnode_recycle(ours);
+			vnode_put(ours);        /* (reclaimed: apfs_node_detach() finds it in no list, and it is freed) */
+			if (vnode_getwithvid(vp, vid) != 0) {
+				/* (that one went too, meanwhile: made again from the start -- a race that does not repeat for long) */
+				return apfs_node_vnode(am, obj_id, dvp, cnp, vpp);
+			}
+			*vpp = vp;
+			return 0;
+		}
+	}
 	an->an_next = am->am_hash[b];
 	am->am_hash[b] = an;
 	an->an_attached = true;
@@ -1036,7 +1056,7 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
 				bc = (bc << 8) | sb[40 + b];
 			}
 			nx_size = bc * bs;
-			if (bs < 4096 || bc == 0 || (nx_size % devblock) != 0 ||
+			if (bs < 4096 || bc == 0 || bc > UINT64_MAX / bs || (nx_size % devblock) != 0 ||
 			    (devsize != 0 && dc->dc_base + nx_size > devsize)) {
 				printf("apfs: container %u: %llu blocks of %u do not fit the device\n", i,
 				    (unsigned long long)bc, bs);
