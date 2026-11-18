@@ -62,6 +62,20 @@ tags yet, so the current work is one section.
   default; 0 turns it off): Apple's limits of a few megabytes let the kernel kill lsd while it builds the LaunchServices
   database from nothing, and an application installed then does not start. After the OnePlus Nord 2 port of iOS (its
   piece 0732, APSL 2.0), which found it on its phone; not yet seen on ours.
+- **Messages' BlastDoor is told it is sandboxed.** MessagesBlastDoorService, which unpacks every incoming message,
+  asks the sandbox whether it is sandboxed at all (`sandbox_check(getpid(), NULL, 0)`) and stops at its start when the
+  answer is no, and the stand-in answered no to everybody: the message was dropped, an SMS the modem took never reached
+  Messages. That one question is now answered yes for a process with "BlastDoo" in its name; questions that name an
+  operation and every other process are answered as before. `sandbox_blastdoor=0` turns it off; `minisandbox: ...
+  answered "sandboxed"` in the log. After the idea of the OnePlus Nord 2 port's piece 0277v; not yet seen on our phone.
+- **IOSurfaces marked volatile are counted.** A program may say a surface's pixels can be thrown away
+  (IOSurfaceSetPurgeable); here every surface stays wired whatever it is marked, and the Nord 2 port found Photos holding
+  521 such surfaces, 312 MB, while the phone thrashed. `sysctl kern.surfaces_volatile` says how many are idle (no use
+  count, held by neither the display nor the GPU, for a few seconds) and their bytes, then how many are marked and
+  theirs; the memory report says it every minute once there are any (`memory: N surfaces marked volatile`), and at once
+  when memory runs short (`memory short:`). Nothing is purged yet: replacing the pages under every program's mapping
+  is not safe with how the surfaces are kept (`MiniIOSurface.cpp` says why), and the count says first whether it is
+  worth doing. After the idea of the OnePlus Nord 2 port's pieces 0417 and 0418.
 - **locationd no longer waits for fairplayd** (iOS 26/27): a library in locationd has its Mescal signer give up at once,
   as locationd does itself when FairPlay cannot be set up, instead of waiting for a fairplayd that never answers here and
   holding everything behind it. Settings > Privacy & Security opens, and an application that asks for its location

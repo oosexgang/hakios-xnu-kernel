@@ -17,8 +17,9 @@
  *
  *   Sandbox  Every query (may this process look up that service?) is
  *            answered "allowed", and every request to apply a profile
- *            succeeds without applying anything. The one question with
- *            an answer of its own is which container a process is in.
+ *            succeeds without applying anything. The questions with
+ *            answers of their own are which container a process is in,
+ *            and whether Messages' BlastDoor is sandboxed (yes).
  */
 
 #include <sys/param.h>
@@ -42,6 +43,7 @@
 #include <vm/vm_map_xnu.h>  /* xnu-12377 internal VM API split */
 #include <security/mac_framework.h>
 #include <security/mac_policy.h>
+#include "sandbox_blastdoor.h"
 
 void minimac_policy_init(void);
 
@@ -361,6 +363,44 @@ minisandbox_extension_consume(user_addr_t arg)
 	return copyout(&handle, args.handle, sizeof(handle));
 }
 
+/*
+ * Request 2, "is this process sandboxed / may it do this" (sandbox_check() of libsystem_sandbox): answered "sandboxed" for
+ * Messages' BlastDoor when no operation is named, which it needs to hear before it unpacks a message (sandbox_blastdoor.h).
+ * Every other question goes on getting success and nothing written: "allowed", and for the question without an operation
+ * "not sandboxed". Boot-arg sandbox_blastdoor=0: BlastDoor is told it is not sandboxed either, as before (it then stops at
+ * its start, and incoming messages are dropped).
+ */
+#define SANDBOX_SYSCALL_CHECK                   2
+static TUNABLE(uint32_t, minisandbox_blastdoor, "sandbox_blastdoor", 1);
+
+static int
+minisandbox_check(user_addr_t arg)
+{
+	struct sandbox_check_args args;
+	char name[2 * MAXCOMLEN + 1];
+	uint64_t sandboxed = 1;
+	static uint32_t said;
+	int error;
+
+	if (!minisandbox_blastdoor || copyin(arg, &args, sizeof(args)) != 0 || args.operation != 0) {
+		return 0;
+	}
+	name[0] = '\0';
+	if (args.pid != 0 && args.pid <= 0x7fffffffULL) {
+		proc_name((int)args.pid, name, sizeof(name));
+	}
+	if (!sandbox_blastdoor_sandboxed(&args, name, minisandbox_blastdoor)) {
+		return 0;
+	}
+	error = copyout(&sandboxed, (user_addr_t)args.result, sizeof(sandboxed));
+	if (said < 8) {
+		said++;
+		printf("minisandbox: %s[%d] answered \"sandboxed\" (%d; boot-arg sandbox_blastdoor=0 says it is not)\n", name,
+		    (int)args.pid, error);
+	}
+	return error;
+}
+
 /* Which request numbers have been seen: one log line each, to learn what user space asks for. */
 static uint64_t minisandbox_seen;
 
@@ -372,6 +412,9 @@ minisandbox_policy_syscall(struct proc *p, int call, user_addr_t arg)
 		printf("minisandbox: request %d (first seen from %s[%d]): %s\n", call, p->p_comm, proc_getpid(p),
 		    call == SANDBOX_SYSCALL_CONTAINER_PATH || call == SANDBOX_SYSCALL_EXTENSION_ISSUE ||
 		    call == SANDBOX_SYSCALL_EXTENSION_CONSUME ? "answered" : "allowed");
+	}
+	if (call == SANDBOX_SYSCALL_CHECK) {
+		return minisandbox_check(arg);
 	}
 	if (call == SANDBOX_SYSCALL_CONTAINER_PATH) {
 		return minisandbox_container_path(arg);

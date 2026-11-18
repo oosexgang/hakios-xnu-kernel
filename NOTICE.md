@@ -43,14 +43,17 @@ extensions, the application log's name alone. From its own findings, not its cod
 signer waiting on fairplayd, `components/location/inject_locationd.c`) and the motor's tap as one short tick at a low
 fixed gain (`board/haptic.c`, `haptic_tap_gain=`). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
 is taken; nor its device data.
-Seven more are taken as ideas only, written anew here with nothing of its code or text, because what it wrote for them
+Nine more are taken as ideas only, written anew here with nothing of its code or text, because what it wrote for them
 is not, or not wholly, under the APSL by its own notes (a file of ios-sweet's, a file a patch adds, its own tools): a
 floor under the clock (its piece 0530; `drivers/iokit/build_date.h`, `init/init.c`), `/private/var` named "apfs" to
 fileproviderd (0734; `fs/ramfs/ramfs.c`), a container path for application extensions (0730;
 `kernel/overlay/bsd/kern/kern_minimac.c`), the time of day kept by the PMIC's clock and a saved difference (0540;
 `drivers/board/rtc.c`, `init/init.c`), dasd's 1970 modulation time taken out of a kept data volume (its dasdmod1;
 `init/init.c`), fairplayd's restarts spaced out, where it takes the job out (its respawn1; `userland/userland/mkjobs.py`),
-and Messages' last build written for it (its 0277y; `darwin/userland/root26-darwin.sh`, `userland/userland/build.sh`).
+Messages' last build written for it (its 0277y; `darwin/userland/root26-darwin.sh`, `userland/userland/build.sh`),
+Messages' BlastDoor told it is sandboxed (its 0277v; `kernel/overlay/bsd/kern/sandbox_blastdoor.h`, `kern_minimac.c`),
+and the IOSurfaces marked volatile counted, which its 0417 and 0418 purge (`drivers/iokit/MiniIOSurface.cpp`: only
+counted here, nothing purged).
 
 ## Excluded from this repository
 
