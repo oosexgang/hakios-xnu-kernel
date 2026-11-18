@@ -1744,6 +1744,7 @@ ws_sampler(void *unused)
 	size_t cache_length = 0;
 	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&cache_length);
 	unsigned ticks = 0, samples = 0, lost = 0;
+	bool say_turn_after = false;
 
 	(void)unused;
 	pthread_setname_np("hakios.waitstack");
@@ -1831,9 +1832,19 @@ ws_sampler(void *unused)
 						const uint64_t woke = ws_turn_woke, now = mach_absolute_time();
 
 						if (tb.denom == 0) mach_timebase_info(&tb);
-						if (woke != 0 && (now - woke) * tb.numer / tb.denom > WS_TURN_MS * 1000000ull) {
+						bool long_turn = woke != 0 && (now - woke) * tb.numer / tb.denom > WS_TURN_MS * 1000000ull;
+
+						if (long_turn && ws_turn_of != ws_turns + 1 && ws_turn_samples != 0) {
+							/*
+							 * (the last turn is said once the main thread runs again, not while it is stopped: it may be
+							 * stopped holding dyld's lock or malloc's, which saying it takes -- and this sample waits
+							 * for the next look)
+							 */
+							say_turn_after = true;
+							long_turn = false;
+						}
+						if (long_turn) {
 							if (ws_turn_of != ws_turns + 1) {
-								if (ws_turn_samples != 0) ws_turn_say(cache, cache_length);
 								ws_turn_of = ws_turns + 1;
 								ws_turn_from = woke;
 								ws_turn_cpu[0] = cpu;
@@ -1912,6 +1923,10 @@ ws_sampler(void *unused)
 					}
 				}
 				thread_resume(threads[t]);
+				if (say_turn_after) {
+					say_turn_after = false;
+					ws_turn_say(cache, cache_length);       /* (the main thread running again: see above) */
+				}
 				mach_port_deallocate(mach_task_self(), threads[t]);
 			}
 			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
