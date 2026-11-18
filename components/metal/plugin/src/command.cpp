@@ -202,7 +202,14 @@ namespace {
 // Buffers over it would close it twice. The deleter takes the lock too, so that a handle the kernel hands out again
 // cannot be met by a Buffer still being destroyed.
 std::mutex gSurfaceLock;
-std::map<std::pair<const Gpu*, uint32_t>, std::weak_ptr<Buffer>> gSurfaceBuffers;
+// the weak reference, and a raw pointer good only while that Buffer still exists: when the weak one is expired but the
+// entry is still here (under gSurfaceLock), the Buffer's deleter is blocked on this lock and has not run yet, so raw
+// still points to it and its Bo still owns the handle -- enough to take the handle over before it closes it
+struct SurfaceWeak {
+    std::weak_ptr<Buffer> weak;
+    Buffer* raw = nullptr;
+};
+std::map<std::pair<const Gpu*, uint32_t>, SurfaceWeak> gSurfaceBuffers;
 // ... and by (GPU, surface ID), with what the kernel said of the surface: a surface wrapped again while its buffer lives
 // is answered from here, no call to the kernel. The window server wraps its display's page in a texture anew for every
 // frame and lets go of it after: each frame opened the surface's buffer in the kernel and closed it again, the close
@@ -288,23 +295,29 @@ std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo*
     const auto key = std::make_pair(static_cast<const Gpu*>(&gpu), bo->handle());
     auto live = gSurfaceBuffers.find(key);
     if (live != gSurfaceBuffers.end()) {
-        if (std::shared_ptr<Buffer> b = live->second.lock()) {
+        if (std::shared_ptr<Buffer> b = live->second.weak.lock()) {
             gpu.disown(std::move(bo));   // the same handle as the live Buffer's Bo: closed once, by that Bo
             gSurfaceIds[id] = SurfaceEntry{b, *info};
             keepRecent(&gpu, b, &dropped);
             return b;
+        }
+        // the entry is here but its Buffer is being destroyed (its deleter waits on this lock, its Bo still owns the
+        // kernel handle the driver just gave us again). Neuter that Bo so its ~Bo closes nothing: our new Bo takes the
+        // handle over as its one owner, instead of a second Bo being built over it and the handle closed twice.
+        if (live->second.raw != nullptr) {
+            gpu.disown(live->second.raw->bo());
         }
     }
     const uint64_t length = bo->size();
     std::shared_ptr<Buffer> b(new Buffer(std::move(bo), length), [key, id](Buffer* x) {
         std::lock_guard<std::mutex> g(gSurfaceLock);
         auto it = gSurfaceBuffers.find(key);
-        if (it != gSurfaceBuffers.end() && it->second.expired()) gSurfaceBuffers.erase(it);
+        if (it != gSurfaceBuffers.end() && it->second.weak.expired()) gSurfaceBuffers.erase(it);
         auto known = gSurfaceIds.find(id);
         if (known != gSurfaceIds.end() && known->second.buffer.expired()) gSurfaceIds.erase(known);
         delete x;
     });
-    gSurfaceBuffers[key] = b;
+    gSurfaceBuffers[key] = SurfaceWeak{b, b.get()};
     gSurfaceIds[id] = SurfaceEntry{b, *info};
     keepRecent(&gpu, b, &dropped);
     return b;

@@ -43,6 +43,7 @@ public:
     void* contents() const { return bo_->cpu(); }
     uint64_t gpuAddress() const { return bo_->gpuAddress(); }
     const Bo& bo() const { return *bo_; }
+    Bo& bo() { return *bo_; }
 
 private:
     std::unique_ptr<Bo> bo_;

@@ -91,17 +91,20 @@ std::unique_ptr<Bo> Gpu::surfaceBo(uint32_t surfaceId, SurfaceInfo* out, int* er
     return std::unique_ptr<Bo>(new Bo(*this, s.handle, s.size, info.value, t_->map(s.handle, s.size)));
 }
 
+void Gpu::disown(Bo& bo) {
+    if (bo.cpu_ != nullptr) {
+        t_->unmap(bo.handle_, bo.cpu_);
+        bo.cpu_ = nullptr;
+    }
+    bo.owned_ = false;
+    if (bo.counted_) {
+        allocated_ -= bo.size_;
+        bo.counted_ = false;
+    }
+}
+
 void Gpu::disown(std::unique_ptr<Bo> bo) {
-    if (bo == nullptr) return;
-    if (bo->cpu_ != nullptr) {
-        t_->unmap(bo->handle_, bo->cpu_);
-        bo->cpu_ = nullptr;
-    }
-    bo->owned_ = false;
-    if (bo->counted_) {
-        allocated_ -= bo->size_;
-        bo->counted_ = false;
-    }
+    if (bo != nullptr) disown(*bo);
 }
 
 Bo::~Bo() { gpu_.release(*this); }

@@ -180,6 +180,9 @@ public:
     // a Bo whose handle another Bo already owns (surfaceBo's second answer for a surface): its mapping undone, the
     // handle left open for the owner to close
     void disown(std::unique_ptr<Bo> bo);
+    // the same, for a Bo a live object still holds (a surface handle taken over from a Buffer being destroyed): its
+    // mapping undone and ownership dropped in place, so its ~Bo closes nothing
+    void disown(Bo& bo);
 
     // a submission queue of its own (the driver keeps an order per queue); 0 is the default one
     int newQueue(uint32_t priority, uint32_t* id);
