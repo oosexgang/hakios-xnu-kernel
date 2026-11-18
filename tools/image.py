@@ -464,8 +464,15 @@ def publish(options):
             die(f'{target} is there and is no image: it is left as it is (another --version)')
         shutil.rmtree(target)
     target.mkdir(parents=True)
+    # (manifest.json is written afresh, not copied: it must list only the files that were put here -- a default publish
+    # leaves boot.img out, and a manifest that still named it would make verify reject its own published image)
+    copied = [file for file in files if file not in ('manifest.json', 'README.md')]
+    published_manifest = dict(manifest, files={f: v for f, v in manifest.get('files', {}).items() if f in copied})
     for file in files:
-        shutil.copy2(source / file, target / file)
+        if file == 'manifest.json':
+            (target / file).write_text(json.dumps(published_manifest, indent=2) + '\n')
+        else:
+            shutil.copy2(source / file, target / file)
     index = repository / 'images' / 'README.md'
     rows = sorted((p for p in (repository / 'images').iterdir() if (p / 'manifest.json').is_file()), reverse=True)
     lines = ['# Images', '', 'Built with `tools/image.py build` and put here with `tools/image.py publish`; the newest first.',

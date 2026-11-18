@@ -214,6 +214,24 @@ class Publish(Sandbox):
         _, (code, _) = self.publish('--with-uefi')
         self.assertIn('boot.img', [p.name for p in (repository / 'images/v1').iterdir()])
 
+    def test_a_published_image_verifies(self):
+        # (publish must leave an image that the phone's repository's own `verify` accepts, whether or not boot.img went
+        # with it: its manifest.json names only the files put beside it, never boot.img that a default publish omits)
+        self.uefi()
+        self.build()
+        repository, (code, said) = self.publish()
+        self.assertEqual(code, 0, said)
+        manifest = json.loads((repository / 'images/v1/manifest.json').read_text())
+        self.assertNotIn('boot.img', manifest['files'], 'the published manifest names no file that is not here')
+        code, said = self.tool('verify', str(repository / 'images'))
+        self.assertEqual(code, 0, f'a default-published image is rejected by verify: {said}')
+        repository, (code, said) = self.publish('--with-uefi')
+        self.assertEqual(code, 0, said)
+        manifest = json.loads((repository / 'images/v1/manifest.json').read_text())
+        self.assertIn('boot.img', manifest['files'], 'with --with-uefi the manifest names boot.img, which is here')
+        code, said = self.tool('verify', str(repository / 'images'))
+        self.assertEqual(code, 0, f'--with-uefi published image is rejected by verify: {said}')
+
     def test_apple_s_data_is_never_published(self):
         (self.dir / 'loader.efi').write_bytes(APPLE_LOADER)
         self.build()
