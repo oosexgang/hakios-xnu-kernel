@@ -45,6 +45,8 @@
 #include <sys/sockio.h>
 #include <sys/systm.h>
 
+#include "log.h"
+
 #define SIOCSA80211             0x802869c8u     /* _IOW('i', 200, struct apple80211req) */
 #define SIOCGA80211             0xc02869c9u     /* _IOWR('i', 201, struct apple80211req) */
 
@@ -738,11 +740,18 @@ hakios_apple80211_summary(void)
 		return;
 	}
 	said = true;
+	/*
+	 * (hakios_say(): this is said on the way back to the loader too, interrupts off, where the console's printf panics --
+	 * and the quiesces after this one would not be run)
+	 */
 	for (unsigned i = 0; i < kind_count; i++) {
-		printf("apple80211: in this run: %s %d (%s) %u times, answered %u times%s", kinds[i].set ? "set" : "get", kinds[i].type,
-		    type_name(kinds[i].type), kinds[i].times, kinds[i].answered, kinds[i].last_error == 0 ? "\n" : "");
 		if (kinds[i].last_error != 0) {
-			printf("; the last refusal: %d%s\n", kinds[i].last_error, kinds[i].last_error == EOPNOTSUPP ? " (not built)" : "");
+			hakios_say("apple80211: in this run: %s %d (%s) %u times, answered %u times; the last refusal: %d%s\n",
+			    kinds[i].set ? "set" : "get", kinds[i].type, type_name(kinds[i].type), kinds[i].times, kinds[i].answered,
+			    kinds[i].last_error, kinds[i].last_error == EOPNOTSUPP ? " (not built)" : "");
+		} else {
+			hakios_say("apple80211: in this run: %s %d (%s) %u times, answered %u times\n", kinds[i].set ? "set" : "get",
+			    kinds[i].type, type_name(kinds[i].type), kinds[i].times, kinds[i].answered);
 		}
 	}
 }

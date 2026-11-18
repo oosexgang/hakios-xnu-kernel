@@ -8,6 +8,8 @@
  *   apple80211_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
 #include "fakekernel.h"
+
+extern char log_text[];
 #define KERNEL 1
 #include <sys/board/sta.h>
 
@@ -553,7 +555,8 @@ refusals(void)
 
 	hakios_apple80211_summary();
 	snprintf(line, sizeof(line), "get 999 (?) 1 times, answered 0 times; the last refusal: %d (not built)", EOPNOTSUPP);
-	CHECK(printed_has(line), "said at the end: %s", printed);
+	/* (on the way back to the loader, interrupts off: to the loader's log, not the console, whose printf would panic there) */
+	CHECK(strstr(log_text, line) != NULL && !printed_has(line), "said at the end, to the loader's log: %s", log_text);
 }
 
 int
