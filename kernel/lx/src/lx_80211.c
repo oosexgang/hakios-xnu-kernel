@@ -109,6 +109,12 @@ struct lx_radio {
 	volatile int handshake;			/* the last thing lx_wpa_message() said */
 	const char *handshake_why;
 	struct work_struct group_work;		/* a new group key, later on */
+	/*
+	 * ... and the key it is to give, copied under lx_os_lock() as it came: the receive path writes the handshake's state
+	 * while the work may be reading it, and two renewals close together would hand the driver a key half of each
+	 */
+	uint8_t group_next[32];
+	unsigned group_next_length, group_next_index;
 	/* block ack: the access point's requests to send us frames in aggregates, by traffic class (TID) */
 	struct work_struct ba_work;
 	volatile uint8_t ba_asked;		/* TIDs with a request (ADDBA or DELBA) not yet dealt with */
@@ -824,6 +830,11 @@ handshake_message(struct lx_radio *radio, const uint8_t *frame, unsigned length)
 	    "with the group's key; answered (message 4)" : said == LX_WPA_GROUP ? "a new key for the group; answered" :
 	    said == LX_WPA_BAD ? "NOT GOOD: " : "not one to answer", why);
 	if (said == LX_WPA_GROUP && radio->joined) {
+		lx_os_lock();
+		memcpy(radio->group_next, radio->wpa.group, sizeof(radio->group_next));
+		radio->group_next_length = radio->wpa.group_length;
+		radio->group_next_index = radio->wpa.group_index;
+		lx_os_unlock();
 		queue_work(radio->work, &radio->group_work);
 	}
 	if (said != LX_WPA_NOTHING) {
@@ -1541,10 +1552,17 @@ group_rekey(struct work_struct *work)
 {
 	struct lx_radio *radio = __containerof(work, struct lx_radio, group_work);
 	struct ieee80211_key_conf *old = radio->group_key, *fresh;
+	uint8_t key[32];
+	unsigned length, index;
 	int error = 0;
 
+	lx_os_lock();
+	memcpy(key, radio->group_next, sizeof(key));
+	length = radio->group_next_length;
+	index = radio->group_next_index;
+	lx_os_unlock();
 	radio->rekeys++;
-	if (old != NULL && old->keyidx == radio->wpa.group_index) {
+	if (old != NULL && old->keyidx == index) {
 		/*
 		 * (the new key under the old one's number: the driver disables a key by its number, so the old one goes first --
 		 * as mac80211's ieee80211_hw_key_replace() does -- or the disabling would take the new one away)
@@ -1552,8 +1570,9 @@ group_rekey(struct work_struct *work)
 		key_drop(radio, &old, false);
 		radio->group_key = NULL;
 	}
-	fresh = key_set(radio, radio->wpa.group, radio->wpa.group_length, radio->wpa.group_index, false, &error);
-	lx_tell("lx: the group's new key (number %u) is given to the driver: %d\n", radio->wpa.group_index, error);
+	fresh = key_set(radio, key, length, index, false, &error);
+	explicit_bzero(key, sizeof(key));
+	lx_tell("lx: the group's new key (number %u) is given to the driver: %d\n", index, error);
 	if (error != 0) {
 		/*
 		 * The firmware did not take the new key: the old one stays (it is not dropped for a key that is not there), and the
