@@ -654,6 +654,24 @@ started_unprepared(void)
 	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
 }
 
+/*
+ * The preparing stopped at the second (a chip that is not this driver's there), the first already configured: a start
+ * asked for all the same starts neither -- the first is not powered up and unmuted by a start that then says it failed.
+ */
+static void
+started_with_the_second_unprepared(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg_b, 0x00, 0x2032);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(soft_resets[0] == 1 && writes_into[1] == 0, "(the first configured, nothing into the second)");
+	CHECK(!hakios_speaker_start(), "not started");
+	CHECK(amplifier_on[0] == 0 && !logged("THE AMPLIFIER 0x35, slot 0 RUNS"), "the first was powered up: %s", log_text);
+	CHECK(down(device.reg) && (reads(device.reg, 0x04) & 0x4100), "the first powered down and muted as prepared: %#x",
+	    reads(device.reg, 0x04));
+	never();
+}
+
 /* a board without the part, though its SoC file has the pins: nothing */
 static void
 board_without_the_part(void)
@@ -1216,7 +1234,8 @@ main(int argc, char **argv)
 		{ "slow_fade", slow_fade }, { "stop_without_an_answer", stop_without_an_answer }, { "monitor_row_edges", monitor_row_edges },
 		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "profiles_not_usable", profiles_not_usable }, { "monitor_tables_at_the_edge", monitor_tables_at_the_edge },
-		{ "started_unprepared", started_unprepared }, { "board_without_the_part", board_without_the_part },
+		{ "started_unprepared", started_unprepared }, { "started_with_the_second_unprepared", started_with_the_second_unprepared },
+		{ "board_without_the_part", board_without_the_part },
 		{ "status_never_ready", status_never_ready },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "a_table_for_no_amplifier", a_table_for_no_amplifier },
 		{ "monitor_rows_past_the_end", monitor_rows_past_the_end }, { "monitor_size_that_wraps", monitor_size_that_wraps }, { "run_ends", run_ends }, { "not_listed", not_listed },

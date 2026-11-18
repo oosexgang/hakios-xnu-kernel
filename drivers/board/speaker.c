@@ -787,6 +787,15 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 bool
 hakios_speaker_start(void)
 {
+	/*
+	 * Both prepared, before either is started. A preparing that stopped at the second (another chip there, its fuses
+	 * not read) leaves the first prepared and not broken: asked to start, the first would be powered up and unmuted,
+	 * and the second's "not prepared" would then end it with false -- the first left running and unmuted, nothing
+	 * powered down, by a start that says it did not start.
+	 */
+	if (broken || !amplifiers[0].prepared || !amplifiers[1].prepared) {
+		return false;
+	}
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
 		uint16_t status = 0, interrupts = 0;
