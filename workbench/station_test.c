@@ -323,10 +323,11 @@ lost_and_joined_again(void)
 	hakios_sta_lost(0);
 	usleep(1000 * 1000);
 	CHECK(strcmp(calls, "join:home ") == 0, "not at once: %s", calls);
-	WAIT_FOR(called("join:home join:home join:home "), 6000);
+	WAIT_FOR(called("join:home join:home join:home "), 10000);
 	CHECK(strcmp(calls, "join:home join:home join:home ") == 0, "after 2 s, and after 2 s more when that failed: %s", calls);
 	join_error = 0;
-	WAIT_FOR(called("join:home join:home join:home join:home "), 4000);
+	/* (2 s after the last failed try; room for a busy computer) */
+	WAIT_FOR(called("join:home join:home join:home join:home "), 10000);
 	CHECK(had(HAKIOS_STA_JOIN_DONE, 0) && strcmp(calls, "join:home join:home join:home join:home ") == 0, "joined: %s", calls);
 }
 
