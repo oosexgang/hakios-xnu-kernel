@@ -162,6 +162,11 @@ LINKED=$XNU_SRC/BUILD/obj/${KERNEL_CONFIG}_${ARCH_CONFIG}_${MACHINE_CONFIG}/$OBJ
 if [ -n "$WIFI_OBJECT" ] && [ -e "$LINKED" ] && [ "$WIFI_OBJECT" -nt "$LINKED" ]; then
 	rm -rf "$LINKED"*
 fi
+# The date in the kernel's version string, which config/newvers.pl takes from `date`: said in English and in UTC, so that
+# the kernel can read it back as the earliest its calendar can be (drivers/iokit/build_date.h). (version.c is made once in
+# a build directory and kept while nothing it is made from changes: an older date, which is still a floor.)
+KERNEL_BUILD_DATE=${KERNEL_BUILD_DATE:-$(LC_ALL=C date -u)}
+export KERNEL_BUILD_DATE
 xnumake() {
 	(cd "$XNU_SRC" && make DEFAULT_TARGET=build HAKIOS_OBJECTS="$WIFI_OBJECT" SDKROOT=iphoneos ARCH_CONFIGS="$ARCH_CONFIG" MACHINE_CONFIGS="$MACHINE_CONFIG" \
 		KERNEL_CONFIGS="$KERNEL_CONFIG" ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} \

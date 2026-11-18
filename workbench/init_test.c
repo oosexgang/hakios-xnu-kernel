@@ -6,9 +6,9 @@
  * As with var_store_test.c, the program is compiled against libmini's header and the host's C library
  * answers the calls it declares. What must not reach the host is the test's: a path under /private (or
  * /jb) is taken to a directory of the test's, with Darwin's open flags turned into Linux's; fork, execve
- * and wait4 only note what they were asked, and so do usleep, settimeofday and mount; getdirentries
- * hands out what a scenario wants; sysctlbyname answers with a boot line of the test's choosing. What
- * init says is kept, to be looked at.
+ * and wait4 only note what they were asked, and so do usleep, settimeofday and mount; gettimeofday and
+ * getdirentries hand out what a scenario wants; sysctlbyname answers with a boot line and a kernel version of
+ * the test's choosing. What init says is kept, to be looked at.
  */
 #ifdef __clang__
 #pragma clang diagnostic ignored "-Wincompatible-library-redeclaration"  /* (libmini's strerror gives a const string) */
@@ -30,6 +30,7 @@
 #define wait4 t_wait4
 #define usleep t_usleep
 #define settimeofday t_settimeofday
+#define gettimeofday t_gettimeofday
 #define mount t_mount
 #include "../init/init.c"
 #undef main
@@ -49,6 +50,7 @@
 #undef wait4
 #undef usleep
 #undef settimeofday
+#undef gettimeofday
 #undef mount
 
 int init_errno;
@@ -71,6 +73,7 @@ int     fork(void);
 int     waitpid(int pid, int *status, int options);
 unsigned alarm(unsigned seconds);
 void  (*signal(int number, void (*handler)(int)))(int);
+int     utimensat(int dirfd, const char *path, const struct timespec times[2], int flags);
 
 #define HOST_ERRNO      (*__errno_location())
 #define A_DAY           86400           /* the longest sleep a job line gets, in seconds */
@@ -114,6 +117,7 @@ static int t_failures, t_checks;
 
 static char root[512];                  /* the test's directory: /private and /jb are in it */
 static const char *boot_line = "";
+static const char *kernel_version;      /* kern.version, when a scenario gives one */
 
 /* PATH as the host is to see it */
 static const char *
@@ -209,6 +213,8 @@ from_statx(const struct host_statx *x, struct stat *st)
 	st->st_ino = x->ino;
 	st->st_size = (off_t)x->size;
 	st->st_dev = (int32_t)(x->dev_major << 8 | x->dev_minor);
+	st->st_mtimespec.tv_sec = (long)x->mtime.sec;
+	st->st_mtimespec.tv_nsec = (long)x->mtime.nsec;
 }
 
 static int
@@ -280,6 +286,17 @@ sysctlbyname(const char *name, void *oldp, size_t *oldlenp, const void *newp, si
 		*oldlenp = n;
 		return 0;
 	}
+	if (strcmp(name, "kern.version") == 0 && kernel_version != NULL && oldp != NULL && oldlenp != NULL) {
+		size_t n = strlen(kernel_version) + 1;
+
+		if (n > *oldlenp) {
+			init_errno = 12;        /* ENOMEM, as the kernel answers a buffer too small */
+			return -1;
+		}
+		memcpy(oldp, kernel_version, n);
+		*oldlenp = n;
+		return 0;
+	}
 	init_errno = 2;
 	return -1;
 }
@@ -311,7 +328,7 @@ t_getdirentries(int fd, void *buf, size_t size, off_t *position)
 }
 
 static int forks, waits_blocking, waited_for, execs, exec_stderr_was_null, sleeps, clock_sets;
-static long clock_set_to;
+static long clock_set_to, clock_now;
 static char exec_path[256];
 static struct host_statx dev_null;
 
@@ -365,6 +382,15 @@ t_settimeofday(const struct timeval *tv, const void *tz)
 	(void)tz;
 	clock_sets++;
 	clock_set_to = tv->tv_sec;
+	return 0;
+}
+
+int
+t_gettimeofday(struct timeval *tv, void *tz)
+{
+	(void)tz;
+	tv->tv_sec = clock_now;
+	tv->tv_usec = 0;
 	return 0;
 }
 
@@ -638,6 +664,115 @@ scenario_numbers(void)
 	CHECK(clock_sets == 1 && clock_set_to == 1700000000, "epoch=1700000000 sets the clock: %d, to %ld", clock_sets, clock_set_to);
 }
 
+/* The kernel's build date read back from its version string, as the kernel itself reads it (drivers/iokit/build_date.h). */
+static void
+scenario_build_date(void)
+{
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Wed Nov 11 12:30:45 UTC 2026; root:xnu-12377/DEVELOPMENT_ARM64")
+	    == 1794400245L, "a date in November");
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Sun Nov  8 09:05:07 UTC 2026; root:xnu") == 1794128707L,
+	    "a day of one digit, padded with a space as date(1) pads it");
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Thu Feb 29 00:00:00 GMT 2024; root:xnu") == 1709164800L,
+	    "the 29th of February of a leap year, in GMT");
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Thu Dec 31 23:59:59 UTC 2099") == 4102444799L,
+	    "the last second taken, the string ending at the year");
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Wed Nov 11 12:30:45 CET 2026; root:xnu") == 1794400245L - 86400,
+	    "a zone other than UTC: a day earlier, never later than the build");
+	CHECK(build_date_seconds("Darwin Kernel Version 26.0.0: Mi 11. Nov 12:30:45 UTC 2026; root:xnu") == 0 &&
+	    build_date_seconds("Darwin Kernel Version 26.0.0: Wed Nov 11 12:30 UTC 2026; root:xnu") == 0 &&
+	    build_date_seconds("Darwin Kernel Version 26.0.0: Wed Nov 11 12:30:45 UTC 1999; root:xnu") == 0 &&
+	    build_date_seconds("Darwin Kernel Version 26.0.0: Wed Nov 31") == 0 &&
+	    build_date_seconds("Darwin Kernel Version 26.0.0") == 0 && build_date_seconds("") == 0 && build_date_seconds(NULL) == 0,
+	    "a date in another language, one cut short, a year before 2000 and no date at all: none");
+	CHECK(build_date_floor("") == BUILD_DATE_EARLIEST && build_date_floor("x: Wed Nov 11 12:30:45 UTC 2026") == BUILD_DATE_EARLIEST,
+	    "the floor without a date, or with one before this was written, is when this was written");
+	CHECK(build_date_floor("x: Mon Jan  7 00:00:00 UTC 2030; root") == 1893974400L, "a later build is the floor");
+}
+
+#define KERNEL_2030     "Darwin Kernel Version 27.0.0: Mon Jan  7 00:00:00 UTC 2030; root:xnu-12377/DEVELOPMENT_ARM64"
+#define BUILT_2030      1893974400L
+#define A_YEAR          (365L * 86400)
+
+/* the time of PATH (one of the test's) set to SECONDS */
+static void
+set_time(const char *path, long seconds)
+{
+	struct timespec times[2] = { { seconds, 0 }, { seconds, 0 } };
+
+	CHECK(utimensat(HOST_AT_FDCWD, path, times, 0) == 0, "%s given the time %ld", path, seconds);
+}
+
+/*
+ * The wall clock raised to what the volumes last knew: a clock behind the newest stamp is raised to it, one ahead of
+ * every stamp is left, and a stamp more than ten years past the kernel's build is not taken.
+ */
+static void
+scenario_clock(void)
+{
+	static const char *const dirs[] = { "/private", "/private/var", "/private/var/db", "/private/var/preferences",
+		                            "/private/var/mobile", "/private/var/mobile/Library", PREFS };
+	long stamps[3] = { 100, BUILT_2030 + A_YEAR, BUILT_2030 + 30 * A_YEAR };
+	unsigned which = 99;
+
+	/* the choice alone */
+	CHECK(clock_raise_to(1000, BUILT_2030, stamps, 3, &which) == BUILT_2030 + A_YEAR && which == 1,
+	    "a clock in 1970 raised to the newest stamp that is not past ten years after the build (%u)", which);
+	which = 99;
+	CHECK(clock_raise_to(BUILT_2030 + 2 * A_YEAR, BUILT_2030, stamps, 3, &which) == 0 && which == 99,
+	    "a clock ahead of every stamp it may take is left");
+	CHECK(clock_raise_to(BUILT_2030, BUILT_2030, stamps, 1, &which) == 0, "nor is it put back to an older one");
+	stamps[2] = BUILT_2030 + CLOCK_STAMP_SPAN;
+	CHECK(clock_raise_to(1000, BUILT_2030, stamps, 3, &which) == BUILT_2030 + CLOCK_STAMP_SPAN && which == 2,
+	    "ten years after the build to the second is still taken");
+	stamps[2]++;
+	CHECK(clock_raise_to(1000, BUILT_2030, stamps, 3, &which) == BUILT_2030 + A_YEAR, "a second more is not");
+	CHECK(clock_raise_to(1000, BUILT_2030, stamps, 0, &which) == 0, "no stamps: nothing");
+
+	/* and process 1 doing it, over directories of the test's (and the host's own root, older than any of these) */
+	for (unsigned i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+		mkdir(in_root(dirs[i]), 0755);
+	}
+	put_file(in_root("/image/etc/rc"), "exec /sbin/launchd\n");
+	set_time(in_root("/private/var"), BUILT_2030 + 2 * A_YEAR);         /* when the store was saved */
+	set_time(in_root("/private/var/db"), BUILT_2030 + A_YEAR);
+	set_time(in_root("/private/var/preferences"), 100);
+	set_time(in_root(PREFS), BUILT_2030 + 3 * A_YEAR);                  /* the newest */
+	set_time(in_root("/image/etc/rc"), BUILT_2030 - A_YEAR);
+	kernel_version = KERNEL_2030;
+
+	forget_calls();
+	clock_now = BUILT_2030;         /* (as the kernel starts it, without a time given) */
+	clock_floor();
+	CHECK(clock_sets == 1 && clock_set_to == BUILT_2030 + 3 * A_YEAR, "a clock at the build raised to the newest stamp: %d, %ld",
+	    clock_sets, clock_set_to);
+	CHECK(init_said(PREFS " was written at"), "and said where it came from");
+
+	forget_calls();
+	clock_now = BUILT_2030 + 4 * A_YEAR;
+	clock_floor();
+	CHECK(clock_sets == 0 && init_said("is not behind"), "a clock ahead of every stamp is left: %d", clock_sets);
+
+	/* a directory written by a clock forty years ahead: left out, and the next newest taken */
+	set_time(in_root(PREFS), BUILT_2030 + 40 * A_YEAR);
+	forget_calls();
+	clock_now = 1000;
+	clock_floor();
+	CHECK(clock_sets == 1 && clock_set_to == BUILT_2030 + 2 * A_YEAR, "the stamp past ten years left out, /private/var taken: %ld",
+	    clock_set_to);
+	CHECK(init_said("more than ten years past"), "and said so");
+
+	/* with no kernel version to read, the floor is when the header was written; a stamp past ten years after that is not taken */
+	kernel_version = NULL;
+	set_time(in_root("/private/var"), BUILD_DATE_EARLIEST + 11 * A_YEAR);
+	set_time(in_root("/private/var/db"), BUILD_DATE_EARLIEST + A_YEAR);
+	set_time(in_root("/image/etc/rc"), 100);
+	forget_calls();
+	clock_now = 1000;
+	clock_floor();
+	CHECK(clock_sets == 1 && clock_set_to == BUILD_DATE_EARLIEST + A_YEAR, "without kern.version: %ld", clock_set_to);
+	clock_now = 0;
+}
+
 /* An exec that fails gives process 1 its standard error back; ">>" on an exec line is refused. */
 static void
 scenario_exec(void)
@@ -690,6 +825,8 @@ main(void)
 	scenario_long_line();
 	scenario_long_list();
 	scenario_numbers();
+	scenario_build_date();
+	scenario_clock();
 	scenario_exec();
 	scenario_zero_record();
 

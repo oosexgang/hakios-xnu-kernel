@@ -22,6 +22,7 @@ extern "C" {
 #include <kern/thread_call.h>
 
 #include "MiniDrivers.h"
+#include "build_date.h"
 
 extern "C" {
 kern_return_t processor_start(processor_t processor);
@@ -35,6 +36,9 @@ kern_return_t psci_smp_start_cpu(int cpu);
 void psci_smp_cpu_running(void);
 void psci_smp_cpu_off(void) __dead2;
 void gic_v3_irq_signal(uint32_t phys_id);
+
+/* the kernel's version string, with the date it was built (libkern/version.h, which the build makes from a template) */
+extern const char version[];
 }
 
 /*
@@ -377,8 +381,10 @@ GenericARMPE::start(IOService * provider)
  * The time of day. There is no driver for a real-time clock here; whoever started the kernel
  * says what time it was then -- the boot-arg epoch= (seconds since 1970, put there by the
  * host scripts) or, failing that, the property boot-epoch of /chosen (the loader, from the
- * firmware's clock) -- and the kernel's own timer counts from there. Without either the
- * calendar starts in 1970, as before.
+ * firmware's clock) -- and the kernel's own timer counts from there. Without either, or with
+ * one earlier than this kernel was built, the calendar starts at the build (build_date.h):
+ * a time we know to have passed, where 1970 has every daemon catch up on fifty-six years once
+ * the network says the date. Process 1 may raise it further from what the volumes last wrote.
  */
 static long gBootEpoch;         /* the calendar time at which the system timer read zero */
 static bool gBootEpochKnown;
@@ -387,27 +393,37 @@ static void
 findBootEpoch(void)
 {
 	uint64_t epoch = 0;
+	long earliest;
+	const char * from = "epoch=";
+	clock_sec_t secs;
+	clock_usec_t usecs;
 
 	if (gBootEpochKnown) {
 		return;
 	}
 	gBootEpochKnown = true;
+	earliest = build_date_floor(version);
 	if (!PE_parse_boot_argn("epoch", &epoch, sizeof(epoch)) || epoch == 0) {
 		IORegistryEntry * chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
 		OSData * data = chosen ? OSDynamicCast(OSData, chosen->getProperty("boot-epoch")) : NULL;
 
+		from = "the loader's boot-epoch";
 		if (data != NULL && data->getLength() == sizeof(epoch)) {
 			memcpy(&epoch, data->getBytesNoCopy(), sizeof(epoch));
 		}
 		OSSafeReleaseNULL(chosen);
 	}
-	if (epoch != 0) {
-		clock_sec_t secs;
-		clock_usec_t usecs;
-
-		clock_get_system_microtime(&secs, &usecs);
-		gBootEpoch = (long) epoch - (long) secs;
+	clock_get_system_microtime(&secs, &usecs);
+	if (epoch < (uint64_t) earliest) {
+		if (epoch == 0) {
+			printf("GenericARMPE: no time given: the calendar starts at %ld, this kernel's build\n", earliest);
+		} else {
+			printf("GenericARMPE: %s (%llu) is before this kernel's build: the calendar starts at %ld instead\n", from,
+			    (unsigned long long) epoch, earliest);
+		}
+		epoch = (uint64_t) earliest;
 	}
+	gBootEpoch = (long) epoch - (long) secs;
 }
 
 long

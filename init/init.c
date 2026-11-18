@@ -14,6 +14,7 @@
  * commands.
  */
 #include "mini.h"
+#include "../drivers/iokit/build_date.h"        /* (the kernel's floor under the clock, read as the kernel reads it) */
 
 #define PATTERN_SIZE    300000
 #define RB_HALT         0x08
@@ -1194,6 +1195,75 @@ restore_var(void)
 	}
 }
 
+/*
+ * The wall clock, raised to what the volumes last knew. Without epoch= or a firmware clock the kernel starts the
+ * calendar at its own build (drivers/iokit/build_date.h), which can be months behind; the volumes know better: the
+ * root's directory was last written when the image was made, our etc/rc when ours was built, and what restore_var()
+ * has just put back carries the times of the last boot -- /private/var itself when the archive was saved
+ * (var_store), its directories when something last changed in them. The clock is raised to the newest of these,
+ * never put back, and a stamp more than ten years past the kernel's build is taken for a clock that was wrong when
+ * it wrote it and is left out. After the OnePlus Nord 2 port of iOS (frxncyyy/ios-denniz, the idea of its piece
+ * 0530), which raised its clock from the root volume's times.
+ */
+#define CLOCK_STAMP_SPAN        (3653L * 86400)         /* ten years, leap days included */
+
+/*
+ * The time to raise a clock that reads NOW to, from STAMPS (N of them, 0 for none) and KERNEL (the kernel's build): the
+ * newest stamp later than NOW and not past KERNEL + CLOCK_STAMP_SPAN, its index in *WHICH; 0 when there is none.
+ */
+static long
+clock_raise_to(long now, long kernel, const long *stamps, unsigned n, unsigned *which)
+{
+	long best = 0;
+
+	for (unsigned i = 0; i < n; i++) {
+		if (stamps[i] > now && stamps[i] > best && stamps[i] <= kernel + CLOCK_STAMP_SPAN) {
+			best = stamps[i];
+			*which = i;
+		}
+	}
+	return best;
+}
+
+static void
+clock_floor(void)
+{
+	static const char *const places[] = { "/", "/private/var", "/private/var/db", "/private/var/preferences",
+		                              "/private/var/mobile/Library/Preferences", NULL /* our image's etc/rc */ };
+	enum { PLACES = sizeof(places) / sizeof(places[0]) };
+	char version[256] = "", image_rc[256];
+	long stamps[PLACES], kernel, to;
+	const char *left_out = "";
+	unsigned which = 0;
+	size_t len = sizeof(version) - 1;
+	struct timeval now = { 0, 0 };
+	struct stat st;
+
+	if (sysctlbyname("kern.version", version, &len, NULL, 0) != 0) {
+		len = 0;
+	}
+	version[len < sizeof(version) ? len : sizeof(version) - 1] = 0;
+	kernel = build_date_floor(version);
+	strcpy(image_rc, in_image("/etc/rc"));
+	for (unsigned i = 0; i < PLACES; i++) {
+		stamps[i] = stat(places[i] != NULL ? places[i] : image_rc, &st) == 0 ? st.st_mtimespec.tv_sec : 0;
+		if (stamps[i] > kernel + CLOCK_STAMP_SPAN) {
+			left_out = " (a time more than ten years past the kernel's build left out)";
+		}
+	}
+	gettimeofday(&now, NULL);
+	to = clock_raise_to(now.tv_sec, kernel, stamps, PLACES, &which);
+	if (to != 0) {
+		struct timeval tv = { to, 0 };
+
+		printf("init: the clock read %ld; %s was written at %ld: raised to that%s: %s\n", now.tv_sec,
+		    places[which] != NULL ? places[which] : image_rc, to, left_out,
+		    settimeofday(&tv, NULL) == 0 ? "ok" : strerror(errno));
+	} else {
+		printf("init: the clock (%ld) is not behind the volumes' times%s\n", now.tv_sec, left_out);
+	}
+}
+
 static int
 count_entries(const char *path)
 {
@@ -1683,6 +1753,7 @@ main(int argc, char **argv, char **envp)
 	show_system();
 	mount_writable();
 	restore_var();
+	clock_floor();
 	boot_arg_preferences();
 	test_files();
 	test_writable();

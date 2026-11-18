@@ -332,6 +332,7 @@ F:	drivers/board/time.h
 F:	drivers/board/cache.h
 F:	drivers/iokit/GenericARMPE.cpp
 F:	drivers/iokit/MiniDrivers.h
+F:	drivers/iokit/build_date.h
 F:	Documentation/examples/
 T:	Documentation/examples/example_led_test.c
 D:	Documentation/writing-a-driver.md

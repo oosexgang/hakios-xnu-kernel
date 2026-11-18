@@ -1433,6 +1433,16 @@ load(void)
 		printf("var_store: the archive read differently the second time: what was made stays\n");
 		return 0;
 	}
+	/*
+	 * When the archive was saved, as the time of /private/var itself (whose own time the archive does not hold): init
+	 * raises a clock that is behind it to it (init/init.c, clock_floor), and the clock of a boot without one goes on from
+	 * where the last boot left it.
+	 */
+	if (h.seconds != 0) {
+		struct timeval saved[2] = { { (long)h.seconds, 0 }, { (long)h.seconds, 0 } };
+
+		utimes(ROOT, saved);
+	}
 	printf("var_store: %llu directories, %llu files (%llu bytes), %llu links back in /private/var\n",
 	    (unsigned long long)made_dirs, (unsigned long long)made_files, (unsigned long long)made_bytes,
 	    (unsigned long long)made_links);
