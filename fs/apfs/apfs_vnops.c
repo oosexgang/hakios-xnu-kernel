@@ -1030,6 +1030,10 @@ apfs_vnop_getxattr(struct vnop_getxattr_args *ap)
 		return error == ENOENT ? ENOATTR : error;
 	}
 	whole = (xa.flags & APFS_XATTR_DATA_STREAM) ? (size_t)xa.stream_size : xa.data_len;
+	if (whole > INT_MAX) {
+		/* (a size off the disk past what one read moves -- or, as a signed size, below zero: not allocated) */
+		return E2BIG;
+	}
 	if (ap->a_uio == NULL) {
 		*ap->a_size = whole;    /* only the size was asked for */
 		return 0;
