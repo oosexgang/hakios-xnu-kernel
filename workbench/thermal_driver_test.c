@@ -375,6 +375,22 @@ scmi_refused(void)
 	CHECK(scmi_level[0] == 2 && scmi_level[1] == 3, "refused three times, then taken: %u %u", scmi_level[0], scmi_level[1]);
 }
 
+/* a jump straight to the most held back, refused once by the firmware: the step does not change again, and the
+ * levels are still asked for at the next looks until they are taken */
+static void
+scmi_refused_at_critical(void)
+{
+	scmi_phone(500);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	usleep(200000);
+	scmi_phone(960);
+	scmi_refusals = 2;
+	WAIT_FOR(get("step") == 9 && scmi_level[0] == 2 && scmi_level[1] == 3, 2000);
+	CHECK(get("step") == 9, "critical: the most held back: %u", get("step"));
+	CHECK(scmi_level[0] == 2 && scmi_level[1] == 3, "refused once, asked again and taken: %u %u", scmi_level[0], scmi_level[1]);
+}
+
 static void
 critical(void)
 {
@@ -620,7 +636,7 @@ main(int argc, char **argv)
 		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
-		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused },
+		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused }, { "scmi_refused_at_critical", scmi_refused_at_critical },
 		{ "said_every_tenth_look", said_every_tenth_look }, { "step_for_the_gpu", step_for_the_gpu },
 		{ "scmi_without_levels", scmi_without_levels }, { "quiesce_when_cool", quiesce_when_cool },
 	};

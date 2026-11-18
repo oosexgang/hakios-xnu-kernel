@@ -216,16 +216,18 @@ th_thread(__unused void *argument, __unused wait_result_t result)
 	for (;;) {
 		unsigned which = 0;
 		int32_t t = read_hottest(&which);
-		uint32_t next;
 
 		hottest = t;
 		tell_look(t, which);
 		if (mode >= 2) {
-			next = th_next_step(step, most, t, &policy);
-			if (next != step) {
-				step = next;
-				apply(step);
-			}
+			/*
+			 * applied at every look, not only when the step changes: apply() writes only the groups that are not
+			 * where the step puts them, so a level the firmware refused (an SCMI channel busy, a call that timed
+			 * out) is asked for again at the next look -- a step held at the critical temperature is not lost to
+			 * one failed call
+			 */
+			step = th_next_step(step, most, t, &policy);
+			apply(step);
 			if (step != said_step) {
 				char rows[48];
 
