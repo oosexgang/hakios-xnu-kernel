@@ -400,7 +400,8 @@ lit_then(void (*goes_wrong)(void), const char *said, const char *what)
 	WAIT_FOR(lit_now(), 3000);
 	CHECK(lit_now(), "lit");
 	goes_wrong();
-	WAIT_FOR(!lit_now() && logged(said), 2000);
+	/* (the light goes off, then writing is given up on: the refusals below wait for the second) */
+	WAIT_FOR(!lit_now() && logged(said) && logged("no more writing to the flash module for the rest of the run"), 2000);
 	CHECK(!lit_now(), "off when %s", what);
 	CHECK(logged(said), "and why is said (\"%s\"): %s", said, log_text);
 	refused(0);
