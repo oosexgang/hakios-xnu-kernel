@@ -1470,8 +1470,17 @@ worker(void *context)
 				}
 				continue;
 			}
-			bytes = sizeof(head) + (size_t)head.stride * head.height;
+			if (head.header_bytes < sizeof(head) || head.header_bytes > 4096 || head.height == 0 || head.width == 0 ||
+			    head.stride < head.width || (uint64_t)head.stride * head.height > (64u << 20)) {
+				failures++;
+				continue;               /* (a header that no buffer is to be sized from) */
+			}
+			bytes = head.header_bytes + (size_t)head.stride * head.height;
 			buffer = malloc(bytes);
+			if (buffer == NULL) {
+				say("no memory for a frame of %zu bytes", bytes);
+				break;
+			}
 			say("frames of %ux%u from the kernel (the %s)", head.width, head.height, s->camera->name);
 			continue;
 		}
@@ -1489,6 +1498,18 @@ worker(void *context)
 		const struct hakios_camera_frame *f = (const void *)buffer;
 		const uint8_t *raw = buffer + f->header_bytes;
 		struct hakios_camera_command c;
+
+		/*
+		 * (each frame the shape the buffer was sized for: a sensor or mode changed meanwhile -- another opener's
+		 * HAKIOS_CAMERA_SENSOR -- would have the ISP read past the buffer's end. Back to the header, sized anew)
+		 */
+		if (f->header_bytes != head.header_bytes || f->sensor != head.sensor || f->width != head.width ||
+		    f->height != head.height || f->stride != head.stride) {
+			say("the kernel's frames changed shape (%ux%u, camera %u): sized again", f->width, f->height, f->sensor);
+			free(buffer);
+			buffer = NULL;
+			continue;
+		}
 
 		isp_measure(&isp, f, raw, &st);
 		isp_awb(&isp, &st);
