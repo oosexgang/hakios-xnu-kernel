@@ -241,6 +241,18 @@ tags yet, so the current work is one section.
   package behind when interrupted; `tools/image.py verify` gave a traceback on a malformed manifest and would read a
   file a manifest named with a path out of the image; and `scripts/new-driver.py` left its files behind when it could
   not extend `workbench/run.sh`, so every retry refused.
+- Reviews of the drivers before a phone has run them, each fix with a scenario that failed before it: the thermal
+  limiter left a level the firmware had refused (SCMI) as it was and took any threshold a sysctl gave, a critical one
+  past 125 °C among them; the ADSP's end left the microphone's DSP stream up, a G-Link channel offered again at another
+  size wrote past its old buffer and a late APR answer overwrote the first; a key held when the keys' bus stopped
+  answering stayed down for Darwin; the torch, the speaker and the vibration motor counted a power-down that was never
+  read back as done; the sound driver, given up, left the DSP playing the last buffer; the battery's temperature from
+  the DSP stayed what it last was when the DSP went quiet (now unknown after 60 s, and the torch refuses then); the
+  camera held RPMh votes that were never answered as given, took a mode past 13 MP or 30 fps and indexed past its
+  CSIPHY and LDO arrays on a board that lists more than there are; the GPU, IOSurface and framebuffer user clients
+  outlived their task when handed to another process, mapped read-only surface memory writable on the GPU, and let any
+  process show a surface past the panel. PosterBoard's timeouts stretched under the emulator could call themselves
+  forever when a subclass called its superclass's.
 
 ### For whoever works on the project
 
