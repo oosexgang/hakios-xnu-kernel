@@ -743,8 +743,34 @@ say_radio(struct ath11k_base *ab)
 
 static struct ath11k_base *volatile driver;	/* the driver, while it is up: between lx_start() and lx_stop() */
 
-int
-lx_start(void)
+/*
+ * lx_start() runs on the steps' thread and lx_stop() on whoever ends the run (board/wifi.c), so a stop can come while a
+ * start is on its way. Under lx_os_lock(): that a start is, and that a stop has come meanwhile. The start then goes no
+ * further and takes down what it has brought up, and the stop waits for it to have done so. The frames lx_transmit()
+ * has in the driver are counted, so that the driver is not taken down under one.
+ */
+static struct {
+	bool starting;
+	bool stop;
+	volatile int sending;
+} life;
+
+static void driver_down(void);
+
+/* The run ends, or a stop has come: the start goes no further. */
+static bool
+start_cut_short(void)
+{
+	bool stop;
+
+	lx_os_lock();
+	stop = life.stop;
+	lx_os_unlock();
+	return (stop || lx_os_option("wifi_ending"));
+}
+
+static int
+bring_up(void)
 {
 	static struct device device;
 	static struct device_node node;
@@ -822,12 +848,12 @@ lx_start(void)
 	 * The rest happens on the driver's own threads, until core.c has been through its start (it
 	 * says so with the flag below, whether that went well or not) or the exchange has failed.
 	 * It went well if the bus is still up: core.c stops it where it gives up. A run that ends
-	 * meanwhile ("wifi_ending", board/wifi.c) does not wait for it: what was started is wound
-	 * down below, before the DSP under it is shut down.
+	 * meanwhile ("wifi_ending", board/wifi.c), or an lx_stop() that comes, does not wait for it:
+	 * what was started is wound down below, before the DSP under it is shut down.
 	 */
 	began = lx_os_nanoseconds();
 	while (!test_bit(ATH11K_FLAG_REGISTERED, &ab->dev_flags) && !test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags) &&
-	    lx_os_nanoseconds() - began < 60000000000ull && !lx_os_option("wifi_ending")) {
+	    lx_os_nanoseconds() - began < 60000000000ull && !start_cut_short()) {
 		lx_pause_ms(10);
 	}
 	up = test_bit(ATH11K_FLAG_REGISTERED, &ab->dev_flags) && bus.looks;
@@ -850,13 +876,15 @@ lx_start(void)
 	lx_pause_ms(1000);			/* (for what the firmware says unasked once it is ready) */
 	say_radio(ab);
 
-	if (lx_os_option("wifi_ending")) {
+	if (start_cut_short()) {
 		/* (the run has ended meanwhile: the driver is not taken up but goes down again at once, before its DSP does) */
 		ath11k_core_deinit(ab);
 		lx_tell("lx: the run ends: the driver is down again\n");
 		return (EIO);
 	}
+	lx_os_lock();
 	driver = ab;
+	lx_os_unlock();
 	if (lx_os_option("wifi_station")) {
 		/* whoever wants a network asks the kernel, and the kernel asks the station: the driver stays up until lx_stop() */
 		if ((ret = lx_station_offer()) == 0) {
@@ -873,7 +901,38 @@ lx_start(void)
 	} else {
 		ret = lx_os_option("wifi_scan") ? lx_station_scan() : 0;
 	}
-	lx_stop();
+	driver_down();
+	return (ret);
+}
+
+int
+lx_start(void)
+{
+	bool stop;
+	int ret;
+
+	lx_os_lock();
+	if (life.starting || driver != NULL) {
+		lx_os_unlock();
+		lx_tell("lx: the driver is up already, or on its way: not started again\n");
+		return (EBUSY);
+	}
+	life.starting = true;
+	life.stop = false;
+	lx_os_unlock();
+	ret = bring_up();
+	/* (a stop that came while the start was on its way: what the start left up goes down before the stop is let go on) */
+	lx_os_lock();
+	stop = life.stop;
+	lx_os_unlock();
+	if (stop) {
+		driver_down();
+		ret = ret == 0 ? EIO : ret;
+	}
+	lx_os_lock();
+	life.starting = false;
+	lx_os_wakeup(&life);
+	lx_os_unlock();
 	return (ret);
 }
 
@@ -884,28 +943,78 @@ lx_prepare(void)
 	return (lx_base_init() != 0 || lx_pool_init() != 0 ? ENOMEM : 0);
 }
 
-/* The network left, and the driver down as its own removal does it (the copy engines are let go of on the way: bus_quiet()). */
-void
-lx_stop(void)
+/*
+ * The network left, and the driver down as its own removal does it (the copy engines are let go of on the way: bus_quiet()).
+ * The driver is taken from where the others find it under the lock: of two callers, one takes it down.
+ */
+static void
+driver_down(void)
 {
-	struct ath11k_base *ab = driver;
+	struct ath11k_base *ab;
 
+	lx_os_lock();
+	ab = driver;
+	driver = NULL;
+	lx_os_unlock();
 	if (ab == NULL) {
-		/* (a start still on its way, or one that gave up: whatever of the bus it started is stopped, and the registers
-		 * closed, before the DSP is shut down) */
+		/* (a start that gave up, or one cut short: whatever of the bus it started is stopped, and the registers closed,
+		 * before the DSP is shut down) */
 		bus_quiet();
 		bus.closed = true;
 		return;
 	}
-	driver = NULL;
+	/*
+	 * (a frame that found the driver up is in it until lx_transmit() counts it out: the driver is not freed under it. Read
+	 * with an atomic add: a frame counted in after it either is seen here or finds the driver gone)
+	 */
+	for (unsigned ms = 0; __sync_fetch_and_add(&life.sending, 0) != 0 && ms < 1000; ms++) {
+		lx_pause_ms(1);
+	}
 	lx_station_withdraw();
 	lx_station_leave();
 	ath11k_core_deinit(ab);
 	lx_tell("lx: the driver is down again\n");
 }
 
+/*
+ * A stop while a start is on its way has the start go no further, and waits for it to have taken down what it brought
+ * up: the driver is then neither freed under a scan or a join of the start's nor left up on a radio whose DSP is about to
+ * go. Ten seconds at the most: a start still on its way after that has the bus stopped and the registers closed under
+ * it, as before, and takes the driver down itself when it gets back.
+ */
+void
+lx_stop(void)
+{
+	bool starting;
+
+	lx_os_lock();
+	if (life.starting) {
+		life.stop = true;
+		for (unsigned slices = 0; life.starting && slices < 2000; slices++) {
+			lx_os_sleep(&life, 5 * 1000000ull);
+		}
+	}
+	starting = life.starting;
+	lx_os_unlock();
+	if (starting) {
+		lx_tell("lx: the driver's start goes on past the wait for it: the bus is stopped under it\n");
+		bus_quiet();
+		bus.closed = true;
+		return;
+	}
+	driver_down();
+}
+
+/* (counted while it is in the driver: driver_down() waits for that) */
 int
 lx_transmit(const unsigned char *frame, unsigned long length)
 {
-	return (driver != NULL ? lx_station_send(frame, length) : ENETDOWN);
+	int ret = ENETDOWN;
+
+	__sync_fetch_and_add(&life.sending, 1);
+	if (driver != NULL) {
+		ret = lx_station_send(frame, length);
+	}
+	__sync_fetch_and_sub(&life.sending, 1);
+	return (ret);
 }

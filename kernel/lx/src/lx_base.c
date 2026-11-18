@@ -254,6 +254,7 @@ static struct timer_list *armed[16];
 static struct timer_list *firing;		/* the timer whose function the ticker runs now (timer_delete_sync() waits for it) */
 static void *ticker_self;			/* lx_os_thread_self() of the ticker */
 static bool queue_work_locked(struct workqueue_struct *wq, struct work_struct *work);
+static bool unqueue_work_locked(struct work_struct *work);
 static struct {
 	struct delayed_work *work;		/* to be queued on ... */
 	struct workqueue_struct *queue;		/* ... when the ticks have reached ... */
@@ -347,7 +348,11 @@ linux_queue_delayed_work_on(int cpu, struct workqueue_struct *wq, struct delayed
 	return (slot >= 0);
 }
 
-/* Not to be queued any more, if it waits for its time; true if it did. */
+/*
+ * Not to be queued any more, if it waits for its time, nor to run, if the ticker has queued it already and it has not
+ * begun (as Linux's takes it off the queue's list: the driver's cancel of its connection_loss_work when a beacon comes
+ * back is one that may find it there); true if it did either. One that runs is not waited for.
+ */
 bool
 linux_cancel_delayed_work(struct delayed_work *dwork)
 {
@@ -360,6 +365,7 @@ linux_cancel_delayed_work(struct delayed_work *dwork)
 			waited = true;
 		}
 	}
+	waited |= unqueue_work_locked(&dwork->work);
 	lx_os_unlock();
 	return (waited);
 }
@@ -714,18 +720,16 @@ linux_queue_work_on(int cpu, struct workqueue_struct *wq, struct work_struct *wo
 	return (queued);
 }
 
-/* Not to run any more if it waits; and if it runs, until it has ended (unless it is the caller that runs it). */
-bool
-linux_cancel_work_sync(struct work_struct *work)
+/* With lx_os_lock() held: off its queue's list, if it waits there; true if it did. */
+static bool
+unqueue_work_locked(struct work_struct *work)
 {
 	struct lx_workqueue *queue;
-	bool waited = false;
 
 	if (work->work_queue == NULL) {
 		return (false);
 	}
 	queue = __containerof(work->work_queue, struct lx_workqueue, shown);
-	lx_os_lock();
 	for (unsigned i = 0; i < queue->count; i++) {
 		unsigned at = (queue->first + i) % nitems(queue->waiting);
 
@@ -736,10 +740,25 @@ linux_cancel_work_sync(struct work_struct *work)
 			}
 			queue->count--;
 			atomic_set(&work->state, WORK_IDLE);
-			waited = true;
-			break;
+			return (true);
 		}
 	}
+	return (false);
+}
+
+/* Not to run any more if it waits; and if it runs, until it has ended (unless it is the caller that runs it). */
+bool
+linux_cancel_work_sync(struct work_struct *work)
+{
+	struct lx_workqueue *queue;
+	bool waited;
+
+	if (work->work_queue == NULL) {
+		return (false);
+	}
+	queue = __containerof(work->work_queue, struct lx_workqueue, shown);
+	lx_os_lock();
+	waited = unqueue_work_locked(work);
 	while (queue->running == work && queue->thread != lx_os_thread_self()) {
 		lx_os_sleep(&queue->running, SLICE_NS);
 		waited = true;
@@ -770,8 +789,13 @@ static volatile long allocations, allocated;	/* pieces out now, and their bytes:
 void *
 lkpi_kmalloc(size_t size, gfp_t flags)
 {
-	size_t *block = lx_os_alloc(size + 16);
+	size_t *block;
 
+	/* (a size the 16 bytes in front would carry past the largest there is: none, rather than a few bytes) */
+	if (size > (size_t)-1 - 16) {
+		return (NULL);
+	}
+	block = lx_os_alloc(size + 16);
 	if (block == NULL) {
 		return (NULL);
 	}

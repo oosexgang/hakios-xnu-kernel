@@ -316,6 +316,7 @@ struct lx_frame {
 };
 
 static bool lx_link_attached;
+static bool lx_queue_made;                      /* the queue and its thread: made once, whatever the link's attach said */
 static LCK_MTX_DECLARE(lx_queue_lock, &lx_lock_group);
 static struct lx_frame *lx_queue;
 static uint32_t lx_queue_in, lx_queue_out;      /* frames put in and taken out, counted from the start */
@@ -377,13 +378,22 @@ lx_os_net_attach(const unsigned char *address)
 	if (lx_link_attached) {
 		return;
 	}
-	lx_queue = kalloc_data(LX_QUEUE * sizeof(*lx_queue), Z_WAITOK | Z_ZERO);
-	if (lx_queue == NULL || kernel_thread_start(lx_queue_runs, NULL, &thread) != KERN_SUCCESS) {
-		say("lx: no memory or no thread for the frames to send: the radio's frames go nowhere\n");
-		return;
+	/*
+	 * (a call after one whose attach was refused tries the attach again, and only that: a second queue would leave the
+	 * first's memory behind, and a second thread would take frames out of the same queue as the first)
+	 */
+	if (!lx_queue_made) {
+		if (lx_queue == NULL) {
+			lx_queue = kalloc_data(LX_QUEUE * sizeof(*lx_queue), Z_WAITOK | Z_ZERO);
+		}
+		if (lx_queue == NULL || kernel_thread_start(lx_queue_runs, NULL, &thread) != KERN_SUCCESS) {
+			say("lx: no memory or no thread for the frames to send: the radio's frames go nowhere\n");
+			return;
+		}
+		thread_set_thread_name(thread, "wifi-send");
+		thread_deallocate(thread);
+		lx_queue_made = true;
 	}
-	thread_set_thread_name(thread, "wifi-send");
-	thread_deallocate(thread);
 	memcpy(lx_link.address, address, sizeof(lx_link.address));
 	lx_link_attached = hakios_net_attach(&lx_link);
 	say("lx: %s\n", lx_link_attached ? "the radio is the link behind en0" : "EN0 HAS A LINK ALREADY: the radio's frames go "
