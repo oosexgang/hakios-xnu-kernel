@@ -851,10 +851,11 @@ swizzle(const char *class_name, const char *selector, IMP replacement, IMP *orig
 		say("hakios: -[%s %s]: not found\n", class_name, selector);
 		return 0;
 	}
-	IMP prev = method_setImplementation(m, replacement);
+	/* the original first: another thread can call the replacement the moment it is set */
 	if (original != NULL) {
-		*original = prev;
+		*original = method_getImplementation(m);
 	}
+	method_setImplementation(m, replacement);
 	return 1;
 }
 
@@ -899,6 +900,7 @@ static void
 sb_wake_posterboard(void *context)
 {
 	Class service_class = objc_getClass("PRSService");
+	SEL prewarm = sel_registerName("prewarmWithCompletion:");
 	id service;
 
 	(void)context;
@@ -906,10 +908,15 @@ sb_wake_posterboard(void *context)
 		say("hakios: SpringBoard: no PRSService\n");
 		return;
 	}
+	/* (a private method: on a build without it the message raises on a global queue, which ends SpringBoard) */
+	if (!class_respondsToSelector(service_class, prewarm)) {
+		say("hakios: SpringBoard: no -[PRSService prewarmWithCompletion:]; PosterBoard is not woken\n");
+		return;
+	}
 	service = ((id (*)(id, SEL))objc_msgSend)(((id (*)(Class, SEL))objc_msgSend)(service_class, sel_registerName("alloc")),
 	    sel_registerName("init"));
 	say("hakios: SpringBoard: PosterBoard: prewarm asked\n");
-	((void (*)(id, SEL, void (^)(void)))objc_msgSend)(service, sel_registerName("prewarmWithCompletion:"), ^{
+	((void (*)(id, SEL, void (^)(void)))objc_msgSend)(service, prewarm, ^{
 		dispatch_async_f(dispatch_get_main_queue(), NULL, sb_prewarm_done);
 	});
 }
@@ -967,6 +974,33 @@ pb_count(id object)
 	    ? ((unsigned long (*)(id, SEL))objc_msgSend)(object, count) : 0;
 }
 
+/*
+ * Whether `object` (or a class, for its class methods) answers `name`. What is asked of PosterBoard below are its
+ * private methods, from a global queue: one this build has not got raises there, and that ends PosterBoard. Each
+ * missing one is said once.
+ */
+static bool
+pb_answers(id object, const char *name)
+{
+	static SEL told[8];
+	static unsigned told_count;
+	SEL selector = sel_registerName(name);
+
+	if (object != nil && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(object, sel_registerName("respondsToSelector:"), selector)) {
+		return true;
+	}
+	for (unsigned i = 0; i < told_count; i++) {
+		if (told[i] == selector) {
+			return false;
+		}
+	}
+	if (told_count < sizeof(told) / sizeof(told[0])) {
+		told[told_count++] = selector;
+	}
+	say("hakios: PosterBoard: %s does not answer %s; not asked\n", object != nil ? object_getClassName(object) : "nil", name);
+	return false;
+}
+
 static id (*orig_initial_posters)(id, SEL, id, id);
 static void (*orig_setup_role)(id, SEL, id);
 static void (*orig_setup_coordinators)(id, SEL);
@@ -993,10 +1027,16 @@ pb_setup_role(id self, SEL sel, id storage)
 	orig_setup_role(self, sel, storage);
 }
 
+extern id objc_retain(id object);
+
 static void
 pb_setup_coordinators(id self, SEL sel)
 {
-	pb_store = self;
+	/* kept, because pb_report uses it 30 s on from another thread (an older one, if there was one, is not
+	 * released: that thread may be using it) */
+	if (pb_store != self) {
+		pb_store = objc_retain(self);
+	}
 	say("hakios: PosterBoard: the data store sets up its role coordinators\n");
 	orig_setup_coordinators(self, sel);
 }
@@ -1131,7 +1171,7 @@ pb_make_initial_posters(id role)
 	if (lock != NULL) {
 		os_unfair_lock_lock(lock);
 	}
-	{
+	if (pb_answers(pb_store, "knownExtensions")) {
 		id known = ((id (*)(id, SEL))objc_msgSend)(pb_store, sel_registerName("knownExtensions"));
 		for (unsigned long i = 0; i < pb_count(known); i++) {
 			id extension = ((id (*)(id, SEL, unsigned long))objc_msgSend)(known, sel_registerName("objectAtIndex:"), i);
@@ -1179,22 +1219,27 @@ pb_report(void *context)
 		Class glue = objc_getClass("PBFPosterExtensionDataStoreXPCServiceGlue");
 		id shared = glue != Nil ? ((id (*)(Class, SEL))objc_msgSend)(glue, sel_registerName("sharedInstance")) : nil;
 		id error = nil;
-		id store = shared != nil ? ((id (*)(id, SEL, id *))objc_msgSend)(shared, sel_registerName("_dataStoreWithError:"),
-		    &error) : nil;
+		id store = shared != nil && pb_answers(shared, "_dataStoreWithError:") ?
+		    ((id (*)(id, SEL, id *))objc_msgSend)(shared, sel_registerName("_dataStoreWithError:"), &error) : nil;
 
 		say("hakios: PosterBoard: no data store after 30 s: made one: %s%s%s\n", pb_desc(store, a, sizeof(a)),
 		    error != nil ? ", error " : "", error != nil ? pb_desc(error, b, sizeof(b)) : "");
-		if (pb_store == nil) {
-			pb_store = store;
+		if (pb_store == nil && store != nil) {
+			pb_store = objc_retain(store);
 		}
 		if (pb_store == nil) {
 			return;
 		}
 	}
-	extensions = ((id (*)(id, SEL))objc_msgSend)(pb_store, sel_registerName("knownExtensions"));
+	extensions = pb_answers(pb_store, "knownExtensions") ?
+	    ((id (*)(id, SEL))objc_msgSend)(pb_store, sel_registerName("knownExtensions")) : nil;
 	say("hakios: PosterBoard: %lu poster extensions known: %s\n", pb_count(extensions), pb_desc(extensions, b, sizeof(b)));
+	if (!pb_answers(pb_store, "posterConfigurationsForRole:error:") ||
+	    !pb_answers((id)objc_getClass("PBFPosterExtensionDataStore"), "supportedRoles")) {
+		return;
+	}
 	roles = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("PBFPosterExtensionDataStore"), sel_registerName("supportedRoles"));
-	roles = ((id (*)(id, SEL))objc_msgSend)(roles, sel_registerName("allObjects"));
+	roles = pb_answers(roles, "allObjects") ? ((id (*)(id, SEL))objc_msgSend)(roles, sel_registerName("allObjects")) : nil;
 	for (unsigned long i = 0; i < pb_count(roles); i++) {
 		id role = ((id (*)(id, SEL, unsigned long))objc_msgSend)(roles, sel_registerName("objectAtIndex:"), i);
 		id error = nil;
@@ -1551,8 +1596,10 @@ posterboard_fixes(void)
 	Method m = helper != Nil ? class_getClassMethod(helper,
 	    sel_registerName("initialPosterConfigurationsWithModelCoordinatorProvider:role:")) : NULL;
 
+	/* (in each, the original is kept before the replacement is set: another thread can call it at once) */
 	if (m != NULL) {
-		orig_initial_posters = (id (*)(id, SEL, id, id))method_setImplementation(m, (IMP)pb_initial_posters);
+		orig_initial_posters = (id (*)(id, SEL, id, id))method_getImplementation(m);
+		method_setImplementation(m, (IMP)pb_initial_posters);
 	}
 	swizzle("PBFPosterRoleCoordinator", "setupRoleIfNecessaryWithStorage:", (IMP)pb_setup_role, (IMP *)&orig_setup_role);
 	{
@@ -1560,8 +1607,8 @@ posterboard_fixes(void)
 		Method mm = migrator != Nil ? class_getClassMethod(migrator,
 		    sel_registerName("migrateDataStoreAtBaseURL:fromVersion:toVersion:cleanupAfterMigrationSucceeds:error:")) : NULL;
 		if (mm != NULL) {
-			orig_migrate = (BOOL (*)(Class, SEL, id, unsigned long, unsigned long, BOOL, id *))
-			    method_setImplementation(mm, (IMP)pb_migrate);
+			orig_migrate = (BOOL (*)(Class, SEL, id, unsigned long, unsigned long, BOOL, id *))method_getImplementation(mm);
+			method_setImplementation(mm, (IMP)pb_migrate);
 		}
 	}
 	swizzle("PBFPosterExtensionDataStoreXPCServiceGlue",
@@ -1575,13 +1622,15 @@ posterboard_fixes(void)
 	{
 		Method me = class_getClassMethod(objc_getClass("NSError"), sel_registerName("pbf_generalErrorWithCode:userInfo:"));
 		if (me != NULL) {
-			orig_general_error = (id (*)(id, SEL, long, id))method_setImplementation(me, (IMP)pb_general_error);
+			orig_general_error = (id (*)(id, SEL, long, id))method_getImplementation(me);
+			method_setImplementation(me, (IMP)pb_general_error);
 		} else {
 			say("hakios: +[NSError pbf_generalErrorWithCode:userInfo:]: not found\n");
 		}
 		me = class_getClassMethod(objc_getClass("NSError"), sel_registerName("errorWithDomain:code:userInfo:"));
 		if (me != NULL) {
-			orig_error_with_domain = (id (*)(id, SEL, id, long, id))method_setImplementation(me, (IMP)pb_error_with_domain);
+			orig_error_with_domain = (id (*)(id, SEL, id, long, id))method_getImplementation(me);
+			method_setImplementation(me, (IMP)pb_error_with_domain);
 		}
 	}
 	swizzle("NSURL", "pbf_recursivelyUpdateResourceValues:error:", (IMP)pb_url_update, (IMP *)&orig_url_update);
@@ -1600,7 +1649,8 @@ posterboard_fixes(void)
 	if (helper != Nil) {
 		Method mi = class_getClassMethod(helper, sel_registerName("incomingPosterConfigurationForRole:templatePath:userInfo:"));
 		if (mi != NULL) {
-			orig_incoming = (id (*)(id, SEL, id, id, id))method_setImplementation(mi, (IMP)pb_incoming);
+			orig_incoming = (id (*)(id, SEL, id, id, id))method_getImplementation(mi);
+			method_setImplementation(mi, (IMP)pb_incoming);
 		}
 	}
 	say("hakios: PosterBoard: watching its poster setup (%s)\n", m != NULL ? "all three steps" : "no initial poster helper");

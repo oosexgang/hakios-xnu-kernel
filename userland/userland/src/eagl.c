@@ -3913,15 +3913,20 @@ my_texImageIOSurface(id self, SEL selector, IOSurfaceRef surface, unsigned long 
 	{
 		/*
 		 * (no bigger than the surface, or its plane: what is read of it later is width by height of the caller's, and a
-		 * size the surface has not got would be read past its memory)
+		 * size the surface has not got would be read past its memory. The same goes for the width in bytes: a row is
+		 * read as width pixels of the caller's format and type, which must fit in the plane's row -- a two-byte
+		 * surface told it holds four-byte pixels would have its last row read past the end.)
 		 */
 		size_t planes = IOSurfaceGetPlaneCount(surface);
 		size_t have_w = planes ? IOSurfaceGetWidthOfPlane(surface, plane) : IOSurfaceGetWidth(surface);
 		size_t have_h = planes ? IOSurfaceGetHeightOfPlane(surface, plane) : IOSurfaceGetHeight(surface);
+		size_t have_row = planes ? IOSurfaceGetBytesPerRowOfPlane(surface, plane) : IOSurfaceGetBytesPerRow(surface);
+		unsigned pixel = bytes_a_pixel((GLenum)format, (GLenum)type);
 
-		if ((planes != 0 && plane >= planes) || width <= 0 || height <= 0 || (size_t)width > have_w || (size_t)height > have_h) {
-			say("hakios-gl: -texImageIOSurface: %d x %d of plane %u, the surface has %zu x %zu (%zu planes): not done\n",
-			    width, height, plane, have_w, have_h, planes);
+		if ((planes != 0 && plane >= planes) || width <= 0 || height <= 0 || (size_t)width > have_w || (size_t)height > have_h ||
+		    (size_t)width * pixel > have_row) {
+			say("hakios-gl: -texImageIOSurface: %d x %d of plane %u, %u bytes a pixel; the surface has %zu x %zu, %zu bytes a "
+			    "row (%zu planes): not done\n", width, height, plane, pixel, have_w, have_h, have_row, planes);
 			return NO;
 		}
 	}

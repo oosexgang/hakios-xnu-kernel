@@ -135,12 +135,14 @@ static uintptr_t slide;
 /*
  * Replace -[CLASS SELECTOR] (or +[CLASS SELECTOR]: `kind` is that first character), whose code must now
  * be at the unslid address `expected` (Darwin 16.5, 20F66: what a replacement does depends on what the
- * original did). Returns the original.
+ * original did). The original goes into *original_out (when that is not NULL) before the replacement is
+ * set, because another thread can call the replacement at once; returns whether it was replaced.
  * (dyld interposing of the C functions underneath does not reach calls made from inside the
  * shared cache: there one library branches straight into the other.)
  */
-static IMP
-replace_method_of_kind(char kind, const char *class_name, const char *selector, uintptr_t expected, IMP replacement)
+static bool
+replace_method_of_kind(char kind, const char *class_name, const char *selector, uintptr_t expected, IMP replacement,
+    IMP *original_out)
 {
 	Class cls = objc_getClass(class_name);
 	Method method = cls == NULL ? NULL : kind == '+' ? class_getClassMethod(cls, sel_registerName(selector)) :
@@ -150,16 +152,19 @@ replace_method_of_kind(char kind, const char *class_name, const char *selector, 
 	if (original == NULL || (uintptr_t)original != expected + slide) {
 		say("hakios: %c[%s %s]: found %#lx, expected %#lx; left alone\n", kind, class_name, selector,
 		    original ? (uintptr_t)original - slide : 0, expected);
-		return NULL;
+		return false;
+	}
+	if (original_out != NULL) {
+		*original_out = original;
 	}
 	method_setImplementation(method, replacement);
-	return original;
+	return true;
 }
 
-static IMP
-replace_method(const char *class_name, const char *selector, uintptr_t expected, IMP replacement)
+static bool
+replace_method(const char *class_name, const char *selector, uintptr_t expected, IMP replacement, IMP *original_out)
 {
-	return replace_method_of_kind('-', class_name, selector, expected, replacement);
+	return replace_method_of_kind('-', class_name, selector, expected, replacement, original_out);
 }
 
 /*
@@ -705,17 +710,16 @@ prewarm_orb_view_shaders(id self, SEL selector)
 static void
 image_added(__unused const struct mach_header *header, __unused intptr_t image_slide)
 {
-	static bool told;
+	static bool tried;      /* (once: an address that did not match the first time will not match on a later image) */
 
-	if (original_prewarm_orb_view_shaders != NULL || objc_getClass("SiriPresentationViewController") == NULL) {
+	if (tried || objc_getClass("SiriPresentationViewController") == NULL) {
 		return;
 	}
-	original_prewarm_orb_view_shaders = (void (*)(id, SEL))replace_method("SiriPresentationViewController",
-	    "prewarmOrbViewShaders", 0x1f0144c30UL, (IMP)prewarm_orb_view_shaders);
-	if (!told++) {
-		say("hakios: Siri's orb: the prewarm is %s\n",
-		    original_prewarm_orb_view_shaders ? "watched" : "NOT watched (the address moved)");
-	}
+	tried = true;
+	replace_method("SiriPresentationViewController", "prewarmOrbViewShaders", 0x1f0144c30UL, (IMP)prewarm_orb_view_shaders,
+	    (IMP *)&original_prewarm_orb_view_shaders);
+	say("hakios: Siri's orb: the prewarm is %s\n",
+	    original_prewarm_orb_view_shaders ? "watched" : "NOT watched (the address moved)");
 }
 
 static void
@@ -1257,8 +1261,29 @@ animation_rates(const char *arguments)
 	if (!boot_arg(arguments, "anim_max=1") || add == NULL) {
 		return;
 	}
-	original_add_animation = (void (*)(id, SEL, id, id))method_setImplementation(add, (IMP)add_animation_full_rate);
+	original_add_animation = (void (*)(id, SEL, id, id))method_getImplementation(add);
+	method_setImplementation(add, (IMP)add_animation_full_rate);
 	say("hakios: SpringBoard's animations ask for 80..120 a second (anim_max=1)\n");
+}
+
+/* two type encodings alike but for the offsets and sizes in them, which are the compiler's to choose */
+static bool
+same_types(const char *a, const char *b)
+{
+	if (a == NULL || b == NULL) {
+		return false;
+	}
+	for (;;) {
+		while (*a >= '0' && *a <= '9') a++;
+		while (*b >= '0' && *b <= '9') b++;
+		if (*a != *b) {
+			return false;
+		}
+		if (*a == 0) {
+			return true;
+		}
+		a++, b++;
+	}
 }
 
 static void
@@ -1278,14 +1303,25 @@ display_link_rates(void)
 	if (!dl_say && !dl_max) {
 		return;
 	}
+	/* (in each, the original is kept before the replacement is set: another thread can call it at once) */
 	if ((made = class_getClassMethod(link, sel_registerName("displayLinkWithTarget:selector:"))) != NULL) {
-		original_display_link_with = (id (*)(id, SEL, id, SEL))method_setImplementation(made, (IMP)display_link_with);
+		original_display_link_with = (id (*)(id, SEL, id, SEL))method_getImplementation(made);
+		method_setImplementation(made, (IMP)display_link_with);
 	}
 	if ((fps = class_getInstanceMethod(link, sel_registerName("setPreferredFramesPerSecond:"))) != NULL) {
-		original_set_fps = (void (*)(id, SEL, long))method_setImplementation(fps, (IMP)set_fps);
+		original_set_fps = (void (*)(id, SEL, long))method_getImplementation(fps);
+		method_setImplementation(fps, (IMP)set_fps);
 	}
-	if ((range = class_getInstanceMethod(link, sel_registerName("setPreferredFrameRateRange:"))) != NULL) {
-		original_set_range = (void (*)(id, SEL, frame_rate_range))method_setImplementation(range, (IMP)set_range);
+	/* set_range takes the range as three floats by value: with any other argument it would pass on garbage */
+	if ((range = class_getInstanceMethod(link, sel_registerName("setPreferredFrameRateRange:"))) != NULL &&
+	    !same_types(method_getTypeEncoding(range), "v28@0:8{CAFrameRateRange=fff}16")) {
+		say("hakios: display links: -setPreferredFrameRateRange: takes %s here, not a CAFrameRateRange; left alone\n",
+		    method_getTypeEncoding(range) != NULL ? method_getTypeEncoding(range) : "?");
+		range = NULL;
+	}
+	if (range != NULL) {
+		original_set_range = (void (*)(id, SEL, frame_rate_range))method_getImplementation(range);
+		method_setImplementation(range, (IMP)set_range);
 	}
 	say("hakios: display links: made %s, fps %s, range %s%s\n", made ? "ok" : "NO", fps ? "ok" : "NO", range ? "ok" : "NO",
 	    dl_max ? "; " DL_FULL_FOR "'s at the panel's rate (dl_max=1)" : "");
@@ -1297,7 +1333,8 @@ hakios_springboard_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;
-	IMP activation, snapshot_format, battery_lvl, battery_st, poster_switcher;
+	bool activation, snapshot_format, poster_switcher;
+	IMP battery_lvl, battery_st;
 	int token;
 
 	if (name == NULL) {
@@ -1347,39 +1384,39 @@ hakios_springboard_init(void)
 	 */
 	setvbuf(stdout, NULL, _IONBF, 0);
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
-	activation = replace_method("SBLockdownManager", "_setupActivationState", 0x1c4bc8dfcUL, (IMP)setup_activation_state);
+	activation = replace_method("SBLockdownManager", "_setupActivationState", 0x1c4bc8dfcUL, (IMP)setup_activation_state,
+	    NULL);
 	_dyld_register_func_for_add_image(image_added);         /* Siri's orb, whose framework comes late */
-	original_set_setup_required_reason = (void (*)(id, SEL, long))replace_method("SBSetupManager",
-	    "_setSetupRequiredReason:", 0x1c4cdd3a4UL, (IMP)set_setup_required_reason);
+	replace_method("SBSetupManager", "_setSetupRequiredReason:", 0x1c4cdd3a4UL, (IMP)set_setup_required_reason,
+	    (IMP *)&original_set_setup_required_reason);
 	snapshot_format = replace_method_of_kind('+', "XBApplicationSnapshotManifestImpl", "_outputFormatForSnapshot:",
-	    0x1f1c91480UL, (IMP)snapshot_output_format);
+	    0x1f1c91480UL, (IMP)snapshot_output_format, NULL);
 	plain_vibrancy();
-	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
-	    (IMP)lock_long_press);
+	replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL, (IMP)lock_long_press,
+	    (IMP *)&original_lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",
-	    0x1c507e0fcUL, (IMP)poster_switcher_allowed);
-	original_poster_switcher_allowed = (BOOL (*)(id, SEL, id *))poster_switcher;
-	original_switcher_wallpaper_overlay = (void (*)(id, SEL))replace_method("SBAppSwitcherPageView",
-	    "_createOrDestroyWallpaperOverlayView", 0x1c4af7860UL, (IMP)switcher_wallpaper_overlay);
+	    0x1c507e0fcUL, (IMP)poster_switcher_allowed, (IMP *)&original_poster_switcher_allowed);
+	replace_method("SBAppSwitcherPageView", "_createOrDestroyWallpaperOverlayView", 0x1c4af7860UL,
+	    (IMP)switcher_wallpaper_overlay, (IMP *)&original_switcher_wallpaper_overlay);
 	/*
 	 * Battery hooks on UIDevice: these are the methods every app and SpringBoard itself calls, so
 	 * hooking them here in the SpringBoard process covers both the status bar and any app that
 	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for Darwin 16.5 (20F66).
 	 */
-	original_battery_level = (float (*)(id, SEL))replace_method("UIDevice", "batteryLevel", 0x1897021b0UL, (IMP)battery_level);
-	original_battery_state = (long (*)(id, SEL))replace_method("UIDevice", "batteryState", 0x189209794UL, (IMP)battery_state);
-	original_battery_view_shows_percentage = (BOOL (*)(id, SEL))replace_method("_UIBatteryView", "showsPercentage",
-	    0x189a9370cUL, (IMP)battery_view_shows_percentage);
-	original_battery_view_set_shows_percentage = (void (*)(id, SEL, BOOL))replace_method("_UIBatteryView", "setShowsPercentage:",
-	    0x18926e150UL, (IMP)battery_view_set_shows_percentage);
-	original_battery_view_should_show_bolt = (BOOL (*)(id, SEL))replace_method("_UIBatteryView", "_shouldShowBolt",
-	    0x189203e28UL, (IMP)battery_view_should_show_bolt);
-	original_battery_view_charge_percent = (double (*)(id, SEL))replace_method("_UIBatteryView", "chargePercent",
-	    0x189a935d8UL, (IMP)battery_view_charge_percent);
-	original_battery_view_set_charge_percent = (void (*)(id, SEL, double))replace_method("_UIBatteryView", "setChargePercent:",
-	    0x18928d310UL, (IMP)battery_view_set_charge_percent);
-	original_ring_charging_level = (double (*)(id, SEL))replace_method("CSBatteryChargingRingView", "batteryChargingLevel",
-	    0x1c48c2cf4UL, (IMP)ring_charging_level);
+	replace_method("UIDevice", "batteryLevel", 0x1897021b0UL, (IMP)battery_level, (IMP *)&original_battery_level);
+	replace_method("UIDevice", "batteryState", 0x189209794UL, (IMP)battery_state, (IMP *)&original_battery_state);
+	replace_method("_UIBatteryView", "showsPercentage", 0x189a9370cUL, (IMP)battery_view_shows_percentage,
+	    (IMP *)&original_battery_view_shows_percentage);
+	replace_method("_UIBatteryView", "setShowsPercentage:", 0x18926e150UL, (IMP)battery_view_set_shows_percentage,
+	    (IMP *)&original_battery_view_set_shows_percentage);
+	replace_method("_UIBatteryView", "_shouldShowBolt", 0x189203e28UL, (IMP)battery_view_should_show_bolt,
+	    (IMP *)&original_battery_view_should_show_bolt);
+	replace_method("_UIBatteryView", "chargePercent", 0x189a935d8UL, (IMP)battery_view_charge_percent,
+	    (IMP *)&original_battery_view_charge_percent);
+	replace_method("_UIBatteryView", "setChargePercent:", 0x18928d310UL, (IMP)battery_view_set_charge_percent,
+	    (IMP *)&original_battery_view_set_charge_percent);
+	replace_method("CSBatteryChargingRingView", "batteryChargingLevel", 0x1c48c2cf4UL, (IMP)ring_charging_level,
+	    (IMP *)&original_ring_charging_level);
 	battery_lvl = (IMP)original_battery_level;
 	battery_st  = (IMP)original_battery_state;
 	say("hakios: SpringBoard: activation %s, setup assistant %s, application snapshots %s, the side button's long press %s, "

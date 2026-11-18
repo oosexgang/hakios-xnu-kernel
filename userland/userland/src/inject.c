@@ -601,36 +601,42 @@ my_detect_displays(id server, SEL selector)
 	orig_detect_displays(server, selector);
 }
 
+/* (method is -[CAWindowServer _detectDisplays], already found where 16.5 has it: window_server_fixes) */
 static void
-window_server_keeps_opengl_es(void)
+window_server_keeps_opengl_es(Method method)
 {
 	char arguments[1024] = "";
 	size_t size = sizeof(arguments) - 1;
-	Class cls;
-	Method method;
-	IMP original;
 
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "camtl=1") != NULL) {
 		say("hakios: camtl=1: CoreAnimation may have the Metal device (it needs "
 		    "QuartzCore.framework/default.metallib in the image)\n");
 		return;
 	}
-	cls = objc_getClass("CAWindowServer");
-	method = cls ? class_getInstanceMethod(cls, sel_registerName("_detectDisplays")) : NULL;
-	original = method ? method_getImplementation(method) : NULL;
-	if (original == NULL || (uintptr_t)original != CA_DETECT_DISPLAYS + slide) {
-		say("hakios: -[CAWindowServer _detectDisplays]: found %#lx, not what was expected; left alone, "
-		    "and CoreAnimation may take the Metal road\n", original ? (uintptr_t)original - slide : 0);
-		return;
-	}
-	orig_detect_displays = (void (*)(id, SEL))original;
+	orig_detect_displays = (void (*)(id, SEL))method_getImplementation(method);
 	method_setImplementation(method, (IMP)my_detect_displays);
 }
 
 static void
 window_server_fixes(void)
 {
-	window_server_keeps_opengl_es();
+	Class cls = objc_getClass("CAWindowServer");
+	Method method = cls ? class_getInstanceMethod(cls, sel_registerName("_detectDisplays")) : NULL;
+	IMP detect = method ? method_getImplementation(method) : NULL;
+
+	/*
+	 * Every address of QuartzCore's in this part is 16.5's (20F66), the tables' as well as the code's,
+	 * and this library also goes unchanged into the backboardd of Darwin 26 and 27, where they are
+	 * something else or not mapped at all. Even reading a table to compare its entry is not safe
+	 * there, so one method is looked at first, and nothing of QuartzCore's is read or written
+	 * unless that method is where 16.5 has it.
+	 */
+	if (detect == NULL || (uintptr_t)detect != CA_DETECT_DISPLAYS + slide) {
+		say("hakios: -[CAWindowServer _detectDisplays]: found %#lx, not 16.5's; the window server is left alone, "
+		    "and CoreAnimation may take the Metal road\n", detect ? (uintptr_t)detect - slide : 0);
+		return;
+	}
+	window_server_keeps_opengl_es(method);
 	orig_is_ready = replace_virtual("is_ready", VSLOT(VT_APPLE_CLCD_DISPLAY, 0xb0), 0x1882f0908UL, my_is_ready);
 	orig_ignore_update_p = replace_virtual("ignore_update_p", VSLOT(VT_APPLE_CLCD_DISPLAY, 0x138), 0x1882e0c90UL,
 	    my_ignore_update_p);
@@ -658,7 +664,8 @@ window_server_fixes(void)
 			char arguments[1024] = "";
 			size_t size = sizeof(arguments) - 1;
 
-			if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
+			/* (only into the table of the renderer whose function_supported was found where 16.5 has it) */
+			if (orig_function_supported != NULL && sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
 			    strstr(arguments, "glsb3=1") != NULL) {
 				give_the_renderer_a_shader(40, shadow_blur_source);
 			}
@@ -1665,6 +1672,16 @@ ws_turn_count(uintptr_t pc, uint32_t depth, bool leaf)
 	}
 }
 
+/*
+ * snprintf answers what it would have written, not what it did: a frame named by a long library name can take a
+ * line past its end, and the next append's size (sizeof(line) - used) would then wrap around to a huge one.
+ */
+static size_t
+ws_clamp(size_t used, size_t size)
+{
+	return used < size - 1 ? used : size - 1;
+}
+
 static void
 ws_turn_say(uintptr_t cache, size_t cache_length)
 {
@@ -1689,10 +1706,11 @@ ws_turn_say(uintptr_t cache, size_t cache_length)
 				write(2, line, strlen(line));
 				used = (size_t)snprintf(line, sizeof(line), "hakios: sbturn path:");
 			}
-			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", d);
+			used = ws_clamp(used + (size_t)snprintf(line + used, sizeof(line) - used, " %u:", d), sizeof(line));
 			ws_frame(line + used, sizeof(line) - used, ws_turn_pc[i].pc, cache, cache_length);
 			used += strlen(line + used);
-			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", ws_turn_pc[i].count);
+			used = ws_clamp(used + (size_t)snprintf(line + used, sizeof(line) - used, ":%u", ws_turn_pc[i].count),
+			    sizeof(line));
 			ws_turn_pc[i].count = 0;   /* (said) */
 		}
 	}
@@ -1710,10 +1728,12 @@ ws_turn_say(uintptr_t cache, size_t cache_length)
 				if (table[i].count != 0 && (best == WS_TURN_SLOTS || table[i].count > table[best].count)) best = i;
 			}
 			if (best == WS_TURN_SLOTS || table[best].count * 20 < ws_turn_samples || used > sizeof(line) - 48) break;
-			used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:", table[best].depth);
+			used = ws_clamp(used + (size_t)snprintf(line + used, sizeof(line) - used, " %u:", table[best].depth),
+			    sizeof(line));
 			ws_frame(line + used, sizeof(line) - used, table[best].pc, cache, cache_length);
 			used += strlen(line + used);
-			used += (size_t)snprintf(line + used, sizeof(line) - used, ":%u", table[best].count);
+			used = ws_clamp(used + (size_t)snprintf(line + used, sizeof(line) - used, ":%u", table[best].count),
+			    sizeof(line));
 			table[best].count = 0;
 		}
 		snprintf(line + used, sizeof(line) - used, "\n");

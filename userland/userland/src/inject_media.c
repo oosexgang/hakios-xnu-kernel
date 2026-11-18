@@ -544,6 +544,7 @@ static struct replacement {
  * or the same assertion comes straight back.
  */
 #define MTL_DEVICE_ARRAY        0x1e1efe9a0UL   /* Metal's static NSMutableArray *_deviceArray */
+#define MTL_CREATE_DEVICE       0x181a34b3cUL   /* MTLCreateSystemDefaultDevice */
 
 extern id objc_retain(id object);
 
@@ -580,6 +581,12 @@ keep_metal_from_the_capture_stack(void)
 		return;
 	}
 	done = true;
+	/* the array's address is 16.5's (20F66): it is read only when Metal's own code is where that build has it */
+	if ((uintptr_t)create != MTL_CREATE_DEVICE + slide) {
+		say("hakios: mediaserverd: MTLCreateSystemDefaultDevice: found %#lx, expected %#lx; the device list is "
+		    "left alone\n", (uintptr_t)create - slide, MTL_CREATE_DEVICE);
+		return;
+	}
 	if ((device = create()) == NULL) {
 		say("hakios: mediaserverd: no Metal device in this process, so the capture stack's shader "
 		    "preload has nothing to ask\n");

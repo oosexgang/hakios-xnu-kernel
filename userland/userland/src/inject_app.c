@@ -331,7 +331,8 @@ __attribute__((used)) static struct {
 	(const void *)watched_spawn, (const void *)posix_spawn
 };
 
-/* Put ours in the place of a method, keeping the one that was there. */
+/* Put ours in the place of a method, keeping the one that was there: kept first, because another thread can
+   call ours the moment it is set. */
 static void
 watch(const char *name, const char *selector, IMP ours, void *theirs)
 {
@@ -339,7 +340,8 @@ watch(const char *name, const char *selector, IMP ours, void *theirs)
 	Method method = class != NULL ? class_getInstanceMethod(class, sel_registerName(selector)) : NULL;
 
 	if (method != NULL && method_getImplementation(method) != ours) {
-		*(IMP *)theirs = method_setImplementation(method, ours);
+		*(IMP *)theirs = method_getImplementation(method);
+		method_setImplementation(method, ours);
 	}
 }
 
