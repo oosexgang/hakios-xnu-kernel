@@ -1734,7 +1734,12 @@ glink_offer(struct glink_channel *channel, uint32_t size)
 	if (i >= sizeof(channel->our_intents) / sizeof(channel->our_intents[0]) || size == 0 || size > 0x10000) {
 		return false;
 	}
-	if (channel->our_intents[i].data == NULL || channel->our_intents[i].size != size) {
+	if (channel->our_intents[i].data != NULL && channel->our_intents[i].size != size) {
+		/* (a slot offered before at another size: its buffer given back, not dropped -- the DSP decides the sizes) */
+		kfree_data(channel->our_intents[i].data, channel->our_intents[i].size);
+		channel->our_intents[i].data = NULL;
+	}
+	if (channel->our_intents[i].data == NULL) {
 		channel->our_intents[i].data = kalloc_data(size, Z_WAITOK | Z_ZERO);
 	}
 	if (channel->our_intents[i].data == NULL) {
