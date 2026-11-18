@@ -76,13 +76,19 @@ hakios_nas_apply(struct hakios_nas_state *state, const void *frame, size_t lengt
 			next.bars = next.registered && next.has_signal ? bars_for(next.dbm) : 0;
 			serving = true;
 		} else if (message == 0x24 && type == 0x10 && size >= 5 && size >= (size_t)5 + value[4]) {
-			/* the current PLMN: MCC, MNC (16 bits each), the description's length and bytes */
-			unsigned n = value[4] < sizeof(next.operator_name) - 1 ? value[4] : sizeof(next.operator_name) - 1;
+			/*
+			 * the current PLMN: MCC, MNC (16 bits each), the description's length and bytes. The name is the
+			 * network's, and goes to the log and to a sysctl: up to a zero, and every byte that is not printable
+			 * ASCII a '?' (an escape would act on the console that shows it)
+			 */
+			unsigned n = value[4] < sizeof(next.operator_name) - 1 ? value[4] : sizeof(next.operator_name) - 1, i;
 
 			next.mcc = le16(value);
 			next.mnc = le16(value + 2);
-			memcpy(next.operator_name, value + 5, n);
-			next.operator_name[n] = 0;
+			for (i = 0; i < n && value[5 + i] != 0; i++) {
+				next.operator_name[i] = value[5 + i] >= 0x20 && value[5 + i] <= 0x7e ? (char)value[5 + i] : '?';
+			}
+			next.operator_name[i] = 0;
 		} else if ((message == 0x4f || message == 0x51) && type == 0x17 && size >= 4) {
 			level = (int16_t)le16(value); radio = 12; signal = true;
 		} else if ((message == 0x4f || message == 0x51) && type == 0x14 && size >= 6 && radio != 12) {

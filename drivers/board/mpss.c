@@ -215,6 +215,28 @@ option(const char *name)
 	return PE_parse_boot_argn(name, &value, sizeof(value)) && value != 0;
 }
 
+/*
+ * Text the modem or the network sends (names, paths, its last words, an error's message), made fit for the log
+ * and a sysctl: at most `size` bytes of `from`, up to a zero, into `to`, every byte that is not printable ASCII
+ * (0x20 to 0x7e) a '?', so that none of it moves the console's cursor, colours it or begins a line of its own.
+ * `to` may be `from`. Returns `to`.
+ */
+static char *
+printable(char *to, size_t to_size, const void *from, size_t size)
+{
+	const uint8_t *in = from;
+	size_t n;
+
+	if (to_size == 0) {
+		return to;
+	}
+	for (n = 0; n < size && n < to_size - 1 && in[n] != 0; n++) {
+		to[n] = in[n] >= 0x20 && in[n] <= 0x7e ? (char)in[n] : '?';
+	}
+	to[n] = 0;
+	return to;
+}
+
 /* ---- register access (as in hakios_wifi.c) ------------------------------------------------------- */
 
 static uint32_t __attribute__((noinline))
@@ -243,6 +265,27 @@ need(struct block *b)
 {
 	if (b->base == 0) {
 		b->base = ml_io_map(b->phys, b->size);
+	}
+}
+
+/*
+ * A block looked at once and given back after (give_back()): what need() maps stays mapped for good, and
+ * cannot be taken down. The mapping is of whole pages, from the one the block begins in.
+ */
+static void
+need_for_now(struct block *b)
+{
+	if (b->base == 0) {
+		b->base = ml_io_map_unmappable(b->phys, b->size, VM_WIMG_IO);
+	}
+}
+
+static void
+give_back(struct block *b)
+{
+	if (b->base != 0) {
+		ml_io_unmap(trunc_page(b->base), round_page(b->size + (b->phys & PAGE_MASK)));
+		b->base = 0;
 	}
 }
 
@@ -564,7 +607,10 @@ show_words(const char *prefix, const struct smp2p *words)
 
 	line[0] = 0;
 	for (unsigned i = 0; i < words->valid && i < 16 && at < (int)sizeof(line) - 40; i++) {
-		at += snprintf(line + at, sizeof(line) - (size_t)at, " %.16s = %#x;", words->entry[i].name, words->entry[i].value);
+		char name[sizeof(words->entry[i].name) + 1];
+
+		at += snprintf(line + at, sizeof(line) - (size_t)at, " %s = %#x;", printable(name, sizeof(name), words->entry[i].name,
+		    sizeof(words->entry[i].name)), words->entry[i].value);
 	}
 	printf("mpss: %u: %s: SMP2P version %u, features %#x, from processor %u to %u, flags %#x, %u of %u entries:%s\n", step, prefix,
 	    words->version & 0xff, words->version >> 8, words->local, words->remote, words->flags, words->valid, words->total, line);
@@ -582,6 +628,7 @@ show_crash_reason(void)
 	}
 	bzero(text, sizeof(text));
 	smem_peek(at, text, size < sizeof(text) - 1 ? size : sizeof(text) - 1);
+	printable(text, sizeof(text), text, sizeof(text));
 	if (text[0] == 0) {
 		printf("mpss: %u: item %u, the DSP's last words (%u bytes): none\n", step, ITEM_CRASH_REASON, size);
 	} else {
@@ -1115,13 +1162,16 @@ root_file(const char *name, uint64_t *size)
 	return data;
 }
 
-static bool from_root;                  /* the image is in memory of ours (root_file()), to be given back once written */
-
-/* A file of fw/ in the small image (MODEM=1 userland/build.sh puts fw-modem/ there), else of /fw on the root (above). */
+/*
+ * A file of fw/ in the small image (MODEM=1 userland/build.sh puts fw-modem/ there), else of /fw on the root (above).
+ * *ours: the size of the memory to give back once the file is written, the file's own (root_file()); 0 for one of the
+ * small image, which is image.c's to keep. Each file says it of itself: the files of one image may come from both.
+ */
 extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 static const uint8_t *
-image_file(const char *name, uint64_t *size)
+image_file(const char *name, uint64_t *size, uint64_t *ours)
 {
+	*ours = 0;
 	{
 		const uint8_t *data = hakios_image_file("fw", name, size, NULL);  /* (hakios_image.c) */
 
@@ -1133,7 +1183,7 @@ image_file(const char *name, uint64_t *size)
 		const uint8_t *data = root_file(name, size);
 
 		if (data != NULL) {
-			from_root = true;
+			*ours = *size;
 			return data;
 		}
 	}
@@ -1152,37 +1202,34 @@ struct elf_segment {
 
 static struct {
 	const uint8_t *header;
-	uint64_t header_size;
+	uint64_t header_size, header_ours;      /* ours: what image_file() said of it */
 	struct {
 		uint32_t at;
 		uint32_t file_size, memory_size;
 		const uint8_t *file;
+		uint64_t ours;                  /* the bytes of root_file()'s to give back, which a file of the wrong size has too */
 	} segment[MAX_SEGMENTS];
 	unsigned segments;
 	uint32_t size;
 } image;
 
-/* The image's files given back, if they were read into memory of ours. */
+/* The image's files given back, those that were read into memory of ours, each with the size it was read with. */
 static void
 image_forget(void)
 {
-	if (!from_root) {
-		return;
-	}
-	if (image.header != NULL) {
+	if (image.header != NULL && image.header_ours != 0) {
 		void *data = (void *)(uintptr_t)image.header;
 
-		kfree_data(data, image.header_size);
+		kfree_data(data, image.header_ours);
 	}
 	for (unsigned s = 0; s < image.segments; s++) {
-		if (image.segment[s].file != NULL) {
+		if (image.segment[s].file != NULL && image.segment[s].ours != 0) {
 			void *data = (void *)(uintptr_t)image.segment[s].file;
 
-			kfree_data(data, image.segment[s].file_size);
+			kfree_data(data, image.segment[s].ours);
 		}
 	}
 	bzero(&image, sizeof(image));
-	from_root = false;
 }
 
 static unsigned rmtfs_load(void);
@@ -1193,22 +1240,27 @@ step_firmware(void)
 {
 	struct elf_segment segment;
 	const uint8_t *header;
-	uint64_t size = 0, files = 0;
+	uint64_t size = 0, files = 0, ours = 0;
 	uint32_t count, hashes = 0, lowest = ~0u, highest = 0;
 
 	announce("find the modem's image in the small image or on the root, and check it against its own header");
 	image_forget();
 	image.segments = 0;
-	header = image_file("modem.mdt", &size);
+	header = image_file("modem.mdt", &size, &ours);
 	if (header == NULL) {
 		return false;
 	}
 	image.header = header;
 	image.header_size = size;
+	image.header_ours = ours;
 	count = size >= 52 + 2 * 32 ? header[44] | header[45] << 8 : 0;
-	if (memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
-		printf("mpss: %u: fw/modem.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, header[0],
-		    header[1], header[2], header[3], count, size);
+	/* (the count first: it is 0 for a file too short for a header, whose first five bytes may not be there) */
+	if (count < 3 || memcmp(header, "\177ELF\1", 5) != 0 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
+		uint8_t first[4] = { 0 };
+
+		memcpy(first, header, size < 4 ? size : 4);
+		printf("mpss: %u: fw/modem.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, first[0],
+		    first[1], first[2], first[3], count, size);
 		goto fail;
 	}
 	for (uint32_t i = 0; i < count; i++) {
@@ -1231,11 +1283,12 @@ step_firmware(void)
 		image.segment[image.segments].file_size = segment.file_size;
 		image.segment[image.segments].memory_size = segment.memory_size;
 		image.segment[image.segments].file = NULL;
+		image.segment[image.segments].ours = 0;
 		if (segment.file_size != 0) {
 			uint64_t file_size = 0;
 
 			snprintf(name, sizeof(name), "modem.b%02u", i);
-			image.segment[image.segments].file = image_file(name, &file_size);
+			image.segment[image.segments].file = image_file(name, &file_size, &image.segment[image.segments].ours);
 			if (image.segment[image.segments].file == NULL) {
 				goto fail;
 			}
@@ -1259,7 +1312,7 @@ step_firmware(void)
 	image.header_size = size;
 	image.size = ((highest + 0xfff) & ~0xfffu) - mpss_memory;
 	printf("mpss: %u: the image is whole (%s): a header of %llu bytes (%u of hashes), %u segments, %llu bytes of files, %#x "
-	    "bytes of the DSP's %#x from %#x\n", step, from_root ? "from /fw on the root" : "from the small image", size, hashes,
+	    "bytes of the DSP's %#x from %#x\n", step, image.header_ours != 0 ? "from /fw on the root" : "from the small image", size, hashes,
 	    image.segments, files, image.size, MPSS_MEMORY_SIZE, mpss_memory);
 	announce("read the modem's four file systems from the phone's storage into memory of ours (rmtfs below)");
 	{
@@ -1876,6 +1929,15 @@ ipa_memory_init(void)
 	};
 	const uint32_t size = 0x3000;
 
+	/*
+	 * (the offset is the IPA's register's, up to half a megabyte, and the local memory is mapped as 0x4000 bytes: its
+	 * 0x3000, the canaries before the regions among them, are written only where they lie inside that)
+	 */
+	if ((uint64_t)ipa_mem_offset + size > ipa_sram.size) {
+		printf("mpss: ipa: its local memory said to begin at offset %#x: %#x bytes from there are not inside the %#x mapped; "
+		    "left as it is\n", ipa_mem_offset, size, ipa_sram.size);
+		return;
+	}
 	need(&ipa_sram);
 	need(&ipa_regs);
 	/* from 0x288: the microcontroller's own area (its shared words at 0, its info at 0x80) is left alone, as Linux leaves it */
@@ -2210,7 +2272,7 @@ ipa_firmware_load(void)
 	vm_offset_t page = 0;
 	uint32_t count, loaded = 0, highest = 0, size;
 	int32_t result;
-	bool ok = false;
+	bool ok = false, taken = false;         /* taken: TrustZone has taken the header, and is to be told to forget the image */
 
 	PE_parse_boot_argn("modem_ipa_fw_at", &ipa_fw_memory, sizeof(ipa_fw_memory));
 	ipa_fw_size = ipa_fw_memory == 0x8b700000u ? 0x1a000u : 0xa000u;
@@ -2235,11 +2297,11 @@ ipa_firmware_load(void)
 		header = root_file(path, &header_size);
 		if (header == NULL) {
 			printf("mpss: %u: no fw/%s: the IPA's firmware is not loaded\n", step, path);
-			return false;
+			goto out;
 		}
 	}
 	count = header_size >= 52 ? header[44] | header[45] << 8 : 0;
-	if (memcmp(header, "\177ELF\1", 5) != 0 || count == 0 || count > 8 || 52 + 32 * count > header_size) {
+	if (count == 0 || memcmp(header, "\177ELF\1", 5) != 0 || count > 8 || 52 + 32 * count > header_size) {
 		printf("mpss: %u: yupik_ipa_fws.mdt is not such a header (%u segments)\n", step, count);
 		goto out;
 	}
@@ -2302,6 +2364,7 @@ ipa_firmware_load(void)
 		printf("mpss: %u: TRUSTZONE DOES NOT TAKE THE IPA'S HEADER (%d, %#llx)\n", step, result, answer);
 		goto out;
 	}
+	taken = true;
 	result = scm("where the IPA's image will be", SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, pas_ipa, ipa_fw_memory, size, 0, &answer);
 	if (result != 0 || answer != 0) {
 		printf("mpss: %u: TRUSTZONE DOES NOT TAKE THE IPA'S PLACE (%d, %#llx)\n", step, result, answer);
@@ -2341,7 +2404,7 @@ ipa_firmware_load(void)
 			struct block iram = { "ipa iram", segments[i].vaddr & ~0xfffu, 0x8000 };
 			uint32_t n = segments[i].file_size < 256 ? segments[i].file_size : 256, same = 0, first[4];
 
-			need(&iram);
+			need_for_now(&iram);
 			for (uint32_t at = 0; at < n; at += 4) {
 				uint32_t ours = rd(iram.base + (segments[i].vaddr & 0xfff) + at), file;
 
@@ -2354,12 +2417,13 @@ ipa_firmware_load(void)
 			tell("mpss: %u: the IPA's segment %u at %#x: %u of the first %u bytes read back as the file has them (%s); it begins %#x %#x %#x %#x\n",
 			    step, i, segments[i].vaddr, same, n, same == n ? "TRUSTZONE HAS PUT IT THERE" : "NOT WHAT TRUSTZONE WAS GIVEN",
 			    first[0], first[1], first[2], first[3]);
+			give_back(&iram);
 		}
 	}
 	{
 		struct block gsi = { "gsi", 0x01e04000, 0xc000 };       /* GSI_CFG at 0, MCS_CFG at 0xb000 (the panic of cycle 26: 0x1000 mapped) */
 
-		need(&gsi);
+		need_for_now(&gsi);
 		tell("mpss: %u: GSI_CFG %#x (bit 0 GSI enable, 1 MCS enable, 2 double MCS clock, 3 uC is MCS, 4 power collapse, 5 bypass matrix off, "
 		    "[11:8] sleep clock divider), MCS_CFG %#x (bit 0: the sequencer runs)\n", step, rd(gsi.base + 0), rd(gsi.base + 0xb000));
 		if (option("modem_ipa_gsi_enable")) {
@@ -2375,6 +2439,7 @@ ipa_firmware_load(void)
 			tell("mpss: %u: GSI enabled by hand: GSI_CFG %#x, MCS_CFG %#x, status %#x\n", step, rd(gsi.base + 0), rd(gsi.base + 0xb000),
 			    rd(gsi_ee0.base + 0));
 		}
+		give_back(&gsi);
 	}
 	sleep_ms(50);
 	if (!option("modem_ipa_quiet")) {
@@ -2390,10 +2455,22 @@ ipa_firmware_load(void)
 	}
 	ok = true;
 out:
+	if (!ok) {
+		/*
+		 * Nothing of a load that failed is left on: TrustZone told to forget an image it has taken, the IPA's
+		 * streams and our context of the SMMU put back, the clock's vote taken back (as ipa_firmware_stop() does
+		 * for one that runs: ipa_loaded stays false, and nobody else would)
+		 */
+		if (taken) {
+			(void)scm("to forget the IPA's image", SCM_PAS_SHUTDOWN, SCM_ONE_VALUE, pas_ipa, 0, 0, 0, &answer);
+		}
+		ipa_space_off();
+		ipa_clock(false);
+	}
 	if (page != 0) {
 		kmem_free(kernel_map, page, PAGE_SIZE);
 	}
-	{
+	if (header != NULL) {
 		uint8_t *gone = __DECONST(uint8_t *, header);
 
 		kfree_data(gone, header_size);
@@ -2646,6 +2723,7 @@ static LCK_MTX_DECLARE(glink_lock, &mpss_lock_group);
 static struct {
 	uint32_t descriptor, ours, ours_size, theirs, theirs_size;
 	bool up, broken;
+	bool stopping;                          /* the run ends (hakios_mpss_stop()): nothing more is sent, nor waited for */
 	uint32_t features;
 	bool agreed;
 	struct glink_channel channel[CHANNELS];
@@ -2939,6 +3017,7 @@ glink_pump(void)
 					channel = &glink.channel[c];
 				}
 			}
+			printable(name, sizeof(name), name, sizeof(name));     /* (as it is said, and kept for the log) */
 			if (channel == NULL) {
 				printf("mpss: glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n", name,
 				    message.param1);
@@ -3100,7 +3179,11 @@ glink_pump(void)
 	}
 }
 
-/* One whole message to the DSP on a channel; waits up to five seconds for an intent of the DSP's that it fits. */
+/*
+ * One whole message to the DSP on a channel; waits up to five seconds for an intent of the DSP's that it fits,
+ * and not at all once the run ends: a modem that has died gives no intent back, and the ports closed then
+ * (each tells the modem with a message of its own) would wait five seconds apiece.
+ */
 static int
 glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 {
@@ -3118,7 +3201,7 @@ glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 	}
 	for (unsigned waited = 0;; waited++) {
 		glink_pump();
-		if (!glink.up || !channel->open || glink.broken) {
+		if (!glink.up || !channel->open || glink.broken || glink.stopping) {
 			lck_mtx_unlock(&glink_lock);
 			return ENOTCONN;
 		}
@@ -3598,7 +3681,12 @@ link_stop(void)
 
 	if (link_runs) {
 		link_wanted = false;
-		for (unsigned ms = 0; ms < 2000 && link_runs; ms++) {
+		/*
+		 * (longer than glink_send() waits for an intent: a callback that is sending when the link is taken down
+		 * returns before the link's memory and the modem's buffer go. At the run's end nothing waits for an
+		 * intent, and the thread ends within a few milliseconds)
+		 */
+		for (unsigned ms = 0; ms < 6000 && link_runs; ms++) {
 			sleep_ms(1);
 		}
 		printf("mpss: link: %s; GLINK said %u and heard %u messages, QRTR sent %u and received %u datagrams; its doorbells heard: "
@@ -3896,8 +3984,10 @@ rmtfs_receive(__unused void *context, uint32_t node, uint32_t port, const void *
 			}
 		}
 		if (file == 4 || rmtfs_files[file].data == NULL) {
-			printf("mpss: rmtfs: the modem opens \"%.*s\": NOT HERE\n", value != NULL ? (int)(size < 64 ? size : 64) : 0,
-			    value != NULL ? (const char *)value : "");
+			char path[65];
+
+			printf("mpss: rmtfs: the modem opens \"%s\": NOT HERE\n", printable(path, sizeof(path), value != NULL ? value : "",
+			    value != NULL ? size : 0));
 			result = QMI_RESULT_FAILURE;
 			error = QMI_ERR_INTERNAL;
 			rmtfs_refused++;
@@ -4226,9 +4316,27 @@ tftp_error(struct hakios_qrtr_port *from, uint32_t node, uint32_t port, uint16_t
 	qrtr_send(from, node, port, packet, 4 + n);
 }
 
+/*
+ * A transfer ended, by the link's thread (its last block, an error, a slot taken back) or by the run's end
+ * (tftp_stop_all()), once: whichever marks it done first ends it, under tftp_lock. Its port is closed before
+ * its memory goes: from outside the link's thread qrtr_close() waits for a callback that is running, and that
+ * callback may still be sending from the file or taking a block into what has been written.
+ */
+static LCK_MTX_DECLARE(tftp_lock, &mpss_lock_group);
+
 static void
 tftp_transfer_end(struct tftp_transfer *t)
 {
+	lck_mtx_lock(&tftp_lock);
+	if (t->done) {
+		lck_mtx_unlock(&tftp_lock);
+		return;
+	}
+	t->done = true;
+	lck_mtx_unlock(&tftp_lock);
+	if (t->port != NULL) {
+		qrtr_close(t->port);
+	}
 	if (t->data != NULL && !t->borrowed) {
 		uint8_t *data = __DECONST(uint8_t *, t->data);
 
@@ -4239,11 +4347,7 @@ tftp_transfer_end(struct tftp_transfer *t)
 		kfree_data(t->written, TFTP_WRITE_MAX);
 		t->written = NULL;
 	}
-	if (t->port != NULL) {
-		qrtr_close(t->port);
-		t->port = NULL;
-	}
-	t->done = true;
+	t->port = NULL;
 }
 
 /* Every transfer still open ended: the link is going (rmtfs_stop()), and nothing of theirs is left for the next */
@@ -4305,6 +4409,7 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 	struct tftp_transfer *t = context;
 	const uint8_t *m = data;
 	uint16_t opcode, block;
+	char shown[sizeof(t->name)];
 
 	if (t->done || node != t->node || port != t->peer || length < 4) {
 		return;
@@ -4349,7 +4454,8 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 			}
 			if (f < 8) {
 				if (tftp_files[f].data != NULL) {
-					kfree_data(tftp_files[f].data, tftp_files[f].size);
+					/* (with the size it was taken with: an empty file is kept in a byte) */
+					kfree_data(tftp_files[f].data, tftp_files[f].size ? tftp_files[f].size : 1);
 				}
 				tftp_files[f].data = kalloc_data(t->written_size ? t->written_size : 1, Z_WAITOK);
 				if (tftp_files[f].data != NULL) {
@@ -4358,8 +4464,8 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 					strlcpy(tftp_files[f].name, t->name, sizeof(tftp_files[f].name));
 				}
 			}
-			printf("mpss: tftp: the modem has written \"%s\": %u bytes, kept%s\n", t->name, t->written_size, f < 8 ? "" :
-			    " NOWHERE (no room)");
+			printf("mpss: tftp: the modem has written \"%s\": %u bytes, kept%s\n", printable(shown, sizeof(shown), t->name,
+			    sizeof(t->name)), t->written_size, f < 8 ? "" : " NOWHERE (no room)");
 			tftp_served++;
 			tftp_transfer_end(t);
 		}
@@ -4367,7 +4473,10 @@ tftp_transfer_receive(void *context, uint32_t node, uint32_t port, const void *d
 	}
 	if (opcode == TFTP_ERROR) {
 		if (block != TFTP_END_OF_TRANSFER) {
-			printf("mpss: tftp: %s: the modem ends the transfer with error %u \"%.*s\"\n", t->name, block, (int)(length - 4), m + 4);
+			char text[64];
+
+			printf("mpss: tftp: %s: the modem ends the transfer with error %u \"%s\"\n", printable(shown, sizeof(shown), t->name,
+			    sizeof(t->name)), block, printable(text, sizeof(text), m + 4, length - 4));
 		}
 		tftp_transfer_end(t);
 		return;
@@ -4415,7 +4524,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	struct tftp_transfer *t = NULL;
 	uint32_t blksize = 512, wsize = 1, rsize = 0, seek = 0;
 	bool tsize = false, options = false;
-	char fwname[160];
+	char fwname[160], shown[sizeof(tftp_transfers[0].name)], given_up[sizeof(tftp_transfers[0].name)];
 	uint64_t size = 0;
 	const uint8_t *file;
 	uint8_t oack[160];
@@ -4501,10 +4610,11 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		tftp_refused++;
 		return;
 	}
+	printable(shown, sizeof(shown), name, strlen(name));   /* (the name as it is said; looked for as it is) */
 	read_write = strncmp(name, "/readwrite/", 11) == 0;
 	if (writing && !read_write) {
 		/* (a write anywhere else would stand, for the rest of the run, in front of the firmware of that name) */
-		printf("mpss: tftp: the modem writes \"%s\": not under /readwrite/: refused\n", name);
+		printf("mpss: tftp: the modem writes \"%s\": not under /readwrite/: refused\n", shown);
 		tftp_error(tftp_port, node, port, TFTP_EACCESS, "read-only");
 		tftp_refused++;
 		return;
@@ -4517,14 +4627,14 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	for (unsigned i = 0; i < sizeof(tftp_transfers) / sizeof(tftp_transfers[0]) && t == NULL; i++) {
 		if (now_us() - tftp_transfers[i].active_us > TFTP_IDLE_US) {
 			/* (a transfer the modem has not spoken on for that long it gave up on: its slot, file and port taken back) */
-			printf("mpss: tftp: \"%s\" given up after %u s without a word from the modem\n", tftp_transfers[i].name,
-			    (unsigned)(TFTP_IDLE_US / 1000000));
+			printf("mpss: tftp: \"%s\" given up after %u s without a word from the modem\n", printable(given_up, sizeof(given_up),
+			    tftp_transfers[i].name, sizeof(tftp_transfers[i].name)), (unsigned)(TFTP_IDLE_US / 1000000));
 			tftp_transfer_end(&tftp_transfers[i]);
 			t = &tftp_transfers[i];
 		}
 	}
 	if (t == NULL) {
-		printf("mpss: tftp: the modem %s \"%s\": NO FREE TRANSFER\n", writing ? "writes" : "reads", name);
+		printf("mpss: tftp: the modem %s \"%s\": NO FREE TRANSFER\n", writing ? "writes" : "reads", shown);
 		tftp_error(tftp_port, node, port, TFTP_ENOENT, "busy");
 		tftp_refused++;
 		return;
@@ -4546,7 +4656,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		t->blksize = blksize;
 		t->wsize = wsize;
 		strlcpy(t->name, name, sizeof(t->name));
-		printf("mpss: tftp: the modem writes \"%s\": blocks of %u, window %u; taken into memory\n", name, blksize, wsize);
+		printf("mpss: tftp: the modem writes \"%s\": blocks of %u, window %u; taken into memory\n", shown, blksize, wsize);
 		if (!options) {
 			uint8_t ack[4] = { 0, TFTP_ACK, 0, 0 };
 
@@ -4574,7 +4684,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 			} else if ((file = kalloc_data(size, Z_WAITOK)) != NULL) {
 				memcpy(__DECONST(uint8_t *, file), tftp_files[f].data, size);
 			} else {
-				printf("mpss: tftp: the modem reads \"%s\": no memory for a copy\n", name);
+				printf("mpss: tftp: the modem reads \"%s\": no memory for a copy\n", shown);
 				tftp_error(tftp_port, node, port, TFTP_ENOENT, "no memory");
 				tftp_refused++;
 				return;
@@ -4582,7 +4692,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		}
 	}
 	if (file == NULL && tftp_file_of(name) == NULL) {
-		printf("mpss: tftp: the modem reads \"%s\": NOT A PATH SERVED HERE\n", name);
+		printf("mpss: tftp: the modem reads \"%s\": NOT A PATH SERVED HERE\n", shown);
 		tftp_error(tftp_port, node, port, TFTP_ENOENT, "file not found");
 		tftp_refused++;
 		return;
@@ -4594,7 +4704,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		strlcpy(fwname, "(written by the modem)", sizeof(fwname));
 	}
 	if (file == NULL) {
-		printf("mpss: tftp: the modem reads \"%s\" (fw/%s): NOT HERE\n", name, fwname);
+		printf("mpss: tftp: the modem reads \"%s\" (fw/%s): NOT HERE\n", shown, printable(fwname, sizeof(fwname), fwname, sizeof(fwname)));
 		tftp_error(tftp_port, node, port, TFTP_ENOENT, "file not found");
 		tftp_refused++;
 		return;
@@ -4626,7 +4736,7 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	t->seek = seek;
 	strlcpy(t->name, name, sizeof(t->name));
 	if (tftp_requests <= 40) {
-		printf("mpss: tftp: the modem reads \"%s\": %llu bytes; blocks of %u, window %u, %u asked for, from %u%s\n", name, size, blksize,
+		printf("mpss: tftp: the modem reads \"%s\": %llu bytes; blocks of %u, window %u, %u asked for, from %u%s\n", shown, size, blksize,
 		    wsize, rsize, seek, options ? "" : " (no options)");
 	}
 	if (!options) {
@@ -4838,11 +4948,12 @@ servreg_receive(__unused void *context, uint32_t node, uint32_t port, const void
 			answer[list + 1] = (uint8_t)(at - list - 3);
 			answer[list + 2] = (uint8_t)((at - list - 3) >> 8);
 		}
-		printf("mpss: servreg: the modem asks where \"%s\" is: %u domain%s\n", wanted, found, found == 1 ? "" : "s");
+		printf("mpss: servreg: the modem asks where \"%s\" is: %u domain%s\n", printable(wanted, sizeof(wanted), wanted, sizeof(wanted)),
+		    found, found == 1 ? "" : "s");
 	} else if (message == SERVREG_PFR) {
 		value = qmi_tlv(m, length, 1, &size);
-		printf("mpss: servreg: the modem reports a failure of \"%.*s\"\n", value ? (int)(size < 63 ? size : 63) : 0,
-		    value ? (const char *)value : "");
+		printf("mpss: servreg: the modem reports a failure of \"%s\"\n", printable(wanted, sizeof(wanted), value ? value : "",
+		    value ? size : 0));
 	} else {
 		printf("mpss: servreg: a request this does not know (%#x)\n", message);
 		answer[10] = QMI_RESULT_FAILURE;
@@ -6391,7 +6502,11 @@ steps_over(uint32_t done)
 void
 hakios_mpss_stop(void)
 {
-	nas_stop();                             /* the questions first, while the modem still listens */
+	/* (nothing sent from here on waits for the modem, which may have died: the run's end is not held up by it) */
+	lck_mtx_lock(&glink_lock);
+	glink.stopping = true;
+	lck_mtx_unlock(&glink_lock);
+	nas_stop();                             /* the questions first, then the ports (the modem is told nothing of them) */
 	lck_mtx_lock(&dsp_lock);
 	if (dsp_started) {
 		unsigned services = 0;
