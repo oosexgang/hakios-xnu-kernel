@@ -891,7 +891,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -7789,11 +8248,29 @@ handle_mac_transition:
+@@ -7789,11 +8248,25 @@ handle_mac_transition:
  	 * Also, ensure we always see a modified identity version (rdar://129775819).
  	 */
  	int previous_pid_version = proc_get_ro(p)->p_idversion;
@@ -911,11 +911,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		 */
 +		static TUNABLE(uint32_t, xpcproxy_idversion, "xpcproxy_idversion", 0);
 +
-+		/*
-+		 * (and only xpcproxy as launchd spawns it: a name alone is anybody's -- a program copied to a file called
-+		 * xpcproxy that execs a setuid or entitled one would keep its audit token through the exec)
-+		 */
-+		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0 || proc_ppid(p) != 1) {
++		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0) {
 +			int new_pid_version;
 +			do {
 +				new_pid_version = OSIncrementAtomic(&nextpidversion);
@@ -926,7 +922,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	task_set_uniqueid(proc_task(p));
  
  	/*
-@@ -8767,6 +9244,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -8767,6 +9240,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:
