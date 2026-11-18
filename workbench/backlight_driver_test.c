@@ -26,6 +26,8 @@ struct dsi_model {
 	uint32_t fifo[16];
 	unsigned fifo_n;
 	bool deaf;                      /* never says a command was sent */
+	unsigned deaf_for;              /* ... or not for so many commands, from the next on */
+	bool erring;                    /* every command ends with the error bit (INT_CTRL bit 24) set */
 	unsigned reads_since_clear;     /* (video mode: a frame ends a few reads after VIDEO_DONE was cleared) */
 	unsigned busy_reads;            /* (command mode: so many reads of STATUS busy after a command) */
 	/* what the panel was sent */
@@ -112,8 +114,13 @@ model_trigger(void)
 		model_error("neither a DCS short nor a long write");
 	}
 	m.fifo_n = 0;
-	if (!m.deaf) {
+	if (m.deaf_for != 0) {
+		m.deaf_for--;
+	} else if (!m.deaf) {
 		m.int_status |= 1;              /* CMD_MODE_DMA_DONE */
+	}
+	if (m.erring) {
+		m.int_status |= 0x1000000;      /* DSI_ERROR */
 	}
 	m.busy_reads = 3;
 }
@@ -496,12 +503,137 @@ deaf_controller(void)
 	m.deaf = true;
 	boot_args = "backlight=2";
 	hakios_backlight_init();
-	WAIT_FOR(logged("NOT SENT"), 2000);
+	WAIT_FOR(logged("no more commands this run"), 2000);
 	CHECK(logged("NOT SENT"), "a command the controller did not send is said");
 	set("level", 100);
 	settle();
-	CHECK(m.sent_n == 1, "and nothing more is sent: %u", m.sent_n);
+	CHECK(m.sent_n == 3, "tried three times, and nothing more is sent: %u", m.sent_n);
 	CHECK(m.tpg == 0, "the TPG off even so");
+}
+
+/* one command the controller did not say it sent: tried again, and the backend goes on */
+static void
+one_command_lost(void)
+{
+	phone("phone-cmd", false);
+	m.deaf_for = 1;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	EVENTUALLY(get("raw") == bl_level_to_raw(500, 1, 2047), 2000, "the boot level, at the second try: raw %u, %u sent",
+	    get("raw"), m.sent_n);
+	CHECK(logged("NOT SENT") && !logged("no more commands"), "the lost one said, and no more: %s", log_text);
+	set("level", 900);
+	EVENTUALLY(get("raw") == bl_level_to_raw(900, 1, 2047), 2000, "and a new level is sent: raw %u", get("raw"));
+	settle();
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
+/*
+ * The display switched on in a moment its registers cannot be reached (the display block powered down):
+ * nothing could be sent then, and the panel is lit once it can be, without the slider moving.
+ */
+static void
+lit_again_after_a_failed_send(void)
+{
+	uint32_t lit = bl_level_to_raw(500, 1, 2047);
+
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	WAIT_FOR(last_sent() == lit, 1000);
+	set("power", 0);
+	EVENTUALLY(last_sent() == 0 && get("raw") == 0, 1000, "dark: %u", last_sent());
+	settle();
+	c.gdsc = 0;
+	set("power", 1);
+	usleep(200000);
+	CHECK(last_sent() == 0, "nothing could be sent meanwhile: %u", last_sent());
+	c.gdsc = 0x80000000;
+	EVENTUALLY(last_sent() == lit && get("raw") == lit, 2000, "lit again once it can be: %u, raw %u", last_sent(), get("raw"));
+	settle();
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
+/* the same switching off: the panel taken for dark only once it was told so, and told once it can be */
+static void
+dark_once_told(void)
+{
+	uint32_t lit = bl_level_to_raw(500, 1, 2047);
+
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	EVENTUALLY(last_sent() == lit && get("raw") == lit, 1000, "lit: %u", last_sent());
+	settle();
+	c.gdsc = 0;
+	set("power", 0);
+	usleep(200000);
+	CHECK(last_sent() == lit && get("raw") == lit, "nothing could be sent meanwhile: %u, raw %u", last_sent(), get("raw"));
+	c.gdsc = 0x80000000;
+	EVENTUALLY(last_sent() == 0 && get("raw") == 0, 2000, "dark once it can be: %u, raw %u", last_sent(), get("raw"));
+	settle();
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
+/* a controller that stopped answering (the backend stopped for the run) is tried once more at the run's end */
+static void
+quiesce_after_broken(void)
+{
+	phone("phone-cmd", false);
+	m.deaf = true;
+	boot_args = "backlight=2";
+	hakios_backlight_init();
+	WAIT_FOR(logged("no more commands this run"), 2000);
+	settle();
+	CHECK(last_sent() != 0x133, "(not at the loader's level already: %u)", last_sent());
+	m.deaf = false;                         /* (it answers again) */
+	hakios_backlight_quiesce();
+	CHECK(last_sent() == 0x133 && logged("the panel back at 307"), "the loader gets a lit panel: %u", last_sent());
+	CHECK(m.tpg == 0 && m.errors == 0, "%s", m.error);
+}
+
+static unsigned
+times_logged(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = strstr(log_text, text); at != NULL; at = strstr(at + 1, text)) {
+		n++;
+	}
+	return n;
+}
+
+/*
+ * The controller's error bit: one the firmware left set is not this driver's commands' error, and one
+ * every command ends with is said once, not for every command (and again after a command without it).
+ */
+static void
+controller_error(void)
+{
+	phone("phone-cmd", false);
+	m.int_status = 0x1000000;               /* (latched before the kernel ran) */
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	EVENTUALLY(get("raw") == bl_level_to_raw(500, 1, 2047), 1000, "lit: %u", get("raw"));
+	set("level", 900);
+	EVENTUALLY(get("raw") == bl_level_to_raw(900, 1, 2047), 2000, "sent: %u", get("raw"));
+	settle();
+	CHECK(!logged("reports an error"), "the firmware's error not taken for a command's: %s", log_text);
+	m.erring = true;
+	set("level", 300);
+	EVENTUALLY(get("raw") == bl_level_to_raw(300, 1, 2047), 2000, "sent: %u", get("raw"));
+	settle();
+	CHECK(times_logged("reports an error") == 1, "said once for %u commands: %s", m.sent_n, log_text);
+	m.erring = false;
+	set("level", 600);
+	EVENTUALLY(get("raw") == bl_level_to_raw(600, 1, 2047), 2000, "sent: %u", get("raw"));
+	settle();
+	m.erring = true;
+	set("level", 700);
+	EVENTUALLY(get("raw") == bl_level_to_raw(700, 1, 2047), 2000, "sent: %u", get("raw"));
+	settle();
+	CHECK(times_logged("reports an error") == 2, "said again after commands without it: %s", log_text);
+	CHECK(m.errors == 0, "%s", m.error);
 }
 
 /* bl_backend=soft: the light made in software, whatever the board's panel takes */
@@ -548,6 +680,30 @@ no_range(void)
 	hakios_backlight_init();
 	usleep(100000);
 	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+}
+
+/* a lowest number of 0 (the slider's lowest a black panel) is refused */
+static void
+lowest_is_dark(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_min=0";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+	CHECK(m.sent_n == 0, "nothing sent: %u", m.sent_n);
+}
+
+/* one byte a level on a panel whose highest number does not fit in one: refused */
+static void
+one_byte_too_few(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_bytes=1";
+	hakios_backlight_init();
+	usleep(100000);
+	CHECK(logged("no complete DCS profile") && strcmp(get_string("backend"), "none") == 0, "refused: %s", log_text);
+	CHECK(m.sent_n == 0, "nothing sent: %u", m.sent_n);
 }
 
 /* bl_le=1: the two bytes of a level least significant first */
@@ -754,10 +910,13 @@ main(int argc, char **argv)
 		{ "controller_2_2", controller_2_2 }, { "controller_2_1", controller_2_1 },
 		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only }, { "look_only_clocks_off", look_only_clocks_off },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
-		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
+		{ "deaf_controller", deaf_controller }, { "one_command_lost", one_command_lost },
+		{ "lit_again_after_a_failed_send", lit_again_after_a_failed_send }, { "dark_once_told", dark_once_told },
+		{ "quiesce_after_broken", quiesce_after_broken }, { "controller_error", controller_error },
+		{ "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
 		{ "backend_from_boot_arg", backend_from_boot_arg }, { "incomplete_profile", incomplete_profile }, { "no_controller", no_controller },
-		{ "no_range", no_range },
+		{ "no_range", no_range }, { "lowest_is_dark", lowest_is_dark }, { "one_byte_too_few", one_byte_too_few },
 		{ "least_significant_first", least_significant_first }, { "held_by_the_thermal_cap", held_by_the_thermal_cap },
 		{ "automatic_from_boot_arg", automatic_from_boot_arg }, { "soft_quiesce", soft_quiesce },
 	};

@@ -17,6 +17,7 @@
 
 #define CPUTOP_PROCS            640
 #define CPUTOP_SHOWN            12
+#define CPUTOP_MAX_SECONDS      3600
 
 extern void hakios_tl(const char *format, ...) __printflike(1, 2);
 extern task_t proc_task(proc_t);
@@ -127,6 +128,8 @@ hakios_cputop_start(void)
 	if (!PE_parse_boot_argn("cputop", &cputop_seconds, sizeof(cputop_seconds)) || cputop_seconds == 0) {
 		return;
 	}
+	/* at most an hour: in milliseconds (the wait's unit) more than 49 days would not fit in 32 bits */
+	cputop_seconds = cputop_seconds > CPUTOP_MAX_SECONDS ? CPUTOP_MAX_SECONDS : cputop_seconds;
 	if (kernel_thread_start(cputop_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}

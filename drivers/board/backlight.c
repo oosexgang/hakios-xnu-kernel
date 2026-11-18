@@ -30,8 +30,9 @@
  *          controller is the one the firmware set the panel going with; nothing of its setup is
  *          changed, only a command added. Every read and write is behind the same checks of clocks as
  *          the display scan (bsd/dev/board/adreno.c): the display block's power switch and the bus
- *          clock of its registers. A command the controller does not report sent within 20 ms stops
- *          this backend for the run.
+ *          clock of its registers. A command that could not be sent is tried again a moment later;
+ *          three in a row the controller does not report sent within 20 ms stop this backend for the
+ *          run (but for one last try at the run's end, to leave the panel lit for the loader).
  *   soft   no panel to tell: the display driver (MiniIOMobileFramebuffer.cpp) darkens every pixel on
  *          its way to the panel, from a copy in memory, so a new level is shown at once even when no
  *          new frame comes. Works anywhere (QEMU); costs a copy of each frame.
@@ -58,6 +59,7 @@
  * then the boot-args above do the same, and a board not described at all gets backend soft.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <kern/sched_prim.h>
 #include <kern/thread.h>
 #include <libkern/libkern.h>
@@ -102,6 +104,9 @@ struct bl_profile {
 static struct bl_profile profile;
 static uint32_t mode;                   /* backlight=: 0 off, 1 look only, 2 in use */
 static bool chosen;
+/* (the display driver asks, from its own thread, while the drivers are started: the second to ask waits for the first's answer) */
+static LCK_GRP_DECLARE(bl_lock_group, "backlight");
+static LCK_MTX_DECLARE(bl_choose_lock, &bl_lock_group);
 
 static void
 bl_choose(void)
@@ -110,10 +115,11 @@ bl_choose(void)
 	char backend[8];
 	uint32_t value;
 
+	lck_mtx_lock(&bl_choose_lock);
 	if (chosen) {
+		lck_mtx_unlock(&bl_choose_lock);
 		return;
 	}
-	chosen = true;
 	bzero(&profile, sizeof(profile));
 	if (board == NULL) {
 		profile.backend = BL_SOFT;      /* a board the table has not got: only what is safe anywhere */
@@ -160,12 +166,19 @@ bl_choose(void)
 	if (mode == 0) {
 		profile.backend = BL_NONE;
 	}
+	/*
+	 * A lowest number of 0 would make the slider's lowest a black panel (Darwin's lowest brightness is dim,
+	 * not dark: dark is the display off); one byte holds no more than 255.
+	 */
 	if (profile.backend == BL_DCS && (profile.dsi == 0 || profile.dispcc == 0 || profile.gcc == 0 ||
-	    profile.raw_max <= profile.raw_min || (profile.bytes != 1 && profile.bytes != 2))) {
+	    profile.raw_min == 0 || profile.raw_max <= profile.raw_min || (profile.bytes != 1 && profile.bytes != 2) ||
+	    (profile.bytes == 1 && profile.raw_max > 0xff))) {
 		say("backlight: %s: no complete DCS profile (DSI %#x, %u to %u, %u bytes): nothing done\n", profile.board,
 		    profile.dsi, profile.raw_min, profile.raw_max, profile.bytes);
 		profile.backend = BL_NONE;
 	}
+	chosen = true;                  /* (last: whoever finds it set finds the profile filled) */
+	lck_mtx_unlock(&bl_choose_lock);
 }
 
 /* ---- state ------------------------------------------------------------------------------------- */
@@ -182,6 +195,8 @@ static volatile uint32_t shown_raw;
 static volatile uint32_t soft_dim = 256;        /* backend soft: what the display driver keeps of a pixel */
 static uint32_t soft_floor = 24;
 static bool broken;                             /* backend dcs: something went wrong, nothing more is written */
+static uint32_t unsent;                         /* backend dcs: commands not sent in time, one after another */
+static bool error_said;                         /* backend dcs: the controller's error said, for the commands since */
 static int poke;                                /* the thread's wait channel */
 static void (*soft_redraw)(void);
 
@@ -317,6 +332,9 @@ dcs_start(void)
 	return true;
 }
 
+/* commands not sent in time, one after another, that stop the backend for the run */
+#define DCS_UNSENT_MAX                  3
+
 /* wait until `bit` of INT_CTRL is set, at most `us` microseconds */
 static bool
 int_wait(uint32_t bit, uint64_t us)
@@ -351,10 +369,11 @@ dcs_send(uint32_t raw)
 {
 	uint32_t words[4], length = 0, control, dma_control;
 	unsigned n = bl_dcs_brightness_words(raw, profile.bytes, profile.little_endian, 0, words, &length);
-	bool sent;
+	bool sent, error;
 	uint64_t began = now_us();
 
-	if (broken || n == 0 || !dsi_reachable(true)) {
+	/* (`broken' is the caller's to look at: the run's end tries once more even so) */
+	if (n == 0 || !dsi_reachable(true)) {
 		return false;
 	}
 	control = rd(dsi + DSI_CTRL);
@@ -383,7 +402,11 @@ dcs_send(uint32_t raw)
 	if (!found_cmd_mode) {
 		wr(dsi + DSI_CTRL, control | DSI_CTRL_CMD_MODE);       /* (Linux's driver does the same for a video panel) */
 	}
-	int_clear(INT_CMD_DMA_DONE);
+	/*
+	 * The error bit too: it stays set until it is cleared, and one the firmware left (or a command of
+	 * long ago) would otherwise be taken for this command's.
+	 */
+	int_clear(INT_CMD_DMA_DONE | INT_ERROR);
 	/* (an empty FIFO to begin with: a send cut off half way may have left words of its own in it) */
 	wr(dsi + DSI_TEST_PATTERN_GEN_CTRL, 0);
 	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 1);
@@ -410,21 +433,27 @@ dcs_send(uint32_t raw)
 	}
 	int_clear(INT_CMD_DMA_DONE);
 	if (!sent) {
-		say("backlight: dcs: brightness %u NOT SENT in 20 ms (int %#x, status %#x): no more commands this run\n", raw,
-		    rd(dsi + DSI_INT_CTRL), rd(dsi + DSI_STATUS));
-		broken = true;
+		/* (one may be lost to a moment's trouble; more in a row and the controller is not listening) */
+		broken = broken || ++unsent >= DCS_UNSENT_MAX;
+		say("backlight: dcs: brightness %u NOT SENT in 20 ms (int %#x, status %#x)%s\n", raw, rd(dsi + DSI_INT_CTRL),
+		    rd(dsi + DSI_STATUS), broken ? ": no more commands this run" : "");
 		return false;
 	}
-	if (rd(dsi + DSI_INT_CTRL) & INT_ERROR) {
+	unsent = 0;
+	/* said once, not again for every command after it while the controller keeps saying it */
+	error = (rd(dsi + DSI_INT_CTRL) & INT_ERROR) != 0;
+	if (error && !error_said) {
 		say("backlight: dcs: the controller reports an error after brightness %u (int %#x)\n", raw, rd(dsi + DSI_INT_CTRL));
 	}
+	error_said = error;
 	(void)began;
 	return true;
 }
 
 /* ---- the light, followed ------------------------------------------------------------------------- */
 
-static void
+/* the light at `level': false when the panel could not be told (then it is to be tried again) */
+static bool
 apply(uint32_t level)
 {
 	shown_level = level;
@@ -432,9 +461,13 @@ apply(uint32_t level)
 	case BL_DCS: {
 		uint32_t raw = bl_level_to_raw(level, profile.raw_min, profile.raw_max);
 
-		if (raw != shown_raw && dcs_send(raw)) {
-			shown_raw = raw;
+		if (raw == shown_raw) {
+			break;
 		}
+		if (broken || !dcs_send(raw)) {
+			return false;
+		}
+		shown_raw = raw;
 		break;
 	}
 	case BL_SOFT: {
@@ -451,21 +484,27 @@ apply(uint32_t level)
 	default:
 		break;
 	}
+	return true;
 }
 
 /*
  * The display off: the panel dark (a DSI panel at brightness 0: black, and back at once; the software light:
  * every pixel black). Not the panel's display-off command, which would need its power-on sequence again.
+ * False, as apply()'s, when the panel could not be told.
  */
-static void
+static bool
 apply_dark(void)
 {
 	shown_level = 0;
 	switch (profile.backend) {
 	case BL_DCS:
-		if (shown_raw != 0 && dcs_send(0)) {
-			shown_raw = 0;
+		if (shown_raw == 0) {
+			break;
 		}
+		if (broken || !dcs_send(0)) {
+			return false;
+		}
+		shown_raw = 0;
 		break;
 	case BL_SOFT:
 		if (soft_dim != 0) {
@@ -478,16 +517,11 @@ apply_dark(void)
 	default:
 		break;
 	}
+	return true;
 }
 
 /* dimmed (the idle timer's first step, or Darwin's dimmed display mode): at most this */
 #define BL_DIMMED_MAX   150
-
-static uint32_t
-wanted_level(void)
-{
-	return automatic ? bl_auto_target(ambient_mlx, auto_offset) : user_level;
-}
 
 #define TICK_MS         50
 
@@ -495,20 +529,31 @@ static void
 bl_thread(__unused void *argument, __unused wait_result_t result)
 {
 	uint32_t now = user_level << 10;        /* in 1024ths of a level */
-	uint32_t reference_mlx = ambient_mlx, target = wanted_level();
-
+	uint32_t reference_mlx = ambient_mlx, target = automatic ? bl_auto_target(ambient_mlx, auto_offset) : user_level;
 	bool dark = false;
+	bool behind = !apply(user_level);       /* the panel not told what `now' is: to be tried again */
 
-	apply(user_level);
 	for (;;) {
-		uint32_t seen = pokes, want = wanted_level(), goal;
+		/*
+		 * What the sysctls and the other drivers set, each read once a turn: one that changes in the
+		 * middle of a turn is not seen as two different things in it (the change pokes the thread,
+		 * and the next turn sees it).
+		 */
+		uint32_t seen = pokes, on = power, cap = thermal_cap, lux = ambient_mlx, goal, want;
+		bool by_hand = automatic == 0;
 
-		if (power == 0) {
+		want = by_hand ? user_level : bl_auto_target(lux, auto_offset);
+		if (on == 0) {
+			/* dark once the panel was told; until then tried again every tick (no use once broken) */
 			if (!dark) {
-				apply_dark();
-				dark = true;
+				dark = apply_dark();
 			}
-			assert_wait(&poke, THREAD_UNINT);
+			behind = true;                  /* lit again at once, where it was, when it is switched on */
+			if (dark || broken) {
+				assert_wait(&poke, THREAD_UNINT);
+			} else {
+				assert_wait_timeout(&poke, THREAD_UNINT, TICK_MS, NSEC_PER_MSEC);
+			}
 			if (pokes != seen) {
 				clear_wait(current_thread(), THREAD_AWAKENED);  /* (as at the loop's end: poked since `power' was read) */
 				continue;
@@ -516,27 +561,28 @@ bl_thread(__unused void *argument, __unused wait_result_t result)
 			thread_block(THREAD_CONTINUE_NULL);
 			continue;
 		}
-		if (dark) {
-			dark = false;
-			apply((now + 512) >> 10);       /* lit again at once, where it was */
-		}
+		dark = false;
 
-		if (!automatic) {
+		if (by_hand) {
 			target = want;
-		} else if (bl_lux_moved(ambient_mlx, reference_mlx) || (want > target ? want - target : target - want) > 20) {
+		} else if (bl_lux_moved(lux, reference_mlx) || (want > target ? want - target : target - want) > 20) {
 			/* a real change of the light (not a flicker), or the user's own move of the curve */
-			reference_mlx = ambient_mlx;
+			reference_mlx = lux;
 			target = want;
 		}
-		goal = power == 2 && target > BL_DIMMED_MAX ? BL_DIMMED_MAX : target;
-		goal = goal > thermal_cap ? thermal_cap : goal;
+		goal = on == 2 && target > BL_DIMMED_MAX ? BL_DIMMED_MAX : target;
+		goal = goal > cap ? cap : goal;
 		if (now != goal << 10) {
 			/* by hand: there in a fifth of a second; automatic: bl_step()'s pace */
-			now = automatic ? bl_step(now, goal << 10) : (now < goal << 10 ?
-			    now + ((goal << 10) - now + 3) / 4 : now - (now - (goal << 10) + 3) / 4);
-			apply((now + 512) >> 10);
+			now = by_hand ? (now < goal << 10 ? now + ((goal << 10) - now + 3) / 4 :
+			    now - (now - (goal << 10) + 3) / 4) : bl_step(now, goal << 10);
+			behind = true;
 		}
-		if (now == goal << 10 && !automatic) {
+		if (behind) {
+			behind = !apply((now + 512) >> 10);
+		}
+		/* asleep until poked only with nothing more to do: a send that failed is tried again at the next tick */
+		if (now == goal << 10 && by_hand && (!behind || broken)) {
 			assert_wait(&poke, THREAD_UNINT);
 		} else {
 			assert_wait_timeout(&poke, THREAD_UNINT, TICK_MS, NSEC_PER_MSEC);
@@ -706,11 +752,15 @@ hakios_backlight_init(void)
 	}
 }
 
-/* At the run's end (and on a panic's way out): the panel left lit for the loader and whatever comes next (also when it was dark). */
+/*
+ * At the run's end (and on a panic's way out): the panel left lit for the loader and whatever comes next (also when it was dark).
+ * Tried also when the backend stopped for the run: a dark panel is worse than one more command the controller may not
+ * send, and a send has its own limits of time.
+ */
 void
 hakios_backlight_quiesce(void)
 {
-	if (profile.backend != BL_DCS || broken || profile.raw_restore == 0) {
+	if (profile.backend != BL_DCS || profile.raw_restore == 0) {
 		return;
 	}
 	if (dcs_send(profile.raw_restore)) {
