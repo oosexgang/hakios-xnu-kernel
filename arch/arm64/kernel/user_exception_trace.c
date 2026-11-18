@@ -11,7 +11,9 @@
  */
 
 #include <arm/thread.h>
+#include <kern/clock.h>
 #include <kern/debug.h>
+#include <kern/locks.h>
 #include <kern/misc_protos.h>
 #include <kern/startup.h>
 #include <kern/task.h>
@@ -36,6 +38,48 @@ plausible_user_address(uint64_t address)
 	return address >= 0x100000000ULL && address < MACH_VM_MAX_ADDRESS;
 }
 
+/*
+ * Any program can take exceptions as fast as it likes (a handler that returns from SIGSEGV or SIGTRAP) or call
+ * abort() with SIGABRT ignored, in a loop, and each report is lines on a console that may be a serial port: so many
+ * reports in ten seconds and no more. The first one of the next ten seconds says how many were left out.
+ */
+#define USER_TRACE_BURST        10
+#define USER_TRACE_WINDOW_NS    (10 * NSEC_PER_SEC)
+
+static LCK_GRP_DECLARE(user_trace_group, "user_exception_trace");
+static LCK_SPIN_DECLARE(user_trace_lock, &user_trace_group);
+
+static bool
+user_trace_allowed(void)
+{
+	static uint64_t window_start;
+	static uint32_t taken, left_out;
+	uint64_t now = mach_absolute_time(), elapsed_ns;
+	uint32_t told = 0;
+	bool allowed;
+
+	lck_spin_lock(&user_trace_lock);
+	absolutetime_to_nanoseconds(now - window_start, &elapsed_ns);
+	if (window_start == 0 || elapsed_ns >= USER_TRACE_WINDOW_NS) {
+		window_start = now;
+		taken = 0;
+		told = left_out;
+		left_out = 0;
+	}
+	allowed = taken < USER_TRACE_BURST;
+	if (allowed) {
+		taken++;
+	} else {
+		left_out++;
+	}
+	lck_spin_unlock(&user_trace_lock);
+	if (told != 0) {
+		printf("usertrap: %u more exceptions and aborts were not described (at most %u in %llu seconds)\n", told,
+		    USER_TRACE_BURST, (unsigned long long)(USER_TRACE_WINDOW_NS / NSEC_PER_SEC));
+	}
+	return allowed;
+}
+
 void
 user_exception_trace(exception_type_t exception, mach_exception_data_t code, mach_msg_type_number_t count, thread_t thread)
 {
@@ -56,7 +100,7 @@ user_exception_trace(exception_type_t exception, mach_exception_data_t code, mac
 	}
 	task = get_threadtask(thread);
 	state = get_user_regs(thread);
-	if (task == kernel_task || state == NULL || !is_saved_state64(state)) {
+	if (task == kernel_task || state == NULL || !is_saved_state64(state) || !user_trace_allowed()) {
 		return;
 	}
 	region = vm_shared_region_get(task);
@@ -85,6 +129,16 @@ user_exception_trace(exception_type_t exception, mach_exception_data_t code, mac
 		(void)copyinstr((user_addr_t)value, text, sizeof(text) - 1, &length);
 		for (unsigned c = 0; c < 6; c++) {
 			printable = printable && text[c] >= 0x20 && text[c] < 0x7f;
+		}
+		/*
+		 * ... and of the rest only what comes before the first character that is not: a newline or an escape
+		 * sequence of the program's would be the console's (a line of its own that looks like the kernel's)
+		 */
+		for (unsigned c = 6; c < sizeof(text); c++) {
+			if (text[c] < 0x20 || text[c] >= 0x7f) {
+				text[c] = 0;
+				break;
+			}
 		}
 		if (printable) {
 			printf("usertrap:   x%u -> \"%s\"\n", message_registers[i], text);
@@ -122,7 +176,7 @@ user_abort_trace(void)
 	uint64_t frame[2], fp;
 	uint32_t slide = 0;
 
-	if (task == kernel_task || state == NULL || !is_saved_state64(state)) {
+	if (task == kernel_task || state == NULL || !is_saved_state64(state) || !user_trace_allowed()) {
 		return;
 	}
 	region = vm_shared_region_get(task);

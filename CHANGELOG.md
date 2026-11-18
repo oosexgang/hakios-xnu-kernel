@@ -119,6 +119,16 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The instructions the kernel emulates for programs this core lacks (`a64emu.c`, with a new host test
+  `workbench/a64emu_test.c` that also compares FJCVTZS and LDAPURS with the processor under qemu-aarch64): LDAPUR,
+  STLUR and LDRAA read and wrote the program's memory a byte at a time, so another thread could see half of a pointer;
+  aligned 8- and 4-byte accesses are now single accesses. Unallocated PAC encodings were run as no-ops; they are
+  undefined again.
+- Reports of programs' exceptions and aborts (`user_exception_trace.c`, new test `workbench/user_exception_trace_test.c`):
+  any program could fill the console without end (`abort()` in a loop, with SIGABRT ignored); now at most ten reports
+  in ten seconds, and the next window says how many were left out. Text from a program's memory went to the console
+  raw, so a crashing program could print fake kernel lines or escape sequences; it is cut at its first control
+  character.
 - Camera (`camera.c`, with a new host test `workbench/camera_driver_test.c` that models the sensor, the PMIC and the
   camera's blocks): a long frame any process could ask for (up to 1.7 s) was timed by the frame before it, given up on
   after 1.5 s, and the camera was gone for the rest of the run; a free SMMU match register found but never written was
