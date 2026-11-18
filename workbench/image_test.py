@@ -358,6 +358,28 @@ class Publish(Sandbox):
         self.assertEqual(code, 1, said)
         self.assertIn('links, not files of its own', said)
 
+    def test_verify_does_not_crash_on_a_malformed_or_hostile_manifest(self):
+        # verify runs against repositories other people push to: a broken or crafted manifest.json must come back as
+        # "NOT AS PUBLISHED", never a traceback, and must not read a file outside the image
+        self.build()
+        repository, (code, said) = self.publish()
+        self.assertEqual(code, 0, said)
+        m = repository / 'images/v1/manifest.json'
+        import json as _json
+        good = _json.loads(m.read_text())
+        for label, text in [
+            ('invalid json', '{not json'),
+            ('not an object', '[]'),
+            ('files not an object', _json.dumps(dict(good, files=[]))),
+            ('a path out of the image', _json.dumps(dict(good, files={'../../etc/passwd': {'sha256': 'x'}}))),
+            ('a member with no sha256', _json.dumps(dict(good, files={'zeta.payload': {}}))),
+        ]:
+            m.write_text(text)
+            code, said = self.tool('verify', str(repository / 'images'))
+            self.assertEqual(code, 1, f'{label}: {said}')
+            self.assertIn('NOT AS PUBLISHED', said, label)
+            self.assertNotIn('Traceback', said, label)
+
     def tree(self):
         path = self.dir / 'DeviceTree.bin'
         path.write_bytes(device_tree())

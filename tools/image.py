@@ -73,6 +73,13 @@ def die(text):
     raise SystemExit(f'image.py: {text}')
 
 
+def plain_name(file):
+    """FILE as a manifest names it, once it is known to be a plain file of the image and not a path out of it."""
+    if not isinstance(file, str) or file in ('', '.', '..') or '/' in file or '\\' in file or Path(file).is_absolute():
+        die(f'manifest.json names {file!r}, which is not a plain file of the image')
+    return file
+
+
 # ---- the payload ----------------------------------------------------------------------------------------------------
 
 def payload_pack(entries):
@@ -352,8 +359,19 @@ def check_against_manifest(directory):
     path = Path(directory) / 'manifest.json'
     if not path.is_file():
         die(f'{directory}: no manifest.json (tools/image.py build makes one)')
-    manifest = json.loads(path.read_text())
-    for file, said in manifest.get('files', {}).items():
+    try:
+        manifest = json.loads(path.read_text())
+    except ValueError as error:
+        die(f'{path}: not valid JSON ({error})')
+    if not isinstance(manifest, dict):
+        die(f'{path}: not a manifest (a JSON object)')
+    files = manifest.get('files', {})
+    if not isinstance(files, dict):
+        die(f'{path}: its "files" is not an object')
+    for file, said in files.items():
+        plain_name(file)
+        if not isinstance(said, dict) or 'sha256' not in said:
+            die(f'{path}: "{file}" has no sha256 in manifest.json')
         data = (Path(directory) / file).read_bytes() if (Path(directory) / file).is_file() else None
         if data is None or sha256(data) != said['sha256']:
             die(f'{directory}/{file} is not what manifest.json says it is')
@@ -536,6 +554,7 @@ def verify(options):
         print(f'{root}: NOT AS PUBLISHED: files in no image: {", ".join(stray)}')
         bad += 1
     for directory in found:
+        ok = ''
         try:
             manifest = check_against_manifest(directory)
             refused = publishable(directory, manifest)
@@ -547,10 +566,12 @@ def verify(options):
                 refused = f'links, not files of its own: {", ".join(links)}'
             if refused is None and more:
                 refused = f'files manifest.json does not list: {", ".join(more)}'
-        except SystemExit as stop:
-            refused = str(stop).removeprefix('image.py: ')
-        print(f'{directory}: ' + (f'NOT AS PUBLISHED: {refused}' if refused else
-                                  f'{manifest["board"]}, {manifest["code"]["describe"] or "?"}, {manifest["defconfig"]}: as its manifest says'))
+            # (a malformed manifest that still passed the checks above would fault here: read each field forgivingly)
+            code = manifest.get('code') or {}
+            ok = f'{manifest.get("board", "?")}, {code.get("describe") or "?"}, {manifest.get("defconfig", "?")}: as its manifest says'
+        except (SystemExit, ValueError, KeyError, TypeError, OSError) as stop:
+            refused = str(stop).removeprefix('image.py: ') or type(stop).__name__
+        print(f'{directory}: ' + (f'NOT AS PUBLISHED: {refused}' if refused else ok))
         bad += refused is not None
     return 1 if bad else 0
 
