@@ -147,17 +147,17 @@ static io_connect_t
 rwd_shared_connection(void)
 {
 	static io_connect_t connection;
-	static int opened;
+	static dispatch_once_t opened;
 
-	if (!opened) {
+	/* (once, and every thread after the first waits for it: one that came meanwhile was given no connection) */
+	dispatch_once(&opened, ^{
 		char why[256] = { 0 };
 
-		opened = 1;
 		if (rwd_gpu_open(&connection, why, sizeof(why)) != 0) {
 			connection = 0;
 			printf("hakiosdrawable: %s\n", why);
 		}
-	}
+	});
 	return connection;
 }
 
@@ -516,12 +516,11 @@ static rwd_import_call
 rwd_import(void)
 {
 	static rwd_import_call import;
-	static int looked;
+	static dispatch_once_t looked;
 
-	if (!looked) {
+	dispatch_once(&looked, ^{
 		void *library = dlopen("/hakios/lib/libhakios-air.dylib", RTLD_NOW | RTLD_NOLOAD);
 
-		looked = 1;
 		if (library != NULL) {
 			*(void **)&import = dlsym(library, "rwa_texture_from_surface");
 		}
@@ -529,7 +528,7 @@ rwd_import(void)
 		       "rwa_texture_from_surface\n",
 		    library != NULL ? "is loaded in this process" : "is not loaded here",
 		    import != NULL ? "has" : "has NOT");
-	}
+	});
 	return import;
 }
 
