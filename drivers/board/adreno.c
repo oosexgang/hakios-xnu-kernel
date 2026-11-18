@@ -3015,6 +3015,7 @@ gpu_block_stop(void)
 		put(&gmu, "cm3_sysreset", GMU_CM3_SYSRESET, 1);
 		gmu_runs = false;
 		gx_off();                               /* (a GMU that has slumbered has done it itself) */
+		core_runs = false;                      /* (no register of the 3D core is to be reached from here on) */
 	}
 	if (zap_is_loaded) {
 		/* the next kernel loads its own: see step_zap_load() */
@@ -3101,7 +3102,13 @@ hakios_adreno_quiesce(void)
 		gmu_runs = false;
 	}
 	if (core_runs) {
-		core_bus_halt(true);
+		/*
+		 * (only while the 3D core has its power: a stop that a panic cut short after gx_off() leaves core_runs set, and a
+		 * register of a block whose power is off hangs the bus)
+		 */
+		if (rd(gpucc.base + GPUCC_GX_GDSCR) & GDSC_POWER_ON) {
+			core_bus_halt(true);
+		}
 		core_runs = false;
 	}
 	/*
