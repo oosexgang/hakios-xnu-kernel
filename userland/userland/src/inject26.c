@@ -630,11 +630,17 @@ big_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 {
 	pthread_attr_t own;
 	size_t stack = 0;
+	void *given = NULL;
 
 	if (attr != NULL) {
 		pthread_attr_getstacksize(attr, &stack);
+		pthread_attr_getstackaddr(attr, &given);
 	}
-	if (stack == 0 || stack >= BIG_STACK_MIN) {
+	/*
+	 * (as said above: a stack under BIG_STACK_MIN made bigger -- not one the caller asked to be bigger still, and not one
+	 * whose memory the caller gave, which cannot be told it has more than it was given)
+	 */
+	if ((stack == 0 || stack < BIG_STACK_MIN) && given == NULL) {
 		if (pthread_attr_init(&own) == 0) {
 			if (attr != NULL) {
 				own = *attr;
