@@ -187,10 +187,18 @@ SECURITY_READ_ONLY_LATE(static mac_policy_handle_t) miniamfi_handle;
  * CFFIXED_USER_HOME, which is where Foundation takes the home directory from. So that is the
  * answer: it is looked up among the strings exec left at the top of the stack of the process.
  * A process without the variable has no container, and gets what every process got before:
- * success and an untouched buffer.
+ * success and an untouched buffer -- unless it is an application extension (its executable
+ * inside a ".appex/"), which PlugInKit checks the answer of at its start and aborts without one,
+ * whoever started it: the document picker's own extension, for one, so that an application's
+ * "open a file" failed with "Couldn't communicate with a helper application". Such a process is
+ * answered with its HOME, or with mobile's home when it has none. After the OnePlus Nord 2 port of
+ * iOS (frxncyyy/ios-denniz, the idea of its piece 0730), which found the picker dying so.
  */
 #define SANDBOX_SYSCALL_CONTAINER_PATH  4
 #define SANDBOX_CONTAINER_VARIABLE      "CFFIXED_USER_HOME="
+#define SANDBOX_EXECUTABLE_VARIABLE     "executable_path="      /* the first string exec leaves (exec_save_path) */
+#define SANDBOX_HOME_VARIABLE           "HOME="
+#define SANDBOX_HOME_DEFAULT            "/private/var/mobile"
 
 static int
 minisandbox_container_path(user_addr_t arg)
@@ -210,9 +218,9 @@ minisandbox_container_path(user_addr_t arg)
 	vm_offset_t strings = 0;
 	vm_size_t strings_size;
 	user_addr_t user_stack;
-	size_t argslen, len;
-	const char *s, *end;
-	int error;
+	size_t argslen, len, home_len = 0;
+	const char *s, *end, *home = NULL;
+	int error, appex = 0;
 
 	error = copyin(arg, &args, sizeof(args));
 	if (error) {
@@ -265,8 +273,23 @@ minisandbox_container_path(user_addr_t arg)
 			s += prefix_len;
 			len -= prefix_len;
 			error = len < args.size ? copyout(s, args.buffer, len + 1) : ENAMETOOLONG;
+			appex = 0;      /* (answered) */
 			break;
 		}
+		if (s == end - argslen && strncmp(s, SANDBOX_EXECUTABLE_VARIABLE, sizeof(SANDBOX_EXECUTABLE_VARIABLE) - 1) == 0) {
+			appex = strnstr(s, ".appex/", len) != NULL;
+		} else if (home == NULL && len > sizeof(SANDBOX_HOME_VARIABLE) && s + len < end &&
+		    strncmp(s, SANDBOX_HOME_VARIABLE "/", sizeof(SANDBOX_HOME_VARIABLE)) == 0) {
+			home = s + sizeof(SANDBOX_HOME_VARIABLE) - 1;       /* (a path of more than "/": PlugInKit wants that) */
+			home_len = len - (sizeof(SANDBOX_HOME_VARIABLE) - 1);
+		}
+	}
+	if (appex) {
+		if (home == NULL) {
+			home = SANDBOX_HOME_DEFAULT;
+			home_len = sizeof(SANDBOX_HOME_DEFAULT) - 1;
+		}
+		error = home_len < args.size ? copyout(home, args.buffer, home_len + 1) : ENAMETOOLONG;
 	}
 	kmem_free(kernel_map, strings, strings_size);
 	return error;

@@ -63,6 +63,16 @@ tags yet, so the current work is one section.
   0, the default, leaves taps as they were): every tap the shortest of Android's waveforms at that gain, at once,
   instead of a gain read from the first milliseconds of Darwin's waveform. After the OnePlus Nord 2 port of iOS, whose
   user found 0x57 felt like a click and the rest like a buzz; not yet tried on ours.
+- **The clock no longer starts in 1970** when nothing gives the time (no `epoch=`, no firmware clock): the kernel starts
+  it at its own build, and process 1 raises it to the newest time the volumes know -- the root, our image, what
+  `var_store` put back -- never backwards and never more than ten years past the build (`init: the clock read` in the
+  log). From 1970 the network's answer moved it 56 years at once, and dasd then kept a big core busy for the rest of
+  the boot. After the idea of the OnePlus Nord 2 port's piece 0530; not yet seen on our phone.
+- **"On My iPhone" in Files:** fileproviderd keeps its files only on a volume it takes for APFS, so `/private/var`
+  (ramfs) is named "apfs" to fileproviderd and to no other program (`var_apfs=0` turns it off); APFS's own requests are
+  refused there with ENOTSUP. After the idea of the Nord 2 port's piece 0734; not yet seen on our phone.
+- **Application extensions are given a container path** when nobody gave them one (their `HOME`, else mobile's home):
+  PlugInKit stopped the document picker's extension without one. After the idea of the Nord 2 port's piece 0730.
 
 ### Fixes
 

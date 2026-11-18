@@ -43,6 +43,11 @@ extensions, the application log's name alone. From its own findings, not its cod
 signer waiting on fairplayd, `components/location/inject_locationd.c`) and the motor's tap as one short tick at a low
 fixed gain (`board/haptic.c`, `haptic_tap_gain=`). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
 is taken; nor its device data.
+Three more are taken as ideas only, written anew here with nothing of its code or text, because what it wrote for them
+is not, or not wholly, under the APSL by its own notes (a file of ios-sweet's, a file a patch adds, its own tools): a
+floor under the clock (its piece 0530; `drivers/iokit/build_date.h`, `init/init.c`), `/private/var` named "apfs" to
+fileproviderd (0734; `fs/ramfs/ramfs.c`) and a container path for application extensions (0730;
+`kernel/overlay/bsd/kern/kern_minimac.c`).
 
 ## Excluded from this repository
 
