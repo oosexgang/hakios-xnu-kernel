@@ -302,10 +302,33 @@ say_kept(void)
 }
 #define printf say
 
+/*
+ * Text the DSP writes (its last words, the names of its entries and of the channels it opens), made fit
+ * for the log: at most `size` bytes of `from`, up to a zero, into `to`, every byte that is not printable
+ * ASCII (0x20 to 0x7e) a '?', so that none of it moves the console's cursor, colours it or begins a line
+ * of its own. `to` may be `from`. Returns `to`.
+ */
+static char *
+printable(char *to, size_t to_size, const void *from, size_t size)
+{
+	const uint8_t *in = from;
+	size_t n;
+
+	if (to_size == 0) {
+		return to;
+	}
+	for (n = 0; n < size && n < to_size - 1 && in[n] != 0; n++) {
+		to[n] = in[n] >= 0x20 && in[n] <= 0x7e ? (char)in[n] : '?';
+	}
+	to[n] = 0;
+	return to;
+}
+
 /* ---- options --------------------------------------------------------------------------------------- */
 
 static bool whole;                      /* wifi=1: all of it, by itself (see the top of this file) */
 static volatile bool whole_runs;        /* ... and the thread that does it is at work */
+static volatile bool ending;            /* the run ends (hakios_wifi_stop()): no step more is taken, nor the driver kept */
 
 /*
  * A number given to the kernel when it was started; with wifi=1 the ones that stands for are as if
@@ -323,6 +346,9 @@ hakios_wifi_option(const char *name)
 
 	if (strcmp(name, "wifi_quiet") == 0) {
 		return quiet;
+	}
+	if (strcmp(name, "wifi_ending") == 0) {
+		return ending;                  /* (for the driver's start: it is cut short, see hakios_wifi_stop()) */
 	}
 	if (PE_parse_boot_argn(name, &value, sizeof(value))) {
 		return value;
@@ -523,7 +549,10 @@ show_words(const char *prefix, const struct smp2p *words)
 
 	line[0] = 0;
 	for (unsigned i = 0; i < words->valid && i < 16 && at < (int)sizeof(line) - 40; i++) {
-		at += snprintf(line + at, sizeof(line) - (size_t)at, " %.16s = %#x;", words->entry[i].name, words->entry[i].value);
+		char name[sizeof(words->entry[i].name) + 1];
+
+		at += snprintf(line + at, sizeof(line) - (size_t)at, " %s = %#x;", printable(name, sizeof(name), words->entry[i].name,
+		    sizeof(words->entry[i].name)), words->entry[i].value);
 	}
 	printf("wifi: %u: %s: SMP2P version %u, features %#x, from processor %u to %u, flags %#x, %u of %u entries:%s\n", step, prefix,
 	    words->version & 0xff, words->version >> 8, words->local, words->remote, words->flags, words->valid, words->total, line);
@@ -545,6 +574,7 @@ show_crash_reason(void)
 	}
 	bzero(text, sizeof(text));
 	smem_peek(at, text, size < sizeof(text) - 1 ? size : sizeof(text) - 1);
+	printable(text, sizeof(text), text, sizeof(text));
 	if (text[0] == 0) {
 		printf("wifi: %u: item %u, the DSP's last words (%u bytes): none\n", step, ITEM_CRASH_REASON, size);
 	} else {
@@ -1137,15 +1167,17 @@ ring(uint32_t client, uint32_t signal, const char *whose)
 }
 
 static struct {
-	uint32_t glink, smp2p, mailbox, other;  /* rings heard, by kind */
+	uint32_t glink, smp2p;                  /* the DSP's rings heard, by kind */
 	uint32_t said;                          /* how many have been written to the log */
 	uint64_t since;
 } doorbell;
 
 /*
- * Who has rung us (see the end of this file for what IPCC is seen to do): each pending doorbell
- * is read and told that it has been heard, which is what an interrupt handler would do before
- * anything else. The first few are written to the log.
+ * Who has rung us (see the end of this file for what IPCC is seen to do): each pending ring of the
+ * Wi-Fi DSP's is read and told that it has been heard, which is what an interrupt handler would do
+ * before anything else. Another's ring (the modem's, the audio DSP's) is left for whoever listens
+ * for it, as board/adsp.c and board/mpss.c leave this one's: IPCC names the same one until it is
+ * cleared, so the look ends there. The first few are written to the log.
  */
 static void
 doorbells(void)
@@ -1153,24 +1185,17 @@ doorbells(void)
 	for (unsigned i = 0; i < 8; i++) {
 		uint32_t who = rd(ipcc.base + IPCC_RECEIVED);
 
-		if (who == IPCC_NOBODY) {
+		if (who == IPCC_NOBODY || who >> 16 != IPCC_WPSS) {
 			return;
 		}
 		wr(ipcc.base + IPCC_CLEAR, who);
-		if (who == (IPCC_WPSS << 16)) {
-			doorbell.glink++;
-		} else if (who == (IPCC_WPSS << 16 | IPCC_SMP2P)) {
-			doorbell.smp2p++;
-		} else if (who == (IPCC_AOP << 16)) {
-			doorbell.mailbox++;
-		} else {
-			doorbell.other++;
-		}
+		doorbell.glink += (who & 0xffff) == IPCC_GLINK;
+		doorbell.smp2p += (who & 0xffff) == IPCC_SMP2P;
 		if (doorbell.said < 24) {
 			uint64_t now = now_us() - doorbell.since;
 
 			doorbell.said++;
-			printf("wifi: doorbell: +%llu.%03llu ms: client %u, signal %u; heard and cleared\n", now / 1000, now % 1000, who >> 16,
+			printf("wifi: doorbell: +%llu.%03llu ms: signal %u of the Wi-Fi DSP; heard and cleared\n", now / 1000, now % 1000,
 			    who & 0xffff);
 		}
 	}
@@ -1852,11 +1877,11 @@ step_start(void)
 	if (have) {
 		show_words("before the start, the DSP's item says (from its last run; believed again once it changes)", &last);
 	}
-	announce("tell the doorbells that rings from before this kernel have been heard and that the DSP's SMP2P ring is "
+	announce("tell the doorbells that the DSP's rings from before this kernel have been heard and that its SMP2P ring is "
 	    "listened for, tell the always-on processor that the image is loaded, and ask TrustZone to authenticate it and let "
 	    "the DSP out of reset");
-	/* (nobody answered them, and a ring after the start is to be the DSP's) */
-	for (unsigned i = 0; i < 8 && (rang = rd(ipcc.base + IPCC_RECEIVED)) != IPCC_NOBODY; i++) {
+	/* (nobody answered them, and a ring after the start is to be the DSP's; another processor's is its own driver's) */
+	for (unsigned i = 0; i < 8 && (rang = rd(ipcc.base + IPCC_RECEIVED)) != IPCC_NOBODY && rang >> 16 == IPCC_WPSS; i++) {
 		put(&ipcc, "heard", IPCC_CLEAR, rang);
 	}
 	/* (the boot chain listens for the DSP's GLINK ring and no other: without this an SMP2P ring leaves no trace) */
@@ -1929,8 +1954,8 @@ step_start(void)
 		show_words("and ours", &words);
 	}
 	rung = doorbell.glink + doorbell.smp2p != 0;
-	printf("wifi: %u: the watch is over after %llu ms; doorbells heard: GLINK %u, SMP2P %u, the mailbox %u, others %u\n", step,
-	    (now_us() - started) / 1000, doorbell.glink, doorbell.smp2p, doorbell.mailbox, doorbell.other);
+	printf("wifi: %u: the watch is over after %llu ms; its doorbells heard: GLINK %u, SMP2P %u\n", step,
+	    (now_us() - started) / 1000, doorbell.glink, doorbell.smp2p);
 	if (state & DSP_FATAL) {
 		return false;
 	}
@@ -1987,6 +2012,8 @@ static struct {
 	uint32_t descriptor, ours, ours_size, theirs, theirs_size;      /* where in the shared memory */
 	bool up;                                /* the queues are found and ours to use */
 	bool broken;                            /* something in the DSP's queue was not understood: nothing more is read */
+	bool stopping;                          /* the DSP has given up, or the link is being taken down: nothing more is
+	                                         * sent, nor waited for */
 	uint32_t features;
 	bool agreed;                            /* the versions are settled */
 	uint32_t their_channel;                 /* the DSP's number for IPCRTR; 0: it has not opened it */
@@ -2226,8 +2253,8 @@ glink_pump(void)
 			glink_peek(name, sizeof(message), message.param2 < sizeof(name) - 1 ? message.param2 : sizeof(name) - 1);
 			glink_advance(length);
 			if (strcmp(name, GLINK_CHANNEL) != 0) {
-				printf("wifi: glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n", name,
-				    message.param1);
+				printf("wifi: glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n",
+				    printable(name, sizeof(name), name, sizeof(name)), message.param1);
 				break;
 			}
 			printf("wifi: glink: the DSP opens \"%s\" as its channel %u: acknowledged, and opened from our side as channel %u\n",
@@ -2329,10 +2356,22 @@ glink_pump(void)
 		case GLINK_CLOSE:
 			glink_advance(length);
 			glink_say(GLINK_CLOSE_ACK, message.param1, 0, NULL, 0);
-			if (message.param1 == glink.their_channel) {
-				printf("wifi: glink: THE DSP CLOSES \"%s\"\n", GLINK_CHANNEL);
+			if (glink.their_channel != 0 && message.param1 == glink.their_channel) {
+				printf("wifi: glink: THE DSP CLOSES \"%s\": closed from our side too, to be opened afresh\n", GLINK_CHANNEL);
+				/*
+				 * (as Linux's qcom_glink_rx_close(): our side closed as well, and nothing of the session kept -- its
+				 * intents are not the next one's, ours would be offered on top of the old ones until there is no
+				 * room for them, and an open that is not sent again is never acknowledged again)
+				 */
+				if (glink.asked) {
+					glink_say(GLINK_CLOSE, GLINK_US, 0, NULL, 0);
+				}
 				glink.open = false;
 				glink.their_channel = 0;
+				glink.asked = glink.acknowledged = false;
+				glink.request_answered = glink.request_granted = false;
+				bzero(glink.their_intents, sizeof(glink.their_intents));
+				glink.our_intent_count = 0;     /* (their buffers kept: offered again, as they are, once it is open) */
 			}
 			break;
 		case GLINK_CLOSE_ACK:
@@ -2361,7 +2400,8 @@ glink_pump(void)
 /*
  * One whole message to the DSP on the channel (Linux's __qcom_glink_send(), for messages that
  * go in one piece). Waits, up to five seconds, for an intent of the DSP's that it fits and
- * for room in our queue, asking for the intent if there is none.
+ * for room in our queue, asking for the intent if there is none; and not at all once the DSP
+ * has given up or the link is being taken down: a DSP that has died gives no intent back.
  */
 static int
 glink_send(const void *data, uint32_t length)
@@ -2380,7 +2420,7 @@ glink_send(const void *data, uint32_t length)
 	}
 	for (unsigned waited = 0;; waited++) {
 		glink_pump();
-		if (!glink.up || !glink.open || glink.broken) {
+		if (!glink.up || !glink.open || glink.broken || glink.stopping) {
 			lck_mtx_unlock(&glink_lock);
 			return ENOTCONN;
 		}
@@ -2766,6 +2806,9 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 			dsp_listen(&words);
 			if ((dsp_state(&words) & DSP_FATAL) && !gave_up) {
 				gave_up = true;
+				lck_mtx_lock(&glink_lock);
+				glink.stopping = true;          /* (whoever waits for an intent of its would wait for nothing) */
+				lck_mtx_unlock(&glink_lock);
 				printf("wifi: link: THE WI-FI DSP SAYS IT HAS GIVEN UP (\"slave-kernel\" = %#x)\n", dsp_state(&words));
 				show_crash_reason();
 			}
@@ -2803,17 +2846,26 @@ link_stop(void)
 {
 	struct glink_packet *packet;
 
+	/* (first: a send that waits for an intent of the DSP's returns at once, and the thread finds nothing more to read) */
+	link_wanted = false;
+	lck_mtx_lock(&glink_lock);
+	glink.stopping = true;
+	glink.up = glink.open = false;
+	lck_mtx_unlock(&glink_lock);
 	if (link_runs) {
-		link_wanted = false;
-		for (unsigned ms = 0; ms < 2000 && link_runs; ms++) {
+		/*
+		 * (longer than the longest wait in the thread, glink_send()'s five seconds for an intent: a callback that is
+		 * sending when the link is taken down returns before the link's memory goes. With the link down it returns at
+		 * once, and the thread ends within a few milliseconds)
+		 */
+		for (unsigned ms = 0; ms < 6000 && link_runs; ms++) {
 			sleep_ms(1);
 		}
-		printf("wifi: link: %s; GLINK said %u and heard %u messages, QRTR sent %u and received %u datagrams; doorbells heard: "
-		    "GLINK %u, SMP2P %u, the mailbox %u, others %u\n", link_runs ? "THE THREAD DOES NOT END" : "down", glink.said,
-		    glink.heard, qrtr_out, qrtr_in, doorbell.glink, doorbell.smp2p, doorbell.mailbox, doorbell.other);
+		printf("wifi: link: %s; GLINK said %u and heard %u messages, QRTR sent %u and received %u datagrams; its doorbells "
+		    "heard: GLINK %u, SMP2P %u\n", link_runs ? "THE THREAD DOES NOT END" : "down", glink.said, glink.heard, qrtr_out,
+		    qrtr_in, doorbell.glink, doorbell.smp2p);
 	}
 	lck_mtx_lock(&glink_lock);
-	glink.up = glink.open = false;
 	while ((packet = glink.first) != NULL) {
 		glink.first = packet->next;
 		kfree_data(packet, sizeof(*packet) + packet->length);
@@ -2856,7 +2908,7 @@ step_queues(void)
 			length += message.param2;
 		}
 		printf("wifi: %u:   in the DSP's queue at %#x: %s %u %#x %s\n", step, at, glink_name(message.command), message.param1,
-		    message.param2, name);
+		    message.param2, printable(name, sizeof(name), name, sizeof(name)));
 		if (message.command != GLINK_VERSION && message.command != GLINK_OPEN) {
 			break;                                  /* (how long the others are, the reading below knows) */
 		}
@@ -2882,7 +2934,7 @@ step_link(void)
 	snprintf(last_write, sizeof(last_write), "step %u took up GLINK", step);
 	lck_mtx_lock(&glink_lock);
 	glink.features = GLINK_INTENT_REUSE;
-	glink.agreed = glink.asked = glink.acknowledged = glink.open = glink.broken = false;
+	glink.agreed = glink.asked = glink.acknowledged = glink.open = glink.broken = glink.stopping = false;
 	glink.their_channel = glink.our_intent_count = glink.said = glink.heard = 0;
 	bzero(glink.their_intents, sizeof(glink.their_intents));
 	glink.trace = 60;
@@ -3307,7 +3359,11 @@ smmu_look(void)
  * takes their interrupt: radio_space_faults() looks.
  *
  * Everything written is put back when the DSP has been stopped, and on the way back to the
- * loader after a panic (radio_space_off()).
+ * loader after a panic (radio_space_off()). A kernel that ends otherwise (or with wifi_dirty=1)
+ * leaves its match register for the stream valid, and a second one for the same stream is a
+ * conflict to the SMMU: the next kernel takes that one over, with its context, instead of adding
+ * one -- the stream sent to fault at once, as the tables it leads to were the last kernel's
+ * memory -- and gives them back invalid and off.
  *
  * What the phone said (13 October): the hypervisor grants it. The boot chain uses match
  * registers 0 to 7 and contexts 0 to 6; register 8 and context 7 (at 0x15087000) were taken,
@@ -3341,6 +3397,7 @@ static struct {
 	uint32_t page, pages;           /* of the SMMU's registers: a page's size, and how many before the contexts' */
 	uint32_t match, context;        /* the stream match register and the context taken for the radio */
 	uint32_t old_smr, old_s2cr, old_sctlr;
+	bool left_over;                 /* the match register (and its context) a kernel before left for the stream, taken over */
 	vm_offset_t tables;             /* RADIO_TABLES of them, the root first */
 	uint32_t table_count;
 	uint64_t next;                  /* of the radio's addresses, the first not handed out (from RADIO_ADDRESSES) */
@@ -3402,13 +3459,18 @@ radio_enter(uint64_t address, uint64_t physical, uint64_t size, uint64_t attribu
 	return true;
 }
 
-/* Which match register and which context are free; nothing is written. */
+/*
+ * Which match register and which context are free; nothing is written. Or the ones a kernel
+ * before left for the radio's stream (see above): the stream is then sent to fault at once,
+ * and they are taken as they are.
+ */
 static bool
 radio_space_find(void)
 {
 	bool used[256] = { false };
 	uint32_t scr0 = get(&apps_smmu, "scr0", SMMU_SCR0), idr0 = get(&apps_smmu, "idr0", SMMU_IDR0);
 	uint32_t idr1 = get(&apps_smmu, "idr1", SMMU_IDR1), matches = idr0 & 0xff, contexts = idr1 & 0xff;
+	uint32_t sees = 1u << 31 | RADIO_STREAM_MASK << 16 | RADIO_STREAM, covering = ~0u, left_context = ~0u;
 
 	if (scr0 & 1u << 3) {
 		printf("wifi: %u: this SMMU numbers its streams with 16 bits, which nothing here is written for\n", step);
@@ -3429,31 +3491,56 @@ radio_space_find(void)
 			printf("wifi: %u: match register %u is in use: stream %#x mask %#x, s2cr %#x\n", step, n, smr & 0x7fff,
 			    smr >> 16 & 0x7fff, s2cr);
 			used[s2cr & 0xff] = true;
-		} else if (radio_space.match == ~0u) {
+			if (((smr ^ RADIO_STREAM) & ~(smr >> 16 | RADIO_STREAM_MASK) & 0x7fff) == 0 && covering == ~0u) {
+				covering = n;
+				radio_space.old_smr = smr;
+				radio_space.old_s2cr = s2cr;
+			}
+		} else if (radio_space.match == ~0u && covering == ~0u) {
 			radio_space.match = n;
 			radio_space.old_smr = smr;
 			radio_space.old_s2cr = s2cr;
 		}
 	}
+	if (covering != ~0u && radio_space.old_smr != sees) {
+		printf("wifi: %u: MATCH REGISTER %u COVERS THE RADIO'S STREAM already, and not as this would set it: it is "
+		    "somebody's, and nothing is written\n", step, covering);
+		return false;
+	}
+	if (covering != ~0u) {
+		printf("wifi: %u: MATCH REGISTER %u IS THE RADIO'S ALREADY (smr %#x, s2cr %#x), left by a kernel before this one: the "
+		    "stream is sent to fault, and the register taken over\n", step, covering, radio_space.old_smr,
+		    radio_space.old_s2cr);
+		put(&apps_smmu, "s2cr", SMMU_S2CR(covering), 2u << 16);
+		radio_space.match = covering;
+		radio_space.left_over = true;
+		if ((radio_space.old_s2cr >> 16 & 3) == 0 && (radio_space.old_s2cr & 0xff) < contexts) {
+			left_context = radio_space.old_s2cr & 0xff;     /* (its context with it: taken as one nobody's stream used) */
+		}
+	}
 	for (radio_space.context = 0; radio_space.context < contexts && used[radio_space.context]; radio_space.context++) {
 	}
+	radio_space.context = left_context != ~0u ? left_context : radio_space.context;
 	if (radio_space.match == ~0u || radio_space.context >= contexts) {
 		printf("wifi: %u: the SMMU has no match register or no context left\n", step);
+		radio_space.left_over = false;          /* (one taken over is left as it is now: faulting) */
 		return false;
 	}
 	apps_smmu_second.phys = apps_smmu.phys + radio_space.page;
 	apps_smmu_context.phys = apps_smmu.phys + (radio_space.pages + radio_space.context) * radio_space.page;
-	printf("wifi: %u: free: match register %u (smr %#x, s2cr %#x) and context %u, whose registers are at %#x; the SMMU's "
-	    "pages are of %#x bytes, %u before the contexts'\n", step, radio_space.match, radio_space.old_smr,
-	    radio_space.old_s2cr, radio_space.context, apps_smmu_context.phys, radio_space.page, radio_space.pages);
+	printf("wifi: %u: %s: match register %u (smr %#x, s2cr %#x) and context %u, whose registers are at %#x; the SMMU's "
+	    "pages are of %#x bytes, %u before the contexts'\n", step, radio_space.left_over ? "taken over" : "free",
+	    radio_space.match, radio_space.old_smr, radio_space.old_s2cr, radio_space.context, apps_smmu_context.phys,
+	    radio_space.page, radio_space.pages);
 	get(&apps_smmu_second, "cbar", SMMU_CBAR(radio_space.context));
 	get(&apps_smmu_second, "cba2r", SMMU_CBA2R(radio_space.context));
 	radio_space.old_sctlr = get(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR);
 	get(&apps_smmu_context, "ttbr0, low", SMMU_CB_TTBR0);
 	get(&apps_smmu_context, "fsr", SMMU_CB_FSR);
-	if (radio_space.old_sctlr & 1) {
+	if ((radio_space.old_sctlr & 1) && radio_space.context != left_context) {
 		printf("wifi: %u: CONTEXT %u IS SWITCHED ON although no stream is sent through it: it is somebody's, and is left "
 		    "alone\n", step, radio_space.context);
+		radio_space.left_over = false;
 		return false;
 	}
 	radio_space.found = true;
@@ -3553,22 +3640,26 @@ radio_stream_to_fault(void)
 	put(&apps_smmu, "s2cr", SMMU_S2CR(radio_space.match), 2u << 16);
 }
 
-/* The stream goes nowhere again, and the context translates nothing: as they were found. */
+/*
+ * The stream goes nowhere again, and the context translates nothing: as they were found, or, if
+ * a kernel before left them for the stream, invalid, faulting and off.
+ */
 static void
 radio_space_off(void)
 {
-	if (!radio_space.on) {
+	if (!radio_space.on && !radio_space.left_over) {
 		return;
 	}
 	radio_space_faults();
-	printf("wifi: %u: the radio's stream and context %u of the SMMU are put back as they were found\n", step, radio_space.context);
-	put(&apps_smmu, "smr", SMMU_SMR(radio_space.match), radio_space.old_smr);
-	put(&apps_smmu, "s2cr", SMMU_S2CR(radio_space.match), radio_space.old_s2cr);
-	put(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR, radio_space.old_sctlr);
+	printf("wifi: %u: the radio's stream and context %u of the SMMU are put back %s\n", step, radio_space.context,
+	    radio_space.left_over ? "invalid and off (a kernel before left them)" : "as they were found");
+	put(&apps_smmu, "smr", SMMU_SMR(radio_space.match), radio_space.left_over ? 0 : radio_space.old_smr);
+	put(&apps_smmu, "s2cr", SMMU_S2CR(radio_space.match), radio_space.left_over ? 2u << 16 : radio_space.old_s2cr);
+	put(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR, radio_space.left_over ? 0 : radio_space.old_sctlr);
 	get(&apps_smmu, "smr", SMMU_SMR(radio_space.match));
 	get(&apps_smmu, "s2cr", SMMU_S2CR(radio_space.match));
 	get(&apps_smmu_context, "sctlr", SMMU_CB_SCTLR);
-	radio_space.on = false;
+	radio_space.on = radio_space.left_over = false;
 }
 
 /*
@@ -3804,7 +3895,12 @@ static bool(*const steps[])(void) = {
 void
 hakios_wifi_stop(void)
 {
-	/* (a radio that is still on its way up is let get there first, or fail: half a minute at the most) */
+	/*
+	 * (a radio that is still on its way up is told to go no further, and the step it is in is let end first: within
+	 * seconds -- the driver's start, which waits up to a minute for a calibration, looks at `ending` while it waits.
+	 * Forty seconds at the most)
+	 */
+	ending = true;
 	for (unsigned ms = 0; whole_runs && ms < 40000; ms += 10) {
 		sleep_ms(10);
 	}
@@ -3899,7 +3995,7 @@ join_given(uint64_t began)
 	what.security = HAKIOS_STA_WPA2_PSK;
 	error = hakios_sta_ask_join_standing(&what);
 	bzero(&what, sizeof(what));
-	for (unsigned waited = 0; error == 0 && hakios_sta_busy() && waited < 300; waited++) {
+	for (unsigned waited = 0; error == 0 && hakios_sta_busy() && waited < 300 && !ending; waited++) {
 		sleep_ms(100);
 	}
 	if ((state = kalloc_data(sizeof(*state), Z_WAITOK)) == NULL) {
@@ -3937,6 +4033,10 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	for (unsigned i = 0; i < sizeof(needed) && failed == 0; i++) {
 		step = needed[i];
+		if (ending) {
+			failed = step;                  /* (the run ends: not a step more) */
+			break;
+		}
 		if (step == 15) {
 			tell("wifi: the radio's DSP is up and linked, %llu ms in; now the driver\n", (now_us() - began) / 1000);
 		}
@@ -3951,6 +4051,9 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 		tell("wifi: THE RADIO IS UP, %llu.%llu s after the kernel began on it\n", (now_us() - began) / 1000000,
 		    (now_us() - began) / 100000 % 10);
 		join_given(began);
+	} else if (ending) {
+		tell("wifi: the run ends before the radio is up (step %u not done, %llu s in): it is not brought up further\n", failed,
+		    (now_us() - began) / 1000000);
 	} else {
 		tell("wifi: THE RADIO DID NOT COME UP: step %u failed, %llu s in. The last of what was said on the way:\n", failed,
 		    (now_us() - began) / 1000000);
@@ -4100,8 +4203,8 @@ hakios_wifi_init(void)
  *     doorbell so and no other, and the DSP's SMP2P rings left no trace until step 11 enabled
  *     them. IPCC_RECEIVED names one recorded doorbell at a time, the same one until that word
  *     is written to IPCC_CLEAR, then the next, then "nobody". So a handler reads IPCC_RECEIVED
- *     until it says nobody, writes each word it gets to IPCC_CLEAR, and passes it on (this is
- *     doorbells() above, called from a loop today): client 0 signal 0 is the always-on
+ *     until it says nobody, writes each word it gets to IPCC_CLEAR, and passes it on (doorbells()
+ *     above does that for the Wi-Fi DSP's own, from a loop today): client 0 signal 0 is the always-on
  *     processor's mailbox (every wait in mailbox_wait()), client 24 signal 2 the Wi-Fi DSP's
  *     SMP2P item (the watch of step 11, the wait in dsp_ask_to_stop()), client 24 signal 0 its
  *     GLINK. Since a mark is not a count, whoever is woken looks until there is nothing left:

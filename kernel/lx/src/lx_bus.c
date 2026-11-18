@@ -821,11 +821,13 @@ lx_start(void)
 	/*
 	 * The rest happens on the driver's own threads, until core.c has been through its start (it
 	 * says so with the flag below, whether that went well or not) or the exchange has failed.
-	 * It went well if the bus is still up: core.c stops it where it gives up.
+	 * It went well if the bus is still up: core.c stops it where it gives up. A run that ends
+	 * meanwhile ("wifi_ending", board/wifi.c) does not wait for it: what was started is wound
+	 * down below, before the DSP under it is shut down.
 	 */
 	began = lx_os_nanoseconds();
 	while (!test_bit(ATH11K_FLAG_REGISTERED, &ab->dev_flags) && !test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags) &&
-	    lx_os_nanoseconds() - began < 60000000000ull) {
+	    lx_os_nanoseconds() - began < 60000000000ull && !lx_os_option("wifi_ending")) {
 		lx_pause_ms(10);
 	}
 	up = test_bit(ATH11K_FLAG_REGISTERED, &ab->dev_flags) && bus.looks;
@@ -848,6 +850,12 @@ lx_start(void)
 	lx_pause_ms(1000);			/* (for what the firmware says unasked once it is ready) */
 	say_radio(ab);
 
+	if (lx_os_option("wifi_ending")) {
+		/* (the run has ended meanwhile: the driver is not taken up but goes down again at once, before its DSP does) */
+		ath11k_core_deinit(ab);
+		lx_tell("lx: the run ends: the driver is down again\n");
+		return (EIO);
+	}
 	driver = ab;
 	if (lx_os_option("wifi_station")) {
 		/* whoever wants a network asks the kernel, and the kernel asks the station: the driver stays up until lx_stop() */

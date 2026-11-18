@@ -196,6 +196,7 @@ says what each test covers and what it leaves out.
 | `board/apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
 | `board/camera.c` (its sensors, its PMIC GPIO, the PM8008i's writes, its tables) | `camera_wiring_test.c` | the PMIC arbiter with the PM8008i's reset GPIO behind it (`spmi_model.h`); a sensor's table as the small image would hold it; otherwise where it takes its sensors from |
 | `board/sound.c` (its pins, the SMMU, the stream's events) | `sound_driver_test.c` | the pin controller's registers, with pins that toggle; the apps SMMU's, with what the boot chain set up |
+| `board/wifi.c` (the radio's SMMU match, the doorbells, GLINK's channel, the DSP's text, its giving up) | `wifi_driver_test.c` | the apps SMMU's registers, as the boot chain or a kernel before left them; IPCC's doorbells; the shared memory with GLINK's queues and the DSP's items, the DSP's side played by the test |
 | `board/mic.c` (its blocks, pins, DSP, SoundWire, codec) | `mic_driver_test.c` | registers that keep what is written; the DSP as a script of answers; the TX SoundWire master's link and command FIFO, with the codec's registers behind it |
 | `board/input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
 | `board/sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
@@ -208,7 +209,8 @@ The two touch drivers, the camera's, the sound's and the microphones' are compil
 not all of their parts are modelled: the touch drivers' tests cover their wiring and what they make of a
 controller's reports, and the FocalTech driver's thread against a model of its controller, not the talk on the
 wire; the others' cover their wiring, and the sound's and the microphones' the rings Darwin writes and reads. The
-Wi-Fi, DSP, GPU and storage drivers have no such test: they are checked for syntax, types and the formats of what
+Wi-Fi driver's test calls parts of it one at a time, with no TrustZone and no DSP that runs. The other DSP drivers,
+the GPU's and the storage's have no such test: they are checked for syntax, types and the formats of what
 they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one
