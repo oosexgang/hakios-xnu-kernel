@@ -1443,6 +1443,7 @@ worker(void *context)
 	pthread_setname_np("hakios-camera");
 	if (device < 0) {
 		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
+		s->running = false;     /* (the next start makes a worker anew: not taken for one still running) */
 		return NULL;
 	}
 	isp_init(&isp);
@@ -1592,6 +1593,8 @@ worker(void *context)
 	free(buffer);
 	close(device);
 	say("the frames stopped (%llu)", s->frames);
+	/* (ended by itself -- faults, reads that kept failing -- or asked to: either way not running, so a start starts it again) */
+	s->running = false;
 	return NULL;
 }
 
@@ -1624,6 +1627,11 @@ stream_begin(CMBaseObjectRef o, bool graph)
 			say("stream: the %s's frames stop for the %s's", stream_of(all_streams[i])->camera->name, s->camera->name);
 			(void)stream_stop(all_streams[i]);
 		}
+	}
+	if (s->worker_started) {
+		/* (a worker that ended by itself: taken back before the next is made) */
+		pthread_join(s->worker, NULL);
+		s->worker_started = false;
 	}
 	s->running = true;
 	s->frames = 0;
