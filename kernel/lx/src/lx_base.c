@@ -241,6 +241,9 @@ ticks_to_ns(unsigned long ticks)
 }
 
 static struct timer_list *armed[16];
+static struct timer_list *firing;		/* the timer whose function the ticker runs now (timer_delete_sync() waits for it) */
+static void *ticker_self;			/* lx_os_thread_self() of the ticker */
+static bool queue_work_locked(struct workqueue_struct *wq, struct work_struct *work);
 static struct {
 	struct delayed_work *work;		/* to be queued on ... */
 	struct workqueue_struct *queue;		/* ... when the ticks have reached ... */
@@ -252,6 +255,7 @@ ticker(void *argument)
 {
 	unsigned long long began = lx_os_nanoseconds();
 
+	ticker_self = lx_os_thread_self();
 	for (;;) {
 		struct timer_list *due = NULL;
 		struct delayed_work *work = NULL;
@@ -273,13 +277,24 @@ ticker(void *argument)
 				later[i].work = NULL;
 			}
 		}
+		/*
+		 * (the work whose time has come queued before the lock is let go of: a cancel_delayed_work_sync() in between
+		 * would otherwise find it neither waiting for its time, nor queued, nor running -- and it would run after it)
+		 */
+		if (work != NULL && !queue_work_locked(queue, &work->work)) {
+			printf("lx: work whose time has come finds its queue full: it will not be done\n");
+		}
+		firing = due;
 		lx_os_unlock();
 		/* (a timer that a part of the driver not built yet would have given its function has none) */
 		if (due != NULL && due->function_415 != NULL) {
 			due->function_415(due);
 		}
-		if (work != NULL) {
-			linux_queue_work_on(0, queue, &work->work);
+		if (due != NULL) {
+			lx_os_lock();
+			firing = NULL;
+			lx_os_wakeup(&firing);
+			lx_os_unlock();
 		}
 	}
 }
@@ -339,13 +354,17 @@ linux_cancel_delayed_work(struct delayed_work *dwork)
 	return (waited);
 }
 
-/* (A timer's function that is running on the ticker's thread at this moment is not waited for.) */
+/* Not armed any more; and if its function runs on the ticker's thread, until it has ended (as Linux's does). */
 int
 timer_delete_sync(struct timer_list *timer)
 {
 	int was = 0;
 
 	lx_os_lock();
+	while (firing == timer && lx_os_thread_self() != ticker_self) {
+		lx_os_sleep(&firing, SLICE_NS);
+	}
+	/* (after the wait: a function that armed its timer again is disarmed too) */
 	for (unsigned i = 0; i < nitems(armed); i++) {
 		if (armed[i] == timer) {
 			armed[i] = NULL;
