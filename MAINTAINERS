@@ -238,6 +238,11 @@ F:	include/board/nas.h
 T:	workbench/qmi/run.sh
 K:	mpss=
 
+ORIENTATION AND SENSORS
+F:	drivers/board/orientation_core.h
+T:	workbench/orientation_test.c
+K:	orient_
+
 QEMU
 F:	tools/qemu-kernel.sh
 F:	tools/qemu-root.sh
