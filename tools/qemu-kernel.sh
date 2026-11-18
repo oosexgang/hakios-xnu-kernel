@@ -164,7 +164,11 @@ if [ -n "$reached" ] && [ -n "$typed" ] && kill -0 "$qemu" 2> /dev/null; then
 	# (--then beside it: what it does may be what a typed line waits for)
 	then_pid=''
 	if [ -n "$then" ]; then
-		bash -c "$then" &
+		# --seconds is "stop after N seconds in any case": give --then only the time left of it, so a command whose
+		# guest never answers cannot hang the run for ever
+		left=$((seconds - (SECONDS - started)))
+		[ "$left" -lt 1 ] && left=1
+		timeout "$left" bash -c "$then" &
 		then_pid=$!
 	fi
 	python3 - "$W/console" "$typed" "$log" <<'PY'
@@ -248,5 +252,11 @@ if [ -n "$reached" ]; then
 	echo "qemu-kernel: after $((SECONDS - started)) s: $(grep -aoE "$until_text" "$log" | head -1)"
 else
 	echo "qemu-kernel: \"$until_text\" not seen in $((SECONDS - started)) s"
+	# QEMU's own errors (a bad --qemu, accelerator or firmware, or an early exit) are the likely cause: show them
+	# before the EXIT trap removes the work directory
+	if [ -s "$W/qemu.err" ]; then
+		echo "qemu-kernel: QEMU's stderr:" >&2
+		cat "$W/qemu.err" >&2
+	fi
 	exit 1
 fi
