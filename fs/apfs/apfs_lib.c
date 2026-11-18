@@ -533,8 +533,8 @@ node_parse(struct apfs_btree *tree, const uint8_t *blk, struct node *n)
 	n->fixed = (n->flags & APFS_BTNODE_FIXED_KV_SIZE) != 0;
 	n->leaf = (n->flags & APFS_BTNODE_LEAF) != 0;
 
-	if (n->level >= APFS_MAX_LEVELS) {
-		return EIO;
+	if (n->level >= APFS_MAX_LEVELS || n->leaf != (n->level == 0)) {
+		return EIO;             /* (a leaf is level 0, and only a leaf is) */
 	}
 	n->toc_off = 56 + ts_off;
 	n->toc_len = ts_len;
@@ -1382,7 +1382,14 @@ seek_to(struct apfs_btree *tree, const struct seek_target *t, struct apfs_cursor
 			}
 			cur->depth++;
 			cur->hash8[cur->depth] = h8;
-			error = node_at_h(tree, addr, h8, &blk, &n);
+			{
+				uint16_t up = n.level;
+
+				error = node_at_h(tree, addr, h8, &blk, &n);
+				if (error == 0 && n.level + 1 != up) {
+					error = EIO;    /* (a child one level below its parent: no tree that points back up) */
+				}
+			}
 		}
 		if (error) {
 			return error;
@@ -1478,11 +1485,27 @@ apfs_cursor_next(struct apfs_cursor *cur, struct apfs_rec *rec)
 			cur->node[cur->depth] = child;
 			cur->index[cur->depth] = 0;
 			cur->hash8[cur->depth] = h8;
-			error = node_at_h(tree, child, h8, &blk, &n);
+			{
+				uint16_t up = n.level;
+
+				error = node_at_h(tree, child, h8, &blk, &n);
+				if (error == 0 && n.level + 1 != up) {
+					error = EIO;
+				}
+			}
 			if (error) {
 				return error;
 			}
 			if (n.leaf) {
+				/*
+				 * (a corrupted tree whose index entries all name the same leaf -- or a few, round and round -- would
+				 * have one walk go on for ever under the mount's lock: the same leaf twice in a row, or more leaves
+				 * than the tree says it has nodes, and the walk is over)
+				 */
+				if (child == cur->last_leaf || ++cur->leaves > 2 * tree->node_count + 16) {
+					return EIO;
+				}
+				cur->last_leaf = child;
 				break;
 			}
 		}
@@ -2268,7 +2291,14 @@ fext_seek(struct apfs_btree *tree, uint64_t id, uint64_t off, struct apfs_cursor
 			return EIO;
 		}
 		cur->depth++;
-		error = node_at(tree, addr, &blk, &n);
+		{
+			uint16_t up = n.level;
+
+			error = node_at(tree, addr, &blk, &n);
+			if (error == 0 && n.level + 1 != up) {
+				error = EIO;
+			}
+		}
 		if (error) {
 			return error;
 		}

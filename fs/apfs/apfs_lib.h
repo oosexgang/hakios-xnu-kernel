@@ -355,6 +355,8 @@ struct apfs_cursor {
 	uint64_t           hash8[APFS_MAX_LEVELS];  /* a sealed tree's nodes: the first 8 bytes of the
 	                                            * SHA-256 the parent keeps of each (0 for the root) */
 	bool               done;
+	uint64_t           last_leaf;          /* the leaf the walk stepped into last, and ... */
+	uint64_t           leaves;             /* ... how many it has stepped into: a tree that loops is not walked for ever */
 };
 
 /* What an inode record says, after the extended fields have been picked apart. */
