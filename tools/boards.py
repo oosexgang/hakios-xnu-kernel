@@ -113,8 +113,9 @@ SOC_SCHEMA = {
     'cpufreq': {'block': (CPUFREQ_BLOCKS, False), 'epss': (int, True), 'epss_domain_size': (int, True),
                 'domains': ([int], False), 'domain_cores': ([int], True)},
 }
-# a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
-SUPPLY = re.compile(r'ldo([1-9]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
+# a camera sensor's supply: a regulator of the sensors' PMIC at a set point (a PM8008's LDO1 to LDO7: it has no more), or one
+# that a pin of the SoC switches
+SUPPLY = re.compile(r'ldo([1-7]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
 # the supply a lens motor may need switched on: an RPMh regulator by its name in the command database, at a voltage
 FOCUS_SUPPLY = re.compile(r'([a-z]{3,4}[a-z]?[0-9]{1,2}) (\d{3,4})mV')
 # the sensor chips the camera driver knows (board/camera.c, chips[]: their registers, colour order and gains)

@@ -576,9 +576,12 @@ show_ldo(unsigned n)
 
 /*
  * An LDO on as Android's regulator framework puts it on (set point, load -> normal mode, enable),
- * then ready within 10 tries of the driver's wait, and not over its current.
+ * then ready within 10 tries of the driver's wait, and not over its current. The PM8008i has seven,
+ * LDO1 to LDO7: another number (a board's, not to be trusted past what tools/boards.py checks) is
+ * refused before anything is read, written or remembered of it.
  */
-static bool ldo_was_on[8], ldo_switched[8];
+#define PM8008_LDOS             7
+static bool ldo_was_on[PM8008_LDOS + 1], ldo_switched[PM8008_LDOS + 1];      /* (by the LDO's number: [0] is not used) */
 
 static bool
 ldo_on(unsigned n, unsigned mv)
@@ -586,6 +589,11 @@ ldo_on(unsigned n, unsigned mv)
 	uint16_t base = (uint16_t)LDO_BASE(n);
 	uint8_t enable = 0, mode = 0, status = 0;
 
+	if (n < 1 || n > PM8008_LDOS) {
+		say("camera: PM8008i LDO%u: the chip has LDO1 to LDO%u\n", n, PM8008_LDOS);
+		give_up("an LDO the PM8008i has not");
+		return false;
+	}
 	if (!sensor_ldo(n, mv)) {
 		give_up("a voltage that is not Android's");
 		return false;
@@ -657,8 +665,8 @@ ldo_off(unsigned n)
 {
 	uint8_t enable = 0;
 
-	if (!ldo_switched[n]) {
-		return;
+	if (n < 1 || n > PM8008_LDOS || !ldo_switched[n]) {
+		return;                 /* (one past the seventh was never switched on: ldo_on() refuses it) */
 	}
 	if (pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_ENABLE), &enable, 1) &&
 	    pm8008_put(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_ENABLE), (uint8_t)(enable & ~0x80), true)) {
@@ -1165,7 +1173,7 @@ power_down(void)
 	uint32_t count = 0;
 	const struct ctab_entry *e = ctab != NULL ? ctab_block(ctab_power, 2, "pwrdn", &count) : NULL;
 
-	for (unsigned n = 1; n <= 7; n++) {
+	for (unsigned n = 1; n <= PM8008_LDOS; n++) {
 		was |= ldo_switched[n];
 	}
 	if (!was) {
@@ -1345,7 +1353,7 @@ read_chip_id(void)
 static bool
 healthy(void)
 {
-	for (unsigned n = 1; n <= 7; n++) {
+	for (unsigned n = 1; n <= PM8008_LDOS; n++) {
 		uint8_t status = 0;
 
 		if (!ldo_switched[n]) {
@@ -1559,16 +1567,27 @@ rail_position(const char *name, uint32_t level, uint32_t *address)
 	return -1;
 }
 
-/* Up to three writes to RPMh's resources through the camera's TCS, waited for. True: RPMh has said done. */
-static bool
+/*
+ * What became of a request to RPMh (rpmh_write()). One that was triggered but not answered may well be in force
+ * all the same (as board/ddr.c takes it): what sent it marks it voted, and gives it back as it gives back one
+ * that was answered.
+ */
+enum rpmh_sent {
+	RPMH_NOT_SENT,          /* the TCS was busy: nothing was sent */
+	RPMH_NO_ANSWER,         /* triggered, but RPMh did not say done within 100 ms */
+	RPMH_DONE,              /* RPMh has said done */
+};
+
+/* Up to three writes to RPMh's resources through the camera's TCS, waited for. */
+static enum rpmh_sent
 rpmh_write(unsigned n, const uint32_t *addresses, const uint32_t *values)
 {
 	vm_offset_t tcs = rsc + RSC_TCS(CAMERA_TCS);
 	uint32_t done = 0, all = (1u << n) - 1;
 
 	if (rd(tcs + TCS_STATUS) == 0) {
-		say("camera: TCS %u of the sequencer is busy (control %#x)\n", CAMERA_TCS, rd(tcs + TCS_CONTROL));
-		return false;
+		say("camera: TCS %u of the sequencer is busy (control %#x): nothing sent\n", CAMERA_TCS, rd(tcs + TCS_CONTROL));
+		return RPMH_NOT_SENT;
 	}
 	wr(rsc + RSC_IRQ_CLEAR, 1u << CAMERA_TCS);
 	for (unsigned r = 0; r < n; r++) {
@@ -1599,15 +1618,20 @@ rpmh_write(unsigned n, const uint32_t *addresses, const uint32_t *values)
 	wr(rsc + RSC_IRQ_CLEAR, 1u << CAMERA_TCS);
 	wr(tcs + TCS_CONTROL, rd(tcs + TCS_CONTROL) & ~(TCS_TRIGGER | TCS_ACTIVE_MODE));
 	wr(tcs + TCS_ENABLED, 0);
-	return done != 0;
+	return done != 0 ? RPMH_DONE : RPMH_NO_ANSWER;
 }
 
-/* CX and MX at the camera's levels, or given back (`on' false). True: RPMh has said done. */
+/*
+ * CX and MX at the camera's levels, or given back (`on' false). True: RPMh has said done. The vote is marked
+ * (rails_voted) once it was sent, answered or not, and the mark goes only when RPMh has said done to its
+ * withdrawal: one that was not answered is made again (titan_down(), and at the run's end).
+ */
 static bool
 rails(bool on)
 {
 	uint32_t addresses[2], values[2];
 	int cx = rail_position("cx.lvl", CX_LEVEL, &addresses[0]), mx = rail_position("mx.lvl", MX_LEVEL, &addresses[1]);
+	enum rpmh_sent sent;
 	bool done;
 
 	if (cx < 0 || mx < 0) {
@@ -1616,10 +1640,16 @@ rails(bool on)
 	}
 	values[0] = on ? (uint32_t)cx : 0;
 	values[1] = on ? (uint32_t)mx : 0;
-	rails_voted |= on;
-	done = rpmh_write(2, addresses, values);
-	say("camera: RPMh %s CX (%#x) position %u and MX (%#x) position %u%s\n", done ? "took" : "DID NOT SAY IT TOOK", addresses[0],
-	    values[0], addresses[1], values[1], on ? "" : " (given back)");
+	sent = rpmh_write(2, addresses, values);
+	done = sent == RPMH_DONE;
+	if (on && sent != RPMH_NOT_SENT) {
+		rails_voted = true;
+	} else if (!on && done) {
+		rails_voted = false;
+	}
+	say("camera: RPMh %s CX (%#x) position %u and MX (%#x) position %u%s\n", done ? "took" : sent == RPMH_NOT_SENT ? "WAS NOT ASKED FOR" :
+	    "DID NOT SAY IT TOOK", addresses[0], values[0], addresses[1], values[1], on ? "" : rails_voted ? " (given back: to be asked again)" :
+	    " (given back)");
 	return done;
 }
 
@@ -2409,7 +2439,8 @@ paths_down(void)
 static bool
 titan_up(void)
 {
-	static vm_offset_t csiphys[4];
+	/* (a mapping each: as many CSIPHYs as camera { } may list, and sensors_from_board() takes none past its count) */
+	static vm_offset_t csiphys[HAKIOS_CAMERA_CLOCKS];
 
 	if (csid == 0) {
 		csid = ml_io_map(CSID_PHYS, 0x1000);
@@ -2437,8 +2468,7 @@ titan_down(void)
 	clocks_down();
 	pll0_down();
 	if (rails_voted) {
-		rails_voted = false;
-		(void)rails(false);
+		(void)rails(false);     /* (still marked when RPMh did not say done: asked again next time, at the latest at the run's end) */
 	}
 }
 
@@ -2764,14 +2794,16 @@ sensor_write(uint16_t address, uint16_t value, bool sixteen)
 #define VRM_MODE                0x8
 #define VRM_MODE_HPM            7               /* a PMIC5 LDO's high power mode */
 
-static bool vaf_voted;
+static bool vaf_voted;                  /* a vote of ours on the lens motor's supply was sent: to be given back */
+static uint32_t vaf_at;                 /* ... to that resource (the sensor's then: another may be chosen before it is given back) */
+static const char *vaf_name;
 static uint32_t af_position = HAKIOS_CAMERA_NO_FOCUS;
 
 /* (a look, for now: what the LDOs say after the motor does something; said only when not all is well) */
 static void
 af_look(const char *when)
 {
-	for (unsigned n = 1; n <= 7; n++) {
+	for (unsigned n = 1; n <= PM8008_LDOS; n++) {
 		uint8_t status = 0;
 
 		if (ldo_switched[n] && pm8008_get(PM8008_REGULATORS, (uint16_t)(LDO_BASE(n) + LDO_STATUS1), &status, 1) &&
@@ -2796,7 +2828,12 @@ af_write(uint8_t reg, uint16_t value)
 	return i2c_transfer(&cci_bus, AF_ADDRESS, out, reg == AF_POSITION ? 3 : 2, NULL, 0);
 }
 
-/* The lens motor's supply (the sensor node's focus-supply) on in high power mode, or given back. True: RPMh has said done. */
+/*
+ * The lens motor's supply (the sensor node's focus-supply) on in high power mode, or given back: its enable,
+ * mode and voltage each back to 0, no request of ours, as the rails are given back. True: RPMh has said done.
+ * The vote is marked (vaf_voted) once it was sent, answered or not, and the mark goes only when RPMh has said
+ * done to its withdrawal: af_down() asks again, at the latest at the run's end.
+ */
 static bool
 vaf(bool on)
 {
@@ -2804,27 +2841,49 @@ vaf(bool on)
 	uint16_t levels[1];
 	unsigned count;
 	uint32_t base, addresses[3], values[3];
-	bool done;
+	enum rpmh_sent sent;
 
-	if (wired->focus_supply[0] == 0) {
-		say("camera: the board names no supply for the lens motor (focus-supply)\n");
-		return false;
+	if (!on) {
+		if (!vaf_voted) {
+			return true;    /* (nothing of ours to give back) */
+		}
+		base = vaf_at;
+		addresses[0] = base + VRM_ENABLE;
+		addresses[1] = base + VRM_MODE;
+		addresses[2] = base + VRM_VOLTAGE;
+		values[0] = values[1] = values[2] = 0;
+	} else {
+		if (wired->focus_supply[0] == 0) {
+			say("camera: the board names no supply for the lens motor (focus-supply)\n");
+			return false;
+		}
+		if ((base = rpmh_resource(wired->focus_supply, levels, 1, &count)) == 0) {
+			say("camera: RPMh has no %s (the lens motor's supply)\n", wired->focus_supply);
+			return false;
+		}
+		addresses[0] = base + VRM_VOLTAGE;
+		values[0] = wired->focus_mv;
+		addresses[1] = base + VRM_MODE;
+		values[1] = VRM_MODE_HPM;
+		addresses[2] = base + VRM_ENABLE;
+		values[2] = 1;
 	}
-	if ((base = rpmh_resource(wired->focus_supply, levels, 1, &count)) == 0) {
-		say("camera: RPMh has no %s (the lens motor's supply)\n", wired->focus_supply);
-		return false;
+	sent = rpmh_write(3, addresses, values);
+	if (on && sent != RPMH_NOT_SENT) {
+		vaf_voted = true;
+		vaf_at = base;
+		vaf_name = wired->focus_supply;
+	} else if (!on && sent == RPMH_DONE) {
+		vaf_voted = false;
 	}
-	addresses[0] = base + VRM_VOLTAGE;
-	values[0] = wired->focus_mv;
-	addresses[1] = base + VRM_MODE;
-	values[1] = VRM_MODE_HPM;
-	addresses[2] = base + VRM_ENABLE;
-	values[2] = on;
-	done = on ? rpmh_write(3, addresses, values) : rpmh_write(1, &addresses[2], &values[2]);
-	vaf_voted = on && done;
-	say("camera: RPMh %s %s (%#x) %s, %u mV\n", done ? "took" : "DID NOT SAY IT TOOK", wired->focus_supply, base, on ? "on" : "off",
-	    wired->focus_mv);
-	return done;
+	if (on) {
+		say("camera: RPMh %s %s (%#x) on, %u mV\n", sent == RPMH_DONE ? "took" : sent == RPMH_NOT_SENT ? "WAS NOT ASKED FOR" :
+		    "DID NOT SAY IT TOOK", wired->focus_supply, base, wired->focus_mv);
+	} else {
+		say("camera: RPMh %s %s (%#x) given back%s\n", sent == RPMH_DONE ? "took" : sent == RPMH_NOT_SENT ? "WAS NOT ASKED FOR" :
+		    "DID NOT SAY IT TOOK", vaf_name, base, vaf_voted ? ": to be asked again" : "");
+	}
+	return sent == RPMH_DONE;
 }
 
 static void
@@ -2837,6 +2896,7 @@ af_up(bool sensor_frames)
 	if (!af_write(AF_CONTROL, 0x01)) {
 		say("camera: the lens motor (DW9800 at 0x0c) does not answer: its supply on\n");
 		if (!vaf(true)) {
+			(void)vaf(false);       /* (sent but not answered, it may be in force: given back; nothing when it was not sent) */
 			return;
 		}
 		wait_ms(2);
@@ -3077,8 +3137,10 @@ capture_sensor(void)
  * SOF (the register update is latched there): a whole frame's time to give it in, not the blanking
  * between two frames. Should no address be waiting at an SOF (the write master's frame increment is
  * 0 here: it then writes the frame where the last one went, not past it), that frame is counted as
- * written over. The exposure the program asks for is written between two frames, after
- * the address, in the sensor's group hold; it counts from the second frame after.
+ * written over -- and the one before it, done while no address was waiting, is dropped rather than
+ * given to a read that would copy it while it is written over (place_written()). The exposure the
+ * program asks for is written between two frames, after the address, in the sensor's group hold; it
+ * counts from the second frame after.
  *
  * A picture for the host (HAKIOS_CAMERA_KEEP: what the program made of a frame) goes into one
  * piece of memory the loader hands over after the run, as cam=3 and cam=4's frames do (the first generation's xl camera).
@@ -3238,6 +3300,9 @@ ring_alloc(uint32_t frame_bytes)
 	return true;
 }
 
+/* the sensor was sent its "on" in this session: its "off" is due at the end (not to a sensor a start left before it) */
+static bool darwin_sensor_on;
+
 /* The session's end, whatever ended it: the sensor's "off", the blocks, the supplies, the memory. */
 static void
 darwin_stop(const char *why)
@@ -3249,9 +3314,10 @@ darwin_stop(const char *why)
 	}
 	lck_mtx_unlock(&darwin_lock);
 	wakeup(&darwin_frames_done);
-	if (!broken && darwin_source != SOURCE_CSID_TPG) {
+	if (!broken && darwin_sensor_on && darwin_source != SOURCE_CSID_TPG) {
 		(void)sensor_table("off");
 	}
+	darwin_sensor_on = false;
 	af_down();
 	/* (only when the paths were set up: a start that failed before them -- a PMIC that did not answer -- has no CSID mapped) */
 	if (csid_running || ife_running) {
@@ -3264,6 +3330,53 @@ darwin_stop(const char *why)
 	ring_free();
 	say("camera: the frames for Darwin stopped (%s): %llu done, %llu given, %llu written over\n", why, darwin_frames_done, darwin_given,
 	    darwin_writes_late);
+}
+
+/*
+ * The places at the IFE's end of a frame and at its start of one (darwin_lock held). `writing' is the place
+ * the IFE writes in; `next' the one whose address it was given at the last SOF for the frame after (-1: none was
+ * free, every other place a reader's). Without one the IFE writes the next frame where it wrote this one: so a
+ * frame done then is dropped, not given to a reader who would copy it while it is written over, and a place a
+ * reader holds is never taken back from it.
+ */
+static bool
+place_written(int writing, int next)
+{
+	if (next < 0 || place[writing].state != PLACE_WRITING) {
+		return false;
+	}
+	place[writing].state = PLACE_READY;
+	place[writing].sequence = darwin_frames_done;
+	place[writing].time = mach_absolute_time();
+	place[writing].exposure_lines = darwin_now.lines;
+	place[writing].gain = darwin_now.gain;
+	place[writing].frame_lines = darwin_now.frame_lines;
+	return true;
+}
+
+static void
+place_started(int *writing, int *next)
+{
+	if (*next >= 0) {
+		*writing = *next;       /* (the address given at the last SOF, taken at this one) */
+		*next = -1;
+	} else {
+		darwin_writes_late++;   /* no address waiting: this frame goes where the last one went */
+	}
+	if (place[*writing].state != PLACE_READING) {
+		place[*writing].state = PLACE_WRITING;
+	}
+	/* the address for the frame after this one, taken at the next SOF: a whole frame's time to give it in */
+	for (int i = 0; i < RING; i++) {
+		int c = (*writing + 1 + i) % RING;
+
+		if (c != *writing && place[c].state != PLACE_READING && (*next < 0 || place[c].sequence < place[*next].sequence)) {
+			*next = c;
+		}
+	}
+	if (*next >= 0) {
+		place[*next].state = PLACE_QUEUED;      /* (a reader that came now would read what the IFE writes over) */
+	}
 }
 
 static const char *darwin_res(void);
@@ -3322,6 +3435,7 @@ darwin_start(void)
 	darwin_ask.pending = false;
 	lck_mtx_unlock(&darwin_lock);
 	exposure_limits(&lines, &gain, &frame_lines);
+	darwin_sensor_on = true;
 	if (!sensor_table("on") || !exposure_write(lines, gain, frame_lines)) {
 		return false;
 	}
@@ -3335,17 +3449,28 @@ darwin_start(void)
 	return true;
 }
 
-static void
+/*
+ * The sensor and mode of the last session that started: where serve_darwin() goes back to when another does not
+ * start (with no fault: no memory for its frames, a table it has not), rather than give the camera up for the run.
+ */
+static bool darwin_started;
+static unsigned darwin_started_sensor;
+static uint32_t darwin_started_mode;
+
+/* A session, until it ends; false when it did not start without a fault (everything is down again, nothing given up). */
+static bool
 darwin_session(void)
 {
 	int writing = 0, next = 0;      /* (place 0's address is the write master's from ife_config(): taken at the first SOF) */
 	uint64_t last_frame;
 
 	if (!darwin_start()) {
-		give_up("the camera did not start");
 		darwin_stop("it did not start");
-		return;
+		return broken;
 	}
+	darwin_started = true;
+	darwin_started_sensor = hw_index;
+	darwin_started_mode = darwin_mode_n;
 	last_frame = darwin_ms();
 	blk_put(ife, "IFE", IFE_IRQ_CLEAR0, 0xffffffff, false);
 	blk_put(ife, "IFE", IFE_IRQ_GLOBAL_CLEAR, 1, false);
@@ -3396,31 +3521,11 @@ darwin_session(void)
 				darwin_now = darwin_next;
 				darwin_next.from = 0;
 			}
-			place[writing].state = PLACE_READY;
-			place[writing].sequence = darwin_frames_done;
-			place[writing].time = mach_absolute_time();
-			place[writing].exposure_lines = darwin_now.lines;
-			place[writing].gain = darwin_now.gain;
-			place[writing].frame_lines = darwin_now.frame_lines;
+			(void)place_written(writing, next);
 		}
 		if (top & RDI0_SOF) {
+			place_started(&writing, &next);
 			if (next >= 0) {
-				writing = next;         /* (the address given at the last SOF, taken at this one) */
-				next = -1;
-			} else {
-				darwin_writes_late++;      /* no address waiting: this frame goes where the last one went */
-			}
-			place[writing].state = PLACE_WRITING;
-			/* the address for the frame after this one, taken at the next SOF: a whole frame's time to give it in */
-			for (int i = 0; i < RING; i++) {
-				int c = (writing + 1 + i) % RING;
-
-				if (c != writing && place[c].state != PLACE_READING && (next < 0 || place[c].sequence < place[next].sequence)) {
-					next = c;
-				}
-			}
-			if (next >= 0) {
-				place[next].state = PLACE_QUEUED;       /* (a reader that came now would read what the IFE writes over) */
 				blk_put(ife, "IFE", WM0_IMAGE_ADDR, (uint32_t)(FRAME_ADDRESSES + (uint64_t)next * ring_place_bytes), false);
 				blk_put(ife, "IFE", IFE_REG_UPDATE, 0x2, false);
 			}
@@ -3466,6 +3571,7 @@ darwin_session(void)
 		}
 	}
 	darwin_stop(broken ? "a fault" : !darwin_open ? "closed" : darwin_switch_to != 0 ? "another sensor asked for" : "nobody reads");
+	return true;
 }
 
 /*
@@ -3865,10 +3971,24 @@ camdev_make(void)
 }
 
 /*
+ * A mode the sessions take: at most 13 megapixels and 30 frames a second (31 with what a table rounds). The
+ * ring is three of its frames, wired; a mode past that, asked for by any process that opens the node, would
+ * take hundreds of megabytes of the phone's memory.
+ */
+#define DARWIN_MOST_PIXELS      13000000ull
+#define DARWIN_MOST_FPS_MILLI   31000u
+
+static bool
+darwin_mode_fits(const struct ctab_mode *o)
+{
+	return (uint64_t)o->width * o->height <= DARWIN_MOST_PIXELS && o->fps_milli <= DARWIN_MOST_FPS_MILLI;
+}
+
+/*
  * The sensor (and its mode) the sessions take: its tables, the mode asked for or else the one with
- * the most pixels of those at 4:3, at most 30 frames a second and 13 megapixels (the wide one's
- * 4000x3000, the front one's 2304x1728, the ultra-wide's 3264x2448, the macro's 1600x1200), the
- * colour bars' source (cam_pattern), the first exposure. False if the sensor cannot be used.
+ * the most pixels of those at 4:3 that darwin_mode_fits() (the wide one's 4000x3000, the front one's
+ * 2304x1728, the ultra-wide's 3264x2448, the macro's 1600x1200), the colour bars' source (cam_pattern),
+ * the first exposure. False if the sensor cannot be used, or the mode asked for is past those limits.
  */
 static bool
 darwin_select(unsigned index, uint32_t mode_n)
@@ -3888,11 +4008,17 @@ darwin_select(unsigned index, uint32_t mode_n)
 			const struct ctab_mode *o = &ctab_modes[m];
 			uint64_t pixels = (uint64_t)o->width * o->height;
 
-			if (o->width * 3 == o->height * 4 && o->fps_milli <= 31000 && pixels <= 13000000 && pixels > best) {
+			if (o->width * 3 == o->height * 4 && darwin_mode_fits(o) && pixels > best) {
 				best = pixels;
 				mode_n = m;
 			}
 		}
+	}
+	if (!darwin_mode_fits(&ctab_modes[mode_n])) {
+		say("camera: mode %u (%ux%u, %u.%03u frames/s) is more than the sessions take (%llu pixels, %u.%03u frames/s at most)\n", mode_n,
+		    ctab_modes[mode_n].width, ctab_modes[mode_n].height, ctab_modes[mode_n].fps_milli / 1000, ctab_modes[mode_n].fps_milli % 1000,
+		    DARWIN_MOST_PIXELS, DARWIN_MOST_FPS_MILLI / 1000, DARWIN_MOST_FPS_MILLI % 1000);
+		return false;
 	}
 	darwin_mode_n = mode_n;
 	darwin_mode = &ctab_modes[mode_n];
@@ -3935,8 +4061,8 @@ serve_darwin(void)
 		return;
 	}
 	(void)PE_parse_boot_argn("cam_mode", &mode_n, sizeof(mode_n));
-	if (!darwin_select(hw_index, mode_n)) {
-		return;
+	if (!darwin_select(hw_index, mode_n) && (mode_n == ~0u || !darwin_select(hw_index, ~0u))) {
+		return;                 /* (a cam_mode that cannot be used: the usual mode instead) */
 	}
 	while (!broken) {
 		lck_mtx_lock(&darwin_lock);
@@ -3974,8 +4100,23 @@ serve_darwin(void)
 		lck_mtx_unlock(&darwin_lock);
 		if (fake) {
 			fake_session();
-		} else {
-			darwin_session();
+		} else if (!darwin_session()) {
+			/*
+			 * It did not start, with no fault, and everything is down again: back to the sensor and mode that
+			 * last started, if that was another. Else (the first session, or that one itself) given up as before.
+			 */
+			unsigned was_sensor = hw_index;
+			uint32_t was_mode = darwin_mode_n;
+
+			if (darwin_started && (darwin_started_sensor != was_sensor || darwin_started_mode != was_mode)) {
+				say("camera: sensor %u, mode %u did not start: back to sensor %u, mode %u\n", was_sensor, was_mode,
+				    darwin_started_sensor, darwin_started_mode);
+				if (darwin_select(darwin_started_sensor, darwin_started_mode)) {
+					continue;
+				}
+			}
+			give_up("the camera did not start");
+			break;
 		}
 	}
 	say("camera: /dev/hakios-camera: no more frames in this run\n");

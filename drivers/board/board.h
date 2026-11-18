@@ -74,7 +74,7 @@ enum {
 /* how a camera sensor's supply is switched (board: sensor@N { } vana, vdig, vio) */
 enum {
 	HAKIOS_SUPPLY_NONE = 0,                 /* not switched: always on, or not there */
-	HAKIOS_SUPPLY_LDO  = 1,                 /* "ldoN MVmV": a regulator of the sensors' PMIC, at a set point */
+	HAKIOS_SUPPLY_LDO  = 1,                 /* "ldoN MVmV": a regulator of the sensors' PMIC (a PM8008's LDO1 to LDO7), at a set point */
 	HAKIOS_SUPPLY_GPIO = 2,                 /* "gpioN MVmV USus": a fixed regulator that a pin of the SoC switches */
 };
 

@@ -783,6 +783,8 @@ class Generate(Sandbox):
         # what a sensor's node may not say, each with the reason
         for wrong, said in ((wide.replace('"S5KHM2SD"', '"IMX766"'), 'chip = \'IMX766\': one of OV02B10'),
                             (wide.replace('"ldo1 1000mV"', '"ldo1 1V"'), "vdig = 'ldo1 1V': not in the form"),
+                            (wide.replace('"ldo1 1000mV"', '"ldo8 1000mV"'), "vdig = 'ldo8 1000mV': not in the form"),   # (a PM8008 has 7)
+                            (wide.replace('"ldo1 1000mV"', '"ldo0 1000mV"'), "vdig = 'ldo0 1000mV': not in the form"),
                             (wide.replace('"ldoc9 2800mV"', '"L9C"'), "focus-supply = 'L9C': not in the form"),
                             (wide.replace('mclk = <1>;', 'mclk = <8>;'), 'mclk and csiphy are numbers'),
                             (wide.replace('cci = <0 1>;', 'cci = <2 1>;'), 'cci is the CCI and its master'),

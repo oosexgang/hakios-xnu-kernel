@@ -7,7 +7,10 @@
  * chip or a clock the driver does not know, or no sensor, is refused with the reason; and the clocks' rates
  * and dividers the driver works out of the SoC file's PLL configurations are the ones it had written in.
  * Besides: the PM8008i's registers a write may reach (its chip enable, the sensor's own LDOs' set point, mode
- * and enable, nothing else), and a sensor's table (RWCTAB02) taken only when it is whole.
+ * and enable, nothing else), and none of an LDO it has not; a sensor's table (RWCTAB02) taken only when it is whole;
+ * a CSIPHY past the fourth mapped where it is; the camera's votes to RPMh (the rails, the lens motor's supply)
+ * given back also when RPMh did not answer, until it does; a mode past what the sessions take refused; and the
+ * places of the frames for Darwin, of which one a reader holds is never the IFE's.
  *
  *   camera_wiring_test SCENARIO
  */
@@ -34,12 +37,63 @@ in_camcc(vm_offset_t address)
 	return address >= CAMCC_AT && address < CAMCC_AT + sizeof(camcc_memory);
 }
 
+/*
+ * (and RPMh's sequencer, for the scenarios of the camera's votes: the TCS it sends through, the second, which
+ * a trigger sends and RPMh answers in the interrupt status, unless it is deaf; or busy, never idle)
+ */
+#define RSC_AT          0x18220000ul
+#define TCS1            (rsc_tcs_at + 672)
+static uint32_t rsc_memory[0x10000 / 4];
+static uint32_t rsc_tcs_at;             /* the board's rpmh { } tcs_offset */
+static bool rpmh_deaf, rpmh_busy;
+static struct { uint32_t address, value; } rpmh_sent[32];
+static unsigned rpmh_sends, rpmh_triggers;
+
+static bool
+in_rsc(vm_offset_t address)
+{
+	return address >= RSC_AT && address < RSC_AT + sizeof(rsc_memory);
+}
+
+static uint32_t
+rsc_rd(uint32_t at)
+{
+	return at == TCS1 + 0x18 ? !rpmh_busy : rsc_memory[at / 4];
+}
+
+static void
+rsc_wr(uint32_t at, uint32_t value)
+{
+	uint32_t was = rsc_memory[at / 4];
+
+	if (at == rsc_tcs_at + 0x08) {
+		rsc_memory[(rsc_tcs_at + 0x04) / 4] &= ~value;          /* the interrupts cleared */
+		return;
+	}
+	rsc_memory[at / 4] = value;
+	if (at == TCS1 + 0x14 && !(was & 1u << 24) && (value & 1u << 24) && (value & 1u << 16)) {
+		rpmh_triggers++;
+		for (unsigned c = 0; c < 16; c++) {
+			if ((rsc_memory[(TCS1 + 0x1c) / 4] >> c & 1) && rpmh_sends < 32) {
+				rpmh_sent[rpmh_sends].address = rsc_memory[(TCS1 + 0x30 + 20 * c + 4) / 4];
+				rpmh_sent[rpmh_sends++].value = rsc_memory[(TCS1 + 0x30 + 20 * c + 8) / 4];
+			}
+		}
+		if (!rpmh_deaf) {
+			rsc_memory[(rsc_tcs_at + 0x04) / 4] |= 1u << 1;
+		}
+	}
+}
+
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
 	accesses++;
 	if (in_camcc(address)) {
 		return camcc_memory[(address - CAMCC_AT) / 4];
+	}
+	if (in_rsc(address)) {
+		return rsc_rd((uint32_t)(address - RSC_AT));
 	}
 	return arbiter ? spmi_model_rd(address) : 0;
 }
@@ -48,6 +102,10 @@ void
 hakios_test_wr(vm_offset_t address, uint32_t value)
 {
 	accesses++;
+	if (in_rsc(address)) {
+		rsc_wr((uint32_t)(address - RSC_AT), value);
+		return;
+	}
 	if (in_camcc(address)) {
 		camcc_writes++;
 		if ((long)(address - CAMCC_AT) != camcc_deaf) {
@@ -85,6 +143,7 @@ struct fake_lock hakios_smmu_lock = { PTHREAD_MUTEX_INITIALIZER };
 #include "board/board.c"
 #include "board/camera.c"
 #undef printf
+#include "cmd_db_image.h"               /* (the command database the votes are looked up in) */
 
 uint64_t loader_recording[3];          /* (the loader's, where the driver says which memory holds a recording) */
 
@@ -515,6 +574,239 @@ camera_table(void)
 	CHECK(!takes(whole), "a power sequence that says it is longer than the file: refused");
 }
 
+/*
+ * An LDO the PM8008i has not (a board's eighth or ninth): refused before the bus is touched or anything is
+ * remembered of it, and switching it off is nothing
+ */
+static void
+ldo_past_seventh(void)
+{
+	struct hakios_board *board = board_to_change();
+	unsigned before;
+
+	board->cameras.sensors[2].vana = (struct hakios_camera_supply){ HAKIOS_SUPPLY_LDO, 8, 2800, 0, 0 };
+	board->cameras.sensors[2].vdig = (struct hakios_camera_supply){ HAKIOS_SUPPLY_LDO, 9, 1200, 0, 0 };
+	CHECK(sensors_from_board(), "the board's sensors");
+	select_sensor(2);
+	before = accesses;
+	CHECK(!ldo_on(8, 2800) && broken && accesses == before, "LDO8: refused, the bus untouched (%u accesses)", accesses - before);
+	CHECK(logged("PM8008i LDO8: the chip has LDO1 to LDO7"), "said: %s", log_text);
+	broken = false;
+	CHECK(!ldo_on(9, 1200) && broken && accesses == before, "LDO9: refused");
+	broken = false;
+	CHECK(!ldo_on(0, 2800) && broken && accesses == before, "LDO0: refused");
+	ldo_off(8);
+	ldo_off(9);
+	ldo_off(0);
+	CHECK(accesses == before, "switched off: nothing (%u accesses)", accesses - before);
+}
+
+/* a sensor on a CSIPHY past the fourth (camera { } may list eight): mapped where it is, as the others */
+static void
+csiphy_past_fourth(void)
+{
+	struct hakios_board *board = board_to_change();
+
+	board->camera.csiphy_count = HAKIOS_CAMERA_CLOCKS;
+	board->cameras.sensors[1].csiphy = HAKIOS_CAMERA_CLOCKS - 1;
+	CHECK(sensors_from_board() && sensors[1].csiphy == HAKIOS_CAMERA_CLOCKS - 1, "taken: %s", log_text);
+	select_sensor(1);
+	camcc = CAMCC_AT;
+	camcc_memory[TITAN_TOP_GDSCR / 4] = GDSC_ON;
+	/* (RPMh's database has no rails here: titan_up() stops at them, after the CSIPHY is mapped) */
+	cmd_db = DB;
+	board->rpmh.cmd_db_size = SIZE;
+	empty();
+	CHECK(!titan_up(), "stopped at the rails");
+	CHECK(csiphy == CSIPHY_PHYS(HAKIOS_CAMERA_CLOCKS - 1), "CSIPHY %u at %#lx: %#lx", HAKIOS_CAMERA_CLOCKS - 1,
+	    (unsigned long)CSIPHY_PHYS(HAKIOS_CAMERA_CLOCKS - 1), (unsigned long)csiphy);
+	select_sensor(2);
+	broken = false;
+	(void)titan_up();
+	CHECK(csiphy == CSIPHY_PHYS(0), "the front one's, CSIPHY 0, after it");
+}
+
+/* RPMh's database with the rails and the lens motor's supply, and the sequencer where the camera finds it */
+#define CX_AT           0x30000u
+#define MX_AT           0x30010u
+#define VAF_AT          0x40800u
+
+static void
+rpmh_there(void)
+{
+	static const uint16_t levels[] = { 0, 16, 48, 64, 128, 192, 256, 384 };
+	static const struct resource rails[] = { { "cx.lvl", CX_AT, levels, sizeof(levels) }, { "mx.lvl", MX_AT, levels, sizeof(levels) } };
+	static const struct resource regulators[] = { { "ldoc9", VAF_AT, NULL, 0 } };
+	struct hakios_board *board = board_to_change();
+
+	empty();
+	slave(0, CMD_DB_ARC, rails, 2);
+	slave(1, CMD_DB_VRM, regulators, 1);
+	board->rpmh.cmd_db_size = SIZE;
+	cmd_db = DB;
+	rsc = RSC_AT;
+	rsc_tcs_at = board->rpmh.tcs_offset;
+	CHECK(sensors_from_board(), "the board's sensors");
+	select_sensor(1);               /* (the wide one: its lens motor's supply is ldoc9 at 2800 mV) */
+	camcc = CAMCC_AT;
+}
+
+/* whether the last request sent `address' <- `value' */
+static bool
+last_sent(unsigned from, uint32_t address, uint32_t value)
+{
+	for (unsigned i = from; i < rpmh_sends; i++) {
+		if (rpmh_sent[i].address == address && rpmh_sent[i].value == value) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+ * The lens motor's supply: a vote RPMh did not answer may be in force, and is given back as one it answered --
+ * enable, mode and voltage -- and asked again until RPMh says it took the withdrawal; one never sent (the TCS
+ * busy) is not given back
+ */
+static void
+vaf_given_back(void)
+{
+	unsigned from;
+
+	rpmh_there();
+	rpmh_deaf = true;
+	CHECK(!vaf(true) && rpmh_triggers == 1, "sent, not answered");
+	CHECK(last_sent(0, VAF_AT + VRM_VOLTAGE, 2800) && last_sent(0, VAF_AT + VRM_MODE, VRM_MODE_HPM) && last_sent(0, VAF_AT + VRM_ENABLE, 1),
+	    "2800 mV, high power, on");
+	from = rpmh_sends;
+	af_down();
+	CHECK(rpmh_triggers == 2, "given back at the end all the same: %u requests", rpmh_triggers);
+	CHECK(last_sent(from, VAF_AT + VRM_ENABLE, 0) && last_sent(from, VAF_AT + VRM_MODE, 0) && last_sent(from, VAF_AT + VRM_VOLTAGE, 0),
+	    "off, its mode and its voltage given back");
+	/* the withdrawal not answered either: asked again at the next end (the run's: hakios_camera_quiesce()) */
+	rpmh_deaf = false;
+	from = rpmh_sends;
+	af_down();
+	CHECK(rpmh_triggers == 3 && last_sent(from, VAF_AT + VRM_ENABLE, 0), "asked again: %u requests", rpmh_triggers);
+	af_down();
+	CHECK(rpmh_triggers == 3, "taken: not again");
+	/* the TCS busy: nothing sent, nothing to give back */
+	rpmh_busy = true;
+	CHECK(!vaf(true) && rpmh_triggers == 3, "busy: not sent");
+	rpmh_busy = false;
+	af_down();
+	CHECK(rpmh_triggers == 3, "nothing given back that was not sent: %u requests", rpmh_triggers);
+	/* answered at once: given back once */
+	CHECK(vaf(true) && rpmh_triggers == 4, "taken");
+	af_down();
+	af_down();
+	CHECK(rpmh_triggers == 5, "given back once: %u requests", rpmh_triggers);
+}
+
+/* the rails, the same: a withdrawal RPMh did not answer is made again, at the latest at the run's end */
+static void
+rails_given_back(void)
+{
+	unsigned from;
+
+	rpmh_there();
+	rpmh_deaf = true;
+	CHECK(!rails(true) && rails_voted, "sent, not answered: voted all the same");
+	from = rpmh_sends;
+	titan_down();
+	CHECK(rpmh_triggers == 2 && last_sent(from, CX_AT, 0) && last_sent(from, MX_AT, 0), "given back: %u requests", rpmh_triggers);
+	CHECK(rails_voted, "not answered: still to be given back");
+	rpmh_deaf = false;
+	level = 5;
+	tlmm = 0x1000;                  /* (what quiesce looks at to know the camera was started) */
+	from = rpmh_sends;
+	hakios_camera_quiesce();
+	CHECK(rpmh_triggers == 3 && last_sent(from, CX_AT, 0) && last_sent(from, MX_AT, 0) && !rails_voted,
+	    "at the run's end, asked again and taken: %u requests", rpmh_triggers);
+	titan_down();
+	CHECK(rpmh_triggers == 3, "not again");
+	rpmh_busy = true;
+	leaving = false;
+	CHECK(!rails(true) && !rails_voted, "the TCS busy: nothing sent, nothing voted");
+}
+
+/* a table with these modes (width, height, frames a second): one D-PHY lane each, RAW10 */
+static void
+modes_table(const uint32_t (*modes)[3], uint32_t count)
+{
+	uint64_t whole = make_table(count, 0, 0);
+
+	for (uint32_t m = 0; m < count; m++) {
+		struct ctab_mode mode = { .width = modes[m][0], .height = modes[m][1], .lanes = 1, .pixel_clock = 100000000,
+			                  .line_length = 2000, .frame_length = 1300, .fps_milli = modes[m][2] * 1000, .data_type = RAW10_DT };
+
+		memcpy(table + sizeof(struct ctab_head) + m * sizeof(struct ctab_mode), &mode, sizeof(mode));
+	}
+	table_file = table;
+	table_size = whole;
+}
+
+/*
+ * A mode asked for by number (HAKIOS_CAMERA_SENSOR's b, cam_mode) within what the sessions take, as the usual
+ * one is chosen: past 13 megapixels or 30 frames a second it is refused, said, and nothing changes
+ */
+static void
+mode_past_limits(void)
+{
+	static const uint32_t modes[][3] = { { 1600, 1200, 30 }, { 12000, 9000, 30 }, { 1920, 1080, 120 }, { 4000, 3000, 30 } };
+
+	CHECK(sensors_from_board(), "the board's sensors");
+	modes_table(modes, 4);
+	CHECK(darwin_select(2, ~0u) && darwin_mode_n == 3, "the usual one: the 12-megapixel 4:3 one (%u)", darwin_mode_n);
+	CHECK(!darwin_select(2, 1) && darwin_mode_n == 3, "108 megapixels asked for: refused");
+	CHECK(logged("mode 1 (12000x9000, 30.000 frames/s) is more than the sessions take"), "said: %s", log_text);
+	CHECK(!darwin_select(2, 2) && darwin_mode_n == 3, "120 frames a second asked for: refused");
+	CHECK(darwin_select(2, 0) && darwin_mode_n == 0 && darwin_mode->width == 1600, "one within: taken");
+	CHECK(!broken, "nothing given up");
+}
+
+/*
+ * The three places of the frames for Darwin. Two readers hold two of them, so no address could be given at the
+ * last SOF: the IFE writes the next frame where it wrote this one, and the frame is not given to a reader (who would
+ * copy it as it is written over); a place a reader holds stays its, whatever the IFE does.
+ */
+static void
+read_place_kept(void)
+{
+	int writing = 0, next = -1;
+
+	CHECK(sensors_from_board(), "the board's sensors");
+	place[0].state = PLACE_WRITING;
+	place[1].state = PLACE_READING;
+	place[2].state = PLACE_READING;
+	place[1].sequence = 1;
+	place[2].sequence = 2;
+	darwin_frames_done = 3;
+	CHECK(!place_written(writing, next) && place[0].state == PLACE_WRITING, "frame 3 done, no other place given: dropped");
+	place_started(&writing, &next);
+	CHECK(writing == 0 && next == -1 && darwin_writes_late == 1 && place[1].state == PLACE_READING && place[2].state == PLACE_READING,
+	    "frame 4 where frame 3 went; the readers' places theirs");
+	/* a reader done: its place for the frame after the next */
+	place[1].state = PLACE_READY;
+	darwin_frames_done = 4;
+	CHECK(!place_written(writing, next) && place[0].state == PLACE_WRITING, "frame 4: dropped too (frame 5 goes there)");
+	place_started(&writing, &next);
+	CHECK(writing == 0 && next == 1 && place[1].state == PLACE_QUEUED, "frame 6's place given: 1");
+	darwin_frames_done = 5;
+	CHECK(place_written(writing, next) && place[0].state == PLACE_READY && place[0].sequence == 5, "frame 5: a reader's to take");
+	place_started(&writing, &next);
+	CHECK(writing == 1 && place[1].state == PLACE_WRITING && next == 0 && place[2].state == PLACE_READING, "frame 6 into place 1");
+	/* a place a reader took, where the IFE writes all the same (no address given): it stays the reader's */
+	place[0].state = PLACE_READING;
+	place[1].state = PLACE_READING;
+	place[2].state = PLACE_READING;
+	writing = 1;
+	next = -1;
+	place_started(&writing, &next);
+	CHECK(writing == 1 && place[1].state == PLACE_READING && next == -1, "a reader's place is not taken back");
+	CHECK(!place_written(writing, next) && place[1].state == PLACE_READING, "nor made ready under it");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -524,7 +816,9 @@ main(int argc, char **argv)
 		{ "pgpio_dropped", pgpio_dropped }, { "pgpio_given_up", pgpio_given_up }, { "unknown_chip", unknown_chip }, { "no_such_clock", no_such_clock }, { "no_sensor", no_sensor },
 		{ "clock_plan", clock_plan }, { "pm8008_whitelist", pm8008_whitelist },
 		{ "camcc_whitelist", camcc_whitelist }, { "titan_top_power_domain", titan_top_power_domain },
-		{ "camera_table", camera_table },
+		{ "camera_table", camera_table }, { "ldo_past_seventh", ldo_past_seventh }, { "csiphy_past_fourth", csiphy_past_fourth },
+		{ "vaf_given_back", vaf_given_back }, { "rails_given_back", rails_given_back }, { "mode_past_limits", mode_past_limits },
+		{ "read_place_kept", read_place_kept },
 	};
 
 	if (argc < 2) {
