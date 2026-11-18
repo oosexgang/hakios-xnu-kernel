@@ -81,5 +81,7 @@ a comment beside it in the code. This page is the map.
 - `apfs` and `ramfs` registered (`vfs_conf.c`); `/dev/console` readable by every daemon.
 - `ATTR_CMN_FULLPATH` listed as valid on every volume: without it Darwin 27 registers no application.
 - Process 1 may bind-mount without an entitlement.
+- The type name statfs, getfsstat and getattrlist report asked of ramfs first (`vfs_subr.c`): `/private/var` is
+  "apfs" to fileproviderd, for "On My iPhone" (`var_apfs=`, fs/ramfs/ramfs.c).
 - Diagnostics: `trace_open=NAME,...` and `trace_attr=NAME` log the paths and attributes a process asks
   for.

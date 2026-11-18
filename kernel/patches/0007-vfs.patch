@@ -475,6 +475,32 @@ diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
  {
  	struct vnode *dp;       /* the directory we are searching */
  	struct vnode *usedvp = ndp->ni_dvp;  /* store pointer to vp in case we must loop due to
+diff --git a/bsd/vfs/vfs_subr.c b/bsd/vfs/vfs_subr.c
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -11432,6 +11432,11 @@ vfs_getextflags(mount_t mp)
+ 	return flags_ext;
+ }
+ 
++#if RAMFS
++/* bsd/miscfs/ramfs/ramfs.c: the name a memory volume is shown by to the process asking */
++extern char *ramfs_fstypename_shown(mount_t mp, char *name);
++#endif /* RAMFS */
++
+ char *
+ vfs_getfstypenameref_locked(mount_t mp, size_t *lenp)
+ {
+@@ -11441,6 +11446,10 @@ vfs_getfstypenameref_locked(mount_t mp, size_t *lenp)
+ 		name = mp->fstypename_override;
+ 	} else {
+ 		name = mp->mnt_vfsstat.f_fstypename;
++#if RAMFS
++		/* (only the name statfs, getfsstat and getattrlist answer with: the kernel's own checks read f_fstypename) */
++		name = ramfs_fstypename_shown(mp, name);
++#endif /* RAMFS */
+ 	}
+ 	if (lenp != NULL) {
+ 		*lenp = strlen(name);
 diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
 --- a/bsd/vfs/vfs_syscalls.c
 +++ b/bsd/vfs/vfs_syscalls.c

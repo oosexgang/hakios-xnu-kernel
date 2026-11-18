@@ -25,6 +25,7 @@
 #include <kern/assert.h>
 #include <kern/kalloc.h>
 #include <kern/locks.h>
+#include <kern/startup.h>
 #include <libkern/libkern.h>
 #include <mach/vm_param.h>
 #include <sys/attr.h>
@@ -1722,6 +1723,11 @@ ramfs_readlink(struct vnop_readlink_args *ap)
  * PosterBoard asks of every directory and file of its wallpaper store and fails the store without
  * (errno -1, no poster is ever made). Purgeable files are what APFS may delete when space runs short;
  * this RAM disk deletes nothing on its own, so the mark is taken and nothing more is done.
+ *
+ * Every other request of APFS's own ('J', the group fsctl(2) and ffsctl(2) hand down here) is "not
+ * supported": fileproviderd is told /private/var is APFS (ramfs_fstypename_shown() below) and may try
+ * what only APFS does -- snapshots, sync roots, cloning a range -- and ENOTSUP is what a program that
+ * asks an APFS feature of a volume without it is prepared for. Nothing is read or written for it.
  */
 #define RAMFS_APFSIOC_MARK_PURGEABLE    _IOWR('J', 68, uint64_t)
 
@@ -1730,6 +1736,9 @@ ramfs_ioctl(struct vnop_ioctl_args *ap)
 {
 	if (ap->a_command == RAMFS_APFSIOC_MARK_PURGEABLE) {
 		return 0;
+	}
+	if (IOCGROUP(ap->a_command) == 'J') {
+		return ENOTSUP;
 	}
 	return ENOTTY;
 }
@@ -2473,6 +2482,46 @@ ramfs_vfs_getattr(mount_t mp, struct vfs_attr *fsap, __unused vfs_context_t ctx)
 		VFSATTR_SET_SUPPORTED(fsap, f_vol_name);
 	}
 	return 0;
+}
+
+/*
+ * "On My iPhone" in Files: fileproviderd keeps its library only on a volume it takes for APFS -- local, writable and
+ * of the type name "apfs" (-[FPDVolume isEligibleForFPFS:]); on any other it says "Non-eligible device ... non-apfs",
+ * skips it, and the local domain is never made, so Files shows no "On My iPhone" at all. /private/var is this memory
+ * filesystem, local and writable but named "ramfs". So to fileproviderd, and to nobody else, it is named "apfs":
+ * statfs(2), getfsstat(2) and getattrlist(2) take the name from here (bsd/vfs/vfs_subr.c,
+ * vfs_getfstypenameref_locked), while the kernel's own checks read f_fstypename and still see "ramfs" -- the APFS
+ * driver never takes this volume for one of its own -- and every other program sees "ramfs" too, so none of the
+ * daemons that do something else on APFS (cloning, snapshots, purgeable space) is sent down that way. What APFS alone
+ * does, fileproviderd is refused cleanly (ramfs_ioctl() above, VNOP_CLONEFILE not implemented: ENOTSUP).
+ * After the OnePlus Nord 2 port of iOS (frxncyyy/ios-denniz, the idea of its piece 0734), which found the check and
+ * named its root volume "apfs" to every program once fileproviderd had started.
+ *
+ * Boot-arg var_apfs=0: /private/var is "ramfs" to fileproviderd as well, and Files has no "On My iPhone".
+ */
+static TUNABLE(uint32_t, ramfs_var_apfs, "var_apfs", 1);
+static char ramfs_apfs_name[] = "apfs";
+static bool ramfs_apfs_said;            /* (under the mount's lock, as the one mount it is said of) */
+extern struct vfsops ramfs_vfsops;
+
+/* (called by vfs_getfstypenameref_locked() with the mount's spin lock held: nothing here waits) */
+char *ramfs_fstypename_shown(mount_t mp, char *name);
+
+char *
+ramfs_fstypename_shown(mount_t mp, char *name)
+{
+	proc_t p = current_proc();
+
+	if (!ramfs_var_apfs || mp->mnt_op != &ramfs_vfsops || p == PROC_NULL ||
+	    strcmp(mp->mnt_vfsstat.f_mntonname, "/private/var") != 0 || strcmp(proc_best_name(p), "fileproviderd") != 0) {
+		return name;
+	}
+	if (!ramfs_apfs_said) {
+		ramfs_apfs_said = true;
+		printf("ramfs: /private/var named \"apfs\" to %s[%d], for \"On My iPhone\" (var_apfs=0: not)\n",
+		    proc_best_name(p), proc_getpid(p));
+	}
+	return ramfs_apfs_name;
 }
 
 static int
