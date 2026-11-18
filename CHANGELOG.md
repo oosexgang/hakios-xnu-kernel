@@ -253,6 +253,13 @@ tags yet, so the current work is one section.
   outlived their task when handed to another process, mapped read-only surface memory writable on the GPU, and let any
   process show a surface past the panel. PosterBoard's timeouts stretched under the emulator could call themselves
   forever when a subclass called its superclass's.
+- More reviews, more fixes, each with a scenario that failed before it: the panel's light stayed black after a
+  brightness command the controller could not take at that moment, and one lost command stopped the backlight for the
+  run; the microphone retried a failed start thousands of times a second and never noticed a stream that stopped; a
+  touch controller that went quiet (Goodix, FocalTech) left a finger down for Darwin, for good or for minutes, and
+  neither was powered down at the run's end; the motion sensor could leave its I2C bus held low at the run's end; a
+  damaged APFS directory (a name with a zero byte or a '/', a directory that is its own ancestor, a file larger than
+  the disk) made the kernel's census walk without end at boot.
 
 ### For whoever works on the project
 
