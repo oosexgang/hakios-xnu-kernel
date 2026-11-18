@@ -856,6 +856,66 @@ read_whole(const char *path, char *buf, size_t size)
 	return (ssize_t)got;
 }
 
+/*
+ * What boot arguments say into the data volume's preferences. After restore_var(): the store's copy of the same
+ * file, written by cfprefsd or bluetoothd in an earlier boot, would otherwise replace what the boot argument asked for.
+ */
+static void
+boot_arg_preferences(void)
+{
+	/*
+	 * dark=1: the system in dark appearance (UIKit's UserInterfaceStyleMode 2), written before
+	 * cfprefsd starts -- the lock screen's wallpaper has a light and a dark rendering
+	 */
+	{
+		const char *d = boot_arg("dark");
+
+		if (d && *d == '1') {
+			static const char path[] =
+			    "/private/var/mobile/Library/Preferences/com.apple.uikitservices.userInterfaceStyleMode.plist";
+			static const char plist[] =
+			    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+			    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+			    "<plist version=\"1.0\">\n<dict>\n\t<key>UserInterfaceStyleMode</key>\n\t<integer>2</integer>\n</dict>\n</plist>\n";
+			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
+
+			if (pfd >= 0) {
+				close(pfd);
+			}
+			printf("  dark appearance: %s\n", good ? "set" : strerror(errno));
+		}
+	}
+
+	/*
+	 * btnolpcore=1: bluetoothd (which takes our Qualcomm chip for an Apple one, BT_CHIP=ACI BT) scans through the
+	 * plain HCI LE scan, not Apple's low-power-core one (vendor command 0xfdd7: "Could not start LE scan
+	 * (leScanParamsLPCoreCb): STATUS 712", run w91w1): its debug preferences, before cfprefsd starts
+	 */
+	{
+		const char *d = boot_arg("btnolpcore");
+
+		if (d && *d == '1') {
+			static const char path[] = "/private/var/mobile/Library/Preferences/com.apple.MobileBluetooth.debug.plist";
+			static const char plist[] =
+			    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+			    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+			    "<plist version=\"1.0\">\n<dict>\n"
+			    "\t<key>DisableLowPowerCoreScan</key>\n\t<true/>\n"
+			    "\t<key>LowPowerCoreScan</key>\n\t<false/>\n"
+			    "\t<key>EnableScanCore</key>\n\t<false/>\n"
+			    "</dict>\n</plist>\n";
+			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
+
+			if (pfd >= 0) {
+				close(pfd);
+			}
+			printf("  bluetoothd's low-power-core scan off: %s\n", good ? "set" : strerror(errno));
+		}
+	}
+}
+
 static void
 mount_writable(void)
 {
@@ -920,58 +980,6 @@ mount_writable(void)
 	}
 	printf("  %d directories, %d files\n", made, files);
 	check(ok && made > 50, "create the directories of the data volume");
-
-	/*
-	 * dark=1: the system in dark appearance (UIKit's UserInterfaceStyleMode 2), written before
-	 * cfprefsd starts -- the lock screen's wallpaper has a light and a dark rendering
-	 */
-	{
-		const char *d = boot_arg("dark");
-
-		if (d && *d == '1') {
-			static const char path[] =
-			    "/private/var/mobile/Library/Preferences/com.apple.uikitservices.userInterfaceStyleMode.plist";
-			static const char plist[] =
-			    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-			    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
-			    "<plist version=\"1.0\">\n<dict>\n\t<key>UserInterfaceStyleMode</key>\n\t<integer>2</integer>\n</dict>\n</plist>\n";
-			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
-
-			if (pfd >= 0) {
-				close(pfd);
-			}
-			printf("  dark appearance: %s\n", good ? "set" : strerror(errno));
-		}
-	}
-
-	/*
-	 * btnolpcore=1: bluetoothd (which takes our Qualcomm chip for an Apple one, BT_CHIP=ACI BT) scans through the
-	 * plain HCI LE scan, not Apple's low-power-core one (vendor command 0xfdd7: "Could not start LE scan
-	 * (leScanParamsLPCoreCb): STATUS 712", run w91w1): its debug preferences, before cfprefsd starts
-	 */
-	{
-		const char *d = boot_arg("btnolpcore");
-
-		if (d && *d == '1') {
-			static const char path[] = "/private/var/mobile/Library/Preferences/com.apple.MobileBluetooth.debug.plist";
-			static const char plist[] =
-			    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-			    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
-			    "<plist version=\"1.0\">\n<dict>\n"
-			    "\t<key>DisableLowPowerCoreScan</key>\n\t<true/>\n"
-			    "\t<key>LowPowerCoreScan</key>\n\t<false/>\n"
-			    "\t<key>EnableScanCore</key>\n\t<false/>\n"
-			    "</dict>\n</plist>\n";
-			int pfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-			int good = pfd >= 0 && write(pfd, plist, sizeof(plist) - 1) == (long)(sizeof(plist) - 1) && chown(path, 501, 501) == 0;
-
-			if (pfd >= 0) {
-				close(pfd);
-			}
-			printf("  bluetoothd's low-power-core scan off: %s\n", good ? "set" : strerror(errno));
-		}
-	}
 
 	/*
 	 * the wall clock: the phone has no RTC driver here, so the date stays at 1 Jan 1970 and the lock
@@ -1573,6 +1581,7 @@ main(int argc, char **argv, char **envp)
 	show_system();
 	mount_writable();
 	restore_var();
+	boot_arg_preferences();
 	test_files();
 	test_writable();
 	test_memory();
