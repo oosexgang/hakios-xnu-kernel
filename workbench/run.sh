@@ -165,23 +165,26 @@ for test in bt_uart_test bt_hci_test bt_qca_test bt_queue_test bt_host_test load
 	fi
 done
 
-# the cameras' picture processor of Darwin's capture device (components/camera/src/camera_isp.c), plain C as libhakios-media
-# builds it: a scenario a process, on the host under the sanitizers and under qemu-aarch64 as the drivers' tests are, with
-# the maths library and without the fake kernel
-echo "== camera_isp_test (host${SANITIZE[0]:+, sanitizers})"
-if "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" "$HERE/camera_isp_test.c" -o "$WORK/camera_isp_test" -lm; then
-	scenarios "" "$WORK/camera_isp_test"
-else
-	failed=1
-fi
-if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
-	echo "== camera_isp_test (aarch64, qemu-aarch64)"
-	if aarch64-linux-gnu-gcc -static -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "$HERE/camera_isp_test.c" -o "$WORK/camera_isp_test.a64" -lm; then
-		scenarios qemu-aarch64 "$WORK/camera_isp_test.a64"
+# plain C without the fake kernel, a scenario a process, on the host under the sanitizers and under qemu-aarch64 as the
+# drivers' tests are, with the maths library: the cameras' picture processor of Darwin's capture device
+# (components/camera/src/camera_isp.c) as libhakios-media builds it, and the WPA2 handshake of the Wi-Fi driver's object
+# (kernel/lx/src/lx_wpa.c), which needs nothing of the kernel's outside it
+for test in camera_isp_test lx_wpa_test; do
+	echo "== $test (host${SANITIZE[0]:+, sanitizers})"
+	if "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" "$HERE/$test.c" -o "$WORK/$test" -lm; then
+		scenarios "" "$WORK/$test"
 	else
 		failed=1
 	fi
-fi
+	if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
+		echo "== $test (aarch64, qemu-aarch64)"
+		if aarch64-linux-gnu-gcc -static -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "$HERE/$test.c" -o "$WORK/$test.a64" -lm; then
+			scenarios qemu-aarch64 "$WORK/$test.a64"
+		else
+			failed=1
+		fi
+	fi
+done
 
 # the kernel's stand-in for corecrypto (crypto/, as osfmk/minicrypto) with the parts of XNU's own corecrypto it rests on,
 # from the kernel tree kernel/env.sh names (XNU_SRC): on the host under the sanitizers, and under qemu-aarch64 as the

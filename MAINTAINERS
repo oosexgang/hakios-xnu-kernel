@@ -412,9 +412,13 @@ F:	drivers/iokit/MiniIONetworkStack.cpp
 F:	include/board/lx.h
 F:	include/board/net.h
 F:	include/board/sta.h
+F:	kernel/lx/src/lx_80211.c
+F:	kernel/lx/src/lx_wpa.c
+F:	kernel/lx/src/lx_wpa.h
 T:	workbench/wifi_driver_test.c
 T:	workbench/apple80211_test.c
 T:	workbench/station_test.c
 T:	workbench/lx_test.c
+T:	workbench/lx_wpa_test.c
 D:	Documentation/drivers.md
 K:	wifi-wcn6750; wifi=

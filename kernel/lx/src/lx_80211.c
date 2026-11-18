@@ -141,6 +141,9 @@ struct lx_radio {
 	int station_users;
 	bool station_closing;
 	unsigned group_lost, mic_wrong;		/* frames to everybody not made into Ethernet; Michael's check failed */
+	unsigned unciphered;			/* frames dropped for coming unciphered once the keys were set */
+	unsigned long long michael_failed_at;	/* nanoseconds: the last frame Michael's check failed on (0: none to count) */
+	unsigned long long left_until;		/* nanoseconds: no network is joined before this (TKIP's countermeasures) */
 	unsigned group_air;			/* frames addressed to everybody on the air (the group's key), as the driver gave them */
 	unsigned told_group, told_arp;		/* of frame_told()'s lines, so many said */
 	unsigned told_action;			/* action frames from the access point said */
@@ -828,7 +831,8 @@ handshake_message(struct lx_radio *radio, const uint8_t *frame, unsigned length)
 	printf("lx: the handshake: a message of %u bytes from the access point: %s%s\n", length - 14, said == LX_WPA_ANSWER ?
 	    "its first; answered with ours (message 2)" : said == LX_WPA_KEYS ? "its second, SIGNED WITH THE KEY WE HAVE TOO, and "
 	    "with the group's key; answered (message 4)" : said == LX_WPA_GROUP ? "a new key for the group; answered" :
-	    said == LX_WPA_BAD ? "NOT GOOD: " : "not one to answer", why);
+	    said == LX_WPA_AGAIN ? "one already taken, sent again; answered, nothing installed again" : said == LX_WPA_REFUSED ?
+	    "REFUSED, the network is left: " : said == LX_WPA_BAD ? "NOT GOOD: " : "not one to answer", why);
 	if (said == LX_WPA_GROUP && radio->joined) {
 		lx_os_lock();
 		memcpy(radio->group_next, radio->wpa.group, sizeof(radio->group_next));
@@ -841,10 +845,11 @@ handshake_message(struct lx_radio *radio, const uint8_t *frame, unsigned length)
 		/*
 		 * The result of the handshake is not last-writer-wins: once message 3 has passed its MIC (KEYS) a later frame -- an
 		 * unsigned one from anyone in range can say BAD or ANSWER -- must not hide it, or the join would time out although
-		 * the keys are agreed (IEEE 802.11i, 8.5.3: only a verified message counts).
+		 * the keys are agreed (IEEE 802.11i, 8.5.3: only a verified message counts). Nor must it hide a signed message 3
+		 * that was refused (REFUSED), for which the join is given up.
 		 */
 		lx_os_lock();
-		if (radio->handshake != LX_WPA_KEYS) {
+		if (radio->handshake != LX_WPA_KEYS && radio->handshake != LX_WPA_REFUSED) {
 			radio->handshake = said;
 			radio->handshake_why = why;
 		}
@@ -910,19 +915,74 @@ station_open(struct lx_radio *radio)
 	__atomic_store_n(&radio->station_closing, false, __ATOMIC_SEQ_CST);
 }
 
+/*
+ * A frame whose Michael check failed (TKIP, which only the group's frames can be ciphered with here): somebody may be
+ * trying keys against the group's. Twice within 60 s and the station does what TKIP's countermeasures ask (IEEE
+ * 802.11-2020, TKIP countermeasures procedures): it leaves the network -- the access point told so, deauthentication with
+ * reason 14, Michael's check failed -- and joins none for 60 s: station_join() refuses until then (board/sta.c, which joins
+ * the network of the file again once it is lost, tries again later). The report of the failure that a station also sends
+ * the access point, an EAPOL-Key frame with its error bit, is not sent.
+ */
+static void
+michael_failed(struct lx_radio *radio)
+{
+	unsigned long long now = lx_os_nanoseconds(), before = radio->michael_failed_at;
+	struct sk_buff *skb;
+	uint8_t *frame;
+
+	radio->mic_wrong++;
+	radio->michael_failed_at = now;
+	if (!radio->joined || before == 0 || now - before > 60000000000ull) {
+		return;
+	}
+	radio->michael_failed_at = 0;
+	radio->left_until = now + 60000000000ull;
+	lx_tell("lx: MICHAEL'S CHECK FAILED TWICE WITHIN 60 S (TKIP's countermeasures): the network is left, and none is joined "
+	    "for 60 s\n");
+	radio->joined = false;
+	radio->last_error = ECONNRESET;
+	lx_os_net_link(0);
+	if (station_use(radio)) {
+		if (radio->vif != NULL && radio->sta != NULL && (skb = frame_new(radio, 26, &frame)) != NULL) {
+			frame = management(radio, frame, 0xc0);
+			frame[0] = 14;
+			frame[1] = 0;
+			frame_send(radio, skb);
+		}
+		station_done(radio);
+	}
+	lx_os_station_lost(ECONNRESET);
+}
+
 /* An Ethernet frame the radio has received; FLAGS: the driver's description of it (RX_FLAG_...). */
 static void
 ethernet_received(struct lx_radio *radio, struct sk_buff *skb, unsigned flags)
 {
+	/* (the frame that arrived is not the one that was sent, or not the one its sender ciphered: nothing of it is believed) */
+	if (flags & RX_FLAG_FAILED_FCS_CRC) {
+		return;
+	}
+	if (flags & RX_FLAG_MMIC_ERROR) {
+		michael_failed(radio);
+		return;
+	}
 	if (skb->len >= 14 && skb->data[12] == 0x88 && skb->data[13] == 0x8e) {
 		if (station_use(radio)) {
 			handshake_message(radio, skb->data, skb->len);
 			station_done(radio);
 		}
 	} else if (radio->joined && skb->len >= 14) {
+		/*
+		 * Once the keys are set the network's frames come ciphered, and the driver says it deciphered them (ath11k: dp_rx.c,
+		 * ath11k_dp_rx_h_mpdu()); one that came in the clear can have been sent by anyone in range. Only the handshake's,
+		 * above, may (mac80211 drops the others the same way: ieee80211_drop_unencrypted()).
+		 */
+		if (!(flags & RX_FLAG_DECRYPTED)) {
+			radio->unciphered++;
+			return;
+		}
 		*(skb->data[0] & 1 ? &radio->received_group : &radio->received) += 1;
 		radio->received_at = lx_os_nanoseconds();
-		radio->mic_wrong += (flags & RX_FLAG_MMIC_ERROR) != 0;
 		if (skb->data[0] & 1 && radio->told_group < 16) {
 			radio->told_group++;
 			frame_told("to everybody", skb->data, skb->len, flags);
@@ -1638,6 +1698,7 @@ station_leave(struct lx_radio *radio)
 		}
 	}
 	cancel_work_sync(&radio->group_work);
+	explicit_bzero(radio->group_next, sizeof(radio->group_next));	/* (the work that reads it is not running) */
 	cancel_work_sync(&radio->ba_work);
 	radio->ba_asked = 0;
 	bzero(radio->ba, sizeof(radio->ba));		/* (the driver forgets the classes' queues with the station) */
@@ -1761,6 +1822,12 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 		station_leave(radio);
 		lx_tell("lx: the network joined before is left\n");
 	}
+	began = lx_os_nanoseconds();
+	if (began < radio->left_until) {
+		lx_tell("lx: no network is joined for 60 s after Michael's check failed twice (TKIP's countermeasures): %llu s to go\n",
+		    (radio->left_until - began) / 1000000000ull + 1);
+		return (EAGAIN);
+	}
 	INIT_WORK(&radio->group_work, group_rekey);
 	INIT_WORK(&radio->ba_work, ba_handle);
 	radio->ba_asked = 0;
@@ -1838,6 +1905,10 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	get_random_bytes(radio->wpa.own_nonce, sizeof(radio->wpa.own_nonce));
 	radio->wpa.rsn = radio->rsn;
 	radio->wpa.rsn_length = 22;
+	/* (the access point's own, which its message 3 must repeat: protection() has found it there) */
+	e = element(target->elements, target->elements_length, 48);
+	radio->wpa.target_rsn = e;
+	radio->wpa.target_rsn_length = e != NULL ? 2u + e[1] : 0;
 	radio->handshake = LX_WPA_NOTHING;
 	printf("lx: the key of the name (%u bytes) and the passphrase (%u bytes; 0: the key itself was given) is there: %llu ms\n",
 	    name_length, what->passphrase_length, (lx_os_nanoseconds() - began) / 1000000ull);
@@ -1974,7 +2045,7 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	 * (A message that is not good does not end the wait: it may be a forged frame, and a frame that fails its check is discarded
 	 * -- IEEE 802.11i, 8.5.3 -- while the genuine messages can still come. The reason is still said below if the time runs out.)
 	 */
-	while (radio->handshake != LX_WPA_KEYS && radio->answer != ANSWER_GONE &&
+	while (radio->handshake != LX_WPA_KEYS && radio->handshake != LX_WPA_REFUSED && radio->answer != ANSWER_GONE &&
 	    lx_os_nanoseconds() - began < 8000000000ull) {
 		lx_os_sleep(&radio->handshake, 20 * 1000000ull);
 	}
@@ -1982,14 +2053,16 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	if (radio->handshake != LX_WPA_KEYS) {
 		lx_tell("lx: THE HANDSHAKE DID NOT COME THROUGH in %llu ms: %s%s (%u of its messages came)\n", (lx_os_nanoseconds() - began) /
 		    1000000ull, radio->answer == ANSWER_GONE ? "the access point has shown us the door (a wrong passphrase gives this)" :
-		    radio->handshake == LX_WPA_BAD ? "a message was not good: " : radio->handshake == LX_WPA_ANSWER ? "our message 2 was "
-		    "not answered (a wrong passphrase gives this)" : "the access point did not begin it", radio->handshake == LX_WPA_BAD ?
+		    radio->handshake == LX_WPA_REFUSED ? "its message 3 was refused: " : radio->handshake == LX_WPA_BAD ? "a message was "
+		    "not good: " : radio->handshake == LX_WPA_ANSWER ? "our message 2 was not answered (a wrong passphrase gives this)" :
+		    "the access point did not begin it", radio->handshake == LX_WPA_BAD || radio->handshake == LX_WPA_REFUSED ?
 		    radio->handshake_why : "", radio->eapol);
 		error = EAUTH;
 		goto out;
 	}
 	lx_pause_ms(30);			/* (for message 4 to have left unciphered, before there is a key to cipher with) */
 	radio->pairwise_key = key_set(radio, radio->wpa.pairwise, 16, 0, true, &ret);
+	explicit_bzero(radio->wpa.pairwise, sizeof(radio->wpa.pairwise));	/* (the driver's now: no handshake after this one) */
 	if (ret == 0) {
 		radio->group_key = key_set(radio, radio->wpa.group, radio->wpa.group_length, radio->wpa.group_index, false, &ret);
 	}
@@ -2003,6 +2076,7 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	radio->reached = IEEE80211_STA_AUTHORIZED;
 	radio->sent = radio->sent_lost = radio->received = radio->received_group = radio->rekeys = 0;
 	radio->group_lost = radio->mic_wrong = radio->told_group = radio->told_arp = radio->group_air = radio->told_action = 0;
+	radio->unciphered = 0;
 	radio->joined_at = lx_os_nanoseconds();
 	radio->signal = target->signal;
 	radio->joined = true;
@@ -2051,11 +2125,11 @@ lx_station_say(void)
 	if (radio != NULL) {
 		lx_tell("lx: the network is %s, %llu s after it was joined: %u frames sent (%u could not be), %u received for us and "
 		    "%u sent to everybody (%u of them to everybody on the air; %u more to everybody not understood; Michael's check "
-		    "failed on %u); %u messages of the handshake, the group's key changed %u times; block ack: %u classes taken, %u "
-		    "refused\n", radio->joined ? "joined" : "NOT joined", radio->joined_at != 0 ? (lx_os_nanoseconds() -
-		    radio->joined_at) / 1000000000ull : 0, radio->sent, radio->sent_lost, radio->received, radio->received_group,
-		    radio->group_air, radio->group_lost, radio->mic_wrong, radio->eapol, radio->rekeys, radio->ba_sessions,
-		    radio->ba_refused);
+		    "failed on %u); %u dropped for coming unciphered; %u messages of the handshake, the group's key changed %u times; "
+		    "block ack: %u classes taken, %u refused\n", radio->joined ? "joined" : "NOT joined", radio->joined_at != 0 ?
+		    (lx_os_nanoseconds() - radio->joined_at) / 1000000000ull : 0, radio->sent, radio->sent_lost, radio->received,
+		    radio->received_group, radio->group_air, radio->group_lost, radio->mic_wrong, radio->unciphered, radio->eapol,
+		    radio->rekeys, radio->ba_sessions, radio->ba_refused);
 	}
 }
 
