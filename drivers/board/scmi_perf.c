@@ -224,7 +224,7 @@ hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)
 int
 hakios_scmi_perf_set(unsigned domain, uint32_t level)
 {
-	uint32_t in[2];
+	uint32_t in[2], was;
 	unsigned words;
 	int status;
 
@@ -235,16 +235,20 @@ hakios_scmi_perf_set(unsigned domain, uint32_t level)
 	in[0] = domain;
 	in[1] = level;
 	lck_mtx_lock(&scmi_lock);
+	was = scmi_now[domain];
+	/*
+	 * (not known from before the doorbell is rung until the answer is read: a core stopped in between -- the way back to
+	 * the loader -- leaves the quiesce to put the domain back whatever it is, not take it for the level it was)
+	 */
+	scmi_now[domain] = UINT32_MAX;
 	status = scmi_query(SCMI_PERF_LEVEL_SET, in, 2, NULL, 0, &words);
 	if (status == 0) {
 		scmi_now[domain] = level;
-	} else if (status <= -101) {
-		/*
-		 * (the doorbell was rung and no answer can be read: the firmware may have taken the level all the same, so where
-		 * the domain is is not known -- and the run's end puts it back whatever it is)
-		 */
-		scmi_now[domain] = UINT32_MAX;
+	} else if (status >= -100) {
+		/* (nothing sent, or refused by the firmware: where it was) */
+		scmi_now[domain] = was;
 	}
+	/* (-101 and below: the doorbell was rung and no answer can be read: the firmware may have taken the level, unknown) */
 	lck_mtx_unlock(&scmi_lock);
 	return status;
 }
