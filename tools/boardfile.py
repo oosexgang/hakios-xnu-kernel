@@ -93,10 +93,20 @@ def unquote(text):
 
 def numbers(text, line):
     found = text[1:-1].split()
+    values = []
     for item in found:
         if not NUMBER.fullmatch(item):
             raise FileError(line, f'<{text[1:-1]}>: only numbers in <> (decimal or 0x...), no {item!r}')
-    return [int(item, 0) for item in found]
+        if item[:2] in ('0x', '0X'):
+            values.append(int(item, 16))
+        elif len(item) > 1 and item[0] == '0':
+            # (as dtc reads it, and C: a leading 0 is octal -- 010 is 8, and 08 is no number at all)
+            if not re.fullmatch(r'[0-7]+', item):
+                raise FileError(line, f'<{text[1:-1]}>: {item!r} begins with 0, which makes it octal, and is not')
+            values.append(int(item, 8))
+        else:
+            values.append(int(item, 10))
+    return values
 
 
 def read_tree(text):

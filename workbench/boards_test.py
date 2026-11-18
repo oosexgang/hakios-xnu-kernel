@@ -382,6 +382,12 @@ class Check(Sandbox):
         path.write_text(original.replace('"cpufreq-epss"', '"bluetooth-wcn-uart"'))
         self.assertIn('feature "bluetooth-wcn-uart" needs bluetooth { }', self.problems())
 
+    def test_numbers_read_as_dtc_reads_them(self):
+        self.assertEqual(boards.boardfile.numbers('<010 0x10 16 0 0X1f>', 1), [8, 16, 16, 0, 31])
+        for bad in ('<08>', '<0x>', '<1a>'):
+            with self.assertRaises(boards.boardfile.FileError, msg=bad):
+                boards.boardfile.numbers(bad, 4)
+
     def test_a_complete_board_is_accepted(self):
         self.assertEqual(self.problems(), '')
 
