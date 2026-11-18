@@ -57,6 +57,7 @@ extern void hakios_mpss_quiesce(void);
 extern void hakios_ddr_quiesce(void);
 extern void hakios_haptic_quiesce(void);
 extern void hakios_imu_quiesce(void);
+extern void hakios_goodix_quiesce(void);
 extern void hakios_torch_quiesce(void);
 extern void hakios_backlight_quiesce(void);
 extern void hakios_thermal_quiesce(void);
@@ -552,6 +553,7 @@ loader_return(void)
 	hakios_ddr_quiesce();          /* and the vote for the memory's bandwidth taken away */
 	hakios_haptic_quiesce();       /* the vibration motor's chip back into reset, if it was let out */
 	hakios_imu_quiesce();          /* the motion sensor's chip powered down, if it was switched on */
+	hakios_goodix_quiesce();       /* the touch controller's polling stopped, the chip powered down, if it was powered up */
 	hakios_torch_quiesce();        /* the flashlight off, if it was lit */
 	hakios_backlight_quiesce();     /* the panel's light back where the loader expects it */
 	hakios_thermal_quiesce();       /* the processors' groups back at the rows they were found at */

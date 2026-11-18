@@ -47,6 +47,7 @@ void hakios_rpmh_lock(void);          /* APPS DRV2/TCS0 transaction; thread cont
 void hakios_rpmh_unlock(void);
 void hakios_fts_init(void);             /* touchscreen=1: FocalTech FT3658U (feature touch-ft3658u) */
 void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's Goodix or FocalTech touch screen */
+void hakios_goodix_quiesce(void);      /* its polling stopped, the chip powered down: at the run's end and on a panic's way out */
 void hakios_buttons_init(void);        /* boot-arg buttons=1: the phone's power and volume keys */
 void hakios_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */
 void hakios_ufs_report(const char *when); /* where reading the storage has spent its time so far */

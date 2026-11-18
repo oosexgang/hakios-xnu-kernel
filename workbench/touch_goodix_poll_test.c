@@ -2,8 +2,11 @@
  * How the Goodix driver (drivers/board/goodix.c) reads a report: the header first with two fingers'
  * room, the rest only when there are more, the chip told it has been read, the header's and the
  * touches' checksums checked before a finger is believed, and a request of the chip's to be reset
- * honoured. The driver is compiled as it is into a host program, its SPI transfer replaced by a model
- * of the chip's memory; the fingers it posts are recorded.
+ * honoured; fingers not left down when the chip falls silent; and the chip powered down again when it
+ * is not found and at the run's end. The driver is compiled as it is into a host program, its SPI
+ * transfer replaced by a model of the chip's memory; the fingers it posts are recorded. For the
+ * driver's own thread, the pins, the clock votes and RPMh are modelled too, and the chip answers on
+ * the pins driven by hand.
  *
  *   touch_goodix_poll_test SCENARIO
  */
@@ -33,12 +36,18 @@ hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 static vm_offset_t reset_io = ~(vm_offset_t)0;
 static int reset_high = 1;
 
-uint32_t hakios_test_rd(vm_offset_t address __unused) { return 0; }
-void hakios_test_wr(vm_offset_t address, uint32_t value) { if (address == reset_io) { reset_high = (value >> 1) & 1; } }
+/* the pins, the clock controller's votes and RPMh, once a scenario has the driver map them (after the driver: model_*()) */
+static uint32_t model_rd(vm_offset_t address);
+static void model_wr(vm_offset_t address, uint32_t value);
+static vm_offset_t model_database(vm_offset_t phys);
+
+uint32_t hakios_test_rd(vm_offset_t address) { return model_rd(address); }
+void hakios_test_wr(vm_offset_t address, uint32_t value) { if (address == reset_io) { reset_high = (value >> 1) & 1; } model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
-vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { return phys; }
+vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { return model_database(phys); }
 void hakios_tl(const char *format __unused, ...) { }
-void hakios_rpmh_lock(void) { }
+static unsigned rpmh_locks;             /* (taken in a thread's context; at the run's end, where the other cores are stopped, not) */
+void hakios_rpmh_lock(void) { rpmh_locks++; }
 void hakios_rpmh_unlock(void) { }
 
 #pragma GCC diagnostic ignored "-Wformat"
@@ -47,6 +56,9 @@ void hakios_rpmh_unlock(void) { }
 #include "board/board.c"
 #include "board/goodix.c"
 #undef printf
+
+/* (the run's end's put-away: looked for, so that a driver without one is a scenario that fails, not a test that does not build) */
+#pragma weak hakios_goodix_quiesce
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -550,6 +562,491 @@ focaltech_without_firmware(void)
 	CHECK(ft.started == 0 && ft.pram_writes == 0, "no start command, no write into its memory: %u, %u", ft.started, ft.pram_writes);
 }
 
+/* ---- a chip that falls silent: what the pins and the engine read then -------------------------------- */
+
+static uint8_t floating;                /* what the data line reads with nothing driving it */
+
+static bool
+floating_transfer(const uint8_t *tx __unused, uint8_t *rx, uint32_t length)
+{
+	if (rx != NULL) {
+		memset(rx, floating, length);
+	}
+	return true;
+}
+
+static unsigned
+times_logged(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = log_text; (at = strstr(at, text)) != NULL; at++) {
+		n++;
+	}
+	return n;
+}
+
+static uint64_t
+ms_since(uint64_t start)
+{
+	return (mach_absolute_time() - start) / NSEC_PER_MSEC;
+}
+
+/*
+ * A finger down, then the chip silent while the transfers go: looked at as the thread looks, still down a little
+ * while on, lifted once a quarter of a second has gone without a report, once, and said once
+ */
+static void
+fallen_silent(void)
+{
+	uint64_t start;
+
+	start = mach_absolute_time();
+	while (ms_since(start) < 150) {
+		goodix_poll();
+		usleep(4000);
+	}
+	CHECK(posts == 1, "not lifted at once: %u posts after 150 ms", posts);
+	while (ms_since(start) < 1000 && posts < 2) {
+		goodix_poll();
+		usleep(4000);
+	}
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 0, "lifted within a second: %u posts", posts);
+	for (unsigned i = 0; i < 20; i++) {
+		goodix_poll();
+		usleep(4000);
+	}
+	CHECK(posts == 2, "once: %u posts", posts);
+	CHECK(times_logged("the fingers taken as lifted") == 1, "said once: %s", log_text);
+}
+
+/* the bus floating high: every read all ones, a header that is never believed */
+static void
+silent_bus_high(void)
+{
+	phone();
+	report(GOODIX_STATUS_TOUCH, 1);
+	goodix_poll();
+	floating = 0xff;
+	spi_transfer = floating_transfer;
+	fallen_silent();
+}
+
+/* the bus floating low: every read all zeros, "nothing new" */
+static void
+silent_bus_low(void)
+{
+	phone();
+	report(GOODIX_STATUS_TOUCH, 1);
+	goodix_poll();
+	floating = 0;
+	spi_transfer = floating_transfer;
+	fallen_silent();
+}
+
+static bool
+rest_fails(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	if (tx[0] == 0xf1 && ((uint32_t)tx[1] << 24 | tx[2] << 16 | tx[3] << 8 | tx[4]) == REPORT + 8) {
+		return false;
+	}
+	return model_transfer(tx, rx, length);
+}
+
+/* three fingers, then the header read every time and the rest of the report never: lifted all the same */
+static void
+rest_never_read(void)
+{
+	uint64_t start;
+
+	phone();
+	report(GOODIX_STATUS_TOUCH, 3);
+	goodix_poll();
+	CHECK(posts == 3, "three down: %u", posts);
+	spi_transfer = rest_fails;
+	start = mach_absolute_time();
+	while (ms_since(start) < 1000 && posts < 6) {
+		goodix_poll();
+		usleep(4000);
+	}
+	CHECK(posts == 6 && posted[3].type == HAKIOS_TOUCH_UP && posted[5].type == HAKIOS_TOUCH_UP, "the three lifted: %u posts",
+	    posts);
+}
+
+/* ---- FocalTech: what a slot's event and the report's count say --------------------------------------- */
+
+/* a report of COUNT fingers with these slots (event, id, x, y), the rest empty */
+static void
+ft_report(uint8_t *r, unsigned count, const uint32_t (*slots)[4], unsigned n)
+{
+	memset(r, 0xff, FOCALTECH_TOUCH_REPORT_LEN);
+	r[0] = 0;
+	r[1] = (uint8_t)count;
+	for (unsigned i = 0; i < n; i++) {
+		uint8_t *t = r + 2 + 6 * i;
+
+		t[0] = (uint8_t)(slots[i][0] << 6 | (slots[i][2] >> 11 & 0xf));
+		t[1] = (uint8_t)(slots[i][2] >> 3);
+		t[2] = (uint8_t)(slots[i][1] << 4 | (slots[i][3] >> 11 & 0xf));
+		t[3] = (uint8_t)(slots[i][3] >> 3);
+		t[4] = (uint8_t)((slots[i][2] & 7) << 5 | (slots[i][3] & 7) << 2);
+		t[5] = 0;
+	}
+}
+
+/* event 3, "no event": not a finger down, and one that was down is up */
+static void
+focaltech_no_event(void)
+{
+	static const uint32_t down[1][4] = { { 0, 2, 1000, 2000 } }, none[1][4] = { { 3, 2, 1000, 2000 } },
+	    other[1][4] = { { 3, 4, 3000, 4000 } };
+	uint8_t r[FOCALTECH_TOUCH_REPORT_LEN];
+
+	focaltech_max_x = 10000;
+	focaltech_max_y = 20000;
+	ft_report(r, 1, other, 1);
+	focaltech_report(r);
+	CHECK(posts == 0, "no event in a slot: no finger down (%u posts, type %u finger %u)", posts, posted[0].type, posted[0].finger);
+	ft_report(r, 1, down, 1);
+	focaltech_report(r);
+	CHECK(posts == 1 && was(0, HAKIOS_TOUCH_DOWN, 2, 1000 * 65535 / 9999, 2000 * 65535 / 19999), "down: %u posts", posts);
+	ft_report(r, 1, none, 1);
+	focaltech_report(r);
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 2, "then no event for it: up (%u posts)", posts);
+}
+
+/* a report that says no finger and has one in contact: not believed, the finger left as it was; one that is empty lifts it */
+static void
+focaltech_count_zero(void)
+{
+	static const uint32_t down[1][4] = { { 0, 1, 1000, 2000 } }, moved[1][4] = { { 2, 1, 3000, 4000 } };
+	uint8_t r[FOCALTECH_TOUCH_REPORT_LEN];
+
+	focaltech_max_x = 10000;
+	focaltech_max_y = 20000;
+	ft_report(r, 1, down, 1);
+	focaltech_report(r);
+	CHECK(posts == 1, "down: %u", posts);
+	ft_report(r, 0, moved, 1);
+	focaltech_report(r);
+	CHECK(posts == 1 && focaltech_contact[1].down, "count 0 with a finger in contact: nothing moved or lifted (%u posts)", posts);
+	ft_report(r, 0, NULL, 0);
+	focaltech_report(r);
+	CHECK(posts == 2 && was(1, HAKIOS_TOUCH_UP, 1, 1000 * 65535 / 9999, 2000 * 65535 / 19999), "an empty report: up where it "
+	    "was (%u posts)", posts);
+}
+
+/* ---- the driver's thread: the pins, the clock votes and RPMh modelled; the chip answers on the pins driven by hand ---- */
+
+#define LDO             0x4a000         /* where the command database says the I/O supply's regulator is */
+
+static struct {
+	uint32_t cfg[256], io[256];
+	uint32_t int_level;                     /* what the interrupt line reads (0: a report waits) */
+	bool int_pulled_up;                     /* the interrupt line's pull-up was switched on, ever ... */
+	bool int_pulled_unpowered;              /* ... while the chip had no I/O supply */
+	bool present;                           /* a chip on the bus */
+	uint8_t tx[8 + GOODIX_MAX_READ];        /* the transfer in progress, as the chip has clocked it in */
+	unsigned bits;
+} pin;
+
+static struct {
+	bool busy, deaf;                        /* the slot set never idle; RPMh never says done */
+	uint32_t control, irq_status, enabled, address[16], data[16];
+	unsigned triggers;
+	bool supply_on, withdrawn;
+	bool cs_high_at_off;                    /* chip select driven high when the supply was withdrawn */
+} rpmh;
+
+static uint32_t gcc_vote;
+
+static union {
+	struct cmd_db_header header;
+	uint8_t bytes[0x20000];
+} database;
+
+static vm_offset_t
+model_database(vm_offset_t phys)
+{
+	const struct hakios_board *b = hakios_board();
+
+	return b != NULL && phys == b->rpmh.cmd_db ? (vm_offset_t)&database : phys;
+}
+
+static bool
+driven_high(unsigned n)
+{
+	return (pin.cfg[n] & CFG_OUTPUT) && (pin.io[n] & 2);
+}
+
+static bool
+chip_on(void)
+{
+	return pin.present && rpmh.supply_on && driven_high(PIN_AVDD) && driven_high(PIN_RESET);
+}
+
+/* the bit the chip puts on its data-out pin for the bit just clocked */
+static uint32_t
+chip_out(void)
+{
+	unsigned at = pin.bits - 1, byte = at / 8;
+
+	if (!chip_on() || driven_high(PIN_CS) || pin.bits == 0 || pin.tx[0] != 0xf1 || byte < 8) {
+		return 0;
+	}
+	return memory_at(((uint32_t)pin.tx[1] << 24 | pin.tx[2] << 16 | pin.tx[3] << 8 | pin.tx[4]) + byte - 8) >> (7 - at % 8) & 1;
+}
+
+static uint32_t
+model_rd(vm_offset_t address)
+{
+	const struct hakios_board *b = hakios_board();
+
+	if (tlmm != 0 && address >= tlmm && address < tlmm + TLMM_SIZE) {
+		unsigned n = (unsigned)((address - tlmm) / 0x1000);
+
+		if ((address - tlmm) % 0x1000 == 0) {
+			return pin.cfg[n];
+		}
+		return n == PIN_MISO ? chip_out() : n == PIN_INT ? pin.int_level : (pin.io[n] >> 1 & 1) | (pin.io[n] & 2);
+	}
+	if (gcc != 0 && address == GCC_VOTE) {
+		return gcc_vote;
+	}
+	if (b != NULL && address == b->rpmh.rsc) {
+		return 0x00020000;              /* (a version 2 sequencer) */
+	}
+	if (b != NULL && address >= b->rpmh.rsc + b->rpmh.tcs_offset && address < b->rpmh.rsc + b->rpmh.tcs_offset + 0x2a0) {
+		uint32_t reg = (uint32_t)(address - b->rpmh.rsc - b->rpmh.tcs_offset);
+
+		return reg == 0x18 ? !rpmh.busy : reg == 0x04 ? rpmh.irq_status : reg == 0x14 ? rpmh.control : 0;
+	}
+	return 0;
+}
+
+static void
+model_wr(vm_offset_t address, uint32_t value)
+{
+	const struct hakios_board *b = hakios_board();
+
+	if (tlmm != 0 && address >= tlmm && address < tlmm + TLMM_SIZE) {
+		unsigned n = (unsigned)((address - tlmm) / 0x1000);
+
+		if ((address - tlmm) % 0x1000 == 0) {
+			pin.cfg[n] = value;
+			if (n == PIN_INT && (value & 3) == PULL_UP) {
+				pin.int_pulled_up = true;
+				pin.int_pulled_unpowered |= !rpmh.supply_on;
+			}
+			return;
+		}
+		if (n == PIN_CS && (pin.io[n] & 2) && !(value & 2)) {
+			pin.bits = 0;                           /* selected: a transfer begins */
+			memset(pin.tx, 0, sizeof(pin.tx));
+		} else if (n == PIN_CS && !(pin.io[n] & 2) && (value & 2) && pin.bits >= 8 * 8 && chip_on()) {
+			uint8_t rx[sizeof(pin.tx)];             /* deselected: what the chip makes of it */
+
+			model_transfer(pin.tx, rx, pin.bits / 8);
+		} else if (n == PIN_CLK && !(pin.io[n] & 2) && (value & 2) && !(pin.io[PIN_CS] & 2) && pin.bits < 8 * sizeof(pin.tx)) {
+			pin.tx[pin.bits / 8] |= (uint8_t)((pin.io[PIN_MOSI] >> 1 & 1) << (7 - pin.bits % 8));
+			pin.bits++;
+		}
+		pin.io[n] = value;
+		return;
+	}
+	if (gcc != 0 && address == GCC_VOTE) {
+		gcc_vote = value;
+		return;
+	}
+	if (b != NULL && address >= b->rpmh.rsc + b->rpmh.tcs_offset && address < b->rpmh.rsc + b->rpmh.tcs_offset + 0x2a0) {
+		uint32_t reg = (uint32_t)(address - b->rpmh.rsc - b->rpmh.tcs_offset);
+
+		if (reg == 0x14) {
+			if (!(rpmh.control & 1u << 24) && (value & 1u << 24) && (value & 1u << 16)) {
+				rpmh.triggers++;
+				for (unsigned c = 0; c < 16; c++) {
+					if ((rpmh.enabled & 1u << c) && rpmh.address[c] == LDO + 4) {
+						rpmh.supply_on = rpmh.data[c] != 0;
+						if (!rpmh.supply_on) {
+							rpmh.withdrawn = true;
+							rpmh.cs_high_at_off = driven_high(PIN_CS);
+						}
+					}
+				}
+				if (!rpmh.deaf) {
+					rpmh.irq_status |= 1;
+				}
+			}
+			rpmh.control = value;
+		} else if (reg == 0x08) {
+			rpmh.irq_status &= ~value;
+		} else if (reg == 0x1c) {
+			rpmh.enabled = value;
+		} else if (reg >= 0x30 && (reg - 0x30) / 20 < 16) {
+			unsigned c = (reg - 0x30) / 20;
+
+			if ((reg - 0x30) % 20 == 4) {
+				rpmh.address[c] = value;
+			} else if ((reg - 0x30) % 20 == 8) {
+				rpmh.data[c] = value;
+			}
+		}
+	}
+}
+
+/* the phone with its pins at rest, the M AHB clock's vote already taken (by the firmware), and RPMh's database */
+static void
+wired_phone(bool present)
+{
+	struct cmd_db_entry *entry = (struct cmd_db_entry *)database.header.data;
+
+	phone();
+	fake_delay_divisor = 100;
+	boot_args = "touchscreen=1";
+	memset(&pin, 0, sizeof(pin));
+	for (unsigned n = 0; n < 256; n++) {
+		pin.io[n] = 2;                          /* (as the firmware leaves them: high, chip select too) */
+	}
+	pin.int_level = 0;
+	pin.present = present;
+	memset(&rpmh, 0, sizeof(rpmh));
+	gcc_vote = 1u << 20;
+	memset(&database, 0, sizeof(database));
+	database.header.magic[0] = 0xdb;
+	database.header.magic[1] = 0x30;
+	database.header.magic[2] = 0x03;
+	database.header.magic[3] = 0x0c;
+	database.header.slave[0].id = CMD_DB_VRM;
+	database.header.slave[0].data_offset = 0x100;
+	database.header.slave[0].count = 1;
+	memcpy(entry->id, "ldoc2", 5);
+	entry->address = LDO;
+	report(0, 0);
+	described(LISTS_END + 144, 1080, 2400);
+}
+
+/* the driver's own mappings, for a scenario that calls one step of its bring-up itself */
+static void
+mapped(void)
+{
+	tlmm = TLMM_PHYS;
+	gcc = GCC_PHYS;
+	rsc = RSC_PHYS;
+	cmd_db = (vm_offset_t)&database;
+}
+
+static bool
+waited_for(const char *text, unsigned ms)
+{
+	for (unsigned waited = 0; !logged(text) && waited < ms; waited += 5) {
+		usleep(5000);
+	}
+	return logged(text);
+}
+
+/* RPMh does not take the I/O supply's request: the interrupt line is not pulled up into a chip without a supply */
+static void
+int_pull_up_waits_for_supply(void)
+{
+	wired_phone(true);
+	mapped();
+	rpmh.busy = true;
+	CHECK(!power_on(), "not powered");
+	CHECK(!pin.int_pulled_up, "the interrupt line pulled up into a chip without its supply (configuration %#x)", pin.cfg[PIN_INT]);
+	rpmh.busy = false;
+	CHECK(power_on(), "powered: %s", log_text);
+	CHECK(pin.int_pulled_up && !pin.int_pulled_unpowered, "pulled up only once the supply is on: %u, %u", pin.int_pulled_up,
+	    pin.int_pulled_unpowered);
+}
+
+/* the bus is the pins' as the run found them, not the driver's, once nothing more of it is driven */
+static void
+let_go(const char *when)
+{
+	static const char *const names[4] = { "chip select", "the clock", "data out", "data in" };
+	const unsigned bus[4] = { PIN_CS, PIN_CLK, PIN_MOSI, PIN_MISO };
+
+	for (unsigned i = 0; i < 4; i++) {
+		CHECK(!(pin.cfg[bus[i]] & CFG_OUTPUT) && (pin.cfg[bus[i]] & 3) == PULL_NONE && (pin.cfg[bus[i]] >> 2 & 0xf) == 0,
+		    "%s: %s is not let go (configuration %#x)", when, names[i], pin.cfg[bus[i]]);
+	}
+}
+
+static void
+powered_down(const char *when)
+{
+	CHECK((pin.cfg[PIN_RESET] & CFG_OUTPUT) && !(pin.io[PIN_RESET] & 2), "%s: reset held low (%#x, %#x)", when, pin.cfg[PIN_RESET],
+	    pin.io[PIN_RESET]);
+	CHECK((pin.cfg[PIN_AVDD] & CFG_OUTPUT) && !(pin.io[PIN_AVDD] & 2), "%s: the analog supply off (%#x, %#x)", when,
+	    pin.cfg[PIN_AVDD], pin.io[PIN_AVDD]);
+	CHECK(rpmh.withdrawn && !rpmh.supply_on, "%s: the I/O supply's request withdrawn (%u triggers)", when, rpmh.triggers);
+	CHECK(rpmh.cs_high_at_off, "%s: chip select raised while the chip still had its supply", when);
+	CHECK((pin.cfg[PIN_INT] & 3) == PULL_NONE, "%s: the interrupt line no longer pulled up (%#x)", when, pin.cfg[PIN_INT]);
+	CHECK(gcc_vote == 1u << 20, "%s: the votes this driver took given back, the firmware's kept: %#x", when, gcc_vote);
+	let_go(when);
+}
+
+/* no chip answers: what was switched on for it is switched off again, and the pins driven by hand let go */
+static void
+not_found_powered_down(void)
+{
+	wired_phone(false);
+	hakios_goodix_init();
+	CHECK(waited_for("no goodix touch screen", 5000), "given up: %s", log_text);
+	usleep(20 * 1000);
+	CHECK(rpmh.triggers >= 1, "(the I/O supply was asked for: %u)", rpmh.triggers);
+	powered_down("not found");
+}
+
+/* the run's end: the thread stops reading, and the chip is powered down */
+static void
+run_end_puts_it_away(void)
+{
+	void (*volatile put_away)(void) = hakios_goodix_quiesce;       /* (NULL where the driver has none) */
+	unsigned reads, locks;
+
+	wired_phone(true);
+	hakios_goodix_init();
+	CHECK(waited_for("touch screen ready", 5000), "found: %s", log_text);
+	usleep(20 * 1000);
+	CHECK(chip.reads > 0, "the thread reads the chip's report (%u reads)", chip.reads);
+	CHECK(put_away != NULL, "the driver has nothing for the run's end (no hakios_goodix_quiesce())");
+	if (put_away == NULL) {
+		reads = chip.reads;
+		usleep(50 * 1000);
+		CHECK(chip.reads == reads, "and its thread reads on: %u reads, then %u", reads, chip.reads);
+		return;
+	}
+	locks = rpmh_locks;
+	put_away();
+	reads = chip.reads;
+	usleep(50 * 1000);
+	CHECK(chip.reads == reads, "no read after the run's end: %u, then %u", reads, chip.reads);
+	CHECK(rpmh_locks == locks, "RPMh's lock not taken at the run's end (%u times)", rpmh_locks - locks);
+	powered_down("at the run's end");
+	CHECK(logged("goodix: at the run's end"), "said: %s", log_text);
+}
+
+/* the run's end in the middle of a transfer on the pins driven by hand: chip select raised before the supply goes */
+static void
+run_end_mid_transfer(void)
+{
+	void (*volatile put_away)(void) = hakios_goodix_quiesce;
+
+	wired_phone(true);
+	mapped();
+	CHECK(power_on(), "powered: %s", log_text);
+	bitbang_in = PIN_MISO;
+	bitbang_out = PIN_MOSI;
+	bitbang_init();
+	gpio_set(PIN_CS, false);                /* (selected, and the thread stopped there) */
+	CHECK(put_away != NULL, "the driver has nothing for the run's end (no hakios_goodix_quiesce())");
+	if (put_away != NULL) {
+		put_away();
+		powered_down("at the run's end, a transfer cut off");
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -561,6 +1058,10 @@ main(int argc, char **argv)
 		{ "the_chips_description", the_chips_description }, { "coordinates_not_described", coordinates_not_described },
 		{ "descriptions_not_believed", descriptions_not_believed }, { "a_command", a_command },
 		{ "focaltech_already_running", focaltech_already_running }, { "focaltech_without_firmware", focaltech_without_firmware },
+		{ "silent_bus_high", silent_bus_high }, { "silent_bus_low", silent_bus_low }, { "rest_never_read", rest_never_read },
+		{ "focaltech_no_event", focaltech_no_event }, { "focaltech_count_zero", focaltech_count_zero },
+		{ "int_pull_up_waits_for_supply", int_pull_up_waits_for_supply }, { "not_found_powered_down", not_found_powered_down },
+		{ "run_end_puts_it_away", run_end_puts_it_away }, { "run_end_mid_transfer", run_end_mid_transfer },
 	};
 
 	if (argc < 2) {

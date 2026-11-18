@@ -53,6 +53,24 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #include "log.h"
 #define printf hakios_say
 
+/*
+ * The run's end has the chip (hakios_goodix_quiesce()): the poll thread stops, and what was switched on is switched
+ * off. There the other processors are stopped and interrupts are off, so RPMh is asked without its lock, and waited
+ * for by spinning, as the other drivers ask it on the way back to the loader.
+ */
+static bool leaving;
+static bool busy;               /* the poll thread is reading the chip: the run's end waits for it, a little */
+
+static void
+goodix_wait_us(uint32_t us)
+{
+	if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+		spin_us(us);
+	} else {
+		sleep_us(us);
+	}
+}
+
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
 #define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
@@ -79,7 +97,9 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
 #define TCS(reg)                (rsc + hakios_board()->rpmh.tcs_offset + (reg))           /* command slot set 0, an "active" one */
+#define sleep_us goodix_wait_us
 #include "rpmh.h"                    /* a slot set's registers, and one request through it */
+#undef sleep_us
 
 #define VRM_VOLTAGE             0               /* a regulator's registers, from its address: millivolts */
 #define VRM_ENABLE              4
@@ -106,22 +126,30 @@ rpmh_address(const char *name)
 	return hakios_cmd_db_address(db, CMD_DB_SIZE, name);
 }
 
-/* Send up to three register writes to RPMh and wait until they are done (board/rpmh.h); what went wrong is said. */
-static bool
+/* Send up to three register writes to RPMh and wait until they are done (board/rpmh.h); NULL, or what went wrong, said. */
+static const char *
 rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
 	const char *problem;
+	bool locked = !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST);
 
 	/* (the slots are shared: the memory's vote, Bluetooth's supplies, the audio DSP's may be sent at the same time) */
-	hakios_rpmh_lock();
+	if (locked) {
+		hakios_rpmh_lock();
+	}
 	problem = hakios_rpmh_send_rsc(rsc, hakios_board()->rpmh.tcs_offset, address, data, count);
-	hakios_rpmh_unlock();
+	if (locked) {
+		hakios_rpmh_unlock();
+	}
 
 	if (problem != NULL) {
 		printf("goodix: RPMh: %s\n", problem);
 	}
-	return problem == NULL;
+	return problem;
 }
+
+static uint32_t io_supply;      /* the regulator's RPMh address, once the supply has been asked for */
+static bool io_voted;           /* ... and the request sent: it is withdrawn when the chip is powered down */
 
 /* The chip's I/O supply: 1.8 V from the regulator the board names (touch { } io-supply: for example "ldoc2", LDO2 of a PM8350C). Nothing else is connected to it. */
 static bool
@@ -130,6 +158,7 @@ io_supply_on(void)
 	uint32_t base = rpmh_address(WIRED->io_supply);
 	uint32_t address[3] = { base + VRM_VOLTAGE, base + VRM_ENABLE, base + VRM_MODE };
 	uint32_t data[3] = { 1800, 1, VRM_MODE_LDO_HPM };
+	const char *problem;
 
 	/* addresses of regulators ("VRM") have 4 in bits 19:16; anything else is not what we are looking for */
 	if (base == 0 || (base >> 16 & 0xf) != 4) {
@@ -138,10 +167,28 @@ io_supply_on(void)
 	}
 	printf("goodix: RPMh: %s is at %#x; slot status %#x, control %#x, irq enable %#x status %#x\n", WIRED->io_supply, base,
 	    rd(TCS(TCS_STATUS)), rd(TCS(TCS_CONTROL)), rd(TCS(TCS_IRQ_ENABLE)), rd(TCS(TCS_IRQ_STATUS)));
-	if (!rpmh_write(address, data, 3)) {
+	io_supply = base;
+	problem = rpmh_write(address, data, 3);
+	/* (a request without an answer was triggered all the same and may be in force: withdrawn like one that was answered, as board/ddr.c does) */
+	io_voted = problem == NULL || strcmp(problem, RPMH_SAYS_NO_ANSWER) == 0;
+	if (problem != NULL) {
 		return false;
 	}
 	printf("goodix: I/O supply on (1.8 V)\n");
+	return true;
+}
+
+/* The I/O supply's request withdrawn. True when RPMh has said it is done: then the chip has no supply of ours. */
+static bool
+io_supply_off(void)
+{
+	uint32_t address = io_supply + VRM_ENABLE, off = 0;
+
+	if (rpmh_write(&address, &off, 1) != NULL) {
+		return false;
+	}
+	io_voted = false;
+	printf("goodix: I/O supply off\n");
 	return true;
 }
 
@@ -170,6 +217,7 @@ io_supply_on(void)
 #define XO_HZ                   19200000
 
 static uint32_t se_source_hz, se_clock_select;
+static uint32_t votes_added;    /* the votes clocks_on() found not taken: given back when the chip is powered down */
 
 #define GENI_SPI_NAME           "goodix"
 #include "geni_spi.h"               /* the engine's registers, SPI set up, a transfer, a recovery;
@@ -188,7 +236,10 @@ ahb_clock_ready(uint32_t status)
 static bool
 clocks_on(void)
 {
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB);
+	const uint32_t group = VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB;
+
+	votes_added |= group & ~rd(GCC_VOTE);
+	wr(GCC_VOTE, rd(GCC_VOTE) | group);
 	if (rd(GCC_SE_DFSR) & 1) {
 		/* preset rates: the lowest that is at least 4 MHz */
 		for (uint32_t level = 0; level < 8; level++) {
@@ -218,6 +269,7 @@ clocks_on(void)
 		se_source_hz = XO_HZ;
 		se_clock_select = 0;
 	}
+	votes_added |= VOTE_SE & ~rd(GCC_VOTE);
 	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_SE);
 	for (int i = 0; i < 1000; i++) {
 		if (ahb_clock_ready(rd(GCC_QUP_M_AHB_CBCR)) && ahb_clock_ready(rd(GCC_QUP_S_AHB_CBCR)) &&
@@ -239,10 +291,12 @@ clocks_on(void)
 /* ---- SPI by hand, on the same pins ----------------------------------------------------------------- */
 
 static unsigned bitbang_in, bitbang_out;        /* (set before each use: bring_up()) */
+static bool bus_taken;          /* the four pins are the engine's or driven by hand: let go when the chip is powered down */
 
 static void
 bitbang_init(void)
 {
+	bus_taken = true;
 	gpio_output(PIN_CS, true, PULL_NONE, 6);
 	gpio_output(PIN_CLK, false, PULL_NONE, 6);
 	/* (2 mA: the second orientation tried makes the chip's own data-out pin ours, and the two drive it against each other) */
@@ -494,11 +548,31 @@ contacts_release(void)
 /* Reads that failed one after another before the fingers are taken as lifted: a quarter of a second at 125 Hz */
 #define READS_FAILED_MOST       32
 
+/*
+ * How long fingers that are down are believed without a report: the chip reports at its rate as long as a finger is
+ * on it, and one that stops answering is not always a read that fails -- pins driven by hand read whatever the line
+ * floats to, all ones (a header not believed) or all zeros (no report), and a transfer of the engine's does not fail
+ * either. A quarter of a second, as the failed reads above.
+ */
+#define SILENT_MOST_US          250000
+
+static uint64_t
+micros_now(void)
+{
+	uint64_t ns;
+
+	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+	return ns / 1000;
+}
+
+static uint64_t believed_at;    /* when the last report with fingers in it that was believed was read */
+
 static void
 goodix_report(const uint8_t *touches, uint32_t count)
 {
 	static unsigned shown;
 
+	believed_at = micros_now();
 	for (int i = 0; i < GOODIX_MAX_TOUCHES; i++) {
 		contact[i].seen = false;
 	}
@@ -546,7 +620,7 @@ goodix_report(const uint8_t *touches, uint32_t count)
 
 /* Read the report if there is one, and tell the chip it has been read. */
 static void
-goodix_poll(void)
+goodix_read_report(void)
 {
 	static uint8_t report[8 + 8 * GOODIX_MAX_TOUCHES + 2];
 	static unsigned bad, failed;
@@ -605,6 +679,33 @@ goodix_poll(void)
 		return;
 	}
 	goodix_report(report + 8, count);
+}
+
+static bool
+contacts_down(void)
+{
+	for (uint32_t id = 0; id < GOODIX_MAX_TOUCHES; id++) {
+		if (contact[id].down) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* A look at the chip; fingers left down while it has said nothing believable for a while are lifted. */
+static void
+goodix_poll(void)
+{
+	static unsigned said;
+
+	goodix_read_report();
+	if (contacts_down() && micros_now() - believed_at >= SILENT_MOST_US) {
+		if (said++ < 8) {
+			printf("goodix: no report believed for %u ms with fingers down: the fingers taken as lifted\n",
+			    SILENT_MOST_US / 1000);
+		}
+		contacts_release();
+	}
 }
 
 /* ---- the FocalTech FT3680 chip --------------------------------------------------------------------- */
@@ -903,7 +1004,7 @@ focaltech_probe(bool verbose)
  * Per-chip report layout for FT3680 (vendor focaltech_core.c, FTS_TOUCH_OFF_* offsets):
  *   report[0] = gesture (0 outside gesture mode)
  *   report[1] = (chip_type << 4) | finger_count
- *   report[2 + 6*i + 0] = E_XH:  bits 7..6 = event (0 = down, 1 = up, 2 = contact)
+ *   report[2 + 6*i + 0] = E_XH:  bits 7..6 = event (0 = down, 1 = up, 2 = contact, 3 = none)
  *                                bits 3..0 = x bits 14..11
  *   report[2 + 6*i + 1] = XL:    x bits 10..3
  *   report[2 + 6*i + 2] = ID_YH: bits 7..4 = finger id, bits 3..0 = y bits 14..11
@@ -933,7 +1034,8 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 	if (id >= FOCALTECH_MAX_TOUCHES || max_report_x < 2 || max_report_y < 2) {
 		return;
 	}
-	if (event == FOCALTECH_EVENT_UP) {
+	/* (only down and contact are a finger on the glass, as the vendor's EVENT_DOWN() has it: up and "no event" are not) */
+	if (event != FOCALTECH_EVENT_DOWN && event != FOCALTECH_EVENT_CONTACT) {
 		focaltech_contact[id].seen = true;
 		if (focaltech_contact[id].down) {
 			focaltech_contact[id].down = false;
@@ -988,6 +1090,22 @@ focaltech_report(const uint8_t *report)
 {
 	uint32_t count = report[1] & 0x0f;
 
+	/*
+	 * A report that says no finger is on the glass and has one down or in contact in a slot says two things: not
+	 * believed, and the fingers left as the last report had them
+	 */
+	for (uint32_t i = 0; count == 0 && i < FOCALTECH_MAX_TOUCHES; i++) {
+		const uint8_t *touch = report + 2 + 6 * i;
+		uint32_t event = (touch[0] >> 6) & 0x3;
+
+		if (((touch[2] >> 4) & 0x0f) >= FOCALTECH_MAX_TOUCHES) {
+			break;
+		}
+		if (event == FOCALTECH_EVENT_DOWN || event == FOCALTECH_EVENT_CONTACT) {
+			seen.bad++;
+			return;
+		}
+	}
 	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
 		focaltech_contact[i].seen = false;
 	}
@@ -1006,7 +1124,6 @@ focaltech_report(const uint8_t *report)
 		    (((uint32_t)touch[4] & 0x1c) >> 2);
 		focaltech_contact_update(id, event, x, y, focaltech_max_x, focaltech_max_y);
 	}
-	(void)count;
 	/* Fingers not in this report are up (vendor driver uses a bitmap; we remember explicitly). */
 	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
 		if (!focaltech_contact[i].seen && focaltech_contact[i].down) {
@@ -1076,6 +1193,20 @@ chip_poll(void)
 	}
 }
 
+/* A look at the chip from the poll thread; false, and nothing read, once the run's end has the chip. */
+static bool
+chip_look(void)
+{
+	__atomic_store_n(&busy, true, __ATOMIC_SEQ_CST);
+	if (__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+		__atomic_store_n(&busy, false, __ATOMIC_SEQ_CST);
+		return false;
+	}
+	chip_poll();
+	__atomic_store_n(&busy, false, __ATOMIC_SEQ_CST);
+	return true;
+}
+
 /* ---- all of it together ---------------------------------------------------------------------------- */
 
 static void
@@ -1089,27 +1220,75 @@ show_state(const char *when)
 	    gpio_get(PIN_FOCALTECH_ID), gpio_get(PIN_GOODIX_ID));
 }
 
+static bool reset_driven, int_pulled, avdd_on;    /* what power_on() did, for power_down() */
+
 /*
  * Power the chip up from nothing, in the vendor driver's order. False when its I/O supply did not come up: then nothing
- * more is driven, neither the analog supply nor a pin the chip would be powered through without it.
+ * more is driven, neither the analog supply nor a pin the chip would be powered through without it -- the interrupt
+ * line's pull-up is such a pin, and is switched on only once the supply is.
  */
 static bool
 power_on(void)
 {
 	gpio_output(PIN_RESET, false, PULL_UP, 8);
-	gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
+	reset_driven = true;
 	if (!io_supply_on()) {
 		return false;
 	}
+	gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
+	int_pulled = true;
 	sleep_ms(3);
 	gpio_output(PIN_AVDD, true, PULL_NONE, 2);
+	avdd_on = true;
 	sleep_ms(15);
 	return true;
+}
+
+/*
+ * Everything power_on(), clocks_on() and the bus did, undone, in the vendor driver's order (goodix_berlin_power_off():
+ * reset, then the analog supply, then the I/O supply): the chip deselected while it still has its supply, held in
+ * reset, its analog supply switched off, the clocks' votes this driver took given back, and the I/O supply's
+ * request withdrawn. Once RPMh says the supply is off, nothing of ours drives the chip or pulls one of its lines up:
+ * the bus pins are let go. Without an answer the chip may still be powered, and chip select stays high. Neither
+ * sleeps nor takes a lock at the run's end (leaving): bounded by RPMh's own wait.
+ */
+static void
+power_down(void)
+{
+	if (bus_taken && io_voted) {
+		gpio_output(PIN_CS, true, PULL_NONE, 2);        /* (also the end of a transfer that was cut off) */
+	}
+	if (reset_driven) {
+		gpio_output(PIN_RESET, false, PULL_NONE, 2);
+	}
+	if (avdd_on) {
+		gpio_output(PIN_AVDD, false, PULL_NONE, 2);
+		avdd_on = false;
+	}
+	if (int_pulled) {
+		gpio_configure(PIN_INT, 0, PULL_NONE, 2, false);
+		int_pulled = false;
+	}
+	if (votes_added != 0) {
+		wr(GCC_VOTE, rd(GCC_VOTE) & ~votes_added);
+		votes_added = 0;
+	}
+	if (io_voted) {
+		(void)io_supply_off();
+	}
+	if (bus_taken && !io_voted) {
+		gpio_configure(PIN_CS, 0, PULL_NONE, 2, false);
+		gpio_configure(PIN_CLK, 0, PULL_NONE, 2, false);
+		gpio_configure(PIN_MOSI, 0, PULL_NONE, 2, false);
+		gpio_configure(PIN_MISO, 0, PULL_NONE, 2, false);
+		bus_taken = false;
+	}
 }
 
 static void
 use_engine_pins(void)
 {
+	bus_taken = true;
 	gpio_configure(PIN_MISO, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
 	gpio_configure(PIN_MOSI, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
 	gpio_configure(PIN_CLK, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
@@ -1176,15 +1355,6 @@ bring_up(void)
 	return false;
 }
 
-static uint64_t
-micros_now(void)
-{
-	uint64_t ns;
-
-	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
-	return ns / 1000;
-}
-
 static void
 goodix_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -1225,7 +1395,8 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 		return;
 	}
 	if (!bring_up()) {
-		printf("goodix: no %s touch screen\n", chip_name());
+		printf("goodix: no %s touch screen; what was switched on for it is off again\n", chip_name());
+		power_down();
 		thread_terminate(current_thread());
 		return;
 	}
@@ -1243,13 +1414,15 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 			    done ? "acknowledged" : "NOT ACKNOWLEDGED");
 		}
 	}
-	for (unsigned tick = 1;; tick++) {
+	for (unsigned tick = 1; !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST); tick++) {
 		uint64_t looked = micros_now(), read_at;
 
 		/* the interrupt line is low while a report waits; look anyway every 80 ms in case it is missed */
 		if (!gpio_get(PIN_INT)) {
 			idle = 0;
-			chip_poll();
+			if (!chip_look()) {
+				break;
+			}
 			read_at = micros_now();
 			reads++;
 			reading += read_at - looked;
@@ -1258,7 +1431,9 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 			}
 		} else if (++idle >= idle_looks) {
 			idle = 0;
-			chip_poll();
+			if (!chip_look()) {
+				break;
+			}
 			reads++;
 			reading += micros_now() - looked;
 		}
@@ -1271,6 +1446,28 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 		sleep_us(poll_us);
 	}
+	thread_terminate(current_thread());     /* (the run's end has the chip) */
+}
+
+/*
+ * At the run's end and on a panic's way out (osfmk/arm64/loader_return.c): the poll thread stopped, and the chip
+ * powered down if it was powered up -- chip select high while it has its supply, reset low, the analog supply off,
+ * and the I/O supply's request withdrawn without RPMh's lock, as the other drivers withdraw theirs there.
+ */
+void
+hakios_goodix_quiesce(void)
+{
+	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
+	/* (nothing switched on, or all of it off again already: a chip that was not found) */
+	if (tlmm == 0 || !(io_voted || avdd_on || int_pulled || bus_taken || votes_added != 0)) {
+		return;
+	}
+	for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
+		spin_us(1000);          /* (the thread finishing the report it reads: 100 ms at most, a stopped core's never ends) */
+	}
+	power_down();
+	printf("goodix: at the run's end: %u reports in %u looks; the chip held in reset, its analog supply off, its I/O supply %s\n",
+	    seen.reports, seen.polls, io_voted ? "STILL ASKED FOR" : "off");
 }
 
 void
