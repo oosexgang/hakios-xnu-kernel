@@ -145,6 +145,13 @@ public:
 	OSDictionary *                  values;
 	uint32_t                        useCount[2];
 	uint32_t                        purgeable;
+	/*
+	 * Of `holders`, those of other parts of the kernel (MiniIOSurfaceCopy(): a swap the display has yet to show, a GPU
+	 * buffer), and when one was last taken or given back or the surface made: a surface its makers let be thrown away
+	 * (purgeable) is counted as idle only when neither has it now nor had it a moment ago (MiniIOSurfaceVolatile()).
+	 */
+	uint32_t                        kernelHolds;
+	uint64_t                        touched;
 	bool                            traced;         /* made by a program of boot-arg surftrace_of: its ports are said too */
 
 	virtual bool
@@ -195,6 +202,12 @@ MiniIOSurface * MiniIOSurfaceCopy(uint32_t sid);
  * each; how many got memory that was kept from one before.
  */
 void            MiniIOSurfaceCost(uint32_t * made, uint64_t * making, uint32_t * freed, uint64_t * freeing, uint32_t * again);
+/*
+ * The surfaces of our own memory their makers have marked volatile (IOSurfaceSetPurgeable): how many and how many bytes are
+ * idle -- no use count, no other part of the kernel holding them, none for a few seconds -- and how many are marked at all.
+ * Only counted: nothing is taken from them (see the comment above it in MiniIOSurface.cpp).
+ */
+extern "C" void MiniIOSurfaceVolatile(uint32_t * idle, uint64_t * idleBytes, uint32_t * marked, uint64_t * markedBytes);
 /* Clear the memory that is kept of surfaces that are gone, for the next ones: when the caller has a moment. */
 void            MiniIOSurfaceClearKept(void);
 /* Wait, for so many milliseconds at most, until the GPU is done with a surface's pixels (BoardGPU.cpp). */

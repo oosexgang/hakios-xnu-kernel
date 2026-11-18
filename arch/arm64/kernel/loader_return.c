@@ -822,6 +822,7 @@ extern uint32_t memorystatus_get_critical_page_shortage_threshold(void);
 extern uint32_t c_segment_pages_compressed;
 extern _Atomic uint64_t ramfs_pages_in_use;
 extern void MiniIOSurfaceUsage(uint32_t *count, uint64_t *bytes);
+extern void MiniIOSurfaceVolatile(uint32_t *idle, uint64_t *idle_bytes, uint32_t *marked, uint64_t *marked_bytes);
 
 /*
  * Where the memory is, in megabytes: for reading a session's log afterwards. "available" is what
@@ -852,6 +853,24 @@ hakios_memory_line(char *buf, size_t len)
 #undef MB
 }
 
+/*
+ * The surfaces their makers marked volatile, which are kept wired all the same (MiniIOSurface.cpp says why they are only
+ * counted): said with the memory line once there are any, so a session's log shows whether giving them back would matter
+ * -- above all when memory is short, which is when it would.
+ */
+static void
+memory_volatile_surfaces(const char *when)
+{
+	uint32_t idle, marked;
+	uint64_t idle_bytes, marked_bytes;
+
+	MiniIOSurfaceVolatile(&idle, &idle_bytes, &marked, &marked_bytes);
+	if (marked != 0) {
+		printf("memory: %u surfaces marked volatile, %u MB, still wired; %u of them idle, %u MB%s\n", marked,
+		    (unsigned int)(marked_bytes >> 20), idle, (unsigned int)(idle_bytes >> 20), when);
+	}
+}
+
 static void
 memory_report(void)
 {
@@ -859,7 +878,30 @@ memory_report(void)
 
 	hakios_memory_line(line, sizeof(line));
 	printf("%s", line);
+	memory_volatile_surfaces("");
 	hakios_adreno_minute();                /* (and how warm the GPU is, if it is in use) */
+}
+
+/*
+ * Memory short between two reports: below the first threshold, where the kernel starts killing idle daemons. The memory
+ * line and the volatile surfaces then, at once, at most once a report's time, so that a session that thrashes shows what
+ * was held when it did.
+ */
+static void
+memory_short(void)
+{
+	static uint64_t said_at;
+	char line[256];
+
+	/* (0 available: not counted yet, early in the boot) */
+	if (memorystatus_available_pages == 0 || memorystatus_available_pages >= memorystatus_get_idle_exit_page_shortage_threshold() ||
+	    (said_at != 0 && loader_live.heartbeat - said_at < MEMORY_REPORT_BEATS)) {
+		return;
+	}
+	said_at = loader_live.heartbeat;
+	hakios_memory_line(line, sizeof(line));
+	printf("memory short: %s", line);
+	memory_volatile_surfaces(" (memory short)");
 }
 
 /* Every HV_WDT_PET_SECONDS: feed the watchdog if there is one, and show any watching loader a sign of life. */
@@ -879,6 +921,8 @@ hv_wdt_pet(__unused thread_call_param_t p0, __unused thread_call_param_t p1)
 	}
 	if (++loader_live.heartbeat % MEMORY_REPORT_BEATS == 0) {
 		memory_report();
+	} else {
+		memory_short();
 	}
 #if HAS_STD_PAC
 	if (loader_live.heartbeat == 1) {

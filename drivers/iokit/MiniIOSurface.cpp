@@ -5,8 +5,9 @@
  * followed by the pixels. Every client that knows a surface has the whole of it mapped once.
  * Surfaces travel between processes as Mach send rights (IOSurfaceSendRight) or by number.
  *
- * What is not here: child surfaces, wrapping of client memory, purgeability, compression,
- * notifications. Calls that are not implemented are logged once and refused.
+ * What is not here: child surfaces, wrapping of client memory, purgeability (what is marked
+ * volatile is only counted: MiniIOSurfaceVolatile()), compression, notifications. Calls that are
+ * not implemented are logged once and refused.
  */
 
 #include <IOKit/IOLib.h>
@@ -29,6 +30,7 @@
 #include <kern/thread_call.h>
 #include <sys/systm.h>
 #include <sys/proc.h>
+#include <sys/sysctl.h>
 
 #include "MiniIOSurface.h"
 
@@ -749,6 +751,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 	info->prohibitUseCount = (uint8_t) dictNumber(props, "IOSurfaceProhibitUseCount", 0);
 	info->sliceCount = dictNumber(props, "IOSurfaceSliceCount", 0);
 	info->protectionOptions = dictNumber(props, "IOSurfaceProtectionOptions", 0);
+	s->touched = mach_absolute_time();
 
 	IOLockLock(gSurfaceLock);
 	uint32_t sid = 0;
@@ -821,6 +824,8 @@ MiniIOSurfaceCopy(uint32_t sid)
 	s = gSurfaceTable[sid];
 	if (s != NULL) {
 		surfaceHold(s);
+		s->kernelHolds++;
+		s->touched = mach_absolute_time();
 	}
 	IOLockUnlock(gSurfaceLock);
 	return s;
@@ -834,6 +839,82 @@ MiniIOSurfaceUsage(uint32_t * count, uint64_t * bytes)
 	*bytes = gSurfaceBytes;
 }
 
+/*
+ * Surfaces marked volatile (IOSurfaceSetPurgeable): their makers have said the pixels may be thrown away and that they will
+ * ask before they draw again. Apple's driver takes the memory of such surfaces when memory runs short; here every surface
+ * stays wired whatever it is marked, and the state is only kept to be answered. Whether that matters is what this counts:
+ * the OnePlus Nord 2 port of iOS found Photos holding 521 volatile surfaces, 312 MB, never given back while the phone
+ * thrashed for memory. After the idea of the OnePlus Nord 2 port's pieces 0417 and 0418, which purge them.
+ *
+ * Idle, which is what such a purge could take: marked volatile, a use count of 0 in both categories, no part of the kernel
+ * holding it (a swap the display has not shown yet, a GPU buffer: kernelHolds) nor the display reading it, and none of that,
+ * nor its making, for SURFACE_IDLE_S. Only surfaces of our own memory are counted: one made around its maker's memory
+ * (IOSurfaceAddress) is that program's memory, which it would have to give back itself.
+ *
+ * Why it is only counted. To give such memory back, the pixels under every client's mapping would have to be replaced at
+ * once (by one page shared by all, as that port does), the memory freed, and the surface answered Empty from then on. That
+ * is not safe with what this file has:
+ *  - a client's mapping is of the whole of `memory`, the page of shared state first and the pixels after it, and clients
+ *    read that page directly (the seed, the use counts): the pixels cannot go without moving the page, and `kbase` with
+ *    it, while the GPU's driver and the display's read `shared()` and the pixels through their own pointers;
+ *  - the mappings are known only to each client (fRefs), with no list of them by surface, and the GPU's driver maps the
+ *    same pages into its client and its SMMU as buffers of its own (BoardGPU.cpp newBuffer);
+ *  - IOMemoryMap::redirect() is made for the display's physical memory (it blocks access with a UPL and maps again as a
+ *    unique mapping), and these mappings were not made unique and may be one object for two of a client's references; a
+ *    mapping over part of another (kIOMapOverwrite) keeps the old memory held by the first, so nothing would be freed;
+ *  - one page shared by every purged surface is a page every client can write and every other read, and made read-only
+ *    it kills the first client that draws into a surface it was told was gone.
+ * So the count, with sysctl kern.surfaces_volatile and a line in the memory report (loader_return.c), says first whether a
+ * phone has enough of them for that work to be worth it.
+ */
+#define SURFACE_PURGEABLE_VOLATILE      1               /* kIOSurfacePurgeableVolatile */
+#define SURFACE_IDLE_S                  3
+
+extern "C" void
+MiniIOSurfaceVolatile(uint32_t * idle, uint64_t * idleBytes, uint32_t * marked, uint64_t * markedBytes)
+{
+	uint64_t now = mach_absolute_time(), settle;
+
+	*idle = *marked = 0;
+	*idleBytes = *markedBytes = 0;
+	if (gSurfaceLock == NULL) {
+		return;
+	}
+	nanoseconds_to_absolutetime((uint64_t) SURFACE_IDLE_S * NSEC_PER_SEC, &settle);
+	IOLockLock(gSurfaceLock);
+	for (uint32_t sid = 1; sid < MINISURF_TABLE_SIZE; sid++) {
+		MiniIOSurface * s = gSurfaceTable[sid];
+
+		if (s == NULL || s->client != NULL || s->purgeable != SURFACE_PURGEABLE_VOLATILE) {
+			continue;
+		}
+		(*marked)++;
+		*markedBytes += s->info.allocSize;
+		if (s->useCount[0] == 0 && s->useCount[1] == 0 && s->kernelHolds == 0 && s->shownReading == 0 &&
+		    now - s->touched >= settle) {
+			(*idle)++;
+			*idleBytes += s->info.allocSize;
+		}
+	}
+	IOLockUnlock(gSurfaceLock);
+}
+
+/* "IDLE IDLE_BYTES MARKED MARKED_BYTES": what MiniIOSurfaceVolatile() counts, for a script on the phone to read. */
+static int
+surfacesVolatileSysctl(struct sysctl_oid * oidp, void * arg1 __unused, int arg2 __unused, struct sysctl_req * req)
+{
+	char text[96];
+	uint32_t idle, marked;
+	uint64_t idleBytes, markedBytes;
+
+	MiniIOSurfaceVolatile(&idle, &idleBytes, &marked, &markedBytes);
+	snprintf(text, sizeof(text), "%u %llu %u %llu", idle, idleBytes, marked, markedBytes);
+	return sysctl_handle_string(oidp, text, 0, req);
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, surfaces_volatile, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 0, surfacesVolatileSysctl, "A",
+    "IOSurfaces marked volatile: idle ones and their bytes, then all of them and their bytes (only counted, never purged)");
+
 void
 MiniIOSurfaceDrop(MiniIOSurface * s)
 {
@@ -841,6 +922,10 @@ MiniIOSurfaceDrop(MiniIOSurface * s)
 		return;
 	}
 	IOLockLock(gSurfaceLock);
+	if (s->kernelHolds != 0) {
+		s->kernelHolds--;
+	}
+	s->touched = mach_absolute_time();
 	surfaceUnhold(s);
 	IOLockUnlock(gSurfaceLock);
 }
@@ -862,6 +947,11 @@ MiniIOSurfaceCreateSimple(uint32_t width, uint32_t height, uint32_t pixelFormat)
 	n = OSNumber::withNumber(pixelFormat, 32); props->setObject("IOSurfacePixelFormat", n); n->release();
 	s = surfaceCreate(props, &error);
 	props->release();
+	if (s != NULL) {
+		IOLockLock(gSurfaceLock);
+		s->kernelHolds = 1;             /* (the maker's hold is the kernel's here, given back with MiniIOSurfaceDrop()) */
+		IOLockUnlock(gSurfaceLock);
+	}
 	return s;
 }
 
@@ -928,7 +1018,10 @@ IOSurfaceSendRight::free(void)
 		ev = NULL;
 	}
 	if (surface != NULL) {
-		MiniIOSurfaceDrop(surface);
+		/* (the right's hold, taken by makeSendRight(): not one of the kernel's, which MiniIOSurfaceDrop() would count off) */
+		IOLockLock(gSurfaceLock);
+		surfaceUnhold(surface);
+		IOLockUnlock(gSurfaceLock);
 	}
 	surface = NULL;
 	OSObject::free();
