@@ -133,7 +133,7 @@ struct hakios_metal_kernel {
     std::shared_ptr<CompiledKernel> kernel;   // shared with every command buffer that dispatched it and has not completed
 };
 struct hakios_metal_queue {
-    std::unique_ptr<CommandQueue> queue;
+    std::shared_ptr<CommandQueue> queue;   // (its command buffers hold it too: freed with the last of them)
     std::shared_ptr<Deferrer> deferrer;   // hakios_metal_queue_set_deferred's; destroyed first (its thread drains)
     ~hakios_metal_queue() { deferrer.reset(); }
 };
@@ -725,6 +725,19 @@ int hakios_metal_texture_replace_level(hakios_metal_texture* t, unsigned level, 
     return 0;
 }
 
+int hakios_metal_buffer_holds_region(hakios_metal_buffer* b, uint64_t offset, hakios_metal_texture* t, unsigned w, unsigned h, unsigned d,
+                                     uint64_t bytesPerRow, uint64_t bytesPerImage) {
+    const uint64_t length = b->buffer->length();
+    uint64_t bytes = 0;
+    if (!t->texture->sourceBytes(w, h, d, bytesPerRow, bytesPerImage, &bytes) || offset > length || bytes > length - offset) {
+        failed("a copy of " + std::to_string(w) + " x " + std::to_string(h) + " x " + std::to_string(std::max(d, 1u)) + " " + t->texture->info().name +
+               " from offset " + std::to_string(offset) + " of a " + std::to_string(length) + "-byte buffer, rows " + std::to_string(bytesPerRow) +
+               " and images " + std::to_string(bytesPerImage) + " bytes apart: it reads past the buffer");
+        return -1;
+    }
+    return 0;
+}
+
 int hakios_metal_texture_read(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, void* bytes, uint64_t bytesPerRow) {
     return hakios_metal_texture_read_level(t, 0, x, y, w, h, bytes, bytesPerRow);
 }
@@ -804,7 +817,12 @@ hakios_metal_queue* hakios_metal_queue_new(hakios_metal_device* d) {
     return r;
 }
 
-void hakios_metal_queue_free(hakios_metal_queue* q) { delete q; }
+void hakios_metal_queue_free(hakios_metal_queue* q) {
+    // (freed inside a deferred job's completion handler: the deferrer's reference to the graveyard, as hakios_metal_cb_free
+    // does, should it be the last; the CommandQueue itself goes with its last command buffer, wherever that is)
+    if (Deferrer::inWorker() && q->deferrer != nullptr) Deferrer::retire(std::move(q->deferrer));
+    delete q;
+}
 
 void hakios_metal_queue_set_deferred(hakios_metal_queue* q, int on) {
     if (on && q->deferrer == nullptr) q->deferrer = std::make_shared<Deferrer>();
@@ -1640,7 +1658,14 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, c
                                  int baseVertex, unsigned baseInstance, hakios_metal_buffer* const* vsBuffers, const uint64_t* vsOffsets, unsigned vsCount,
                                  hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount, hakios_metal_texture* const* fsTextures,
                                  unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers, unsigned fsSamplerCount) {
-    if (deferring(cb) && indexBuffer != nullptr) {
+    if (deferring(cb) && indexBuffer == nullptr) {
+        // (refused on the recording thread, in its place among the jobs: here it would write the command buffer's error
+        // while that thread records into the same buffer)
+        cb->deferrer->post(cb->pending, [cb] { cb->cb->refuse("an indexed draw with no index buffer"); });
+        failed("an indexed draw with no index buffer");
+        return -1;
+    }
+    if (deferring(cb)) {
         auto c = std::make_shared<DrawCopy>();
         c->take(p, pass, viewport, scissor, vsBuffers, vsOffsets, vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
         c->index = *indexBuffer;
@@ -1664,7 +1689,8 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, c
 }
 
 int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
-    if (deferring(cb) && pass != nullptr) {
+    // (no pass is posted too: a clear refused records into the buffer as one served does, on the recording thread)
+    if (deferring(cb)) {
         auto c = std::make_shared<PassCopy>();
         c->take(pass);
         cb->deferrer->post(cb->pending, [cb, c] { refusedThere(cb, hakios_metal_cb_clear(cb, c->get())); });

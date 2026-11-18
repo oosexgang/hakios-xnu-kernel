@@ -55,7 +55,7 @@ struct Rig {
     }
     FakeGpu* fake;
     std::unique_ptr<Gpu> gpu;
-    std::unique_ptr<CommandQueue> queue;
+    std::shared_ptr<CommandQueue> queue;
 };
 
 std::shared_ptr<Texture> target(Rig& r, uint32_t w = 64, uint32_t h = 64, uint32_t usage = kTextureUsageRenderTarget | kTextureUsageRead,

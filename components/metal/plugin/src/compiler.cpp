@@ -9,6 +9,8 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #ifdef HAKIOS_METAL_MESA
 // Mesa's headers carry their own C++ guards (and templates behind them: no extern "C" around these) and are not clean
@@ -1314,6 +1316,17 @@ struct CacheReader {
         return true;
     }
     uint32_t u32() { uint32_t v = 0; raw(&v, 4); return v; }
+    // a count of things that take at least LEAST bytes each in what follows: 0, and the file refused, when what is left
+    // cannot hold that many (a count is believed only after this: the file may be anyone's, and a vector resized to
+    // four billion words is the process gone)
+    uint32_t count(size_t least) {
+        const uint32_t n = u32();
+        if (!ok || uint64_t(n) * least > uint64_t(end - p)) {
+            ok = false;
+            return 0;
+        }
+        return n;
+    }
     std::string str() {
         uint32_t n = u32();
         if (!ok || size_t(end - p) < n) { ok = false; return {}; }
@@ -1427,9 +1440,29 @@ void stageCacheSave(const std::string& path, const CompiledStage& s) {
     if (!written || rename(tmp.c_str(), path.c_str()) != 0) remove(tmp.c_str());
 }
 
-std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
+// whether a stage read back holds to what compileStage's own fills refuse past (fillKernel, fillStage) and to what
+// the draw then indexes by its counts: a file that does not is compiled again, not believed
+bool stageWithinLimits(const CompiledStage& c) {
+    const Stage& s = c.stage;
+    const Kernel& k = s.k;
+    const uint64_t bytes = 4ull * c.words.size();
+    return s.kind <= kStageFragment && s.numInputs <= kMaxStageInputs && s.numOutputs <= kMaxStageOutputs &&
+           s.numColorOutputs <= kMaxColorOutputs && s.numSamplerPrefetch <= kMaxSamplerPrefetch && k.numUboRanges <= kMaxUboRanges &&
+           k.numTextureSlots <= kMaxTextureSlots && k.numBufs <= kMaxBufs && 128ull * k.instrlen <= bytes &&
+           k.constantDataOffset % 4 == 0 && uint64_t(k.constantDataOffset) + k.constantDataSize <= bytes;
+}
+
+// TRUSTED: a read-only seed of the system image's. A file of the writable cache is taken only when it is this user's or
+// root's and no one else may write it: the directory is the process's own, but one made by an older build was open to all.
+std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path, bool trusted) {
     FILE* f = fopen(path.c_str(), "rb");
     if (f == nullptr) return nullptr;
+    struct stat st;
+    if (!trusted && (fstat(fileno(f), &st) != 0 || !S_ISREG(st.st_mode) || (st.st_uid != geteuid() && st.st_uid != 0) ||
+                     (st.st_mode & (S_IWGRP | S_IWOTH)) != 0)) {
+        fclose(f);
+        return nullptr;
+    }
     std::string data;
     char chunk[65536];
     for (size_t n; (n = fread(chunk, 1, sizeof(chunk), f)) > 0;) data.append(chunk, n);
@@ -1437,11 +1470,11 @@ std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
     CacheReader r{reinterpret_cast<const uint8_t*>(data.data()), reinterpret_cast<const uint8_t*>(data.data()) + data.size()};
     auto s = std::make_unique<CompiledStage>();
     if (r.u32() != kCacheMagic || !r.raw(&s->stage, sizeof(s->stage))) return nullptr;
-    s->words.resize(r.u32());
+    s->words.resize(r.count(4));
     r.raw(s->words.data(), s->words.size() * 4);
-    s->immediates.resize(r.u32());
+    s->immediates.resize(r.count(4));
     r.raw(s->immediates.data(), s->immediates.size() * 4);
-    s->resources.resize(r.u32());
+    s->resources.resize(r.count(4 * 3 + 8 + 4 + 4 * 2));   // (kind, index, size, the flags, the type's name, the set and offset)
     for (Resource& res : s->resources) {
         res.kind = Resource::Kind(r.u32());
         res.index = r.u32();
@@ -1454,9 +1487,9 @@ std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
         res.argbufSet = r.u32();
         res.argbufOffset = r.u32();
     }
-    s->varyingNames.resize(r.u32());
+    s->varyingNames.resize(r.count(4));
     for (std::string& v : s->varyingNames) v = r.str();
-    s->inlineSamplers.resize(r.u32());
+    s->inlineSamplers.resize(r.count(4 + sizeof(Sampler)));
     for (auto& is : s->inlineSamplers) {
         is.first = r.u32();
         r.raw(&is.second, sizeof(is.second));
@@ -1472,6 +1505,7 @@ std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
     s->stage.k.numImmediates = uint32_t(s->immediates.size());
     s->stage.k.name = s->name.c_str();
     s->stage.k.source = "";
+    if (!stageWithinLimits(*s)) return nullptr;
     return s;
 }
 }  // namespace
@@ -1558,7 +1592,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     const std::string name = stageCacheName(bitcode, size, constants, iboBase, known);
     const std::string cached = stageCacheWritable(name);
     if (!cached.empty()) {
-        if (std::unique_ptr<CompiledStage> s = stageCacheLoad(cached)) return s;
+        if (std::unique_ptr<CompiledStage> s = stageCacheLoad(cached, false)) return s;
     }
     if (!name.empty()) {
         const char* seed = getenv("HAKIOS_METAL_CACHE_SEED");
@@ -1567,7 +1601,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
             const std::string dir(p, colon != nullptr ? size_t(colon - p) : strlen(p));
             p = colon != nullptr ? colon + 1 : nullptr;
             if (dir.empty()) continue;
-            if (std::unique_ptr<CompiledStage> s = stageCacheLoad(dir + name)) return s;
+            if (std::unique_ptr<CompiledStage> s = stageCacheLoad(dir + name, true)) return s;
         }
     }
     std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase, known);

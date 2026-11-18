@@ -29,7 +29,7 @@ struct Rig {
     }
     FakeGpu* fake;
     std::unique_ptr<Gpu> gpu;
-    std::unique_ptr<CommandQueue> queue;
+    std::shared_ptr<CommandQueue> queue;
 };
 
 std::shared_ptr<Buffer> buffer(Rig& r, uint64_t n, uint32_t fill) {

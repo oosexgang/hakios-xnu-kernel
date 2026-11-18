@@ -124,6 +124,25 @@ void Gpu::release(Bo& bo) {
     t_->call(kGemClose, &c, sizeof(c));
 }
 
+Gpu::~Gpu() {
+    {
+        std::unique_lock<std::mutex> g(queuesLock_);
+        queuesGone_.wait(g, [this] { return queues_ == 0; });
+    }
+    forgetSurfaceBuffers(this);
+}
+
+Gpu::QueueHold::QueueHold(Gpu& gpu) : gpu_(gpu) {
+    std::lock_guard<std::mutex> g(gpu_.queuesLock_);
+    gpu_.queues_++;
+}
+
+Gpu::QueueHold::~QueueHold() {
+    // (told under the lock: once it is let go the Gpu may be destroyed, and nothing of it is touched after)
+    std::lock_guard<std::mutex> g(gpu_.queuesLock_);
+    if (--gpu_.queues_ == 0) gpu_.queuesGone_.notify_all();
+}
+
 int Gpu::newQueue(uint32_t priority, uint32_t* id) {
     MsmSubmitQueue q{0, priority, 0};
     int e = t_->call(kSubmitQueueNew, &q, sizeof(q));

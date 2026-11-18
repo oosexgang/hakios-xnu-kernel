@@ -322,6 +322,10 @@ public:
     // slices Z to Z + D - 1 of mip level LEVEL, each its rows (bytesPerRow apart) and the next BYTES_PER_IMAGE further on
     bool replaceSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
                        uint64_t bytesPerImage, std::string* why);
+    // The bytes from its BYTES that replace (D 0) or replaceSlices (D slices) reads for a W x H region at these strides,
+    // into *OUT: what a caller copying out of memory of a known length must check first (a buffer's, at an offset of
+    // its caller's). False when the sum passes 2^64, which no memory holds.
+    bool sourceBytes(uint32_t w, uint32_t h, uint32_t d, uint64_t bytesPerRow, uint64_t bytesPerImage, uint64_t* out) const;
     bool readSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow,
                     uint64_t bytesPerImage, std::string* why) const;
     // how far apart its slices are (ARRAY_PITCH): a 3D texture's depth slice (fd6_layout.c's size0 for level 0: the rows,

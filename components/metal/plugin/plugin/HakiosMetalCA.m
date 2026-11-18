@@ -1327,6 +1327,7 @@ HM_REFUSES_OUT_LOUD
 	NSMutableArray *_scheduled, *_completed; /* handler blocks, copied to the heap */
 	NSError *_error;
 	BOOL _committed;
+	BOOL _completedTaken;                    /* (under @synchronized) hakiosCompletedNow has taken _completed: a handler now is run at once */
 	BOOL _owesSlot;                          /* holds one of the queue's maxCommandBufferCount slots */
 	double _committedAt;                     /* host seconds, for the GPU times Metal reports */
 	double _createdAt;                       /* ...and when it was made: metal_fps's encoding time */
@@ -2304,6 +2305,30 @@ hm_boot_arg_set(const char *what)
 	return sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, what) != NULL;
 }
 
+/*
+ * Whether DIR may hold this process's compiled stages: made 0700 when missing, and taken only when it is a directory
+ * (not a link) of this process's user. The stages in it are machine code the GPU runs in the window server and loaded
+ * without a second look at where they came from, so no one else may write there. A process shown the device compiles
+ * its own stages (hm_shown(): iconservicesagent and the others of metal_procs=, as mobile), so the cache is per user:
+ * one that finds the directory another user's goes on to the next. A directory of its own that an older build made open
+ * to all (01777) is closed again; a stage someone else left in it is not this user's or root's, and the loader
+ * (compiler.cpp: stageCacheLoad) passes over it and compiles the stage again.
+ */
+static bool
+hm_own_cache_dir(const char *dir)
+{
+	struct stat st;
+
+	mkdir(dir, 0700);
+	if (lstat(dir, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid()) {
+		return false;
+	}
+	if ((st.st_mode & 07077) != 0 && chmod(dir, 0700) != 0) {
+		return false;
+	}
+	return access(dir, W_OK | X_OK) == 0;
+}
+
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
 	/* (hakios) the window server is shown the device, and the processes of hm_shown(): every other client of this
@@ -2482,11 +2507,25 @@ hm_boot_arg_set(const char *what)
 	 * out by design, so a cache in /var/tmp started empty at every boot and the first minute of every boot paid the
 	 * 66 to 103 compiles again. A cache in the image (HM_CACHE_SEED, read-only, put there by
 	 * tools/metal-cache-seed.sh from an earlier boot's) is looked in after it and never written. */
-	/* (the skeleton makes HM_CACHE_DIR 1777, init.c from var.skel; an image without that line, or a process that may not
-	 * write there, falls back on /var/tmp as before: a cache for this boot only is better than none) */
-	mkdir(HM_CACHE_DIR, 01777);
-	setenv("HAKIOS_METAL_CACHE", access(HM_CACHE_DIR, W_OK | X_OK) == 0 ? HM_CACHE_DIR : (mkdir("/var/tmp/hakios-metal-cache", 0755),
-												 "/var/tmp/hakios-metal-cache"), 0);
+	/* (a process that may not use HM_CACHE_DIR -- the window server's sandbox, or one of hm_shown()'s that is not root --
+	 * falls back on /var/tmp as before, and past a directory there that another user holds on one of its own: a cache
+	 * for this boot only is better than none, and one shared with another user is worse than none) */
+	{
+		char mine[64];
+		const char *dir = NULL;
+
+		snprintf(mine, sizeof(mine), "/var/tmp/hakios-metal-cache-%u", (unsigned)geteuid());
+		if (hm_own_cache_dir(HM_CACHE_DIR)) {
+			dir = HM_CACHE_DIR;
+		} else if (hm_own_cache_dir("/var/tmp/hakios-metal-cache")) {
+			dir = "/var/tmp/hakios-metal-cache";
+		} else if (hm_own_cache_dir(mine)) {
+			dir = mine;
+		}
+		if (dir != NULL) {
+			setenv("HAKIOS_METAL_CACHE", dir, 0);
+		}
+	}
 	{
 		struct stat st;
 
@@ -4612,8 +4651,11 @@ HM_REFUSES_OUT_LOUD
 			"made now\n", (unsigned long)bytesPerRow, (unsigned long)offset);
 		texture = hakios_metal_texture_new_levels([_device hakiosDevice], (unsigned)[descriptor textureType], (unsigned)[descriptor pixelFormat],
 							  (unsigned)[descriptor width], (unsigned)[descriptor height], 1, (unsigned)usage);
-		if (texture != NULL && hakios_metal_texture_replace(texture, 0, 0, (unsigned)[descriptor width], (unsigned)[descriptor height], from,
-								    (uint64_t)bytesPerRow) != 0) {
+		/* (the rows the copy reads, from the caller's offset at the caller's stride, inside the buffer first) */
+		if (texture != NULL && (hakios_metal_buffer_holds_region(_buffer, (uint64_t)offset, texture, (unsigned)[descriptor width],
+									 (unsigned)[descriptor height], 0, (uint64_t)bytesPerRow, 0) != 0 ||
+					hakios_metal_texture_replace(texture, 0, 0, (unsigned)[descriptor width], (unsigned)[descriptor height], from,
+								     (uint64_t)bytesPerRow) != 0)) {
 			hakios_metal_texture_free(texture);
 			texture = NULL;
 		}
@@ -5788,12 +5830,19 @@ HM_REFUSES_OUT_LOUD
  * completed 4, error 5 */
 - (MTLCommandBufferStatus)status { return (MTLCommandBufferStatus)hakios_metal_cb_status(_cb); }
 
+/* The status and the sentence are read before the lock is taken: with deferred recording they wait for the commit
+ * still queued on the recording thread, and a commit that fails there completes the buffer on that thread, where
+ * hakiosCompletedNow asks for this error -- under the lock, which this thread would be holding while it waited. */
 - (NSError *)error
 {
-	@synchronized (self) {
-		if (_error == nil && hakios_metal_cb_status(_cb) == HAKIOS_METAL_ERROR) {
-			NSString *why = [NSString stringWithUTF8String:hakios_metal_cb_error(_cb)];
+	NSString *why = nil;
+	BOOL failed = hakios_metal_cb_status(_cb) == HAKIOS_METAL_ERROR;
 
+	if (failed) {
+		why = [NSString stringWithUTF8String:hakios_metal_cb_error(_cb)];
+	}
+	@synchronized (self) {
+		if (_error == nil && failed) {
 			_error = [[NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
 						  userInfo:@{ NSLocalizedDescriptionKey: why != nil ? why : @"(no reason recorded)" }] retain];
 		}
@@ -7145,6 +7194,7 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	@synchronized (self) {
 		completed = _completed;
 		_completed = nil;
+		_completedTaken = YES;
 	}
 	for (id handler in completed) {
 		[self hakiosDeliver:(MTLCommandBufferHandler)handler];
@@ -7250,8 +7300,10 @@ hm_note_handler(const char *kind, id handler)
 		return;
 	}
 	hm_note_handler("completed", handler);
+	/* (whether the completion has taken the handlers, and not the status: the status waits for a deferred commit, whose
+	 * failure completes the buffer on the recording thread under this lock -- see -error) */
 	@synchronized (self) {
-		if (hakios_metal_cb_status(_cb) < HAKIOS_METAL_COMPLETED) {
+		if (!_completedTaken) {
 			if (_completed == nil) {
 				_completed = [[NSMutableArray alloc] init];
 			}
@@ -7597,7 +7649,10 @@ hm_rows_texture(HakiosMetalBlitCommandEncoder *self, hakios_metal_cb *cb, hakios
 		const uint8_t *base = hakios_metal_buffer_contents(from);
 		const BOOL planes = hakios_metal_texture_type(to) == MTLTextureType3D;
 
+		/* (the offset and the strides are the caller's: what the copy reads is checked against the buffer before it is read) */
 		if (base == NULL || (!planes && sourceSize.depth != 1) ||
+		    hakios_metal_buffer_holds_region(from, sourceOffset, to, (unsigned)sourceSize.width, (unsigned)sourceSize.height,
+						     (unsigned)sourceSize.depth, sourceBytesPerRow, sourceBytesPerImage) != 0 ||
 		    hakios_metal_texture_replace_3d(to, (unsigned)destinationLevel, (unsigned)destinationOrigin.x, (unsigned)destinationOrigin.y,
 						    (unsigned)(planes ? destinationOrigin.z : destinationSlice), (unsigned)sourceSize.width,
 						    (unsigned)sourceSize.height, (unsigned)sourceSize.depth, base + sourceOffset, sourceBytesPerRow,
@@ -7634,7 +7689,9 @@ hm_rows_texture(HakiosMetalBlitCommandEncoder *self, hakios_metal_cb *cb, hakios
 		if (format >= 130 && format <= 236) {
 			const uint8_t *base = hakios_metal_buffer_contents(from);
 
-			if (base == NULL || hakios_metal_texture_replace_level(to, (unsigned)destinationLevel, (unsigned)destinationOrigin.x,
+			if (base == NULL || hakios_metal_buffer_holds_region(from, sourceOffset, to, (unsigned)sourceSize.width,
+									     (unsigned)sourceSize.height, 0, sourceBytesPerRow, 0) != 0 ||
+			    hakios_metal_texture_replace_level(to, (unsigned)destinationLevel, (unsigned)destinationOrigin.x,
 									       (unsigned)destinationOrigin.y, (unsigned)sourceSize.width,
 									       (unsigned)sourceSize.height, base + sourceOffset, sourceBytesPerRow) != 0) {
 				hm_print("refused: a buffer-to-texture copy of %lux%lu at (%lu, %lu) into block format %u: %s\n", (unsigned long)sourceSize.width,

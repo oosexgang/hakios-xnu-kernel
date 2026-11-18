@@ -159,8 +159,8 @@ hakios_metal_texture *hakios_metal_texture_new_iosurface(hakios_metal_device *de
 hakios_metal_texture *hakios_metal_texture_new_iosurface2(hakios_metal_device *device, unsigned surface_id, unsigned plane,
     unsigned pixel_format, unsigned width, unsigned height, unsigned usage, uint64_t chroma_offset, unsigned chroma_row_bytes);
 /* -[MTLBuffer newTextureWithDescriptor:offset:bytesPerRow:]: a texture over BUFFER's bytes from OFFSET, BYTES_PER_ROW apart
- * (the same memory). NULL with the reason: a pitch or start that is not a multiple of 64 bytes, rows past the buffer, a
- * format, type or level count a buffer does not take. */
+ * (the same memory). NULL with the reason: a pitch or start that is not a multiple of 64 bytes, a pitch past the
+ * descriptor's field (4 MiB less 64 bytes), rows past the buffer, a format, type or level count a buffer does not take. */
 hakios_metal_texture *hakios_metal_texture_new_buffer(hakios_metal_buffer *buffer, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage, uint64_t offset, uint64_t bytes_per_row);
 /* -newTextureViewWithPixelFormat:textureType:levels:slices:: a texture over TEXTURE's memory, of PIXEL_FORMAT and TYPE,
@@ -235,6 +235,13 @@ int hakios_metal_texture_replace_level(hakios_metal_texture *texture, unsigned l
     unsigned h, const void *bytes, uint64_t bytes_per_row);
 int hakios_metal_texture_read_level(hakios_metal_texture *texture, unsigned level, unsigned x, unsigned y, unsigned w,
     unsigned h, void *bytes, uint64_t bytes_per_row);
+/* whether BUFFER's bytes from OFFSET hold all that a write of a W x H region of TEXTURE reads from a pointer there:
+ * hakios_metal_texture_replace_level's rows (D 0) or hakios_metal_texture_replace_3d's D images, at BYTES_PER_ROW and
+ * BYTES_PER_IMAGE, in TEXTURE's format. What a copy out of a buffer's memory by the processor checks first: the offset
+ * and the strides are a caller's (an MTLBlitCommandEncoder's), and the copy would read past the buffer. 0, or -1 with
+ * the reason. */
+int hakios_metal_buffer_holds_region(hakios_metal_buffer *buffer, uint64_t offset, hakios_metal_texture *texture, unsigned w, unsigned h,
+    unsigned d, uint64_t bytes_per_row, uint64_t bytes_per_image);
 
 /* MTLSamplerDescriptor's fields, Metal's numbering and defaults (zero everywhere but normalized_coordinates 1,
  * lod_max_clamp FLT_MAX, max_anisotropy 1) */

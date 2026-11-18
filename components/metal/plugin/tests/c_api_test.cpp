@@ -1,8 +1,11 @@
 // The C interface the plug-in uses, on the fake GPU.
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "hakios-metal/hakios_metal.h"
@@ -111,6 +114,174 @@ TEST(c_api_a_deferred_buffer_freed_in_its_callback_is_safe) {
     hakios_metal_cb_free(last);
     CHECK_EQ(done.load(), 20);
     hakios_metal_queue_set_deferred(q, 0);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
+namespace {
+// what the plug-in's command buffer does in its completion: it releases itself, and with it the last reference to
+// its queue (the MTLCommandQueue an application dropped while the buffer was in flight)
+struct LastHolder {
+    hakios_metal_queue* q;
+    std::atomic<int> done{0};
+};
+void freeItselfAndItsQueue(hakios_metal_cb* cb, void* context) {
+    auto* h = static_cast<LastHolder*>(context);
+    hakios_metal_cb_free(cb);
+    hakios_metal_queue_free(h->q);
+    h->done.store(1);
+}
+// until the queue's memory is all given back, which its destructor does on a thread of the driver's (closing the
+// device waits for that destructor to be through: Gpu::QueueHold)
+bool settles(hakios_metal_device* d, uint64_t before) {
+    for (int i = 0; i < 5000; i++) {
+        if (hakios_metal_device_allocated_bytes(d) == before) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+}  // namespace
+
+TEST(c_api_the_last_reference_to_a_queue_may_go_in_a_completion) {
+    // The completion runs on the queue's own waiting thread; the queue destroyed there joined that thread to itself
+    // (std::terminate). The queue now lives as long as its command buffers, and one let go of on its own thread is
+    // left to end there.
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
+    const uint64_t before = hakios_metal_device_allocated_bytes(d);
+    LastHolder h;
+    h.q = hakios_metal_queue_new(d);
+    hakios_metal_cb* c = hakios_metal_cb_new(h.q);
+    CHECK_EQ(hakios_metal_cb_fill(c, b, 0, 4096, 0x5a), 0);
+    hakios_metal_cb_commit(c, freeItselfAndItsQueue, &h);
+    for (int i = 0; i < 5000 && h.done.load() == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK_EQ(h.done.load(), 1);
+    CHECK(settles(d, before));
+    CHECK_EQ(static_cast<uint8_t*>(hakios_metal_buffer_contents(b))[4095], 0x5a);
+    hakios_metal_buffer_free(b);
+    hakios_metal_close(d);
+}
+
+TEST(c_api_the_last_reference_to_a_queue_may_go_in_a_deferred_refusal) {
+    // With deferred recording a refused commit finishes on the Deferrer's worker, and its handler there frees the
+    // command buffer and the queue; finish() then gave the buffer's slabs back to the freed queue (a use after free
+    // under make asan). The unaligned copy is what takes a slab: a pass of the 2D engine with a table of its own.
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
+    const uint64_t before = hakios_metal_device_allocated_bytes(d);
+    LastHolder h;
+    h.q = hakios_metal_queue_new(d);
+    hakios_metal_queue_set_deferred(h.q, 1);
+    hakios_metal_cb* c = hakios_metal_cb_new(h.q);
+    CHECK_EQ(hakios_metal_cb_copy(c, b, 0, b, 2048, 6), 0);
+    hakios_metal_cb_fail(c, "a buffer not in the GPU's memory");
+    hakios_metal_cb_commit(c, freeItselfAndItsQueue, &h);
+    for (int i = 0; i < 5000 && h.done.load() == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK_EQ(h.done.load(), 1);
+    CHECK(settles(d, before));
+    hakios_metal_buffer_free(b);
+    hakios_metal_close(d);
+}
+
+// A texture over a buffer at the caller's offset and pitch, both 64-bit: the end of its last row wrapped round past 2^64
+// to a small number inside the buffer, and the texture was made over memory that is not the buffer's. Twins: the same
+// texture at an offset and a pitch that fit is made, and one at the largest pitch the descriptor holds is refused only
+// for the rows past the buffer, not for the pitch.
+TEST(c_api_a_texture_over_a_buffer_refuses_rows_that_wrap_round) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
+    CHECK(hakios_metal_texture_new_buffer(b, 2, 70, 16, 1, 1, UINT64_MAX - 63, 64) == nullptr);
+    CHECK(hakios_metal_texture_new_buffer(b, 2, 70, 16, 3, 1, 0, 1ull << 63) == nullptr);
+    CHECK(hakios_metal_texture_new_buffer(b, 2, 70, 16, 1, 1, 1ull << 32, 64) == nullptr);   // (past it without wrapping)
+    hakios_metal_texture* fits = hakios_metal_texture_new_buffer(b, 2, 70, 16, 3, 1, 1024, 64);
+    CHECK(fits != nullptr);
+    if (fits != nullptr) hakios_metal_texture_free(fits);
+    hakios_metal_buffer* big = hakios_metal_buffer_new(d, 16u << 20);
+    // a pitch of 4 MiB is past the descriptor's 22 bits (it read as 0); 4 MiB less 64 is the largest it holds
+    CHECK(hakios_metal_texture_new_buffer(big, 2, 70, 16, 2, 1, 0, 4u << 20) == nullptr);
+    CHECK(strstr(hakios_metal_error(), "at most") != nullptr);
+    hakios_metal_texture* widest = hakios_metal_texture_new_buffer(big, 2, 70, 16, 2, 1, 0, (4u << 20) - 64);
+    CHECK(widest != nullptr);
+    if (widest != nullptr) hakios_metal_texture_free(widest);
+    hakios_metal_buffer_free(big);
+    hakios_metal_buffer_free(b);
+    hakios_metal_close(d);
+}
+
+// What a copy out of a buffer's memory by the processor reads, against the buffer (the plug-in's buffer-to-texture
+// copies take the offset and the strides from their caller): exactly the bytes the write reads fit at the end of the
+// buffer, one more does not, and sums that pass 2^64 are refused, not wrapped round.
+TEST(c_api_a_buffer_holds_the_region_a_copy_reads_or_says_not) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
+    hakios_metal_texture* t = hakios_metal_texture_new_levels(d, 2, 70, 16, 16, 1, 1);
+    CHECK(t != nullptr);
+    if (t != nullptr) {
+        // 16 rows of 64 bytes, 128 apart: 15 * 128 + 64 = 1984 bytes
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 0, t, 16, 16, 0, 128, 0), 0);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 4096 - 1984, t, 16, 16, 0, 128, 0), 0);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 4096 - 1984 + 1, t, 16, 16, 0, 128, 0), -1);
+        CHECK(strstr(hakios_metal_error(), "reads past the buffer") != nullptr);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, UINT64_MAX - 63, t, 16, 1, 0, 64, 0), -1);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 0, t, 16, 3, 0, 1ull << 63, 0), -1);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 4096, t, 0, 0, 0, 64, 0), 0);   // (nothing read: nothing past it)
+        hakios_metal_texture_free(t);
+    }
+    // D images: 4 of 16 rows of 64 bytes, 1024 apart, fill the buffer exactly
+    hakios_metal_texture* v = hakios_metal_texture_new_3d(d, 70, 16, 16, 4, 1);
+    CHECK(v != nullptr);
+    if (v != nullptr) {
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 0, v, 16, 16, 4, 64, 1024), 0);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 64, v, 16, 16, 4, 64, 1024), -1);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 0, v, 16, 16, 2, 64, UINT64_MAX), -1);
+        hakios_metal_texture_free(v);
+    }
+    // a block format reads rows of blocks (ETC2: 4 rows of 4 blocks of 8 bytes), PVRTC its whole level's blocks
+    hakios_metal_texture* e = hakios_metal_texture_new_levels(d, 2, 180, 16, 16, 1, 1);
+    CHECK(e != nullptr);
+    if (e != nullptr) {
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 4096 - 128, e, 16, 16, 0, 32, 0), 0);
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 4096 - 127, e, 16, 16, 0, 32, 0), -1);
+        hakios_metal_texture_free(e);
+    }
+    hakios_metal_texture* p = hakios_metal_texture_new_levels(d, 2, 166, 64, 64, 1, 1);
+    CHECK(p != nullptr);
+    if (p != nullptr) {
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 2048, p, 64, 64, 0, 0, 0), 0);      // 16 x 16 blocks of 8 bytes
+        CHECK_EQ(hakios_metal_buffer_holds_region(b, 2049, p, 64, 64, 0, 0, 0), -1);
+        hakios_metal_texture_free(p);
+    }
+    hakios_metal_buffer_free(b);
+    hakios_metal_close(d);
+}
+
+// With deferred recording an indexed draw with no index buffer and a clear with no pass were refused on the caller's
+// thread, into the command buffer the recording thread was recording the jobs before them into (a race under make
+// tsan), and ahead of those jobs: the buffer's error was the later refusal's. Posted, they come in their order.
+TEST(c_api_deferred_refusals_of_a_missing_argument_keep_their_order) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    hakios_metal_queue_set_deferred(q, 1);
+    hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET | 1);
+    struct hakios_metal_render_pass green = {rt, 2, 1, {0.0, 1.0, 0.0, 0.0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0, nullptr, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (int round = 0; round < 4; round++) {
+        hakios_metal_cb* cb = hakios_metal_cb_new(q);
+        for (int i = 0; i < 16; i++) CHECK_EQ(hakios_metal_cb_clear(cb, &green), 0);
+        hakios_metal_cb_fail(cb, "the refusal before them");
+        CHECK_EQ(hakios_metal_cb_draw_indexed(cb, nullptr, &green, nullptr, nullptr, 3, 3, 0, nullptr, 0, 1, 0, 0, nullptr, nullptr, 0, nullptr,
+                                              nullptr, 0, nullptr, 0, nullptr, 0),
+                 -1);
+        CHECK(strstr(hakios_metal_error(), "no index buffer") != nullptr);
+        hakios_metal_cb_clear(cb, nullptr);
+        for (int i = 0; i < 4; i++) CHECK_EQ(hakios_metal_cb_clear(cb, &green), 0);
+        hakios_metal_cb_commit(cb, nullptr, nullptr);
+        hakios_metal_cb_wait(cb);
+        CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_ERROR);
+        CHECK(strcmp(hakios_metal_cb_error(cb), "the refusal before them") == 0);
+        hakios_metal_cb_free(cb);
+    }
+    hakios_metal_queue_set_deferred(q, 0);
+    hakios_metal_texture_free(rt);
     hakios_metal_queue_free(q);
     hakios_metal_close(d);
 }

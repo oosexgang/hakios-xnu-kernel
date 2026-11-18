@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -1562,6 +1563,80 @@ TEST(a_compiled_stage_comes_back_from_the_cache_and_from_a_seed) {
     for (const std::string& d : {writable, seed, other}) {
         for (const std::string& n : files(d)) remove((d + "/" + n).c_str());
         rmdir(d.c_str());
+    }
+    rmdir(base);
+}
+
+TEST(a_cached_stage_that_does_not_hold_together_is_compiled_again) {
+    // The cache's files are read back as they lie: a count that its file cannot hold (four billion words) was a vector
+    // resized to it before anything was checked, and a Stage past compileStage's limits (1000 inputs, which the draw
+    // walks in an array of 34) was handed to the draw. Each is compiled again now, as is a file that someone other than
+    // this user or root may write.
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the cache did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("tri_flat_vs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    char base[] = "/tmp/hakios-metal-cache-test-XXXXXX";
+    CHECK(mkdtemp(base) != nullptr);
+    setenv("HAKIOS_METAL_CACHE", base, 1);
+    unsetenv("HAKIOS_METAL_CACHE_SEED");
+    std::string why;
+    auto first = compileStage(bc.data(), bc.size(), &why);
+    CHECK(first != nullptr);
+    std::string file;
+    if (DIR* dir = opendir(base)) {
+        while (dirent* e = readdir(dir)) {
+            if (e->d_name[0] != '.') file = std::string(base) + "/" + e->d_name;
+        }
+        closedir(dir);
+    }
+    CHECK(!file.empty());
+    // the file as compileStage wrote it, with N bytes at AT replaced
+    auto patched = [&](long at, const void* bytes, size_t n) {
+        FILE* f = fopen(file.c_str(), "r+b");
+        CHECK(f != nullptr);
+        if (f == nullptr) return;
+        CHECK(fseek(f, at, SEEK_SET) == 0);
+        CHECK_EQ(fwrite(bytes, 1, n, f), n);
+        fclose(f);
+    };
+    const long words = long(4 + sizeof(Stage));                       // (the magic, the Stage, then the words' count)
+    const long inputs = long(4 + offsetof(Stage, numInputs));
+    if (first != nullptr && !file.empty()) {
+        const uint32_t huge = 0xfffffff0u, many = 1000;
+        patched(words, &huge, 4);
+        auto a = compileStage(bc.data(), bc.size(), &why);
+        CHECK(a != nullptr && a->words == first->words);
+        patched(inputs, &many, 4);
+        auto b = compileStage(bc.data(), bc.size(), &why);
+        CHECK(b != nullptr && b->stage.numInputs == first->stage.numInputs && b->words == first->words);
+        // a stage with a name of its own, good in every other way, in a file others may write: not taken
+        auto c = compileStage(bc.data(), bc.size(), &why);   // (from the file written just now)
+        CHECK(c != nullptr && c->name == first->name);
+        // (the file ends with the name and the listing, each after its length)
+        struct stat st;
+        CHECK(stat(file.c_str(), &st) == 0);
+        const long at = long(st.st_size) - long(first->listing.size()) - 4 - long(first->name.size());
+        CHECK(!first->name.empty());
+        if (!first->name.empty()) {
+            const char other = first->name[0] == 'x' ? 'y' : 'x';
+            patched(at, &other, 1);
+            auto mine = compileStage(bc.data(), bc.size(), &why);
+            CHECK(mine != nullptr && mine->name != first->name);   // (this user's own file: taken, the name with it)
+            CHECK(chmod(file.c_str(), 0666) == 0);
+            auto open = compileStage(bc.data(), bc.size(), &why);
+            CHECK(open != nullptr && open->name == first->name);
+        }
+    }
+    unsetenv("HAKIOS_METAL_CACHE");
+    if (DIR* dir = opendir(base)) {
+        while (dirent* e = readdir(dir)) {
+            if (e->d_name[0] != '.') remove((std::string(base) + "/" + e->d_name).c_str());
+        }
+        closedir(dir);
     }
     rmdir(base);
 }

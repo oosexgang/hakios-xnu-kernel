@@ -209,7 +209,7 @@ public:
 
 private:
     friend class CommandQueue;
-    explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
+    explicit CommandBuffer(std::shared_ptr<CommandQueue> queue) : owner_(std::move(queue)), queue_(*owner_) {}
 public:
     ~CommandBuffer();   // (its stamp buffers back to the queue: read until the last reader lets go, which is now)
 private:
@@ -360,6 +360,11 @@ private:
     uint64_t programAddress(const Kernel& k, std::string* why);
     std::unordered_multimap<const uint32_t*, Uploaded> uploaded_;
 
+    // The queue, kept alive by every command buffer of it: the last reference to a queue may go inside a completed
+    // handler (the plug-in's command buffer releasing its queue there), and the buffer still gives its memory back to
+    // the queue after that. Let go (by the waiter, under the queue's lock) when the buffer is quarantined: the queue
+    // holds those for its life, and the two holding each other would outlive everyone.
+    std::shared_ptr<CommandQueue> owner_;
     CommandQueue& queue_;
     std::atomic<Status> status_{kNotEnqueued};
     std::string error_;
@@ -381,10 +386,11 @@ private:
     int64_t committedAt_ = 0, completedAt_ = 0;
 };
 
-class CommandQueue {
+class CommandQueue : public std::enable_shared_from_this<CommandQueue> {
 public:
-    // a queue of its own with the driver; nullptr with *why when the driver has none to give
-    static std::unique_ptr<CommandQueue> make(Gpu& gpu, std::string* why);
+    // a queue of its own with the driver; nullptr with *why when the driver has none to give. Shared: each of its
+    // command buffers holds it too, so it lives until the caller and its last command buffer have let go of it.
+    static std::shared_ptr<CommandQueue> make(Gpu& gpu, std::string* why);
     ~CommandQueue();
 
     std::shared_ptr<CommandBuffer> commandBuffer();
@@ -452,11 +458,12 @@ public:
 
 private:
     friend class CommandBuffer;
-    CommandQueue(Gpu& gpu, uint32_t id) : gpu_(gpu), id_(id) {}
+    CommandQueue(Gpu& gpu, uint32_t id) : hold_(gpu), gpu_(gpu), id_(id) {}
     void submit(std::shared_ptr<CommandBuffer> cb);
-    void waiter();
+    void waiter(const std::shared_ptr<bool>& orphaned);
     std::unique_ptr<Bo> takeCommandBo(size_t bytes, int* error);
 
+    Gpu::QueueHold hold_;   // first: let go after every other member, the last of them to touch the Gpu
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
@@ -491,6 +498,9 @@ private:
     // (under lock_) command buffers' streams' memory, given back at submit for the next command buffer (pm4::Stream::release)
     std::vector<std::vector<uint32_t>> spareStreams_;
     bool quit_ = false;
+    // set by the destructor when it runs on the waiter's own thread (the last reference let go there), which it cannot
+    // join: the thread is detached and the waiter, which holds this flag and not the queue, returns at once
+    std::shared_ptr<bool> orphaned_ = std::make_shared<bool>(false);
     std::thread thread_;
 };
 

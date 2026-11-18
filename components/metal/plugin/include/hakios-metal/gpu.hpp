@@ -9,9 +9,11 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -157,7 +159,23 @@ void forgetSurfaceBuffers(const class Gpu* gpu);
 class Gpu {
 public:
     explicit Gpu(std::unique_ptr<Transport> transport) : t_(std::move(transport)) {}
-    ~Gpu() { forgetSurfaceBuffers(this); }
+    // (after every CommandQueue over it is gone: QueueHold)
+    ~Gpu();
+
+    // A CommandQueue's hold on its Gpu, its first member and so the last of it let go: the destructor waits for every
+    // one. A queue lives as long as its last command buffer, and the last one may go on a thread of the driver's own
+    // (the queue's waiter, a deferred commit's recorder) while the owner is closing the device: that queue's pools and
+    // command memory are still going back to this Gpu then, and a Gpu freed under them corrupted the heap.
+    class QueueHold {
+    public:
+        explicit QueueHold(Gpu& gpu);
+        ~QueueHold();
+        QueueHold(const QueueHold&) = delete;
+        QueueHold& operator=(const QueueHold&) = delete;
+
+    private:
+        Gpu& gpu_;
+    };
 
     // what the driver says about the GPU (kParam...): 0 and *value, or an errno
     int param(uint32_t which, uint64_t* value);
@@ -204,6 +222,9 @@ public:
 
 private:
     friend class Bo;
+    std::mutex queuesLock_;
+    std::condition_variable queuesGone_;
+    uint32_t queues_ = 0;   // (under queuesLock_) QueueHolds alive
     std::atomic<uint64_t> allocated_{0};
     void release(Bo& bo);
     std::unique_ptr<Transport> t_;

@@ -779,6 +779,29 @@ bool Texture::replaceSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, 
     return true;
 }
 
+bool Texture::sourceBytes(uint32_t w, uint32_t h, uint32_t d, uint64_t bytesPerRow, uint64_t bytesPerImage, uint64_t* out) const {
+    *out = 0;
+    if (d == 0 && staging_ != nullptr) return staging_->sourceBytes(w, h, d, bytesPerRow, bytesPerImage, out);   // (replace's own road)
+    if (w == 0 || h == 0) return true;
+    if (d == 0 && info_->pvrtcBpp != 0) {
+        // PVRTC: the whole level's blocks, at their twiddled places (decodePvrtc), whatever the stride
+        const uint32_t bw = info_->pvrtcBpp == 2 ? 8 : 4, bh = 4;
+        const uint32_t wb = std::max<uint32_t>((w + bw - 1) / bw, 2), hb = std::max<uint32_t>((h + bh - 1) / bh, 2);
+        uint64_t last = 0;
+        for (uint32_t by = 0; by < hb; by++) {
+            for (uint32_t bx = 0; bx < wb; bx++) last = std::max<uint64_t>(last, pvrtcTwiddle(bx, by, wb, hb));
+        }
+        *out = 8 * (last + 1);
+        return true;
+    }
+    // replace: rows of blocks (a row of pixels for any other format); replaceSlices: H rows of W pixels, D images
+    const uint64_t rows = d == 0 ? blocksDown(*info_, h) : h;
+    const uint64_t row = d == 0 ? uint64_t(blocksAcross(*info_, w)) * info_->bytesPerPixel : uint64_t(w) * info_->bytesPerPixel;
+    uint64_t images = 0, lines = 0;
+    return !__builtin_mul_overflow(uint64_t(d == 0 ? 0 : d - 1), bytesPerImage, &images) && !__builtin_mul_overflow(rows - 1, bytesPerRow, &lines) &&
+           !__builtin_add_overflow(images, lines, out) && !__builtin_add_overflow(*out, row, out);
+}
+
 bool Texture::readSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow,
                          uint64_t bytesPerImage, std::string* why) const {
     if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, level, x, y, w, h, bytesPerRow, why)) return false;
@@ -1056,8 +1079,12 @@ std::shared_ptr<Texture> Texture::wrapTwoPlanes(std::shared_ptr<Buffer> buffer, 
         return nullptr;
     }
     const uint64_t cw = (uint64_t(desc.width) + 1) / 2, ch = (uint64_t(desc.height) + 1) / 2;
+    // (the chroma plane's offset is the caller's, any 64-bit value: its end is summed with the overflow seen, not wrapped
+    // round to a small number that fits)
+    uint64_t chromaEnd = 0;
+    const bool chromaWraps = __builtin_add_overflow(chroma->offset, uint64_t(chroma->rowBytes) * ch, &chromaEnd);
     if (s.rowBytes % 64 != 0 || s.offset % 64 != 0 || s.rowBytes < desc.width || uint64_t(s.offset) + uint64_t(s.rowBytes) * desc.height > s.size ||
-        chroma->rowBytes % 64 != 0 || chroma->offset % 64 != 0 || chroma->rowBytes < 2 * cw || chroma->offset + uint64_t(chroma->rowBytes) * ch > s.size) {
+        chroma->rowBytes % 64 != 0 || chroma->offset % 64 != 0 || chroma->rowBytes < 2 * cw || chromaWraps || chromaEnd > s.size) {
         refuse(why, name + "'s planes, luma rows of " + n(s.rowBytes) + " bytes from " + n(s.offset) + ", chroma rows of " + n(chroma->rowBytes) + " from " +
                         n(chroma->offset) + ", in its " + n(s.size) + " bytes: each plane wants a pitch and a start that are multiples of 64 bytes, rows that "
                         "hold its width, and its rows inside the surface");
@@ -1083,11 +1110,19 @@ std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uin
         refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture of usage " + n(desc.usage) + " over a buffer: each side 1 to 32767, usage read, write and render target");
         return nullptr;
     }
-    if (bytesPerRow % 64 != 0 || offset % 64 != 0 || bytesPerRow < uint64_t(desc.width) * info->bytesPerPixel ||
-        offset + bytesPerRow * (desc.height - 1) + uint64_t(desc.width) * info->bytesPerPixel > buffer->length()) {
+    // The offset and the pitch are the caller's, any 64-bit values: the end of the last row is summed with the overflow
+    // seen (offset + pitch * (height - 1) wrapped round to a small number and passed), and the pitch is held to what the
+    // descriptors' PITCH field takes (TEX_CONST_2, an image's too: 22 bits of bytes) -- a larger one was cut to its low
+    // bits there, the GPU reading rows other than the ones checked here.
+    constexpr uint64_t kPitchMax = a6xx::A6XX_TEX_CONST_2_PITCH__MASK >> a6xx::A6XX_TEX_CONST_2_PITCH__SHIFT;
+    uint64_t end = 0;
+    const bool wraps = __builtin_mul_overflow(bytesPerRow, uint64_t(desc.height - 1), &end) || __builtin_add_overflow(end, offset, &end) ||
+                       __builtin_add_overflow(end, uint64_t(desc.width) * info->bytesPerPixel, &end);
+    if (bytesPerRow % 64 != 0 || offset % 64 != 0 || bytesPerRow < uint64_t(desc.width) * info->bytesPerPixel || bytesPerRow > kPitchMax || wraps ||
+        end > buffer->length()) {
         refuse(why, "rows of " + n(bytesPerRow) + " bytes from offset " + n(offset) + " of a " + n(buffer->length()) + "-byte buffer for a " + n(desc.width) + " x " +
                         n(desc.height) + " " + info->name + " texture: the GPU wants a pitch and a start that are multiples of 64 bytes, rows that hold the width, "
-                        "and the rows inside the buffer");
+                        "a pitch of " + n(kPitchMax) + " bytes at most, and the rows inside the buffer");
         return nullptr;
     }
     uint32_t pitchAlign = 0;

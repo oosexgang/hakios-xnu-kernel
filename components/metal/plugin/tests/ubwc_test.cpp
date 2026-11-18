@@ -39,7 +39,7 @@ struct Rig {
     }
     FakeGpu* fake;
     std::unique_ptr<Gpu> gpu;
-    std::unique_ptr<CommandQueue> queue;
+    std::shared_ptr<CommandQueue> queue;
 };
 
 bool noMesa(const std::string& why) { return why.find("this build has none") != std::string::npos; }

@@ -520,14 +520,18 @@ void CommandBuffer::waitUntilCompleted() {
 
 CommandBuffer::~CommandBuffer() {
     // (a buffer never completed may be destroyed with the GPU still on it -- an error -- and its stamps are then not
-    // given back; one that completed has had its readers)
-    if (finished_) {
+    // given back; one that completed has had its readers. Nor are a quarantined one's, which has let go of its queue:
+    // the GPU may still write them, and the queue may be gone)
+    if (finished_ && owner_ != nullptr) {
         queue_.giveBuffer(std::move(profileStamps_));
         queue_.giveBuffer(std::move(drawStamps_));
     }
 }
 
 void CommandBuffer::finish(Status s, bool recycle) {
+    // (the queue kept alive to the end of this, whatever the handlers let go of: on the waiter's thread the waiter
+    // holds it too, but a refused commit finishes on the committing thread, a deferred one on the Deferrer's)
+    const std::shared_ptr<CommandQueue> queue = owner_;
     status_ = s;
     if (s == kCompleted && counts_.binnedPasses != 0) queue_.checkVsc();
     if (s == kCompleted && tuning_) {
@@ -535,12 +539,9 @@ void CommandBuffer::finish(Status s, bool recycle) {
             if (t.tuneKey != 0) queue_.tuned(t.tuneKey, t.tiles != 0, t.us);
         }
     }
-    for (auto& h : handlers_) {
-        h(*this);
-    }
-    handlers_.clear();
     if (recycle) {
-        // the GPU has finished with this buffer, or never had it: its slabs and the memory it kept go back
+        // the GPU has finished with this buffer, or never had it: its slabs and the memory it kept go back, before the
+        // handlers, which touch nothing of them (the stamps they may read are held apart) and may let go of the queue
         kept_.clear();
         slab_.reset();
         queue_.giveSlabs(&slabs_);
@@ -548,6 +549,10 @@ void CommandBuffer::finish(Status s, bool recycle) {
     }
     // (when !recycle -- a wait that timed out with no reset -- kept_, slab_, slabs_ and keptAny_ stay referenced so none
     // of their memory is freed or pooled while the GPU may still be reading it; the queue quarantines the whole buffer)
+    for (auto& h : handlers_) {
+        h(*this);
+    }
+    handlers_.clear();
     {
         std::lock_guard<std::mutex> g(lock_);
         finished_ = true;
@@ -634,15 +639,15 @@ bool CommandBuffer::fill(const Buffer& b, uint64_t offset, uint64_t length, uint
 
 // --- CommandQueue -----------------------------------------------------------------------------------------------
 
-std::unique_ptr<CommandQueue> CommandQueue::make(Gpu& gpu, std::string* why) {
+std::shared_ptr<CommandQueue> CommandQueue::make(Gpu& gpu, std::string* why) {
     uint32_t id = 0;
     int e = gpu.newQueue(0, &id);
     if (e != 0) {
         *why = std::string("the driver gave no submission queue: ") + strerror(e);
         return nullptr;
     }
-    std::unique_ptr<CommandQueue> q(new CommandQueue(gpu, id));
-    q->thread_ = std::thread([p = q.get()] { p->waiter(); });
+    std::shared_ptr<CommandQueue> q(new CommandQueue(gpu, id));
+    q->thread_ = std::thread([p = q.get(), orphaned = q->orphaned_] { p->waiter(orphaned); });
     return q;
 }
 
@@ -652,7 +657,13 @@ CommandQueue::~CommandQueue() {
         quit_ = true;
     }
     changed_.notify_all();
-    if (thread_.joinable()) {
+    if (thread_.get_id() == std::this_thread::get_id()) {
+        // the last reference went on the waiter's own thread, after a completed handler let go of the caller's: the
+        // thread cannot join itself (std::terminate). Nothing is in flight (each one in flight holds the queue), and the
+        // waiter returns as soon as this does, touching nothing of the queue.
+        *orphaned_ = true;
+        thread_.detach();
+    } else if (thread_.joinable()) {
         thread_.join();
     }
     idle_.clear();
@@ -660,7 +671,7 @@ CommandQueue::~CommandQueue() {
 }
 
 std::shared_ptr<CommandBuffer> CommandQueue::commandBuffer() {
-    std::shared_ptr<CommandBuffer> cb(new CommandBuffer(*this));
+    std::shared_ptr<CommandBuffer> cb(new CommandBuffer(shared_from_this()));
     std::lock_guard<std::mutex> g(lock_);
     if (!spareStreams_.empty()) {
         cb->stream_.adopt(std::move(spareStreams_.back()));
@@ -767,7 +778,7 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
     changed_.notify_all();
 }
 
-void CommandQueue::waiter() {
+void CommandQueue::waiter(const std::shared_ptr<bool>& orphaned) {
     std::unique_lock<std::mutex> g(lock_);
     for (;;) {
         changed_.wait(g, [this] { return quit_ || !inFlight_.empty(); });
@@ -775,6 +786,8 @@ void CommandQueue::waiter() {
             return;  // quitting, and nothing left in flight
         }
         std::shared_ptr<CommandBuffer> cb = inFlight_.front();
+        // (the queue held while this one is finished and put away: its handlers may let go of every other reference)
+        std::shared_ptr<CommandQueue> self = cb->owner_;
         g.unlock();
         int e = gpu_.wait(id_, cb->fence_, kPatienceNs);
         cb->completedAt_ = gpu_.transport().nowNs();
@@ -798,14 +811,30 @@ void CommandQueue::waiter() {
         // a timeout with no reset means the GPU is still able to be running this submission: its command BO, slabs and
         // stamp buffers must not be reused or freed under it
         const bool poisoned = (e == ETIMEDOUT && !givenUp);
+        if (poisoned) {
+            // held for the queue's life; its commands_ and buffers are never touched again. Put there before its
+            // handlers run and its waiters wake, so that what they ask of the queue then says so (quarantinedCount
+            // read after waitUntilCompleted found it not there yet, now and then)
+            g.lock();
+            quarantined_.push_back(cb);
+            g.unlock();
+        }
         cb->finish(e == 0 ? CommandBuffer::kCompleted : CommandBuffer::kError, !poisoned);
         g.lock();
         inFlight_.pop_front();
         if (poisoned) {
-            quarantined_.push_back(cb);   // held for the queue's life; its commands_ and buffers are never touched again
+            cb->owner_.reset();           // (self holds the queue to the end of this turn)
         } else if (cb->commands_ != nullptr) {
             idle_.push_back(std::move(cb->commands_));
         }
+        g.unlock();
+        // The buffer let go of first (its stamps go back to the queue's pool, which SELF keeps), then the queue: SELF
+        // may be the last reference, and the queue's destructor then runs here, on this thread, and says so through
+        // ORPHANED -- after which nothing of the queue may be touched.
+        cb.reset();
+        self.reset();
+        if (*orphaned) return;
+        g.lock();
     }
 }
 
