@@ -1544,6 +1544,14 @@ group_rekey(struct work_struct *work)
 	int error = 0;
 
 	radio->rekeys++;
+	if (old != NULL && old->keyidx == radio->wpa.group_index) {
+		/*
+		 * (the new key under the old one's number: the driver disables a key by its number, so the old one goes first --
+		 * as mac80211's ieee80211_hw_key_replace() does -- or the disabling would take the new one away)
+		 */
+		key_drop(radio, &old, false);
+		radio->group_key = NULL;
+	}
 	fresh = key_set(radio, radio->wpa.group, radio->wpa.group_length, radio->wpa.group_index, false, &error);
 	lx_tell("lx: the group's new key (number %u) is given to the driver: %d\n", radio->wpa.group_index, error);
 	if (error != 0) {
@@ -1558,7 +1566,9 @@ group_rekey(struct work_struct *work)
 		return;
 	}
 	radio->group_key = fresh;
-	key_drop(radio, &old, false);
+	if (old != NULL) {
+		key_drop(radio, &old, false);
+	}
 }
 
 /* One step of the station's state as the driver is told of it (mac80211: drv_sta_state()). */
