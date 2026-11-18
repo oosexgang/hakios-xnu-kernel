@@ -122,6 +122,8 @@ struct apfs_buf {
 	bool      ref;                  /* used since the clock hand last passed it */
 	uint32_t  used;                 /* nx->fetches when it was last used */
 	bool      checked;              /* its checksum has been verified */
+	bool      hashed;               /* a sealed node: its SHA-256 was found to begin as hash8 says */
+	uint8_t   hash8[8];
 	uint8_t  *data;
 };
 

@@ -336,6 +336,7 @@ nx_block_unlocked(struct apfs_nx *nx, uint64_t addr, const uint8_t **out, bool v
 			return EIO;             /* (the slot stays empty: cache_victim took it out of its chain) */
 		}
 		b->checked = verify;
+		b->hashed = false;
 		cache_link(nx, b, addr);
 	}
 	b->ref = true;
@@ -353,6 +354,7 @@ nx_block_unlocked(struct apfs_nx *nx, uint64_t addr, const uint8_t **out, bool v
 		}
 		memcpy(nb->data, mine + (i - first) * bs, bs);
 		nb->checked = false;
+		nb->hashed = false;
 		nb->ref = false;
 		nb->used = nx->fetches - APFS_CACHE_RECENT;
 		cache_link(nx, nb, i);
@@ -441,6 +443,7 @@ nx_block(struct apfs_nx *nx, uint64_t addr, const uint8_t **out, bool verify)
 		return EIO;
 	}
 	victim->checked = verify;
+	victim->hashed = false;
 	victim->ref = true;
 	victim->used = nx->fetches;
 	cache_link(nx, victim, addr);
@@ -460,6 +463,7 @@ nx_block(struct apfs_nx *nx, uint64_t addr, const uint8_t **out, bool verify)
 		}
 		memcpy(nb->data, nx->cluster + (i - first) * nx->block_size, nx->block_size);
 		nb->checked = false;
+		nb->hashed = false;
 		nb->ref = false;
 		nb->used = nx->fetches - APFS_CACHE_RECENT;
 		cache_link(nx, nb, i);
@@ -649,8 +653,8 @@ tree_node_addr(struct apfs_btree *tree, uint64_t oid, uint64_t *addr);
 /*
  * A sealed volume (the Darwin cryptexes) keeps its file-system tree in nodes without an object
  * header -- no Fletcher checksum -- and each parent keeps the SHA-256 of each child's whole
- * block instead.  Checked once per block the cache brings in (b->checked, which for such a
- * block means "its hash was right"); `len` is 32 on the way down, 8 when a cursor comes back
+ * block instead.  Checked once per block the cache brings in (b->hashed, with the first 8 bytes
+ * of the hash that was right); `len` is 32 on the way down, 8 when a cursor comes back
  * to a node it had left (apfs_cursor.hash8).  The root has no parent: Apple checks it against
  * the volume's root hash, which is kept outside the image (the IPSW's .root_hash), and
  * nothing here has that.
@@ -675,7 +679,11 @@ node_hash_check(struct apfs_nx *nx, uint64_t addr, const uint8_t *blk, const uin
 	struct apfs_buf *b = cache_find(nx, addr);
 	uint8_t d[32];
 
-	if (b != NULL && b->checked) {
+	/*
+	 * (a hash found right before, kept apart from the Fletcher checksum's flag and with what it began with: a block read
+	 * first as checksummed metadata is not taken for a node whose hash was checked, nor one parent's hash for another's)
+	 */
+	if (b != NULL && b->hashed && memcmp(b->hash8, hash, len < 8 ? len : 8) == 0) {
 		return 0;
 	}
 	apfs_sha256(blk, nx->block_size, d);
@@ -684,7 +692,8 @@ node_hash_check(struct apfs_nx *nx, uint64_t addr, const uint8_t *blk, const uin
 		return EIO;
 	}
 	if (b != NULL) {
-		b->checked = true;
+		memcpy(b->hash8, d, sizeof(b->hash8));
+		b->hashed = true;
 	}
 	return 0;
 }
