@@ -115,21 +115,37 @@ power_for(long long mode)
 	return power;
 }
 
+static bool mode_is_32;                 /* the methods take the mode as a 32-bit integer (their type says i or I) */
+static volatile long transitions;       /* how many have begun: a ramp's end acts only if no other began since */
+
 static void
 transition(id self, SEL selector, long long mode, double duration, id curve_changed)
 {
-	int power = power_for(mode);
+	int power;
+	long mine;
 
+	if (mode_is_32) {
+		mode = (int)mode;               /* (the upper half of the register is not the method's to read) */
+	}
+	power = power_for(mode);
+	mine = __atomic_add_fetch(&transitions, 1, __ATOMIC_SEQ_CST);
 	if (power > 0) {
 		set_power(power);               /* lit or dimmed from the start of the ramp */
 	}
 	original_transition(self, selector, mode, duration, curve_changed);
+	/* (the object kept until the block has said its transition is complete: a block of C does not keep it) */
+	CFRetain((CFTypeRef)self);
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * 1e9)),
 	    dispatch_get_main_queue(), ^{
-		if (power == 0) {
-			set_power(0);           /* dark once the ramp is over */
+		/*
+		 * (dark once the ramp is over -- unless the display was turned on again meanwhile: an "off" whose ramp ends after
+		 * an "on" would leave the panel dark with Darwin believing it lit)
+		 */
+		if (power == 0 && __atomic_load_n(&transitions, __ATOMIC_SEQ_CST) == mine) {
+			set_power(0);
 		}
 		((complete_fn)objc_msgSend)(self, complete_sel, mode, nil);
+		CFRelease((CFTypeRef)self);
 	});
 }
 
@@ -209,6 +225,7 @@ backlight_init(void)
 		say(line);
 		return;
 	}
+	mode_is_32 = types[3] == 'i' || types[3] == 'I';
 	original_transition = (transition_fn)method_setImplementation(m, (IMP)transition);
 	snprintf(line, sizeof(line), "hakios: SpringBoard: display mode changes complete after their ramp (%s)\n", types);
 	say(line);
