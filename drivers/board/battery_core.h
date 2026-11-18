@@ -24,6 +24,14 @@
 #define BAT_STEP_TENTHS         2       /* how far what is shown moves at a look (every 5 s: 2.4% a minute) ... */
 #define BAT_FAR_TENTHS          100     /* ... unless it is this far off ... */
 #define BAT_FAR_STEP_TENTHS     20      /* ... when it moves this far */
+/*
+ * A current no phone's cell carries, either way: what the firmware says beyond it is not a current (its word of the
+ * charger's status is unchecked all the way from the loader) and is taken for none. Believed, it moved the voltage's
+ * estimate by its 80 mOhm -- 60 A said to go into the cell took 4.8 V off, a battery at 70% read as empty and shown
+ * as 0% at the first look, for iOS to shut the phone down on (60 A out of it: full) -- and was multiplied past what
+ * an int holds.
+ */
+#define BAT_MOST_MA             20000
 
 /* a cell of 4.4 to 4.45 V (Xiaomi's), its open-circuit voltage against its charge in tenths of a percent */
 static const struct {

@@ -112,16 +112,45 @@ clock_ahead(unsigned seconds)
 	__atomic_store_n(&clock_ahead_ns, (uint64_t)seconds * NSEC_PER_SEC, __ATOMIC_RELAXED);
 }
 
+/*
+ * What the driver says, which a test can have the audio DSP's battery manager report in the middle of: armed, that
+ * report is made when the driver says the loader's cache is passed on again -- after its look at which source is in
+ * use, before it goes on with the cache's values.
+ */
+struct hakios_battery_state;
+static const struct hakios_battery_state *report_when_passed_on;
+static int said_while_reported(const char *format, ...) __attribute__((format(printf, 1, 2)));
+
 /* the driver's includes are the kernel's: the fake kernel answers for them */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #include "board/board.c"
+#include "board/log.h"                  /* (the driver's own, here first: its hakios_say() is the one below) */
+#define hakios_say said_while_reported
 #define memcpy copy_while_updated
 #define mach_absolute_time driver_clock
 #include "board/battery.c"
 #undef mach_absolute_time
 #undef memcpy
+#undef hakios_say
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
+
+static int
+said_while_reported(const char *format, ...)
+{
+	const struct hakios_battery_state *report;
+	va_list list;
+	int length;
+
+	va_start(list, format);
+	length = hakios_vsay(true, format, list);
+	va_end(list);
+	if (strstr(format, "is passed on again") != NULL &&
+	    (report = __atomic_exchange_n(&report_when_passed_on, NULL, __ATOMIC_RELAXED)) != NULL) {
+		hakios_battery_report(report);
+	}
+	return length;
+}
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -636,6 +665,36 @@ dsp_quiet_loader_takes_over(void)
 	    hakios_battery_temperature());
 }
 
+/*
+ * The audio DSP's battery manager speaks again just as the loader's cache is passed on in its place (it had been
+ * quiet for a minute): the DSP is the source from then on, and what is kept -- for the sysctls, for the flashlight's
+ * guard -- is what it said, not the cache's values that the loader's readings took after their look at the source.
+ */
+static void
+dsp_speaks_as_the_cache_is_taken(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 5100, .voltage_uv = 3900000, .current_ua = -100000,
+		.temperature_hundredths = 2500, .present = 1, .external = 0, .status = 2,
+	};
+
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 64, 3960, 200, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	hakios_battery_report(&state);
+	clock_ahead(61);
+	__atomic_store_n(&report_when_passed_on, &state, __ATOMIC_RELAXED);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 50, 3880, 200, 36);
+	WAIT_FOR(__atomic_load_n(&report_when_passed_on, __ATOMIC_RELAXED) == NULL, 2000);
+	usleep(250 * 1000);
+	CHECK(logged("battery: the audio DSP's battery manager speaks again"), "the DSP spoke while the cache was taken: %s", log_text);
+	CHECK(s("battery_from_dsp") == 1, "the DSP is the source");
+	CHECK(s("battery_soc") == 51 && s("battery_voltage_mv") == 3900 && hakios_battery_temperature() == 25,
+	    "and what is kept is the DSP's, not the cache's: %d%%, %d mV, %d C", s("battery_soc"), s("battery_voltage_mv"),
+	    hakios_battery_temperature());
+}
+
 /* full on the charger, taking nothing: full, not "not charging" */
 static void
 full_on_the_charger(void)
@@ -646,6 +705,69 @@ full_on_the_charger(void)
 	WAIT_FOR(reported > 0, 2000);
 	CHECK(told()->percent_hundredths == 10000 && told()->external == 1 && told()->status == 4, "full: %d%%, status %d",
 	    told()->percent_hundredths / 100, told()->status);
+}
+
+/*
+ * A current no cell carries (the firmware's word of its status, which nothing on the way checks): taken for none.
+ * Believed, 60 A into the cell made the voltage's estimate 4.8 V lower -- a battery at 70% shown as empty at the
+ * first look -- and a current near the int's end was multiplied past it.
+ */
+static void
+a_current_that_cannot_be(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, -60000, 31);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(reported > 0 && told()->percent_hundredths == 7000, "the firmware's 70%%, which the voltage at rest agrees with, not empty: %d",
+	    told()->percent_hundredths);
+	CHECK(told()->current_ua == 0 && told()->status == 2, "no current, discharging: %d uA, status %d", told()->current_ua,
+	    told()->status);
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID, 70, 3990, INT32_MIN, 31);
+	WAIT_FOR(told()->external == 1, 2000);
+	usleep(250 * 1000);
+	CHECK(told()->external == 1 && told()->current_ua == 0 && told()->status == 3, "nor the int's end, taken for charging: %d uA, status %d",
+	    told()->current_ua, told()->status);
+	CHECK(told()->percent_hundredths == 7000 && s("battery_shown") == 700, "still 70%%: %d", s("battery_shown"));
+}
+
+/*
+ * A temperature no cell has (an open thermistor, a word of the firmware's status that is something else, a DSP's
+ * number near the int's end): not known, and -- known earlier -- no longer reported, for the flashlight's guard.
+ * Taken as it was, -400 C was cool enough for the guard, and the int's end was multiplied past it for Darwin.
+ */
+static void
+a_temperature_that_cannot_be(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6000, .voltage_uv = 3900000, .current_ua = -100000,
+		.temperature_hundredths = INT32_MAX, .present = 1, .external = 0, .status = 2,
+	};
+
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 300, 31);
+	CHECK(!hakios_battery_went_quiet(), "nothing known yet, nothing lost");
+	hakios_battery_init();
+	WAIT_FOR(hakios_battery_temperature() == 31, 2000);
+	CHECK(hakios_battery_temperature() == 31 && !hakios_battery_went_quiet(), "known: %d C", hakios_battery_temperature());
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 300, -400);
+	WAIT_FOR(s("battery_temperature_c") != 31, 2000);
+	CHECK(hakios_battery_temperature() == -273 && s("battery_temperature_c") == -273, "-400 C is not a temperature: %d C",
+	    hakios_battery_temperature());
+	CHECK(hakios_battery_went_quiet(), "and the guard is told the one known is no longer reported");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 300, INT32_MAX);
+	WAIT_FOR(told()->temperature_hundredths == -27300, 2000);
+	CHECK(told()->temperature_hundredths == -27300 && hakios_battery_temperature() == -273,
+	    "nor the int's end, for Darwin as for the guard: %d", told()->temperature_hundredths);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 300, 33);
+	WAIT_FOR(hakios_battery_temperature() == 33, 2000);
+	CHECK(hakios_battery_temperature() == 33 && !hakios_battery_went_quiet(), "a temperature again: %d C", hakios_battery_temperature());
+	hakios_battery_report(&state);
+	CHECK(s("battery_temperature_c") == -273 && hakios_battery_went_quiet(), "the DSP's int's end neither: %d C",
+	    s("battery_temperature_c"));
+	state.temperature_hundredths = 2950;
+	hakios_battery_report(&state);
+	CHECK(hakios_battery_temperature() == 30 && !hakios_battery_went_quiet(), "and its 29.5 C is: %d C", hakios_battery_temperature());
 }
 
 /* battery_shown=N: N%% shown whatever the firmware says, 100 included */
@@ -679,6 +801,8 @@ main(int argc, char **argv)
 		{ "address_zero", address_zero }, { "full_on_the_charger", full_on_the_charger }, { "shown_as_told", shown_as_told },
 		{ "loader_goes_quiet", loader_goes_quiet }, { "dsp_goes_quiet", dsp_goes_quiet },
 		{ "dsp_quiet_loader_takes_over", dsp_quiet_loader_takes_over },
+		{ "a_current_that_cannot_be", a_current_that_cannot_be }, { "a_temperature_that_cannot_be", a_temperature_that_cannot_be },
+		{ "dsp_speaks_as_the_cache_is_taken", dsp_speaks_as_the_cache_is_taken },
 	};
 
 	if (argc < 2) {

@@ -150,6 +150,26 @@ battery_quiet(void)
 	return quiet;
 }
 
+/*
+ * A temperature that no cell has -- a thermistor open or shorted, a word of the firmware's status that is something
+ * else (the loader passes it on unchecked), a number of the DSP's near the int's end -- is not a temperature: it is
+ * taken for "not known" (-273). Taken as it was, a cell said to be at -400 C was cool enough for the flashlight's
+ * guard, one at 6553 C kept the light off for good, and one near the int's end was multiplied past it for Darwin.
+ */
+#define BATTERY_COLDEST_C       (-40)
+#define BATTERY_HOTTEST_C       100
+static bool battery_temperature_was_known;      /* a temperature that can be was taken in this run */
+
+static int
+battery_plausible_c(int c)
+{
+	if (c < BATTERY_COLDEST_C || c > BATTERY_HOTTEST_C) {
+		return -273;
+	}
+	__atomic_store_n(&battery_temperature_was_known, true, __ATOMIC_RELAXED);
+	return c;
+}
+
 /* for others in the kernel (the flashlight's thermal guard): -273 while it is not known, or no longer */
 int
 hakios_battery_temperature(void)
@@ -158,13 +178,15 @@ hakios_battery_temperature(void)
 }
 
 /*
- * For the flashlight's guard: a temperature known earlier in this run is no longer reported (its source went quiet
- * holding one). Never true where no battery was ever heard of, nor where the last that was said was "not known".
+ * For the flashlight's guard: a temperature known earlier in this run is no longer reported -- its source went
+ * quiet holding one, or what it says now cannot be a temperature (battery_plausible_c()). Never true where no
+ * battery was ever heard of, nor where no temperature that can be was ever said.
  */
 bool
 hakios_battery_went_quiet(void)
 {
-	return battery_quiet() && battery_temperature_c != -273;
+	return __atomic_load_n(&battery_temperature_was_known, __ATOMIC_RELAXED) &&
+	       (battery_quiet() || battery_temperature_c == -273);
 }
 
 static int battery_shown_tenths = -1;   /* what iOS is shown, tenths of a percent (-1: nothing yet) */
@@ -185,7 +207,11 @@ extern void HakiosBatteryReport(const void *state, unsigned size);     /* iokit/
  * HakiosBatteryReport() takes one caller at a time, and two threads call it: the loader's readings here and the audio DSP's
  * battery manager (hakios_battery_report()). Both at once had the service's properties replaced under the other's
  * update, or two power sources made at the first reading. The lock is held around each report, and the readings
- * here look again under it whether the DSP has taken over.
+ * here look again under it whether the DSP has taken over. The values kept for the sysctls and for the flashlight's
+ * guard are taken under it too, with the look at which source is in use: the loader's readings took theirs after
+ * the look, unlocked, and a report of the DSP's that came in between -- its first, or its first after it had gone
+ * quiet -- was written over by the cache's, the DSP then the source and its temperature, its charge not the ones
+ * kept until it reported again.
  */
 static LCK_GRP_DECLARE(battery_lock_group, "hakios-battery");
 static LCK_MTX_DECLARE(battery_report_lock, &battery_lock_group);
@@ -203,14 +229,16 @@ battery_tell_ios(const struct loader_battery *sample)
 {
 	const int mv = (sample->flags & LOADER_BATTERY_VOLTAGE_VALID) ? sample->voltage_mv : -1;
 	const int external = (sample->flags & LOADER_BATTERY_CHARGER_PRESENT) != 0;
-	const int gaining = external && sample->current_ma < BAT_GAINING_MA;
+	/* (a current that cannot be is none: battery_core.h, BAT_MOST_MA) */
+	const int ma = sample->current_ma >= -BAT_MOST_MA && sample->current_ma <= BAT_MOST_MA ? sample->current_ma : 0;
+	const int gaining = external && ma < BAT_GAINING_MA;
 	struct hakios_battery_state state;
 
 	if (battery_source_dsp) {
 		return;
 	}
 	battery_shown_tenths = bat_shown_tenths(battery_shown_tenths,
-	    bat_estimate_tenths(sample->soc_percent, (sample->flags & LOADER_BATTERY_SOC_ESTIMATED) != 0, mv, sample->current_ma), gaining);
+	    bat_estimate_tenths(sample->soc_percent, (sample->flags & LOADER_BATTERY_SOC_ESTIMATED) != 0, mv, ma), gaining);
 	if (battery_shown_override <= 100) {
 		battery_shown_tenths = (int)battery_shown_override * 10;
 	}
@@ -218,8 +246,8 @@ battery_tell_ios(const struct loader_battery *sample)
 	state.size = sizeof(state);
 	state.percent_hundredths = battery_shown_tenths * 10;
 	state.voltage_uv = mv > 0 ? mv * 1000 : 0;
-	state.current_ua = -sample->current_ma * 1000;
-	state.temperature_hundredths = sample->temperature_c * 100;
+	state.current_ua = -ma * 1000;
+	state.temperature_hundredths = battery_plausible_c(sample->temperature_c) * 100;
 	state.present = (sample->flags & LOADER_BATTERY_PRESENT) != 0;
 	state.external = external;
 	/* (POWER_SUPPLY_STATUS_*: charging 1, discharging 2, not charging 3, full 4) */
@@ -235,7 +263,7 @@ battery_tell_ios(const struct loader_battery *sample)
 		/* (a line a look, beside the thermal ones: darwin/tools/frames.py shows what the battery did in each phase) */
 		absolutetime_to_nanoseconds(mach_absolute_time(), &now_ns);
 		hakios_tl("tl: b at %llu shown %d mv %d ma %d c %d external %d\n", now_ns / 1000, battery_shown_tenths, mv,
-		    -sample->current_ma, sample->temperature_c, external);
+		    -ma, battery_plausible_c(sample->temperature_c), external);
 	}
 }
 
@@ -275,6 +303,17 @@ battery_poll(void)
 		__atomic_store_n(&battery_fresh_at, mach_absolute_time(), __ATOMIC_RELAXED);
 		__atomic_store_n(&battery_heard, true, __ATOMIC_RELAXED);
 	}
+	/* (under the lock, with the look above: see battery_report_lock) */
+	battery_soc_percent = sample.soc_percent;
+	battery_voltage_mv = (sample.flags & LOADER_BATTERY_VOLTAGE_VALID) ? sample.voltage_mv : -1;
+	battery_current_ma = sample.current_ma;
+	battery_temperature_c = battery_plausible_c(sample.temperature_c);
+	battery_present = (sample.flags & LOADER_BATTERY_PRESENT) != 0;
+	battery_charger_present = (sample.flags & LOADER_BATTERY_CHARGER_PRESENT) != 0;
+	battery_charging = (sample.flags & LOADER_BATTERY_CHARGING) != 0;
+	battery_soc_estimated = (sample.flags & LOADER_BATTERY_SOC_ESTIMATED) != 0;
+	battery_charger_action = (int)sample.charger_action;
+	battery_updates++;
 	lck_mtx_unlock(&battery_report_lock);
 	if (taken_over) {
 		/* (this says it, not battery_quiet(): the source is another now, and it is not quiet) */
@@ -282,16 +321,6 @@ battery_poll(void)
 		printf("battery: nothing new from the audio DSP's battery manager for %d s: xnuloader's cache, which is new, is "
 		    "passed on again\n", BATTERY_QUIET_SECONDS);
 	}
-	battery_soc_percent = sample.soc_percent;
-	battery_voltage_mv = (sample.flags & LOADER_BATTERY_VOLTAGE_VALID) ? sample.voltage_mv : -1;
-	battery_current_ma = sample.current_ma;
-	battery_temperature_c = sample.temperature_c;
-	battery_present = (sample.flags & LOADER_BATTERY_PRESENT) != 0;
-	battery_charger_present = (sample.flags & LOADER_BATTERY_CHARGER_PRESENT) != 0;
-	battery_charging = (sample.flags & LOADER_BATTERY_CHARGING) != 0;
-	battery_soc_estimated = (sample.flags & LOADER_BATTERY_SOC_ESTIMATED) != 0;
-	battery_charger_action = (int)sample.charger_action;
-	battery_updates++;
 	battery_tell_ios(&sample);
 }
 
@@ -315,12 +344,17 @@ void
 hakios_battery_report(const struct hakios_battery_state *b)
 {
 	int percent = (b->percent_hundredths + 50) / 100;
+	const int hundredths = b->temperature_hundredths;
 	bool back;
 
+	/* (under the lock, as the loader's readings: see battery_report_lock) */
+	lck_mtx_lock(&battery_report_lock);
 	battery_soc_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
 	battery_voltage_mv = b->voltage_uv / 1000;
 	battery_current_ma = b->current_ua / 1000;
-	battery_temperature_c = (b->temperature_hundredths + 50) / 100;
+	/* (looked at before it is rounded: near the int's end, adding to it went past) */
+	battery_temperature_c = hundredths >= BATTERY_COLDEST_C * 100 && hundredths <= BATTERY_HOTTEST_C * 100 ?
+	    battery_plausible_c((hundredths + 50) / 100) : -273;
 	battery_present = b->present != 0;
 	battery_charger_present = b->external != 0;
 	battery_charging = b->status == 1;      /* POWER_SUPPLY_STATUS_CHARGING */
@@ -335,7 +369,6 @@ hakios_battery_report(const struct hakios_battery_state *b)
 	if (b->cycles > 0) {
 		battery_cycles = b->cycles;
 	}
-	lck_mtx_lock(&battery_report_lock);
 	back = !battery_source_dsp && battery_dsp_gave_way;
 	battery_dsp_gave_way = false;
 	battery_source_dsp = 1;
