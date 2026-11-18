@@ -75,8 +75,13 @@ extern void hakios_virtio_blk_quiesce(void);
 extern void hakios_var_save_on_return(void);   /* bsd/dev/board/ufs.c: the data volume into the flash */
 void loader_checkpoint(uint64_t n);
 
-/* Also referenced from the early exception vector in start.s. */
-char     loader_log[LOADER_LOG_SIZE];
+/*
+ * Also referenced from the early exception vector in start.s, which writes it back to RAM 64 bytes (a
+ * cache line) at a time from its first byte, not from the start of that byte's line. Hence the alignment:
+ * otherwise, whenever the log's last characters lay at the start of a line, that line was not written
+ * back, and they were lost with the MMU switched off.
+ */
+char     loader_log[LOADER_LOG_SIZE] __attribute__((aligned(64)));
 uint32_t loader_log_len;
 static bool     loader_return_entered;
 
@@ -94,10 +99,45 @@ static char     loader_log_scratch[LOADER_LOG_RING];
  * writing one. The lock is of the simplest kind, good from the first line of C code to the
  * last of a panic; whoever cannot have it for a long while (its holder is gone: a panic
  * inside this very function) goes ahead without it.
+ *
+ * It holds its holder's MPIDR affinity, plus one (0: free), read from the processor itself and
+ * so there from the first instruction: a processor that finds it holds the lock already (a panic
+ * while it was writing) goes ahead at once. And once somebody has waited the long while in vain,
+ * nobody waits for it again: the processor that holds it is not coming back, and without that
+ * every later character, of every processor, would wait as long -- hours for the rest of a log.
  */
 static uint32_t loader_log_lock;
+static bool     loader_log_lock_broken;
 
 static void loader_log_put_locked(char c);
+
+/* With interrupts off. true: taken, to be let go of; false: the log is written without it. */
+static bool
+loader_log_lock_take(void)
+{
+	uint32_t me = (uint32_t)(__builtin_arm_rsr64("MPIDR_EL1") & 0xffffff) + 1, holder;
+	uint32_t tries = os_atomic_load(&loader_log_lock_broken, relaxed) ? 1 : 10000000;
+
+	if (os_atomic_load(&loader_log_lock, relaxed) == me) {
+		return false;
+	}
+	for (uint32_t i = 0; i < tries; i++) {
+		if (os_atomic_cmpxchg(&loader_log_lock, 0, me, acquire)) {
+			return true;
+		}
+	}
+	holder = os_atomic_load(&loader_log_lock, relaxed);
+	if (!os_atomic_xchg(&loader_log_lock_broken, true, relaxed)) {
+		char note[128];
+
+		snprintf(note, sizeof(note), "\n[the log's lock was not let go of by MPIDR 0x%x: written without it from now on]\n",
+		    holder != 0 ? holder - 1 : 0);
+		for (const char *c = note; *c != 0; c++) {
+			loader_log_put_locked(*c);
+		}
+	}
+	return false;
+}
 
 /*
  * Lines worth keeping whatever the ring loses: a driver's or a library's of ours being brought up
@@ -244,16 +284,14 @@ void
 loader_log_putc(char c)
 {
 	uint64_t daif;
-	bool locked = false;
+	bool locked;
 
 	if (c == '\r') {
 		return;
 	}
 	daif = __builtin_arm_rsr64("DAIF");
 	__builtin_arm_wsr("DAIFSet", DAIFSC_IRQF | DAIFSC_FIQF);
-	for (uint32_t tries = 0; !locked && tries < 10000000; tries++) {
-		locked = os_atomic_cmpxchg(&loader_log_lock, 0, 1, acquire);
-	}
+	locked = loader_log_lock_take();
 	loader_log_put_locked(c);
 	if (locked) {
 		os_atomic_store(&loader_log_lock, 0, release);
@@ -271,13 +309,11 @@ void
 loader_log_line(const char *line)
 {
 	uint64_t daif;
-	bool locked = false;
+	bool locked;
 
 	daif = __builtin_arm_rsr64("DAIF");
 	__builtin_arm_wsr("DAIFSet", DAIFSC_IRQF | DAIFSC_FIQF);
-	for (uint32_t tries = 0; !locked && tries < 10000000; tries++) {
-		locked = os_atomic_cmpxchg(&loader_log_lock, 0, 1, acquire);
-	}
+	locked = loader_log_lock_take();
 	for (; *line != 0; line++) {
 		if (*line != '\r') {
 			loader_log_put_locked(*line);
@@ -971,7 +1007,18 @@ hk_stack_snapshot(void)
 	char line[200];
 	task_t task, found[HK_TASKS];
 	unsigned nfound = 0;
+	/*
+	 * The threads' registers are kept in a static array (regs[] below, 3 KB: too much for the stack of
+	 * a thread that goes on into page faults and the file system's reads), so one snapshot is taken at
+	 * a time. One that comes while another is still being taken (the one of ten seconds before the end,
+	 * held up reading from storage, when the one at the end begins) is left out.
+	 */
+	static uint32_t busy;
 
+	if (!os_atomic_cmpxchg(&busy, 0, 1, acquire)) {
+		loader_log_line("stacks: another snapshot is still being taken: this one is left out\n");
+		return;
+	}
 	PE_parse_boot_arg_str("stacks", wanted, sizeof(wanted));
 	lck_mtx_lock(&tasks_threads_lock);
 	queue_iterate(&tasks, task, task_t, tasks) {
@@ -1069,4 +1116,5 @@ hk_stack_snapshot(void)
 		}
 		task_deallocate(task);
 	}
+	os_atomic_store(&busy, 0, release);
 }

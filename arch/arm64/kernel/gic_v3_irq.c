@@ -15,8 +15,8 @@
  *     is attached (gic_v3_spi_attach()): configured, routed to the processor that
  *     attaches it, enabled, and its handler called in interrupt context for each
  *     one that arrives, before it is ended
- *   - any other interrupt that fires is masked and counted, until a real
- *     driver registers a handler for it
+ *   - any other interrupt that fires is masked (an LPI cannot be, here) and
+ *     counted, until a real driver registers a handler for it
  *
  * Every processor has its own CPU interface, redistributor frame and timer,
  * and sets them up for itself (gic_v3_irq_cpu_init(), from PE_init_cpu()).
@@ -54,6 +54,8 @@
 #define GICD_ICFGR(n)           (0x0c00 + 4 * (n))
 #define GICD_IGRPMODR(n)        (0x0d00 + 4 * (n))
 #define GICD_IROUTER(n)         (0x6000 + 8 * (n))
+#define GICD_ICENABLERE(n)      (0x1400 + 4 * (n))  /* the extended SPIs', from GIC_INTID_ESPI_MIN on */
+#define GICD_SIZE_LEAST         0x10000     /* every register above lies in the first 64 KB */
 
 #define GICR_FRAME_SIZE         0x20000     /* RD_base + SGI_base per CPU */
 #define GICR_TYPER              0x0008
@@ -76,12 +78,16 @@
 #define GIC_INTID_VTIMER        27          /* EL1 virtual timer PPI */
 #define GIC_INTID_SPI_MIN       32
 #define GIC_INTID_SPURIOUS_MIN  1020
+#define GIC_INTID_SPURIOUS_MOST 1023        /* 1020 to 1023 are no interrupt; above them there are others */
+#define GIC_INTID_ESPI_MIN      4096        /* extended SPIs (GICv3.1): 4096 to 5119 */
 #define GIC_SPI_MOST            48          /* attached at a time */
 #define GIC_PRIORITY_DEFAULT    0xa0
 
 static vm_offset_t gicd_base, gicr_base;
 #define GICD_TYPER              0x0004  /* [4:0] ITLinesNumber: SPIs up to 32 * (N + 1) - 1 */
+#define GICD_TYPER_ESPI         (1u << 8)   /* extended SPIs, up to 32 * (ESPI_range [31:27] + 1) + 4095 */
 static uint32_t gic_intid_most = 1019;  /* the last INTID the distributor has, from GICD_TYPER */
+static uint32_t gic_espi_most;          /* ... and the last extended SPI; 0: it has none */
 static vm_size_t   gicr_size;
 static vm_offset_t gicr_cpu_base[MAX_CPUS]; /* each processor's redistributor frame */
 
@@ -142,10 +148,12 @@ gic_mask(uint32_t intid)
 		gic_write32(gicr_cpu_base[cpu_number()] + GICR_ICENABLER0, 1u << intid);
 	} else if (intid < GIC_INTID_SPURIOUS_MIN) {
 		gic_write32(gicd_base + GICD_ICENABLER(intid / 32), 1u << (intid % 32));
+	} else if (intid >= GIC_INTID_ESPI_MIN && intid <= gic_espi_most) {
+		gic_write32(gicd_base + GICD_ICENABLERE((intid - GIC_INTID_ESPI_MIN) / 32), 1u << (intid % 32));
 	}
 	/*
-	 * (an extended SPI or an LPI the firmware left enabled is not one of these registers': written as if it were, it
-	 * would land on others -- the active or the priority registers -- or past the distributor's mapping. Only counted.)
+	 * (an extended SPI has registers of its own, which only a distributor that says it has extended SPIs has. An LPI
+	 * the firmware left enabled is switched on in a table in memory, not in the distributor: it is only counted.)
 	 */
 }
 
@@ -188,8 +196,13 @@ gic_spi_handle(uint32_t intid)
 		struct gic_spi *spi = &gic_spi[i];
 
 		if (os_atomic_load(&spi->intid, acquire) == intid) {
-			os_atomic_inc(&spi->busy, acquire);
-			if (os_atomic_load(&spi->intid, relaxed) == intid) {
+			/*
+			 * (sequentially consistent, as gic_v3_spi_detach()'s two: each side writes one word and then
+			 * reads the other's, and with acquire and release alone both reads may come before the other
+			 * side's write -- the handler called after detach has returned)
+			 */
+			os_atomic_inc(&spi->busy, seq_cst);
+			if (os_atomic_load(&spi->intid, seq_cst) == intid) {
 				spi->count++;
 				spi->handler(spi->context, intid);
 			}
@@ -291,8 +304,8 @@ gic_v3_spi_detach(uint32_t intid)
 	}
 	for (unsigned i = 0; i < GIC_SPI_MOST; i++) {
 		if (gic_spi[i].intid == intid) {
-			os_atomic_store(&gic_spi[i].intid, 0, release);
-			while (os_atomic_load(&gic_spi[i].busy, acquire) != 0) {
+			os_atomic_store(&gic_spi[i].intid, 0, seq_cst);
+			while (os_atomic_load(&gic_spi[i].busy, seq_cst) != 0) {
 				/* a handler of it on another processor is finishing */
 			}
 		}
@@ -320,7 +333,12 @@ gic_irq_handler(__unused void *target, __unused void *refCon, __unused void *nub
 		uint64_t iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
 		uint32_t intid = (uint32_t)(iar & 0xffffff);
 
-		if (intid >= GIC_INTID_SPURIOUS_MIN) {
+		/*
+		 * (only 1020 to 1023 mean there is nothing to take: an extended SPI or an LPI above them has
+		 * been acknowledged like any other interrupt, and left without its end it would hold off
+		 * everything of its priority and below -- the timer and the signals between processors)
+		 */
+		if (intid >= GIC_INTID_SPURIOUS_MIN && intid <= GIC_INTID_SPURIOUS_MOST) {
 			break;
 		}
 		gic_active_iar[cpu] = iar | GIC_IAR_TAKEN;
@@ -417,16 +435,22 @@ gic_find_redistributor(void)
 	/* GICR_TYPER[63:32] packs Aff3.Aff2.Aff1.Aff0 */
 	uint32_t affinity = (uint32_t)(((mpidr >> 32) & 0xff) << 24 | (mpidr & 0xffffff));
 
-	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size;) {
-		uint64_t typer = *(volatile uint64_t *)(frame + GICR_TYPER);
+	/* (by the distance from the start: a sum of addresses could wrap around) */
+	for (vm_size_t at = 0; gicr_size >= GICR_FRAME_SIZE && at <= gicr_size - GICR_FRAME_SIZE;) {
+		uint64_t typer = *(volatile uint64_t *)(gicr_base + at + GICR_TYPER);
+		vm_size_t step;
 
 		if ((uint32_t)(typer >> 32) == affinity) {
-			return frame;
+			return gicr_base + at;
 		}
 		if (typer & GICR_TYPER_LAST) {
 			break;
 		}
-		frame += gicr_stride ? gicr_stride : (typer & GICR_TYPER_VLPIS) ? 2 * GICR_FRAME_SIZE : GICR_FRAME_SIZE;
+		step = gicr_stride ? gicr_stride : (typer & GICR_TYPER_VLPIS) ? 2 * GICR_FRAME_SIZE : GICR_FRAME_SIZE;
+		if (step > gicr_size - at) {
+			break;
+		}
+		at += step;
 	}
 	panic("gic: no redistributor for MPIDR 0x%llx", mpidr);
 }
@@ -439,6 +463,11 @@ gic_v3_irq_cpu_init(void)
 	vm_offset_t gicr;
 	uint32_t mine = 1u << GIC_INTID_VTIMER;
 
+	/*
+	 * (the device tree's node is read once, by the boot processor; the rest is done every time a
+	 * processor comes up, also one that the firmware switched off (gic_v3_irq_cpu_shutdown()) and
+	 * has started again: its CPU interface and its redistributor were left with everything off)
+	 */
 	if (gicd_base == 0) {
 		DTEntry entry;
 		void const *prop;
@@ -450,33 +479,56 @@ gic_v3_irq_cpu_init(void)
 			panic("gic: no usable /arm-io/gic node in the device tree");
 		}
 		uint64_t const *reg = prop;
-		vm_offset_t soc_base = pe_arm_get_soc_base_phys();
+		uint64_t soc_base = pe_arm_get_soc_base_phys(), gicd_phys, gicr_phys, end;
 
+		/*
+		 * (a distributor smaller than its registers, or a place that wraps around, is refused rather than
+		 * written past; a stride that is not a whole number of 64 KB frames, at least the two every
+		 * redistributor has, would have the walk read in the middle of frames: it is not used)
+		 */
+		if (reg[1] < GICD_SIZE_LEAST || __builtin_add_overflow(soc_base, reg[0], &gicd_phys) ||
+		    __builtin_add_overflow(gicd_phys, reg[1], &end) || __builtin_add_overflow(soc_base, reg[2], &gicr_phys) ||
+		    __builtin_add_overflow(gicr_phys, reg[3], &end)) {
+			panic("gic: the device tree's /arm-io/gic reg is unusable: distributor 0x%llx size 0x%llx, "
+			    "redistributors 0x%llx size 0x%llx", reg[0], reg[1], reg[2], reg[3]);
+		}
 		simple_lock_init(&gic_spi_lock, 0);
-		gicd_base = ml_io_map(soc_base + reg[0], reg[1]);
-		gicr_base = ml_io_map(soc_base + reg[2], reg[3]);
+		gicd_base = ml_io_map(gicd_phys, reg[1]);
+		gicr_base = ml_io_map(gicr_phys, reg[3]);
 		gicr_size = reg[3];
 		if (SecureDTGetProperty(entry, "redistributor-stride", &prop, &prop_size) == kSuccess &&
 		    prop_size >= sizeof(uint64_t)) {
-			gicr_stride = *(uint64_t const *)prop;
+			uint64_t stride = *(uint64_t const *)prop;
+
+			if (stride == 0 || (stride % 0x10000 == 0 && stride >= GICR_FRAME_SIZE)) {
+				gicr_stride = stride;
+			} else {
+				kprintf("gic: redistributor-stride 0x%llx is not a multiple of 64 KB of at least 128 KB: not used\n",
+				    stride);
+			}
 		}
 		if (gicd_base == 0 || gicr_base == 0) {
 			panic("gic: cannot map the distributor/redistributor");
 		}
 		{
-			uint32_t lines = gic_read32(gicd_base + GICD_TYPER) & 0x1f, most = 32 * (lines + 1) - 1;
+			uint32_t typer = gic_read32(gicd_base + GICD_TYPER), lines = typer & 0x1f, most = 32 * (lines + 1) - 1;
 
 			gic_intid_most = most < GIC_INTID_SPURIOUS_MIN - 1 ? most : GIC_INTID_SPURIOUS_MIN - 1;
+			if (typer & GICD_TYPER_ESPI) {
+				gic_espi_most = GIC_INTID_ESPI_MIN - 1 + 32 * ((typer >> 27) + 1);
+			}
 		}
-	} else if (gicr_cpu_base[cpu] != 0) {
-		return;
 	}
 
 	/* System-register CPU interface */
 	__builtin_arm_wsr64("ICC_SRE_EL1", __builtin_arm_rsr64("ICC_SRE_EL1") | 1);
 	__builtin_arm_isb(ISB_SY);
 
-	gicr = gicr_cpu_base[cpu] = gic_find_redistributor();
+	/* (where its redistributor is does not change: looked for once) */
+	if (gicr_cpu_base[cpu] == 0) {
+		gicr_cpu_base[cpu] = gic_find_redistributor();
+	}
+	gicr = gicr_cpu_base[cpu];
 
 	uint32_t waker = gic_read32(gicr + GICR_WAKER);
 	if (waker & (GICR_WAKER_PROCSLEEP | GICR_WAKER_CHILDASLEEP)) {

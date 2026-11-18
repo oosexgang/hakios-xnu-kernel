@@ -123,8 +123,15 @@ prof_report(void)
 		uint32_t count;
 	} top[100];
 	uint64_t samples, user;
+	boolean_t istate;
 
 	bzero(top, sizeof(top));
+	/*
+	 * (prof_count() takes the lock in a cross-call's interrupt: one that reached this processor while
+	 * this thread held it with interrupts on -- sent before the thread moved here -- would spin on it for
+	 * good)
+	 */
+	istate = ml_set_interrupts_enabled(FALSE);
 	lck_spin_lock(&prof_lock);
 	for (uint32_t k = 0; k < PROF_SLOTS; k++) {
 		uint32_t c = prof_pcs[k].count;
@@ -146,6 +153,7 @@ prof_report(void)
 	user = prof_user;
 	prof_samples = prof_user = 0;
 	lck_spin_unlock(&prof_lock);
+	ml_set_interrupts_enabled(istate);
 	hakios_tl("dprof: %s: %llu samples (%llu in user code), %llu lost\n", prof_name, samples, user, prof_lost);
 	for (unsigned t = 0; t < 100 && top[t].count; t++) {
 		hakios_tl("dprof: %c %#llx %u\n", (top[t].pc & 1) ? 'k' : (top[t].pc & 2) ? 'l' : 'u', top[t].pc & ~3ull,
@@ -178,6 +186,7 @@ prof_thread(__unused void *arg, __unused wait_result_t wr)
 	uint32_t secs = 10;
 
 	PE_parse_boot_argn("hakios_prof_secs", &secs, sizeof(secs));
+	secs = MAX(secs, 1);    /* (0 would be a division by zero below, as a product that wrapped to 0 in 32 bits) */
 	for (uint64_t tick = 1;; tick++) {
 		delay(1000);
 		if (prof_task == TASK_NULL || !prof_task->active) {
@@ -198,7 +207,7 @@ prof_thread(__unused void *arg, __unused wait_result_t wr)
 			}
 			(void)cpu_xcall(cpu, prof_sample_cpu, &prof_param);
 		}
-		if (tick % (secs * 1000) == 0) {
+		if (tick % (secs * 1000ull) == 0) {
 			prof_images(prof_task);
 			prof_report();
 		}
@@ -222,6 +231,7 @@ prof_all_thread(__unused void *arg, __unused wait_result_t wr)
 	uint32_t secs = 10, total = 0;
 
 	PE_parse_boot_argn("hakios_prof_secs", &secs, sizeof(secs));
+	secs = MAX(secs, 1);    /* (0 would be a division by zero below, as a product that wrapped to 0 in 32 bits) */
 	for (uint64_t tick = 1;; tick++) {
 		delay(1000);
 		for (int cpu = 0; cpu < PROF_CPUS && cpu <= ml_get_max_cpu_number(); cpu++) {
@@ -257,7 +267,7 @@ prof_all_thread(__unused void *arg, __unused wait_result_t wr)
 				}
 			}
 		}
-		if (tick % (secs * 1000) == 0 && total != 0) {
+		if (tick % (secs * 1000ull) == 0 && total != 0) {
 			char line[400];
 			int at = 0;
 
