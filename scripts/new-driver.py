@@ -49,20 +49,24 @@ def main(arguments=None, root=ROOT):
             f' * the part. Documentation/writing-a-driver.md has the steps and the rules.\n')
     text = started((examples / 'example_led.c').read_text(), name)
     text = re.sub(r'\A/\*\n( \*[^\n]*\n)+? \*\n', head + ' *\n', text, count=1)
-    driver.write_text(text)
-    test.write_text(started((examples / 'example_led_test.c').read_text(), name))
+    driver_text = text
+    test_text = started((examples / 'example_led_test.c').read_text(), name)
 
+    # work everything out, and fail, before writing any file: a run that stopped after writing the driver and its test
+    # but before run.sh was changed used to leave them in place, so every rerun stopped at "is there already" with
+    # run.sh and MAINTAINERS never updated
     run = root / 'workbench/run.sh'
     listed = run.read_text()
+    run_text = None
     if f' {name}_driver_test ' not in listed:
-        listed, n = re.subn(r'(\nfor test in [^\n]*?) example_led_test; do', rf'\1 {name}_driver_test example_led_test; do', listed, count=1)
+        run_text, n = re.subn(r'(\nfor test in [^\n]*?) example_led_test; do', rf'\1 {name}_driver_test example_led_test; do', listed, count=1)
         if n != 1:
             raise SystemExit('new-driver.py: workbench/run.sh has no list of tests ending with example_led_test')
-        run.write_text(listed)
 
     maintainers = root / 'MAINTAINERS'
     part = (options.part or name.replace('_', ' ')).upper()
     text = maintainers.read_text()
+    maintainers_text = None
     if f'F:\tdrivers/board/{name}.c\n' not in text:
         entry = f'{part}\nF:\tdrivers/board/{name}.c\nT:\tworkbench/{name}_driver_test.c\nK:\t{name}=\n'
         blocks = text.split('\n\n')
@@ -70,7 +74,15 @@ def main(arguments=None, root=ROOT):
         at = next((i for i, block in enumerate(blocks) if i > 0 and block.split('\n')[0] == block.split('\n')[0].upper()
                    and block.split('\n')[0] > part), len(blocks))
         blocks.insert(at, entry.rstrip('\n'))
-        maintainers.write_text('\n\n'.join(blocks))
+        maintainers_text = '\n\n'.join(blocks)
+
+    # all the changes worked out: write them
+    driver.write_text(driver_text)
+    test.write_text(test_text)
+    if run_text is not None:
+        run.write_text(run_text)
+    if maintainers_text is not None:
+        maintainers.write_text(maintainers_text)
     for path in (driver, test):
         print(f'wrote {path.relative_to(root)}')
     print(f'workbench/run.sh runs {name}_driver_test; MAINTAINERS has the part {part}')

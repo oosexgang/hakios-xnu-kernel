@@ -172,6 +172,20 @@ class NewDriver(unittest.TestCase):
         self.assertIn('lower-case', str(self.make('Fan')[0]))
         self.assertIn('lower-case', str(self.make('../fan')[0]))
 
+    def test_a_failed_run_leaves_no_files_so_the_retry_works(self):
+        # if run.sh has no list to extend, new-driver.py must fail before writing anything; otherwise the driver and
+        # its test are left behind and every retry stops at "there already", run.sh and MAINTAINERS never updated
+        (self.root / 'workbench/run.sh').write_text('#!/bin/sh\necho nothing to extend here\n')
+        code, said = self.make('fan_ctl', '--part', 'a fan')
+        self.assertIn('run.sh has no list', str(code))
+        self.assertFalse((self.root / 'drivers/board/fan_ctl.c').exists(), 'no driver left behind')
+        self.assertFalse((self.root / 'workbench/fan_ctl_driver_test.c').exists(), 'no test left behind')
+        self.assertNotIn('a fan', (self.root / 'MAINTAINERS').read_text())
+        # with run.sh restored, a plain rerun now succeeds (nothing was left to block it)
+        (self.root / 'workbench/run.sh').write_text((ROOT / 'workbench/run.sh').read_text())
+        self.assertEqual(self.make('fan_ctl', '--part', 'a fan')[0], 0)
+        self.assertTrue((self.root / 'drivers/board/fan_ctl.c').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
