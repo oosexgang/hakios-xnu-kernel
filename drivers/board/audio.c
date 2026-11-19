@@ -261,6 +261,7 @@ static int
 audio_ioctl(__unused dev_t dev, u_long command, caddr_t data, __unused int flags, __unused struct proc *p)
 {
 	const struct hakios_audio_volume *volume = (const struct hakios_audio_volume *)data;
+	bool same;
 
 	if (command != HAKIOS_AUDIO_SET_VOLUME) {
 		return ENOTTY;
@@ -270,12 +271,16 @@ audio_ioctl(__unused dev_t dev, u_long command, caddr_t data, __unused int flags
 		return EINVAL;
 	}
 	lck_mtx_lock(&audio_lock);
+	/* (said when it changes: any process may open the node, and one setting the same level in a loop filled the log) */
+	same = volume_generation != 0 && volume_below == volume->below && volume_muted == (volume->muted != 0);
 	volume_below = volume->below;
 	volume_muted = volume->muted != 0;
 	volume_generation++;
 	lck_mtx_unlock(&audio_lock);
-	printf("hakios-audio: the volume: %s%u.%03u dB under the loudest\n", volume->muted ? "muted; " : "", volume->below / 8,
-	    volume->below % 8 * 125);
+	if (!same) {
+		printf("hakios-audio: the volume: %s%u.%03u dB under the loudest\n", volume->muted ? "muted; " : "", volume->below / 8,
+		    volume->below % 8 * 125);
+	}
 	return 0;
 }
 

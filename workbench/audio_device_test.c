@@ -306,12 +306,34 @@ volume(void)
 	    below == HAKIOS_AUDIO_BELOW_MOST && generation == 3, "the most is taken");
 }
 
+/* the same level set again and again is said once: any process may open the node, and a loop of settings filled the log */
+static void
+same_volume_said_once(void)
+{
+	struct hakios_audio_volume v = { .below = 100, .muted = 0 };
+	uint32_t below = 0, generation = 0, said = 0;
+	bool muted = true;
+
+	hakios_audio_init();
+	for (unsigned i = 0; i < 1000; i++) {
+		CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0, "set");
+	}
+	for (const char *at = log_text; (at = strstr(at, "hakios-audio: the volume:")) != NULL; at++) {
+		said++;
+	}
+	CHECK(said == 1, "said %u times", said);
+	CHECK(hakios_audio_volume(&below, &muted, &generation) && below == 100 && generation == 1000, "each setting counted: %u",
+	    generation);
+	v.muted = 1;
+	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0 && logged("muted; 12.500 dB"), "a change is said: %s", log_text);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "played_and_said", played_and_said }, { "sink_full", sink_full }, { "whole_frames", whole_frames },
-		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume }, { "rate_said", rate_said }, { "silence_ends_at_8", silence_ends_at_8 },
+		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume }, { "same_volume_said_once", same_volume_said_once }, { "rate_said", rate_said }, { "silence_ends_at_8", silence_ends_at_8 },
 		{ "rec_sound_zero", rec_sound_zero }, { "full_takes_no_more", full_takes_no_more },
 		{ "fed_recording", fed_recording }, { "mic_recording", mic_recording }, { "no_recording", no_recording },
 		{ "fed_and_mic_recording", fed_and_mic_recording },
