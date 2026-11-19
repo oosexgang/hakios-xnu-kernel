@@ -380,6 +380,8 @@ publish_lock_button(bool down)
 	notify_set_state(token, down ? 2 : 1);
 }
 
+static uint32_t buttons_held;           /* one bit for each button (HAKIOS_BUTTON_*) whose press was sent and not its release */
+
 static void
 send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 {
@@ -394,10 +396,47 @@ send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 	if (t->finger == HAKIOS_BUTTON_LOCK) {
 		publish_lock_button(t->type == HAKIOS_BUTTON_DOWN);
 	}
+	if (t->type == HAKIOS_BUTTON_DOWN) {
+		__atomic_or_fetch(&buttons_held, 1u << t->finger, __ATOMIC_RELAXED);
+	} else {
+		__atomic_and_fetch(&buttons_held, ~(1u << t->finger), __ATOMIC_RELAXED);
+	}
 	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == HAKIOS_BUTTON_DOWN, 0);
 	IOHIDEventSetIntegerValue(event, FIELD_IS_BUILT_IN, 1);
 	IOHIDVirtualServiceClientDispatchEvent(buttons, event);
 	CFRelease(event);
+}
+
+/*
+ * Where the samples that would have lifted them may be lost (the device given up on and opened again):
+ * every finger that is down lifted where it was last, and every button that is held let go -- or the
+ * window server keeps a finger on the screen, or the side button held, for good.
+ */
+static void
+release_all(IOHIDServiceClientRef screen, IOHIDServiceClientRef buttons)
+{
+	struct hakios_touch t = { .time = mach_absolute_time() };
+	uint32_t held = __atomic_load_n(&buttons_held, __ATOMIC_RELAXED);
+
+	pthread_mutex_lock(&touch_lock);
+	for (unsigned i = 0; i < MAX_FINGERS; i++) {
+		if (fingers[i].touching) {
+			t.type = HAKIOS_TOUCH_UP;
+			t.finger = i;
+			t.x = (uint32_t)(fingers[i].x * 65535 + 0.5);
+			t.y = (uint32_t)(fingers[i].y * 65535 + 0.5);
+			send_touch_locked(screen, &t);
+		}
+	}
+	pthread_mutex_unlock(&touch_lock);
+	t.type = HAKIOS_BUTTON_UP;
+	t.x = t.y = 0;
+	for (uint32_t b = 0; buttons != NULL && b < 32; b++) {
+		if (held & (1u << b)) {
+			t.finger = b;
+			send_button(buttons, &t);
+		}
+	}
 }
 
 /*
@@ -415,6 +454,32 @@ micros(uint64_t absolute)
 }
 
 static void script_start(IOHIDServiceClientRef screen, IOHIDServiceClientRef buttons);
+
+/*
+ * /dev/hakios-touch, opened for reading. One program may read it (board/input.c): while another does -- a
+ * backboardd of before that is still going away -- the open is EBUSY, and is tried again each second
+ * rather than leaving this one without touches for good. -1: it cannot be read at all (said why).
+ */
+static int
+open_touch_device(void)
+{
+	int device;
+	bool said = false;
+
+	while ((device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY)) < 0 && (errno == EBUSY || errno == EINTR)) {
+		if (errno == EBUSY && !said) {
+			say("hakios: input: %s: %s: waiting for the other reader to let it go\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+			said = true;
+		}
+		sleep(1);
+	}
+	if (device < 0) {
+		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+	} else if (said) {
+		say("hakios: input: %s: ours now\n", HAKIOS_TOUCH_DEVICE);
+	}
+	return device;
+}
 
 static void *
 input_thread(__unused void *arg)
@@ -436,9 +501,8 @@ input_thread(__unused void *arg)
 		}
 		mach_timebase_info(&timebase);
 	}
-	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
+	device = open_touch_device();
 	if (device < 0) {
-		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -465,8 +529,30 @@ input_thread(__unused void *arg)
 	}
 	script_start(screen, buttons);
 
-	while (read(device, &t, sizeof(t)) == (ssize_t)sizeof(t)) {
+	for (;;) {
+		ssize_t got = read(device, &t, sizeof(t));
 		uint64_t read_at = mach_absolute_time();
+
+		if (got != (ssize_t)sizeof(t)) {
+			/*
+			 * A signal (EINTR) took nothing: read again. Anything else may have taken samples with it: what is
+			 * held is let go, and the device opened again -- the thread that ended here left the phone with no
+			 * touch screen and no buttons until backboardd was started again, and with a finger held, if one was.
+			 */
+			if (got < 0 && errno == EINTR) {
+				continue;
+			}
+			say("hakios: input: %s: %s: opening it again\n", HAKIOS_TOUCH_DEVICE, got < 0 ? strerror(errno) :
+			    "not a whole sample");
+			release_all(screen, buttons);
+			waking = 0;
+			close(device);
+			sleep(1);
+			if ((device = open_touch_device()) < 0) {
+				return NULL;
+			}
+			continue;
+		}
 
 		if (t.type == HAKIOS_TOUCH_DOWN || t.type == HAKIOS_TOUCH_UP || count++ < 4) {
 			say("hakios: input: %s finger %u at %u %u (%.0f%% %.0f%%)\n",
@@ -500,8 +586,6 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
-	return NULL;
 }
 
 /*

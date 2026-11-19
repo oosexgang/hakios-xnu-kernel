@@ -207,6 +207,23 @@ for test in audio_plugin_test record_analysis_test brightness_slider_test; do
 	fi
 done
 
+# backboardd's touch screen and buttons on Darwin 26 (userland/userland/src/inject26.c): the part of the file between its
+# "---- backboardd" and "---- big thread stacks" lines, cut out unchanged (the rest is Objective-C runtime calls and
+# blocks), with what it needs of Darwin's frameworks and of the device in the test, on the host under the sanitizers
+mkdir -p "$WORK/inject26"
+sed -n '/^\/\* ---- backboardd: the touch screen and the buttons/,/^\/\* ---- big thread stacks/p' \
+	"$HERE/../userland/userland/src/inject26.c" > "$WORK/inject26/inject26_input.c"
+echo "== backboard_input_test (host${SANITIZE[0]:+, sanitizers})"
+if ! grep -q '^input_thread(' "$WORK/inject26/inject26_input.c"; then
+	echo "FAIL: no input part between the two lines in userland/userland/src/inject26.c"
+	failed=1
+elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject26" "$HERE/backboard_input_test.c" \
+	-o "$WORK/backboard_input_test" -lm; then
+	scenarios "" "$WORK/backboard_input_test"
+else
+	failed=1
+fi
+
 # the kernel's stand-in for corecrypto (crypto/, as osfmk/minicrypto) with the parts of XNU's own corecrypto it rests on,
 # from the kernel tree kernel/env.sh names (XNU_SRC): on the host under the sanitizers, and under qemu-aarch64 as the
 # picture processor's (built there without the DIT register's code: gcc has no builtin for it, and it would not run).

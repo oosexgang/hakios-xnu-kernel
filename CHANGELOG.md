@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Touches into iOS (`userland/userland/src/inject26.c`, in backboardd; new host test `workbench/backboard_input_test.c`,
+  run on the part of the file that reads the touches, cut out unchanged): one interrupted or failed read of
+  `/dev/hakios-touch` ended the thread, leaving the phone with no touch screen and no buttons until backboardd started
+  again, and a finger or the side button held for good. A signal now just reads again; any other failure lets go of what
+  is held and opens the device again. And while another reader holds the device (`EBUSY`), the open is tried again each
+  second instead of never.
 - The brightness slider's way to the kernel (`components/brightness/inject_brightness.c`, new host test
   `workbench/brightness_slider_test.c`): a brightness of NaN, or one out of range, was turned into an integer before it
   was clamped, and NaN and infinity made the panel its dimmest; NaN is now ignored and the rest clamped first.
