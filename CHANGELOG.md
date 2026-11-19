@@ -119,6 +119,13 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Our changes to XNU's processes (`kernel/patches/0006-bsd-process.patch`): a spawn with a persona let any process that
+  is not root start a child as any other user, with any groups (a daemon's files, its processes to signal); now a
+  non-root caller may only ask for an identity it already has, as with setuid() and setgroups(). A program named
+  `xpcproxy` started by launchd kept its audit token's version through an exec, as only the real xpcproxy should; now
+  only one run from the read-only system volume does. The reason of an abort 160 bytes or longer was printed past its
+  buffer, and failed execs and spawns, with a path any program chooses, were logged without limit (now the first 100,
+  all with `systrace`).
 - Joining a Wi-Fi network (`kernel/lx/src/lx_80211.c`): an authentication answered again by the access point (our
   acknowledgement lost) ended the wait for the association as "refused", and a second association response -- the
   access point's, or anyone's in range -- rewrote the elements and station number the join was reading; each answer now

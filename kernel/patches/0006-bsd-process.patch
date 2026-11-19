@@ -246,7 +246,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  #endif
  
  #include <IOKit/IOBSD.h>
-@@ -1919,6 +1966,10 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
+@@ -1919,6 +1966,29 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
   *		activators should not be given the opportunity to attempt
   *		to activate the image.
   */
@@ -254,10 +254,29 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +extern void loader_log_line(const char *line);
 +static TUNABLE(uint32_t, exec_trace, "systrace", 0);
 +
++/*
++ * The failed execs and spawns written to the loader's log without systrace: the first 100 of a boot. Any program
++ * can fail as many as it likes, with a path of its own choosing, and the log is a ring the rest of the boot shares.
++ */
++static bool
++exec_failure_logged(void)
++{
++	static uint32_t lines;
++
++	if (exec_trace) {
++		return true;
++	}
++	if (lines >= 100) {
++		return false;
++	}
++	lines++;
++	return true;
++}
++
  static int
  exec_mach_imgact(struct image_params *imgp)
  {
-@@ -2076,6 +2127,9 @@ grade:
+@@ -2076,6 +2146,9 @@ grade:
  	 * Actually load the image file we previously decided to load.
  	 */
  	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
@@ -267,7 +286,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (lret != LOAD_SUCCESS) {
  		error = load_return_to_errno(lret);
  
-@@ -2984,11 +3038,36 @@ exec_activate_image(struct image_params *imgp)
+@@ -2984,11 +3057,36 @@ exec_activate_image(struct image_params *imgp)
  
  	ndp = kalloc_type(struct nameidata, Z_WAITOK | Z_ZERO | Z_NOFAIL);
  
@@ -298,13 +317,13 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  again:
  	error = namei(ndp);
-+	if (error && error != ENOENT) {
++	if (error && error != ENOENT && exec_failure_logged()) {
 +		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: exec lookup of %s: error %d (uid %d)\n", imgp->ip_strings, error, kauth_getuid()); loader_log_line(hk_line); }
 +	}
  	if (error) {
  		if (error == ERESTART) {
  			error = EINTR;
-@@ -3018,6 +3097,9 @@ again:
+@@ -3018,6 +3116,9 @@ again:
  	}
  
  	error = exec_check_permissions(imgp);
@@ -314,7 +333,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (error) {
  		goto bad;
  	}
-@@ -3517,6 +3599,57 @@ exec_handle_exception_port_actions(const struct image_params *imgp,
+@@ -3517,6 +3618,57 @@ exec_handle_exception_port_actions(const struct image_params *imgp,
  }
  
  
@@ -372,7 +391,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  /*
   * exec_handle_file_actions
   *
-@@ -3587,7 +3720,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+@@ -3587,7 +3739,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
  			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
  
  			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
@@ -381,7 +400,29 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			    imgp->ip_vfs_context);
  
  			error = open1(imgp->ip_vfs_context, ndp,
-@@ -3970,10 +4103,12 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+@@ -3963,6 +4115,21 @@ spawn_coalitions_release_all(coalition_t coal[COALITION_NUM_TYPES])
+ #endif
+ 
+ #if CONFIG_PERSONAS
++/* hakios: a group the credential has already: its real, effective or saved group, or one of its list */
++static bool
++spawn_persona_gid_held(posix_cred_t pcred, gid_t gid)
++{
++	if (gid == pcred->cr_rgid || gid == pcred->cr_svgid) {
++		return true;
++	}
++	for (unsigned i = 0; i < pcred->cr_ngroups && i < NGROUPS; i++) {
++		if (pcred->cr_groups[i] == gid) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ static int
+ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ {
+@@ -3970,10 +4137,12 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
  	struct persona *persona = NULL;
  	kauth_cred_t mycred = kauth_cred_get();
  
@@ -398,7 +439,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
  		if (px_persona->pspi_ngroups > NGROUPS_MAX) {
  			return EINVAL;
-@@ -3981,17 +4116,31 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+@@ -3981,17 +4150,57 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
  	}
  
  	persona = persona_lookup(px_persona->pspi_id);
@@ -426,15 +467,41 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +			}
 +		}
 +	}
++	/*
++	 * hakios: and no identity it has not got, as setuid(), setgid() and setgroups() keep it: any other uid, gid,
++	 * group or group-membership uid is somebody else's (a daemon's files, its processes to signal, operator's disks)
++	 */
++	if (!kauth_cred_issuser(mycred)) {
++		posix_cred_t pcred = posix_cred_get(mycred);
  
 -	persona_put(persona);
++		if ((px_persona->pspi_flags & POSIX_SPAWN_PERSONA_UID) && px_persona->pspi_uid != pcred->cr_ruid &&
++		    px_persona->pspi_uid != pcred->cr_uid && px_persona->pspi_uid != pcred->cr_svuid) {
++			error = EPERM;
++		}
++		if ((px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GID) && !spawn_persona_gid_held(pcred, px_persona->pspi_gid)) {
++			error = EPERM;
++		}
++		if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
++			if (px_persona->pspi_gmuid != KAUTH_UID_NONE && px_persona->pspi_gmuid != pcred->cr_gmuid &&
++			    px_persona->pspi_gmuid != pcred->cr_ruid && px_persona->pspi_gmuid != pcred->cr_uid) {
++				error = EPERM;
++			}
++			for (unsigned i = 0; i < px_persona->pspi_ngroups && i < NGROUPS_MAX; i++) {
++				if (!spawn_persona_gid_held(pcred, px_persona->pspi_groups[i])) {
++					error = EPERM;
++				}
++			}
++		}
++	}
++
 +	if (persona) {
 +		persona_put(persona);
 +	}
  	return error;
  }
  
-@@ -4038,7 +4187,36 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+@@ -4038,7 +4247,36 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
  	 */
  	persona = persona_lookup(px_persona->pspi_id);
  	if (!persona) {
@@ -472,7 +539,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	}
  
  	return persona_proc_adopt(p, persona,
-@@ -4333,6 +4511,7 @@ int
+@@ -4333,6 +4571,7 @@ int
  posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  {
  	proc_t p = ap;
@@ -480,7 +547,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	user_addr_t pid = uap->pid;
  	int ival[2];            /* dummy retval for setpgid() */
  	char *subsystem_root_path = NULL;
-@@ -4452,6 +4631,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+@@ -4452,6 +4691,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
  			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
  				goto bad;
  			}
@@ -509,7 +576,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  			imgp->ip_px_sa = &px_sa;
  		}
-@@ -4891,6 +5092,7 @@ do_fork1:
+@@ -4891,6 +5152,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -517,7 +584,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_file_actions(imgp,
  		    imgp->ip_px_sa != NULL ? px_sa.psa_flags : 0);
  #if CONFIG_AUDIT
-@@ -4912,6 +5114,7 @@ do_fork1:
+@@ -4912,6 +5174,7 @@ do_fork1:
  		struct kaudit_record *save_uu_ar = uthread->uu_ar;
  		uthread->uu_ar = NULL;
  #endif
@@ -525,7 +592,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_port_actions(imgp, &port_actions);
  #if CONFIG_AUDIT
  		/* Restore the AUE_POSIX_SPAWN audit record. */
-@@ -4953,6 +5156,7 @@ do_fork1:
+@@ -4953,6 +5216,7 @@ do_fork1:
  				goto bad;
  			}
  
@@ -533,7 +600,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_posix_cred_adopt(p, imgp->ip_px_pcred_info);
  			if (error != 0) {
  				goto bad;
-@@ -4974,6 +5178,7 @@ do_fork1:
+@@ -4974,6 +5238,7 @@ do_fork1:
  			 * to ensure that the new persona has access to the image/file
  			 * being executed.
  			 */
@@ -541,7 +608,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = spawn_persona_adopt(p, imgp->ip_px_persona);
  			if (error != 0) {
  				goto bad;
-@@ -5052,6 +5257,7 @@ do_fork1:
+@@ -5052,6 +5317,7 @@ do_fork1:
  
  #if MAC_SPAWN   /* XXX */
  	if (uap->mac_p != USER_ADDR_NULL) {
@@ -549,7 +616,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = mac_execve_enter(uap->mac_p, imgp);
  		if (error) {
  			goto bad;
-@@ -5063,6 +5269,7 @@ do_fork1:
+@@ -5063,6 +5329,7 @@ do_fork1:
  	 * Warning: If activation failed after point of no return, it returns error
  	 * as 0 and pretends the call succeeded.
  	 */
@@ -557,18 +624,18 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	error = exec_activate_image(imgp);
  #if defined(HAS_APPLE_PAC)
  	const uint8_t disable_user_jop = imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE;
-@@ -5219,6 +5426,10 @@ bad_px_sa:
+@@ -5219,6 +5486,10 @@ bad_px_sa:
  	}
  
  bad:
-+	if (error == EACCES || error == EPERM) {
++	if ((error == EACCES || error == EPERM) && exec_failure_logged()) {
 +		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: posix_spawn %s: error %d at stage %d (uid %d)\n",
 +		    imgp && imgp->ip_strings ? imgp->ip_strings : "?", error, hk_stage, kauth_getuid()); loader_log_line(hk_line); }
 +	}
  
  	if (error == 0) {
  		/* reset delay idle sleep status if set */
-@@ -5282,6 +5493,7 @@ bad:
+@@ -5282,6 +5553,7 @@ bad:
  
  		/* Set task exception ports now that we can check entitlements */
  		if (imgp->ip_px_spa != NULL) {
@@ -576,7 +643,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = exec_handle_exception_port_actions(imgp, &port_actions);
  		}
  
-@@ -5325,8 +5537,11 @@ bad:
+@@ -5325,8 +5597,11 @@ bad:
  				memlimit_options &= ~MEMLIMIT_INACTIVE_FATAL;
  				memlimit_active = -1;
  			}
@@ -588,7 +655,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		}
  
  		/* Has jetsam relaunch behavior? */
-@@ -5358,6 +5573,7 @@ bad:
+@@ -5358,6 +5633,7 @@ bad:
  			task_set_thread_limit(new_task, (uint16_t)px_sa.psa_thread_limit);
  		}
  		if (error == 0 && imgp->ip_px_sa != NULL && px_sa.psa_conclave_mem_limit > 0) {
@@ -596,7 +663,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			error = task_set_conclave_mem_limit_internal(new_task, px_sa.psa_conclave_mem_limit);
  		}
  
-@@ -5411,6 +5627,7 @@ bad:
+@@ -5411,6 +5687,7 @@ bad:
  		 * exec_activate_image because task_bank_init checks entitlements that
  		 * aren't loaded until subsequent calls (including exec_resettextvp).
  		 */
@@ -604,7 +671,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = proc_transstart(p, 0, 0);
  
  		if (error == 0) {
-@@ -5473,6 +5690,7 @@ bad:
+@@ -5473,6 +5750,7 @@ bad:
  	if (error == 0 && imgp->ip_px_sa != NULL) {
  		struct _posix_spawnattr *psa = (struct _posix_spawnattr *) imgp->ip_px_sa;
  
@@ -612,7 +679,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = exec_handle_spawnattr_policy(p, imgp->ip_new_thread, psa->psa_apptype, psa->psa_qos_clamp,
  		    psa->psa_darwin_role, &port_actions);
  	}
-@@ -5537,6 +5755,7 @@ bad:
+@@ -5537,6 +5815,7 @@ bad:
  	 * fire.
  	 */
  	if (error == 0) {
@@ -620,17 +687,17 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		error = process_signature(p, imgp);
  
  		/*
-@@ -5765,6 +5984,9 @@ bad:
+@@ -5765,6 +6044,9 @@ bad:
  #endif
  
  	assert(spawn_no_exec || exec_failure_reason == NULL);
-+	if (error == EACCES || error == EPERM) {
++	if ((error == EACCES || error == EPERM) && exec_failure_logged()) {
 +		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: posix_spawn returns %d, last stage %d (uid %d)\n", error, hk_stage, kauth_getuid()); loader_log_line(hk_line); }
 +	}
  	return error;
  }
  
-@@ -6724,16 +6946,145 @@ bad:
+@@ -6724,16 +7006,145 @@ bad:
   * Note:	The argument and environment vectors are user space pointers
   *		to arrays of user space pointers.
   */
@@ -776,7 +843,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/*
  	 * Adjust space reserved for the path name by however much padding it
  	 * needs. Doing this here since we didn't know if this would be a 32-
-@@ -6897,6 +7248,114 @@ exec_extract_strings(struct image_params *imgp)
+@@ -6897,6 +7308,114 @@ exec_extract_strings(struct image_params *imgp)
  		imgp->ip_envc++;
  	}
  
@@ -891,7 +958,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -7789,11 +8248,29 @@ handle_mac_transition:
+@@ -7789,11 +8308,33 @@ handle_mac_transition:
  	 * Also, ensure we always see a modified identity version (rdar://129775819).
  	 */
  	int previous_pid_version = proc_get_ro(p)->p_idversion;
@@ -913,9 +980,13 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +
 +		/*
 +		 * (and only xpcproxy as launchd spawns it: a name alone is anybody's -- a program copied to a file called
-+		 * xpcproxy that execs a setuid or entitled one would keep its audit token through the exec)
++		 * xpcproxy that execs a setuid or entitled one would keep its audit token through the exec). Every job of
++		 * launchd's has parent 1, applications too, so the parent alone is not enough either: the program leaving
++		 * (p_textvp is still its file here) must lie on a read-only volume, the system's, where no one but root puts
++		 * a file called xpcproxy.
 +		 */
-+		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0 || proc_ppid(p) != 1) {
++		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0 || proc_ppid(p) != 1 ||
++		    p->p_textvp == NULLVP || !vnode_vfsisrdonly(p->p_textvp)) {
 +			int new_pid_version;
 +			do {
 +				new_pid_version = OSIncrementAtomic(&nextpidversion);
@@ -926,7 +997,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	task_set_uniqueid(proc_task(p));
  
  	/*
-@@ -8767,6 +9244,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -8767,6 +9308,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:
@@ -941,7 +1012,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
-@@ -1524,6 +1524,19 @@ abort_with_payload_internal(proc_t p,
+@@ -1524,6 +1524,21 @@ abort_with_payload_internal(proc_t p,
  	if (abort_should_be_throttled(p, reason_namespace, internal_flags)) {
  		return EQFULL;
  	}
@@ -953,6 +1024,8 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 +
 +		if (reason_string != USER_ADDR_NULL) {
 +			(void)copyinstr(reason_string, text, sizeof(text), &got);
++			/* a reason as long as text, or longer, is copied with no terminator (ENAMETOOLONG) */
++			text[sizeof(text) - 1] = 0;
 +		}
 +		snprintf(line, sizeof(line), "exec: abort by %s[%d], namespace %u code %#llx: %s\n", proc_best_name(p),
 +		    proc_getpid(p), reason_namespace, reason_code, text);
@@ -961,7 +1034,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  
  	KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
  	    proc_getpid(p), reason_namespace,
-@@ -1647,6 +1660,17 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+@@ -1647,6 +1662,17 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
  	int error = 0;
  	bool proc_exiting = false;
  
