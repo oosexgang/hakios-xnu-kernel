@@ -380,6 +380,46 @@ lost_while_following(void)
 	pins_as_found();
 }
 
+/* the chip stops answering while the orientation is followed: hw.sensors.orientation says not known (0), not the last one */
+static void
+lost_is_not_known(void)
+{
+	following();
+	WAIT_FOR(get("orientation") == 1, 3000);
+	CHECK(get("orientation") == 1, "portrait (1) first: %u", get("orientation"));
+	device.absent = true;
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(logged("a byte was not acknowledged: NOTHING MORE IS DONE"), "said: %s", log_text);
+	CHECK(get("orientation") == 0, "not known (0) once nothing more is read: %u", get("orientation"));
+	device.absent = false;
+	hakios_imu_quiesce();
+}
+
+/*
+ * The chip's output reads all zeros at first (its registers as a reset leaves them, before its first sample is
+ * ready): not taken for a phone face down. The orientation stays not known until a real sample, and is named from
+ * that one at once, not after a climb from zero.
+ */
+static void
+zeros_before_the_first_sample(void)
+{
+	uint32_t before;
+
+	phone("phone-video", 0x6c);
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("the orientation is followed from here on") && get("samples") >= 3, 10000);
+	CHECK(get("samples") >= 3, "read: %u", get("samples"));
+	CHECK(get("orientation") == 0, "zeros are not known (0): %u", get("orientation"));
+	CHECK(!logged("imu: face down"), "not said to be face down: %s", log_text);
+	before = get("samples");
+	chip_reads(-8192, 0, 0);
+	WAIT_FOR(get("orientation") == 1, 3000);
+	CHECK(get("orientation") == 1, "portrait (1): %u", get("orientation"));
+	CHECK(get("samples") - before <= 3, "named from the first real sample: %u samples", get("samples") - before);
+	hakios_imu_quiesce();
+}
+
 /* a chip that holds the data line down at the run's end (cut off in a byte it was sending): clocked free, then powered down */
 static void
 wedged_at_the_end(void)
@@ -535,6 +575,7 @@ main(int argc, char **argv)
 		{ "another_chip_refused", another_chip_refused }, { "nobody_there", nobody_there }, { "bus_not_at_rest", bus_not_at_rest },
 		{ "configured", configured }, { "orientation_through_the_mounting", orientation_through_the_mounting },
 		{ "teardown", teardown }, { "lost_while_following", lost_while_following }, { "wedged_at_the_end", wedged_at_the_end },
+		{ "lost_is_not_known", lost_is_not_known }, { "zeros_before_the_first_sample", zeros_before_the_first_sample },
 		{ "write_does_not_stick", write_does_not_stick }, { "reset_does_not_end", reset_does_not_end },
 		{ "level_past_the_last", level_past_the_last }, { "not_listed", not_listed },
 		{ "stopped_in_a_read_at_a_look", stopped_in_a_read_at_a_look },

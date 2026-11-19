@@ -22,8 +22,9 @@
  *              the accelerometer switched on at 104 Hz and the board's range (CTRL1_XL; the gyroscope
  *              stays off), each write read back. Then its output read about every 100 ms, turned onto
  *              Darwin's axes and into milli-g, each change of orientation said, and the latest in
- *              hw.sensors.orientation (a UIDeviceOrientation: 1 portrait ... 6 face down, 0 not known yet)
- *              and hw.sensors.accel (milli-g, "x y z" on Darwin's axes).
+ *              hw.sensors.orientation (a UIDeviceOrientation: 1 portrait ... 6 face down, 0 not known yet, or
+ *              not any more once the chip stops answering) and hw.sensors.accel (milli-g, "x y z" on Darwin's
+ *              axes).
  *
  * Limits, whatever asks: another chip's identity, a byte nobody acknowledges, a write that does not read
  * back or a bus that is not at rest, and nothing more is done for the rest of the run, with a line that
@@ -352,6 +353,10 @@ sample(void)
 
 	if (!regs_read(LSM6DSO_REG_OUTX_L_G, out, sizeof(out))) {
 		give_up(failed);
+		/* nothing is read from here on: the orientation is not known any more, not the last one kept as if it were */
+		lck_spin_lock(&shown_lock);
+		shown_orientation = ORIENT_UNKNOWN;
+		lck_spin_unlock(&shown_lock);
 		return false;
 	}
 	raw = lsm6dso_decode(out);
