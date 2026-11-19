@@ -179,8 +179,9 @@ tags yet, so the current work is one section.
   any program can post `com.hakios.layers`, and a layer tree deeper than about 600 overflowed SpringBoard's stack (a
   respring); the walk now stops at 128 and says so. `com.hakios.switcher` sent `sharedInstance` without asking the class
   and called the switcher with integers whatever its argument types; both are checked now.
-- Touches into iOS (`userland/userland/src/inject26.c`, in backboardd; new host test `workbench/backboard_input_test.c`,
-  run on the part of the file that reads the touches, cut out unchanged): one interrupted or failed read of
+- Touches into iOS (`userland/userland/src/inject26.c`, and `userland/userland/src/inject.c`, the library the main Darwin
+  26/27 image puts into backboardd; new host tests `workbench/backboard_input_test.c` and
+  `workbench/backboard_input16_test.c`, run on the part of each file that reads the touches, cut out unchanged): one interrupted or failed read of
   `/dev/hakios-touch` ended the thread, leaving the phone with no touch screen and no buttons until backboardd started
   again, and a finger or the side button held for good. A signal now just reads again; any other failure lets go of what
   is held and opens the device again. And while another reader holds the device (`EBUSY`), the open is tried again each

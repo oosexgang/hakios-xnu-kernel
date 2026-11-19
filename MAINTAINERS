@@ -144,6 +144,7 @@ T:	workbench/jb_preinstall_test.py
 T:	workbench/var_store_test.c
 T:	workbench/init_test.c
 T:	workbench/backboard_input_test.c
+T:	workbench/backboard_input16_test.c
 T:	workbench/springboard_remote_test.c
 D:	darwin/README.md
 D:	Documentation/darwin26-boot.md

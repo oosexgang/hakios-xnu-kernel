@@ -261,6 +261,23 @@ else
 	failed=1
 fi
 
+# the same on the main Darwin 26/27 image, where backboardd's library is libhakios.dylib from userland/userland/src/inject.c
+# (darwin/userland/inj26.sh), not inject26.c: its part between "---- backboardd: the touch screen and the buttons" and
+# "---- containermanagerd", cut out unchanged, in backboard_input_test.c's scenarios (backboard_input16_test.c)
+mkdir -p "$WORK/inject"
+sed -n '/^\/\* ---- backboardd: the touch screen and the buttons/,/^\/\* ---- containermanagerd/p' \
+	"$HERE/../userland/userland/src/inject.c" > "$WORK/inject/inject_input.c"
+echo "== backboard_input16_test (host${SANITIZE[0]:+, sanitizers})"
+if ! grep -q '^input_thread(' "$WORK/inject/inject_input.c"; then
+	echo "FAIL: no input part between the two lines in userland/userland/src/inject.c"
+	failed=1
+elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject" "$HERE/backboard_input16_test.c" \
+	-o "$WORK/backboard_input16_test" -lm; then
+	scenarios "" "$WORK/backboard_input16_test"
+else
+	failed=1
+fi
+
 # SpringBoard's remote control (userland/userland/src/inject_sb.c), what any program's com.hakios.layers and
 # com.hakios.switcher make it do: the part of the file from its SEND macros to Control Center's fades, cut out unchanged
 # but for those two macros (the test's own call a method of its runtime with the types given), on the host under the sanitizers

@@ -188,12 +188,21 @@ struct __IOHIDEvent {
 	struct __IOHIDEvent *child[16];
 };
 
+/*
+ * The part under test: inject26.c's, or the same part of another backboardd library of the same shape, which a test
+ * that includes this file names before it does (backboard_input16_test.c: inject.c's, as inject_input.c).
+ */
+#ifndef INPUT_PART
+#define INPUT_PART      "inject26_input.c"
+#define TEST_NAME       "backboard_input_test"
+#endif
+
 #define open    test_open
 #define read    test_read
 #define close   test_close
 #define sleep   test_sleep
 #define usleep  test_usleep
-#include "inject26_input.c"
+#include INPUT_PART
 #undef open
 #undef read
 #undef close
@@ -582,6 +591,6 @@ main(int argc, char **argv)
 			return failures != 0;
 		}
 	}
-	fprintf(stderr, "backboard_input_test: no scenario %s\n", argv[1]);
+	fprintf(stderr, "%s: no scenario %s\n", TEST_NAME, argv[1]);
 	return 2;
 }
