@@ -208,6 +208,7 @@ F:	include/external/
 T:	workbench/kernel_tools_test.sh
 T:	workbench/place_kernel_test.py
 T:	workbench/gic_v3_irq_test.c
+T:	workbench/psci_smp_test.c
 T:	workbench/a64emu_test.c
 T:	workbench/user_exception_trace_test.c
 T:	workbench/memory_floor_test.c

@@ -211,6 +211,7 @@ psci_smp_start_cpu(int cpu)
 	uint64_t entry = ml_static_vtop((vm_offset_t)&LowResetVectorBase);
 	uint64_t now, deadline;
 	int64_t status;
+	bool faulted = false;
 	static bool psci_smp_init_done;
 
 	/* (psci_smp_init() is not on every way here: read /chosen once, whoever starts the first core) */
@@ -240,6 +241,13 @@ psci_smp_start_cpu(int cpu)
 	__builtin_arm_dsb(DSB_SY);
 
 	os_atomic_store(&psci_smp_cpu_stage[cpu], PSCI_SMP_CPU_ASKED, release);
+	/*
+	 * Counted among the started before the firmware is asked, not once it has answered: the core may run before
+	 * CPU_ON comes back here (this thread can be preempted right after it), and a core that ends the system
+	 * meanwhile (psci_smp_stop_others()) took itself for the only one and went on to the boot loader, or was
+	 * not told to stop.
+	 */
+	os_atomic_or(&psci_smp_started, 1u << cpu, release);
 	{
 		extern void loader_log_line(const char *line);
 		char line[120];
@@ -253,12 +261,12 @@ psci_smp_start_cpu(int cpu)
 		status = psci_call(PSCI_CPU_ON, phys_id, entry, 0);
 	}
 	if (status != 0) {
+		os_atomic_andnot(&psci_smp_started, 1u << cpu, relaxed);
 		os_atomic_store(&psci_smp_cpu_stage[cpu], 0, release);
 		printf("psci: cpu %d (MPIDR 0x%x) was not started: the firmware answers %lld (%s)\n",
 		    cpu, phys_id, status, psci_error(status));
 		return KERN_FAILURE;
 	}
-	os_atomic_or(&psci_smp_started, 1u << cpu, relaxed);
 
 	clock_interval_to_deadline(PSCI_SMP_START_SECONDS, NSEC_PER_SEC, &deadline);
 	do {
@@ -268,14 +276,19 @@ psci_smp_start_cpu(int cpu)
 		}
 		/* memory, not this processor's copy of it */
 		FlushPoC_DcacheRegion((vm_offset_t)&psci_smp_start_fault, sizeof(psci_smp_start_fault));
-		if (psci_smp_start_fault.valid != 0) {
+		/*
+		 * ... and the note of this core, by its MPIDR (Aff2 to Aff0, as the reset vector compares them): one
+		 * whose start was given up on earlier can take its exception only now, while this one is waited for.
+		 */
+		faulted = psci_smp_start_fault.valid != 0 && (psci_smp_start_fault.mpidr & 0xFFFFFF) == (phys_id & 0xFFFFFF);
+		if (faulted) {
 			break;
 		}
 		delay_for_interval(1, NSEC_PER_MSEC);
 		now = mach_absolute_time();
 	} while (now < deadline);
 
-	if (psci_smp_start_fault.valid != 0) {
+	if (faulted) {
 		struct psci_smp_start_fault *f = &psci_smp_start_fault;
 		uint64_t to_virtual = gVirtBase - gPhysBase;
 
