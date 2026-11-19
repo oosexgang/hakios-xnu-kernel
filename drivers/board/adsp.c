@@ -2463,6 +2463,10 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
  * With adsp=1 (battmgr=0: not) it is asked every BATTMGR_SECONDS while the DSP runs, and what it says
  * goes to bsd/dev/board/battery.c (hakios_battery_report()), and from there to the power source
  * that Darwin reads (iokit/Kernel/BoardBattery.cpp). battmgr=2: every property once, for the log.
+ * Between two rounds the USB port alone is asked about every half second, and a charger plugged in or
+ * pulled out has a round made at once and two more after it (board/plug_watch_core.h): Darwin hears of it
+ * within a second, not up to a round later (after the idea of the OnePlus Nord 2 port's piece 0703).
+ * battmgr_plug=MS: the port looked at every MS milliseconds instead (100 to 5000); battmgr_plug=0: the rounds alone, as before.
  * Units: capacity in hundredths of a percent, voltage in uV, current in uA (more than 0 while the
  * battery takes charge), the temperature in hundredths of a degree, charges in uAh.
  * The properties' numbers are this phone's firmware's, read with battmgr=2 and checked against what
@@ -2492,6 +2496,7 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
 #define USB_TYPE                6               /* Linux's POWER_SUPPLY_USB_TYPE_*: 1 here, a computer's port */
 #define USB_ONLINE              0
 #define BATTMGR_SECONDS         10
+#include "plug_watch_core.h"         /* when a plug between two rounds calls for one at once */
 
 struct battmgr_message {
 	uint32_t owner, type, opcode;
@@ -2571,7 +2576,14 @@ battmgr_charge_uah(uint32_t raw)
 static void
 battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 {
+	struct plug_watch watch;
+	uint32_t look_ms = PLUG_LOOK_MS_DEFAULT;
+
 	battmgr.runs = true;
+	/* boot-arg battmgr_plug=MS: the port looked at that often between rounds; 0: not at all (this part's head) */
+	PE_parse_boot_argn("battmgr_plug", &look_ms, sizeof(look_ms));
+	look_ms = plug_watch_look_ms(look_ms);
+	plug_watch_reset(&watch);
 	for (unsigned ms = 0; ms < 15000 && battmgr.wanted && !glink.channel[CHANNEL_PMIC].open; ms += 10) {
 		sleep_ms(10);
 	}
@@ -2650,8 +2662,30 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 				tell("adsp: battmgr: full charge %u uAh, as designed %u uAh, %u cycles\n", full, design, cycles);
 			}
 		}
-		for (unsigned ms = 0; ms < BATTMGR_SECONDS * 1000 && battmgr.wanted && glink.up; ms += 50) {
+		/*
+		 * The wait for the next round, cut short when a look at the port finds it is not as this round read it, and
+		 * when a round after such a change is due (board/plug_watch_core.h)
+		 */
+		plug_watch_round(&watch, good ? usb != 0 : -1);
+		for (unsigned ms = 0, next_look = look_ms; ms < BATTMGR_SECONDS * 1000 && battmgr.wanted && glink.up; ms += 50) {
 			sleep_ms(50);
+			if (look_ms != 0 && ms + 50 >= next_look) {
+				uint32_t online = 0;
+				bool answered = battmgr_get(BATTMGR_USB_GET, USB_ONLINE, &online);
+
+				next_look += look_ms;
+
+				if (plug_watch_look(&watch, answered ? online != 0 : -1, now_us() / 1000)) {
+					if (watch.changes <= 20) {
+						tell("adsp: battmgr: %s the USB port between two rounds: asked again at once\n",
+						    online ? "something plugged into" : "nothing on");
+					}
+					break;
+				}
+			}
+			if (plug_watch_due(&watch, now_us() / 1000)) {
+				break;
+			}
 		}
 	}
 	battmgr.runs = false;

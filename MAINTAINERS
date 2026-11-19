@@ -57,8 +57,10 @@ K:	backlight { }; backlight=
 BATTERY
 F:	drivers/board/battery.c
 F:	drivers/board/battery_core.h
+F:	drivers/board/plug_watch_core.h
 F:	drivers/iokit/BoardBattery.cpp
 T:	workbench/battery_driver_test.c
+T:	workbench/plug_watch_test.c
 K:	battery-uefi; battery=
 
 BLUETOOTH
@@ -280,7 +282,8 @@ T:	workbench/orientation_test.c
 T:	workbench/sensor_axes_test.c
 T:	workbench/sensors_test.c
 T:	workbench/lsm6dso_test.c
-K:	orient_; imu-lsm6dso; sensors=
+T:	workbench/backboard_input_test.c
+K:	orient_; imu-lsm6dso; sensors=; orientation_hid=
 
 QEMU
 F:	tools/qemu-kernel.sh

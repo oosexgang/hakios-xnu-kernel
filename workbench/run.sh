@@ -144,7 +144,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in bt_uart_test bt_hci_test bt_qca_test bt_queue_test bt_host_test loader_test loader_window_test loader_download_test loader_dsu_test loader_log_partition_test loader_own_partition_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test touch_fts_read_test touch_goodix_poll_test touch_reports_test touch_fts_reports_test touch_fts_thread_test geni_spi_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test qrtr_frame_test mdt_test ipc_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test rtc_driver_test torch_driver_test battery_driver_test haptic_driver_test imu_driver_test adreno_driver_test cell_driver_test mpss_driver_test nas_test speaker_driver_test scmi_perf_test audio_device_test station_test apple80211_test lx_test camera_wiring_test camera_driver_test sound_driver_test wifi_driver_test mic_driver_test adsp_driver_test sparse_driver_test ufs_driver_test ufs_whitelist_test ufs_native_read_test input_queue_test guard_test gic_v3_irq_test psci_smp_test a64emu_test user_exception_trace_test memory_floor_test sandbox_blastdoor_test drivers_kconfig_test orientation_test sensor_axes_test sensors_test lsm6dso_test example_led_test; do
+for test in bt_uart_test bt_hci_test bt_qca_test bt_queue_test bt_host_test loader_test loader_window_test loader_download_test loader_dsu_test loader_log_partition_test loader_own_partition_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test touch_fts_read_test touch_goodix_poll_test touch_reports_test touch_fts_reports_test touch_fts_thread_test geni_spi_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test qrtr_frame_test mdt_test ipc_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test rtc_driver_test torch_driver_test battery_driver_test plug_watch_test haptic_driver_test imu_driver_test adreno_driver_test cell_driver_test mpss_driver_test nas_test speaker_driver_test scmi_perf_test audio_device_test station_test apple80211_test lx_test camera_wiring_test camera_driver_test sound_driver_test wifi_driver_test mic_driver_test adsp_driver_test sparse_driver_test ufs_driver_test ufs_whitelist_test ufs_native_read_test input_queue_test guard_test gic_v3_irq_test psci_smp_test a64emu_test user_exception_trace_test memory_floor_test sandbox_blastdoor_test drivers_kconfig_test orientation_test sensor_axes_test sensors_test lsm6dso_test example_led_test; do
 	source=$HERE/$test.c
 	[ -f "$source" ] || source=$EXAMPLES/$test.c
 	echo "== $test (host${SANITIZE[0]:+, sanitizers})"
@@ -246,7 +246,8 @@ fi
 
 # backboardd's touch screen and buttons on Darwin 26 (userland/userland/src/inject26.c): the part of the file between its
 # "---- backboardd" and "---- big thread stacks" lines, cut out unchanged (the rest is Objective-C runtime calls and
-# blocks), with what it needs of Darwin's frameworks and of the device in the test, on the host under the sanitizers
+# blocks), with what it needs of Darwin's frameworks and of the device in the test, on the host under the sanitizers;
+# the part includes the phone's orientation service from beside it (userland/userland/src/hid_orientation.h)
 mkdir -p "$WORK/inject26"
 sed -n '/^\/\* ---- backboardd: the touch screen and the buttons/,/^\/\* ---- big thread stacks/p' \
 	"$HERE/../userland/userland/src/inject26.c" > "$WORK/inject26/inject26_input.c"
@@ -254,7 +255,7 @@ echo "== backboard_input_test (host${SANITIZE[0]:+, sanitizers})"
 if ! grep -q '^input_thread(' "$WORK/inject26/inject26_input.c"; then
 	echo "FAIL: no input part between the two lines in userland/userland/src/inject26.c"
 	failed=1
-elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject26" "$HERE/backboard_input_test.c" \
+elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject26" -I"$HERE/../userland/userland/src" "$HERE/backboard_input_test.c" \
 	-o "$WORK/backboard_input_test" -lm; then
 	scenarios "" "$WORK/backboard_input_test"
 else
@@ -271,7 +272,7 @@ echo "== backboard_input16_test (host${SANITIZE[0]:+, sanitizers})"
 if ! grep -q '^input_thread(' "$WORK/inject/inject_input.c"; then
 	echo "FAIL: no input part between the two lines in userland/userland/src/inject.c"
 	failed=1
-elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject" "$HERE/backboard_input16_test.c" \
+elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject" -I"$HERE/../userland/userland/src" "$HERE/backboard_input16_test.c" \
 	-o "$WORK/backboard_input16_test" -lm; then
 	scenarios "" "$WORK/backboard_input16_test"
 else

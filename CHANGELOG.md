@@ -117,6 +117,20 @@ tags yet, so the current work is one section.
 - **Application extensions are given a container path** when nobody gave them one (their `HOME`, else mobile's home):
   PlugInKit stopped the document picker's extension without one. After the idea of the Nord 2 port's piece 0730.
 
+- **Darwin is given the phone's orientation** (`sensors=2`): backboardd's library makes the service an iPhone's
+  always-on processor has -- sensor page 0x20, device orientation 0x8a, built in -- and sends the kernel's
+  `hw.sensors.orientation` through it as orientation events (the orientation as a usage, 0x65 portrait to 0x6a face
+  down, its time in a child event), at once on a change and again every ten seconds; locationd's orientation notifier
+  reads them and tells auto-rotate. Only while the kernel says it follows the orientation (`hw.sensors.hid`);
+  `orientation_hid=0` keeps it to the log as before (`userland/userland/src/hid_orientation.h`, in both backboardd
+  libraries). The numbers are iOS 16.7's, after the idea of the OnePlus Nord 2 port's piece 0761, where the phone
+  rotated by them; that Darwin 26 and 27 read the same is not yet seen on ours.
+- **A charger plugged in or pulled out is shown within a second**, not up to ten seconds later: between two of the
+  battery manager's rounds (`adsp=1`) the USB port alone is asked about every half second, and when it is not as the
+  last round read it a round is made at once, and two more a second and three seconds after, while the charger starts
+  (`board/plug_watch_core.h`). `battmgr_plug=MS` looks that often (100 to 5000), `battmgr_plug=0` not at all, as
+  before. After the idea of the OnePlus Nord 2 port's piece 0703; not yet seen on our phone.
+
 ### Fixes
 
 - Orientation (`orientation_core.h`, `imu.c`): the zeros read before the chip's first sample were taken as gravity and
