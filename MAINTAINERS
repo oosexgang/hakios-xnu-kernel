@@ -34,6 +34,8 @@ F:	drivers/board/adsp.c
 F:	components/audio/
 F:	include/board/audio.h
 T:	workbench/audio_device_test.c
+T:	workbench/audio_plugin_test.c
+T:	workbench/record_analysis_test.c
 T:	workbench/sound_driver_test.c
 T:	workbench/speaker_driver_test.c
 T:	workbench/mic_driver_test.c

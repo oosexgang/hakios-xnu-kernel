@@ -292,11 +292,14 @@ say(const char *format, ...)
 	write(2, line, (size_t)n);
 }
 
-/* The volume control's scale: a straight line of decibels over VOLUME_RANGE_DB. */
+/*
+ * The volume control's scale: a straight line of decibels over VOLUME_RANGE_DB. (What is not a number is silence:
+ * NaN passes both tests of a clamp, and lround() makes 0 of it -- the loudest the kernel allows.)
+ */
 static Float32
 scalar_to_db(Float32 scalar)
 {
-	scalar = scalar < 0 ? 0 : scalar > 1 ? 1 : scalar;
+	scalar = !(scalar > 0) ? 0 : scalar > 1 ? 1 : scalar;
 	return (Float32)(-VOLUME_RANGE_DB * (1.0 - scalar));
 }
 
@@ -305,7 +308,7 @@ db_to_scalar(Float32 db)
 {
 	Float32 scalar = (Float32)(1.0 + db / VOLUME_RANGE_DB);
 
-	return scalar < 0 ? 0 : scalar > 1 ? 1 : scalar;
+	return !(scalar > 0) ? 0 : scalar > 1 ? 1 : scalar;
 }
 
 /* The volume, to the kernel. With volume_lock held. */
@@ -870,7 +873,7 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
 		}
 		wanted = *(const Float32 *)data;
 		wanted = address->mSelector == kAudioLevelControlPropertyDecibelValue ? db_to_scalar(wanted) :
-		    wanted < 0 ? 0 : wanted > 1 ? 1 : wanted;
+		    !(wanted > 0) ? 0 : wanted > 1 ? 1 : wanted;
 		pthread_mutex_lock(&volume_lock);
 		pthread_mutex_lock(&lock);
 		volume = wanted;
@@ -1031,13 +1034,14 @@ start_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unu
 	first = d->running++ == 0;
 	if (first) {
 		__atomic_store_n(&d->anchor, mach_absolute_time(), __ATOMIC_RELEASE);
-		if (d->output != 0) {
+		if (d->object == OBJECT_SPEAKER) {
 			written = refused = 0;
 		}
 	}
 	pthread_mutex_unlock(&lock);
 	if (first) {
-		if (d->output != 0) {
+		/* (the speaker's: the actuator has an output too, and starting it is no reason to count the speaker's afresh) */
+		if (d->object == OBJECT_SPEAKER) {
 			say("hakios: audio: playing\n");
 		}
 		if (d->object == OBJECT_ACTUATOR) {

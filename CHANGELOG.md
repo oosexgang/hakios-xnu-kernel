@@ -119,6 +119,10 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The audio server's plug-in (`components/audio/audio_plugin.c`, new host test `workbench/audio_plugin_test.c`): a
+  volume of NaN, from any client, passed every clamp and reached the kernel as the loudest level; it is silence now.
+  A haptic tap reset the speaker's counts and said "playing" again. `record_test` read past its samples on a
+  recording shorter than the vibration's time (new test `workbench/record_analysis_test.c`).
 - The instructions the kernel emulates for programs this core lacks (`a64emu.c`, with a new host test
   `workbench/a64emu_test.c` that also compares FJCVTZS and LDAPURS with the processor under qemu-aarch64): LDAPUR,
   STLUR and LDRAA read and wrote the program's memory a byte at a time, so another thread could see half of a pointer;

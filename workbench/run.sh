@@ -186,6 +186,26 @@ for test in camera_isp_test lx_wpa_test; do
 	fi
 done
 
+# Darwin's side of the sound, the files themselves included in a test that has what they need of Darwin's frameworks
+# (the audio server's plug-in, components/audio/audio_plugin.c, and what the phone's recording test,
+# components/audio/record_test.c, makes of its file), on the host under the sanitizers: Darwin's headers they
+# include are empty files of the same names here, and the HAL's four-character constants are no warning
+DARWIN_STUBS=$WORK/darwin-headers
+for header in CoreFoundation/CoreFoundation.h CoreFoundation/CFPlugInCOM.h CoreAudioTypes/CoreAudioTypes.h mach/mach_time.h \
+	sys/ioccom.h objc/message.h objc/runtime.h; do
+	mkdir -p "$DARWIN_STUBS/$(dirname "$header")"
+	: > "$DARWIN_STUBS/$header"
+done
+for test in audio_plugin_test record_analysis_test; do
+	echo "== $test (host${SANITIZE[0]:+, sanitizers})"
+	if "$CC" -std=gnu11 -Wall -Wextra -Werror -Wno-multichar -O2 -pthread "${SANITIZE[@]}" -I"$DARWIN_STUBS" "$HERE/$test.c" \
+		-o "$WORK/$test" -lm; then
+		scenarios "" "$WORK/$test"
+	else
+		failed=1
+	fi
+done
+
 # the kernel's stand-in for corecrypto (crypto/, as osfmk/minicrypto) with the parts of XNU's own corecrypto it rests on,
 # from the kernel tree kernel/env.sh names (XNU_SRC): on the host under the sanitizers, and under qemu-aarch64 as the
 # picture processor's (built there without the DIT register's code: gcc has no builtin for it, and it would not run).

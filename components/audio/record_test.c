@@ -246,6 +246,8 @@ analyse(double seconds, double vibrate_at)
 		long quiet_from = (long)(0.5 * RATE), quiet_to = (long)(vibrate_at * RATE) - RATE / 10;
 		long loud_from = (long)((vibrate_at + 0.15) * RATE), loud_to = (long)((vibrate_at + 0.95) * RATE);
 
+		/* (a recording shorter than asked for, or than the vibration's time, is measured where it has samples) */
+		quiet_to = quiet_to < count ? quiet_to : count;
 		loud_to = loud_to < count ? loud_to : count;
 		printf("record_test: before the vibration %.1f dBFS RMS, %.1f dBFS at %.1f Hz; while it lasts %.1f dBFS RMS, %.1f dBFS at %.1f "
 		    "Hz\n", rms_db(samples, quiet_from, quiet_to), tone_db(samples, quiet_from, quiet_to, MOTOR_HZ), MOTOR_HZ,
