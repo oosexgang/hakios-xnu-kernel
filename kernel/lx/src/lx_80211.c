@@ -314,8 +314,10 @@ regd_apply(struct lx_radio *radio)
 		}
 	}
 	radio->kept = true;
-	printf("lx: the regulatory domain \"%c%c\" (%d rules) allows the radio's channels:%s\n", regd->alpha2[0], regd->alpha2[1],
-	    regd->n_reg_rules, said);
+	/* (the country's two letters may come from a beacon's country element, through the firmware: printed only as letters) */
+	printf("lx: the regulatory domain \"%c%c\" (%d rules) allows the radio's channels:%s\n",
+	    regd->alpha2[0] >= 0x20 && regd->alpha2[0] <= 0x7e ? regd->alpha2[0] : '?',
+	    regd->alpha2[1] >= 0x20 && regd->alpha2[1] <= 0x7e ? regd->alpha2[1] : '?', regd->n_reg_rules, said);
 }
 
 /*
