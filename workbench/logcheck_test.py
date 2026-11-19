@@ -170,6 +170,28 @@ class LogCheck(unittest.TestCase):
         self.assertIn('NOT STARTED', said)
         self.assertIn('no line of any part', said)
 
+    def test_what_gives_a_part_up_on_the_phone(self):
+        # the lines that say a part stopped working in the middle of a run, each its driver's own
+        log = """Darwin Kernel Version 12377.121.6: ...
+thermal: trip 72.0 C, clear 60.0 C, critical 90.0 C
+thermal: 1 sensor that answered before is silent: held back 3 of 5, nothing given back until every one answers again
+buttons: buttons and keys believed from here on
+buttons: power let go: the power-on block has not been read for 62 looks in a row
+camera: /dev/hakios-camera: the back camera
+camera: no frame in its time: nothing more is written in this run
+adsp: 9: versions agreed; the channel is open
+adsp: link: THE AUDIO DSP SAYS IT HAS GIVEN UP ("slave-kernel" = 0x1)
+lx: using the early radio pool
+lx: THE HANDSHAKE DID NOT COME THROUGH in 8000 ms: its message 3 was refused: its RSN element is not the beacon's (2 of its messages came)
+"""
+        code, said = run(log)
+        self.assertEqual(code, 1, said)
+        self.assertRegex(said, r'Temperature +STOPPED +thermal: 1 sensor that answered before is silent')
+        self.assertRegex(said, r'Buttons +STOPPED +buttons: power let go')
+        self.assertRegex(said, r'Camera +STOPPED +camera: no frame in its time')
+        self.assertRegex(said, r'Audio DSP +STOPPED +adsp: link: THE AUDIO DSP SAYS IT HAS GIVEN UP')
+        self.assertRegex(said, r'Wi-Fi driver +STOPPED +lx: THE HANDSHAKE DID NOT COME THROUGH')
+
     def test_the_parts_words_are_the_drivers(self):
         # each part's prefix is one its driver writes its lines with
         # (or the loader: the identity is its)
