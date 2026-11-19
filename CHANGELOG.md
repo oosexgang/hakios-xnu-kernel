@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Storage (`ufs.c`, with `ufs_write=1`): a read arriving as this kernel's transfer list went back in after writing
+  failed with EIO for nothing (page-ins of the system volume among them); and a write raised as the run ended could be
+  served by the loader after the kernel had gone, at the next run, with whatever its buffer then held. The loader now
+  takes the answer of the device's cache flush after a write (`ufs_service.c`): a failed flush and a read back from the
+  cache said "written" of blocks not on the flash. A review of the whole write path found nothing that could write
+  outside the darwin partition or at the wrong block.
 - The Metal plug-in (`components/metal/plugin`, five new tests): a draw into another slice or depth layer of the same
   texture joined the open pass and landed on the first slice; a mip level past the texture's made the default viewport
   loop four billion times; a fragment shader with enough varyings wrote past the link's mask into the position's

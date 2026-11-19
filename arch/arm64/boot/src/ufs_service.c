@@ -307,7 +307,13 @@ block_poll(void)
 				want = ufs_crc32(block_buffer, bytes);
 				s = bio->write_blocks(bio, bio->media->media_id, lba, bytes, block_buffer);
 				if (!EFI_ERROR(s)) {
-					bio->flush_blocks(bio);
+					/*
+					 * (out of the device's own cache first, and its answer taken: a flush that failed and a read
+					 * back from that cache would have said "written" of blocks that are not on the flash)
+					 */
+					s = bio->flush_blocks(bio);
+				}
+				if (!EFI_ERROR(s)) {
 					s = bio->read_blocks(bio, bio->media->media_id, lba, bytes, block_buffer);
 					flush_dcache((uint64_t)(uintptr_t)block_buffer,
 					    (uint64_t)(uintptr_t)block_buffer + bytes);
