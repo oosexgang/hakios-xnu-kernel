@@ -226,6 +226,18 @@ struct hakios_worked {
 #define GPU_BUFFER_MAX          (256u << 20)
 #define GPU_SUBMIT_CMDS         128
 #define GPU_IB_WORDS_MOST       0xfffffu        /* CP_INDIRECT_BUFFER's size field: 20 bits */
+
+/*
+ * Whether a refusal of a client's request is still said in the log: the first 64 of a boot. Any program may open the GPU
+ * and ask what it likes as often as it likes, and every refusal was a line -- the kernel's log filled by one loop.
+ */
+static bool
+gpuRefusalSaid(void)
+{
+	static volatile uint32_t said;
+
+	return OSIncrementAtomic((volatile SInt32 *) &said) < 64;
+}
 #define GPU_SUBMIT_BOS          8192
 #define GPU_SHOWN_WAIT_MS       30              /* a submission waits for the display's copy of its surface this long at most */
 #define GPU_SUBMIT_BO_TRACK     0x8000u         /* a submission's buffer flag (Turnip's darwin transport): named for the surface's
@@ -820,7 +832,9 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 		}
 	}
 	if (b == NULL || (b->address = hakios_gpu_address(size)) == 0) {
-		IOLog("HakiosGPU: no %s left for a buffer of %llu bytes\n", b ? "addresses" : "handles", size);
+		if (gpuRefusalSaid()) {
+			IOLog("HakiosGPU: no %s left for a buffer of %llu bytes\n", b ? "addresses" : "handles", size);
+		}
 		return NULL;
 	}
 	for (uint64_t offset = 0; offset < size && mapped; offset += 4096) {
@@ -1414,7 +1428,9 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	IOReturn ret = kIOReturnBadArgument;
 
 	if (request->nr_cmds == 0 || request->nr_cmds > GPU_SUBMIT_CMDS || request->nr_bos == 0 || request->nr_bos > GPU_SUBMIT_BOS) {
-		IOLog("HakiosGPU: a submission of %u command buffers in %u buffers: not taken\n", request->nr_cmds, request->nr_bos);
+		if (gpuRefusalSaid()) {
+			IOLog("HakiosGPU: a submission of %u command buffers in %u buffers: not taken\n", request->nr_cmds, request->nr_bos);
+		}
 		return kIOReturnBadArgument;
 	}
 	bos = IONew(struct msm_gem_submit_bo, request->nr_bos);
@@ -1548,8 +1564,10 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		 */
 		if (b == NULL || cmds[i].nr_relocs != 0 || (cmds[i].size & 3) || (cmds[i].submit_offset & 3) ||
 		    (uint64_t) cmds[i].submit_offset + cmds[i].size > b->size || cmds[i].size / 4 > GPU_IB_WORDS_MOST) {
-			IOLog("HakiosGPU: command buffer %u of a submission: buffer %u, offset %u, %u bytes, %u relocations: not taken\n",
-			    i, cmds[i].submit_idx, cmds[i].submit_offset, cmds[i].size, cmds[i].nr_relocs);
+			if (gpuRefusalSaid()) {
+				IOLog("HakiosGPU: command buffer %u of a submission: buffer %u, offset %u, %u bytes, %u relocations: not taken\n",
+				    i, cmds[i].submit_idx, cmds[i].submit_offset, cmds[i].size, cmds[i].nr_relocs);
+			}
 			IOLockUnlock(gGPULock);
 			goto out;
 		}
@@ -1558,7 +1576,9 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	}
 	if (count == 0) {
 		/* (every one of another kind: nothing for this GPU to run, and nothing to say it ran) */
-		IOLog("HakiosGPU: a submission of %u command buffers, none of them for this GPU: not taken\n", request->nr_cmds);
+		if (gpuRefusalSaid()) {
+			IOLog("HakiosGPU: a submission of %u command buffers, none of them for this GPU: not taken\n", request->nr_cmds);
+		}
 		IOLockUnlock(gGPULock);
 		goto out;
 	}
@@ -1941,7 +1961,9 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		ret = userBuffer(&r.user);
 		break;
 	default:
-		IOLog("HakiosGPU: request %#x (%zu bytes) is not known here\n", selector, size);
+		if (gpuRefusalSaid()) {
+			IOLog("HakiosGPU: request %#x (%zu bytes) is not known here\n", selector, size);
+		}
 		ret = kIOReturnUnsupported;
 		break;
 	}
