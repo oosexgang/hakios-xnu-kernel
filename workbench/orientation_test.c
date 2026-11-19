@@ -122,6 +122,73 @@ test_tilting_up_from_portrait_becomes_face_up(void)
 	CHECK(o == ORIENT_FACE_UP, "laid down reads face up: got %d", o);
 }
 
+static void
+test_a_sample_without_gravity_is_not_taken(void)
+{
+	/* a chip that reads all zeros (its output before its first sample is ready, or stuck) is not a phone face
+	 * down: nothing is known yet, and the first real sample seeds gravity as if the zeros had not been there */
+	struct orient_detector d;
+	int o;
+
+	orient_reset(&d);
+	o = settle(&d, 0, 0, 0, 5);
+	CHECK(o == ORIENT_UNKNOWN, "all zeros is not known: got %d", o);
+	o = settle(&d, 0, -1000, 0, 2);
+	CHECK(o == ORIENT_PORTRAIT, "then portrait at once: got %d", o);
+
+	/* held in portrait, the chip then reads zeros, or one axis stuck at its limit (0x7fff at +-4 g is 4000
+	 * milli-g): portrait is kept, not walked to face down or landscape */
+	o = settle(&d, 0, 0, 0, 30);
+	CHECK(o == ORIENT_PORTRAIT, "zeros keep portrait: got %d", o);
+	o = settle(&d, 4000, 0, 0, 30);
+	CHECK(o == ORIENT_PORTRAIT, "a saturated x keeps portrait: got %d", o);
+	CHECK(d.gy < -900, "the gravity estimate is still portrait's: %d %d %d", d.gx, d.gy, d.gz);
+}
+
+static void
+test_held_near_the_flat_limit_does_not_flap(void)
+{
+	/* a phone held at about 35 degrees from flat (where face up meets portrait), swaying by a degree or so
+	 * over a second: it may change once, not back and forth */
+	struct orient_detector d;
+	int changes = 0, last;
+
+	orient_reset(&d);
+	last = settle(&d, 0, 0, -1000, 30);
+	CHECK(last == ORIENT_FACE_UP, "face up first: %d", last);
+	for (int i = 0; i < 200; i++) {
+		int sway = (i / 8) % 2 ? 20 : -20;
+		int o = orient_update(&d, 0, -574 + sway, -819);
+		if (o != last) {
+			changes++;
+			last = o;
+		}
+	}
+	CHECK(changes <= 1, "changed %d times", changes);
+
+	/* and from portrait into the same place */
+	orient_reset(&d);
+	last = settle(&d, 0, -1000, 0, 30);
+	changes = 0;
+	for (int i = 0; i < 200; i++) {
+		int sway = (i / 8) % 2 ? 20 : -20;
+		int o = orient_update(&d, 0, -574 + sway, -819);
+		if (o != last) {
+			changes++;
+			last = o;
+		}
+	}
+	CHECK(changes <= 1, "from portrait: changed %d times", changes);
+
+	/* well past the limit either way it still turns */
+	{
+		int o = settle(&d, 0, -200, -980, 40);
+		CHECK(o == ORIENT_FACE_UP, "laid down: %d", o);
+		o = settle(&d, 0, -820, -574, 40);
+		CHECK(o == ORIENT_PORTRAIT, "picked up: %d", o);
+	}
+}
+
 int
 main(void)
 {
@@ -131,6 +198,8 @@ main(void)
 	test_the_diagonal_holds_the_orientation();
 	test_a_clear_turn_past_the_diagonal_switches();
 	test_tilting_up_from_portrait_becomes_face_up();
+	test_a_sample_without_gravity_is_not_taken();
+	test_held_near_the_flat_limit_does_not_flap();
 	printf("%d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }

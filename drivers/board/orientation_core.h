@@ -7,8 +7,9 @@
  * compiled by the host test (workbench/orientation_test.c), so what is tested there is what runs here.
  *
  * Units and axes:
- *   milli-g    the sample's and gravity's unit: 1000 is one g (9.81 m/s^2). The accelerometer reads the
- *              reaction to gravity, so a phone held still, screen up on a table, reads about (0, 0, -1000).
+ *   milli-g    the sample's and gravity's unit: 1000 is one g (9.81 m/s^2). The samples here are gravity as
+ *              Darwin's motion APIs give it (the board's mount turns the chip's reading, which is the reaction
+ *              to gravity, +1 g up, into that), so a phone held still, screen up on a table, is about (0, 0, -1000).
  *   axes       Darwin's: +x out of the right edge, +y out of the top (away from the home button), +z out
  *              of the screen toward the user. So gravity points along:
  *                portrait            (home button down)   -> g.y about -1000
@@ -49,6 +50,18 @@ enum {
  * about 574: past about 35 degrees from flat the edge orientations begin. */
 #define ORIENT_FLAT_PULL       574
 
+/* ... with this much (milli-g, about 4 degrees) either side of it held: a phone that is face up only goes to an
+ * edge orientation past ORIENT_FLAT_PULL + this, and one on an edge only goes flat below ORIENT_FLAT_PULL - this,
+ * so a phone held at about 35 degrees, swaying a little, does not flap between face up and portrait. */
+#define ORIENT_FLAT_HOLD       60
+
+/* A sample whose pull is not about one g (in milli-g, its length below the one or above the other) is not
+ * gravity: a chip that reads all zeros (its first output before a sample is ready, a chip that is stuck or
+ * powered down, a phone in free fall) or saturates, or a phone being shaken. It is not taken into the gravity
+ * estimate at all, so the orientation held is kept (and a detector not primed yet stays not known). */
+#define ORIENT_G_MIN           500
+#define ORIENT_G_MAX           1500
+
 /* The dominant horizontal axis must beat the other by this much (milli-g) to name the orientation; within
  * it the orientation is held, so the diagonal between two does not flap. */
 #define ORIENT_MARGIN          180
@@ -75,14 +88,25 @@ orient_abs(int32_t v)
 
 /*
  * One accelerometer sample (milli-g). Returns the current orientation (an ORIENT_* value): the one just
- * named, or the one held when no axis dominates. The first sample seeds gravity so the detector settles
- * from where the phone is, not from flat.
+ * named, or the one held when no axis dominates or the sample is not gravity. The first sample that is gravity
+ * seeds the estimate so the detector settles from where the phone is, not from flat.
  */
 static inline int
 orient_update(struct orient_detector *d, int32_t ax, int32_t ay, int32_t az)
 {
-	int32_t hx, hy;
+	int32_t hx, hy, flat_limit;
+	int64_t length2;
 	int candidate;
+
+	/* not gravity (ORIENT_G_MIN, ORIENT_G_MAX): left out. Each axis bounded first, so the squares cannot overflow. */
+	if (ax > ORIENT_G_MAX || ax < -ORIENT_G_MAX || ay > ORIENT_G_MAX || ay < -ORIENT_G_MAX || az > ORIENT_G_MAX ||
+	    az < -ORIENT_G_MAX) {
+		return d->current;
+	}
+	length2 = (int64_t)ax * ax + (int64_t)ay * ay + (int64_t)az * az;
+	if (length2 < (int64_t)ORIENT_G_MIN * ORIENT_G_MIN || length2 > (int64_t)ORIENT_G_MAX * ORIENT_G_MAX) {
+		return d->current;
+	}
 
 	if (!d->primed) {
 		d->gx = ax;
@@ -98,8 +122,15 @@ orient_update(struct orient_detector *d, int32_t ax, int32_t ay, int32_t az)
 	hx = orient_abs(d->gx);
 	hy = orient_abs(d->gy);
 
-	/* mostly flat: gravity along z and neither horizontal pull strong -> face up or face down */
-	if (hx < ORIENT_FLAT_PULL && hy < ORIENT_FLAT_PULL) {
+	/* mostly flat: gravity along z and neither horizontal pull strong -> face up or face down (the limit moved
+	 * away from the orientation held by ORIENT_FLAT_HOLD, so it is not crossed back and forth) */
+	flat_limit = ORIENT_FLAT_PULL;
+	if (d->current == ORIENT_FACE_UP || d->current == ORIENT_FACE_DOWN) {
+		flat_limit += ORIENT_FLAT_HOLD;
+	} else if (d->current != ORIENT_UNKNOWN) {
+		flat_limit -= ORIENT_FLAT_HOLD;
+	}
+	if (hx < flat_limit && hy < flat_limit) {
 		candidate = d->gz < 0 ? ORIENT_FACE_UP : ORIENT_FACE_DOWN;
 	} else if (hx > hy + ORIENT_MARGIN) {
 		candidate = d->gx < 0 ? ORIENT_LANDSCAPE_LEFT : ORIENT_LANDSCAPE_RIGHT;
