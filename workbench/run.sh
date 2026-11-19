@@ -208,7 +208,8 @@ fi
 # include are empty files of the same names here, and the HAL's four-character constants are no warning
 DARWIN_STUBS=$WORK/darwin-headers
 for header in CoreFoundation/CoreFoundation.h CoreFoundation/CFPlugInCOM.h CoreAudioTypes/CoreAudioTypes.h mach/mach_time.h \
-	sys/ioccom.h objc/message.h objc/runtime.h dispatch/dispatch.h sys/sysctl.h; do
+	sys/ioccom.h objc/message.h objc/runtime.h dispatch/dispatch.h sys/sysctl.h CoreMedia/CoreMedia.h CoreVideo/CoreVideo.h \
+	IOSurface/IOSurfaceRef.h; do
 	mkdir -p "$DARWIN_STUBS/$(dirname "$header")"
 	: > "$DARWIN_STUBS/$header"
 done
@@ -221,6 +222,27 @@ for test in audio_plugin_test record_analysis_test brightness_slider_test; do
 		failed=1
 	fi
 done
+
+# Darwin's capture device in cameracaptured (components/camera/src/camera_device.c, with the picture processor it is built
+# with), the file itself included in a test that has what it needs of CoreFoundation, CoreMedia, CoreVideo and dlsym(), and a
+# /dev/hakios-camera of its own: with clang (CLANG), for the file's one block type, under the sanitizers where that clang
+# has them; left out where there is no clang
+CLANG=${CLANG:-clang}
+if command -v "$CLANG" > /dev/null; then
+	CLANG_SANITIZE=()
+	if echo 'int main(void) { return 0; }' | "$CLANG" -fsanitize=address,undefined -x c - -o "$WORK/sanitizers-clang" 2> /dev/null; then
+		CLANG_SANITIZE=(-O1 '-fsanitize=address,undefined' -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+	fi
+	echo "== camera_device_test (host, clang${CLANG_SANITIZE[0]:+, sanitizers})"
+	if "$CLANG" -std=gnu11 -fblocks -Wall -Wextra -Werror -O2 -pthread "${CLANG_SANITIZE[@]}" -I"$DARWIN_STUBS" \
+		"$HERE/camera_device_test.c" -o "$WORK/camera_device_test" -lm; then
+		TMPDIR=$WORK scenarios "" "$WORK/camera_device_test"
+	else
+		failed=1
+	fi
+else
+	echo "== (no clang: camera_device_test is left out)"
+fi
 
 # backboardd's touch screen and buttons on Darwin 26 (userland/userland/src/inject26.c): the part of the file between its
 # "---- backboardd" and "---- big thread stacks" lines, cut out unchanged (the rest is Objective-C runtime calls and

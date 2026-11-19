@@ -713,16 +713,19 @@ af_window(struct stream *s, CFTypeRef value)
 	if (value != NULL && CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayGetCount(value) > 0) {
 		w = CFArrayGetValueAtIndex(value, 0);
 	}
-	if (w == NULL || CFGetTypeID(w) != CFDictionaryGetTypeID() || (width = dict_number(w, "width", 0)) <= 0 ||
-	    (height = dict_number(w, "height", 0)) <= 0) {
+	if (w == NULL || CFGetTypeID(w) != CFDictionaryGetTypeID() || !((width = dict_number(w, "width", 0)) > 0) ||
+	    !((height = dict_number(w, "height", 0)) > 0)) {
 		s->af_window[0] = s->af_window[1] = 0.3f;
 		s->af_window[2] = s->af_window[3] = 0.7f;
 		return;
 	}
 	x0 = dict_number(w, "hStart", 0) / 1000;
 	y0 = dict_number(w, "vStart", 0) / 1000;
-	width /= 1000;
-	height /= 1000;
+	/* (at most the whole frame: isp_sharpness() takes fractions of it, and a NaN start is its left or top) */
+	width = width > 1000 ? 1 : width / 1000;
+	height = height > 1000 ? 1 : height / 1000;
+	x0 = isnan(x0) ? 0 : x0;
+	y0 = isnan(y0) ? 0 : y0;
 	/* (at least a tenth of the frame each way, about the middle of what was asked) */
 	if (width < 0.1) {
 		x0 -= (0.1 - width) / 2;
@@ -769,7 +772,7 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 		if (value != NULL && CFGetTypeID(value) == CFNumberGetTypeID()) {
 			CFNumberGetValue(value, kCFNumberDoubleType, &zoom);
 		}
-		zoom = zoom < 1 ? 1 : zoom > MAX_ZOOM ? MAX_ZOOM : zoom;
+		zoom = !(zoom >= 1) ? 1 : zoom > MAX_ZOOM ? MAX_ZOOM : zoom;        /* (NaN: 1, not a NaN crop) */
 		if (fabs(zoom - s->zoom) >= 0.25 || (zoom == 1) != (s->zoom == 1)) {
 			say("stream: zoom %.2fx", zoom);
 		}
@@ -1468,6 +1471,12 @@ same_shape(const struct hakios_camera_frame *f, const struct hakios_camera_frame
 	    f->width == head->width && f->height == head->height && f->stride == head->stride;
 }
 
+/*
+ * The kernel's camera has had a fault (EIO): it stays off for the rest of the run (sys/board/camera.h), so no worker is
+ * made again -- each would fail at once, at every RequestStreams -- and the graph's start is told so.
+ */
+static bool kernel_fault;
+
 static void *
 worker(void *context)
 {
@@ -1486,6 +1495,9 @@ worker(void *context)
 
 	pthread_setname_np("hakios-camera");
 	if (device < 0) {
+		if (errno == EIO) {
+			__atomic_store_n(&kernel_fault, true, __ATOMIC_RELEASE);
+		}
 		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
 		/* (the next start takes this one back and makes a worker anew: not taken for one still running) */
 		__atomic_store_n(&s->worker_done, true, __ATOMIC_RELEASE);
@@ -1501,6 +1513,7 @@ worker(void *context)
 				failures += n < 0 && errno == EAGAIN ? 0 : 1;
 				if (n < 0 && errno == EIO) {
 					say("the kernel's camera has had a fault: no frames");
+					__atomic_store_n(&kernel_fault, true, __ATOMIC_RELEASE);
 					break;
 				}
 				continue;
@@ -1554,6 +1567,7 @@ worker(void *context)
 		if (n != (ssize_t)bytes) {
 			if (n < 0 && errno == EIO) {
 				say("the kernel's camera has had a fault: no more frames");
+				__atomic_store_n(&kernel_fault, true, __ATOMIC_RELEASE);
 				break;
 			}
 			failures += n < 0 && errno == EAGAIN ? 0 : 1;
@@ -1647,6 +1661,11 @@ worker(void *context)
 	}
 	free(buffer);
 	close(device);
+	if (isp.tuning != NULL) {
+		/* (isp_load_tuning()'s: else a start of the camera's -- a turn to the other one -- leaves a tuning behind each time) */
+		free(isp.tuning->file);
+		free(isp.tuning);
+	}
 	say("the frames stopped (%llu)", s->frames);
 	/* (ended by itself -- faults, reads that kept failing -- or asked to: either way ended, so a start starts it again) */
 	__atomic_store_n(&s->worker_done, true, __ATOMIC_RELEASE);
@@ -1686,6 +1705,20 @@ stream_begin(CMBaseObjectRef o, bool graph)
 	if (s->worker_started && !__atomic_load_n(&s->worker_done, __ATOMIC_ACQUIRE)) {
 		pthread_mutex_unlock(&run_lock);
 		return 0;               /* (its frames are coming) */
+	}
+	if (__atomic_load_n(&kernel_fault, __ATOMIC_ACQUIRE)) {
+		static bool said;
+
+		if (s->worker_started) {
+			pthread_join(s->worker, NULL);
+			s->worker_started = false;
+		}
+		if (!said) {
+			said = true;
+			say("stream: the kernel's camera has had a fault: no frames for the rest of the run");
+		}
+		pthread_mutex_unlock(&run_lock);
+		return ERR_NOT_AVAILABLE;
 	}
 	/* one camera at a time: the kernel gives one sensor's frames (the other stream's worker stopped first) */
 	for (int i = 0; i < 2; i++) {

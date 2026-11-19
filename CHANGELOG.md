@@ -119,6 +119,11 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Darwin's camera device (`components/camera/src/camera_device.c`, new host test `workbench/camera_device_test.c`,
+  built with clang for the file's block): every start of the camera leaked the sensor's colour tuning; after the
+  kernel gave the camera up (`EIO`), every request of the capture graph made a new worker that failed to open it, and
+  the start still said it had worked (a black preview, no error); and a NaN zoom or focus window from the graph got past
+  the clamps into the picture processing.
 - The layer under the Wi-Fi driver (`kernel/lx/src/lx_base.c`, new host test `workbench/lx_base_test.c` that runs it
   on the host's threads): a delayed piece of work already pending -- on its queue, or waiting for its time -- was queued
   again and ran twice (Linux leaves it), as a second beacon miss would have had the network lost twice; `kfree(NULL)`
