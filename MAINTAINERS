@@ -50,6 +50,7 @@ F:	drivers/board/backlight_core.h
 F:	components/brightness/
 T:	workbench/backlight_driver_test.c
 T:	workbench/backlight_test.c
+T:	workbench/brightness_slider_test.c
 D:	Documentation/backlight.md
 K:	backlight { }; backlight=
 

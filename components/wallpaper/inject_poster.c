@@ -67,10 +67,16 @@ same(id object, CFTypeRef value)
 	return object != nil && value != NULL && CFEqual((CFTypeRef)object, value);
 }
 
+/* nil where the receiver has not got the method in this build: an unrecognized selector would end PosterBoard */
 static id
 send(id receiver, const char *selector)
 {
-	return ((id (*)(id, SEL))objc_msgSend)(receiver, sel_registerName(selector));
+	SEL sel = sel_registerName(selector);
+
+	if (receiver == nil || !class_respondsToSelector(object_getClass(receiver), sel)) {
+		return nil;
+	}
+	return ((id (*)(id, SEL))objc_msgSend)(receiver, sel);
 }
 
 static id

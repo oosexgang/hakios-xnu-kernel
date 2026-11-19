@@ -119,6 +119,11 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The brightness slider's way to the kernel (`components/brightness/inject_brightness.c`, new host test
+  `workbench/brightness_slider_test.c`): a brightness of NaN, or one out of range, was turned into an integer before it
+  was clamped, and NaN and infinity made the panel its dimmest; NaN is now ignored and the rest clamped first.
+  PosterBoard asks the wallpaper bridge only what it answers (`inject_poster.c`), where a renamed method would have
+  crashed it on every launch.
 - Starting the other processors (`psci_smp.c`, new host test `workbench/psci_smp_test.c` with a fake firmware): a core
   was counted as started only after the firmware's CPU_ON returned, so a core that panicked at once could take itself
   for the only one and go back to the loader while the boot core ran on; and an early-exception note left by a core

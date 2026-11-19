@@ -119,9 +119,15 @@ to_kernel(CFTypeRef key, CFTypeRef value)
 		return;
 	}
 	if (key_is(key, CFSTR("DisplayBrightness"))) {
-		int level = (int)(number * 1000.0 + 0.5);
-
-		write_value("hw.backlight.level", level < 0 ? 0 : level > 1000 ? 1000 : level);
+		/*
+		 * (kept to 0..1 as a double, before it is made an integer: one out of an int's range does not convert,
+		 * and a NaN, which no comparison keeps out, became level 0 -- a dark panel -- on this processor)
+		 */
+		if (!(number == number)) {
+			return;
+		}
+		number = number < 0.0 ? 0.0 : number > 1.0 ? 1.0 : number;
+		write_value("hw.backlight.level", (int)(number * 1000.0 + 0.5));
 	} else if (key_is(key, CFSTR("DisplayBrightnessAuto"))) {
 		write_value("hw.backlight.auto", number != 0.0);
 	}
