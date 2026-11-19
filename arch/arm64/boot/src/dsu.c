@@ -42,6 +42,7 @@ dsu_command(char *cmd)
 		return;
 	}
 	if (!dsu_find(&data)) {
+		dsu_patch_data = NULL;  /* (a patch armed before is not written by a table this look refused) */
 		fb_reply("FAIL", "no DSU image (see oem log)");
 		return;
 	}
