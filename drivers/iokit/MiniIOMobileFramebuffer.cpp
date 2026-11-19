@@ -983,6 +983,7 @@ struct RowJob {
 	const uint8_t * pixels;
 	uint32_t        stride;
 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
+	int32_t         cy0, cy1;               /* the rows of [py0, py1) that are on the panel (as cx0, cx1 its columns) */
 	bool            filter, unscaled, over;
 	uint64_t        target;                 /* the panel's readout it is for (scanWaitRows()) */
 };
@@ -1092,15 +1093,15 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 void
 IOMobileFramebuffer::drawShare(const RowJob * job, unsigned share, uint32_t * blendRow)
 {
-	int32_t rows = job->py1 - job->py0;
+	int32_t rows = job->cy1 - job->cy0;
 
 	if (job->target == 0) {
-		drawRows(job, job->py0 + (int32_t) ((int64_t) rows * share / fThreads),
-		    job->py0 + (int32_t) ((int64_t) rows * (share + 1) / fThreads), blendRow);
+		drawRows(job, job->cy0 + (int32_t) ((int64_t) rows * share / fThreads),
+		    job->cy0 + (int32_t) ((int64_t) rows * (share + 1) / fThreads), blendRow);
 		return;
 	}
-	for (int32_t y = job->py0 + (int32_t) share * SCAN_STRIPE; y < job->py1; y += (int32_t) fThreads * SCAN_STRIPE) {
-		drawRows(job, y, y + SCAN_STRIPE < job->py1 ? y + SCAN_STRIPE : job->py1, blendRow);
+	for (int32_t y = job->cy0 + (int32_t) share * SCAN_STRIPE; y < job->cy1; y += (int32_t) fThreads * SCAN_STRIPE) {
+		drawRows(job, y, y + SCAN_STRIPE < job->cy1 ? y + SCAN_STRIPE : job->cy1, blendRow);
 	}
 }
 
@@ -1314,6 +1315,25 @@ outside(MiniIOSurface * s, const char * what)
 }
 
 /*
+ * A span of a layer's destination on the display, `at` and `length` long, as a span of the panel, [*p0, *p1). Worked out in
+ * 64 bits, and a span more than 2^30 pixels off is not drawn: what is worked out from it (x - px0, px1 - px0) stays within
+ * 32 bits, where a span of the client's numbers wrapped round onto the panel in 32 bits would read past the layer's rows
+ * (fb_filter=0) when the panel is larger than the display (fbscale=). Whether there is a span at all.
+ */
+static bool
+panelSpan(int32_t at, int32_t length, uint32_t display, uint32_t panel, int32_t * p0, int32_t * p1)
+{
+	int64_t from = (int64_t) at * panel / display, to = ((int64_t) at + length) * panel / display;
+
+	if (to <= from || from < -(1LL << 30) || to > (1LL << 30)) {
+		return false;
+	}
+	*p0 = (int32_t) from;
+	*p1 = (int32_t) to;
+	return true;
+}
+
+/*
  * fb_yuv: a rectangle of a two-plane YCbCr surface ('420f' full range, '420v' video range: luma, then interleaved
  * Cb Cr at half size each way) on the screen, by nearest neighbour, on this thread, BT.601 as CoreVideo's camera
  * buffers say. Where the layer's numbers do not make sense nothing is drawn. Whether it drew anything.
@@ -1369,11 +1389,7 @@ IOMobileFramebuffer::drawYUV(MiniIOSurface * s, const int32_t * src, const int32
 			return false;
 		}
 	}
-	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
-	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
-	px1 = (int32_t) ((int64_t) (dx + dw) * fPanelWidth / fWidth);
-	py1 = (int32_t) ((int64_t) (dy + dh) * fPanelHeight / fHeight);
-	if (px1 <= px0 || py1 <= py0) {
+	if (!panelSpan(dx, dw, fWidth, fPanelWidth, &px0, &px1) || !panelSpan(dy, dh, fHeight, fPanelHeight, &py0, &py1)) {
 		return false;
 	}
 	for (int32_t y = py0 > 0 ? py0 : 0; y < py1 && (uint32_t) y < fPanelHeight; y++) {
@@ -1416,7 +1432,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 {
 	int32_t sx = src[0], sy = src[1], sw = src[2], sh = src[3];
 	int32_t dx = dst[0], dy = dst[1], dw = dst[2], dh = dst[3];
-	int32_t px0, py0, px1, py1, cx0, cx1;
+	int32_t px0, py0, px1, py1, cx0, cx1, cy0, cy1;
 	bool filter = gFilter != 0;
 	RowJob job;
 
@@ -1438,12 +1454,20 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		outside(s, "a layer");
 		return;
 	}
-	/* the rectangle on the panel */
-	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
-	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
-	px1 = (int32_t) ((int64_t) (dx + dw) * fPanelWidth / fWidth);
-	py1 = (int32_t) ((int64_t) (dy + dh) * fPanelHeight / fHeight);
-	if (px1 <= px0 || py1 <= py0) {
+	/* the rectangle on the panel, and the part of it that is on the panel: none, nothing is drawn */
+	if (!panelSpan(dx, dw, fWidth, fPanelWidth, &px0, &px1) || !panelSpan(dy, dh, fHeight, fPanelHeight, &py0, &py1)) {
+		return;
+	}
+	/*
+	 * (a layer wholly left or right of the panel has no columns, cx1 <= cx0: drawRows() would blend its rows from
+	 * fColumn[cx0] to fColumn[cx1 - 1], read outside fColumn or left there by another layer -- past the surface's rows
+	 * and blendRow both. One above or below the panel has no rows; of a tall one only those on the panel are gone through.)
+	 */
+	cx0 = px0 < 0 ? 0 : px0;
+	cx1 = px1 > (int32_t) fPanelWidth ? (int32_t) fPanelWidth : px1;
+	cy0 = py0 < 0 ? 0 : py0;
+	cy1 = py1 > (int32_t) fPanelHeight ? (int32_t) fPanelHeight : py1;
+	if (cx1 <= cx0 || cy1 <= cy0) {
 		return;
 	}
 	/* (blending, a row of the picture mixed from two: room for it, for every one who draws rows) */
@@ -1471,8 +1495,6 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	}
 	filter = filter && fBlendRow != NULL;
 	/* which pixel of a source row each pixel of a panel row takes: worked out once, not 2.6 million times */
-	cx0 = px0 < 0 ? 0 : px0;
-	cx1 = (uint32_t) px1 > fPanelWidth ? (int32_t) fPanelWidth : px1;
 	for (int32_t x = cx0; x < cx1; x++) {
 		if (filter) {
 			int64_t at = sample_at(x - px0, sw, px1 - px0);
@@ -1495,12 +1517,14 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	job.py1 = py1;
 	job.cx0 = cx0;
 	job.cx1 = cx1;
+	job.cy0 = cy0;
+	job.cy1 = cy1;
 	job.filter = filter;
 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
 	job.target = fScanTarget;
 	job.over = fOver;
 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
-		drawRows(&job, py0, py1, fBlendRow);
+		drawRows(&job, cy0, cy1, fBlendRow);
 		return;
 	}
 	/* shared out: the helpers take their rows, this thread the first share, then waits for them */
