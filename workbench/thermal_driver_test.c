@@ -517,6 +517,55 @@ hottest_sensor_silent(void)
 	CHECK(get("step") == 0 && perf[0] == ROWS - 1, "both cool and said so: given back: step %u, row %u", get("step"), perf[0]);
 }
 
+/* how many times the driver has said `text` */
+static unsigned
+times_logged(const char *text)
+{
+	unsigned n = 0;
+
+	for (const char *at = strstr(log_text, text); at != NULL; at = strstr(at + 1, text)) {
+		n++;
+	}
+	return n;
+}
+
+/*
+ * Why it is held is said once each time a silence begins: not again at every look while it lasts -- nor after a hot
+ * sensor that answers has held it all the way meanwhile -- and again when a sensor goes silent once every one had
+ * answered and it had been given back
+ */
+static void
+silence_said_once_each_time(void)
+{
+	const char *why = "1 sensor that answered before is silent: held back";
+
+	phone(720);
+	boot_args = "thermal=2 th_period_ms=100";
+	hakios_thermal_init();
+	WAIT_FOR(get("step") >= 3, 2000);
+	sensor[0][3] = 0;                       /* the hot one: no reading */
+	temperature(1, 1, 550);                 /* the other: under the clear */
+	WAIT_FOR(logged(why), 1000);
+	usleep(500000);                         /* five looks or so of it */
+	CHECK(times_logged(why) == 1, "said once, not at every look: %u times: %s", times_logged(why), log_text);
+	temperature(1, 1, 960);                 /* the other critical: all the way, and kept there a few looks */
+	WAIT_FOR(get("step") == 5, 1000);
+	usleep(300000);
+	temperature(1, 1, 550);                 /* cool again, the hot one still silent */
+	usleep(500000);
+	CHECK(get("step") == 5, "still silent: nothing given back: %u", get("step"));
+	CHECK(times_logged(why) == 1, "the same silence: still said once: %u times", times_logged(why));
+	temperature(0, 3, 550);                 /* it answers: cool -- given back */
+	WAIT_FOR(get("step") == 0, 3000);
+	CHECK(get("step") == 0, "every one answers, cool: given back: %u", get("step"));
+	temperature(0, 3, 720);                 /* hot again, then silent again: a silence of its own, said again */
+	WAIT_FOR(get("step") >= 3, 2000);
+	sensor[0][3] = 0;
+	WAIT_FOR(times_logged(why) == 2, 1000);
+	CHECK(times_logged(why) == 2, "a second silence is said too: %u times", times_logged(why));
+	CHECK(get("step") >= 3, "and held: %u", get("step"));
+}
+
 static void
 tuned_while_running(void)
 {
@@ -716,7 +765,7 @@ main(int argc, char **argv)
 		{ "looks_by_default", looks_by_default }, { "off_when_asked", off_when_asked },
 		{ "throttled_by_the_hardware", throttled_by_the_hardware }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "osm_chip", osm_chip }, { "group_not_in_charge", group_not_in_charge },
-		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors }, { "hottest_sensor_silent", hottest_sensor_silent },
+		{ "critical", critical }, { "never_raises", never_raises }, { "row_past_the_table", row_past_the_table }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors }, { "hottest_sensor_silent", hottest_sensor_silent }, { "silence_said_once_each_time", silence_said_once_each_time },
 		{ "tuned_while_running", tuned_while_running }, { "thresholds_held_to_sense", thresholds_held_to_sense }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy }, { "clear_at_the_trip", clear_at_the_trip }, { "said_off", said_off },
 		{ "slowest_period", slowest_period }, { "too_short_a_period", too_short_a_period }, { "scmi_heat_and_cool", scmi_heat_and_cool }, { "scmi_refused", scmi_refused }, { "scmi_refused_at_critical", scmi_refused_at_critical },

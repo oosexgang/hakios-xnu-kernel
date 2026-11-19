@@ -42,6 +42,7 @@ main(void)
 	}
 	CHECK(s == 5, "held back all the way, then ten looks without a reading: still all the way: %u", s);
 	CHECK(th_next_step(9, 5, 650, &p) == 5, "a step beyond most comes back within");
+	CHECK(th_next_step(9, 5, TH_NONE, &p) == 5, "a step beyond most comes back within, a reading or none: %u", th_next_step(9, 5, TH_NONE, &p));
 	/* a run: heating holds back a step a look, cooling gives back a step a look, hysteresis between */
 	s = 0;
 	for (int t = 600; t <= 760; t += 20) {
