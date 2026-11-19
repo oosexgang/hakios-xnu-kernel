@@ -119,6 +119,13 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Orientation (`orientation_core.h`, `imu.c`): the zeros read before the chip's first sample were taken as gravity and
+  every start said "face down" for most of a second (a stuck axis or free fall did the same); a phone held at about
+  35 degrees flipped between face up and portrait many times a second (now a hold of about 4 degrees); and once the
+  chip stopped answering, the last orientation was published for the rest of the run instead of "not known".
+- Touch (FocalTech FT3680, in `goodix.c`): a finger down when the chip stopped answering stayed down for about 2.5 s
+  (long enough for a long press, or with five fingers the gesture that ends the run); it is now lifted after 250 ms of
+  nothing believable, as the Goodix path already did.
 - Keeping `/private/var` between boots (`init/var_store.c`): one file with more than 4096 extended attributes -- which
   any application can give a file of its own -- made every new archive one the next boot refused, and the save after
   that overwrote the last good copy: the whole volume was lost. A save now never writes over the only good copy either:

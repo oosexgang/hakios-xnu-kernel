@@ -1106,6 +1106,7 @@ focaltech_report(const uint8_t *report)
 			return;
 		}
 	}
+	believed_at = micros_now();
 	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
 		focaltech_contact[i].seen = false;
 	}
@@ -1133,11 +1134,22 @@ focaltech_report(const uint8_t *report)
 	}
 }
 
+static bool
+focaltech_down(void)
+{
+	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
+		if (focaltech_contact[i].down) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static void
 focaltech_poll(void)
 {
 	static uint8_t report[FOCALTECH_TOUCH_REPORT_LEN];
-	static unsigned bad, failed;
+	static unsigned bad, failed, said;
 
 	seen.polls++;
 	if (!focaltech_read(FOCALTECH_TOUCH_DATA, report, sizeof(report))) {
@@ -1149,11 +1161,23 @@ focaltech_poll(void)
 			printf("focaltech: %u reads failed one after another: the fingers taken as lifted\n", failed);
 			focaltech_release();
 		}
-		return;
+	} else {
+		failed = 0;
+		seen.reports++;
+		focaltech_report(report);
 	}
-	failed = 0;
-	seen.reports++;
-	focaltech_report(report);
+	/*
+	 * As goodix_poll(): fingers left down while the chip has said nothing believable for a while are lifted. Counted
+	 * in reads alone, a chip that falls silent with its interrupt line high (looked at every 80 ms) held them down for
+	 * two and a half seconds -- long enough for five of them to end the run (input.c).
+	 */
+	if (focaltech_down() && micros_now() - believed_at >= SILENT_MOST_US) {
+		if (said++ < 8) {
+			printf("focaltech: no report believed for %u ms with fingers down: the fingers taken as lifted\n",
+			    SILENT_MOST_US / 1000);
+		}
+		focaltech_release();
+	}
 }
 
 static bool looking_only;              /* touchscreen=-1 */

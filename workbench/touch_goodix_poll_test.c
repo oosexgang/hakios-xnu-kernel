@@ -736,6 +736,54 @@ focaltech_count_zero(void)
 	    "was (%u posts)", posts);
 }
 
+/* the FT3680's report, answered whole and with its CRC to every read of it */
+static uint8_t ft_frame[FOCALTECH_TOUCH_REPORT_LEN];
+
+static bool
+ft_report_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	memset(rx, 0, length);
+	if (tx[1] == FOCALTECH_READ_CTRL && tx[0] == FOCALTECH_TOUCH_DATA && length == 7 + sizeof(ft_frame) + 2) {
+		ft_answer(rx, ft_frame, sizeof(ft_frame));
+	}
+	return true;
+}
+
+/*
+ * A FocalTech finger down, held, and then the chip silent, its reads failing, looked at every 80 ms as the thread looks
+ * with the interrupt line high: lifted after a quarter of a second, as a Goodix finger is -- not after 32 failed reads
+ */
+static void
+focaltech_fallen_silent(void)
+{
+	static const uint32_t down[1][4] = { { 0, 1, 1000, 2000 } };
+	uint64_t start, took;
+
+	board = "phone-video";
+	touch_chip = TOUCH_FOCALTECH;
+	focaltech_max_x = 10000;
+	focaltech_max_y = 20000;
+	ft_report(ft_frame, 1, down, 1);
+	spi_transfer = ft_report_transfer;
+	chip_poll();
+	CHECK(posts == 1 && posted[0].type == HAKIOS_TOUCH_DOWN && posted[0].finger == 1, "down: %u posts", posts);
+	start = mach_absolute_time();
+	while (ms_since(start) < 400) {
+		chip_poll();
+		usleep(80 * 1000);
+	}
+	CHECK(posts == 1, "held, its reports read every 80 ms: still down (%u posts)", posts);
+	spi_transfer = transfer_fails;
+	start = mach_absolute_time();
+	while (ms_since(start) < 1500 && posts < 2) {
+		chip_poll();
+		usleep(80 * 1000);
+	}
+	took = ms_since(start);
+	CHECK(posts == 2 && posted[1].type == HAKIOS_TOUCH_UP && posted[1].finger == 1 && took >= 200 && took < 600,
+	    "lifted after a quarter of a second: %u posts after %llu ms", posts, (unsigned long long)took);
+}
+
 /* ---- the driver's thread: the pins, the clock votes and RPMh modelled; the chip answers on the pins driven by hand ---- */
 
 #define LDO             0x4a000         /* where the command database says the I/O supply's regulator is */
@@ -1059,7 +1107,7 @@ main(int argc, char **argv)
 		{ "descriptions_not_believed", descriptions_not_believed }, { "a_command", a_command },
 		{ "focaltech_already_running", focaltech_already_running }, { "focaltech_without_firmware", focaltech_without_firmware },
 		{ "silent_bus_high", silent_bus_high }, { "silent_bus_low", silent_bus_low }, { "rest_never_read", rest_never_read },
-		{ "focaltech_no_event", focaltech_no_event }, { "focaltech_count_zero", focaltech_count_zero },
+		{ "focaltech_no_event", focaltech_no_event }, { "focaltech_count_zero", focaltech_count_zero }, { "focaltech_fallen_silent", focaltech_fallen_silent },
 		{ "int_pull_up_waits_for_supply", int_pull_up_waits_for_supply }, { "not_found_powered_down", not_found_powered_down },
 		{ "run_end_puts_it_away", run_end_puts_it_away }, { "run_end_mid_transfer", run_end_mid_transfer },
 	};
