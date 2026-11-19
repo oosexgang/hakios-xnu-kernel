@@ -1015,16 +1015,28 @@ management_received(struct lx_radio *radio, const uint8_t *f, unsigned length)
 		radio->told_action++;
 		lx_tell("lx: an action frame from the access point: category %u, action %u, %u bytes\n", f[24], f[25], length);
 	}
-	if (f[0] == 0xb0 && length >= 30) {		/* authentication: algorithm, step (2: the answer), status */
+	/*
+	 * (Each answer only while the join waits for it: an authentication answered again by the access point -- our
+	 * acknowledgement lost -- must not end the wait for the association with "refused", and an association response that
+	 * comes after the first, from the access point or from anyone in range, must not rewrite the elements and number
+	 * station_join() is reading.)
+	 */
+	if (f[0] == 0xb0 && length >= 30 && radio->reached == IEEE80211_STA_NONE) {
+		/* authentication: algorithm, step (2: the answer), status */
 		status = f[28] | f[29] << 8;
 		answer = (f[26] | f[27] << 8) != 2 ? ANSWER_NONE : status == 0 ? ANSWER_AUTHENTICATED : ANSWER_REFUSED;
-	} else if (f[0] == 0x10 && length >= 30) {	/* association response: capabilities, status, our number, elements */
+	} else if (f[0] == 0x10 && length >= 30 && radio->reached == IEEE80211_STA_AUTH) {
+		/* association response: capabilities, status, our number, elements */
 		status = f[26] | f[27] << 8;
 		answer = status == 0 ? ANSWER_ASSOCIATED : ANSWER_REFUSED;
 		lx_os_lock();
-		radio->aid = (uint16_t)((f[28] | f[29] << 8) & 0x3fff);
-		radio->answer_length = length - 30 < ELEMENTS_MOST ? length - 30 : ELEMENTS_MOST;
-		memcpy(radio->answer_elements, f + 30, radio->answer_length);
+		if (radio->answer == ANSWER_NONE) {
+			radio->aid = (uint16_t)((f[28] | f[29] << 8) & 0x3fff);
+			radio->answer_length = length - 30 < ELEMENTS_MOST ? length - 30 : ELEMENTS_MOST;
+			memcpy(radio->answer_elements, f + 30, radio->answer_length);
+		} else {
+			answer = ANSWER_NONE;
+		}
 		lx_os_unlock();
 	} else if (f[0] == 0xd0 && length >= 28 && f[24] == 3 && radio->reached >= IEEE80211_STA_ASSOC && lx_os_option("wifi_ba")) {
 		/* an action frame, block ack's: ADDBA request (0) or DELBA (2); done on the driver's terms in ba_handle() */
@@ -1151,9 +1163,17 @@ station_up(struct lx_radio *radio)
 		    IEEE80211_OFFLOAD_DECAP_ENABLED ? "from" : "NOT from");
 		if (ret == 0) {
 			radio->vif = vif;
+		} else {
+			/* (as mac80211's ieee80211_do_open() does: started again, the driver would refuse, being on already) */
+			radio->ops->stop(hw, false);
+			radio->started = false;
 		}
 	}
 	mutex_unlock(&hw->wiphy->mtx);
+	if (ret != 0) {
+		kfree(radio->vif_memory);
+		radio->vif_memory = NULL;
+	}
 	return (-ret);
 }
 
@@ -1927,6 +1947,8 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	radio->channel = kzalloc(sizeof(*radio->channel) + hw->chanctx_data_size + 64, GFP_KERNEL);
 	radio->sta_memory = kzalloc(64 + sizeof(*radio->sta) + hw->sta_data_size, GFP_KERNEL);
 	if (radio->channel == NULL || radio->sta_memory == NULL) {
+		kfree(radio->channel);		/* (not given to the driver: station_leave() is not to take it back from it) */
+		radio->channel = NULL;
 		error = ENOMEM;
 		goto out;
 	}
@@ -1939,10 +1961,17 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	if (ret == 0) {
 		vif->bss_conf.chanctx_conf = radio->channel;
 		ret = radio->ops->assign_vif_chanctx(hw, vif, &vif->bss_conf, radio->channel);
+		if (ret != 0) {
+			/* (as mac80211 undoes it: the context removed; the interface, never given it, is not taken off it) */
+			vif->bss_conf.chanctx_conf = NULL;
+			radio->ops->remove_chanctx(hw, radio->channel);
+		}
 	}
 	mutex_unlock(&hw->wiphy->mtx);
 	lx_tell("lx: the channel is taken, %u MHz wide around %u MHz: %d\n", radio->width, radio->channel->def.center_freq1, ret);
 	if (ret != 0) {
+		kfree(radio->channel);
+		radio->channel = NULL;
 		error = -ret;
 		goto out;
 	}

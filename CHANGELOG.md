@@ -119,6 +119,11 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Joining a Wi-Fi network (`kernel/lx/src/lx_80211.c`): an authentication answered again by the access point (our
+  acknowledgement lost) ended the wait for the association as "refused", and a second association response -- the
+  access point's, or anyone's in range -- rewrote the elements and station number the join was reading; each answer now
+  counts only while the join waits for it. A radio whose interface could not be added was left started and its memory
+  kept, and a channel the driver was never given was taken back from it on the way out.
 - Darwin's camera device (`components/camera/src/camera_device.c`, new host test `workbench/camera_device_test.c`,
   built with clang for the file's block): every start of the camera leaked the sensor's colour tuning; after the
   kernel gave the camera up (`EIO`), every request of the capture graph made a new worker that failed to open it, and
