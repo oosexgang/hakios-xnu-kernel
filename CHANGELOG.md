@@ -119,6 +119,10 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- SpringBoard's remote control (`userland/userland/src/inject_sb.c`, new host test `workbench/springboard_remote_test.c`):
+  any program can post `com.hakios.layers`, and a layer tree deeper than about 600 overflowed SpringBoard's stack (a
+  respring); the walk now stops at 128 and says so. `com.hakios.switcher` sent `sharedInstance` without asking the class
+  and called the switcher with integers whatever its argument types; both are checked now.
 - Touches into iOS (`userland/userland/src/inject26.c`, in backboardd; new host test `workbench/backboard_input_test.c`,
   run on the part of the file that reads the touches, cut out unchanged): one interrupted or failed read of
   `/dev/hakios-touch` ended the thread, leaving the phone with no touch screen and no buttons until backboardd started

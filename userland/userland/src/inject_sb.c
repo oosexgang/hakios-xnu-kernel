@@ -758,6 +758,11 @@ layer_filter(id filter, const char *what, int depth)
 
 /* (what snprintf says it would have written, held to the buffer: else the next size left wraps round) */
 #define HELD_MORE(n) ((n) = (n) >= sizeof(more) ? sizeof(more) - 1 : (n))
+/*
+ * How deep layer_line() goes: each level is a frame of more than a kilobyte and a half (more, flat) on the main
+ * thread's stack, which is 1 MB; a tree (or a chain of masks) deeper than this is said to be, not walked.
+ */
+#define LAYERS_DEPTH_MAX 128
 
 static void
 layer_line(id layer, const char *role, int depth)
@@ -883,6 +888,11 @@ layer_line(id layer, const char *role, int depth)
 	if (compositing != NULL) {
 		layer_filter(compositing, "compositing filter", depth);
 	}
+	if (depth >= LAYERS_DEPTH_MAX && (mask != NULL || (sublayers != NULL && SEND(long, sublayers, "count") > 0))) {
+		say("hakios: layers%s: %*s  (its mask and sublayers left out: deeper than %d)\n", layers_of, 2 * depth, "",
+		    LAYERS_DEPTH_MAX);
+		return;
+	}
 	if (mask != NULL) {
 		layer_line(mask, "MASK ", depth + 1);
 	}
@@ -992,12 +1002,24 @@ switcher(void)
 {
 	Class coordinator = objc_getClass("SBMainSwitcherControllerCoordinator");
 	SEL activate = sel_registerName("activateMainSwitcherNoninteractivelyWithSource:animated:");
-	id shared = coordinator != NULL ? SEND(id, coordinator, "sharedInstance") : NULL;
+	/* (any program can post the notification: what this build's SpringBoard has not got is not asked of it) */
+	id shared = coordinator != NULL && class_getClassMethod(coordinator, sel_registerName("sharedInstance")) != NULL ?
+	    SEND(id, coordinator, "sharedInstance") : NULL;
 	Method method = shared != NULL ? class_getInstanceMethod(object_getClass(shared), activate) : NULL;
+	char source_type[2] = "", animated_type[2] = "";
 
 	if (method == NULL) {
 		say("hakios: the switcher: %s has no %s\n",
 		    coordinator != NULL ? "SBMainSwitcherControllerCoordinator" : "nothing", sel_getName(activate));
+		return;
+	}
+	/* the source is passed as an integer and animated as a BOOL: a method that takes anything else is left alone */
+	method_getArgumentType(method, 2, source_type, sizeof(source_type));
+	method_getArgumentType(method, 3, animated_type, sizeof(animated_type));
+	if (method_getNumberOfArguments(method) != 4 || source_type[0] == 0 || strchr("qQlLiI", source_type[0]) == NULL ||
+	    (animated_type[0] != 'B' && animated_type[0] != 'c')) {
+		say("hakios: the switcher: %s takes %s here; left alone\n", sel_getName(activate),
+		    method_getTypeEncoding(method) != NULL ? method_getTypeEncoding(method) : "?");
 		return;
 	}
 	say("hakios: the switcher: opening it (%s, %s)\n", object_getClassName(shared),

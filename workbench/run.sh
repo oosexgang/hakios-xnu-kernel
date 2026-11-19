@@ -224,6 +224,23 @@ else
 	failed=1
 fi
 
+# SpringBoard's remote control (userland/userland/src/inject_sb.c), what any program's com.hakios.layers and
+# com.hakios.switcher make it do: the part of the file from its SEND macros to Control Center's fades, cut out unchanged
+# but for those two macros (the test's own call a method of its runtime with the types given), on the host under the sanitizers
+mkdir -p "$WORK/inject_sb"
+sed -n '/^#define SEND(type/,/^#define CC_FADE_MS/p' "$HERE/../userland/userland/src/inject_sb.c" |
+	sed -e '/^#define SEND(/d' -e '/^#define SEND1(/,/objc_msgSend/d' > "$WORK/inject_sb/inject_sb_remote.c"
+echo "== springboard_remote_test (host${SANITIZE[0]:+, sanitizers})"
+if ! grep -q '^layer_line(' "$WORK/inject_sb/inject_sb_remote.c" || ! grep -q '^switcher(' "$WORK/inject_sb/inject_sb_remote.c"; then
+	echo "FAIL: no layer_line() and switcher() between the two lines in userland/userland/src/inject_sb.c"
+	failed=1
+elif "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$WORK/inject_sb" "$HERE/springboard_remote_test.c" \
+	-o "$WORK/springboard_remote_test"; then
+	scenarios "" "$WORK/springboard_remote_test"
+else
+	failed=1
+fi
+
 # the kernel's stand-in for corecrypto (crypto/, as osfmk/minicrypto) with the parts of XNU's own corecrypto it rests on,
 # from the kernel tree kernel/env.sh names (XNU_SRC): on the host under the sanitizers, and under qemu-aarch64 as the
 # picture processor's (built there without the DIT register's code: gcc has no builtin for it, and it would not run).
