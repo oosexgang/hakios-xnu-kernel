@@ -125,6 +125,17 @@ tags yet, so the current work is one section.
   `orientation_hid=0` keeps it to the log as before (`userland/userland/src/hid_orientation.h`, in both backboardd
   libraries). The numbers are iOS 16.7's, after the idea of the OnePlus Nord 2 port's piece 0761, where the phone
   rotated by them; that Darwin 26 and 27 read the same is not yet seen on ours.
+- **Darwin's motion stack is given the accelerometer's samples** (`sensors=2`): beside the orientation's,
+  backboardd's library makes the accelerometer service an iPhone's motion processor has -- Apple's page 0xff00, usage
+  3, built in -- and sends each sample the kernel reads through it as an accelerometer event, x y z in g on Darwin's
+  axes, dated when the chip was read (`hw.sensors.sample`: the sample's number, its time and its milli-g together).
+  locationd asks the service how often it wants them ("ReportInterval") and gets that, or none while it asks for
+  none -- but never more than the kernel reads, about 10 a second: each read of the chip spins a core for about
+  1.4 ms on the hand-driven bus, so a program that asks CoreMotion for 50 or 100 a second gets 10. The accelerometer
+  alone: the gyroscope stays off, so CoreMotion's device motion (attitude, rotation) is not there. Only while
+  `hw.sensors.hid` and `hw.sensors.motion` say 1; `motion_hid=0` turns it off and leaves the orientation
+  (`userland/userland/src/hid_motion.h`, in both backboardd libraries). The numbers are iOS 16.7's, after the idea of
+  the OnePlus Nord 2 port's piece 0760; not yet seen on Darwin 26 and 27 or on our phone.
 - **A charger plugged in or pulled out is shown within a second**, not up to ten seconds later: between two of the
   battery manager's rounds (`adsp=1`) the USB port alone is asked about every half second, and when it is not as the
   last round read it a round is made at once, and two more a second and three seconds after, while the charger starts

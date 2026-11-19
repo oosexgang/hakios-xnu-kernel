@@ -247,7 +247,8 @@ fi
 # backboardd's touch screen and buttons on Darwin 26 (userland/userland/src/inject26.c): the part of the file between its
 # "---- backboardd" and "---- big thread stacks" lines, cut out unchanged (the rest is Objective-C runtime calls and
 # blocks), with what it needs of Darwin's frameworks and of the device in the test, on the host under the sanitizers;
-# the part includes the phone's orientation service from beside it (userland/userland/src/hid_orientation.h)
+# the part includes the phone's orientation service and the accelerometer's from beside it
+# (userland/userland/src/hid_orientation.h, hid_motion.h)
 mkdir -p "$WORK/inject26"
 sed -n '/^\/\* ---- backboardd: the touch screen and the buttons/,/^\/\* ---- big thread stacks/p' \
 	"$HERE/../userland/userland/src/inject26.c" > "$WORK/inject26/inject26_input.c"

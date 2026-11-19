@@ -6,8 +6,10 @@
  * What it is given of CoreFoundation, IOKit's HID event calls, dispatch, notify and the Mach clock is this
  * file's: the events it makes are kept and looked at, and counted, so that one not let go is seen; and so are
  * its open(), read() and close() of /dev/hakios-touch, which play a script of samples and errors. The phone's
- * orientation (userland/userland/src/hid_orientation.h, included by the part) is played the same way: what the
- * kernel's sysctls say is a script, and the two calls the part looks up by name are this file's, or missing.
+ * orientation (userland/userland/src/hid_orientation.h, included by the part) and the accelerometer's samples
+ * (hid_motion.h) are played the same way: what the kernel's sysctls say is a script, what a client asks of a
+ * service is set through the service's own callbacks, and the calls the part looks up by name are this file's, or
+ * missing.
  *
  *   backboard_input_test               the scenarios' names
  *   backboard_input_test SCENARIO      one scenario a process
@@ -40,19 +42,51 @@ typedef unsigned long CFTypeID;
 typedef unsigned char Boolean;
 #define CFSTR(s)                ((CFStringRef)(s))
 #define kCFNumberIntType        9
+#define kCFNumberSInt64Type     4
 #define kCFStringEncodingUTF8   0x08000100
 static const int kCFTypeSetCallBacks, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, kCFTypeArrayCallBacks;
 static const char cf_true[] = "true", cf_object[] = "a CoreFoundation object";
 #define kCFBooleanTrue          ((CFBooleanRef)cf_true)
 
-static CFNumberRef CFNumberCreate(CFAllocatorRef a, int type, const void *value) { (void)a; (void)type; (void)value; return cf_object; }
+/* numbers that hold their value (a few at a time: the oldest is reused), so that what is set and asked can be read */
+static struct test_number {
+	long long value;
+} test_numbers[256];
+static unsigned test_number_count;
+
+static bool
+is_number(const void *o)
+{
+	return (uintptr_t)o >= (uintptr_t)test_numbers && (uintptr_t)o < (uintptr_t)(test_numbers + 256);
+}
+
+static CFNumberRef
+CFNumberCreate(CFAllocatorRef a, int type, const void *value)
+{
+	struct test_number *n = &test_numbers[test_number_count++ % 256];
+
+	(void)a;
+	n->value = type == kCFNumberSInt64Type ? *(const long long *)value : *(const int *)value;
+	return n;
+}
 static CFMutableDictionaryRef
 CFDictionaryCreateMutable(CFAllocatorRef a, CFIndex n, const void *k, const void *v)
 {
 	(void)a; (void)n; (void)k; (void)v;
 	return (CFMutableDictionaryRef)cf_object;
 }
-static void CFDictionarySetValue(CFMutableDictionaryRef d, const void *k, const void *v) { (void)d; (void)k; (void)v; }
+/* the usage page and usage the part last gave a service, which IOHIDVirtualServiceClientCreateWithCallbacks() keeps */
+static long long given_page = -1, given_usage = -1;
+static void
+CFDictionarySetValue(CFMutableDictionaryRef d, const void *k, const void *v)
+{
+	(void)d;
+	if (is_number(v) && strcmp(k, "PrimaryUsagePage") == 0) {
+		given_page = ((const struct test_number *)v)->value;
+	} else if (is_number(v) && strcmp(k, "PrimaryUsage") == 0) {
+		given_usage = ((const struct test_number *)v)->value;
+	}
+}
 static const void *CFDictionaryGetValue(CFDictionaryRef d, const void *k) { (void)d; (void)k; return NULL; }
 static CFArrayRef CFArrayCreate(CFAllocatorRef a, const void **v, CFIndex n, const void *c) { (void)a; (void)v; (void)n; (void)c; return cf_object; }
 static CFStringRef CFStringCreateWithCString(CFAllocatorRef a, const char *s, int e) { (void)a; (void)e; return s; }
@@ -68,11 +102,22 @@ static Boolean CFSetContainsValue(CFMutableSetRef s, const void *v) { (void)s; (
 static void CFSetAddValue(CFMutableSetRef s, const void *v) { (void)s; (void)v; }
 static CFIndex CFSetGetCount(CFMutableSetRef s) { (void)s; return 0; }
 static Boolean CFEqual(CFTypeRef a, CFTypeRef b) { return strcmp(a, b) == 0; }
-static CFTypeID CFGetTypeID(CFTypeRef o) { (void)o; return 0; }
 static CFTypeID CFBooleanGetTypeID(void) { return 1; }
 static CFTypeID CFNumberGetTypeID(void) { return 2; }
+static CFTypeID CFGetTypeID(CFTypeRef o) { return is_number(o) ? CFNumberGetTypeID() : 0; }
 static Boolean CFBooleanGetValue(CFBooleanRef b) { return b == kCFBooleanTrue; }
-static Boolean CFNumberGetValue(CFNumberRef n, int type, void *value) { (void)n; (void)type; *(int *)value = 0; return true; }
+static Boolean
+CFNumberGetValue(CFNumberRef n, int type, void *value)
+{
+	long long v = is_number(n) ? ((const struct test_number *)n)->value : 0;
+
+	if (type == kCFNumberSInt64Type) {
+		*(long long *)value = v;
+	} else {
+		*(int *)value = (int)v;
+	}
+	return true;
+}
 static CFStringRef CFCopyDescription(CFTypeRef o) { (void)o; return NULL; }
 static CFTypeRef CFRetain(CFTypeRef o);
 static void CFRelease(CFTypeRef o);
@@ -96,25 +141,50 @@ static uint64_t mach_absolute_time(void) { return clock_now++; }
 static int mach_timebase_info(mach_timebase_info_data_t *t) { t->numer = t->denom = 1; return 0; }
 
 /*
- * The kernel's numbers, as hid_orientation.h asks for them: hw.sensors.hid and hw.sensors.orientation each say the
- * values of a script in turn, the last one for good; a name without a script is not there (and kern.bootargs is
- * not, as before).
+ * The kernel's numbers, as hid_orientation.h and hid_motion.h ask for them: hw.sensors.hid, hw.sensors.orientation and
+ * hw.sensors.motion each say the values of a script in turn, the last one for good; a name without a script is not
+ * there (and kern.bootargs is not, as before). hw.sensors.sample says the texts of its own script the same way.
  */
 struct number_script {
 	const char *name;
 	int values[64];
 	unsigned count, next, asked;
 };
-static struct number_script kernel_hid = { .name = "hw.sensors.hid" }, kernel_orientation = { .name = "hw.sensors.orientation" };
+static struct number_script kernel_hid = { .name = "hw.sensors.hid" }, kernel_orientation = { .name = "hw.sensors.orientation" },
+	kernel_motion = { .name = "hw.sensors.motion" };
+static struct {
+	const char *texts[64];          /* NULL: a read that fails */
+	long long asked_before[64];     /* before the look that reads this text, a client sets the "ReportInterval" ... */
+	bool asks_before[64];           /* ... if this says so (when the look reads hw.sensors.motion, before what was asked) */
+	unsigned count, next, asked;
+} kernel_sample;
+static void client_asks(long long interval);
 
 static int
 sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is)
 {
 	struct number_script *script = strcmp(n, kernel_hid.name) == 0 ? &kernel_hid :
-	    strcmp(n, kernel_orientation.name) == 0 ? &kernel_orientation : NULL;
+	    strcmp(n, kernel_orientation.name) == 0 ? &kernel_orientation : strcmp(n, kernel_motion.name) == 0 ? &kernel_motion : NULL;
 	int value;
 
 	(void)i; (void)is;
+	if (strcmp(n, "hw.sensors.sample") == 0 && kernel_sample.count > 0 && o != NULL && s != NULL) {
+		unsigned k = kernel_sample.next < kernel_sample.count ? kernel_sample.next++ : kernel_sample.count - 1;
+		const char *text = kernel_sample.texts[k];
+
+		kernel_sample.asked++;
+		if (text == NULL || *s < strlen(text) + 1) {
+			errno = text == NULL ? EIO : ENOMEM;
+			return -1;
+		}
+		memcpy(o, text, strlen(text) + 1);
+		*s = strlen(text) + 1;
+		return 0;
+	}
+	if (script == &kernel_motion && kernel_sample.asks_before[kernel_sample.next]) {
+		kernel_sample.asks_before[kernel_sample.next] = false;  /* (once: a look that reads no text comes again) */
+		client_asks(kernel_sample.asked_before[kernel_sample.next]);
+	}
 	if (script == NULL || script->count == 0 || o == NULL || s == NULL || *s < sizeof(int)) {
 		errno = ENOENT;
 		return -1;
@@ -133,6 +203,7 @@ sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is)
 /* IOKit's calls the part looks up by name (dlsym): this file's below, or none when a scenario says the calls are missing */
 #define RTLD_DEFAULT    ((void *)0)
 static bool hid_calls_missing;
+static bool accelerometer_call_missing;        /* IOHIDEventCreateAccelerometerEvent alone */
 static void *test_dlsym(void *handle, const char *name);
 #define dlsym   test_dlsym
 
@@ -234,7 +305,8 @@ struct __IOHIDEvent {
 	unsigned field_count;
 	uint64_t time;
 	uint32_t mask, index, usage;
-	double x, y;
+	bool accelerometer;             /* IOHIDEventCreateAccelerometerEvent()'s, with its z in `z` */
+	double x, y, z;
 	bool range, touch, down;
 	unsigned children;
 	struct __IOHIDEvent *child[16];
@@ -318,6 +390,12 @@ made(struct __IOHIDEvent *e)
 static struct __IOHIDEventSystemClient the_client;
 static struct __IOHIDServiceClient services[8];
 static unsigned service_count;
+/* what each service was made with: its usage page and usage, its callbacks and their refcon */
+static struct {
+	long long page, usage;
+	const struct virtual_service_callbacks *callbacks;
+	void *refcon;
+} made_services[8];
 
 IOHIDEventSystemClientRef
 IOHIDEventSystemClientCreateWithType(CFAllocatorRef allocator, int type, CFDictionaryRef attributes)
@@ -336,8 +414,12 @@ IOHIDServiceClientRef
 IOHIDVirtualServiceClientCreateWithCallbacks(IOHIDEventSystemClientRef client, CFDictionaryRef attributes,
     const struct virtual_service_callbacks *callbacks, void *target, void *refcon)
 {
-	(void)client; (void)attributes; (void)callbacks; (void)target;
+	(void)client; (void)attributes; (void)target;
 	((struct service *)refcon)->opened = true;     /* (the event server takes it at once) */
+	made_services[service_count % 8].page = given_page;
+	made_services[service_count % 8].usage = given_usage;
+	made_services[service_count % 8].callbacks = callbacks;
+	made_services[service_count % 8].refcon = refcon;
 	return &services[service_count++ % 8];
 }
 
@@ -437,7 +519,20 @@ IOHIDEventSetIntegerValue(IOHIDEventRef event, uint32_t field, CFIndex value)
 	}
 }
 
-/* IOHIDEventCreate() and IOHIDEventCreateVendorDefinedEvent(), as the part finds them by name */
+/* A client (locationd) sets the "ReportInterval" of the service made last, through the service's own callbacks. */
+static void
+client_asks(long long interval)
+{
+	unsigned last = (service_count - 1) % 8;
+
+	if (service_count == 0) {
+		abort();
+	}
+	made_services[last].callbacks->setProperty(NULL, made_services[last].refcon, &services[last], CFSTR("ReportInterval"),
+	    CFNumberCreate(NULL, kCFNumberSInt64Type, &interval));
+}
+
+/* IOHIDEventCreate(), IOHIDEventCreateVendorDefinedEvent() and IOHIDEventCreateAccelerometerEvent(), as the part finds them by name */
 static IOHIDEventRef
 test_event_create(CFAllocatorRef allocator, uint32_t type, uint64_t time, uint32_t options)
 {
@@ -464,12 +559,29 @@ test_vendor_create(CFAllocatorRef allocator, uint64_t time, uint32_t page, uint3
 	return e;
 }
 
+static IOHIDEventRef
+test_accelerometer_create(CFAllocatorRef allocator, uint64_t time, double x, double y, double z, uint32_t options)
+{
+	struct __IOHIDEvent *e = made(event_new());
+
+	(void)allocator; (void)options;
+	e->accelerometer = true;
+	e->time = time;
+	e->x = x;
+	e->y = y;
+	e->z = z;
+	return e;
+}
+
 static void *
 test_dlsym(void *handle, const char *name)
 {
 	(void)handle;
 	if (hid_calls_missing) {
 		return NULL;
+	}
+	if (strcmp(name, "IOHIDEventCreateAccelerometerEvent") == 0) {
+		return accelerometer_call_missing ? NULL : (void *)test_accelerometer_create;
 	}
 	if (strcmp(name, "IOHIDEventCreate") == 0) {
 		return (void *)test_event_create;
@@ -532,7 +644,7 @@ static const struct sent *
 frame(unsigned n)
 {
 	for (unsigned i = 0; i < sent_count; i++) {
-		if (!sent[i].event.keyboard && sent[i].event.type != HID_EVENT_ORIENTATION && n-- == 0) {
+		if (!sent[i].event.keyboard && sent[i].event.type != HID_EVENT_ORIENTATION && !sent[i].event.accelerometer && n-- == 0) {
 			return &sent[i];
 		}
 	}
@@ -821,6 +933,205 @@ scenario_orientation_not_without_the_kernel(void)
 	CHECK(orientation_event(0) == NULL && frames() == 2, "an orientation said, or the touches lost");
 }
 
+/* ---- the accelerometer's samples (hid_motion.h) ------------------------------------------------- */
+
+/* what hw.sensors.sample says, in turn, the last for good (NULL: a read that fails); before the look that would read
+ * the n-th, a client may set the service's "ReportInterval" (sample_asked) */
+static void
+samples_say(unsigned count, const char *const *texts)
+{
+	for (unsigned i = 0; i < count; i++) {
+		kernel_sample.texts[i] = texts[i];
+	}
+	kernel_sample.count = count;
+	kernel_sample.next = 0;
+}
+
+static void
+sample_asked(unsigned n, long long interval)
+{
+	kernel_sample.asked_before[n] = interval;
+	kernel_sample.asks_before[n] = true;
+}
+
+/* the accelerometer events that reached the event server, the n-th of them, or NULL */
+static const struct sent *
+accelerometer_event(unsigned n)
+{
+	for (unsigned i = 0; i < sent_count; i++) {
+		if (sent[i].event.accelerometer && n-- == 0) {
+			return &sent[i];
+		}
+	}
+	return NULL;
+}
+
+static unsigned
+accelerometer_events(void)
+{
+	unsigned n = 0;
+
+	while (accelerometer_event(n) != NULL) {
+		n++;
+	}
+	return n;
+}
+
+/* An accelerometer event as locationd reads it: x y z in g, built in, dated when the kernel read the sample. */
+static void
+check_accelerometer_event(unsigned n, uint64_t time, double x, double y, double z)
+{
+	const struct sent *s = accelerometer_event(n);
+
+	CHECK(s != NULL, "no accelerometer event %u", n);
+	if (s == NULL) {
+		return;
+	}
+	CHECK(s->event.time == time, "event %u: dated %llu, not %llu (when the kernel read it)", n, (unsigned long long)s->event.time,
+	    (unsigned long long)time);
+	CHECK(fabs(s->event.x - x) < 1e-9 && fabs(s->event.y - y) < 1e-9 && fabs(s->event.z - z) < 1e-9,
+	    "event %u: %f %f %f g, not %f %f %f", n, s->event.x, s->event.y, s->event.z, x, y, z);
+	CHECK(field_of(&s->event, FIELD_IS_BUILT_IN) == 1, "event %u: not built in", n);
+	CHECK(s->event.children == 0 && s->event.type == 0, "event %u: %u children, type %u", n, s->event.children, s->event.type);
+}
+
+/*
+ * The kernel gives the samples (hw.sensors.hid and hw.sensors.motion 1): the service is made on Apple's page 0xff00,
+ * usage 3, and each sample the kernel has read is sent once, in g, dated when it was read -- not one not read yet
+ * ("0 ..."), not one read twice, not a read that failed, not a text that is not five numbers; once the kernel says
+ * the samples are not for Darwin any more, the looking stops.
+ */
+static void
+scenario_motion_followed(void)
+{
+	static const int hid[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 }, motion[] = { 1 };
+	static const char *const texts[] = {
+		"0 0 0 0 0", "1 5000000 0 -1000 0", "1 5000000 0 -1000 0", NULL, "2 105000000 500 500 -707", "3 205000000",
+		"4 305000000 -12 3 -1001",
+	};
+
+	kernel_says(&kernel_hid, 17, hid);
+	kernel_says(&kernel_motion, 1, motion);
+	samples_say(7, texts);
+	motion_thread(&the_client);
+	CHECK(service_count == 1, "%u services made, not the accelerometer's alone", service_count);
+	CHECK(made_services[0].page == 0xff00 && made_services[0].usage == 0x03, "the service is page %#llx usage %#llx, not Apple's "
+	    "accelerometer (0xff00, 3)", made_services[0].page, made_services[0].usage);
+	CHECK(accelerometer_events() == 3, "%u samples sent, not 3", accelerometer_events());
+	check_accelerometer_event(0, 5000000, 0, -1, 0);
+	check_accelerometer_event(1, 105000000, 0.5, 0.5, -0.707);
+	check_accelerometer_event(2, 305000000, -0.012, 0.003, -1.001);
+	CHECK(kernel_sample.asked >= 7, "the kernel's sample looked at %u times", kernel_sample.asked);
+	CHECK(frames() == 0 && orientation_event(0) == NULL, "touch frames or orientations sent");
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/*
+ * What a client asks of the service ("ReportInterval") is what is sent: every sample while nobody has asked or what
+ * was asked says "not configured", every other at 200 ms, every one at 100 ms or less -- the kernel's own rate -- and
+ * none while it is 0, when the kernel's sample is not even looked at.
+ */
+static void
+scenario_motion_as_asked(void)
+{
+	static const int hid[] = { 1 }, motion[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 };
+	static const char *const texts[] = {
+		"1 100000000 0 0 -1000", "2 200000000 0 0 -1000", "3 300000000 0 0 -1000", "4 400000000 0 0 -1000",
+		"5 500000000 0 0 -1000", "6 600000000 0 0 -1000", "7 700000000 0 0 -1000", "8 800000000 0 0 -1000",
+		"9 900000000 0 0 -1000", "10 1000000000 0 0 -1000",
+	};
+
+	kernel_says(&kernel_hid, 1, hid);
+	kernel_says(&kernel_motion, 23, motion);
+	samples_say(10, texts);
+	sample_asked(1, 0xffffffffLL);          /* "not configured": every one (1 before it, as nobody had asked, and 2) */
+	sample_asked(2, 200000);                /* 5 a second: every other (not 3, 4, not 5) */
+	sample_asked(5, 10000);                 /* 100 a second: every one the kernel has (6) */
+	sample_asked(6, 0);                     /* none: 7 is never read */
+	motion_thread(&the_client);
+	CHECK(accelerometer_events() == 4, "%u samples sent, not 4", accelerometer_events());
+	for (unsigned n = 0; n < 4; n++) {
+		static const uint64_t times[] = { 100000000, 200000000, 400000000, 600000000 };
+
+		check_accelerometer_event(n, times[n], 0, 0, -1);
+	}
+	CHECK(kernel_sample.asked == 6, "the kernel's sample looked at %u times, not 6: looked at while none was wanted",
+	    kernel_sample.asked);
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/* What is sent when, apart from the service. */
+static void
+scenario_motion_feed(void)
+{
+	struct motion_feed f = { 0 };
+
+	CHECK(motion_interval(-1) == -1 && motion_interval(0xffffffffLL) == -1 && motion_interval(0x100000000LL) == -1,
+	    "\"not configured\" taken for a rate");
+	CHECK(motion_interval(0) == 0 && motion_interval(10000) == 10000, "a rate asked not taken");
+	CHECK(!motion_feed_take(&f, 0, 0, -1), "a sample not read yet sent");
+	CHECK(motion_feed_take(&f, 1, 100000, -1) && !motion_feed_take(&f, 1, 100000, -1), "the first not sent, or sent twice");
+	CHECK(!motion_feed_take(&f, 2, 200000, 0) && motion_feed_take(&f, 3, 300000, 200000), "sent while none was wanted, or the "
+	    "first after not");
+	CHECK(!motion_feed_take(&f, 4, 401000, 200000) && motion_feed_take(&f, 5, 502000, 200000), "every other not sent at 200 ms");
+	CHECK(motion_feed_take(&f, 6, 603000, 100000) && motion_feed_take(&f, 7, 704000, 100000), "not every one at the kernel's rate");
+	/* 150 ms: the kernel's every one (never slower than asked), 1 s: every tenth */
+	CHECK(motion_feed_take(&f, 8, 805000, 150000) && motion_feed_take(&f, 9, 906000, 150000), "not every one at 150 ms");
+	CHECK(!motion_feed_take(&f, 10, 1007000, 1000000) && !motion_feed_take(&f, 18, 1806000, 1000000) &&
+	    motion_feed_take(&f, 19, 1906000, 1000000), "not every tenth at a second");
+}
+
+/*
+ * The kernel follows the orientation for Darwin but keeps the samples from its motion stack (motion_hid=0), or says
+ * nothing of them (a kernel from before hw.sensors.motion): no accelerometer service, no sample read.
+ */
+static void
+scenario_motion_kept_from_darwin(void)
+{
+	static const int hid[] = { 1 }, off[] = { 0 };
+	static const char *const texts[] = { "1 5000000 0 -1000 0" };
+
+	kernel_says(&kernel_hid, 1, hid);
+	kernel_says(&kernel_motion, 1, off);
+	samples_say(1, texts);
+	motion_thread(&the_client);
+	CHECK(service_count == 0 && kernel_sample.asked == 0 && sent_count == 0, "%u services, the sample read %u times, %u events",
+	    service_count, kernel_sample.asked, sent_count);
+	kernel_motion.count = 0;
+	motion_thread(&the_client);
+	CHECK(service_count == 0 && kernel_sample.asked == 0, "without hw.sensors.motion: %u services, the sample read %u times",
+	    service_count, kernel_sample.asked);
+}
+
+/* The kernel does not follow the sensor for Darwin (hw.sensors.hid never 1): waited for as the orientation's, then nothing. */
+static void
+scenario_motion_waits_for_the_kernel(void)
+{
+	static const int never[] = { 0 }, motion[] = { 1 };
+
+	kernel_says(&kernel_hid, 1, never);
+	kernel_says(&kernel_motion, 1, motion);
+	motion_thread(&the_client);
+	CHECK(kernel_hid.asked == ORIENTATION_WAIT_S + 1, "asked %u times, not %d", kernel_hid.asked, ORIENTATION_WAIT_S + 1);
+	CHECK(service_count == 0 && kernel_sample.asked == 0, "a service made, or a sample read, without the kernel");
+}
+
+/* A Darwin whose IOKit has not got IOHIDEventCreateAccelerometerEvent: no service, nothing sent, nothing read. */
+static void
+scenario_motion_without_the_call(void)
+{
+	static const int one[] = { 1, 1, 0 };
+	static const char *const texts[] = { "1 5000000 0 -1000 0" };
+
+	accelerometer_call_missing = true;
+	kernel_says(&kernel_hid, 3, one);
+	kernel_says(&kernel_motion, 3, one);
+	samples_say(1, texts);
+	motion_thread(&the_client);
+	CHECK(service_count == 0 && sent_count == 0 && kernel_sample.asked == 0, "%u services, %u events, the sample read %u times",
+	    service_count, sent_count, kernel_sample.asked);
+}
+
 static const struct {
 	const char *name;
 	void (*run)(void);
@@ -834,6 +1145,12 @@ static const struct {
 	{ "orientation_waits_for_the_kernel", scenario_orientation_waits_for_the_kernel },
 	{ "orientation_without_the_calls", scenario_orientation_without_the_calls },
 	{ "orientation_not_without_the_kernel", scenario_orientation_not_without_the_kernel },
+	{ "motion_followed", scenario_motion_followed },
+	{ "motion_as_asked", scenario_motion_as_asked },
+	{ "motion_feed", scenario_motion_feed },
+	{ "motion_kept_from_darwin", scenario_motion_kept_from_darwin },
+	{ "motion_waits_for_the_kernel", scenario_motion_waits_for_the_kernel },
+	{ "motion_without_the_call", scenario_motion_without_the_call },
 };
 
 int

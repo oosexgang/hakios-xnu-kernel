@@ -794,6 +794,7 @@ number(int value)
 struct service {
 	CFMutableDictionaryRef properties;
 	volatile bool opened;
+	volatile long long report_interval;     /* the "ReportInterval" a client last set (microseconds; -1: none yet) */
 };
 
 /* The properties of a service of ours; the event server asks for them one at a time. */
@@ -850,6 +851,13 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 		}
 		touch_mode = mode;
 	}
+	/* how often a client (locationd) wants a sensor's samples: hid_motion.h */
+	if (key != NULL && value != NULL && CFEqual(key, CFSTR("ReportInterval")) && CFGetTypeID(value) == CFNumberGetTypeID()) {
+		long long interval = -1;
+
+		CFNumberGetValue(value, kCFNumberSInt64Type, &interval);
+		((struct service *)refcon)->report_interval = interval;
+	}
 	if (told == NULL) {
 		told = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
 	}
@@ -887,9 +895,12 @@ static const struct virtual_service_callbacks service_callbacks = {
  * for in vain ("still waiting for a main screen digitizer"). When that moment comes depends on
  * how fast the machine is and on how many processors it has, so no fixed delay avoids it:
  * the service is made again until the server has opened it.
+ *
+ * KEPT, if not NULL, is given the service's own state, for a caller that reads what clients set on it.
  */
 static IOHIDServiceClientRef
-make_service(IOHIDEventSystemClientRef client, const char *product, int page, int usage, bool display)
+make_service_kept(IOHIDEventSystemClientRef client, const char *product, int page, int usage, bool display,
+    struct service **kept)
 {
 	struct service *made = calloc(1, sizeof(*made));
 	IOHIDServiceClientRef service = NULL;
@@ -927,6 +938,10 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 	CFRelease(pair);
 	/* the dictionary stays: it is what service_copy_property() answers from */
 	made->properties = properties;
+	made->report_interval = -1;
+	if (kept != NULL) {
+		*kept = made;
+	}
 	for (int attempt = 1; attempt <= 20; attempt++) {
 		made->opened = false;
 		service = IOHIDVirtualServiceClientCreateWithCallbacks(client, properties, &service_callbacks, NULL, made);
@@ -945,6 +960,12 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 		service = NULL;
 	}
 	return service;
+}
+
+static IOHIDServiceClientRef
+make_service(IOHIDEventSystemClientRef client, const char *product, int page, int usage, bool display)
+{
+	return make_service_kept(client, product, page, usage, display, NULL);
 }
 
 /* One frame of the touch screen: the hand, and under it every finger that is down or has just lifted. */
@@ -1080,6 +1101,8 @@ micros(uint64_t absolute)
 
 /* the phone's orientation, as a service of its own beside the touch screen and the buttons */
 #include "hid_orientation.h"
+/* ... and the accelerometer's samples, for Darwin's motion stack, as another */
+#include "hid_motion.h"
 
 /*
  * /dev/hakios-touch, opened for reading. One program may read it (board/input.c): while another does -- a
@@ -1148,6 +1171,7 @@ input_thread(__unused void *arg)
 	if (screen != NULL) {
 		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 		orientation_start(client);      /* (the phone's orientation, when the kernel follows it: hid_orientation.h) */
+		motion_start(client);           /* (the accelerometer's samples, when the kernel gives them: hid_motion.h) */
 	}
 	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */

@@ -283,7 +283,7 @@ T:	workbench/sensor_axes_test.c
 T:	workbench/sensors_test.c
 T:	workbench/lsm6dso_test.c
 T:	workbench/backboard_input_test.c
-K:	orient_; imu-lsm6dso; sensors=; orientation_hid=
+K:	orient_; imu-lsm6dso; sensors=; orientation_hid=; motion_hid=
 
 QEMU
 F:	tools/qemu-kernel.sh
