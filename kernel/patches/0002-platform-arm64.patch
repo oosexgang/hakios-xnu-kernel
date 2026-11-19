@@ -1377,8 +1377,8 @@ diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
 +			__asm__ volatile ("mrs %0, APIAKeyLo_EL1" : "=r" (ia));
 +			__asm__ volatile ("mrs %0, APGAKeyLo_EL1" : "=r" (ga));
 +#endif
-+			snprintf(line, sizeof(line), "hakios: user exception esr=0x%llx far=0x%lx pc=0x%llx lr=0x%llx sp=0x%llx iaLo=%llx\n",
-+			    esr, far, get_saved_state_pc(state), get_saved_state_lr(state), get_saved_state_sp(state), ia);
++			snprintf(line, sizeof(line), "hakios: user exception esr=0x%llx far=0x%lx pc=0x%llx lr=0x%llx sp=0x%llx ia key %s\n",
++			    esr, far, get_saved_state_pc(state), get_saved_state_lr(state), get_saved_state_sp(state), ia ? "set" : "zero");
 +			loader_log_line(line);
 +			(void)ga;
 +		}
