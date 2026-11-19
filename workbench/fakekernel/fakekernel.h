@@ -124,7 +124,8 @@ void IOSleep(unsigned int milliseconds);
 #define VM_WIMG_WCOMB                   1
 uint32_t crc32(uint32_t crc, const void *data, size_t size);    /* libkern/crc.h: zlib's */
 
-/* processes (sys/proc.h): the calling one is fake_pid, and the processes alive are it and fake_other_pid (0: none) */
+/* processes (sys/proc.h): the calling one is fake_pid, and the processes alive are it, fake_other_pid (0: none) and the
+ * kernel's, pid 0, which proc_find() finds as XNU's does */
 extern int fake_pid, fake_other_pid;
 int proc_selfpid(void);
 struct proc *proc_find(int pid);

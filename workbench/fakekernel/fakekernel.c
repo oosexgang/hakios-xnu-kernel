@@ -551,7 +551,8 @@ int fake_pid = 100, fake_other_pid;
 
 int proc_selfpid(void) { return fake_pid; }
 int proc_pid(proc_t p __unused) { return fake_pid; }
-struct proc *proc_find(int pid) { return pid != 0 && (pid == fake_pid || pid == fake_other_pid) ? (struct proc *)&fake_pid : NULL; }
+/* (pid 0 is the kernel's own process, as XNU's proc_find() finds it: alive always -- so 0 is no "nobody" to look up) */
+struct proc *proc_find(int pid) { return pid == 0 || pid == fake_pid || pid == fake_other_pid ? (struct proc *)&fake_pid : NULL; }
 void proc_rele(struct proc *p __unused) {}
 
 int fake_uid;
