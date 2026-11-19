@@ -152,16 +152,34 @@ from_statx(const struct host_statx *x, struct stat *st)
 	st->st_mtimespec.tv_nsec = (long)x->mtime.nsec;
 }
 
+/*
+ * A race the test plays out: the next lstat of SWAP_AT sees what is there (or that nothing is), and then, before the
+ * program's next call, the name is made a symbolic link to SWAP_TO (a host path) -- as another program could
+ */
+static const char *swap_at = "", *swap_to = "";
+
 int
 t_lstat(const char *p, struct stat *st)
 {
 	struct host_statx x;
+	int result = answer(statx(HOST_AT_FDCWD, host_path(p), HOST_AT_SYMLINK_NOFOLLOW, HOST_STATX_BASIC, &x));
 
-	if (answer(statx(HOST_AT_FDCWD, host_path(p), HOST_AT_SYMLINK_NOFOLLOW, HOST_STATX_BASIC, &x)) != 0) {
-		return -1;
+	if (result == 0) {
+		from_statx(&x, st);
 	}
-	from_statx(&x, st);
-	return 0;
+	if (swap_at[0] != 0 && strcmp(p, swap_at) == 0) {
+		char h[4096], command[4200];
+
+		snprintf(h, sizeof(h), "%s", host_path(p));
+		snprintf(command, sizeof(command), "rm -rf '%s'", h);
+		(void)system(command);
+		if (symlink(swap_to, h) != 0) {
+			printf("FAIL: %s cannot be swapped for a link\n", h);
+			failures++;
+		}
+		swap_at = "";
+	}
+	return result == 0 ? 0 : -1;
 }
 
 int
@@ -177,7 +195,19 @@ t_fstat(int f, struct stat *st)
 }
 
 int t_mkdir(const char *p, int mode) { return answer(mkdir(host_path(p), (unsigned)mode)); }
-int t_chown(const char *p, int uid, int gid) { return answer(chown(host_path(p), (unsigned)uid, (unsigned)gid)); }
+/* chown() follows a symbolic link: one given to a link sets the owner of whatever it leads to */
+static unsigned chowned_through_links;
+
+int
+t_chown(const char *p, int uid, int gid)
+{
+	struct host_statx x;
+
+	if (statx(HOST_AT_FDCWD, host_path(p), HOST_AT_SYMLINK_NOFOLLOW, HOST_STATX_BASIC, &x) == 0 && (x.mode & 0170000) == 0120000) {
+		chowned_through_links++;
+	}
+	return answer(chown(host_path(p), (unsigned)uid, (unsigned)gid));
+}
 int t_lchown(const char *p, int uid, int gid) { return answer(lchown(host_path(p), (unsigned)uid, (unsigned)gid)); }
 int t_chmod(const char *p, int mode) { return answer(chmod(host_path(p), (unsigned)mode)); }
 int t_unlink(const char *p) { return answer(unlink(host_path(p))); }
@@ -204,8 +234,11 @@ t_utimes(const char *p, const struct timeval times[2])
 	return answer(utimensat(HOST_AT_FDCWD, host_path(p), ts, 0));
 }
 
-/* The extended attributes: FAKE_XATTRS of them on FAKE_XATTR_PATH, names of two characters, each value one byte. */
-static const char *fake_xattr_path = "";
+/*
+ * The extended attributes: FAKE_XATTRS of them on FAKE_XATTR_PATH, names of two characters, each value one byte; and on
+ * FORGED_ACL_PATH one alone, named as the archive names the access control list (anyone who can write a file can set it)
+ */
+static const char *fake_xattr_path = "", *forged_acl_path = "";
 static unsigned fake_xattrs;
 
 ssize_t
@@ -214,6 +247,10 @@ t_listxattr(const char *p, char *names, size_t size, int options)
 	size_t used = 0;
 
 	(void)options;
+	if (strcmp(p, forged_acl_path) == 0 && size > sizeof(ACL_NAME)) {
+		memcpy(names, ACL_NAME, sizeof(ACL_NAME));
+		return (ssize_t)sizeof(ACL_NAME);
+	}
 	if (strcmp(p, fake_xattr_path) != 0) {
 		return 0;
 	}
@@ -235,7 +272,7 @@ t_getxattr(const char *p, const char *name, void *value, size_t size, uint32_t p
 	(void)name;
 	(void)position;
 	(void)options;
-	if (strcmp(p, fake_xattr_path) != 0 || size < 1) {
+	if ((strcmp(p, fake_xattr_path) != 0 && strcmp(p, forged_acl_path) != 0) || size < 1) {
 		return -1;
 	}
 	*(uint8_t *)value = 'v';
@@ -280,14 +317,19 @@ chflags(const char *p, int flags)
 	return 0;
 }
 
+/* the access control list: FAKE_ACL_PATH has one of four bytes, nothing else any */
+static const char *fake_acl_path = "";
+
 int
 lstat_extended(const char *p, struct stat *st, void *sec, size_t *size)
 {
-	(void)p;
 	(void)st;
-	(void)sec;
-	(void)size;
-	return -1;
+	if (strcmp(p, fake_acl_path) != 0 || *size < 4) {
+		return -1;
+	}
+	memset(sec, 0xac, 4);
+	*size = 4;
+	return 0;
 }
 
 int
@@ -531,8 +573,18 @@ main(void)
 	 * archive is one load refuses, and every file of the volume is lost at the next boot for the one
 	 */
 	fake_xattr_path = ROOT "/many";
+	fake_acl_path = ROOT "/many";           /* (and an access control list, which is one of them in the archive) */
 	fake_xattrs = 4200;
 	strcpy(path, fake_xattr_path);
+	{
+		uint32_t count = 0;
+		const size_t namelen = strlen(ACL_NAME);
+		uint64_t used = pack_xattrs(&count);
+
+		CHECK(count == 4096, "as many as load reads of one entry, and no fewer: %u", count);
+		CHECK(used >= 8 + namelen + 4 && memcmp(xpack + used - 4 - namelen, ACL_NAME, namelen) == 0,
+		    "the access control list among them, not left out for the others");
+	}
 	{
 		struct stat st;
 
@@ -544,6 +596,20 @@ main(void)
 		CHECK(read_head(0, &h) && pass(&h, 0), "and the archive it is in reads back whole (load would take it)");
 	}
 	fake_xattrs = 0;
+	fake_acl_path = "";
+
+	/*
+	 * acl_attribute_not_taken: an extended attribute named as the archive names the access control list, set by whoever
+	 * can write the file, is not packed: load, as root, would install it as the file's list
+	 */
+	forged_acl_path = ROOT "/forged";
+	strcpy(path, forged_acl_path);
+	{
+		uint32_t count = 1;
+
+		CHECK(pack_xattrs(&count) == 0 && count == 0, "the forged list is left out: %u attributes", count);
+	}
+	forged_acl_path = "";
 
 	/*
 	 * hardlink_first_name_unpacked: an inode of two names whose first name was not packed after all -- swapped for
@@ -612,6 +678,130 @@ main(void)
 		CHECK(host_statx_of(p, &x) == 0 && (x.mode & 0170000) == 0100000 && strcmp(text, "store") == 0,
 		    "the archive's file is there in the link's place: \"%s\"", text);
 	}
+
+	/*
+	 * hardlink_packed_as_link: an inode of two names, both packed, is packed once: its second name as a link to the first,
+	 * and it comes back one inode, not two copies
+	 */
+	{
+		char p[1024], q[1024];
+		struct stat st;
+		struct host_statx x, y;
+
+		snprintf(p, sizeof(p), "%s/var/hl_first", test_root);
+		snprintf(q, sizeof(q), "%s/var/hl_second", test_root);
+		host_put(p, "one inode");
+		CHECK(link(p, q) == 0, "its second name");
+		archive_begin(0);
+		strcpy(path, ROOT "/hl_first");
+		CHECK(t_lstat(path, &st) == 0 && st.st_nlink == 2 && pack_one("hl_first", &st), "the first name is packed");
+		strcpy(path, ROOT "/hl_second");
+		CHECK(t_lstat(path, &st) == 0 && pack_one("hl_second", &st), "the second name is packed");
+		archive_end(0, 53);
+		unlink(p);
+		unlink(q);
+		CHECK(load(), "the store is loaded");
+		CHECK(host_statx_of(p, &x) == 0 && host_statx_of(q, &y) == 0 && x.ino == y.ino && x.nlink == 2,
+		    "the two names are one inode again");
+		CHECK(strcmp(host_file(q), "one inode") == 0, "with its contents");
+	}
+
+	/*
+	 * swapped_before_open: a file another program replaced with a file of its own between the walk's lstat and the open
+	 * (a rename over it) is left out: packed, the newcomer's contents would be restored with the first one's owner and mode
+	 */
+	{
+		char p[1024], q[1024];
+		struct stat st;
+
+		snprintf(p, sizeof(p), "%s/var/swapped", test_root);
+		snprintf(q, sizeof(q), "%s/var/swapped.new", test_root);
+		host_put(p, "looked at");
+		strcpy(path, ROOT "/swapped");
+		CHECK(t_lstat(path, &st) == 0, "the file is looked at");
+		host_put(q, "put in its place");
+		CHECK(rename(q, p) == 0, "and replaced");
+		archive_begin(1);
+		changed_under = 0;
+		CHECK(pack_one("swapped", &st) && changed_under == 1 && entries == 0,
+		    "it is left out and counted: %u changed, %llu entries", changed_under, (unsigned long long)entries);
+		unlink(p);
+	}
+
+	/*
+	 * walk_not_led_out: a directory made a symbolic link to a directory outside /private/var between the walk's lstat
+	 * and its open is not walked into: nothing of where it leads goes into the archive
+	 */
+	{
+		char p[1024], q[1024];
+
+		snprintf(p, sizeof(p), "%s/var/walked", test_root);
+		snprintf(q, sizeof(q), "%s/outside", test_root);
+		CHECK(mkdir(p, 0755) == 0, "%s made", p);
+		archive_begin(1);
+		swap_at = ROOT "/walked";
+		swap_to = q;
+		strcpy(path, ROOT "/walked");
+		CHECK(pack_tree("walked") && entries == 1, "the directory's own entry, nothing of outside: %llu entries",
+		    (unsigned long long)entries);
+		swap_at = "";
+		unlink(p);
+	}
+
+	/*
+	 * restore_raced_by_a_link: a name the archive has a file for, made a symbolic link out of /private/var between load's
+	 * lstat and its open, is not written through, nor given the file's mode
+	 */
+	{
+		char q[1024], text[256];
+		struct host_statx x;
+
+		snprintf(q, sizeof(q), "%s/outside/target", test_root);
+		archive_begin(0);
+		archive_entry(ENT_FILE, 0600, "raced", "store", 5, 1000000);
+		archive_end(0, 54);
+		swap_at = ROOT "/raced";
+		swap_to = q;
+		CHECK(load(), "the store is loaded");
+		swap_at = "";
+		snprintf(text, sizeof(text), "%s", host_file(q));
+		CHECK(strcmp(text, "outside") == 0, "the file the link leads to is not written: \"%s\"", text);
+		CHECK(host_statx_of(q, &x) == 0 && (x.mode & 07777) == 0644, "nor given the archive's mode: %o", x.mode & 07777);
+	}
+
+	/*
+	 * restore_links_and_names: a symbolic link of the archive replaces the one the skeleton made by its name, and is
+	 * given its owner without following it; a file of the archive where a directory is gives the directory nothing; a
+	 * name that climbs out of /private/var is made nowhere
+	 */
+	{
+		char p[1024], q[1024], target[256];
+		struct host_statx x;
+		ssize_t n;
+
+		snprintf(p, sizeof(p), "%s/var/lnk", test_root);
+		snprintf(q, sizeof(q), "%s/outside", test_root);
+		CHECK(symlink(q, p) == 0, "the skeleton's link");
+		snprintf(p, sizeof(p), "%s/var/adir", test_root);
+		CHECK(mkdir(p, 0751) == 0, "%s made", p);
+		archive_begin(0);
+		archive_entry(ENT_SYMLINK, 0755, "lnk", "store/target", 12, 1000000);
+		archive_entry(ENT_FILE, 0600, "adir", "store", 5, 1000000);
+		archive_entry(ENT_FILE, 0600, "../escaped", "store", 5, 1000000);
+		archive_end(0, 55);
+		chowned_through_links = 0;
+		CHECK(load(), "the store is loaded");
+		snprintf(p, sizeof(p), "%s/var/lnk", test_root);
+		n = readlink(p, target, sizeof(target) - 1);
+		target[n > 0 ? n : 0] = 0;
+		CHECK(strcmp(target, "store/target") == 0, "the archive's link in the skeleton's place: \"%s\"", target);
+		CHECK(chowned_through_links == 0, "no owner set through a link: %u", chowned_through_links);
+		snprintf(p, sizeof(p), "%s/var/adir", test_root);
+		CHECK(host_statx_of(p, &x) == 0 && (x.mode & 0170000) == 0040000 && (x.mode & 07777) == 0751,
+		    "the directory keeps its mode: %o", x.mode & 07777);
+		snprintf(p, sizeof(p), "%s/escaped", test_root);
+		CHECK(host_statx_of(p, &x) != 0, "nothing made outside /private/var");
+	}
 	/*
 	 * save_keeps_the_good_copy: the newest slot's header checks out but its archive does not (a save torn after the
 	 * header reached the flash): load took the slot before it, and the next save writes over the torn one, not over the
@@ -638,6 +828,27 @@ main(void)
 		memset(&old, 0, sizeof(old));
 		CHECK(save_slot(&old, &best) == 1 && best == 1 && old.generation == 61,
 		    "the torn slot is the one written, slot 0, the good copy, kept (best %d)", best);
+	}
+	/*
+	 * whole_by_generation: what archive_whole remembers is a slot AND its generation: another archive in that slot later
+	 * -- torn -- is read through again, not taken for the whole one that was there
+	 */
+	{
+		static uint8_t junk[BLOCK];
+		struct head h0;
+
+		good_slot = -1;
+		archive_begin(0);
+		archive_entry(ENT_FILE, 0600, "kept", "good", 4, 1000000);
+		archive_end(0, 62);
+		CHECK(read_head(0, &h0) && archive_whole(0, &h0), "generation 62 in slot 0 reads back whole");
+		archive_begin(0);
+		archive_entry(ENT_FILE, 0600, "kept", "newer", 5, 1000000);
+		archive_end(0, 64);
+		memset(junk, 0x5c, sizeof(junk));
+		CHECK(device_write(slot_at(0) + BLOCK, junk, BLOCK), "slot 0's archive torn under its header");
+		CHECK(read_head(0, &h0) && h0.generation == 64 && !archive_whole(0, &h0),
+		    "generation 64 in the same slot, torn, is not taken for the whole one remembered");
 	}
 	{
 		char p[1024];
