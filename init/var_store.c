@@ -70,6 +70,8 @@ static unsigned changed_under;          /* files that were another by the time t
 #define MAX_DEPTH       32
 #define MAX_XATTR       (256u << 10)            /* one attribute's value; Darwin keeps small ones */
 #define XPACK           (512u << 10)            /* all the attributes of one file, packed */
+#define XATTRS          4096                    /* attributes of one file at most, the access control list among them:
+                                                 * `load` takes an entry with more for a broken archive, so no more are packed */
 #define LINKS           8192                    /* names remembered for hard links */
 #define LINK_PATH       256
 /*
@@ -653,9 +655,13 @@ is_skipped(const char *relative)
 	return strcmp(relative, KEYCHAIN) == 0 && !keychain_kept();
 }
 
-/* The name this inode was first met under, if it has one; otherwise this one is remembered. */
+/*
+ * The name this inode was first met under, if it has one; otherwise, with remember, this one is remembered. Only a name
+ * whose contents went into the archive is: the inode's other names are packed as links to it, and a link to a name
+ * the archive does not hold is restored as nothing at all.
+ */
 static const char *
-link_name(uint64_t ino, const char *relative)
+link_name(uint64_t ino, const char *relative, int remember)
 {
 	uint64_t slot = (ino * 2654435761u) % LINKS;
 
@@ -664,7 +670,7 @@ link_name(uint64_t ino, const char *relative)
 			return links[slot].path;
 		}
 		if (links[slot].ino == 0) {
-			if (strlen(relative) < LINK_PATH) {
+			if (remember && strlen(relative) < LINK_PATH) {
 				links[slot].ino = ino;
 				strcpy(links[slot].path, relative);
 			}
@@ -707,6 +713,14 @@ pack_xattrs(uint32_t *count)
 		 * as the file's access control list. The real list is packed below, from lstat_extended)
 		 */
 		if (strcmp(names + i, ACL_NAME) == 0) {
+			continue;
+		}
+		/*
+		 * (no more than load reads, one kept for the list below: a file of anyone's with thousands of tiny attributes
+		 * would otherwise make the whole archive one that load refuses -- every file of the volume lost to one)
+		 */
+		if (*count >= XATTRS - 1) {
+			skipped_big++;
 			continue;
 		}
 		size = getxattr(path, names + i, value, sizeof(value), 0, XATTR_NOFOLLOW);
@@ -783,7 +797,7 @@ pack_one(const char *relative, const struct stat *st)
 		kind = ENT_FILE;
 		size = (uint64_t)st->st_size;
 		if (st->st_nlink > 1) {
-			first = link_name(st->st_ino, relative);
+			first = link_name(st->st_ino, relative, 0);
 			if (first != NULL) {
 				kind = ENT_HARDLINK;
 				size = strlen(first);
@@ -809,6 +823,10 @@ pack_one(const char *relative, const struct stat *st)
 				return 1;
 			}
 			size = (uint64_t)now.st_size;
+			/* (the name the inode's other names will be links to: this one, now that it is certain to be packed) */
+			if (st->st_nlink > 1) {
+				(void)link_name(st->st_ino, relative, 1);
+			}
 		}
 		break;
 	default:
@@ -1150,6 +1168,14 @@ set_times(const struct entry *e)
 }
 
 /*
+ * A directory of the archive that init had already made something else of -- a symbolic link (/private/var/jb, with the
+ * root on the flash, leads into /private/preboot) or a file: it is left as init made it, and nothing of the archive goes
+ * in under it. Unpacked as root, the directory's owner, mode and flags would otherwise land on whatever the link leads
+ * to, outside /private/var, and its files would be written there.
+ */
+static char not_made_dir[MAX_PATH];
+
+/*
  * One entry out of the archive and into /private/var. make: with 0, the entry is only read past
  * (the first pass, which proves the archive's checksum before anything is made).
  */
@@ -1160,12 +1186,13 @@ unpack_one(int make)
 	static char relative[MAX_PATH];
 	static uint8_t value[MAX_XATTR];
 	static char name[1024];
-	int out_fd = -1, ok = 1;
+	int out_fd = -1, ok = 1, made_file = 0;
+	struct stat there;
 
 	if (!in(&e, sizeof(e))) {
 		return 0;
 	}
-	if (e.pathlen >= MAX_PATH || e.nxattr > 4096) {
+	if (e.pathlen >= MAX_PATH || e.nxattr > XATTRS) {
 		printf("var_store: an entry this program cannot read (kind %u, path %u bytes)\n", e.kind,
 		    e.pathlen);
 		return 0;
@@ -1199,19 +1226,38 @@ unpack_one(int make)
 		make = 0;
 		skipped_load++;
 	}
+	if (make && not_made_dir[0] != 0) {
+		const size_t n = strlen(not_made_dir);
+
+		/* (what is under it, and its own times and flags at the end of it) */
+		if (strncmp(relative, not_made_dir, n) == 0 && (relative[n] == '/' || relative[n] == 0)) {
+			make = 0;
+			skipped_load++;
+		}
+	}
 	if (make) {
 		switch (e.kind) {
 		case ENT_DIR:
 			if (mkdir(path, (int)e.mode) == 0) {
 				made_dirs++;
+			} else if (lstat(path, &there) != 0 || (there.st_mode & S_IFMT) != S_IFDIR) {
+				printf("var_store: %s is not a directory here: left as it is, and what the store has under it too\n",
+				    path);
+				strcpy(not_made_dir, relative);
+				make = 0;
 			}
 			break;
 		case ENT_FILE:
-			out_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, (int)e.mode);
+			/* (a symbolic link the skeleton made in its place is replaced, not written through: the store has a file) */
+			if (lstat(path, &there) == 0 && (there.st_mode & S_IFMT) == S_IFLNK) {
+				unlink(path);
+			}
+			out_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | VS_O_NOFOLLOW, (int)e.mode);
 			if (out_fd < 0) {
 				printf("var_store: %s cannot be made: %s\n", path, strerror(errno));
 			} else {
 				made_files++;
+				made_file = 1;
 			}
 			break;
 		default:
@@ -1360,6 +1406,9 @@ unpack_one(int make)
 	case ENT_HARDLINK:
 		break;                  /* the same inode: it has them already */
 	default:
+		if (!made_file) {
+			break;          /* (not made: what is there instead is not given this one's owner and mode) */
+		}
 		chown(path, (int)e.uid, (int)e.gid);
 		chmod(path, (int)e.mode);
 		if (acl_size != 0) chmod_extended(path, KAUTH_UID_NONE, KAUTH_GID_NONE, -1, acl);
@@ -1376,6 +1425,7 @@ static int
 pass(const struct head *h, int make)
 {
 	stream_start((int)h->slot, h->bytes);
+	not_made_dir[0] = 0;
 	for (uint64_t i = 0; i < h->entries; i++) {
 		if (!unpack_one(make)) {
 			return 0;
