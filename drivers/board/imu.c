@@ -30,7 +30,20 @@
  *
  *   orientation_hid=0  the orientation is followed and said all the same, but Darwin is not given it:
  *              hw.sensors.hid stays 0, backboardd's library makes no orientation service, and only the log
- *              hears of a turn, as before there was such a service.
+ *              hears of a turn, as before there was such a service. Nor its motion stack the samples (below).
+ *
+ *   motion_hid=0  the samples themselves are not given to Darwin's motion stack: hw.sensors.motion stays 0 and
+ *              backboardd's library makes no accelerometer service; the orientation is given as ever.
+ *
+ * The samples for Darwin's motion stack (CoreMotion, through locationd): while hw.sensors.hid says 1, and unless
+ * the boot-arg above keeps them, hw.sensors.motion says 1 too, and backboardd's library gives each sample of
+ * hw.sensors.sample (its number, the time it was read and the three milli-g, read together) to the HID event system
+ * as an accelerometer event (userland/userland/src/hid_motion.h; after the idea of the OnePlus Nord 2 port's piece
+ * 0760). As often as this file reads the chip and no more: about 10 times a second (POLL_MS), where an iPhone's
+ * motion stack is used to fifty or a hundred. Each read is some 135 bits on a bus driven by hand at 100 kHz, about
+ * 1.4 ms of a core spun (i2c_gpio.h): 1.4 % of a core at 10 a second, 7 % at 50, 14 % at 100, for as long as the
+ * phone is up -- too dear while nothing on the phone has been seen to need more. A program that asks CoreMotion for
+ * more gets those 10 a second, dated when they were read.
  *
  * Limits, whatever asks: another chip's identity, a byte nobody acknowledges, a write that does not read
  * back or a bus that is not at rest, and nothing more is done for the rest of the run, with a line that
@@ -70,7 +83,7 @@ HAKIOS_DEFINE_SAY(!__atomic_load_n(&leaving, __ATOMIC_SEQ_CST) && ml_get_interru
 
 #define wait_ms(ms)             hakios_wait_ms((ms), __atomic_load_n(&leaving, __ATOMIC_SEQ_CST))   /* (spun on the way out) */
 
-#define POLL_MS                 100     /* how often the output is read */
+#define POLL_MS                 100     /* how often the output is read: at most 10 samples a second (this file's head) */
 #define ODR_104_HZ              4       /* CTRL1_XL's output data rate code for 104 Hz (lsm6dso_core.h: lsm6dso_ctrl1_xl()) */
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
@@ -293,6 +306,8 @@ configure(void)
 static struct sensors_accel accel;      /* the board's mounting and scale, and the orientation detector */
 static volatile int32_t shown_orientation;      /* hw.sensors.orientation: ORIENT_* */
 static int32_t shown_mg[3];                     /* hw.sensors.accel: the latest sample, milli-g on Darwin's axes */
+static uint32_t shown_number;                   /* hw.sensors.sample: its number (the first is 1; 0: none read yet) ... */
+static uint64_t shown_time;                     /* ... and when it was read (mach_absolute_time) */
 static LCK_GRP_DECLARE(imu_lock_group, "imu");
 /* the three of a sample and its orientation, put out together: a reader never sees x of one sample and y of the next */
 static LCK_SPIN_DECLARE(shown_lock, &imu_lock_group);
@@ -300,6 +315,8 @@ static volatile uint32_t samples;               /* hw.sensors.samples: how many 
 static unsigned changes;
 static uint32_t give_darwin = 1;                /* boot-arg orientation_hid (this file's head): 0 keeps the orientation to the log */
 static volatile int32_t followed_for_darwin;    /* hw.sensors.hid: 1 while the orientation is followed and Darwin is to have it */
+static uint32_t give_motion = 1;                /* boot-arg motion_hid (this file's head): 0 keeps the samples from Darwin's motion stack */
+static volatile int32_t motion_for_darwin;      /* hw.sensors.motion: 1 while hw.sensors.hid is and the samples are for the motion stack */
 
 static const char *const orientation_names[] = {
 	[ORIENT_UNKNOWN] = "not known", [ORIENT_PORTRAIT] = "portrait", [ORIENT_PORTRAIT_UPSIDE_DOWN] = "portrait upside down",
@@ -325,12 +342,40 @@ sysctl_accel SYSCTL_HANDLER_ARGS
 	return SYSCTL_OUT(req, text, strlen(text) + 1);
 }
 
+/* hw.sensors.sample: "NUMBER TIME X Y Z", one sample's, read together under the lock (TIME in mach_absolute_time) */
+static int
+sysctl_sample SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	char text[80];
+	int32_t mg[3];
+	uint32_t number;
+	uint64_t time;
+
+	lck_spin_lock(&shown_lock);
+	number = shown_number;
+	time = shown_time;
+	for (unsigned i = 0; i < 3; i++) {
+		mg[i] = shown_mg[i];
+	}
+	lck_spin_unlock(&shown_lock);
+	snprintf(text, sizeof(text), "%u %llu %d %d %d", number, (unsigned long long)time, mg[0], mg[1], mg[2]);
+	return SYSCTL_OUT(req, text, strlen(text) + 1);
+}
+
 SYSCTL_INT(_hw_sensors, OID_AUTO, orientation, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &shown_orientation), 0,
     "the phone's orientation (UIDeviceOrientation): 0 not known, 1 portrait, 2 upside down, 3 landscape left, 4 right, 5 face up, 6 down");
 SYSCTL_PROC(_hw_sensors, OID_AUTO, accel, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 0, sysctl_accel, "A",
     "the latest accelerometer sample: x y z in milli-g, on Darwin's axes");
 SYSCTL_UINT(_hw_sensors, OID_AUTO, samples, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &samples), 0,
     "accelerometer samples read");
+/*
+ * The latest sample with its number and the time it was read, the five together: what backboardd's library gives
+ * Darwin's motion stack (userland/userland/src/hid_motion.h), which must not take one sample twice nor date it by
+ * when it happened to look. "0 0 0 0 0" until the first is read.
+ */
+SYSCTL_PROC(_hw_sensors, OID_AUTO, sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 0, sysctl_sample, "A",
+    "the latest accelerometer sample: its number, the time it was read (mach_absolute_time), x y z in milli-g on Darwin's axes");
 /*
  * Whether backboardd's library is to give the orientation to Darwin (userland/userland/src/hid_orientation.h): 1 from
  * the moment the orientation is followed until the reading stops -- the chip lost, the run's end -- and never with
@@ -339,6 +384,12 @@ SYSCTL_UINT(_hw_sensors, OID_AUTO, samples, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOL
  */
 SYSCTL_INT(_hw_sensors, OID_AUTO, hid, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &followed_for_darwin), 0,
     "1 while the orientation is followed and Darwin's HID event system is to be given it (boot-arg orientation_hid=0: never)");
+/*
+ * Whether backboardd's library is to give the samples themselves to Darwin's motion stack (hid_motion.h): 1 only
+ * while hw.sensors.hid is 1, and never with motion_hid=0. Set before hw.sensors.hid and let go of after it.
+ */
+SYSCTL_INT(_hw_sensors, OID_AUTO, motion, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &motion_for_darwin), 0,
+    "1 while hw.sensors.hid is 1 and Darwin's motion stack is to be given the samples (boot-arg motion_hid=0: never)");
 
 /* The bus is the thread's from here until it calls done(); false when the run's end has it already. */
 static bool
@@ -388,8 +439,9 @@ sample(void)
 		shown_mg[i] = mg.v[i];
 	}
 	shown_orientation = now;
+	shown_time = mach_absolute_time();
+	shown_number = ++samples;
 	lck_spin_unlock(&shown_lock);
-	samples++;
 	return true;
 }
 
@@ -406,7 +458,11 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 		done();
 		if (followed) {
 			say("imu: the orientation is followed from here on (hw.sensors.orientation, hw.sensors.accel), until the run ends; "
-			    "%s\n", give_darwin ? "Darwin is given it (hw.sensors.hid 1)" : "Darwin is not given it (orientation_hid=0)");
+			    "%s%s\n", give_darwin ? "Darwin is given it (hw.sensors.hid 1)" : "Darwin is not given it (orientation_hid=0)",
+			    !give_darwin ? "" : give_motion ? ", and its motion stack the samples (hw.sensors.motion 1)" :
+			    ", not its motion stack the samples (motion_hid=0)");
+			/* (the motion first: the library looks at it once hw.sensors.hid says 1) */
+			__atomic_store_n(&motion_for_darwin, give_darwin && give_motion ? 1 : 0, __ATOMIC_SEQ_CST);
 			__atomic_store_n(&followed_for_darwin, give_darwin ? 1 : 0, __ATOMIC_SEQ_CST);
 			while (begin()) {
 				bool read = sample();
@@ -417,8 +473,9 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 				}
 				wait_ms(POLL_MS);
 			}
-			/* (nothing more is read: the library's service falls silent, and keeps what it said last) */
+			/* (nothing more is read: the library's services fall silent, and keep what they said last) */
 			__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);
+			__atomic_store_n(&motion_for_darwin, 0, __ATOMIC_SEQ_CST);
 		}
 	}
 	say("imu: done\n");
@@ -468,6 +525,8 @@ hakios_imu_init(void)
 	}
 	/* boot-arg orientation_hid=0: followed and said, not given to Darwin (this file's head) */
 	PE_parse_boot_argn("orientation_hid", &give_darwin, sizeof(give_darwin));
+	/* boot-arg motion_hid=0: the samples not given to Darwin's motion stack (this file's head) */
+	PE_parse_boot_argn("motion_hid", &give_motion, sizeof(give_motion));
 	if (kernel_thread_start(imu_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}
@@ -488,6 +547,7 @@ hakios_imu_quiesce(void)
 	}
 	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
 	__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);  /* (whether its thread gets that far or not) */
+	__atomic_store_n(&motion_for_darwin, 0, __ATOMIC_SEQ_CST);
 	for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
 		wait_ms(1);             /* (the thread finishing what it reads: 100 ms at most, a stopped core's never ends) */
 	}

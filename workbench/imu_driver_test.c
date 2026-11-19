@@ -7,7 +7,8 @@
  * nothing more written; the chip is configured as the file's head says, and its samples come out as the
  * right orientation through the board's turned mounting; at the run's end it is powered down and the pins
  * are as they were found, also when the driver's thread was stopped (as the run's end stops the other cores)
- * while it took the pins or while the chip was sending it a byte.
+ * while it took the pins or while the chip was sending it a byte; and what it says to Darwin's side (hw.sensors.hid,
+ * hw.sensors.motion, the timed hw.sensors.sample) and when.
  *
  *   imu_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
@@ -442,6 +443,83 @@ kept_from_darwin(void)
 }
 
 /*
+ * The samples for Darwin's motion stack (hw.sensors.motion, which backboardd's library looks at:
+ * userland/userland/src/hid_motion.h): 1 only while hw.sensors.hid is -- set no later than it, gone with it at the
+ * run's end -- and never with motion_hid=0, nor with orientation_hid=0, which leaves Darwin nothing.
+ */
+static void
+motion_given_to_darwin(void)
+{
+	phone("phone-video", 0x6c);
+	CHECK(get("motion") == 0, "nothing to give before anything is followed: %u", get("motion"));
+	following();
+	CHECK(get("motion") == 1 && get("hid") == 1, "1 while followed: motion %u, hid %u", get("motion"), get("hid"));
+	CHECK(logged("and its motion stack the samples (hw.sensors.motion 1)"), "said: %s", log_text);
+	hakios_imu_quiesce();
+	CHECK(get("motion") == 0, "0 from the run's end on: %u", get("motion"));
+}
+
+static void
+motion_kept_from_darwin(void)
+{
+	phone("phone-video", 0x6c);
+	chip_reads(-8192, 0, 0);
+	boot_args = "sensors=2 motion_hid=0";
+	hakios_imu_init();
+	WAIT_FOR(get("orientation") == 1, 5000);
+	CHECK(get("hid") == 1, "the orientation given as ever: %u", get("hid"));
+	CHECK(get("motion") == 0, "the samples not given: %u", get("motion"));
+	CHECK(logged("not its motion stack the samples (motion_hid=0)"), "said: %s", log_text);
+	hakios_imu_quiesce();
+}
+
+static void
+motion_not_without_the_orientation(void)
+{
+	phone("phone-video", 0x6c);
+	chip_reads(-8192, 0, 0);
+	boot_args = "sensors=2 orientation_hid=0";
+	hakios_imu_init();
+	WAIT_FOR(get("orientation") == 1, 5000);
+	CHECK(get("hid") == 0 && get("motion") == 0, "hid %u, motion %u", get("hid"), get("motion"));
+	hakios_imu_quiesce();
+}
+
+/*
+ * hw.sensors.sample: "NUMBER TIME X Y Z", the five of one sample. "0 0 0 0 0" before the first; then the number
+ * counts the samples (what hw.sensors.samples says, or one behind it), the time is the host's clock when it was read
+ * and grows with the number, and x y z are hw.sensors.accel's milli-g.
+ */
+static void
+timed_sample(void)
+{
+	unsigned number = 0, later = 0;
+	unsigned long long time = 0, later_time = 0;
+	int mg[3] = { 0, 0, 0 };
+	uint64_t before;
+
+	phone("phone-video", 0x6c);
+	CHECK(strcmp(get_string("sample"), "0 0 0 0 0") == 0, "nothing read yet: %s", get_string("sample"));
+	before = mach_absolute_time();
+	following();
+	WAIT_FOR(get("orientation") == 1, 3000);
+	CHECK(sscanf(get_string("sample"), "%u %llu %d %d %d", &number, &time, &mg[0], &mg[1], &mg[2]) == 5, "five numbers: %s",
+	    get_string("sample"));
+	CHECK(number >= 1 && number <= get("samples") && get("samples") - number <= 1, "number %u, %u samples read", number,
+	    get("samples"));
+	CHECK(time > before && time <= mach_absolute_time(), "read at %llu, not between %llu and now", time,
+	    (unsigned long long)before);
+	CHECK(mg[0] == 0 && mg[1] == -1000 && mg[2] == 0, "portrait's milli-g: %d %d %d", mg[0], mg[1], mg[2]);
+	chip_reads(0, 0, 8192);
+	WAIT_FOR(sscanf(get_string("sample"), "%u %llu %d %d %d", &later, &later_time, &mg[0], &mg[1], &mg[2]) == 5 &&
+	    mg[2] == -1000, 3000);
+	CHECK(mg[0] == 0 && mg[1] == 0 && mg[2] == -1000, "face up's milli-g: %d %d %d", mg[0], mg[1], mg[2]);
+	CHECK(later > number && later_time > time, "sample %u at %llu after sample %u at %llu", later, later_time, number, time);
+	CHECK(strcmp(get_string("accel"), "0 0 -1000") == 0, "hw.sensors.accel says the same: %s", get_string("accel"));
+	hakios_imu_quiesce();
+}
+
+/*
  * The chip's output reads all zeros at first (its registers as a reset leaves them, before its first sample is
  * ready): not taken for a phone face down. The orientation stays not known until a real sample, and is named from
  * that one at once, not after a climb from zero.
@@ -623,7 +701,9 @@ main(int argc, char **argv)
 		{ "teardown", teardown }, { "lost_while_following", lost_while_following }, { "wedged_at_the_end", wedged_at_the_end },
 		{ "lost_is_not_known", lost_is_not_known }, { "zeros_before_the_first_sample", zeros_before_the_first_sample },
 		{ "given_to_darwin", given_to_darwin }, { "given_until_the_end", given_until_the_end },
-		{ "kept_from_darwin", kept_from_darwin },
+		{ "kept_from_darwin", kept_from_darwin }, { "motion_given_to_darwin", motion_given_to_darwin },
+		{ "motion_kept_from_darwin", motion_kept_from_darwin },
+		{ "motion_not_without_the_orientation", motion_not_without_the_orientation }, { "timed_sample", timed_sample },
 		{ "write_does_not_stick", write_does_not_stick }, { "reset_does_not_end", reset_does_not_end },
 		{ "level_past_the_last", level_past_the_last }, { "not_listed", not_listed },
 		{ "stopped_in_a_read_at_a_look", stopped_in_a_read_at_a_look },
