@@ -189,7 +189,18 @@ core0(void *unused __unused)
 	return NULL;
 }
 
-void FlushPoC_DcacheRegion(vm_offset_t va __unused, size_t length __unused) { flushes++; }
+static void (*while_flushing)(void);           /* (what happens elsewhere meanwhile, once: a write's bytes leaving the cache) */
+void
+FlushPoC_DcacheRegion(vm_offset_t va __unused, size_t length __unused)
+{
+	void (*then)(void) = while_flushing;
+
+	flushes++;
+	while_flushing = NULL;
+	if (then != NULL) {
+		then();
+	}
+}
 void loader_return(void) {}
 
 /*
@@ -202,7 +213,8 @@ static int native_error = EIO, switch_in_error = EIO;
 bool ufshc_probe(const struct ufshc_loader *loader __unused, bool only __unused) { return false; }
 bool ufshc_available(void) { return false; }
 void ufshc_set_luns(uint32_t mask __unused) {}
-int ufshc_switch_in(bool prove __unused) { switched_in++; return switch_in_error; }
+static void (*while_switching_in)(void);       /* (what happens elsewhere while the list goes in, with the mailbox held) */
+int ufshc_switch_in(bool prove __unused) { switched_in++; if (while_switching_in != NULL) { while_switching_in(); } return switch_in_error; }
 int ufshc_switch_out(const char *why __unused) { switched_out++; return 0; }
 bool ufshc_list_in(void) { return list_in; }
 #define DARWIN_ON_ITS_UNIT 0x100000ull         /* (where darwin begins on its unit, as a GPT would say) */
@@ -680,6 +692,47 @@ closing(void)
 	CHECK(asked_n == 1, "and the loader saw the one request from before: %u", asked_n);
 }
 
+/*
+ * the run ends while a write is on its way: its bytes are going into the loader's buffer when the thread that hands the phone back
+ * says nothing more is to be asked and finds nothing asked -- then the write must not be asked for after all, for the loader would
+ * serve it once the kernel is gone (in the next run, from a buffer it has filled with its own reads by then)
+ */
+static volatile uint32_t request_at_close;
+
+static void *
+closer(void *unused __unused)
+{
+	hakios_ufs_close();
+	request_at_close = page->ask.request;
+	return NULL;
+}
+
+static void
+the_run_ends_meanwhile(void)
+{
+	pthread_t thread;
+
+	pthread_create(&thread, NULL, closer, NULL);
+	pthread_join(thread, NULL);
+}
+
+static void
+closing_while_a_write_is_on_its_way(void)
+{
+	static uint8_t data[4096];
+	size_t done = 9;
+
+	loader("ufs_write=1");
+	hakios_ufs_init();
+	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
+	while_flushing = the_run_ends_meanwhile;
+	CHECK(fake_dev_pwrite("rufs_darwin", data, sizeof(data), AT(WRITE_FIRST), &done) == EIO && done == 0, "the write: an error, nothing written");
+	usleep(20000);                          /* (time for a loader to see a request, were there one) */
+	CHECK(page->ask.request == request_at_close && page->ask.request == 40 && asked_n == 0 && writes_asked == 0,
+	    "nothing was asked after the close had found the loader done: request %u, %u at the close, %u asked", page->ask.request,
+	    request_at_close, asked_n);
+}
+
 /* the data volume's saver is asked on the way out, and waited for no longer than said */
 static void *
 saver(void *unused __unused)
@@ -879,6 +932,64 @@ writing_has_its_list_out(void)
 	CHECK(switched_in == 1 && ufs_native_on && !ufs_write_busy, "the list back in, reads through it again: %u", switched_in);
 }
 
+/*
+ * a read that comes in while the writing is over and the list goes back in: it goes the loader's way (the list was out when it
+ * looked), waits for the mailbox the switch holds, and finds the list in -- and then goes through the list, not an error
+ */
+static uint8_t reader_data[2 * 4096];
+static volatile int reader_error = -1;
+static volatile bool reader_started;
+
+static void *
+reader(void *unused __unused)
+{
+	size_t done = 0;
+
+	reader_started = true;
+	reader_error = fake_dev_pread("rufs_darwin", reader_data, sizeof(reader_data), AT(11), &done);
+	if (reader_error == 0 && done != sizeof(reader_data)) {
+		reader_error = -2;
+	}
+	return NULL;
+}
+
+static pthread_t reader_thread;
+
+static void
+a_reader_arrives(void)
+{
+	list_in = true;                         /* (the switch itself: the list is in from here on) */
+	pthread_create(&reader_thread, NULL, reader, NULL);
+	while (!reader_started) {
+		usleep(100);
+	}
+	usleep(50000);                          /* (long enough for it to be waiting for the mailbox) */
+}
+
+static void
+a_read_while_the_list_goes_back(void)
+{
+	static uint8_t data[4096];
+	size_t done = 0;
+
+	loader("ufs_write=1");
+	hakios_ufs_init();
+	ufs_lun[DARWIN] = 0;
+	ufs_lun_offset[DARWIN] = DARWIN_ON_ITS_UNIT;
+	ufs_native_on = true;
+	native_error = 0;
+	switch_in_error = 0;
+	memset(data, 0x5a, sizeof(data));
+	CHECK(try_as_root("var_busy", 1) == 0 && fake_dev_open("rufs_darwin", FREAD | FWRITE) == 0, "(the writer, and its device)");
+	CHECK(fake_dev_pwrite("rufs_darwin", data, sizeof(data), AT(WRITE_FIRST), &done) == 0 && switched_out == 1 && !list_in, "written, the list out");
+	while_switching_in = a_reader_arrives;
+	CHECK(fake_dev_close("rufs_darwin") == 0 && switched_in == 1 && ufs_native_on, "closed: the list back in");
+	pthread_join(reader_thread, NULL);
+	CHECK(reader_error == 0 && is_disk(DARWIN, 11 * 4096, reader_data, sizeof(reader_data)),
+	    "the read that came in meanwhile has its bytes, not an error: %d (%s)", reader_error, log_text);
+	CHECK(ufs_native_fallbacks == 0, "and it is no failure of the list's: %llu", (unsigned long long)ufs_native_fallbacks);
+}
+
 /* which partitions ufs_check=1 takes for an image's: the name, or the name with its slot (_a, _b), and nothing else */
 static void
 reference_names(void)
@@ -963,10 +1074,12 @@ main(int argc, char **argv)
 		{ "long_write", long_write, 1 }, { "writer_claims_first", writer_claims_first, 1 },
 		{ "partition_must_be_the_ports", partition_must_be_the_ports, 10 }, { "loader_fails", loader_fails, 1 },
 		{ "loader_goes_silent", loader_goes_silent, 1 }, { "not_while_the_list_is_in", not_while_the_list_is_in, 1 },
-		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
+		{ "page_not_usable", page_not_usable, 12 }, { "closing", closing, 1 },
+		{ "closing_while_a_write_is_on_its_way", closing_while_a_write_is_on_its_way, 1 }, { "a_buffer_of_one_block", a_buffer_of_one_block, 1 },
 		{ "the_largest_partition", the_largest_partition, 1 }, { "saver_is_asked", saver_is_asked, 1 },
 		{ "off_without_the_loader", off_without_the_loader, 1 }, { "through_its_own_driver", through_its_own_driver, 1 },
 		{ "a_unit_not_known", a_unit_not_known, 1 }, { "writing_has_its_list_out", writing_has_its_list_out, 1 },
+		{ "a_read_while_the_list_goes_back", a_read_while_the_list_goes_back, 1 },
 		{ "read_ahead_by_its_threads", read_ahead_by_its_threads, 1 }, { "no_threads", no_threads, 1 },
 		{ "a_request_that_waits", a_request_that_waits, 1 }, { "reference_names", reference_names, 1 }, { "the_writes_own_checks", the_writes_own_checks, 1 },
 		{ "reads_short_of_a_block", reads_short_of_a_block, 1 }, { "reads_that_follow", reads_that_follow, 1 }, { "its_devices", its_devices, 1 },

@@ -147,6 +147,7 @@ static volatile struct loader_block *ufs_page;
 static uint8_t *ufs_buffer;             /* the loader's data buffer: filled by it for a read, here for a write */
 static uint32_t ufs_buffer_size, ufs_parts, ufs_seq;
 static volatile bool ufs_closing;      /* the run is ending: nothing more is asked of the loader */
+static volatile bool ufs_asking;       /* a request is about to be raised, or raised and not answered (see hakios_ufs_close) */
 static uint32_t ufs_bsize[BLOCK_MAX_PARTS];   /* the block size each device is counted in (spec_open sets 512) */
 static int ufs_bmajor = -1, ufs_cmajor = -1;
 static bool ufs_ready, ufs_dead;
@@ -370,7 +371,21 @@ ufs_request(uint32_t op, uint32_t part, uint64_t lba, uint64_t count, uint8_t *d
 	ufs_page->ask.lba = lba;
 	ufs_page->ask.count = count;
 	ufs_page->ask.op = op;
+	/*
+	 * The run may have begun to end since ufs_closing was looked at above -- a write's bytes
+	 * were being copied into the buffer meanwhile -- and hakios_ufs_close, having found nothing
+	 * asked, may be on its way back to the loader already: a request raised now would be
+	 * served after the kernel is gone (in the next run, from a buffer the loader has filled with
+	 * its own reads by then: a write of whatever is in it). So this says it is asking first, and
+	 * looks again after: the closing side says it is closing first and looks at this after, and
+	 * with a barrier between on both sides, one of the two sees the other.
+	 */
+	ufs_asking = true;
 	ufs_barrier();
+	if (ufs_closing) {
+		ufs_asking = false;
+		return EIO;
+	}
 	ufs_page->ask.request = seq;
 	ufs_barrier();
 
@@ -393,9 +408,11 @@ ufs_request(uint32_t op, uint32_t part, uint64_t lba, uint64_t count, uint8_t *d
 			    seq, UFS_TIMEOUT_MS / 1000);
 			ufs_dead = true;
 			ufs_errors++;
+			ufs_asking = false;     /* (what is not answered is still waited for: request != answered) */
 			return EIO;
 		}
 	}
+	ufs_asking = false;
 	ufs_barrier();
 	{
 		uint64_t ns;
@@ -581,25 +598,38 @@ ufs_native_out(const char *why)
 static int
 ufs_read(uint32_t part, uint64_t offset, uint8_t *dst, uint64_t len)
 {
-	if (ufs_native_on && ufs_lun[part] != 0xff) {
-		int error = ufs_read_native(part, offset, dst, len);
+	int error;
 
+	if (ufs_native_on && ufs_lun[part] != 0xff) {
+		error = ufs_read_native(part, offset, dst, len);
 		if (error == 0) {
 			return 0;
 		}
-		if (ufs_write_busy) {
-			/* the list is out for a write of ours, not broken: this read goes the other way */
-			return ufs_read_mailbox(part, offset, dst, len);
+		if (!ufs_write_busy) {
+			/* (with the list out for a write of ours, not broken: this read just goes the other way) */
+			if (ufs_native_on) {
+				ufs_native_on = false;
+				ufs_native_fallbacks++;
+				printf("ufs: %s: bytes %llu..%llu: this kernel's own read failed (%d); through the loader from now on\n",
+				    ufs_page->part[part].name, offset, offset + len - 1, error);
+			}
+			ufs_native_out("a read failed");
 		}
-		if (ufs_native_on) {
-			ufs_native_on = false;
-			ufs_native_fallbacks++;
-			printf("ufs: %s: bytes %llu..%llu: this kernel's own read failed (%d); through the loader from now on\n",
-			    ufs_page->part[part].name, offset, offset + len - 1, error);
-		}
-		ufs_native_out("a read failed");
 	}
-	return ufs_read_mailbox(part, offset, dst, len);
+	error = ufs_read_mailbox(part, offset, dst, len);
+	if (error != 0 && ufs_lun[part] != 0xff && ufshc_list_in()) {
+		/*
+		 * This kernel's own list went back in while the read waited for the loader's mailbox --
+		 * the writing over (ufs_write_restore puts the list in with the mailbox held, and says
+		 * reads may go through it only after), or kern.hakios.ufs_native=1 -- so the mailbox
+		 * refused it, rightly, and the read goes through the list instead. Without this, every
+		 * read that came in during the switch was an error for nothing (a page of the system
+		 * volume, with DSU=2). A list that may be in but is not usable (lost, the path off)
+		 * reads nothing here, and the error stands.
+		 */
+		error = ufs_read_native(part, offset, dst, len);
+	}
+	return error;
 }
 
 /*
@@ -1809,7 +1839,8 @@ hakios_ufs_close(void)
 	ufs_closing = true;
 	ufs_barrier();
 	clock_interval_to_deadline(2, NSEC_PER_SEC, &deadline);
-	while (ufs_page->answer.answered != ufs_page->ask.request && mach_absolute_time() < deadline) {
+	/* (and one that is being raised: it sees ufs_closing and is not, or is raised and answered -- ufs_request) */
+	while ((ufs_asking || ufs_page->answer.answered != ufs_page->ask.request) && mach_absolute_time() < deadline) {
 		__builtin_arm_yield();
 	}
 }
