@@ -119,6 +119,13 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- What the loader writes to the phone's flash (`arch/arm64/boot/src/`, new test `workbench/loader_log_partition_test.c`):
+  `oem dsu patch` wrote the first pieces of a patch before finding a later piece not on whole blocks, leaving the
+  image half patched while the host was told nothing was written; every piece is now checked before any is written.
+  The DSU commands and the log's writer used the storage even when the kernel's own transfer list was still in the
+  controller (a run whose list could not be put back); they now refuse. The log was written to `logdump` without
+  comparing its length with the partition's (and a block size of 0 divided by zero); and its flush's answer was
+  thrown away, so "read back the same" could come from the device's cache.
 - Storage (`ufs.c`, with `ufs_write=1`): a read arriving as this kernel's transfer list went back in after writing
   failed with EIO for nothing (page-ins of the system volume among them); and a write raised as the run ended could be
   served by the loader after the kernel had gone, at the next run, with whatever its buffer then held. The loader now
