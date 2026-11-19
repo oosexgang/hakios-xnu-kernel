@@ -352,9 +352,12 @@ hakios_battery_report(const struct hakios_battery_state *b)
 	battery_soc_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
 	battery_voltage_mv = b->voltage_uv / 1000;
 	battery_current_ma = b->current_ua / 1000;
-	/* (looked at before it is rounded: near the int's end, adding to it went past) */
+	/*
+	 * (looked at before it is rounded: near the int's end, adding to it went past. Rounded half away from 0: C's division
+	 * goes toward 0, and + 50 made -1.00 C 0 C, -40.00 C -39 C)
+	 */
 	battery_temperature_c = hundredths >= BATTERY_COLDEST_C * 100 && hundredths <= BATTERY_HOTTEST_C * 100 ?
-	    battery_plausible_c((hundredths + 50) / 100) : -273;
+	    battery_plausible_c((hundredths + (hundredths < 0 ? -50 : 50)) / 100) : -273;
 	battery_present = b->present != 0;
 	battery_charger_present = b->external != 0;
 	battery_charging = b->status == 1;      /* POWER_SUPPLY_STATUS_CHARGING */

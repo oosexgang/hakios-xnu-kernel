@@ -770,6 +770,77 @@ a_temperature_that_cannot_be(void)
 	CHECK(hakios_battery_temperature() == 30 && !hakios_battery_went_quiet(), "and its 29.5 C is: %d C", hakios_battery_temperature());
 }
 
+/*
+ * The edges of what can be: 20 A either way and -40 to 100 C are a current and a temperature (a fast charger's 5 A
+ * among them); a milliampere or a degree past them is none -- 60 A out of the cell too, not only into it
+ */
+static void
+at_the_edges(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 20000, -40);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0 && told()->temperature_hundredths == -4000, 2000);
+	CHECK(told()->current_ua == -20000000 && told()->temperature_hundredths == -4000, "20 A out of it, at -40 C: %d uA, %d",
+	    told()->current_ua, told()->temperature_hundredths);
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID, 70, 3990, -20000, 100);
+	WAIT_FOR(told()->temperature_hundredths == 10000, 2000);
+	CHECK(told()->current_ua == 20000000 && told()->status == 1 && told()->temperature_hundredths == 10000,
+	    "20 A into it, at 100 C: %d uA, status %d, %d", told()->current_ua, told()->status, told()->temperature_hundredths);
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID, 70, 3990, -5000, 45);
+	WAIT_FOR(told()->temperature_hundredths == 4500, 2000);
+	CHECK(told()->current_ua == 5000000 && told()->status == 1, "a fast charger's 5 A: %d uA, status %d", told()->current_ua,
+	    told()->status);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 20001, 41);
+	WAIT_FOR(told()->temperature_hundredths == 4100, 2000);
+	CHECK(told()->temperature_hundredths == 4100 && told()->current_ua == 0, "20.001 A out of it is none: %d uA", told()->current_ua);
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID, 70, 3990, -20001, 42);
+	WAIT_FOR(told()->temperature_hundredths == 4200, 2000);
+	CHECK(told()->temperature_hundredths == 4200 && told()->current_ua == 0 && told()->status == 3,
+	    "nor 20.001 A into it, taken for charging: %d uA, status %d", told()->current_ua, told()->status);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 60000, 43);
+	WAIT_FOR(told()->temperature_hundredths == 4300, 2000);
+	CHECK(told()->temperature_hundredths == 4300 && told()->current_ua == 0, "nor 60 A out of it: %d uA", told()->current_ua);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 301, -41);
+	WAIT_FOR(told()->current_ua == -301000, 2000);
+	CHECK(told()->current_ua == -301000 && told()->temperature_hundredths == -27300, "-41 C is not a temperature: %d",
+	    told()->temperature_hundredths);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 70, 3990, 302, 101);
+	WAIT_FOR(told()->current_ua == -302000, 2000);
+	CHECK(told()->current_ua == -302000 && told()->temperature_hundredths == -27300, "nor 101 C: %d", told()->temperature_hundredths);
+	/* the DSP's, in hundredths: its edges the same, looked at before they are rounded */
+	{
+		struct hakios_battery_state state = {
+			.size = sizeof(state), .percent_hundredths = 6000, .voltage_uv = 3900000, .current_ua = -100000,
+			.temperature_hundredths = -4000, .present = 1, .external = 0, .status = 2,
+		};
+
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -40, "the DSP's -40.00 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = -100;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -1, "its -1.00 C, not 0 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = -149;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -1, "its -1.49 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = -150;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -2, "its -1.50 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = 2949;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == 29, "its 29.49 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = 10000;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == 100, "its 100.00 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = 10001;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -273, "not its 100.01 C: %d", s("battery_temperature_c"));
+		state.temperature_hundredths = -4001;
+		hakios_battery_report(&state);
+		CHECK(s("battery_temperature_c") == -273, "nor its -40.01 C: %d", s("battery_temperature_c"));
+	}
+}
+
 /* battery_shown=N: N%% shown whatever the firmware says, 100 included */
 static void
 shown_as_told(void)
@@ -797,7 +868,7 @@ main(int argc, char **argv)
 		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp }, { "asked_for_none", asked_for_none },
 		{ "the_arithmetic", the_arithmetic }, { "a_stale_figure_is_not_shown", a_stale_figure_is_not_shown },
 		{ "on_a_port_that_gives_too_little", on_a_port_that_gives_too_little },
-		{ "shown_a_little_at_a_time", shown_a_little_at_a_time }, { "the_dsp_knows_better", the_dsp_knows_better },
+		{ "shown_a_little_at_a_time", shown_a_little_at_a_time }, { "the_dsp_knows_better", the_dsp_knows_better }, { "at_the_edges", at_the_edges },
 		{ "address_zero", address_zero }, { "full_on_the_charger", full_on_the_charger }, { "shown_as_told", shown_as_told },
 		{ "loader_goes_quiet", loader_goes_quiet }, { "dsp_goes_quiet", dsp_goes_quiet },
 		{ "dsp_quiet_loader_takes_over", dsp_quiet_loader_takes_over },
