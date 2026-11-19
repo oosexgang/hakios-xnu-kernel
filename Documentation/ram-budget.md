@@ -260,7 +260,7 @@ Run in WSL. Scripts are in `darwin/tools/ram-budget/`; intermediate files go to 
 
 ```
 RB=$(python3 .../cachedir.py)
-cd /home/wannq/darwin_kernel/darwin26/dyld
+cd DARWIN26/dyld        # (the unpacked Darwin 26 image's dyld directory)
 python3 .../zchunks.py $RB/dyld26.pkl $(ls $PWD/dyld_shared_cache_arm64e* | grep -v -E '\.(symbols|atlas)$')
 python3 .../cache_images.py $RB/dyld26.pkl jobs|apps|broad     # writes $RB/used_MODE.pkl
 python3 .../rootfs_select.py            # writes $RB/rootfs26.pkl

@@ -35,6 +35,8 @@ while IFS= read -r -d '' f; do
 	esac
 done < "$list"
 scan -lI -e "/Users/[a-z]" -e "/private/tmp/[a-z]*-[0-9]*/" | grep -v "^./tools/check-publishable.sh$" | while read -r f; do echo "home path: $f"; done | grep . && bad=1
+# (and a Linux home of somebody's: /home/NAME/ -- the build machine's generic /home/user/ and /home/runner/ aside)
+scan -HIoE "/home/[a-z][a-z0-9_-]*/" | grep -vE ":/home/(user|runner)/$" | grep -v "^./tools/check-publishable.sh:" | while read -r f; do echo "home path: $f"; done | grep . && bad=1
 scan -lIE "(ghp_[A-Za-z0-9]{20}|github_pat_|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)" | grep -v "^./tools/check-publishable.sh$" | while read -r f; do echo "secret: $f"; done | grep . && bad=1
 # e-mail addresses other than the author's (git config user.email)
 me=$(git config user.email)
