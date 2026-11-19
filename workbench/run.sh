@@ -186,6 +186,21 @@ for test in camera_isp_test lx_wpa_test; do
 	fi
 done
 
+# the layer under the Wi-Fi driver (kernel/lx/src/lx_base.c): its work, timers, waits and memory on the host's threads, under
+# the sanitizers. The headers of FreeBSD's and LinuxKPI's it includes are empty files of the same names here, made from the
+# file's own #include lines (the test has the little of them the file uses)
+LXKPI_STUBS=$WORK/lxkpi-headers
+for header in $(sed -n 's/^#include <\(.*\)>$/\1/p' "$HERE/../kernel/lx/src/lx_base.c") linux/types.h; do
+	mkdir -p "$LXKPI_STUBS/$(dirname "$header")"
+	: > "$LXKPI_STUBS/$header"
+done
+echo "== lx_base_test (host${SANITIZE[0]:+, sanitizers})"
+if "$CC" -std=gnu11 -Wall -Wextra -Werror -O2 -pthread "${SANITIZE[@]}" -I"$LXKPI_STUBS" "$HERE/lx_base_test.c" -o "$WORK/lx_base_test"; then
+	scenarios "" "$WORK/lx_base_test"
+else
+	failed=1
+fi
+
 # Darwin's side of the sound, the files themselves included in a test that has what they need of Darwin's frameworks
 # (the audio server's plug-in, components/audio/audio_plugin.c, and what the phone's recording test,
 # components/audio/record_test.c, makes of its file), and the brightness slider's library injected into SpringBoard,

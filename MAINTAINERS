@@ -430,6 +430,7 @@ T:	workbench/wifi_driver_test.c
 T:	workbench/apple80211_test.c
 T:	workbench/station_test.c
 T:	workbench/lx_test.c
+T:	workbench/lx_base_test.c
 T:	workbench/lx_wpa_test.c
 D:	Documentation/drivers.md
 K:	wifi-wcn6750; wifi=

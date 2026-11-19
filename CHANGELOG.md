@@ -119,6 +119,10 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The layer under the Wi-Fi driver (`kernel/lx/src/lx_base.c`, new host test `workbench/lx_base_test.c` that runs it
+  on the host's threads): a delayed piece of work already pending -- on its queue, or waiting for its time -- was queued
+  again and ran twice (Linux leaves it), as a second beacon miss would have had the network lost twice; `kfree(NULL)`
+  did arithmetic on the null pointer; and sizes near the largest wrapped round to a tiny ring or packet buffer.
 - The framebuffer (`MiniIOMobileFramebuffer.cpp`): a layer placed wholly off the panel -- by any program that can swap,
   or by the window server sliding a layer just out of sight -- made the drawing read its column table outside it and
   blend past the surface's rows into the kernel's heap; a layer wholly left of the panel was smeared over all of it.

@@ -253,6 +253,7 @@ ticks_to_ns(unsigned long ticks)
 static struct timer_list *armed[16];
 static struct timer_list *firing;		/* the timer whose function the ticker runs now (timer_delete_sync() waits for it) */
 static void *ticker_self;			/* lx_os_thread_self() of the ticker */
+enum { WORK_IDLE = 0, WORK_QUEUED = 2 };	/* a piece of work's state (below: work queues) */
 static bool queue_work_locked(struct workqueue_struct *wq, struct work_struct *work);
 static bool unqueue_work_locked(struct work_struct *work);
 static struct {
@@ -322,11 +323,18 @@ bool
 linux_queue_delayed_work_on(int cpu, struct workqueue_struct *wq, struct delayed_work *dwork, unsigned long delay)
 {
 	int slot = -1;
+	bool queued;
 
-	if (delay == 0) {
-		return (linux_queue_work_on(cpu, wq, &dwork->work));
-	}
 	lx_os_lock();
+	/*
+	 * (one that is pending -- on its queue and not begun, or waiting for its time -- is left as it is, and the answer is
+	 * false, as Linux's: queued a second time, it would run twice -- the driver's connection_loss_work, queued again by a
+	 * beacon miss while its first turn waits behind other work, would have the network lost twice)
+	 */
+	if (atomic_read(&dwork->work.state) != WORK_IDLE) {
+		lx_os_unlock();
+		return (false);
+	}
 	for (unsigned i = 0; i < nitems(later); i++) {
 		if (later[i].work == dwork) {
 			lx_os_unlock();
@@ -335,6 +343,14 @@ linux_queue_delayed_work_on(int cpu, struct workqueue_struct *wq, struct delayed
 		if (later[i].work == NULL && slot < 0) {
 			slot = (int)i;
 		}
+	}
+	if (delay == 0) {
+		queued = queue_work_locked(wq, &dwork->work);
+		lx_os_unlock();
+		if (!queued) {
+			printf("lx: a queue is full: a piece of work will not be done\n");
+		}
+		return (queued);
 	}
 	if (slot >= 0) {
 		later[slot].work = dwork;
@@ -616,8 +632,6 @@ autoremove_wake_function(wait_queue_t *wq, unsigned int state, int flags, void *
  * kinds do. A piece of work that is queued while it waits is not queued twice; one that is
  * queued while it runs runs again.
  */
-enum { WORK_IDLE = 0, WORK_QUEUED = 2 };
-
 struct lx_workqueue {
 	struct workqueue_struct shown;		/* what LinuxKPI's headers know of a queue (nothing of it is used) */
 	struct work_struct *waiting[64];
@@ -808,9 +822,14 @@ lkpi_kmalloc(size_t size, gfp_t flags)
 void
 lkpi_kfree(const void *memory)
 {
-	size_t *block = (size_t *)(uintptr_t)memory - 2;
+	size_t *block;
 
+	/*
+	 * (the size in front is looked for only in memory there is: kfree(NULL), which the driver calls everywhere, less 16
+	 * bytes is no pointer, and the compiler may take such a subtraction for a promise that the pointer is not NULL)
+	 */
 	if (memory != NULL) {
+		block = (size_t *)(uintptr_t)memory - 2;
 		__sync_fetch_and_sub(&allocations, 1);
 		__sync_fetch_and_sub(&allocated, (long)block[0]);
 		lx_os_free(block, block[0]);
@@ -878,6 +897,11 @@ linux_dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle
 {
 	uint32_t at;
 
+	/* (a size that rounding up would carry past the largest there is, back to a few bytes: none, as Linux's) */
+	if (size > POOL_RINGS) {
+		printf("lx: no room for %zu more bytes of rings\n", size);
+		return (NULL);
+	}
 	size = roundup2(size, 64);
 	lx_os_lock();
 	/*
@@ -962,7 +986,7 @@ linuxkpi_dev_alloc_skb(size_t size, gfp_t gfp)
 	uint8_t *raw;
 	uint32_t slot;
 
-	if (size + NET_SKB_PAD > POOL_SLOT) {
+	if (size > POOL_SLOT - NET_SKB_PAD) {		/* (not size + NET_SKB_PAD: that may come round past 0 to a few bytes) */
 		printf("lx: a buffer of %zu bytes is asked for; the slots are %u\n", size, POOL_SLOT);
 		return (NULL);
 	}
