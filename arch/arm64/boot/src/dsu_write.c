@@ -15,6 +15,32 @@ dsu_write(efi_block_io *data, uint64_t offset, const uint8_t *src, uint64_t n)
 		print("dsu: patch at %x of %d bytes: not whole blocks inside the image\n", offset, n);
 		return 0;
 	}
+	/*
+	 * Only through UEFI's own transfer list (see hc_take_back): with the kernel's still in the controller,
+	 * UEFI's driver rings for a slot of that list, and the controller does what the kernel left there.
+	 */
+	if (!hc_list_is_uefis()) {
+		hc_print_state("patch not written");
+		print("dsu: patch: NOT WRITTEN: UEFI's transfer list is not the one in the controller\n");
+		return 0;
+	}
+	/*
+	 * Every piece the patch is cut into begins and ends on a block of the storage, looked at before anything
+	 * is written: found at the second extent, the first piece would have been written already, and the patch
+	 * left half in.
+	 */
+	for (unsigned x = 0; x < dsu_extents && image_at < offset + n; x++) {
+		uint64_t len = dsu_extent[x].count * 512, start = dsu_extent[x].sector * 512;
+		uint64_t from = offset > image_at ? offset : image_at, to = offset + n < image_at + len ? offset + n : image_at + len;
+
+		if (from < to && ((start + (from - image_at)) % bs || (start + (to - image_at)) % bs)) {
+			print("dsu: patch: extent %d (sector %x, %d sectors) is not in whole blocks: nothing written\n",
+			    (uint64_t)x, dsu_extent[x].sector, dsu_extent[x].count);
+			return 0;
+		}
+		image_at += len;
+	}
+	image_at = 0;
 	for (unsigned x = 0; x < dsu_extents && n > 0; x++) {
 		uint64_t len = dsu_extent[x].count * 512, start = dsu_extent[x].sector * 512;
 

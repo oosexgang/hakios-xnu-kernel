@@ -37,6 +37,20 @@ partition_named(const char *want)
 	return strcmp(want, "metadata") == 0 ? metadata_partition : strcmp(want, "userdata") == 0 ? userdata_partition : NULL;
 }
 
+/* ... and whether UEFI's transfer list is the one in the UFS controller (ufs_block.c: the kernel may have put its own in) */
+static bool kernels_list_in;
+
+static int
+hc_list_is_uefis(void)
+{
+	return !kernels_list_in;
+}
+
+static void
+hc_print_state(const char *when)
+{
+}
+
 #include "src/dsu_extents.c"
 #include "src/dsu_place.c"
 #include "src/dsu_write.c"
@@ -524,6 +538,42 @@ not_written_is_said(void)
 	read_status = 0;
 }
 
+/*
+ * An extent the patch reaches that does not begin or end on a block of the storage: nothing at all is written --
+ * not the pieces of the extents before it either, which would leave the image half patched.
+ */
+static void
+whole_blocks_before_writing(void)
+{
+	image();
+	dsu_extent[1].sector = 16001;           /* the second extent off the storage's blocks */
+	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0, "a patch across an extent off the storage's blocks");
+	CHECK(write_count == 0, "nothing is written, not even the first extent's piece: %u writes", write_count);
+	CHECK(strstr(said, "not in whole blocks") != NULL, "and why is said: %s", said);
+	/* the first extent 2.5 blocks long: its piece would end in the middle of a block, and the next start there */
+	image();
+	dsu_extent[0].count = 20;
+	dsu_bytes = 36 * 512;
+	CHECK(dsu_write(&userdata_io, 0, patch, 4 * 4096) == 0 && write_count == 0, "an extent whose end is off the storage's blocks: %u writes",
+	    write_count);
+	/* ... which a patch inside the first two blocks of it does not reach: that one goes in */
+	CHECK(dsu_write(&userdata_io, 4096, patch, 4096) == 1 && write_count == 1 && writes[0].lba == 10001, "a patch that does not reach it: %s",
+	    said);
+}
+
+/* the kernel's own transfer list still in the controller (a run that did not give it back): nothing is written */
+static void
+only_through_uefis_list(void)
+{
+	image();
+	kernels_list_in = true;
+	CHECK(dsu_write(&userdata_io, 0, patch, 4096) == 0, "a patch while the kernel's list is in the controller");
+	CHECK(write_count == 0 && read_count == 0, "nothing is written or read: %u writes, %u reads", write_count, read_count);
+	CHECK(strstr(said, "transfer list") != NULL, "and why is said: %s", said);
+	kernels_list_in = false;
+	CHECK(dsu_write(&userdata_io, 0, patch, 4096) == 1 && write_count == 1, "with UEFI's back, it goes in: %s", said);
+}
+
 /* a long piece goes in pieces no larger than the buffer it is read back into */
 static void
 long_patch(void)
@@ -550,6 +600,7 @@ main(int argc, char **argv)
 		{ "not_of_the_shape_known", not_of_the_shape_known }, { "found_on_the_phone", found_on_the_phone }, { "copies", copies },
 		{ "read_through_extents", read_through_extents }, { "written_through_extents", written_through_extents },
 		{ "only_inside_the_image", only_inside_the_image }, { "not_written_is_said", not_written_is_said }, { "long_patch", long_patch },
+		{ "whole_blocks_before_writing", whole_blocks_before_writing }, { "only_through_uefis_list", only_through_uefis_list },
 	};
 
 	if (argc < 2) {

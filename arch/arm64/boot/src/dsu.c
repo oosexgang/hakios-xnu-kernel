@@ -31,6 +31,16 @@ dsu_command(char *cmd)
 	uint8_t *dest;
 
 	log_len = 0;
+	/*
+	 * (the storage only through UEFI's own transfer list, as the block service and the log's writer use it: a read
+	 * rings the controller's doorbell too, and after a run whose list could not be put back that slot is the kernel's)
+	 */
+	if (!hc_list_is_uefis()) {
+		hc_print_state("DSU not looked for");
+		dsu_patch_data = NULL;
+		fb_reply("FAIL", "the storage is not UEFI's now (see oem log)");
+		return;
+	}
 	if (!dsu_find(&data)) {
 		fb_reply("FAIL", "no DSU image (see oem log)");
 		return;

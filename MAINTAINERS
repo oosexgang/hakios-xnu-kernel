@@ -237,6 +237,7 @@ T:	workbench/loader_test.c
 T:	workbench/loader_window_test.c
 T:	workbench/loader_download_test.c
 T:	workbench/loader_dsu_test.c
+T:	workbench/loader_log_partition_test.c
 T:	workbench/loader_own_partition_test.c
 T:	workbench/loader_boot_test.sh
 T:	workbench/bench_test.py

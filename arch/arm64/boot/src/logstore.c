@@ -121,11 +121,21 @@ write_logs(const char *klog, uint64_t klog_len)
 		}
 		return;
 	}
-	uint64_t bs = bio->media->block_size;
-	uint64_t len = (staged_len + 1 + bs - 1) / bs * bs;
-	efi_status ws, rs = 0;
+	uint64_t bs = bio->media->block_size, len;
+	efi_status ws, fs = 0, rs = 0;
 	int same = 0;
 
+	/*
+	 * Nothing past the partition's end: the log is written from its first block, and a logdump smaller than the
+	 * log (or a medium that says its blocks are of no size) is not written at all rather than written beyond.
+	 */
+	if (bs == 0 || bio->media->last_block >= ~0ULL / bs ||
+	    (len = (staged_len + 1 + bs - 1) / bs * bs) > (bio->media->last_block + 1) * bs) {
+		print("log: NOT WRITTEN to logdump: %d bytes, the partition has %d blocks of %d\n", staged_len + 1,
+		    bio->media->last_block + 1, bs);
+		compose_logs(klog, klog_len);
+		return;
+	}
 	/* only through UEFI's own transfer list (see hc_take_back) */
 	if (!hc_list_is_uefis()) {
 		if (hc_log_skips++ < 2) {
@@ -138,7 +148,13 @@ write_logs(const char *klog, uint64_t klog_len)
 	ws = bio->write_blocks(bio, bio->media->media_id, 0, len, out_buf);
 
 	if (!EFI_ERROR(ws)) {
-		bio->flush_blocks(bio);
+		/*
+		 * (out of the device's own cache first, and its answer taken: a flush that failed and a read
+		 * back from that cache would have said "the same" of blocks that are not on the flash)
+		 */
+		fs = bio->flush_blocks(bio);
+	}
+	if (!EFI_ERROR(ws) && !EFI_ERROR(fs)) {
 		/*
 		 * And read back: that the log is in the partition is what a run of the kernel's own UFS
 		 * driver must leave possible (the controller is shared with this one). The line goes into
@@ -149,8 +165,8 @@ write_logs(const char *klog, uint64_t klog_len)
 			same = !EFI_ERROR(rs) && memcmp(block_buffer, out_buf, len) == 0;
 		}
 	}
-	print("log: %d bytes written to logdump (%x), read back %s (%x)\n", len, ws,
-	    EFI_ERROR(ws) ? "not tried" : same ? "the same" : "DIFFERENT", rs);
+	print("log: %d bytes written to logdump (%x), flushed (%x), read back %s (%x)\n", len, ws, fs,
+	    EFI_ERROR(ws) ? "not tried" : EFI_ERROR(fs) ? "not tried: the flush FAILED" : same ? "the same" : "DIFFERENT", rs);
 	compose_logs(klog, klog_len);
 }
 
