@@ -24,7 +24,13 @@
  *              Darwin's axes and into milli-g, each change of orientation said, and the latest in
  *              hw.sensors.orientation (a UIDeviceOrientation: 1 portrait ... 6 face down, 0 not known yet, or
  *              not any more once the chip stops answering) and hw.sensors.accel (milli-g, "x y z" on Darwin's
- *              axes).
+ *              axes). While it is followed, hw.sensors.hid says 1: backboardd's library then gives the
+ *              orientation to Darwin's HID event system, as an iPhone's always-on processor does
+ *              (userland/userland/src/hid_orientation.h; after the idea of the OnePlus Nord 2 port's piece 0761).
+ *
+ *   orientation_hid=0  the orientation is followed and said all the same, but Darwin is not given it:
+ *              hw.sensors.hid stays 0, backboardd's library makes no orientation service, and only the log
+ *              hears of a turn, as before there was such a service.
  *
  * Limits, whatever asks: another chip's identity, a byte nobody acknowledges, a write that does not read
  * back or a bus that is not at rest, and nothing more is done for the rest of the run, with a line that
@@ -292,6 +298,8 @@ static LCK_GRP_DECLARE(imu_lock_group, "imu");
 static LCK_SPIN_DECLARE(shown_lock, &imu_lock_group);
 static volatile uint32_t samples;               /* hw.sensors.samples: how many were read */
 static unsigned changes;
+static uint32_t give_darwin = 1;                /* boot-arg orientation_hid (this file's head): 0 keeps the orientation to the log */
+static volatile int32_t followed_for_darwin;    /* hw.sensors.hid: 1 while the orientation is followed and Darwin is to have it */
 
 static const char *const orientation_names[] = {
 	[ORIENT_UNKNOWN] = "not known", [ORIENT_PORTRAIT] = "portrait", [ORIENT_PORTRAIT_UPSIDE_DOWN] = "portrait upside down",
@@ -323,6 +331,14 @@ SYSCTL_PROC(_hw_sensors, OID_AUTO, accel, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_
     "the latest accelerometer sample: x y z in milli-g, on Darwin's axes");
 SYSCTL_UINT(_hw_sensors, OID_AUTO, samples, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &samples), 0,
     "accelerometer samples read");
+/*
+ * Whether backboardd's library is to give the orientation to Darwin (userland/userland/src/hid_orientation.h): 1 from
+ * the moment the orientation is followed until the reading stops -- the chip lost, the run's end -- and never with
+ * orientation_hid=0. The library looks at it before it makes its service and at every look after, and lets the service
+ * fall silent when it goes back to 0: what it said last stands, as on a phone whose sensor has gone quiet.
+ */
+SYSCTL_INT(_hw_sensors, OID_AUTO, hid, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &followed_for_darwin), 0,
+    "1 while the orientation is followed and Darwin's HID event system is to be given it (boot-arg orientation_hid=0: never)");
 
 /* The bus is the thread's from here until it calls done(); false when the run's end has it already. */
 static bool
@@ -389,7 +405,9 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 		followed = identified() && level >= 2 && configure();
 		done();
 		if (followed) {
-			say("imu: the orientation is followed from here on (hw.sensors.orientation, hw.sensors.accel), until the run ends\n");
+			say("imu: the orientation is followed from here on (hw.sensors.orientation, hw.sensors.accel), until the run ends; "
+			    "%s\n", give_darwin ? "Darwin is given it (hw.sensors.hid 1)" : "Darwin is not given it (orientation_hid=0)");
+			__atomic_store_n(&followed_for_darwin, give_darwin ? 1 : 0, __ATOMIC_SEQ_CST);
 			while (begin()) {
 				bool read = sample();
 
@@ -399,6 +417,8 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 				}
 				wait_ms(POLL_MS);
 			}
+			/* (nothing more is read: the library's service falls silent, and keeps what it said last) */
+			__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);
 		}
 	}
 	say("imu: done\n");
@@ -446,6 +466,8 @@ hakios_imu_init(void)
 	if (level > 2) {
 		level = 2;
 	}
+	/* boot-arg orientation_hid=0: followed and said, not given to Darwin (this file's head) */
+	PE_parse_boot_argn("orientation_hid", &give_darwin, sizeof(give_darwin));
 	if (kernel_thread_start(imu_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}
@@ -465,6 +487,7 @@ hakios_imu_quiesce(void)
 		return;
 	}
 	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
+	__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);  /* (whether its thread gets that far or not) */
 	for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
 		wait_ms(1);             /* (the thread finishing what it reads: 100 ms at most, a stopped core's never ends) */
 	}

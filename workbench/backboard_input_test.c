@@ -5,7 +5,9 @@
  * runtime calls and blocks, which have nothing to do with touches and which the host's compiler cannot build).
  * What it is given of CoreFoundation, IOKit's HID event calls, dispatch, notify and the Mach clock is this
  * file's: the events it makes are kept and looked at, and counted, so that one not let go is seen; and so are
- * its open(), read() and close() of /dev/hakios-touch, which play a script of samples and errors.
+ * its open(), read() and close() of /dev/hakios-touch, which play a script of samples and errors. The phone's
+ * orientation (userland/userland/src/hid_orientation.h, included by the part) is played the same way: what the
+ * kernel's sysctls say is a script, and the two calls the part looks up by name are this file's, or missing.
  *
  *   backboard_input_test               the scenarios' names
  *   backboard_input_test SCENARIO      one scenario a process
@@ -92,7 +94,47 @@ typedef struct {
 static uint64_t clock_now = 1000;
 static uint64_t mach_absolute_time(void) { return clock_now++; }
 static int mach_timebase_info(mach_timebase_info_data_t *t) { t->numer = t->denom = 1; return 0; }
-static int sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is) { (void)n; (void)o; (void)s; (void)i; (void)is; return -1; }
+
+/*
+ * The kernel's numbers, as hid_orientation.h asks for them: hw.sensors.hid and hw.sensors.orientation each say the
+ * values of a script in turn, the last one for good; a name without a script is not there (and kern.bootargs is
+ * not, as before).
+ */
+struct number_script {
+	const char *name;
+	int values[64];
+	unsigned count, next, asked;
+};
+static struct number_script kernel_hid = { .name = "hw.sensors.hid" }, kernel_orientation = { .name = "hw.sensors.orientation" };
+
+static int
+sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is)
+{
+	struct number_script *script = strcmp(n, kernel_hid.name) == 0 ? &kernel_hid :
+	    strcmp(n, kernel_orientation.name) == 0 ? &kernel_orientation : NULL;
+	int value;
+
+	(void)i; (void)is;
+	if (script == NULL || script->count == 0 || o == NULL || s == NULL || *s < sizeof(int)) {
+		errno = ENOENT;
+		return -1;
+	}
+	script->asked++;
+	value = script->values[script->next < script->count ? script->next++ : script->count - 1];
+	if (value == -99) {             /* (a read that fails) */
+		errno = EIO;
+		return -1;
+	}
+	memcpy(o, &value, sizeof(value));
+	*s = sizeof(value);
+	return 0;
+}
+
+/* IOKit's calls the part looks up by name (dlsym): this file's below, or none when a scenario says the calls are missing */
+#define RTLD_DEFAULT    ((void *)0)
+static bool hid_calls_missing;
+static void *test_dlsym(void *handle, const char *name);
+#define dlsym   test_dlsym
 
 #define pthread_setname_np(name) ((void)(name))
 
@@ -181,6 +223,16 @@ struct __IOHIDServiceClient {
 struct __IOHIDEvent {
 	int references;
 	bool keyboard;
+	uint32_t type;                  /* IOHIDEventCreate()'s; 0 for the other makers' */
+	uint32_t page;                  /* a vendor-defined event's, with its usage in `usage` and its bytes in `data` */
+	uint8_t data[8];
+	CFIndex length;
+	struct {
+		uint32_t field;
+		CFIndex value;
+	} fields[8];                    /* what IOHIDEventSetIntegerValue() set, in order */
+	unsigned field_count;
+	uint64_t time;
 	uint32_t mask, index, usage;
 	double x, y;
 	bool range, touch, down;
@@ -203,6 +255,7 @@ struct __IOHIDEvent {
 #define sleep   test_sleep
 #define usleep  test_usleep
 #include INPUT_PART
+#undef dlsym
 #undef open
 #undef read
 #undef close
@@ -378,7 +431,67 @@ IOHIDEventAppendEvent(IOHIDEventRef parent, IOHIDEventRef child, uint32_t option
 void
 IOHIDEventSetIntegerValue(IOHIDEventRef event, uint32_t field, CFIndex value)
 {
-	(void)event; (void)field; (void)value;
+	if (event->field_count < sizeof(event->fields) / sizeof(event->fields[0])) {
+		event->fields[event->field_count].field = field;
+		event->fields[event->field_count++].value = value;
+	}
+}
+
+/* IOHIDEventCreate() and IOHIDEventCreateVendorDefinedEvent(), as the part finds them by name */
+static IOHIDEventRef
+test_event_create(CFAllocatorRef allocator, uint32_t type, uint64_t time, uint32_t options)
+{
+	struct __IOHIDEvent *e = made(event_new());
+
+	(void)allocator; (void)options;
+	e->type = type;
+	e->time = time;
+	return e;
+}
+
+static IOHIDEventRef
+test_vendor_create(CFAllocatorRef allocator, uint64_t time, uint32_t page, uint32_t usage, uint32_t version, const uint8_t *data,
+    CFIndex length, uint32_t options)
+{
+	struct __IOHIDEvent *e = made(event_new());
+
+	(void)allocator; (void)version; (void)options;
+	e->page = page;
+	e->usage = usage;
+	e->time = time;
+	e->length = length;
+	memcpy(e->data, data, length < 8 ? (size_t)length : 8);
+	return e;
+}
+
+static void *
+test_dlsym(void *handle, const char *name)
+{
+	(void)handle;
+	if (hid_calls_missing) {
+		return NULL;
+	}
+	if (strcmp(name, "IOHIDEventCreate") == 0) {
+		return (void *)test_event_create;
+	}
+	if (strcmp(name, "IOHIDEventCreateVendorDefinedEvent") == 0) {
+		return (void *)test_vendor_create;
+	}
+	return NULL;
+}
+
+/* the value a field of an event was last set to, or -1 */
+static CFIndex
+field_of(const struct __IOHIDEvent *e, uint32_t field)
+{
+	CFIndex value = -1;
+
+	for (unsigned i = 0; i < e->field_count; i++) {
+		if (e->fields[i].field == field) {
+			value = e->fields[i].value;
+		}
+	}
+	return value;
 }
 
 /* ---- the scenarios ---------------------------------------------------------------------------- */
@@ -419,7 +532,7 @@ static const struct sent *
 frame(unsigned n)
 {
 	for (unsigned i = 0; i < sent_count; i++) {
-		if (!sent[i].event.keyboard && n-- == 0) {
+		if (!sent[i].event.keyboard && sent[i].event.type != HID_EVENT_ORIENTATION && n-- == 0) {
 			return &sent[i];
 		}
 	}
@@ -562,6 +675,152 @@ scenario_busy(void)
 	CHECK(frames() == 2, "%u frames, not 2", frames());
 }
 
+/* ---- the phone's orientation (hid_orientation.h) ----------------------------------------------- */
+
+/* what the kernel says of a number, in turn, the last for good (-99: a read that fails) */
+static void
+kernel_says(struct number_script *script, unsigned count, const int *values)
+{
+	memcpy(script->values, values, count * sizeof(int));
+	script->count = count;
+	script->next = 0;
+}
+
+/* the orientation events that reached the event server, the n-th of them, or NULL */
+static const struct sent *
+orientation_event(unsigned n)
+{
+	for (unsigned i = 0; i < sent_count; i++) {
+		if (sent[i].event.type == HID_EVENT_ORIENTATION && n-- == 0) {
+			return &sent[i];
+		}
+	}
+	return NULL;
+}
+
+/* An orientation event as locationd reads it: a usage, the orientation's, built in, and its time in its one child. */
+static void
+check_orientation_event(unsigned n, uint32_t usage)
+{
+	const struct sent *s = orientation_event(n);
+	uint64_t when = 0;
+
+	CHECK(s != NULL, "no orientation event %u", n);
+	if (s == NULL) {
+		return;
+	}
+	CHECK(field_of(&s->event, FIELD_ORIENTATION_KIND) == ORIENTATION_KIND_USAGE, "event %u: given as a usage (1): %ld", n,
+	    (long)field_of(&s->event, FIELD_ORIENTATION_KIND));
+	CHECK(field_of(&s->event, FIELD_ORIENTATION_USAGE) == (CFIndex)usage, "event %u: usage %#x, not %#lx", n, usage,
+	    (long)field_of(&s->event, FIELD_ORIENTATION_USAGE));
+	CHECK(field_of(&s->event, FIELD_IS_BUILT_IN) == 1, "event %u: not built in", n);
+	CHECK(s->event.children == 1, "event %u: %u children, not the time alone", n, s->event.children);
+	if (s->event.children != 1) {
+		return;
+	}
+	CHECK(s->child[0].page == HID_PAGE_SENSOR_TIME && s->child[0].usage == HID_USAGE_SENSOR_TIME && s->child[0].length == 8,
+	    "event %u: its child is page %#x usage %u, %ld bytes", n, s->child[0].page, s->child[0].usage, (long)s->child[0].length);
+	for (unsigned i = 0; i < 8; i++) {
+		when |= (uint64_t)s->child[0].data[i] << (8 * i);
+	}
+	CHECK(when == s->event.time && when == s->child[0].time, "event %u: its time %llu, the child's bytes say %llu", n,
+	    (unsigned long long)s->event.time, (unsigned long long)when);
+	if (n > 0 && orientation_event(n - 1) != NULL) {
+		CHECK(s->event.time > orientation_event(n - 1)->event.time, "event %u: not later than the one before", n);
+	}
+}
+
+/*
+ * The kernel follows the orientation for Darwin: the service is made, and each known orientation it changes to is
+ * said once, as its usage -- not "not known", not a read that failed, not the same one again at once; once the kernel
+ * says it no longer follows it, the looking stops.
+ */
+static void
+scenario_orientation_followed(void)
+{
+	static const int hid[] = { 1, 1, 1, 1, 1, 1, 1, 1, 0 };
+	static const int orientation[] = { 0, 1, 1, 3, -99, 3, 5 };
+
+	kernel_says(&kernel_hid, 9, hid);
+	kernel_says(&kernel_orientation, 7, orientation);
+	orientation_thread(&the_client);
+	CHECK(service_count == 1, "%u services made, not the orientation's alone", service_count);
+	CHECK(kernel_orientation.asked == 7, "the orientation looked at %u times, not 7 (while the kernel said 1)",
+	    kernel_orientation.asked);
+	CHECK(orientation_event(3) == NULL, "more than three orientations said");
+	check_orientation_event(0, 0x65);       /* portrait */
+	check_orientation_event(1, 0x67);       /* landscape left */
+	check_orientation_event(2, 0x69);       /* face up */
+	CHECK(frames() == 0, "%u touch frames", frames());
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/* What is said when, apart from the service: again after ORIENTATION_AGAIN_MS, at once on a change, never "not known". */
+static void
+scenario_orientation_said_again(void)
+{
+	struct orientation_feed f = { 0 };
+
+	CHECK(orientation_feed_next(&f, 0, 0) == 0, "\"not known\" said");
+	CHECK(orientation_feed_next(&f, 1, 0) == 1, "the first known one not said");
+	CHECK(orientation_feed_next(&f, 1, ORIENTATION_AGAIN_MS - 1) == 0, "said again too soon");
+	CHECK(orientation_feed_next(&f, 1, ORIENTATION_AGAIN_MS) == 1, "not said again after %d ms", ORIENTATION_AGAIN_MS);
+	CHECK(orientation_feed_next(&f, 0, ORIENTATION_AGAIN_MS * 3) == 0 && f.sent == 1, "\"not known\" took the place of portrait");
+	CHECK(orientation_feed_next(&f, -1, ORIENTATION_AGAIN_MS * 3) == 0 && orientation_feed_next(&f, 7, 0) == 0,
+	    "a read that failed, or a number past face down, said");
+	CHECK(orientation_feed_next(&f, 4, ORIENTATION_AGAIN_MS + 1) == 4, "a change not said at once");
+	CHECK(orientation_feed_stamp(&f, 100) == 100 && orientation_feed_stamp(&f, 100) == 101 && orientation_feed_stamp(&f, 50) == 102 &&
+	    orientation_feed_stamp(&f, 500) == 500, "the times carried do not only grow");
+	CHECK(orientation_usage(0) == 0x64 && orientation_usage(1) == 0x65 && orientation_usage(6) == 0x6a, "the usages");
+}
+
+/*
+ * The kernel does not say it follows the orientation (sensors=2 off, or orientation_hid=0): looked at once a second for
+ * ORIENTATION_WAIT_S, then no more, and no service; one that comes to say so within that is waited for.
+ */
+static void
+scenario_orientation_waits_for_the_kernel(void)
+{
+	static const int never[] = { 0 }, later[] = { 0, 0, 1, 1, 0 }, face_down[] = { 6 };
+
+	kernel_says(&kernel_hid, 1, never);
+	orientation_thread(&the_client);
+	CHECK(kernel_hid.asked == ORIENTATION_WAIT_S + 1, "asked %u times, not %d", kernel_hid.asked, ORIENTATION_WAIT_S + 1);
+	CHECK(service_count == 0 && kernel_orientation.asked == 0, "a service made, or the orientation looked at, without the kernel");
+	kernel_says(&kernel_hid, 5, later);
+	kernel_says(&kernel_orientation, 1, face_down);
+	orientation_thread(&the_client);
+	CHECK(service_count == 1, "%u services made once the kernel said it follows the orientation", service_count);
+	check_orientation_event(0, 0x6a);
+	CHECK(orientation_event(1) == NULL && live_events == 0, "more than face down, or events not let go of");
+}
+
+/* A Darwin whose IOKit has not got one of the two calls: no service, nothing sent, the kernel's orientation not read. */
+static void
+scenario_orientation_without_the_calls(void)
+{
+	static const int hid[] = { 1, 1, 0 }, portrait[] = { 1 };
+
+	hid_calls_missing = true;
+	kernel_says(&kernel_hid, 3, hid);
+	kernel_says(&kernel_orientation, 1, portrait);
+	orientation_thread(&the_client);
+	CHECK(service_count == 0 && sent_count == 0 && kernel_orientation.asked == 0, "%u services, %u events, the orientation read %u "
+	    "times", service_count, sent_count, kernel_orientation.asked);
+}
+
+/* A kernel that says nothing of the orientation (no hw.sensors.hid): the touch screen and the buttons alone, as before. */
+static void
+scenario_orientation_not_without_the_kernel(void)
+{
+	opening(0);
+	sample(HAKIOS_TOUCH_DOWN, 0, 1000, 1000);
+	sample(HAKIOS_TOUCH_UP, 0, 1000, 1000);
+	run();
+	CHECK(service_count == 2, "%u services, not the touch screen and the buttons", service_count);
+	CHECK(orientation_event(0) == NULL && frames() == 2, "an orientation said, or the touches lost");
+}
+
 static const struct {
 	const char *name;
 	void (*run)(void);
@@ -570,6 +829,11 @@ static const struct {
 	{ "interrupted", scenario_interrupted },
 	{ "read_fails", scenario_read_fails },
 	{ "busy", scenario_busy },
+	{ "orientation_followed", scenario_orientation_followed },
+	{ "orientation_said_again", scenario_orientation_said_again },
+	{ "orientation_waits_for_the_kernel", scenario_orientation_waits_for_the_kernel },
+	{ "orientation_without_the_calls", scenario_orientation_without_the_calls },
+	{ "orientation_not_without_the_kernel", scenario_orientation_not_without_the_kernel },
 };
 
 int

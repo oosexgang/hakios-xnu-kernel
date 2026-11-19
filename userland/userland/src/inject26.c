@@ -455,6 +455,9 @@ micros(uint64_t absolute)
 
 static void script_start(IOHIDServiceClientRef screen, IOHIDServiceClientRef buttons);
 
+/* the phone's orientation, as a service of its own beside the touch screen and the buttons */
+#include "hid_orientation.h"
+
 /*
  * /dev/hakios-touch, opened for reading. One program may read it (board/input.c): while another does -- a
  * backboardd of before that is still going away -- the open is EBUSY, and is tried again each second
@@ -521,6 +524,7 @@ input_thread(__unused void *arg)
 	}
 	if (screen != NULL) {
 		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
+		orientation_start(client);      /* (the phone's orientation, when the kernel follows it: hid_orientation.h) */
 	}
 	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */

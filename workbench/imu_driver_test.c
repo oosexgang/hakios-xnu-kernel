@@ -396,6 +396,52 @@ lost_is_not_known(void)
 }
 
 /*
+ * Darwin is to be given the orientation (hw.sensors.hid, which backboardd's library looks at:
+ * userland/userland/src/hid_orientation.h) only while it is followed: not before the chip is configured, 1 from then
+ * on, 0 again once nothing more is read -- the chip lost, or the run's end.
+ */
+static void
+given_to_darwin(void)
+{
+	phone("phone-video", 0x6c);
+	CHECK(get("hid") == 0, "nothing to give before anything is followed: %u", get("hid"));
+	following();
+	CHECK(get("hid") == 1, "1 while followed: %u", get("hid"));
+	CHECK(logged("Darwin is given it (hw.sensors.hid 1)"), "said: %s", log_text);
+	device.absent = true;
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(get("hid") == 0, "0 once the chip is lost: %u", get("hid"));
+	device.absent = false;
+	hakios_imu_quiesce();
+	CHECK(get("hid") == 0, "and after the run's end: %u", get("hid"));
+}
+
+/* ... and at the run's end, with the thread still reading */
+static void
+given_until_the_end(void)
+{
+	following();
+	CHECK(get("hid") == 1, "1 while followed: %u", get("hid"));
+	hakios_imu_quiesce();
+	CHECK(get("hid") == 0, "0 from the run's end on: %u", get("hid"));
+}
+
+/* orientation_hid=0: the orientation followed and said as ever, and Darwin not given it */
+static void
+kept_from_darwin(void)
+{
+	phone("phone-video", 0x6c);
+	chip_reads(-8192, 0, 0);
+	boot_args = "sensors=2 orientation_hid=0";
+	hakios_imu_init();
+	WAIT_FOR(get("orientation") == 1, 5000);
+	CHECK(get("orientation") == 1, "followed all the same: portrait (1): %u", get("orientation"));
+	CHECK(get("hid") == 0, "not given to Darwin: %u", get("hid"));
+	CHECK(logged("Darwin is not given it (orientation_hid=0)"), "said: %s", log_text);
+	hakios_imu_quiesce();
+}
+
+/*
  * The chip's output reads all zeros at first (its registers as a reset leaves them, before its first sample is
  * ready): not taken for a phone face down. The orientation stays not known until a real sample, and is named from
  * that one at once, not after a climb from zero.
@@ -576,6 +622,8 @@ main(int argc, char **argv)
 		{ "configured", configured }, { "orientation_through_the_mounting", orientation_through_the_mounting },
 		{ "teardown", teardown }, { "lost_while_following", lost_while_following }, { "wedged_at_the_end", wedged_at_the_end },
 		{ "lost_is_not_known", lost_is_not_known }, { "zeros_before_the_first_sample", zeros_before_the_first_sample },
+		{ "given_to_darwin", given_to_darwin }, { "given_until_the_end", given_until_the_end },
+		{ "kept_from_darwin", kept_from_darwin },
 		{ "write_does_not_stick", write_does_not_stick }, { "reset_does_not_end", reset_does_not_end },
 		{ "level_past_the_last", level_past_the_last }, { "not_listed", not_listed },
 		{ "stopped_in_a_read_at_a_look", stopped_in_a_read_at_a_look },
