@@ -317,13 +317,6 @@ gpuWaitList(const uint32_t * fences, unsigned count, uint64_t milliseconds)
 	return true;
 }
 
-/* All the GPU has been given: its last submission. With the lock held. */
-static bool
-gpuWaitAll(uint64_t milliseconds)
-{
-	return gpuWait(hakios_gpu_last(), milliseconds);
-}
-
 bool
 MiniIOSurfaceDrawn(MiniIOSurface * surface, uint64_t milliseconds)
 {
@@ -475,6 +468,7 @@ struct gpu_buffer {
 	uint32_t                        fence;          /* the last submission that names it (0: none has) */
 	uint64_t                        flushSize;      /* what of it is pushed out of the cache, when not all (0: all) */
 	IOMemoryMap *                   map;            /* a kHakiosHost buffer's pages in the kernel (for the cache pushes) */
+	uint32_t                        flushed;        /* the submission (fFlushes) that last looked at it for the cache: once a submission */
 };
 
 /*
@@ -530,6 +524,7 @@ class HakiosGPUUserClient : public IOUserClient
 	uint32_t                fBufferCount;
 	uint64_t                fBufferBytes;
 	uint32_t                fSubmits;
+	uint32_t                fFlushes;               /* submissions that pushed buffers out of the cache (gpu_buffer.flushed; never 0) */
 	uint32_t                fStrangers;             /* requests that named a buffer the client does not have */
 	uint32_t                fLastFence;             /* this client's last submission */
 	bool                    fYields;                /* ... which the next waits for (gpu_fair_ms): not the window server */
@@ -736,9 +731,13 @@ HakiosGPUUserClient::clientClose(void)
 		 * gemNew) and nothing more is kept (keep).
 		 */
 		fClosed = true;
-		/* what the client had the GPU do last may still be going on, in these buffers */
-		if (hakios_gpu_ready()) {
-			gpuWaitAll(1000);
+		/*
+		 * what the client had the GPU do last may still be going on, in these buffers (its own last submission: every fence
+		 * of its buffers is one of its own. Not all the GPU had been given -- another program's second of work queued behind
+		 * it was waited for here, and then said to be a GPU that had stopped answering, reset or given up for the run)
+		 */
+		if (hakios_gpu_ready() && fLastFence != 0) {
+			gpuWait(fLastFence, 1000);
 		}
 		giveBack();
 		if (fLeftCount != 0) {
@@ -860,6 +859,7 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 	b->seen = false;
 	b->fence = 0;
 	b->flushSize = 0;
+	b->flushed = 0;
 	b->surface = NULL;
 	b->map = NULL;
 	b->client = false;
@@ -1473,12 +1473,20 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	 */
 	began = mach_absolute_time();
 	nanoseconds_to_absolutetime(GPU_PUSH_AGAIN_MS * NSEC_PER_MSEC, &again);
+	if (++fFlushes == 0) {
+		fFlushes = 1;
+	}
 	for (uint32_t i = 0; i < request->nr_bos; i++) {
 		struct gpu_buffer * b = buffer(bos[i].handle);
 
-		if (b == NULL || (bos[i].flags & GPU_SUBMIT_BO_TRACK)) {
+		/*
+		 * (a buffer named again in the same submission is not pushed out again: one 256 MB buffer of the program's own named
+		 * 8192 times would be 2 TB pushed out of the cache, with the lock every program's GPU work waits for held all along)
+		 */
+		if (b == NULL || (bos[i].flags & GPU_SUBMIT_BO_TRACK) || b->flushed == fFlushes) {
 			continue;
 		}
+		b->flushed = fFlushes;
 		if (b->surface != NULL) {
 			MiniIOSurface * s = b->surface;
 			uint32_t seed = s->shared()->seed;
@@ -1550,7 +1558,6 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		goto out;
 	}
 	request->fence = hakios_gpu_submit(addresses, words, count);
-	fLastFence = request->fence != 0 ? request->fence : fLastFence;
 	/*
 	 * The ring is full and the core is not reading it: it has stopped. With gpu_recover=1 it is
 	 * reset and given this submission again -- after a reset the ring is empty, so there is
@@ -1564,6 +1571,8 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 			request->fence = hakios_gpu_submit(addresses, words, count);
 		}
 	}
+	/* (after the submission given again, too: clientClose() and gpu_fair_ms wait for this one) */
+	fLastFence = request->fence != 0 ? request->fence : fLastFence;
 	if (gpu_log && request->fence != 0) {
 		/* "tl: Q FENCE at US: N buffers, B of 4 MB or more, W words of commands": what was given (tl: q: what it took) */
 		uint32_t big = 0, all_words = 0;

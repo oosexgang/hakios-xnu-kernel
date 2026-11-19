@@ -119,6 +119,16 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The framebuffer (`MiniIOMobileFramebuffer.cpp`): a layer placed wholly off the panel -- by any program that can swap,
+  or by the window server sliding a layer just out of sight -- made the drawing read its column table outside it and
+  blend past the surface's rows into the kernel's heap; a layer wholly left of the panel was smeared over all of it.
+  Columns and rows are now clipped to the panel and a layer with none on it is not drawn; a very tall layer is no longer
+  walked row by row a billion times with the lock held; and the panel rectangle is worked out in 64 bits (with
+  `fbscale=` it wrapped in 32).
+- The GPU's user client (`BoardGPU.cpp`): a buffer named many times in one submission was pushed out of the cache each
+  time, under the lock every program's GPU work waits for (one 256 MB buffer named 8192 times: 2 TB); a client closing
+  waited for every program's last work, not its own, and a second of another's work then looked like a GPU that had
+  stopped (reset, or given up on for the run); and a submission sent again after a recovery was not the one waited for.
 - SpringBoard's remote control (`userland/userland/src/inject_sb.c`, new host test `workbench/springboard_remote_test.c`):
   any program can post `com.hakios.layers`, and a layer tree deeper than about 600 overflowed SpringBoard's stack (a
   respring); the walk now stops at 128 and says so. `com.hakios.switcher` sent `sharedInstance` without asking the class
