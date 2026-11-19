@@ -262,3 +262,45 @@ TEST(link_refuses_more_varyings_than_the_table_holds) {
     CHECK(!render::link(vs, fs, &l, &why));
     expectRefusal(why, "the link holds 32 entries and has no room left for the position");
 }
+
+// The VPC has 128 locations (VPC_VAR_DISABLE's four words, Linkage::varmask), and the position's four come after the
+// FS's varyings: 30 vec4 varyings and a [[point_coord]] (two locations, no VS register) leave 126 - 120 - 2 = 4 for the
+// position, which fits; 31 vec4 varyings and the point coordinate end at 126, and the position from there ran past
+// varmask[3] into positionLoc (126 | 3 = 127), a link that went on to be drawn. Refused by name now, as is an FS input
+// whose own location is past the VPC's.
+TEST(link_refuses_varyings_that_leave_no_location_for_the_position) {
+    constexpr uint8_t kSlotPntc = 25;   // VARYING_SLOT_PNTC
+    Stage vs = kernels::tri_color_vs_air;
+    Stage fs = kernels::tri_color_fs_air;
+    auto build = [&](uint32_t vec4s) {
+        vs.numOutputs = vec4s + 1;
+        vs.outputs[0] = StageOutput{kSlotPos, uint8_t(regid(40, 0)), 0, 0};
+        for (uint32_t i = 0; i < vec4s; i++) vs.outputs[1 + i] = StageOutput{uint8_t(kSlotVar0 + i), uint8_t(regid(i, 0)), 0, 0};
+        vs.positionRegid = regid(40, 0);
+        vs.pointSizeRegid = a6xx::kRegidNone;
+        fs.numInputs = vec4s + 1;
+        for (uint32_t i = 0; i < vec4s; i++) fs.inputs[i] = StageInput{uint8_t(kSlotVar0 + i), a6xx::kRegidNone, 0xf, uint8_t(4 * i), 0, 1, 0, 0};
+        fs.inputs[vec4s] = StageInput{kSlotPntc, a6xx::kRegidNone, 0x3, uint8_t(4 * vec4s), 0, 1, 0, 0};
+        fs.totalIn = 4 * vec4s + 2;
+    };
+    Linkage l{};
+    std::string why;
+    build(30);
+    CHECK(render::link(vs, fs, &l, &why));
+    CHECK_EQ(l.positionLoc, 122u);
+    CHECK_EQ(l.maxLoc, 126u);
+    build(31);
+    l = Linkage{};
+    why.clear();
+    const bool linked = render::link(vs, fs, &l, &why);
+    CHECK(!linked);
+    if (linked) std::fprintf(stderr, "  linked: positionLoc %u, maxLoc %u\n", l.positionLoc, l.maxLoc);
+    expectRefusal(why, "the fragment stage's varyings take 126 of the VPC's 128 locations: no room left for the position");
+    // an input of its own past the VPC's locations
+    build(30);
+    fs.inputs[29].inloc = 126;
+    fs.totalIn = 200;
+    l = Linkage{};
+    CHECK(!render::link(vs, fs, &l, &why));
+    expectRefusal(why, "the fragment stage reads varying slot 61 (VAR29) at location 126, past the VPC's 128");
+}

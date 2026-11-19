@@ -1,4 +1,5 @@
 #include "hakios-metal/gpu.hpp"
+#include "hakios-metal/pm4.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -161,8 +162,20 @@ void Gpu::closeQueue(uint32_t id) {
 
 int Gpu::submit(uint32_t queue, const Bo& commands, uint32_t offsetBytes, uint32_t words, const std::vector<BoUse>& uses,
                 uint32_t* fence) {
-    if (words == 0 || offsetBytes % 4 != 0 || offsetBytes + 4ull * words > commands.size()) {
+    return submit(queue, commands, std::vector<std::pair<uint32_t, uint32_t>>{{offsetBytes, words}}, uses, fence);
+}
+
+int Gpu::submit(uint32_t queue, const Bo& commands, const std::vector<std::pair<uint32_t, uint32_t>>& runs, const std::vector<BoUse>& uses,
+                uint32_t* fence) {
+    // (each run is a CP_INDIRECT_BUFFER of its own in the kernel's ring, whose IB_SIZE holds 20 bits: a longer one would
+    // run cut short, so it is refused here, as is a count the kernel would refuse)
+    if (runs.empty() || runs.size() > kMaxSubmitCmds) {
         return EINVAL;
+    }
+    for (const auto& [offsetBytes, words] : runs) {
+        if (words == 0 || words > pm4::kMaxIbWords || offsetBytes % 4 != 0 || offsetBytes + 4ull * words > commands.size()) {
+            return EINVAL;
+        }
     }
     // the command buffer is the first of the buffers; the others follow it once each, read or written
     std::vector<MsmSubmitBo> bos;
@@ -182,17 +195,19 @@ int Gpu::submit(uint32_t queue, const Bo& commands, uint32_t offsetBytes, uint32
             bos.push_back(MsmSubmitBo{u.write ? kSubmitBoWrite : kSubmitBoRead, u.bo->handle(), u.bo->gpuAddress()});
         }
     }
-    MsmSubmitCmd cmd{};
-    cmd.type = kSubmitCmdBuf;
-    cmd.submit_idx = 0;
-    cmd.submit_offset = offsetBytes;
-    cmd.size = words * 4;
+    std::vector<MsmSubmitCmd> cmds(runs.size());
+    for (size_t i = 0; i < runs.size(); i++) {
+        cmds[i].type = kSubmitCmdBuf;
+        cmds[i].submit_idx = 0;
+        cmds[i].submit_offset = runs[i].first;
+        cmds[i].size = runs[i].second * 4;
+    }
     MsmGemSubmit s{};
     s.flags = kPipe3D;
     s.nr_bos = uint32_t(bos.size());
-    s.nr_cmds = 1;
+    s.nr_cmds = uint32_t(cmds.size());
     s.bos = uint64_t(uintptr_t(bos.data()));
-    s.cmds = uint64_t(uintptr_t(&cmd));
+    s.cmds = uint64_t(uintptr_t(cmds.data()));
     s.fence_fd = -1;
     s.queueid = queue;
     int e = t_->call(kGemSubmit, &s, sizeof(s));

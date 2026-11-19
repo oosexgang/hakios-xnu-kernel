@@ -105,6 +105,31 @@ TEST(fill_any_length) {
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
+// A command buffer of more words than one CP_INDIRECT_BUFFER counts (IB_SIZE: 20 bits, 0xfffff words): 180 000 fills
+// of a word each, six words of stream apiece, some 1.08 million words. Handed over as one IB, the command processor ran
+// its size modulo 2^20 (the fake faults such an IB, as the GPU would cut it); as IBs cut between packets every fill
+// lands. The control: the words before the first fill's and after the last one's are left as they were.
+TEST(a_command_buffer_longer_than_one_indirect_buffer_runs_whole) {
+    Rig r;
+    constexpr uint32_t kFills = 180000;
+    auto b = buffer(r, 4ull * (kFills + 2));
+    memset(b->contents(), 0x11, 4ull * (kFills + 2));
+    auto cb = r.queue->commandBuffer();
+    bool recorded = true;
+    for (uint32_t i = 0; i < kFills; i++) recorded = cb->fill(*b, 4ull * (i + 1), 4, uint8_t(i % 251 + 1)) && recorded;
+    CHECK(recorded);
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    const auto* p = static_cast<const uint8_t*>(b->contents());
+    uint32_t wrong = 0;
+    for (uint32_t i = 0; i < kFills; i++) wrong += p[4ull * (i + 1)] != uint8_t(i % 251 + 1) || p[4ull * (i + 1) + 3] != uint8_t(i % 251 + 1);
+    CHECK_EQ(wrong, 0u);
+    CHECK(p[0] == 0x11 && p[3] == 0x11 && p[4ull * (kFills + 1)] == 0x11);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 TEST(copy_then_fill_in_one_buffer_keeps_order) {
     Rig r;
     auto a = buffer(r, 4096), b = buffer(r, 4096);

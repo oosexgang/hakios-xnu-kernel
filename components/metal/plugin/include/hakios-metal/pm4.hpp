@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace hakios::metal::pm4 {
@@ -41,6 +42,9 @@ constexpr uint32_t kType4 = 0x40000000u;
 constexpr uint32_t kType7 = 0x70000000u;
 constexpr uint32_t kMaxType4Count = 0x7e;     // a type-4 count has 7 bits, and Mesa keeps it below 0x7f
 constexpr uint32_t kMaxType7Count = 0x3fff;   // a type-7 count has 14 bits
+// CP_INDIRECT_BUFFER's IB_SIZE is 20 bits of words (adreno_pm4.xml, A5XX-): the command processor runs a longer
+// buffer's size modulo 2^20 -- the rest of it never, or the cut at a packet's middle read on as packets
+constexpr uint32_t kMaxIbWords = 0xfffff;
 
 constexpr uint32_t type4(uint32_t reg, uint32_t count) {
     return kType4 | count | oddParity(count) << 7 | (reg & 0x3ffffu) << 8 | oddParity(reg) << 27;
@@ -57,6 +61,10 @@ struct Header {
     uint32_t opcode = 0;      // type 7
     uint32_t count = 0;       // the words after the header
 };
+
+// WORDS, whole packets, cut into runs of at most MAX words each, at packet boundaries: (first word, words) of each, in
+// order -- what one CP_INDIRECT_BUFFER can take (kMaxIbWords), a run apiece
+std::vector<std::pair<uint32_t, uint32_t>> ibRuns(const std::vector<uint32_t>& words, uint32_t max = kMaxIbWords);
 
 Header decode(uint32_t word);
 

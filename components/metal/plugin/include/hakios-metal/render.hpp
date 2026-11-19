@@ -553,8 +553,10 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
 // CLEAR: the attachments cleared in GMEM instead of loaded (gmemClearWords' packing in CLEAR_WORDS), which
 // encodeBegin was told to leave unfilled
 // VSC: with Options::gmemBinning, the visibility streams' memory (vscBytes'), the draws having been encoded USE_VISIBILITY
-void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
-                uint32_t load, uint32_t store, bool fetch, uint32_t clear = 0, const uint32_t (*clearWords)[4] = nullptr, uint64_t vsc = 0);
+// BODIES: the draws' words in memory, as runs of whole packets (address, words) one CP_INDIRECT_BUFFER can take each
+// (pm4::kMaxIbWords), called one after another in every tile
+void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, const std::vector<std::pair<uint64_t, uint32_t>>& bodies,
+                uint64_t table, const Options& o, uint32_t load, uint32_t store, bool fetch, uint32_t clear = 0, const uint32_t (*clearWords)[4] = nullptr, uint64_t vsc = 0);
 // the visibility streams' memory a binned GMEM pass needs: each pipe's draw stream and its size word, each pipe's
 // primitive stream
 constexpr uint32_t kVscDrawPitch = 0x4000, kVscPrimPitch = 0x20000;

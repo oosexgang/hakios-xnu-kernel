@@ -2401,8 +2401,8 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
     return true;
 }
 
-void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
-                uint32_t load, uint32_t store, bool fetch, uint32_t clear, const uint32_t (*clearWords)[4], uint64_t vsc) {
+void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, const std::vector<std::pair<uint64_t, uint32_t>>& bodies,
+                uint64_t table, const Options& o, uint32_t load, uint32_t store, bool fetch, uint32_t clear, const uint32_t (*clearWords)[4], uint64_t vsc) {
     const auto [W, H] = windowOf(pass);
     // the colour cache out of the tiles' way (it is not pipelined: after a WFI, as the sysmem value is written)
     stream.waitForIdle();
@@ -2484,7 +2484,9 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         event(stream, UNK_2C);
         reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(0, 0));
         reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
-        if (o.gmemBinningStage != 1) stream.indirect(bodies, bodyWords);
+        if (o.gmemBinningStage != 1) {
+            for (const auto& [at, words] : bodies) stream.indirect(at, words);
+        }
         event(stream, UNK_2D);
         // the VSC wrote through the UCHE and the command processor reads the streams uncached: flushed and waited for
         stream.waitForIdle();
@@ -2583,7 +2585,8 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
                 stream.waitForIdle();
                 event(stream, CACHE_INVALIDATE);
             }
-            stream.indirect(bodies, bodyWords);   // (an IB2: the draws' words once in memory, not once a tile in the stream)
+            // (an IB2: the draws' words once in memory, not once a tile in the stream; IB2s, past what one IB_SIZE counts)
+            for (const auto& [at, words] : bodies) stream.indirect(at, words);
             crumb(0x300 + ty * plan.cols + tx);
             // The command processor queues each tile's streams and lets one go only at this marker (tu6_render_tile's,
             // under hw binning): without it the third tile's CP_SET_BIN_DATA5 found the queue full and its draws hung
@@ -2935,7 +2938,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // A draw into the open pass's attachments joins it: no batch start, no pass begin and no tail of its own, which a
     // pass per draw spent on every draw (the CCU flush and the cache flush waited for, each time). It joins when the
     // attachments are the same textures, it asks for no Clear (a Clear begins a pass), and the options are the same.
-    bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.level == pass.level && open_->pass.depth == pass.depth &&
+    // (the same level and slice of each: a draw into another face of the cube, or another layer of the depth array, is
+    // another pass, whose attachments are other memory)
+    bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.level == pass.level && open_->pass.slice == pass.slice &&
+                 open_->pass.depth == pass.depth && open_->pass.depthLevel == pass.depthLevel && open_->pass.depthSlice == pass.depthSlice &&
                  open_->pass.stencil == pass.stencil && !(pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear) &&
                  pass.load != LoadAction::kClear &&
                  !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
@@ -2943,7 +2949,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     for (uint32_t i = 0; joins && i < kMaxColorOutputs - 1; i++) {
         // (the attachments past 0 the same textures and stores, none asking for a Clear: the same pass)
         const ColorAttachment &a = pass.more[i], &b = open_->pass.more[i];
-        joins = a.texture == b.texture && a.level == b.level && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
+        joins = a.texture == b.texture && a.level == b.level && a.slice == b.slice && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
     }
     // GMEM is decided as a pass opens, before its first draw is encoded (a draw in a tile is encoded for the tile:
     // encodeInPass). A draw a tile cannot replay ends a GMEM pass and opens a sysmem one of its own.
@@ -3471,7 +3477,11 @@ void CommandBuffer::closePass() {
             vsc = v->gpuAddress();
         }
         pm4::Stream tiles;
-        render::encodeGmem(tiles, open_->pass, plan, ib.gpuAddress(), uint32_t(w.size()), open_->table, open_->options, load, store, open_->read != 0,
+        // (the draws as IB2s of whole packets that IB_SIZE's 20 bits can count: a pass of some thousands of draws is more
+        // than 2^20 words, which one IB2 ran modulo 2^20)
+        std::vector<std::pair<uint64_t, uint32_t>> bodies;
+        for (const auto& [first, words] : pm4::ibRuns(w)) bodies.emplace_back(ib.gpuAddress() + 4ull * first, words);
+        render::encodeGmem(tiles, open_->pass, plan, bodies, open_->table, open_->options, load, store, open_->read != 0,
                            open_->clears, open_->clearWords, vsc);
         appendStream(stream_, tiles);
         counts_.gmemPasses++;

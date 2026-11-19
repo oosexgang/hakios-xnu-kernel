@@ -549,6 +549,9 @@ uint64_t Texture::stencilPlaneBytes() const { return info_->stencil ? s8Bytes(de
 
 TextureLevel Texture::level(uint32_t l) const {
     if (surface_ != 0 || desc_.mipLevels <= 1) return TextureLevel{0, pitch_, desc_.width, desc_.height};
+    // (a level past the texture's is the caller's to refuse, and some ask before they refuse -- a draw's default
+    // viewport, of the application's attachment level: answered as the last, not walked to, which for 0xffffffff never ended)
+    l = std::min(l, desc_.mipLevels - 1);
     if (info_->depth) return depthLevel(*info_, desc_.width, desc_.height, l);
     return textureLevel(*info_, desc_.width, desc_.height, desc_.mipLevels, l);
 }

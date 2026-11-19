@@ -2164,6 +2164,10 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     fault(depth >= 2 ? "indirect buffers nested deeper than the GPU's two levels" : "CP_INDIRECT_BUFFER of other than 3 words");
                     return false;
                 }
+                if (p[2] > pm4::kMaxIbWords) {
+                    fault(text("CP_INDIRECT_BUFFER of %llu words: its IB_SIZE holds 20 bits (0x%llx at most)", p[2], pm4::kMaxIbWords));
+                    return false;
+                }
                 if (!execute(p[0] | uint64_t(p[1]) << 32, p[2], depth + 1)) {
                     return false;
                 }
@@ -2555,7 +2559,17 @@ void FakeGpu::run(const Job& job) {
     passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = inTile_ = binning_ = false;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();
-    bool ok = execute(job.address, job.words, 0);
+    // each of the submission's command buffers an IB1 of the kernel's ring, one after another; IB_SIZE holds 20 bits,
+    // and a longer one would run cut short (pm4::kMaxIbWords)
+    bool ok = true;
+    for (const auto& [address, words] : job.ibs) {
+        if (words > pm4::kMaxIbWords) {
+            fault(text("an IB1 of %llu words: CP_INDIRECT_BUFFER's IB_SIZE holds 20 bits", words, 0));
+            ok = false;
+            break;
+        }
+        if (!(ok = execute(address, words, 0))) break;
+    }
     if (ok && drawsInSubmission_ != 0) {
         // the colour a draw wrote sits in the CCU until PC_CCU_FLUSH_COLOR_TS (the kernel's own end-of-submit fence
         // flushes the UCHE, not the CCU: hakios.adreno.c:3496-3516), and what the CCU flushed sits in the UCHE until
@@ -2710,16 +2724,22 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
     case kGemSubmit: {
         if (size != sizeof(MsmGemSubmit)) return EINVAL;
         auto* s = static_cast<MsmGemSubmit*>(data);
-        if (s->nr_cmds != 1 || s->nr_bos == 0 || (s->queueid != 0 && queues_.count(s->queueid) == 0)) return EINVAL;
+        // (the kernel's checks: 1 to GPU_SUBMIT_CMDS command buffers, each a CMD_BUF inside a buffer of the submission)
+        if (s->nr_cmds == 0 || s->nr_cmds > Gpu::kMaxSubmitCmds || s->nr_bos == 0 || (s->queueid != 0 && queues_.count(s->queueid) == 0)) return EINVAL;
         auto* bos = reinterpret_cast<const MsmSubmitBo*>(uintptr_t(s->bos));
-        auto* cmd = reinterpret_cast<const MsmSubmitCmd*>(uintptr_t(s->cmds));
-        if (cmd->submit_idx >= s->nr_bos || cmd->type != kSubmitCmdBuf || cmd->size % 4 != 0) return EINVAL;
+        auto* cmds = reinterpret_cast<const MsmSubmitCmd*>(uintptr_t(s->cmds));
         for (uint32_t i = 0; i < s->nr_bos; i++) {
             if (buffers_.count(bos[i].handle) == 0) return ENOENT;   // a buffer the GPU would not know: refused
         }
-        Buffer& c = buffers_.at(bos[cmd->submit_idx].handle);
-        if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
-        Job job{++submitted_, c.iova + cmd->submit_offset, cmd->size / 4};
+        Job job{0, {}};
+        for (uint32_t i = 0; i < s->nr_cmds; i++) {
+            const MsmSubmitCmd* cmd = &cmds[i];
+            if (cmd->submit_idx >= s->nr_bos || cmd->type != kSubmitCmdBuf || cmd->size % 4 != 0) return EINVAL;
+            Buffer& c = buffers_.at(bos[cmd->submit_idx].handle);
+            if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
+            job.ibs.emplace_back(c.iova + cmd->submit_offset, cmd->size / 4);
+        }
+        job.fence = ++submitted_;
         s->fence = job.fence;
         // (a wedged GPU still takes submissions, as the kernel's ring does until it is full: they are never run)
         if (wedged_) {

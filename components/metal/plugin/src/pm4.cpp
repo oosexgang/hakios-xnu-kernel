@@ -27,6 +27,21 @@ Header decode(uint32_t word) {
     return h;
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> ibRuns(const std::vector<uint32_t>& words, uint32_t max) {
+    std::vector<std::pair<uint32_t, uint32_t>> runs;
+    uint32_t start = 0;
+    for (size_t i = 0; i < words.size();) {
+        const size_t next = i + 1 + decode(words[i]).count;   // (a packet is at most 1 + kMaxType7Count words, far below MAX)
+        if (next - start > max) {
+            runs.emplace_back(start, uint32_t(i - start));
+            start = uint32_t(i);
+        }
+        i = next;
+    }
+    if (start < words.size()) runs.emplace_back(start, uint32_t(words.size() - start));
+    return runs;
+}
+
 void Stream::command(uint32_t opcode, uint32_t count) {
     assert(count <= kMaxType7Count);
     ready();

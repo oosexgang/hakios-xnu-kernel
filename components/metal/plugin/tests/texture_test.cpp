@@ -1,8 +1,12 @@
 // Textures and samplers as objects: the layout rule (fdl6_layout's pitch and size for a linear 2D image), the row
 // conversion between the caller's stride and the GPU's, the two descriptors against literals, the sampler words
 // against literals, and every refusal by its sentence. Nothing here reaches a dispatch; compute_test does that.
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "hakios-metal/fake_gpu.hpp"
@@ -566,6 +570,56 @@ TEST(texture_levels_are_laid_out_as_fdl6_layout_does_it) {
     const uint32_t px = 0;
     CHECK(!t->replace(3, 0, 0, 9, 1, &px, 36, &why));
     CHECK(has(why, "lies outside the 8 x 8 level 3 of the texture"));
+}
+
+// A level past the texture's, as an application's render pass may name one (MTLRenderPassAttachmentDescriptor.level,
+// an NSUInteger the plug-in hands through as it is, trusting the core to refuse it): Texture::level answers at once, with
+// the last level, and the caller refuses it. Level 0xffffffff walked the levels with a counter that could never pass
+// it -- the draw's default viewport asked for that level before the draw was refused, and the recording thread spun for
+// ever. Asked on a thread of its own here, so that the old walk fails this test instead of hanging the run. The
+// control: the last real level is itself, the depth texture's chain too.
+TEST(a_level_past_the_textures_is_answered_at_once_as_its_last) {
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 64;
+    d.mipLevels = 3;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    TextureDesc zd = d;
+    zd.format = PixelFormat::kDepth32Float;
+    zd.usage = kTextureUsageRenderTarget;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    auto z = t != nullptr ? Texture::make(r.gpu, zd, &why) : nullptr;
+    CHECK(z != nullptr);
+    if (z == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    for (const std::shared_ptr<Texture>& x : {t, z}) {
+        struct Answer {
+            std::mutex m;
+            std::condition_variable cv;
+            bool done = false;
+            TextureLevel level{};
+        };
+        auto a = std::make_shared<Answer>();
+        std::thread([x, a] {
+            const TextureLevel L = x->level(~0u);
+            std::lock_guard<std::mutex> g(a->m);
+            a->level = L;
+            a->done = true;
+            a->cv.notify_all();
+        }).detach();
+        std::unique_lock<std::mutex> g(a->m);
+        CHECK(a->cv.wait_for(g, std::chrono::seconds(5), [&] { return a->done; }));
+        if (!a->done) continue;
+        const TextureLevel last = x->level(2);
+        CHECK_EQ(last.width, 16u);
+        CHECK_EQ(a->level.offset, last.offset);
+        CHECK_EQ(a->level.width, last.width);
+        CHECK_EQ(a->level.pitch, last.pitch);
+    }
 }
 
 // ASTC, a block format: fdl6 counts blocks (nblocksx * cpp, cpp 16 for a 128-bit block) and aligns the pitch to 64

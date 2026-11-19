@@ -222,8 +222,7 @@ private:
     };
     struct Job {
         uint32_t fence;
-        uint64_t address;
-        uint32_t words;
+        std::vector<std::pair<uint64_t, uint32_t>> ibs;   // the submission's command buffers, (address, words), run in order
     };
     // what a dispatch has loaded so far, for CP_EXEC_CS to be checked against
     struct CsState {

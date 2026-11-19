@@ -750,6 +750,17 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
     cb->stream_.waitMemWrites();
     cb->stream_.waitForIdle();
     const std::vector<uint32_t>& w = cb->stream_.words();
+    // the stream as runs the GPU's IB_SIZE can count, cut between packets: one IB1 a run, run in order (a stream of
+    // more than 2^20 words -- some thousands of draws in one command buffer -- was handed over as one, and the command
+    // processor ran its size modulo 2^20)
+    std::vector<std::pair<uint32_t, uint32_t>> runs = pm4::ibRuns(w);
+    if (runs.size() > Gpu::kMaxSubmitCmds) {
+        cb->error_ = "a command stream of " + std::to_string(w.size()) + " words: more than the " + std::to_string(Gpu::kMaxSubmitCmds) +
+                     " indirect buffers of " + std::to_string(pm4::kMaxIbWords) + " words one submission takes";
+        cb->finish(CommandBuffer::kError);
+        return;
+    }
+    for (auto& r : runs) r.first *= 4;   // (in bytes into the command buffer's memory)
     int error = 0;
     cb->commands_ = takeCommandBo(4 * w.size(), &error);
     if (cb->commands_ == nullptr) {
@@ -759,13 +770,12 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
     }
     // the stream is written in order, as write-combined memory wants it, and read back by nobody
     memcpy(cb->commands_->cpu(), w.data(), 4 * w.size());
-    const uint32_t words = uint32_t(w.size());
     std::unique_lock<std::mutex> g(lock_);  // the fences of one queue are handed out in commit order
     // (its words are in the GPU's buffer now: the memory goes to the next command buffer, a few kept at most)
     if (spareStreams_.size() < kSpareStreams) spareStreams_.push_back(cb->stream_.release());
     cb->status_ = CommandBuffer::kCommitted;
     cb->faultsAtCommit_ = gpu_.faults();
-    int e = gpu_.submit(id_, *cb->commands_, 0, words, cb->uses_, &cb->fence_);
+    int e = gpu_.submit(id_, *cb->commands_, runs, cb->uses_, &cb->fence_);
     if (e != 0) {
         cb->error_ = std::string("the driver refused the submission: ") + strerror(e);
         idle_.push_back(std::move(cb->commands_));

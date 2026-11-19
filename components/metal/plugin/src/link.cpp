@@ -33,6 +33,9 @@ constexpr uint8_t kVaryingSlotPos = 0;
 constexpr uint8_t kVaryingSlotVar0 = 32;
 constexpr uint8_t kVaryingSlotPsiz = 12;   // gl_varying_slot's VARYING_SLOT_PSIZ: a VS's [[point_size]]
 constexpr uint8_t kVaryingSlotPntc = 25;   // [[point_coord]] (compiler.cpp lowers it to this input), filled by the VPC
+// the VPC's locations: VPC_VAR_DISABLE's 4 x 32 bits (Linkage::varmask) and VPC_VARYING_INTERP_MODE's / PS_REPL_MODE's 8 x
+// 16 (Linkage::interpMode, psReplMode) -- what the stride, the position and the point size must fit in too
+constexpr uint32_t kMaxLocations = 128;
 
 // VPC_VARYING_INTERP_MODE's two-bit field per component: INTERP_SMOOTH 0, INTERP_FLAT 1, INTERP_ZERO 2, INTERP_ONE 3
 // (a6xx.xml.h enum a6xx_varying_interp_mode); 16 components per register (tu_pipeline.cc tu6_emit_vpc_varying_modes)
@@ -102,6 +105,10 @@ bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why) {
         const StageInput& in = fs.inputs[j];
         if (in.compmask == 0 || !in.bary) continue;
         if (in.inloc >= fs.totalIn) continue;
+        if (uint32_t(in.inloc) + lastBit(in.compmask) > kMaxLocations) {
+            return refuse(why, "the fragment stage reads varying slot " + std::to_string(in.slot) + " (" + slotName(in.slot) + ") at location " +
+                                   std::to_string(in.inloc) + ", past the VPC's " + std::to_string(kMaxLocations));
+        }
         if (in.slot == kVaryingSlotPntc) {
             // no VS register: the VPC writes S and T for a point sprite, and the z and w a vec4 read would see as 0 and
             // 1, at the input's packed components (tu6_vpc_varying_mode). Metal's point_coord has its origin at the
@@ -151,6 +158,12 @@ bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why) {
     // takes linkage.varmask BEFORE the position is appended (fd6_program.cc:654-658); ir3_link_add would set the
     // position's bits too, so they are taken back after it
     uint32_t varyingsOnly[4] = {l.varmask[0], l.varmask[1], l.varmask[2], l.varmask[3]};
+    // (the position's four locations, and the point size's one after them, inside the VPC's too: past them linkAdd's
+    // varmask[] ran off its four words into positionLoc, and the stride past what the VPC has)
+    if (l.maxLoc + 4 + (vs.pointSizeRegid != a6xx::kRegidNone ? 1 : 0) > kMaxLocations) {
+        return refuse(why, "the fragment stage's varyings take " + std::to_string(l.maxLoc) + " of the VPC's " + std::to_string(kMaxLocations) +
+                               " locations: no room left for the position" + (vs.pointSizeRegid != a6xx::kRegidNone ? " and the point size" : ""));
+    }
     l.positionLoc = l.maxLoc;
     if (!linkAdd(l, kVaryingSlotPos, vs.positionRegid, 0xf, uint8_t(l.maxLoc))) {
         return refuse(why, "the link holds " + std::to_string(kMaxStageOutputs) + " entries and has no room left for the position");

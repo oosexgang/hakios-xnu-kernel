@@ -5061,6 +5061,64 @@ TEST(a_draw_into_a_cube_face_aims_at_that_face) {
     expectRefusal(e6.error, "slice 6 of a texture of 6");
 }
 
+// Two passes into one cube, face 0 then face 3, in one command buffer and neither asking for a Clear (each face of a
+// cube map drawn by an encoder of its own, its load action Load or DontCare): the second is a pass of its own aimed at
+// face 3, not a draw joined to face 0's pass. The same for a depth array's layers (a shadow map's cascades), whose
+// depth slice alone differs. The control: two draws into face 0 still share their one pass.
+TEST(a_draw_into_another_slice_of_the_same_texture_begins_a_pass_of_its_own) {
+    Rig r;
+    TextureDesc d;
+    d.type = TextureType::kCube;
+    d.width = d.height = 64;
+    d.depth = 6;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    TextureDesc zd;
+    zd.type = TextureType::k2DArray;
+    zd.format = PixelFormat::kDepth32Float;
+    zd.width = zd.height = 64;
+    zd.depth = 4;
+    zd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    std::string why;
+    auto cube = Texture::make(*r.gpu, d, &why);
+    auto z = cube != nullptr ? Texture::make(*r.gpu, zd, &why) : nullptr;
+    CHECK(z != nullptr);
+    if (z == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    auto run = [&](const RenderPass& a, const RenderPass& b, const Draw& dr) {
+        const uint32_t before = r.fake->stats().passes;
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(flatProgram(), a, dr, Bindings{}, Bindings{}));
+        CHECK(cb->draw(flatProgram(), b, dr, Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+        return r.fake->stats().passes - before;
+    };
+    RenderPass face0;
+    face0.color0 = cube.get();
+    face0.load = LoadAction::kDontCare;
+    RenderPass face3 = face0;
+    face3.slice = 3;
+    CHECK_EQ(run(face0, face0, wholeDraw()), 1u);
+    CHECK_EQ(run(face0, face3, wholeDraw()), 2u);
+    CHECK_EQ(r.fake->stats().lastDraw.mrtBase, cube->gpuAddress() + 3 * cube->sliceBytes());
+    auto t = target(r);
+    RenderPass layer0;
+    layer0.color0 = t.get();
+    layer0.depth = z.get();
+    layer0.depthLoad = LoadAction::kDontCare;
+    RenderPass layer2 = layer0;
+    layer2.depthSlice = 2;
+    Draw dr = wholeDraw();
+    dr.depth = DepthState{1, true};
+    CHECK_EQ(run(layer0, layer2, dr), 2u);
+    CHECK_EQ(r.fake->stats().lastDraw.depthBase, z->gpuAddress() + 2 * z->sliceBytes());
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 // A depth texture of mip levels (sokol's miprender draws every level with depth): each level its own tiled layout, the
 // RB told the level's base and pitch. Level 0 is the control: the texture's own address and pitch.
 TEST(a_draw_into_a_depth_mip_level_aims_at_that_level) {
@@ -5573,6 +5631,31 @@ TEST(a_draw_gmem_cannot_replay_sends_the_pass_to_sysmem) {
     // (the first draw in a tile, then the other two in a sysmem pass that loads what the tile stored)
     CHECK(cb->counts().gmemPasses == 1 && cb->counts().passes == 2 && s.tiles == 1 && s.draws == 3);
     CHECK_EQ(coordsWrong(*t), 0u);
+}
+
+// A GMEM pass of so many draws that their words, called once a tile as an IB2, are more than one CP_INDIRECT_BUFFER
+// counts (IB_SIZE: 20 bits, 0xfffff words): 48 000 draws of one program, some 23 words each once deduplicated. As one
+// IB2 the command processor ran the size modulo 2^20 -- the draws past it never, or a packet cut in two read on (the fake
+// faults such an IB); as IB2s of whole packets every draw runs in the tile. The control: the pass is the one tile.
+TEST(a_gmem_pass_of_more_draw_words_than_one_ib2_counts_runs_every_draw) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    constexpr uint32_t kDraws = 48000;
+    const uint32_t before = r.fake->stats().draws;
+    auto cb = r.queue->commandBuffer();
+    bool recorded = true;
+    for (uint32_t i = 0; i < kDraws; i++) recorded = cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}) && recorded;
+    CHECK(recorded);
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK(cb->counts().gmemPasses == 1 && s.tiles == 1);
+    CHECK_EQ(s.draws - before, kDraws);
 }
 
 // The same split with a store action of DontCare (a memoryless attachment's, CoreAnimation's path mask): the pass goes

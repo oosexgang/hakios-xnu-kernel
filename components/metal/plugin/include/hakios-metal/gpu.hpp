@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hakios::metal {
@@ -210,6 +211,11 @@ public:
     // 0 and the fence, or an errno
     int submit(uint32_t queue, const Bo& commands, uint32_t offsetBytes, uint32_t words, const std::vector<BoUse>& uses,
                uint32_t* fence);
+    // ...and as several runs of COMMANDS, (offset in bytes, words) each, one after another in one submission: one
+    // CP_INDIRECT_BUFFER a run in the kernel's ring, so each at most pm4::kMaxIbWords, and kMaxSubmitCmds of them
+    int submit(uint32_t queue, const Bo& commands, const std::vector<std::pair<uint32_t, uint32_t>>& runs, const std::vector<BoUse>& uses,
+               uint32_t* fence);
+    static constexpr size_t kMaxSubmitCmds = 128;   // the kernel's GPU_SUBMIT_CMDS (drivers/iokit/BoardGPU.cpp)
 
     // until the fence has passed, or TIMEOUT_NS: 0, ETIMEDOUT, or another errno
     int wait(uint32_t queue, uint32_t fence, int64_t timeoutNs);
