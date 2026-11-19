@@ -101,7 +101,8 @@ static struct part {
 	unsigned writes, past_end, flushes, reads;
 	uint64_t lba, size;                     /* the last write */
 } parts[PARTS];
-static efi_status flush_status;
+static efi_status flush_status, write_status;
+static efi_status read_status;                  /* (a read that says it failed, its blocks copied all the same) */
 
 static struct part *
 part_of(struct efi_block_io *self)
@@ -130,6 +131,9 @@ part_write(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t 
 	if (lba + size / bs > p->media.last_block + 1) {
 		p->past_end++;
 	}
+	if (EFI_ERROR(write_status)) {
+		return write_status;
+	}
 	if ((lba + size / bs) * bs <= sizeof(p->bytes)) {
 		memcpy(p->bytes + lba * bs, buffer, size);
 	}
@@ -147,7 +151,7 @@ part_read(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t s
 		return EFI_ERROR_BIT | 2;
 	}
 	memcpy(buffer, p->bytes + lba * bs, size);
-	return 0;
+	return read_status;
 }
 
 static efi_status EFIAPI
@@ -218,7 +222,7 @@ phone(void)
 		p->media = (efi_block_media){ .media_id = 5 + i, .present = 1, .logical = 1, .block_size = 4096, .last_block = BLOCKS - 1 };
 		p->io = (efi_block_io){ .media = &p->media, .read_blocks = part_read, .write_blocks = part_write, .flush_blocks = part_flush };
 	}
-	flush_status = 0;
+	flush_status = write_status = read_status = 0;
 	kernels_list_in = false;
 	said[0] = 0;
 	log_len = 0;
@@ -311,6 +315,66 @@ larger_than_the_partition(void)
 	parts[LOGDUMP].media.block_size = 0;
 	write_logs(NULL, 0);
 	CHECK(parts[LOGDUMP].writes == 0 && strstr(said, "NOT WRITTEN") != NULL, "no block size: %s", said);
+	/* a log, its end among it, of exactly the partition's size: it fits, and is written */
+	phone();
+	parts[LOGDUMP].media.last_block = (log_len + 1 + 4095) / 4096 - 1;
+	write_logs(NULL, 0);
+	CHECK(parts[LOGDUMP].writes == 1 && parts[LOGDUMP].past_end == 0 && strstr(said, "read back the same") != NULL,
+	    "a log of the partition's size: %s", said);
+	/* a medium that says it has more blocks than 64 bits count bytes of: not believed, nothing written */
+	phone();
+	parts[LOGDUMP].media.last_block = (1ULL << 52) + (1ULL << 40);
+	write_logs(NULL, 0);
+	CHECK(parts[LOGDUMP].writes == 0 && strstr(said, "NOT WRITTEN") != NULL, "a partition of more than 2^64 bytes: %s", said);
+}
+
+/*
+ * the log's end goes into the partition with it: a log of whole blocks has a block more, of zeros, behind it -- else
+ * a longer log of an earlier run, still in the partition, reads as part of this one
+ */
+static void
+the_end_is_written(void)
+{
+	phone();
+	memset(parts[LOGDUMP].bytes, 'x', sizeof(parts[LOGDUMP].bytes));   /* (an earlier run's log) */
+	while (log_len < 4096) {
+		put_char('.');
+	}
+	write_logs(NULL, 0);
+	CHECK(parts[LOGDUMP].writes == 1 && parts[LOGDUMP].size == 2 * 4096, "two blocks: %llu bytes", (unsigned long long)parts[LOGDUMP].size);
+	CHECK(parts[LOGDUMP].bytes[4095] == '.' && parts[LOGDUMP].bytes[4096] == 0, "the log, and its end after it: %#x",
+	    parts[LOGDUMP].bytes[4096]);
+}
+
+/* only a partition of the GPT's: what UEFI gives of an MBR partition is no name, whatever its bytes read as */
+static void
+only_gpt_partitions(void)
+{
+	phone();
+	parts[0].info.type = 1;                 /* MBR */
+	for (unsigned k = 0; k < 9; k++) {
+		parts[0].info.name[k] = (char16)"logdump"[k < 8 ? k : 7];
+	}
+	write_logs(NULL, 0);
+	CHECK(only_logdump_written() && parts[LOGDUMP].writes == 1, "the GPT's logdump, not the MBR's: %u %u", parts[0].writes,
+	    parts[LOGDUMP].writes);
+}
+
+/* a write that fails is not flushed or read back; a read back that fails is not taken for the log, whatever came in */
+static void
+failures_are_not_the_same(void)
+{
+	phone();
+	write_status = EFI_ERROR_BIT | 7;
+	write_logs(NULL, 0);
+	CHECK(parts[LOGDUMP].writes == 1 && parts[LOGDUMP].flushes == 0 && parts[LOGDUMP].reads == 0, "written: %u, flushed %u, read %u",
+	    parts[LOGDUMP].writes, parts[LOGDUMP].flushes, parts[LOGDUMP].reads);
+	CHECK(strstr(said, "read back not tried") != NULL, "said: %s", said);
+	phone();
+	read_status = EFI_ERROR_BIT | 7;
+	write_logs(NULL, 0);
+	CHECK(parts[LOGDUMP].reads == 1 && strstr(said, "read back the same") == NULL && strstr(said, "DIFFERENT") != NULL,
+	    "a read back that failed: %s", said);
 }
 
 /* a flush that fails: the blocks may be in the device's cache only, and a read back from there says nothing */
@@ -324,6 +388,7 @@ flush_that_fails(void)
 	    parts[LOGDUMP].flushes);
 	CHECK(strstr(said, "read back the same") == NULL, "not said to be the same: %s", said);
 	CHECK(strstr(said, "flush FAILED") != NULL, "the flush said to have failed: %s", said);
+	CHECK(parts[LOGDUMP].reads == 0, "and nothing read back from the cache: %u reads", parts[LOGDUMP].reads);
 }
 
 /* the kernel's own transfer list in the controller: nothing is written (and that is said) */
@@ -343,7 +408,8 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "the_log_goes_into_logdump", the_log_goes_into_logdump }, { "no_logdump", no_logdump },
 		{ "larger_than_the_partition", larger_than_the_partition }, { "flush_that_fails", flush_that_fails },
-		{ "only_through_uefis_list", only_through_uefis_list },
+		{ "only_through_uefis_list", only_through_uefis_list }, { "the_end_is_written", the_end_is_written },
+		{ "only_gpt_partitions", only_gpt_partitions }, { "failures_are_not_the_same", failures_are_not_the_same },
 	};
 
 	if (argc < 2) {

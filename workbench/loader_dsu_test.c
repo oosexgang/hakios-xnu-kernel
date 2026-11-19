@@ -259,7 +259,7 @@ static uint8_t stored_bytes[STORED][4096];
 static struct { uint64_t lba, size; } writes[64];
 static unsigned write_count, flushes, written_outside;
 static bool forgetful;                          /* a storage that takes a write and does not keep it */
-static efi_status write_status;
+static efi_status write_status, flush_status;
 
 static efi_status EFIAPI
 userdata_write(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t size, void *buffer)
@@ -318,7 +318,7 @@ static efi_status EFIAPI
 userdata_flush(struct efi_block_io *self)
 {
 	flushes++;
-	return 0;
+	return flush_status;
 }
 
 static efi_block_io metadata_io = { .media = &metadata_media, .read_blocks = metadata_read };
@@ -504,6 +504,10 @@ only_inside_the_image(void)
 	CHECK(dsu_write(&userdata_io, 5 * 4096, patch, 4096) == 0, "from its end");
 	CHECK(dsu_write(&userdata_io, 0, patch, 6 * 4096) == 0, "more than all of it");
 	CHECK(dsu_write(&userdata_io, 512, patch, 4096) == 0 && dsu_write(&userdata_io, 0, patch, 512) == 0, "not in whole blocks");
+	/* (an offset off the image's blocks, also where an extent off the storage's would put it on one of the storage's) */
+	dsu_extent[0].sector = 79999;
+	CHECK(dsu_write(&userdata_io, 512, patch, 4096) == 0, "an offset that is no block of the image");
+	dsu_extent[0].sector = 80000;
 	said[0] = 0;
 	CHECK(dsu_write(&userdata_io, 0xfffffffffffff000ULL, patch, 2 * 4096) == 0 && strstr(said, "not whole blocks inside the image") != NULL,
 	    "an offset so large that offset + length wraps around is refused as what it is: %s", said);
@@ -516,6 +520,16 @@ only_inside_the_image(void)
 	userdata_media.block_size = 0;
 	CHECK(dsu_write(&userdata_io, 0, patch, 4096) == 0 && write_count == 0, "a storage that gives no block size");
 	userdata_media.block_size = 4096;
+	/* nothing to write at the image's very end is nothing written, and done */
+	image();
+	write_count = 0;
+	CHECK(dsu_write(&userdata_io, 5 * 4096, patch, 0) == 1 && write_count == 0, "an empty patch at the end: %u writes", write_count);
+	/* an image said to be larger than its extents: what lies past them is not written, and not said to be */
+	dsu_bytes = 48 * 512;
+	CHECK(dsu_write(&userdata_io, 5 * 4096, patch, 4096) == 0 && write_count == 0 && written_outside == 0,
+	    "a block past the extents: %u writes", write_count);
+	CHECK(dsu_write(&userdata_io, 4 * 4096, patch, 4096 + 512) == 0 && write_count == 0,
+	    "a patch of a block and a half, the half past the extents: refused before anything is written: %u writes", write_count);
 }
 
 /* a write that fails, or that does not read back as written: said, and nothing more is written */
@@ -536,6 +550,11 @@ not_written_is_said(void)
 	read_status = EFI_ERROR_BIT | 7;
 	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0 && write_count == 1, "a read back that fails");
 	read_status = 0;
+	/* a flush that fails: what reads back may be the device's cache, not the flash -- not taken for written */
+	write_count = 0;
+	flush_status = EFI_ERROR_BIT | 7;
+	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0 && write_count == 1, "a flush that fails: %u writes", write_count);
+	flush_status = 0;
 }
 
 /*
@@ -559,6 +578,24 @@ whole_blocks_before_writing(void)
 	/* ... which a patch inside the first two blocks of it does not reach: that one goes in */
 	CHECK(dsu_write(&userdata_io, 4096, patch, 4096) == 1 && write_count == 1 && writes[0].lba == 10001, "a patch that does not reach it: %s",
 	    said);
+	/*
+	 * an extent that begins off the storage's blocks and ends on one (and the next the other way about): the piece of it
+	 * would begin in the middle of a block -- nothing written, not the first extent's piece either
+	 */
+	image();
+	dsu_extent[1].sector = 16001, dsu_extent[1].count = 15;
+	dsu_extent[2].sector = 40007, dsu_extent[2].count = 9;
+	dsu_extents = 3;
+	dsu_bytes = 48 * 512;
+	write_count = 0;
+	CHECK(dsu_write(&userdata_io, 0, patch, 6 * 4096) == 0 && write_count == 0, "an extent whose start is off the storage's blocks: %u writes",
+	    write_count);
+	/* an extent off the storage's blocks that ends where a patch begins: the patch does not reach it, and goes in */
+	image();
+	dsu_extent[0].sector = 80001;
+	write_count = 0;
+	CHECK(dsu_write(&userdata_io, 3 * 4096, patch, 2 * 4096) == 1 && write_count == 1 && writes[0].lba == 2000,
+	    "a patch of the second extent alone: %u writes: %s", write_count, said);
 }
 
 /* the kernel's own transfer list still in the controller (a run that did not give it back): nothing is written */
