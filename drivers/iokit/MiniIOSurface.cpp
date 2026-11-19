@@ -93,6 +93,7 @@ enum {
 #define MINISURF_MAX_DIMENSION  16384
 #define MINISURF_MAX_ALLOC      (512u << 20)
 #define MINISURF_ROW_ALIGN      64
+#define MINISURF_MAX_BYTES_PER_ROW (MINISURF_MAX_DIMENSION * 16)   /* what methodInit says a row may be */
 
 #define FOURCC(a, b, c, d) ((uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d))
 
@@ -643,6 +644,22 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 	if (bpr == 0) {
 		bpr = planeCount ? s->planes[0].bytesPerRow
 		    : alignUp((uint64_t) ((width + ew - 1) / ew) * bpe, MINISURF_ROW_ALIGN);
+	}
+	/*
+	 * A surface around its maker's memory gets a copy of that memory (`snapshot`, below) with four
+	 * rows to spare after it, and the GPU's side sizes its own copy of one the same way (BoardGPU.cpp
+	 * clientSurfaceBuffer): rows of the maker's bytesPerRow, which nothing above ties to the memory
+	 * the maker has. A 4 KB picture said to have one row of 512 MB had the kernel ask for 2 GB of
+	 * wired memory for its copy, and one of no rows said to be 4 GB less a byte long, 16 GB. A row of
+	 * such a surface is no longer than methodInit says a row may be (the widest surface at 16 bytes
+	 * a pixel), so the rows to spare are a megabyte at most past memory that is the maker's size.
+	 * Surfaces of our own memory are left as they were: nothing is allocated past their end (the
+	 * GPU sees the pages there as repeats of the last one), and their rows times their height are
+	 * held to MINISURF_MAX_ALLOC below.
+	 */
+	if (wrapped != NULL && bpr > MINISURF_MAX_BYTES_PER_ROW) {
+		s->release();
+		return NULL;
 	}
 	if (planeCount == 0) {
 		needed = (uint64_t) bpr * ((height + eh - 1) / eh);
@@ -1441,7 +1458,7 @@ IOSurfaceRootUserClient::methodInit(IOExternalMethodArguments * args)
 		bzero(&reply26, sizeof(reply26));
 		reply26.allocAlignMask = (uint32_t) PAGE_MASK;
 		reply26.rowAlignMask = MINISURF_ROW_ALIGN - 1;
-		reply26.maxBytesPerRow = MINISURF_MAX_DIMENSION * 16;
+		reply26.maxBytesPerRow = MINISURF_MAX_BYTES_PER_ROW;
 		reply26.maxWidth = MINISURF_MAX_DIMENSION;
 		reply26.maxHeight = MINISURF_MAX_DIMENSION;
 		reply26.version = 1;
@@ -1454,7 +1471,7 @@ IOSurfaceRootUserClient::methodInit(IOExternalMethodArguments * args)
 	}
 	reply.allocAlignMask = (uint32_t) PAGE_MASK;
 	reply.rowAlignMask = MINISURF_ROW_ALIGN - 1;
-	reply.maxBytesPerRow = MINISURF_MAX_DIMENSION * 16;
+	reply.maxBytesPerRow = MINISURF_MAX_BYTES_PER_ROW;
 	reply.maxWidth = MINISURF_MAX_DIMENSION;
 	reply.maxHeight = MINISURF_MAX_DIMENSION;
 	reply.reserved = 0;
