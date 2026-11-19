@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- The Metal plug-in (`components/metal/plugin`, five new tests): a draw into another slice or depth layer of the same
+  texture joined the open pass and landed on the first slice; a mip level past the texture's made the default viewport
+  loop four billion times; a fragment shader with enough varyings wrote past the link's mask into the position's
+  location; and a command buffer, or a tile pass's draws, longer than an indirect buffer's 2^20 words was handed to the
+  GPU whole and run cut short. Streams are now cut between packets into indirect buffers that fit, and the kernel
+  refuses a command buffer longer than that (`BoardGPU.cpp`).
 - Our changes to XNU's processes (`kernel/patches/0006-bsd-process.patch`): a spawn with a persona let any process that
   is not root start a child as any other user, with any groups (a daemon's files, its processes to signal); now a
   non-root caller may only ask for an identity it already has, as with setuid() and setgroups(). A program named

@@ -225,6 +225,7 @@ struct hakios_worked {
 #define GPU_BUFFERS             8192            /* a client's, at most */
 #define GPU_BUFFER_MAX          (256u << 20)
 #define GPU_SUBMIT_CMDS         128
+#define GPU_IB_WORDS_MOST       0xfffffu        /* CP_INDIRECT_BUFFER's size field: 20 bits */
 #define GPU_SUBMIT_BOS          8192
 #define GPU_SHOWN_WAIT_MS       30              /* a submission waits for the display's copy of its surface this long at most */
 #define GPU_SUBMIT_BO_TRACK     0x8000u         /* a submission's buffer flag (Turnip's darwin transport): named for the surface's
@@ -1541,8 +1542,12 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		if (cmds[i].type != MSM_SUBMIT_CMD_BUF) {
 			continue;                               /* the other kinds are for a GPU shared between address spaces */
 		}
+		/*
+		 * (and no more words than an indirect buffer's size field holds, 20 bits: the ring takes the count as it is, and
+		 * the GPU would run it modulo 2^20 -- draws dropped, or a packet cut in two and the rest read as commands)
+		 */
 		if (b == NULL || cmds[i].nr_relocs != 0 || (cmds[i].size & 3) || (cmds[i].submit_offset & 3) ||
-		    (uint64_t) cmds[i].submit_offset + cmds[i].size > b->size) {
+		    (uint64_t) cmds[i].submit_offset + cmds[i].size > b->size || cmds[i].size / 4 > GPU_IB_WORDS_MOST) {
 			IOLog("HakiosGPU: command buffer %u of a submission: buffer %u, offset %u, %u bytes, %u relocations: not taken\n",
 			    i, cmds[i].submit_idx, cmds[i].submit_offset, cmds[i].size, cmds[i].nr_relocs);
 			IOLockUnlock(gGPULock);
