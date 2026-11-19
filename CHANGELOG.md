@@ -119,6 +119,12 @@ tags yet, so the current work is one section.
 
 ### Fixes
 
+- Keeping `/private/var` between boots (`init/var_store.c`): one file with more than 4096 extended attributes -- which
+  any application can give a file of its own -- made every new archive one the next boot refused, and the save after
+  that overwrote the last good copy: the whole volume was lost. A save now never writes over the only good copy either:
+  the newest slot is read through before the other is written (once, when `var_store watch` starts), and a torn one is
+  written instead. An inode's other names were restored as links to a first name that was never packed, losing the
+  file; and the restore wrote owners, modes and files through symbolic links init had made (`/private/var/jb`).
 - What the loader writes to the phone's flash (`arch/arm64/boot/src/`, new test `workbench/loader_log_partition_test.c`):
   `oem dsu patch` wrote the first pieces of a patch before finding a later piece not on whole blocks, leaving the
   image half patched while the host was told nothing was written; every piece is now checked before any is written.

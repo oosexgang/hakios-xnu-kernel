@@ -612,6 +612,33 @@ main(void)
 		CHECK(host_statx_of(p, &x) == 0 && (x.mode & 0170000) == 0100000 && strcmp(text, "store") == 0,
 		    "the archive's file is there in the link's place: \"%s\"", text);
 	}
+	/*
+	 * save_keeps_the_good_copy: the newest slot's header checks out but its archive does not (a save torn after the
+	 * header reached the flash): load took the slot before it, and the next save writes over the torn one, not over the
+	 * only good copy there is; with both whole, the older is written, as always
+	 */
+	{
+		static uint8_t junk[BLOCK];
+		struct head h1, old;
+		int best = -2;
+
+		archive_begin(0);
+		archive_entry(ENT_FILE, 0600, "kept", "good", 4, 1000000);
+		archive_end(0, 60);
+		archive_begin(1);
+		archive_entry(ENT_FILE, 0600, "newer", "newer", 5, 1000000);
+		archive_end(1, 61);
+		good_slot = -1;                 /* (a new process: nothing read through yet) */
+		memset(&old, 0, sizeof(old));
+		CHECK(save_slot(&old, &best) == 0 && best == 1, "both whole: the older slot is written (best %d)", best);
+		memset(junk, 0x5c, sizeof(junk));
+		CHECK(device_write(slot_at(1) + BLOCK, junk, BLOCK), "slot 1's archive torn under its header");
+		CHECK(read_head(1, &h1) && !pass(&h1, 0), "slot 1's header checks out, its archive does not");
+		good_slot = -1;
+		memset(&old, 0, sizeof(old));
+		CHECK(save_slot(&old, &best) == 1 && best == 1 && old.generation == 61,
+		    "the torn slot is the one written, slot 0, the good copy, kept (best %d)", best);
+	}
 	{
 		char p[1024];
 

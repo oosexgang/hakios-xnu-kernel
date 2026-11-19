@@ -1046,6 +1046,49 @@ pack_tree(const char *relative)
 	return ok;
 }
 
+/*
+ * The slot and generation whose archive this process has read through and found whole, or written itself (each block
+ * of a write is read back before it is answered): what save() need not read again.
+ */
+static int good_slot = -1;
+static uint64_t good_generation;
+static int pass(const struct head *h, int make);
+
+/* Whether the archive SLOT's header H describes reads back whole: read through once, then remembered. */
+static int
+archive_whole(int slot, const struct head *h)
+{
+	if (slot == good_slot && h->generation == good_generation) {
+		return 1;
+	}
+	if (!pass(h, 0)) {
+		return 0;
+	}
+	good_slot = slot;
+	good_generation = h->generation;
+	return 1;
+}
+
+/*
+ * The slot a save writes, OLD the newest header and *BEST its slot (-1: none). It is the one NOT holding the newest good
+ * archive. newest() goes by the headers; a header that checks out over an archive that does not (a save torn after its
+ * header -- or its last blocks -- reached the flash) is one load passes over for the slot before it. Writing that slot then
+ * would leave nothing good at all: the torn one is written instead, and the one load took is kept.
+ */
+static int
+save_slot(struct head *old, int *best_out)
+{
+	int best = newest(old), slot = best < 0 ? 0 : (best + 1) % SLOTS;
+
+	if (best >= 0 && !archive_whole(best, old)) {
+		printf("var_store: slot %d (generation %llu) does not read back whole: it is the one written, and slot %d is kept\n",
+		    best, (unsigned long long)old->generation, (best + 1) % SLOTS);
+		slot = best;
+	}
+	*best_out = best;
+	return slot;
+}
+
 static int
 save(void)
 {
@@ -1054,8 +1097,7 @@ save(void)
 	static uint8_t block[BLOCK];
 
 	memset(&old, 0, sizeof(old));
-	best = newest(&old);
-	slot = best < 0 ? 0 : (best + 1) % SLOTS;
+	slot = save_slot(&old, &best);
 	printf("var_store: saving into slot %d (slot %d holds generation %llu)\n", slot, best,
 	    best < 0 ? 0ULL : (unsigned long long)old.generation);
 	printf("var_store: the keychain is %s\n", keychain_kept() ? "kept too (var_store_keychain=1), and not encrypted" :
@@ -1120,6 +1162,8 @@ save(void)
 	if (changed_under != 0) {
 		printf("var_store: %u files were another by the time they were opened: left out\n", changed_under);
 	}
+	good_slot = slot;
+	good_generation = h.generation;
 	return 1;
 }
 
@@ -1674,6 +1718,18 @@ watch(int seconds)
 		printf("var_store: %s cannot be written (%s): nothing would be saved\n", DEVICE,
 		    strerror(errno));
 		return 0;
+	}
+	{
+		/* (the newest archive read through now, at the start, and not within the 20 s the end of the run gives a save) */
+		struct head h;
+		int best;
+
+		memset(&h, 0, sizeof(h));
+		best = newest(&h);
+		if (best >= 0 && !archive_whole(best, &h)) {
+			printf("var_store: slot %d (generation %llu) does not read back whole: a save writes it, not the other\n", best,
+			    (unsigned long long)h.generation);
+		}
 	}
 	close(fd);
 	fd = -1;
