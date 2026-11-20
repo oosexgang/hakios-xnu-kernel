@@ -978,6 +978,19 @@ class Generate(Sandbox):
         for mount in ('"x", "x", "z"', '"x", "y"', '"x", "y", "z", "x"', '"x", "y", "w"', '"--x", "y", "z"', '"x", "-y", "z "'):
             self.assertIn('mount is Darwin\'s x, y and z as the chip\'s axes', wired(mount=mount), mount)
         self.assertEqual(wired(mount='"x", "y", "z"'), '')
+        # a BMI160 instead: the same section, its own feature (and its bit in the table); never both chips for the one section
+        lsm6dso = path.read_text()
+        self.assertIn('HAKIOS_HAS_IMU_LSM6DSO', boards.table_text(*boards.load()))
+        path.write_text(lsm6dso.replace('"imu-lsm6dso"', '"imu-bmi160"').replace('<0x6a>', '<0x68>'))
+        self.assertEqual(self.problems(), '')
+        table = boards.table_text(*boards.load())
+        self.assertIn('HAKIOS_HAS_IMU_BMI160', table)
+        self.assertNotIn('HAKIOS_HAS_IMU_LSM6DSO', table)
+        self.assertIn('.address = 0x68, .full_scale = 4, .axis = { 0, 1, 2 }, .sign = { 1, 1, 1 } },', table)
+        path.write_text(lsm6dso.replace('"imu-lsm6dso"', '"imu-lsm6dso", "imu-bmi160"'))
+        self.assertIn('features "imu-lsm6dso" and "imu-bmi160" are two chips for the one imu { }', self.problems())
+        path.write_text(plain.replace('"imu-lsm6dso"', '"imu-bmi160"'))
+        self.assertIn('feature "imu-bmi160" needs imu { } in the board file', self.problems())
         self.assertEqual(wired(mount='"+z", "-x", "y"'), '')
         self.assertIn('.axis = { 2, 0, 1 }, .sign = { 1, -1, 1 } },', boards.table_text(*boards.load()))
 

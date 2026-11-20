@@ -6,12 +6,18 @@
  * units board/sensor_axes_core.h's, the orientation board/orientation_core.h's, and the three together
  * board/sensors_core.h's. This file is the bus, the levels and the thread.
  *
+ * Or a Bosch BMI160, where the board lists "imu-bmi160" instead: the same pins, levels, boot-args, units, mounting
+ * and hw.sensors.*, the chip's own registers and commands (board/bmi160_core.h; "A BMI160" below says what differs).
+ * Which chip is the board's word (its feature), never a guess from what answers: the one's identity register is in
+ * the middle of the other's output. What is said of the LSM6DSO from here on is said of the chip of the board, by
+ * the names its row of chips[] has for them.
+ *
  *   I2C        done by hand (board/i2c_gpio.h) on the board's two pins, taken for each transaction and given
  *              back as they were found
  *   interrupt  the chip's INT1, only looked at: the output is polled
  *
  * On most Snapdragon phones the chip is the sensor DSP's, on a bus the application processor does not
- * drive; a board lists "imu-lsm6dso" only where it is on the SoC's own pins.
+ * drive; a board lists "imu-lsm6dso" (or "imu-bmi160") only where it is on the SoC's own pins.
  *
  * Nothing here is done unless a boot-arg asks for it:
  *
@@ -85,6 +91,20 @@
  * sending) is clocked free, at a look too, and the pins are as they were found. The gyroscope, if it was switched
  * on, is powered down too (CTRL2_G 0), before the accelerometer. Nothing is written anywhere but to the chip's three
  * control registers and the bus's two pins.
+ *
+ * A BMI160 (board/bmi160_core.h; its numbers are its datasheet's as remembered, and none of this has met a chip):
+ * its identity is CHIP_ID (0x00), 0xd1. At the second level it is reset by a command (CMD, 0x7e <- 0xb6) and waited for
+ * until it answers its identity again with both halves suspended; the accelerometer is switched on by a command
+ * (0x11), then given 100 Hz (ACC_CONF 0x28) and the board's range (ACC_RANGE), and the gyroscope, only when its
+ * rates are for Darwin's motion stack exactly as above, by its command (0x15), then 100 Hz (GYR_CONF 0x28) and
+ * +-2000 dps (GYR_RANGE 0, 16.4 counts a dps). A register written is read back as above; a command cannot be (CMD
+ * does not keep it), so PMU_STATUS (0x03) is read until it says the half is in the mode asked for, which takes the
+ * accelerometer a few milliseconds and the gyroscope some 55 to 80 -- and the next command waits for that, since
+ * the chip drops one that comes while it carries out another. A millisecond is let pass after every write: the chip
+ * wants 450 microseconds between writes while nothing in it measures. Its twelve output bytes are read in one go
+ * from 0x0c, gyroscope first, as the LSM6DSO's are. It is powered down by the two suspend commands (0x14 the
+ * gyroscope first, then 0x10), each held to PMU_STATUS and said again if the chip dropped it. Nothing is written
+ * anywhere but to CMD and those four registers.
  */
 #include <kern/clock.h>
 #include <kern/locks.h>
@@ -100,6 +120,7 @@
 #include "board.h"
 #include "log.h"
 #include "lsm6dso_core.h"
+#include "bmi160_core.h"
 #include "sensors_core.h"
 
 static vm_offset_t tlmm;
@@ -121,6 +142,8 @@ HAKIOS_DEFINE_SAY(!__atomic_load_n(&leaving, __ATOMIC_SEQ_CST) && ml_get_interru
 #define POLL_MS                 100     /* how often the output is read: at most 10 samples a second (this file's head) */
 #define ODR_104_HZ              4       /* CTRL1_XL's output data rate code for 104 Hz (lsm6dso_core.h: lsm6dso_ctrl1_xl()); CTRL2_G's too */
 #define GYRO_FS                 LSM6DSO_FS_G_2000DPS    /* the gyroscope's range: +-2000 dps, 70 mdps a count (lsm6dso_core.h) */
+#define BMI160_GYRO_RANGE       BMI160_GYR_RANGE_2000DPS        /* a BMI160's: the same +-2000 dps, 16.4 counts a dps (bmi160_core.h) */
+#define OUTPUT_BYTES            12      /* a read of the output, either chip's: the gyroscope's six bytes, then the accelerometer's */
 #define GYRO_SETTLE             3       /* reads after the gyroscope is switched on whose rates are not taken (this file's head) */
 #define GYRO_STUCK              100     /* reads in a row (10 s) of the very same rates that say the gyroscope is stuck */
 
@@ -261,9 +284,9 @@ give_up(const char *why)
 	say("imu: %s: NOTHING MORE IS DONE with the chip in this run\n", why);
 }
 
-/* One register written and read back. */
+/* One register written and, GAP_MS after (a chip that wants time after a write: 0 for one that does not), read back. */
 static bool
-put(uint8_t reg, uint8_t value)
+put_after(uint8_t reg, uint8_t value, unsigned gap_ms)
 {
 	uint8_t after = 0;
 
@@ -271,6 +294,9 @@ put(uint8_t reg, uint8_t value)
 		say("imu: 0x%02x <- 0x%02x NOT WRITTEN\n", reg, value);
 		give_up(failed);
 		return false;
+	}
+	if (gap_ms != 0) {
+		wait_ms(gap_ms);
 	}
 	if (!regs_read(reg, &after, 1)) {
 		give_up(failed);
@@ -284,39 +310,78 @@ put(uint8_t reg, uint8_t value)
 	return true;
 }
 
-/* Is the chip there, and is it an LSM6DSO? */
+/* One register written and read back. */
+static bool
+put(uint8_t reg, uint8_t value)
+{
+	return put_after(reg, value, 0);
+}
+
+/*
+ * What this file knows of a chip: one row each of chips[], below the two chips' own parts. The board's feature says
+ * which row (hakios_imu_init()); everything after that is the row's.
+ */
+struct imu_counts {
+	int16_t gyro[3], accel[3];      /* one read of the output: x, y, z of each half, in the chip's axes and counts */
+};
+
+struct imu_chip {
+	const char *feature;            /* what a board lists for it */
+	uint32_t has;                   /* ... as board.h has it (HAKIOS_HAS_*) */
+	const char *a, *of;             /* "an LSM6DSO", "THE LSM6DSO'S": as the identity's line says them */
+	const char *identity;           /* its identity register's name ... */
+	uint8_t identity_reg, identity_is;      /* ... its number, and what the chip answers there */
+	uint8_t output_reg;             /* the first of its OUTPUT_BYTES output bytes: gyroscope x, y, z then accelerometer x, y, z, low byte first */
+	void (*decode)(const uint8_t out[], struct imu_counts *counts);        /* ... into counts */
+	unsigned rate_hz;               /* the rate its halves are switched on at, as it is said */
+	const char *gyro_too;           /* ... and how the gyroscope's switching on is said after the accelerometer's */
+	int (*range)(unsigned g);       /* the board's range (g) as the chip's register has it; -1: not one of its ranges */
+	int32_t (*counts_per_g)(int range);     /* ... and the counts it gives per g at it */
+	int gyro_range;                 /* the range configure() gives the gyroscope, as the chip's register has it ... */
+	int32_t (*gyro_udps_per_count)(int range);      /* ... and its sensitivity at it, micro-dps a count */
+	bool (*configure)(void);        /* reset, the accelerometer on at the board's range, the gyroscope too if gyro_wanted */
+	bool (*gyro_off)(void);         /* the gyroscope powered down: also at the run's end, the other cores stopped */
+	bool (*accel_off)(void);        /* ... and the accelerometer */
+	const char *gyro_off_is, *accel_off_is; /* what was written for that, as it is said: "CTRL2_G 0" */
+	const char *off_failed;         /* ... and when it could not be, in the line of a gyroscope held stuck */
+};
+
+static const struct imu_chip *chip;     /* the board's (hakios_imu_init()) */
+
+/* Is the chip there, and is it the board's? */
 static bool
 identified(void)
 {
 	uint8_t id = 0;
 
-	if (!regs_read(LSM6DSO_REG_WHO_AM_I, &id, 1)) {
+	if (!regs_read(chip->identity_reg, &id, 1)) {
 		if (failed == not_acknowledged) {
 			say("imu: nobody answers at %#x on the bus of gpio%u/%u\n", ADDRESS, PIN_SDA, PIN_SCL);
 		}
 		give_up(failed);
 		return false;
 	}
-	say("imu: the chip at %#x answers WHO_AM_I 0x%02x%s\n", ADDRESS, id, id == LSM6DSO_WHO_AM_I ? ", an LSM6DSO (0x6c)" :
-	    ": NOT THE LSM6DSO'S 0x6c");
-	if (id != LSM6DSO_WHO_AM_I) {
+	if (id == chip->identity_is) {
+		say("imu: the chip at %#x answers %s 0x%02x, %s (0x%02x)\n", ADDRESS, chip->identity, id, chip->a, chip->identity_is);
+	} else {
+		say("imu: the chip at %#x answers %s 0x%02x: NOT %s 0x%02x\n", ADDRESS, chip->identity, id, chip->of, chip->identity_is);
 		give_up("another chip");
 		return false;
 	}
 	return true;
 }
 
-static uint8_t full_scale;              /* the board's range as CTRL1_XL has it (LSM6DSO_FS_*) */
+static uint8_t full_scale;              /* the board's range as the chip's register has it (LSM6DSO_FS_*, BMI160_ACC_RANGE_*) */
 static bool gyro_wanted;                /* the gyroscope to be switched on: its rates for Darwin's motion stack (this file's head) */
+
+/* ---- an LSM6DSO (lsm6dso_core.h) ------------------------------------------------------------------- */
 
 /* reset, whole samples read in one go, then the accelerometer on at 104 Hz and the board's range */
 static bool
-configure(void)
+lsm6dso_configure(void)
 {
 	uint8_t control = LSM6DSO_CTRL3_SW_RESET;
 
-	say("imu: the chip is reset and its accelerometer switched on: 104 Hz, +-%u g%s\n", hakios_board()->imu.full_scale,
-	    gyro_wanted ? "; its gyroscope too, for Darwin's motion stack: 104 Hz, +-2000 dps" : "");
 	if (!reg_write(LSM6DSO_REG_CTRL3_C, LSM6DSO_CTRL3_SW_RESET)) {
 		say("imu: 0x%02x <- 0x%02x NOT WRITTEN\n", LSM6DSO_REG_CTRL3_C, LSM6DSO_CTRL3_SW_RESET);
 		give_up(failed);
@@ -346,6 +411,273 @@ configure(void)
 	}
 	gyro_switched_on = true;
 	return put(LSM6DSO_REG_CTRL2_G, lsm6dso_ctrl2_g(ODR_104_HZ, GYRO_FS));
+}
+
+static bool
+lsm6dso_gyro_off(void)
+{
+	return reg_write(LSM6DSO_REG_CTRL2_G, 0);
+}
+
+static bool
+lsm6dso_accel_off(void)
+{
+	return reg_write(LSM6DSO_REG_CTRL1_XL, 0);
+}
+
+static void
+lsm6dso_counts(const uint8_t out[], struct imu_counts *counts)
+{
+	struct lsm6dso_sample its = lsm6dso_decode(out);
+
+	for (unsigned i = 0; i < 3; i++) {
+		counts->gyro[i] = its.gyro[i];
+		counts->accel[i] = its.accel[i];
+	}
+}
+
+static int
+lsm6dso_range(unsigned g)
+{
+	return g == 2 ? LSM6DSO_FS_2G : g == 4 ? LSM6DSO_FS_4G : g == 8 ? LSM6DSO_FS_8G : g == 16 ? LSM6DSO_FS_16G : -1;
+}
+
+/* ---- a BMI160 (bmi160_core.h; this file's head: "A BMI160") --------------------------------------- */
+
+/* the mode PMU_STATUS says a half is in */
+static unsigned
+bmi160_pmu(uint8_t status, bool gyroscope)
+{
+	return gyroscope ? bmi160_gyr_pmu(status) : bmi160_acc_pmu(status);
+}
+
+/*
+ * A command that puts a half (the gyroscope, or the accelerometer) into a mode, and PMU_STATUS read every
+ * millisecond until it says the half is there, WITHIN_MS at most; what it read last in STATUS. False when the chip
+ * did not take the command or did not carry it out in that time -- `failed' says which, for the caller to say --
+ * and at once, not at the run's end (AT_END), when the run's end wants the bus: that has the chip powered down.
+ */
+static const char not_carried_out[] = "a command was not carried out", run_ends[] = "the run ends";
+/*
+ * The command that switches a half on, from before it is written until PMU_STATUS has said it carried out (or its
+ * time is up); 0 otherwise. What the run's end finds here was cut off -- the thread let go of the bus for it, or
+ * its core was stopped -- and may still be being carried out: bmi160_off() lets it finish before it says its own.
+ */
+static uint8_t bmi160_in_hand;
+
+static bool
+bmi160_mode(uint8_t command, bool gyroscope, unsigned mode, unsigned within_ms, bool at_end, uint8_t *status)
+{
+	*status = 0;
+	if (!reg_write(BMI160_REG_CMD, command)) {
+		return false;
+	}
+	for (unsigned waited = 0; waited < within_ms; waited++) {
+		if (!at_end && __atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+			failed = run_ends;
+			return false;
+		}
+		wait_ms(BMI160_WRITE_GAP_MS);   /* (also the gap the chip wants after a write: bmi160_core.h) */
+		if (!regs_read(BMI160_REG_PMU_STATUS, status, 1)) {
+			return false;
+		}
+		if (bmi160_pmu(*status, gyroscope) == mode) {
+			return true;
+		}
+	}
+	failed = not_carried_out;
+	return false;
+}
+
+/* A half switched on: its command, said with what PMU_STATUS says of it; nothing more with the chip if it is not carried out. */
+static bool
+bmi160_on(uint8_t command, bool gyroscope, unsigned within_ms)
+{
+	uint8_t status;
+
+	__atomic_store_n(&bmi160_in_hand, command, __ATOMIC_SEQ_CST);
+	if (!bmi160_mode(command, gyroscope, BMI160_PMU_NORMAL, within_ms, false, &status)) {
+		if (failed == not_carried_out) {
+			__atomic_store_n(&bmi160_in_hand, 0, __ATOMIC_SEQ_CST);        /* (its time is up) */
+			say("imu: 0x%02x <- 0x%02x, PMU_STATUS reads 0x%02x: NOT CARRIED OUT in %u ms\n", BMI160_REG_CMD, command, status,
+			    within_ms);
+		} else if (failed == not_acknowledged) {
+			say("imu: 0x%02x <- 0x%02x: a byte was not acknowledged\n", BMI160_REG_CMD, command);
+		}
+		give_up(failed);
+		return false;
+	}
+	__atomic_store_n(&bmi160_in_hand, 0, __ATOMIC_SEQ_CST);
+	say("imu: 0x%02x <- 0x%02x, PMU_STATUS reads 0x%02x: the %s measures\n", BMI160_REG_CMD, command, status,
+	    gyroscope ? "gyroscope" : "accelerometer");
+	return true;
+}
+
+/*
+ * A half powered down: its suspend command, held to PMU_STATUS. A command that comes while the chip carries out
+ * another is dropped, and PMU_STATUS may say the old mode -- suspended -- of a half that is still starting: so a
+ * start that was cut off (bmi160_in_hand: the run ended while the gyroscope was starting) is first let finish,
+ * for as long as it can take, and the suspend command is said again when the chip took it and the half is not
+ * suspended in BMI160_SUSPEND_MS. Always said once, whatever PMU_STATUS says before. In the thread (a gyroscope
+ * held stuck) and at the run's end.
+ */
+static bool
+bmi160_off(uint8_t command, bool gyroscope)
+{
+	bool at_end = __atomic_load_n(&leaving, __ATOMIC_SEQ_CST);
+	uint8_t status, in_hand = __atomic_load_n(&bmi160_in_hand, __ATOMIC_SEQ_CST);
+
+	if (in_hand != 0) {
+		bool its = in_hand == BMI160_CMD_GYR_NORMAL;
+
+		for (unsigned waited = 0; waited < (its ? BMI160_GYR_START_MS : BMI160_ACC_START_MS); waited++) {
+			wait_ms(1);
+			if (!regs_read(BMI160_REG_PMU_STATUS, &status, 1)) {
+				return false;
+			}
+			if (bmi160_pmu(status, its) == BMI160_PMU_NORMAL) {
+				break;
+			}
+		}
+		__atomic_store_n(&bmi160_in_hand, 0, __ATOMIC_SEQ_CST);
+	}
+	/* (the longest another command of that half's can take: its start) */
+	for (unsigned said = 0; said * BMI160_SUSPEND_MS < (gyroscope ? BMI160_GYR_START_MS : BMI160_ACC_START_MS) + BMI160_SUSPEND_MS; said++) {
+		if (bmi160_mode(command, gyroscope, BMI160_PMU_SUSPEND, BMI160_SUSPEND_MS, at_end, &status)) {
+			return true;
+		}
+		if (failed != not_carried_out) {
+			break;          /* (nobody answers, the bus is not at rest: saying it again changes nothing) */
+		}
+	}
+	return false;
+}
+
+static bool
+bmi160_gyro_off(void)
+{
+	return bmi160_off(BMI160_CMD_GYR_SUSPEND, true);
+}
+
+static bool
+bmi160_accel_off(void)
+{
+	return bmi160_off(BMI160_CMD_ACC_SUSPEND, false);
+}
+
+/*
+ * The reset: its command, then the chip looked at every millisecond until it answers its identity again with both
+ * halves suspended, as a reset leaves them (it has no bit that says the reset is done, and may not acknowledge
+ * its address while it is at it), BMI160_RESET_MS at most.
+ */
+static bool
+bmi160_reset(void)
+{
+	uint8_t id, status;
+
+	if (!reg_write(BMI160_REG_CMD, BMI160_CMD_SOFTRESET)) {
+		say("imu: 0x%02x <- 0x%02x NOT WRITTEN\n", BMI160_REG_CMD, BMI160_CMD_SOFTRESET);
+		give_up(failed);
+		return false;
+	}
+	for (unsigned waited = 0; waited < BMI160_RESET_MS && !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST); waited++) {
+		wait_ms(1);
+		id = 0;
+		status = 0xff;
+		failed = NULL;
+		if (regs_read(BMI160_REG_CHIP_ID, &id, 1) && id == BMI160_CHIP_ID && regs_read(BMI160_REG_PMU_STATUS, &status, 1) &&
+		    bmi160_acc_pmu(status) == BMI160_PMU_SUSPEND && bmi160_gyr_pmu(status) == BMI160_PMU_SUSPEND) {
+			say("imu: 0x%02x <- 0x%02x, the chip is back after %u ms: CHIP_ID 0x%02x, PMU_STATUS 0x%02x\n", BMI160_REG_CMD,
+			    BMI160_CMD_SOFTRESET, waited + 1, id, status);
+			return true;
+		}
+		if (failed == not_at_rest) {
+			give_up(failed);        /* (a byte not acknowledged is the chip still at its reset; this is not) */
+			return false;
+		}
+	}
+	give_up("the chip's reset does not end");
+	return false;
+}
+
+/*
+ * reset, then the accelerometer on (its command; once it measures, 100 Hz and the board's range), then the gyroscope
+ * if it is wanted (its command; once it measures, 100 Hz and +-2000 dps) -- each half's registers after its command,
+ * when the chip is known to take a write
+ */
+static bool
+bmi160_configure(void)
+{
+	if (!bmi160_reset()) {
+		return false;
+	}
+	switched_on = true;             /* (from the command on, whether it went through or not: the run's end switches it off) */
+	if (!bmi160_on(BMI160_CMD_ACC_NORMAL, false, BMI160_ACC_START_MS) ||
+	    !put_after(BMI160_REG_ACC_CONF, bmi160_acc_conf(BMI160_ODR_100_HZ), BMI160_WRITE_GAP_MS) ||
+	    !put_after(BMI160_REG_ACC_RANGE, full_scale, BMI160_WRITE_GAP_MS)) {
+		return false;
+	}
+	if (!gyro_wanted) {
+		return true;            /* (the gyroscope stays as the reset left it: suspended) */
+	}
+	gyro_switched_on = true;
+	return bmi160_on(BMI160_CMD_GYR_NORMAL, true, BMI160_GYR_START_MS) &&
+	       put_after(BMI160_REG_GYR_CONF, bmi160_gyr_conf(BMI160_ODR_100_HZ), BMI160_WRITE_GAP_MS) &&
+	       put_after(BMI160_REG_GYR_RANGE, BMI160_GYRO_RANGE, BMI160_WRITE_GAP_MS);
+}
+
+static void
+bmi160_counts(const uint8_t out[], struct imu_counts *counts)
+{
+	struct bmi160_sample its = bmi160_decode(out);
+
+	for (unsigned i = 0; i < 3; i++) {
+		counts->gyro[i] = its.gyro[i];
+		counts->accel[i] = its.accel[i];
+	}
+}
+
+static int
+bmi160_range(unsigned g)
+{
+	return bmi160_acc_range(g) != 0 ? bmi160_acc_range(g) : -1;
+}
+
+/* ---- the chips ------------------------------------------------------------------------------------ */
+
+_Static_assert(LSM6DSO_OUTPUT_BYTES == OUTPUT_BYTES && BMI160_OUTPUT_BYTES == OUTPUT_BYTES, "the output read is twelve bytes");
+
+static const struct imu_chip chips[] = {
+	{
+		.feature = "imu-lsm6dso", .has = HAKIOS_HAS_IMU_LSM6DSO, .a = "an LSM6DSO", .of = "THE LSM6DSO'S",
+		.identity = "WHO_AM_I", .identity_reg = LSM6DSO_REG_WHO_AM_I, .identity_is = LSM6DSO_WHO_AM_I,
+		.output_reg = LSM6DSO_REG_OUTX_L_G, .decode = lsm6dso_counts, .rate_hz = 104,
+		.gyro_too = "; its gyroscope too, for Darwin's motion stack: 104 Hz, +-2000 dps",
+		.range = lsm6dso_range, .counts_per_g = lsm6dso_counts_per_g, .gyro_range = GYRO_FS,
+		.gyro_udps_per_count = lsm6dso_gyro_udps_per_count,
+		.configure = lsm6dso_configure, .gyro_off = lsm6dso_gyro_off, .accel_off = lsm6dso_accel_off,
+		.gyro_off_is = "CTRL2_G 0", .accel_off_is = "CTRL1_XL 0", .off_failed = ": NOT WRITTEN",
+	},
+	{
+		.feature = "imu-bmi160", .has = HAKIOS_HAS_IMU_BMI160, .a = "a BMI160", .of = "THE BMI160'S",
+		.identity = "CHIP_ID", .identity_reg = BMI160_REG_CHIP_ID, .identity_is = BMI160_CHIP_ID,
+		.output_reg = BMI160_REG_DATA_GYR, .decode = bmi160_counts, .rate_hz = 100,
+		.gyro_too = "; its gyroscope too, for Darwin's motion stack: 100 Hz, +-2000 dps",
+		.range = bmi160_range, .counts_per_g = bmi160_counts_per_g, .gyro_range = BMI160_GYRO_RANGE,
+		.gyro_udps_per_count = bmi160_gyro_udps_per_count,
+		.configure = bmi160_configure, .gyro_off = bmi160_gyro_off, .accel_off = bmi160_accel_off,
+		.gyro_off_is = "CMD 0x14, PMU_STATUS: suspended", .accel_off_is = "CMD 0x10, PMU_STATUS: suspended",
+		.off_failed = ": NOT CARRIED OUT",
+	},
+};
+
+/* the chip reset and its accelerometer switched on at the board's range, its gyroscope too if its rates are wanted */
+static bool
+configure(void)
+{
+	say("imu: the chip is reset and its accelerometer switched on: %u Hz, +-%u g%s\n", chip->rate_hz, hakios_board()->imu.full_scale,
+	    gyro_wanted ? chip->gyro_too : "");
+	return chip->configure();
 }
 
 /* ---- the orientation, for Darwin: hw.sensors ----------------------------------------------------- */
@@ -504,9 +836,9 @@ gyro_taken(const int16_t raw[3])
 	if (gyro_same + 1 >= GYRO_STUCK) {     /* (the first of them and the GYRO_STUCK - 1 after it that said the same) */
 		gyro_stuck = true;
 		__atomic_store_n(&gyro_for_darwin, 0, __ATOMIC_SEQ_CST);
-		say("imu: the gyroscope has read %d %d %d (counts) %u times in a row: %s; it is powered down (CTRL2_G 0%s)\n", raw[0],
+		say("imu: the gyroscope has read %d %d %d (counts) %u times in a row: %s; it is powered down (%s%s)\n", raw[0],
 		    raw[1], raw[2], gyro_same + 1, gyro_live ? "stuck, its rates NOT GIVEN ANY MORE" :
-		    "it does not answer, its rates NOT GIVEN", reg_write(LSM6DSO_REG_CTRL2_G, 0) ? "" : ": NOT WRITTEN");
+		    "it does not answer, its rates NOT GIVEN", chip->gyro_off_is, chip->gyro_off() ? "" : chip->off_failed);
 		return false;
 	}
 	if (!gyro_live && !same) {
@@ -519,13 +851,13 @@ gyro_taken(const int16_t raw[3])
 static bool
 sample(void)
 {
-	uint8_t out[LSM6DSO_OUTPUT_BYTES];
-	struct lsm6dso_sample raw;
+	uint8_t out[OUTPUT_BYTES];
+	struct imu_counts raw;
 	struct sensor_sample mg, rate = { { 0, 0, 0 } };
 	bool rated;
 	int now;
 
-	if (!regs_read(LSM6DSO_REG_OUTX_L_G, out, sizeof(out))) {
+	if (!regs_read(chip->output_reg, out, sizeof(out))) {
 		give_up(failed);
 		/* nothing is read from here on: the orientation is not known any more, not the last one kept as if it were */
 		lck_spin_lock(&shown_lock);
@@ -533,7 +865,7 @@ sample(void)
 		lck_spin_unlock(&shown_lock);
 		return false;
 	}
-	raw = lsm6dso_decode(out);
+	chip->decode(out, &raw);
 	mg = sensor_to_darwin(&accel.mount, &accel.scale, (struct sensor_sample){ { raw.accel[0], raw.accel[1], raw.accel[2] } });
 	rated = gyro_switched_on && gyro_taken(raw.gyro);
 	if (rated) {
@@ -609,14 +941,29 @@ hakios_imu_init(void)
 {
 	const struct hakios_board *b;
 	thread_t thread;
+	int range;
 
 	/* boot-arg sensors=N: the motion sensor -- 1 looks at it, 2 follows the phone's orientation (this file's head) */
 	if (!PE_parse_boot_argn("sensors", &level, sizeof(level)) || level == 0) {
 		return;
 	}
-	if (!hakios_board_has(HAKIOS_HAS_IMU_LSM6DSO)) {
+	for (unsigned i = 0; i < sizeof(chips) / sizeof(chips[0]); i++) {
+		if (!hakios_board_has(chips[i].has)) {
+			continue;
+		}
+		if (chip != NULL) {
+			/* (tools/boards.py check refuses such a board: imu { } is one chip's) */
+			say("imu: disabled: this board's board.dts lists both \"%s\" and \"%s\": a board has one motion sensor\n",
+			    chip->feature, chips[i].feature);
+			chip = NULL;
+			level = 0;
+			return;
+		}
+		chip = &chips[i];
+	}
+	if (chip == NULL) {
 		/* the pins and the address are the board's: not on a board that does not say it has the chip on its own pins */
-		say("imu: disabled: this board's board.dts lists no \"imu-lsm6dso\"\n");
+		say("imu: disabled: this board's board.dts lists no \"imu-lsm6dso\" nor \"imu-bmi160\"\n");
 		level = 0;
 		return;
 	}
@@ -630,15 +977,15 @@ hakios_imu_init(void)
 		accel.mount.axis[i] = b->imu.axis[i];
 		accel.mount.sign[i] = b->imu.sign[i];
 	}
-	full_scale = b->imu.full_scale == 2 ? LSM6DSO_FS_2G : b->imu.full_scale == 4 ? LSM6DSO_FS_4G :
-	    b->imu.full_scale == 8 ? LSM6DSO_FS_8G : b->imu.full_scale == 16 ? LSM6DSO_FS_16G : 0xff;
-	if (b->imu.sda == b->imu.scl || b->imu.address == 0 || full_scale == 0xff || !sensor_mount_ok(&accel.mount)) {
+	range = chip->range(b->imu.full_scale);
+	if (b->imu.sda == b->imu.scl || b->imu.address == 0 || range < 0 || !sensor_mount_ok(&accel.mount)) {
 		say("imu: disabled: the board file does not say which pins the chip is on, its address, its range and how it is "
 		    "turned (imu { })\n");
 		level = 0;
 		return;
 	}
-	accel.scale = (struct sensor_scale){ 1000, lsm6dso_counts_per_g(full_scale) };
+	full_scale = (uint8_t)range;
+	accel.scale = (struct sensor_scale){ 1000, chip->counts_per_g(range) };
 	sensors_accel_reset(&accel);
 	i2c_bus.sda = PIN_SDA;
 	i2c_bus.scl = PIN_SCL;
@@ -658,7 +1005,7 @@ hakios_imu_init(void)
 		    "put the right way round on Darwin's axes\n");
 		gyro_wanted = false;
 	}
-	gyro_scale = sensor_gyro_scale(lsm6dso_gyro_udps_per_count(GYRO_FS));
+	gyro_scale = sensor_gyro_scale(chip->gyro_udps_per_count(chip->gyro_range));
 	if (kernel_thread_start(imu_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}
@@ -674,7 +1021,7 @@ hakios_imu_quiesce(void)
 	unsigned clocks = 0;
 	bool off, came_back;
 
-	if (level == 0 || tlmm == 0) {
+	if (level == 0 || tlmm == 0 || chip == NULL) {
 		return;
 	}
 	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
@@ -713,10 +1060,11 @@ hakios_imu_quiesce(void)
 		return;
 	}
 	if (gyro_switched_on) {
-		off = reg_write(LSM6DSO_REG_CTRL2_G, 0);
-		say("imu: at the run's end: the gyroscope %s\n", off ? "is powered down (CTRL2_G 0)" : "COULD NOT BE POWERED DOWN");
+		off = chip->gyro_off();
+		say("imu: at the run's end: the gyroscope %s%s%s\n", off ? "is powered down (" : "COULD NOT BE POWERED DOWN",
+		    off ? chip->gyro_off_is : "", off ? ")" : "");
 	}
-	off = reg_write(LSM6DSO_REG_CTRL1_XL, 0);
-	say("imu: at the run's end: %u samples read, the orientation changed %u times; the accelerometer %s\n", samples, changes,
-	    off ? "is powered down (CTRL1_XL 0)" : "COULD NOT BE POWERED DOWN");
+	off = chip->accel_off();
+	say("imu: at the run's end: %u samples read, the orientation changed %u times; the accelerometer %s%s%s\n", samples, changes,
+	    off ? "is powered down (" : "COULD NOT BE POWERED DOWN", off ? chip->accel_off_is : "", off ? ")" : "");
 }

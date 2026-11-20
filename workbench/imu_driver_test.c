@@ -12,6 +12,16 @@
  * Darwin's motion stack, given only once it is seen to answer and not once it is stuck, its counts turned onto Darwin's
  * axes and into milli-rad/s, and powered down at the run's end.
  *
+ * And the same driver on a board that lists a BMI160 instead (the scenarios named bmi160_*), against a model of that
+ * chip at its own address: its identity at CHIP_ID, a reset by command after which it does not acknowledge its
+ * address for a while, a half's power mode changed by a command that takes some reads of PMU_STATUS to be carried out
+ * and is dropped if it comes while another is, CMD reading back nothing, and the four registers of rate and range. The
+ * model is the datasheet as bmi160_core.h has it, as sure and as unsure as that file: it holds the driver to what the
+ * driver was written for, not to a chip. What is tested is what the LSM6DSO's scenarios test: nothing given before
+ * the chip answers and is configured, the configuration and the order it is made in, the samples and the rates
+ * through the board's mounting in milli-g and milli-rad/s, the gyroscope only on when its rates go to Darwin, the
+ * orientation not known once the chip is lost, both halves suspended at the run's end.
+ *
  *   imu_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
 #include <unistd.h>
@@ -22,7 +32,8 @@
 static unsigned sda_pin = 116, scl_pin = 117, int_pin = 112;
 #define I2C_DEVICE_SDA          sda_pin
 #define I2C_DEVICE_SCL          scl_pin
-#define I2C_DEVICE_ADDRESS      0x6a
+static unsigned chip_address = 0x6a;    /* (an LSM6DSO's; the BMI160 of the bmi160_* scenarios is at 0x68) */
+#define I2C_DEVICE_ADDRESS      chip_address
 #include "i2c_device_model.h"
 
 extern char log_text[];
@@ -36,6 +47,19 @@ extern char log_text[];
 #define CTRL3_C         0x12
 #define OUTX_L_G        0x22
 
+/* a BMI160's (the bmi160_* scenarios) */
+#define BMI_CHIP_ID     0x00
+#define BMI_PMU_STATUS  0x03
+#define BMI_DATA_GYR    0x0c
+#define BMI_ACC_CONF    0x40
+#define BMI_ACC_RANGE   0x41
+#define BMI_GYR_CONF    0x42
+#define BMI_GYR_RANGE   0x43
+#define BMI_CMD         0x7e
+
+static bool bmi160;                             /* the chip on the bus is the model of a BMI160 */
+static unsigned output_register = OUTX_L_G;     /* the first of the chip's twelve output bytes */
+
 /* what is written into the chip */
 static bool register_written[256];
 static unsigned resets, written_after_reset;
@@ -44,9 +68,90 @@ static bool reset_never_ends;                   /* CTRL3_C's reset bit stays set
 static volatile unsigned output_reads;          /* reads of the first output byte: samples taken */
 static volatile bool gyro_wobbles;              /* the gyroscope's x says one count more or less on every other read, as one at rest does */
 
+/*
+ * The model of a BMI160. A command that changes a half's power mode takes `bmi_command_reads' reads of PMU_STATUS
+ * to be carried out (the gyroscope's start three times as many: it is the slow one), PMU_STATUS saying the old mode
+ * until then; a command that comes meanwhile is dropped, as the chip drops it. After a reset the chip does not
+ * acknowledge its address for `bmi_reset_transfers' transfers. CMD keeps nothing to read back.
+ */
+static uint8_t bmi_commands[64];                /* every command written, in order ... */
+static unsigned bmi_command_count;
+static unsigned bmi_dropped;                    /* ... and how many of them came while another was carried out */
+static unsigned bmi_busy;                       /* reads of PMU_STATUS until the command in hand is carried out */
+static uint8_t bmi_status_then;                 /* ... and what PMU_STATUS says from then on */
+static unsigned bmi_command_reads = 2;
+static unsigned bmi_gyro_start_reads;           /* (0: three times bmi_command_reads) */
+static unsigned bmi_reset_transfers = 2;
+static unsigned bmi_back_at;                    /* the transfer (device.starts) from which it answers again after a reset; 0: it answers */
+static volatile bool bmi_start_held;            /* the gyroscope's start is not carried out while the scenario holds it: the reads do not count */
+static bool bmi_drop_next;                      /* the chip drops the next command, as if it were carrying one out */
+static int bmi_deaf_command = -1;               /* a command the chip acknowledges and does not carry out */
+static unsigned bmi_written_while_busy;         /* registers written while a command was being carried out */
+static unsigned bmi_written_while_suspended;    /* a half's rate or range written while the half was suspended */
+
+static void
+bmi_reset(void)
+{
+	device.reg[BMI_PMU_STATUS] = 0x00;      /* both halves suspended */
+	device.reg[BMI_ACC_CONF] = 0x28;        /* 100 Hz, the normal filter */
+	device.reg[BMI_ACC_RANGE] = 0x03;       /* +-2 g */
+	device.reg[BMI_GYR_CONF] = 0x28;
+	device.reg[BMI_GYR_RANGE] = 0x00;       /* +-2000 dps */
+	bmi_busy = 0;
+}
+
+static void
+bmi_written(uint8_t reg, uint8_t value)
+{
+	bool gyroscope = value == 0x14 || value == 0x15;
+	uint8_t status = device.reg[BMI_PMU_STATUS];
+
+	if (reg != BMI_CMD) {
+		written_after_reset += resets > 0;
+		bmi_written_while_busy += bmi_busy != 0;
+		if (reg == BMI_ACC_CONF || reg == BMI_ACC_RANGE) {
+			bmi_written_while_suspended += ((status >> 4) & 3) == 0;
+		} else if (reg == BMI_GYR_CONF || reg == BMI_GYR_RANGE) {
+			bmi_written_while_suspended += ((status >> 2) & 3) == 0;
+		}
+		if (reg != deaf_register) {
+			device.reg[reg] = reg == BMI_ACC_RANGE ? value & 0x0f : reg == BMI_GYR_RANGE ? value & 0x07 : value;
+		}
+		return;
+	}
+	if (bmi_command_count < sizeof(bmi_commands)) {
+		bmi_commands[bmi_command_count++] = value;
+	}
+	if (value == 0xb6) {
+		resets++;
+		bmi_reset();
+		device.absent = true;           /* (from the next transfer on: this byte is acknowledged) */
+		bmi_back_at = reset_never_ends ? ~0u : device.starts + 1 + bmi_reset_transfers;
+		return;
+	}
+	written_after_reset += resets > 0;
+	if (value != 0x10 && value != 0x11 && value != 0x14 && value != 0x15) {
+		return;
+	}
+	if (bmi_busy != 0 || bmi_drop_next) {
+		bmi_dropped++;
+		bmi_drop_next = false;
+		return;
+	}
+	if (value == bmi_deaf_command || ((status >> (gyroscope ? 2 : 4)) & 3) == (value & 1)) {
+		return;                         /* (nor is there anything to carry out for a half that is in that mode) */
+	}
+	bmi_status_then = gyroscope ? (uint8_t)((status & ~0x0c) | (value & 1) << 2) : (uint8_t)((status & ~0x30) | (value & 1) << 4);
+	bmi_busy = value == 0x15 ? (bmi_gyro_start_reads ? bmi_gyro_start_reads : 3 * bmi_command_reads) : bmi_command_reads;
+}
+
 static void
 chip_reset(void)
 {
+	if (bmi160) {
+		bmi_reset();
+		return;
+	}
 	device.reg[CTRL1_XL] = 0x00;
 	device.reg[CTRL2_G] = 0x00;
 	device.reg[CTRL3_C] = 0x04;             /* IF_INC, as the chip comes out of reset */
@@ -56,6 +161,10 @@ static void
 chip_written(uint8_t reg, uint8_t value)
 {
 	register_written[reg] = true;
+	if (bmi160) {
+		bmi_written(reg, value);
+		return;
+	}
 	if (reg == CTRL3_C && (value & 0x01)) {
 		resets++;
 		chip_reset();
@@ -73,11 +182,14 @@ chip_written(uint8_t reg, uint8_t value)
 static uint8_t
 chip_read(uint8_t reg)
 {
-	if (reg == OUTX_L_G) {
+	if (reg == output_register) {
 		output_reads++;
 		if (gyro_wobbles) {
-			device.reg[OUTX_L_G] ^= 1;
+			device.reg[output_register] ^= 1;
 		}
+	}
+	if (bmi160 && reg == BMI_PMU_STATUS && bmi_busy != 0 && !(bmi_start_held && (bmi_status_then & 0x0c)) && --bmi_busy == 0) {
+		device.reg[BMI_PMU_STATUS] = bmi_status_then;
 	}
 	return device.reg[reg];
 }
@@ -85,6 +197,10 @@ chip_read(uint8_t reg)
 uint32_t
 hakios_test_rd(vm_offset_t address)
 {
+	if (bmi_back_at != 0 && device.starts >= bmi_back_at) {
+		bmi_back_at = 0;                /* the BMI160's reset is over: it answers again */
+		device.absent = false;
+	}
 	i2c_device_looked_at(address);
 	return tlmm_model_rd(address);
 }
@@ -104,6 +220,10 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 	uint32_t offset = (uint32_t)(address - model.base), pin = offset / 0x1000;
 	uint32_t before = address >= model.base && pin < PINS ? (offset % 0x1000 == 0 ? model.cfg[pin] : model.io[pin]) : 0;
 
+	if (bmi_back_at != 0 && device.starts >= bmi_back_at) {
+		bmi_back_at = 0;
+		device.absent = false;
+	}
 	tlmm_model_wr(address, value);
 	if (stop_after != NULL && !pthread_equal(pthread_self(), scenario_thread) && stop_after(address, before)) {
 		stopped = true;
@@ -135,8 +255,8 @@ static int16_t rates[3] = { 11, -22, 33 };      /* (not what the orientation is 
 static void
 output_word(unsigned i, int16_t v)
 {
-	device.reg[OUTX_L_G + 2 * i] = (uint8_t)((uint16_t)v & 0xff);
-	device.reg[OUTX_L_G + 2 * i + 1] = (uint8_t)((uint16_t)v >> 8);
+	device.reg[output_register + 2 * i] = (uint8_t)((uint16_t)v & 0xff);
+	device.reg[output_register + 2 * i + 1] = (uint8_t)((uint16_t)v >> 8);
 }
 
 static void
@@ -178,7 +298,7 @@ phone(const char *name, uint8_t identity)
 	model.cfg[I2C_DEVICE_SDA] = model.cfg[I2C_DEVICE_SCL] = AS_FOUND;
 	model.cfg[int_pin] = INT_AS_FOUND;
 	memset(device.reg, 0, sizeof(device.reg));
-	device.reg[WHO_AM_I] = identity;
+	device.reg[bmi160 ? BMI_CHIP_ID : WHO_AM_I] = identity;
 	chip_reset();
 	chip_reads(0, 0, 0);
 	device.written = chip_written;
@@ -908,6 +1028,614 @@ gyro_lost_with_the_chip(void)
 	CHECK(device.reg[CTRL2_G] == 0 && logged("the gyroscope is powered down (CTRL2_G 0)"), "not powered down: %s", log_text);
 }
 
+/* ---- a BMI160 ------------------------------------------------------------------------------------ */
+
+/*
+ * The test phone with a BMI160 where its LSM6DSO is: its board's row with the one feature for the other and the
+ * chip's address, +-RANGE g; the model of the chip on the same pins, answering IDENTITY at CHIP_ID.
+ */
+static void
+bmi160_phone(uint8_t identity, uint8_t range)
+{
+	static struct hakios_board with_bmi160;
+
+	bmi160 = true;
+	chip_address = 0x68;
+	output_register = BMI_DATA_GYR;
+	phone("phone-video", identity);
+	with_bmi160 = *hakios_board();
+	with_bmi160.features = (with_bmi160.features & ~HAKIOS_HAS_IMU_LSM6DSO) | HAKIOS_HAS_IMU_BMI160;
+	with_bmi160.imu.address = 0x68;
+	with_bmi160.imu.full_scale = range;
+	found = &with_bmi160;
+}
+
+/* the commands the chip was given, in order: exactly these */
+static bool
+bmi160_commands_were(const char *what, unsigned count, ...)
+{
+	va_list list;
+	bool same = bmi_command_count == count;
+
+	va_start(list, count);
+	for (unsigned i = 0; i < count; i++) {
+		unsigned command = va_arg(list, unsigned);
+
+		same = same && bmi_commands[i] == command;
+	}
+	va_end(list);
+	if (!same) {
+		fprintf(stderr, "%s: the commands were", what);
+		for (unsigned i = 0; i < bmi_command_count && i < sizeof(bmi_commands); i++) {
+			fprintf(stderr, " 0x%02x", bmi_commands[i]);
+		}
+		fprintf(stderr, "\n");
+	}
+	return same;
+}
+
+/* only CMD and the four registers of rate and range, if anything; none while a command was carried out, none dropped */
+static bool
+bmi160_written_as_it_wants(void)
+{
+	for (unsigned reg = 0; reg < 256; reg++) {
+		if (register_written[reg] && reg != BMI_CMD && (reg < BMI_ACC_CONF || reg > BMI_GYR_RANGE)) {
+			fprintf(stderr, "register 0x%02x was written\n", reg);
+			return false;
+		}
+	}
+	if (bmi_dropped != 0 || bmi_written_while_busy != 0 || bmi_written_while_suspended != 0) {
+		fprintf(stderr, "%u commands came while another was carried out, %u registers were written meanwhile, %u while their "
+		    "half was suspended\n", bmi_dropped, bmi_written_while_busy, bmi_written_while_suspended);
+		return false;
+	}
+	return true;
+}
+
+/* nothing of the chip's is given to Darwin, and nothing was read of it */
+static void
+bmi160_nothing_given(const char *when)
+{
+	CHECK(get("hid") == 0 && get("motion") == 0 && get("gyro") == 0, "%s: hid %u, motion %u, gyro %u", when, get("hid"),
+	    get("motion"), get("gyro"));
+	CHECK(get("orientation") == 0 && get("samples") == 0 && strcmp(get_string("sample"), "0 0 0 0 0") == 0 &&
+	    strcmp(get_string("accel"), "0 0 0") == 0, "%s: orientation %u, %u samples, sample %s", when, get("orientation"),
+	    get("samples"), get_string("sample"));
+	CHECK(output_reads == 0, "%s: the output was read %u times", when, output_reads);
+}
+
+/* sensors=2 (and whatever else ARGS says) on the phone with a BMI160 at +-4 g, held upright, until the orientation is followed */
+static void
+bmi160_following(const char *args)
+{
+	bmi160_phone(0xd1, 4);
+	chip_reads(-8192, 0, 0);
+	chip_rates(1000, 0, 0);
+	gyro_wobbles = true;
+	boot_args = args;
+	hakios_imu_init();
+	WAIT_FOR(logged("the orientation is followed from here on") && get("samples") >= 2, 10000);
+	CHECK(logged("the orientation is followed from here on"), "followed: %s", log_text);
+}
+
+/* sensors=1: the identity read at CHIP_ID and said, nothing written, no samples, nothing given; nor at the run's end */
+static void
+bmi160_look_only(void)
+{
+	bmi160_phone(0xd1, 4);
+	boot_args = "sensors=1";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(logged("imu: the chip at 0x68 answers CHIP_ID 0xd1, a BMI160 (0xd1)"), "the identity, against the BMI160's: %s", log_text);
+	CHECK(device.writes == 0 && device.starts >= 2 && bmi_command_count == 0, "read, and nothing written: %u bytes", device.writes);
+	CHECK(!logged("followed") && !logged("NOTHING MORE"), "no samples at a look, nothing wrong: %s", log_text);
+	bmi160_nothing_given("at a look");
+	pins_as_found();
+	hakios_imu_quiesce();
+	CHECK(device.writes == 0, "nor at the run's end: %u", device.writes);
+	pins_as_found();
+}
+
+/* another chip at the address (0x24, which a BMI270 is remembered to answer; any number but 0xd1 does): refused, nothing written, nothing given */
+static void
+bmi160_another_chip_refused(void)
+{
+	bmi160_phone(0x24, 4);
+	device.reg[WHO_AM_I] = 0x6c;            /* (what the other row's identity register would say: not looked at) */
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(logged("imu: the chip at 0x68 answers CHIP_ID 0x24: NOT THE BMI160'S 0xd1") && logged("another chip: NOTHING MORE IS DONE"),
+	    "said: %s", log_text);
+	CHECK(device.writes == 0 && resets == 0, "not reset, not configured: %u bytes written", device.writes);
+	bmi160_nothing_given("another chip");
+	hakios_imu_quiesce();
+	CHECK(device.writes == 0, "nor written at the run's end");
+	pins_as_found();
+}
+
+/* nobody at the address: said, nothing written, nothing given */
+static void
+bmi160_nobody_there(void)
+{
+	bmi160_phone(0xd1, 4);
+	device.absent = true;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(logged("imu: nobody answers at 0x68 on the bus of gpio116/117") &&
+	    logged("a byte was not acknowledged: NOTHING MORE IS DONE"), "said: %s", log_text);
+	bmi160_nothing_given("nobody there");
+	device.absent = false;
+	hakios_imu_quiesce();
+	CHECK(device.writes == 0, "nothing written, nor at the run's end: %u", device.writes);
+	pins_as_found();
+}
+
+/* the board lists the LSM6DSO where the chip is a BMI160 (the test phone as it is, the BMI160's model at its address): refused */
+static void
+bmi160_under_the_other_feature(void)
+{
+	bmi160 = true;
+	output_register = BMI_DATA_GYR;
+	phone("phone-video", 0xd1);             /* (at 0x6a, where the board says its LSM6DSO is) */
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 5000);
+	/* (the LSM6DSO's identity register is the high byte of the BMI160's gyroscope y: here -22's 0xff, and whatever turns it) */
+	CHECK(logged("answers WHO_AM_I 0xff: NOT THE LSM6DSO'S 0x6c"), "said: %s", log_text);
+	CHECK(device.writes == 0, "nothing written: %u bytes", device.writes);
+	bmi160_nothing_given("the other feature's chip");
+}
+
+/*
+ * sensors=2: the reset command, the chip waited for while it does not answer; the accelerometer's command, then, once
+ * PMU_STATUS says it measures, 100 Hz and the board's +-4 g, each read back; the gyroscope's command, then, once it
+ * measures, 100 Hz and +-2000 dps. In that order, no command while another is carried out, nothing else written.
+ * Nothing is given before all of it is done.
+ */
+static void
+bmi160_configured(void)
+{
+	bmi160_phone(0xd1, 4);
+	chip_reads(-8192, 0, 0);
+	boot_args = "sensors=2";
+	bmi160_nothing_given("before the driver starts");
+	hakios_imu_init();
+	for (int waited = 0; waited < 10000 && !logged("the orientation is followed from here on"); waited += 1) {
+		/*
+		 * (looked at all the while: nothing given, nothing read of the output, until the last register is written -- what
+		 * is given looked at first, so that a chip not yet configured after it is one not configured before it)
+		 */
+		uint32_t hid = get("hid"), motion = get("motion"), read = get("samples");
+		unsigned reads = output_reads;
+
+		if (device.reg[BMI_PMU_STATUS] != 0x14 || !register_written[BMI_GYR_RANGE]) {
+			CHECK(hid == 0 && motion == 0 && read == 0 && reads == 0, "given before the chip was configured: hid %u, %u samples "
+			    "(PMU_STATUS %#x)", hid, read, device.reg[BMI_PMU_STATUS]);
+		}
+		usleep(1000);
+	}
+	WAIT_FOR(get("samples") >= 2, 5000);
+	CHECK(logged("the orientation is followed from here on") && get("hid") == 1 && get("motion") == 1, "followed: %s", log_text);
+	CHECK(bmi160_commands_were("configured", 3, 0xb6, 0x11, 0x15), "reset, the accelerometer on, the gyroscope on");
+	CHECK(resets == 1 && logged("imu: 0x7e <- 0xb6, the chip is back after ") && logged(": CHIP_ID 0xd1, PMU_STATUS 0x00"),
+	    "reset once and waited for: %s", log_text);
+	CHECK(device.reg[BMI_PMU_STATUS] == 0x14, "PMU_STATUS: both halves normal, 0x14: %#x", device.reg[BMI_PMU_STATUS]);
+	CHECK(register_written[BMI_ACC_CONF] && device.reg[BMI_ACC_CONF] == 0x28, "ACC_CONF: 100 Hz (8), the normal filter (2 << 4), "
+	    "0x28: %#x", device.reg[BMI_ACC_CONF]);
+	CHECK(register_written[BMI_ACC_RANGE] && device.reg[BMI_ACC_RANGE] == 0x05, "ACC_RANGE: +-4 g, 0x05: %#x",
+	    device.reg[BMI_ACC_RANGE]);
+	CHECK(register_written[BMI_GYR_CONF] && device.reg[BMI_GYR_CONF] == 0x28, "GYR_CONF: 100 Hz, 0x28: %#x", device.reg[BMI_GYR_CONF]);
+	CHECK(register_written[BMI_GYR_RANGE] && device.reg[BMI_GYR_RANGE] == 0x00, "GYR_RANGE: +-2000 dps, 0: %#x",
+	    device.reg[BMI_GYR_RANGE]);
+	CHECK(logged("imu: 0x7e <- 0x11, PMU_STATUS reads 0x10: the accelerometer measures") &&
+	    logged("imu: 0x7e <- 0x15, PMU_STATUS reads 0x14: the gyroscope measures"), "each command held to PMU_STATUS: %s", log_text);
+	CHECK(logged("imu: 0x40 <- 0x28, reads 0x28") && logged("imu: 0x41 <- 0x05, reads 0x05") && logged("imu: 0x42 <- 0x28, reads 0x28") &&
+	    logged("imu: 0x43 <- 0x00, reads 0x00"), "each register read back: %s", log_text);
+	CHECK(logged("its accelerometer switched on: 100 Hz, +-4 g; its gyroscope too, for Darwin's motion stack: 100 Hz, +-2000 dps"),
+	    "the rate and the board's range said: %s", log_text);
+	CHECK(bmi160_written_as_it_wants(), "written as the chip wants it");
+	CHECK(device.driven_high == 0 && model.elsewhere == 0, "the bus was used as a bus");
+	hakios_imu_quiesce();
+}
+
+/*
+ * The samples through the board's mounting ("-y", "x", "-z", as the LSM6DSO's scenario has it), at +-4 g, 8192 counts
+ * a g: upright the chip reads -1 g along its x, Darwin's y -1000 milli-g, portrait; and so on.
+ */
+static void
+bmi160_orientation_through_the_mounting(void)
+{
+	bmi160_following("sensors=2");
+	WAIT_FOR(get("orientation") == 1, 3000);
+	CHECK(get("orientation") == 1, "portrait (1): %u", get("orientation"));
+	CHECK(strcmp(get_string("accel"), "0 -1000 0") == 0, "hw.sensors.accel in milli-g on Darwin's axes: %s", get_string("accel"));
+	CHECK(logged("imu: portrait (0 -1000 0 milli-g; the chip's -8192 0 0)"), "said: %s", log_text);
+	chip_reads(0, 8192, 0);
+	/* (the accelerometer's three too: a read may fall between two of the words the scenario sets) */
+	WAIT_FOR(get("orientation") == 3 && strcmp(get_string("accel"), "-1000 0 0") == 0, 5000);
+	CHECK(get("orientation") == 3, "landscape left (3): %u", get("orientation"));
+	CHECK(strcmp(get_string("accel"), "-1000 0 0") == 0, "%s", get_string("accel"));
+	chip_reads(0, 0, 8192);
+	WAIT_FOR(get("orientation") == 5 && strcmp(get_string("accel"), "0 0 -1000") == 0, 5000);
+	CHECK(get("orientation") == 5, "face up (5): %u", get("orientation"));
+	CHECK(strcmp(get_string("accel"), "0 0 -1000") == 0, "%s", get_string("accel"));
+	chip_reads(4096, -4096, 3);
+	WAIT_FOR(strcmp(get_string("accel"), "500 500 0") == 0, 2000);
+	CHECK(strcmp(get_string("accel"), "500 500 0") == 0, "half a g each, and three counts that round to nothing: %s",
+	    get_string("accel"));
+	chip_reads(-32768, 32767, 100);
+	WAIT_FOR(strcmp(get_string("accel"), "-4000 -4000 -12") == 0, 2000);
+	CHECK(strcmp(get_string("accel"), "-4000 -4000 -12") == 0, "all the range (Darwin's x the chip's -y, its y the chip's x), and 100 "
+	    "counts are 12.2 milli-g: %s", get_string("accel"));
+	CHECK(bmi160_commands_were("reading", 3, 0xb6, 0x11, 0x15) && bmi160_written_as_it_wants(), "reading wrote nothing");
+	hakios_imu_quiesce();
+}
+
+/* a board at +-16 g: ACC_RANGE 0x0c, 2048 counts a g */
+static void
+bmi160_the_board_s_range(void)
+{
+	bmi160_phone(0xd1, 16);
+	chip_reads(-2048, 0, 0);
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(get("orientation") == 1, 10000);
+	CHECK(device.reg[BMI_ACC_RANGE] == 0x0c && logged("imu: 0x41 <- 0x0c, reads 0x0c") && logged("100 Hz, +-16 g"),
+	    "ACC_RANGE: +-16 g, 0x0c: %#x; %s", device.reg[BMI_ACC_RANGE], log_text);
+	CHECK(get("orientation") == 1 && strcmp(get_string("accel"), "0 -1000 0") == 0, "2048 counts are a g: %s", get_string("accel"));
+	chip_reads(0, 1024, -3072);
+	WAIT_FOR(strcmp(get_string("accel"), "-500 0 1500") == 0, 3000);
+	CHECK(strcmp(get_string("accel"), "-500 0 1500") == 0, "%s", get_string("accel"));
+	hakios_imu_quiesce();
+}
+
+/* a range the chip has not (the board's row by hand: tools/boards.py refuses the file): disabled, nothing touched */
+static void
+bmi160_no_such_range(void)
+{
+	bmi160_phone(0xd1, 3);
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	usleep(50000);
+	CHECK(logged("imu: disabled: the board file does not say which pins the chip is on, its address, its range"), "said: %s", log_text);
+	CHECK(model.writes == 0 && model.reads == 0, "nothing touched");
+	hakios_imu_quiesce();
+	CHECK(model.writes == 0, "nor at the run's end");
+}
+
+/*
+ * The gyroscope's rates: from its fifth read, in the sample of the accelerometer's milli-g, through the board's
+ * mounting with the signs turned back (Darwin's x the chip's +y, its y the chip's -x, its z the chip's +z) and into
+ * milli-rad/s at 16.4 counts a dps: 16400 counts are 1000 dps, 17.453 rad/s; 1000 counts 60.976 dps, 1.0642 rad/s.
+ */
+static void
+bmi160_gyro_rates_through_the_mounting(void)
+{
+	int mg[3], rate[3];
+
+	bmi160_following("sensors=2");
+	WAIT_FOR(get("gyro") == 1, 10000);
+	CHECK(get("gyro") == 1, "the rates not given: %s", log_text);
+	CHECK(logged("imu: the gyroscope answers at its read 5 ("), "given from another read than its fifth: %s", log_text);
+	gyro_wobbles = false;
+	chip_rates(1000, 0, 0);
+	CHECK(rates_said(0, -1064, 0), "the chip's x is Darwin's -y");
+	CHECK(sample_says(mg, rate) == 8 && mg[0] == 0 && mg[1] == -1000 && mg[2] == 0, "with the accelerometer's portrait: %s",
+	    get_string("sample"));
+	chip_rates(0, 16400, 0);
+	CHECK(rates_said(17453, 0, 0), "the chip's y is Darwin's x: 1000 dps, 17.453 rad/s");
+	chip_rates(0, 0, -32768);
+	CHECK(rates_said(0, 0, -34873), "the chip's z is Darwin's z, all the range: -1998.06 dps, -34.8728 rad/s");
+	chip_rates(-1, 1, 1);
+	CHECK(rates_said(1, 1, 1), "a count is 1.06 milli-rad/s, rounded to the nearest");
+	chip_rates(2000, -2000, 3);
+	CHECK(rates_said(-2128, -2128, 3), "2000 counts are 2.1285 rad/s, three 3.19 milli-rad/s");
+	CHECK(bmi160_commands_were("reading", 3, 0xb6, 0x11, 0x15) && bmi160_written_as_it_wants(), "reading wrote nothing");
+	hakios_imu_quiesce();
+	CHECK(get("gyro") == 0, "given after the run's end: %u", get("gyro"));
+	CHECK(device.reg[BMI_PMU_STATUS] == 0, "not powered down at the run's end: PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+}
+
+/*
+ * What keeps the gyroscope off: its command never given, its registers never written, PMU_STATUS says it suspended
+ * all along, no sample has rates -- and the run's end has only the accelerometer to power down.
+ */
+static void
+bmi160_gyro_kept_off(const char *args, const char *said)
+{
+	int mg[3], rate[3];
+
+	bmi160_following(args);
+	WAIT_FOR(get("samples") >= 12, 10000);
+	CHECK(get("samples") >= 12 && get("orientation") == 1, "followed: %u samples", get("samples"));
+	CHECK(bmi160_commands_were("the gyroscope kept off", 2, 0xb6, 0x11), "reset and the accelerometer on, no more");
+	CHECK(!register_written[BMI_GYR_CONF] && !register_written[BMI_GYR_RANGE] && device.reg[BMI_PMU_STATUS] == 0x10,
+	    "the gyroscope switched on or written to: PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+	CHECK(get("gyro") == 0 && sample_says(mg, rate) == 5, "rates given: hw.sensors.gyro %u, %s", get("gyro"), get_string("sample"));
+	CHECK(!logged("imu: the gyroscope answers") && !logged("its gyroscope too"), "said: %s", log_text);
+	CHECK(said == NULL || logged(said), "not said \"%s\": %s", said, log_text);
+	hakios_imu_quiesce();
+	CHECK(bmi160_commands_were("the run's end", 3, 0xb6, 0x11, 0x10) && !logged("the gyroscope is powered down"),
+	    "the accelerometer suspended, the gyroscope not written to: %s", log_text);
+	CHECK(device.reg[BMI_PMU_STATUS] == 0, "PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+	CHECK(bmi160_written_as_it_wants(), "written as the chip wants it");
+}
+
+static void
+bmi160_gyro_hid_off(void)
+{
+	bmi160_gyro_kept_off("sensors=2 gyro_hid=0", "without the gyroscope's rates (gyro_hid=0)");
+	CHECK(logged("and its motion stack the samples (hw.sensors.motion 1)"), "the samples not given: %s", log_text);
+}
+
+static void
+bmi160_gyro_not_without_motion(void)
+{
+	bmi160_gyro_kept_off("sensors=2 motion_hid=0", "not its motion stack the samples (motion_hid=0)");
+}
+
+static void
+bmi160_gyro_not_without_darwin(void)
+{
+	bmi160_gyro_kept_off("sensors=2 orientation_hid=0", "Darwin is not given it (orientation_hid=0)");
+}
+
+/*
+ * The run's end: the reading stops; the gyroscope's suspend command, then, once PMU_STATUS says it suspended, the
+ * accelerometer's; both said; the pins as they were found.
+ */
+static void
+bmi160_teardown(void)
+{
+	unsigned taken;
+
+	bmi160_following("sensors=2");
+	WAIT_FOR(get("gyro") == 1, 10000);
+	CHECK(get("hid") == 1 && get("motion") == 1 && get("gyro") == 1, "given while the run goes on: %s", log_text);
+	CHECK(device.reg[BMI_PMU_STATUS] == 0x14, "on while the run goes on: %#x", device.reg[BMI_PMU_STATUS]);
+	hakios_imu_quiesce();
+	CHECK(get("hid") == 0 && get("motion") == 0 && get("gyro") == 0, "given after the run's end");
+	CHECK(bmi160_commands_were("the run's end", 5, 0xb6, 0x11, 0x15, 0x14, 0x10), "the gyroscope suspended, then the accelerometer");
+	CHECK(device.reg[BMI_PMU_STATUS] == 0, "PMU_STATUS 0, both suspended, at the run's end: %#x", device.reg[BMI_PMU_STATUS]);
+	CHECK(logged("imu: at the run's end: the gyroscope is powered down (CMD 0x14, PMU_STATUS: suspended)") &&
+	    logged("the accelerometer is powered down (CMD 0x10, PMU_STATUS: suspended)"), "said: %s", log_text);
+	CHECK(bmi160_written_as_it_wants(), "no command dropped, nothing else written");
+	pins_as_found();
+	usleep(300000);
+	taken = output_reads;
+	usleep(300000);
+	CHECK(output_reads == taken, "no sample after the run's end: %u then %u", taken, output_reads);
+	CHECK(logged("imu: done"), "the thread has ended: %s", log_text);
+}
+
+/*
+ * The run ends while the gyroscope is still starting (its command given, not yet carried out, PMU_STATUS still saying
+ * it suspended): the thread lets go of the bus and writes nothing more, the run's end lets the chip finish the start
+ * -- a suspend command now would be dropped, and PMU_STATUS would seem to say it was carried out -- and then
+ * suspends both halves. (The model's start is held until the scenario has seen the command, then takes forty reads
+ * more; the driver's waits as long as it asks for, so that it is still waiting when the scenario looks.)
+ */
+static void
+bmi160_end_while_the_gyroscope_starts(void)
+{
+	bmi160_phone(0xd1, 4);
+	fake_delay_divisor = 1;
+	bmi_gyro_start_reads = 40;
+	bmi_start_held = true;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	for (int waited = 0; waited < 50000 && !(bmi_command_count >= 3 && bmi_busy != 0); waited++) {
+		usleep(200);
+	}
+	CHECK(bmi160_commands_were("the gyroscope starting", 3, 0xb6, 0x11, 0x15) && bmi_busy != 0, "the gyroscope's command in hand");
+	CHECK(!logged("NOT CARRIED OUT"), "the scenario looked too late: the driver's wait for the gyroscope was over: %s", log_text);
+	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);     /* (as the run's end does first: the start goes on from here) */
+	bmi_start_held = false;
+	hakios_imu_quiesce();
+	CHECK(logged("imu: the run ends: NOTHING MORE IS DONE") && !logged("the gyroscope measures") && !register_written[BMI_GYR_CONF] &&
+	    !register_written[BMI_GYR_RANGE], "the thread went on with the chip after the run's end began: %s", log_text);
+	CHECK(bmi_dropped == 0, "%u commands came while the gyroscope was starting, and were dropped", bmi_dropped);
+	CHECK(device.reg[BMI_PMU_STATUS] == 0 && bmi_busy == 0, "both suspended all the same: PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+	CHECK(logged("the gyroscope is powered down (CMD 0x14") && logged("the accelerometer is powered down (CMD 0x10"), "said: %s",
+	    log_text);
+	CHECK(bmi_commands[bmi_command_count - 1] == 0x10 && bmi_commands[bmi_command_count - 2] == 0x14, "the gyroscope, then the "
+	    "accelerometer: 0x%02x 0x%02x last", bmi_commands[bmi_command_count - 2], bmi_commands[bmi_command_count - 1]);
+	CHECK(get("hid") == 0 && get("samples") == 0 && output_reads == 0, "nothing was given or read: hid %u, %u samples", get("hid"),
+	    get("samples"));
+	pins_as_found();
+	WAIT_FOR(logged("imu: done"), 3000);
+	CHECK(logged("imu: done") && device.reg[BMI_PMU_STATUS] == 0, "the thread ended and left the chip suspended: %s", log_text);
+}
+
+/* the chip drops the gyroscope's suspend command at the run's end (once): said again, both suspended */
+static void
+bmi160_suspend_said_again(void)
+{
+	bmi160_following("sensors=2");
+	bmi_drop_next = true;
+	hakios_imu_quiesce();
+	CHECK(bmi_dropped == 1 && bmi160_commands_were("the run's end", 6, 0xb6, 0x11, 0x15, 0x14, 0x14, 0x10), "said again, once");
+	CHECK(device.reg[BMI_PMU_STATUS] == 0 && logged("the gyroscope is powered down (CMD 0x14") &&
+	    logged("the accelerometer is powered down (CMD 0x10"), "both suspended: PMU_STATUS %#x, %s", device.reg[BMI_PMU_STATUS], log_text);
+}
+
+/* a gyroscope that will not be suspended: said so, not claimed; the accelerometer suspended all the same */
+static void
+bmi160_gyroscope_does_not_stop(void)
+{
+	bmi160_following("sensors=2");
+	bmi_deaf_command = 0x14;
+	hakios_imu_quiesce();
+	CHECK(logged("imu: at the run's end: the gyroscope COULD NOT BE POWERED DOWN") &&
+	    logged("the accelerometer is powered down (CMD 0x10"), "said: %s", log_text);
+	CHECK(device.reg[BMI_PMU_STATUS] == 0x04, "PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+}
+
+/* the chip stops answering: the orientation is not known (0), nothing is given any more; the run's end powers it down when it is back */
+static void
+bmi160_lost_is_not_known(void)
+{
+	unsigned taken;
+
+	bmi160_following("sensors=2");
+	WAIT_FOR(get("orientation") == 1 && get("gyro") == 1, 10000);
+	CHECK(get("orientation") == 1 && get("hid") == 1 && get("gyro") == 1, "portrait (1) first, and given: %u", get("orientation"));
+	device.absent = true;
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(logged("a byte was not acknowledged: NOTHING MORE IS DONE"), "said: %s", log_text);
+	CHECK(get("orientation") == 0, "not known (0) once nothing more is read: %u", get("orientation"));
+	CHECK(get("hid") == 0 && get("motion") == 0 && get("gyro") == 0, "given after the chip was lost: hid %u, motion %u, gyro %u",
+	    get("hid"), get("motion"), get("gyro"));
+	taken = output_reads;
+	usleep(200000);
+	CHECK(output_reads == taken, "no more reads");
+	device.absent = false;
+	hakios_imu_quiesce();
+	CHECK(device.reg[BMI_PMU_STATUS] == 0 && logged("the accelerometer is powered down (CMD 0x10"), "powered down at the run's end: "
+	    "PMU_STATUS %#x, %s", device.reg[BMI_PMU_STATUS], log_text);
+	pins_as_found();
+}
+
+/* ... and when it is still not there at the run's end: said, not claimed */
+static void
+bmi160_lost_for_good(void)
+{
+	bmi160_following("sensors=2");
+	device.absent = true;
+	WAIT_FOR(logged("imu: done"), 5000);
+	hakios_imu_quiesce();
+	CHECK(logged("the gyroscope COULD NOT BE POWERED DOWN") && logged("the accelerometer COULD NOT BE POWERED DOWN") &&
+	    !logged("is powered down"), "said: %s", log_text);
+	pins_as_found();
+}
+
+/* a reset the chip does not come back from: stopped, nothing switched on, nothing given, nothing to power down */
+static void
+bmi160_reset_does_not_end(void)
+{
+	bmi160_phone(0xd1, 4);
+	reset_never_ends = true;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 10000);
+	CHECK(logged("the chip's reset does not end: NOTHING MORE IS DONE"), "said: %s", log_text);
+	CHECK(bmi160_commands_were("the reset", 1, 0xb6) && written_after_reset == 0, "nothing written after the reset");
+	bmi160_nothing_given("the reset not ended");
+	hakios_imu_quiesce();
+	CHECK(bmi_command_count == 1, "and nothing to switch off at the run's end");
+}
+
+/* a chip slow to come back from its reset (twenty transfers unanswered): waited for */
+static void
+bmi160_reset_takes_its_time(void)
+{
+	bmi_reset_transfers = 20;
+	bmi160_following("sensors=2");
+	CHECK(resets == 1 && device.reg[BMI_PMU_STATUS] == 0x14, "configured after it: PMU_STATUS %#x", device.reg[BMI_PMU_STATUS]);
+	hakios_imu_quiesce();
+}
+
+/* the accelerometer's command acknowledged and not carried out: stopped, no register written, nothing given */
+static void
+bmi160_accelerometer_does_not_start(void)
+{
+	bmi160_phone(0xd1, 4);
+	bmi_deaf_command = 0x11;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 10000);
+	CHECK(logged("imu: 0x7e <- 0x11, PMU_STATUS reads 0x00: NOT CARRIED OUT in 20 ms") &&
+	    logged("a command was not carried out: NOTHING MORE IS DONE"), "said: %s", log_text);
+	CHECK(bmi160_commands_were("the accelerometer deaf", 2, 0xb6, 0x11) && !register_written[BMI_ACC_CONF] &&
+	    !register_written[BMI_ACC_RANGE], "nothing written after it");
+	bmi160_nothing_given("the accelerometer not started");
+	hakios_imu_quiesce();
+	CHECK(device.reg[BMI_PMU_STATUS] == 0, "suspended at the run's end: %#x", device.reg[BMI_PMU_STATUS]);
+}
+
+/* ... and the gyroscope's: stopped too, as for an LSM6DSO whose CTRL2_G does not read back; both suspended at the run's end */
+static void
+bmi160_gyroscope_does_not_start(void)
+{
+	bmi160_phone(0xd1, 4);
+	bmi_deaf_command = 0x15;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 10000);
+	CHECK(logged("imu: 0x7e <- 0x15, PMU_STATUS reads 0x10: NOT CARRIED OUT in 150 ms") &&
+	    logged("a command was not carried out: NOTHING MORE IS DONE"), "said: %s", log_text);
+	CHECK(!register_written[BMI_GYR_CONF] && !register_written[BMI_GYR_RANGE], "nothing written after it");
+	bmi160_nothing_given("the gyroscope not started");
+	hakios_imu_quiesce();
+	CHECK(device.reg[BMI_PMU_STATUS] == 0 && logged("the accelerometer is powered down (CMD 0x10"), "suspended at the run's end: "
+	    "%#x, %s", device.reg[BMI_PMU_STATUS], log_text);
+}
+
+/* a register that does not take what is written: stopped, nothing given; the accelerometer suspended at the run's end */
+static void
+bmi160_write_does_not_stick(void)
+{
+	bmi160_phone(0xd1, 4);
+	deaf_register = BMI_ACC_RANGE;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	WAIT_FOR(logged("imu: done"), 10000);
+	CHECK(logged("imu: 0x41 <- 0x05, reads 0x03: NOT AS WRITTEN") && logged("did not read back as written: NOTHING MORE IS DONE"),
+	    "said: %s", log_text);
+	CHECK(bmi160_commands_were("a deaf register", 2, 0xb6, 0x11), "the gyroscope not switched on after it");
+	bmi160_nothing_given("a register not as written");
+	hakios_imu_quiesce();
+	CHECK(bmi160_commands_were("the run's end", 3, 0xb6, 0x11, 0x10) && device.reg[BMI_PMU_STATUS] == 0, "the accelerometer "
+	    "suspended at the run's end: %#x", device.reg[BMI_PMU_STATUS]);
+	pins_as_found();
+}
+
+/* a gyroscope that answered and then reads the very same for a hundred reads: held stuck, its rates taken back, it alone suspended */
+static void
+bmi160_gyro_stuck_taken_back(void)
+{
+	int mg[3], rate[3];
+	uint32_t before;
+
+	bmi160_following("sensors=2");
+	WAIT_FOR(get("gyro") == 1, 10000);
+	CHECK(get("gyro") == 1, "the rates not given: %s", log_text);
+	gyro_wobbles = false;
+	WAIT_FOR(logged("stuck"), 15000);
+	CHECK(logged("times in a row: stuck, its rates NOT GIVEN ANY MORE; it is powered down (CMD 0x14, PMU_STATUS: suspended)"),
+	    "said: %s", log_text);
+	CHECK(get("gyro") == 0 && device.reg[BMI_PMU_STATUS] == 0x10, "still given, or not it alone suspended: gyro %u, PMU_STATUS %#x",
+	    get("gyro"), device.reg[BMI_PMU_STATUS]);
+	before = get("samples");
+	WAIT_FOR(get("samples") >= before + 2, 3000);
+	CHECK(sample_says(mg, rate) == 5 && get("samples") >= before + 2 && get("motion") == 1, "the samples go on without rates: %s",
+	    get_string("sample"));
+	hakios_imu_quiesce();
+	CHECK(device.reg[BMI_PMU_STATUS] == 0 && bmi_dropped == 0, "PMU_STATUS %#x at the run's end", device.reg[BMI_PMU_STATUS]);
+}
+
+/* a board that lists both chips (its row by hand: tools/boards.py refuses the file): said, nothing touched */
+static void
+bmi160_and_lsm6dso_listed(void)
+{
+	static struct hakios_board both;
+
+	phone("phone-video", 0x6c);
+	both = *hakios_board();
+	both.features |= HAKIOS_HAS_IMU_BMI160;
+	found = &both;
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	usleep(50000);
+	CHECK(logged("imu: disabled: this board's board.dts lists both \"imu-lsm6dso\" and \"imu-bmi160\": a board has one motion sensor"),
+	    "said: %s", log_text);
+	CHECK(model.writes == 0 && model.reads == 0 && model.elsewhere == 0, "nothing touched");
+	hakios_imu_quiesce();
+	CHECK(model.writes == 0, "nor at the run's end");
+}
+
 /* a level past the last is the last */
 static void
 level_past_the_last(void)
@@ -928,7 +1656,7 @@ not_listed(void)
 	boot_args = "sensors=2";
 	hakios_imu_init();
 	usleep(50000);
-	CHECK(logged("imu: disabled: this board's board.dts lists no \"imu-lsm6dso\""), "said: %s", log_text);
+	CHECK(logged("imu: disabled: this board's board.dts lists no \"imu-lsm6dso\" nor \"imu-bmi160\""), "said: %s", log_text);
 	CHECK(model.writes == 0 && model.reads == 0 && model.elsewhere == 0, "nothing touched");
 	hakios_imu_quiesce();
 	CHECK(model.writes == 0, "nor at the run's end");
@@ -957,6 +1685,24 @@ main(int argc, char **argv)
 		{ "gyro_not_without_darwin", gyro_not_without_darwin }, { "gyro_board_mount_refused", gyro_board_mount_refused },
 		{ "gyro_zeros_not_given", gyro_zeros_not_given }, { "gyro_stuck_taken_back", gyro_stuck_taken_back },
 		{ "gyro_lost_with_the_chip", gyro_lost_with_the_chip },
+		{ "bmi160_look_only", bmi160_look_only }, { "bmi160_another_chip_refused", bmi160_another_chip_refused },
+		{ "bmi160_nobody_there", bmi160_nobody_there }, { "bmi160_under_the_other_feature", bmi160_under_the_other_feature },
+		{ "bmi160_configured", bmi160_configured },
+		{ "bmi160_orientation_through_the_mounting", bmi160_orientation_through_the_mounting },
+		{ "bmi160_the_board_s_range", bmi160_the_board_s_range }, { "bmi160_no_such_range", bmi160_no_such_range },
+		{ "bmi160_gyro_rates_through_the_mounting", bmi160_gyro_rates_through_the_mounting },
+		{ "bmi160_gyro_hid_off", bmi160_gyro_hid_off }, { "bmi160_gyro_not_without_motion", bmi160_gyro_not_without_motion },
+		{ "bmi160_gyro_not_without_darwin", bmi160_gyro_not_without_darwin }, { "bmi160_teardown", bmi160_teardown },
+		{ "bmi160_end_while_the_gyroscope_starts", bmi160_end_while_the_gyroscope_starts },
+		{ "bmi160_suspend_said_again", bmi160_suspend_said_again },
+		{ "bmi160_gyroscope_does_not_stop", bmi160_gyroscope_does_not_stop },
+		{ "bmi160_lost_is_not_known", bmi160_lost_is_not_known }, { "bmi160_lost_for_good", bmi160_lost_for_good },
+		{ "bmi160_reset_does_not_end", bmi160_reset_does_not_end }, { "bmi160_reset_takes_its_time", bmi160_reset_takes_its_time },
+		{ "bmi160_accelerometer_does_not_start", bmi160_accelerometer_does_not_start },
+		{ "bmi160_gyroscope_does_not_start", bmi160_gyroscope_does_not_start },
+		{ "bmi160_write_does_not_stick", bmi160_write_does_not_stick },
+		{ "bmi160_gyro_stuck_taken_back", bmi160_gyro_stuck_taken_back },
+		{ "bmi160_and_lsm6dso_listed", bmi160_and_lsm6dso_listed },
 	};
 
 	scenario_thread = pthread_self();
@@ -972,7 +1718,7 @@ main(int argc, char **argv)
 				return 2;
 			}
 			scenarios[i].run();
-			fprintf(stderr, "%-34s %s\n", argv[1], failures ? "FAILED" : "ok");
+			fprintf(stderr, "%-40s %s\n", argv[1], failures ? "FAILED" : "ok");
 			return failures ? 1 : 0;
 		}
 	}

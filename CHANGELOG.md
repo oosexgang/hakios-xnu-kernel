@@ -24,6 +24,18 @@ tags yet, so the current work is one section.
   `imu { }` where the chip is and how it is turned gets `sensors=1` (its identity read, nothing written) and
   `sensors=2` (the accelerometer on at 104 Hz, the orientation followed and said, `hw.sensors.orientation` and
   `hw.sensors.accel`); powered down at the run's end. Not run on a phone yet. ([drivers.md](Documentation/drivers.md))
+- **The motion sensor's driver knows a second chip, the Bosch BMI160.** A board lists `imu-bmi160` instead of
+  `imu-lsm6dso` (one of the two; `tools/boards.py check` refuses both) and writes the same `imu { }` -- the address
+  0x68 or 0x69. Everything else is as for the LSM6DSO: `sensors=1` reads the identity (CHIP_ID, 0xd1) and writes
+  nothing; `sensors=2` resets the chip, switches the accelerometer on at 100 Hz and the board's range, follows the
+  orientation and gives Darwin the samples in milli-g and, unless `gyro_hid=0`, `motion_hid=0` or `orientation_hid=0`
+  keeps the gyroscope suspended, its rates in milli-rad/s (+-2000 dps, 16.4 counts a dps) through the same mount;
+  nothing is given before the chip is configured, the orientation is not known once it stops answering, and both
+  halves are suspended at the run's end. What differs is in the chip: a half is switched by a command and the driver
+  waits for PMU_STATUS to say it was carried out before the next. Each chip is a header of its facts
+  (`lsm6dso_core.h`, `bmi160_core.h`) and a row of the driver's table. The BMI160's numbers are its datasheet's as
+  remembered and the driver has only met a model of the chip (`workbench/imu_driver_test.c`), never one. Not for a
+  BMI260/BMI270, which is another chip. ([drivers.md](Documentation/drivers.md))
 - **The common drivers on every Snapdragon since the SDM845.** The cores' speed (`cpufreq=1`) and the thermal limiter
   speak both layouts of the frequency block, EPSS (SM8350 and later) and the OSM's firmware before it (SDM845 to
   SM8250), with each group's block where the SoC file says (`cpufreq { block; domains; }`), and leave a group whose

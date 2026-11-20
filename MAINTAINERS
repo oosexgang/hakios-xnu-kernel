@@ -277,13 +277,15 @@ F:	drivers/board/orientation_core.h
 F:	drivers/board/sensor_axes_core.h
 F:	drivers/board/sensors_core.h
 F:	drivers/board/lsm6dso_core.h
+F:	drivers/board/bmi160_core.h
 T:	workbench/imu_driver_test.c
 T:	workbench/orientation_test.c
 T:	workbench/sensor_axes_test.c
 T:	workbench/sensors_test.c
 T:	workbench/lsm6dso_test.c
+T:	workbench/bmi160_test.c
 T:	workbench/backboard_input_test.c
-K:	orient_; imu-lsm6dso; sensors=; orientation_hid=; motion_hid=; gyro_hid=
+K:	orient_; imu-lsm6dso; imu-bmi160; sensors=; orientation_hid=; motion_hid=; gyro_hid=
 
 QEMU
 F:	tools/qemu-kernel.sh

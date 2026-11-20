@@ -61,6 +61,8 @@ enum {
 	                                         * (board/mpss.c, board/ipa.c, board/nas.c, board/cell.c) */
 	HAKIOS_HAS_IMU_LSM6DSO     = 1u << 19,  /* an ST LSM6DSO accelerometer on I2C, wired and mounted as the board's
 	                                         * imu { } says: the phone's orientation (board/imu.c) */
+	HAKIOS_HAS_IMU_BMI160      = 1u << 20,  /* ... or a Bosch BMI160 there instead: the same imu { }, the same driver; a
+	                                         * board lists one of the two */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
@@ -229,13 +231,15 @@ struct hakios_board {
 	} haptic;
 
 	/*
-	 * The motion sensor (board: imu { }): an ST LSM6DSO on two of the SoC's pins, and how the chip is turned on
-	 * the board -- Darwin's axis i is the chip's axis axis[i] times sign[i] (board/sensor_axes_core.h).
+	 * The motion sensor (board: imu { }): an ST LSM6DSO or a Bosch BMI160 (the board's feature says which) on two
+	 * of the SoC's pins, and how the chip is turned on the board -- Darwin's axis i is the chip's axis axis[i] times
+	 * sign[i] (board/sensor_axes_core.h).
 	 */
 	struct {
 		uint8_t sda, scl;               /* its I2C bus's two lines */
 		uint8_t interrupt;              /* its INT1 pin (only looked at: the driver polls) */
-		uint8_t address;                /* its I2C address: 0x6a or 0x6b, by how its SA0 pin is strapped */
+		uint8_t address;                /* its I2C address: 0x6a or 0x6b, by how an LSM6DSO's SA0 pin is strapped (a BMI160:
+		                                 * 0x68 or 0x69, by its SDO pin) */
 		uint8_t full_scale;             /* the accelerometer's range, in g: 2, 4, 8 or 16 */
 		uint8_t axis[3];                /* each of Darwin's axes x, y, z is the chip's axis 0, 1 or 2 ... */
 		int8_t sign[3];                 /* ... with this sign, +1 or -1 */

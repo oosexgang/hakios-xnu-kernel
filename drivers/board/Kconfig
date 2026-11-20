@@ -251,12 +251,13 @@ config HAPTIC
 	  The haptic driver chip on I2C and the motor Darwin plays (board/haptic.c, haptic=).
 
 config IMU_LSM6DSO
-	bool "An LSM6DSO accelerometer on I2C: the phone's orientation"
+	bool "An LSM6DSO or BMI160 accelerometer on I2C: the phone's orientation"
 	default y
 	select QCOM_TLMM
 	help
 	  The motion sensor's chip found on its bus, then its accelerometer read about ten times a second and turned into
-	  the phone's orientation, hw.sensors.* (board/imu.c, the board's "imu-lsm6dso", sensors=).
+	  the phone's orientation, hw.sensors.* (board/imu.c, the board's "imu-lsm6dso" or "imu-bmi160", sensors=). The
+	  symbol keeps the name of the chip the driver knew first.
 
 config CAMERA_SM7325
 	bool "The cameras on SM7325's camera blocks"

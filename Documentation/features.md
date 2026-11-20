@@ -31,6 +31,7 @@ the two the same. What each key means is in `arch/arm64/boot/dts/_template/soc.d
 | `bluetooth-wcn-uart` | `pins { }`; `clocks { }`; `rpmh { }`; `spmi { }`: `channels` | `bluetooth { }`: `serial-engine`, `wrapper`, `clocks`, `clock-source`, `vote-register`, `votes`, `uart-pins`, `uart-function`, `enable-ppid`, `sw-ctrl`, `supplies`, `supply-mv`, `rf-clock` | `bt=-1 looks; bt=1 powers and identifies; bt=2 then hands it to Darwin` |
 | `modem-sm7325` | nothing | nothing | `modem=1` |
 | `imu-lsm6dso` | `pins { }` | `imu { }`: `sda`, `scl`, `interrupt`, `address`, `full-scale`, `mount` | `sensors=1 looks; sensors=2 follows the orientation` |
+| `imu-bmi160` | `pins { }` | `imu { }`: `sda`, `scl`, `interrupt`, `address`, `full-scale`, `mount` | `sensors=1 looks; sensors=2 follows the orientation` |
 
 The brightness (`backlight { }`), the thermal floors (`thermal { }`), the PMIC's clock (`rtc { }`, which
 needs `spmi { }` in the SoC file) and the partition that may be written (`storage { }`) are not

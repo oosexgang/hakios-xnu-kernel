@@ -183,7 +183,7 @@ FEATURE_NEEDS = {'bluetooth-wcn-uart': ('pins', 'clocks', 'rpmh', 'spmi'), 'virt
                  # for a part's supply, and give a device its addresses in the SMMU
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
                  'speaker-aw88261': ('pins', 'clocks', 'rpmh', 'smmu'), 'haptic-aw86927': ('pins',),
-                 'imu-lsm6dso': ('pins',),
+                 'imu-lsm6dso': ('pins',), 'imu-bmi160': ('pins',),
                  'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins', 'lpass')}
 # ... and the stream of the SMMU that a part's DMA comes in on: [stream ID, mask], from the device tree's iommus
 STREAM_OF = {'speaker-aw88261': 'audio_stream', 'wifi-wcn6750': 'wifi_stream', 'camera-sm7325': 'camera_stream'}
@@ -206,6 +206,7 @@ FEATURE_BOOTARGS = {
     'speaker-aw88261': 'speaker_probe=N looks; sound=N with adsp=1',
     'haptic-aw86927': 'haptic=N',
     'imu-lsm6dso': 'sensors=1 looks; sensors=2 follows the orientation',
+    'imu-bmi160': 'sensors=1 looks; sensors=2 follows the orientation',
     'torch-pm8350c': 'torch=1 looks; torch=3 is the light for Darwin',
     'camera-sm7325': 'cam=N',
     'wifi-wcn6750': 'wifi=1',
@@ -217,12 +218,15 @@ PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'imu', 'torch', 'came
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'bluetooth-wcn-uart': 'bluetooth', 'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
                           'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',
-                          'touch-ft3658u': 'touch', 'camera-sm7325': 'camera', 'imu-lsm6dso': 'imu'}
+                          'touch-ft3658u': 'touch', 'camera-sm7325': 'camera', 'imu-lsm6dso': 'imu',
+                          'imu-bmi160': 'imu'}
 # ... and what a controller's driver uses of [touch] beyond what every one needs
 TOUCH_NEEDS = {'touch-goodix': ('analog_enable', 'vendor_pins', 'coordinates'), 'touch-ft3658u': ('analog_supply',)}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
-# the accelerometer's ranges an LSM6DSO has (board/lsm6dso_core.h), in g
+# the accelerometer's ranges an LSM6DSO has (board/lsm6dso_core.h), in g; a BMI160 has the same four (board/bmi160_core.h)
 IMU_FULL_SCALES = (2, 4, 8, 16)
+# the motion sensor's chips, each a feature: board/imu.c drives the one the board lists, on the one [imu]
+IMU_CHIPS = ('imu-lsm6dso', 'imu-bmi160')
 # one of Darwin's axes as the chip's: "x", "-y", ... (imu { } mount; board/sensor_axes_core.h)
 IMU_AXIS = re.compile(r'([+-]?)([xyz])')
 
@@ -661,7 +665,8 @@ def load(problems=None):
             if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
                 problems.add(f'{rel} [imu]', 'sda, scl and interrupt are three different pins of the SoC, 0 to 255')
             if not 0x08 <= imu['address'] <= 0x77:
-                problems.add(f'{rel} [imu]', 'address is the chip\'s 7-bit I2C address, 0x08 to 0x77 (an LSM6DSO: 0x6a or 0x6b)')
+                problems.add(f'{rel} [imu]', 'address is the chip\'s 7-bit I2C address, 0x08 to 0x77 (an LSM6DSO: 0x6a or 0x6b; '
+                             'a BMI160: 0x68 or 0x69)')
             if imu['full_scale'] not in IMU_FULL_SCALES:
                 problems.add(f'{rel} [imu]', f'full_scale is the accelerometer\'s range in g: one of {", ".join(map(str, IMU_FULL_SCALES))}')
             if imu_mounting(imu['mount']) is None:
@@ -788,6 +793,9 @@ def load(problems=None):
             if len(supplies) != 3 or len(set(supplies)) != 3 or any(not re.fullmatch(r'[a-z0-9.]{1,7}', name) for name in supplies):
                 problems.add(f'{rel} [wifi]', 'supplies are three different names of RPMh resources, as the command database has them '
                              '("smpb7": up to 7 lower-case letters, digits and dots): the radio\'s vdd-cx-mx, 1.8 V and 1.3 V')
+        if all(chip in data.get('features', []) for chip in IMU_CHIPS):
+            problems.add(rel, 'features "' + '" and "'.join(IMU_CHIPS) + '" are two chips for the one [imu]: a board has one motion '
+                         'sensor, list the one it has')
         if 'virtio' in data.get('features', []) and len(data['features']) > 1:
             problems.add(rel, 'feature "virtio" is an emulator\'s: not beside the features of a phone')
         if data.get('screen', {}).get('statusbar_leading_shift', 0) > 200:

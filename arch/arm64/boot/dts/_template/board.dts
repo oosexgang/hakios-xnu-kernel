@@ -24,8 +24,8 @@
 	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (drivers/board/board.h, Documentation/drivers.md):
-	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, imu-lsm6dso, torch-pm8350c, camera-sm7325,
-	// wifi-wcn6750, mic-wcd938x, modem-sm7325, bluetooth-wcn-uart
+	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, imu-lsm6dso, imu-bmi160, torch-pm8350c,
+	// camera-sm7325, wifi-wcn6750, mic-wcd938x, modem-sm7325, bluetooth-wcn-uart
 	// Documentation/features.md has what each needs written down first; tools/boards.py status NAME says it for
 	// this board.
 	features = <>;
@@ -174,6 +174,9 @@
 	// The motion sensor, for the feature "imu-lsm6dso": an ST LSM6DSO (or LSM6DSOX) accelerometer and gyroscope on
 	// two of the SoC's pins (I2C by hand), and how the chip is turned on the board. Only where the application
 	// processor has the chip's bus: on most phones it is the sensor DSP's, and this is not for them.
+	// For a Bosch BMI160 list "imu-bmi160" instead (one of the two, never both) and write the same keys: its
+	// address is 0x68 with its SDO pin low, 0x69 high, its ranges the same four, and mount means the same (it too
+	// reads +1 g along the axis that points up). A BMI260 or BMI270 is another chip: neither feature is for it.
 	// imu {
 		// sda = <116>;                 // the I2C bus's data line: the first pin of the bus's pinctrl node
 		// scl = <117>;                 // ... and its clock, the second
