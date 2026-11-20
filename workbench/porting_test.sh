@@ -178,7 +178,7 @@ main(int argc, char **argv)
 	    b->buttons.pon_name ? b->buttons.pon_name : "-", b->buttons.volume_up,
 	    b->buttons.volume_up_name ? b->buttons.volume_up_name : "-");
 	printf("epss=%d touch=%d torch=%d\n", hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS), hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX) ||
-	    hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U), hakios_board_has(HAKIOS_HAS_TORCH_PM8350C));
+	    hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U) || hakios_board_has(HAKIOS_HAS_TOUCH_FT5X06), hakios_board_has(HAKIOS_HAS_TORCH_PM8350C));
 	return 0;
 }
 EOF

@@ -44,6 +44,19 @@
 		coordinates = <1440 3200>;     // (a larger panel than the first phones' 1080 x 2400)
 	};
 
+	// (a touch controller on I2C wired unlike phone-i2c's: five fingers, at another address, on other pins, its analog
+	// supply behind a pin and nothing asked of RPMh; no driver is listed for it, the driver's test reads it)
+	touch-i2c {
+		sda = <160>;
+		scl = <161>;
+		interrupt = <8>;
+		reset = <202>;
+		address = <0x48>;
+		contacts = <5>;
+		coordinates = <720 1600>;
+		analog-enable = <78>;
+	};
+
 	speaker {
 		sda = <60>;
 		scl = <61>;

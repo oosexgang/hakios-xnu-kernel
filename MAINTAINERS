@@ -408,6 +408,8 @@ TOUCH SCREENS
 F:	drivers/board/goodix.c
 F:	drivers/board/fts.c
 F:	drivers/board/fts_protocol.h
+F:	drivers/board/ft5x06.c
+F:	drivers/board/ft5x06_report.h
 F:	drivers/board/synaptics_report.h
 T:	workbench/touch_goodix_wiring_test.c
 T:	workbench/touch_goodix_poll_test.c
@@ -416,8 +418,9 @@ T:	workbench/touch_fts_wiring_test.c
 T:	workbench/touch_fts_read_test.c
 T:	workbench/touch_fts_reports_test.c
 T:	workbench/touch_fts_thread_test.c
+T:	workbench/touch_ft5x06_test.c
 T:	workbench/synaptics_report_test.c
-K:	touch-goodix, touch-ft3658u; touchscreen=
+K:	touch-goodix, touch-ft3658u, touch-ft5x06; touchscreen=
 
 WI-FI AND THE NETWORK
 F:	drivers/board/wifi.c

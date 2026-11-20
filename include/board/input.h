@@ -46,6 +46,8 @@ void hakios_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio
 void hakios_rpmh_lock(void);          /* APPS DRV2/TCS0 transaction; thread context only */
 void hakios_rpmh_unlock(void);
 void hakios_fts_init(void);             /* touchscreen=1: FocalTech FT3658U (feature touch-ft3658u) */
+void hakios_ft5x06_init(void);          /* touchscreen=1: a FocalTech FT5x06-family controller on I2C (feature touch-ft5x06) */
+void hakios_ft5x06_quiesce(void);       /* its polling stopped, the chip powered off: at the run's end and on a panic's way out */
 void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's Goodix or FocalTech touch screen */
 void hakios_goodix_quiesce(void);      /* its polling stopped, the chip powered down: at the run's end and on a panic's way out */
 void hakios_buttons_init(void);        /* boot-arg buttons=1: the phone's power and volume keys */

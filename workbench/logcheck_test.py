@@ -163,6 +163,17 @@ class LogCheck(unittest.TestCase):
                          'goodix: no focaltech touch screen\n')
         self.assertRegex(said, r'Touch \(FocalTech firmware\) +STOPPED +focaltech: no firmware built in')
         self.assertRegex(said, r'Touch \(Goodix\) +STOPPED +goodix: no focaltech touch screen')
+        # the controller on I2C: a look says, a bring-up that found no chip is stopped, one that reads reports is ok
+        code, said = run('Darwin Kernel Version 1\nft5x06: touchscreen=-1: looking only\n'
+                         'ft5x06: the chip at 0x38 answers identity 0x5422, an FT5x46; firmware 0x1e, mode 0x00\n'
+                         'ft5x06: touchscreen=-1: nothing powered, configured or written\n')
+        self.assertRegex(said, r'Touch \(FocalTech on I2C\) +said +ft5x06: touchscreen=-1: nothing powered')
+        code, said = run('Darwin Kernel Version 1\nft5x06: nobody answers at 0x38: a chip that is not there, not powered or held in reset\n'
+                         'ft5x06: touch screen unavailable\nft5x06: powered off: in reset, what was switched on for it off again, the pins as found\n')
+        self.assertRegex(said, r'Touch \(FocalTech on I2C\) +STOPPED +ft5x06: touch screen unavailable')
+        code, said = run('Darwin Kernel Version 1\nft5x06: step 5: touch screen ready, 1080 x 2340, 10 fingers; the interrupt line '
+                         '(gpio59) is looked at every 8 ms\n')
+        self.assertRegex(said, r'Touch \(FocalTech on I2C\) +ok +ft5x06: step 5: touch screen ready')
 
     def test_a_kernel_that_never_started(self):
         code, said = run('loader: platform phone\nno kernel in payload\n')

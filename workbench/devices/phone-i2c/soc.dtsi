@@ -1,0 +1,19 @@
+/dts-v1/;
+
+// A made-up chip for the test of a touch controller on I2C (workbench/touch_ft5x06_test.c): the SoC's pins and RPMh,
+// at addresses where no real chip has them, and nothing else.
+/ {
+	name = "soc-i2c";
+	description = "A made-up chip for the tests, with pins and RPMh only";
+
+	pins {
+		tlmm = <0x03400000>;
+	};
+
+	rpmh {
+		cmd-db = <0x85fe0000>;
+		cmd-db-size = <0x20000>;
+		rsc = <0x1a200000>;
+		tcs-offset = <0xd00>;
+	};
+};

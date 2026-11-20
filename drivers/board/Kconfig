@@ -192,6 +192,15 @@ config TOUCH_FTS
 	help
 	  A FocalTech FT3658U on a serial engine as SPI (board/fts.c, the board's "touch-ft3658u").
 
+config TOUCH_FT5X06
+	bool "FocalTech FT5x06-family touch screens on I2C"
+	default y
+	select QCOM_TLMM
+	select QCOM_RPMH
+	help
+	  A FocalTech controller of the FT5x06 register family (FT5x06, FT5x46, FT6x36 ...) on two of the SoC's pins as
+	  I2C, driven by hand (board/ft5x06.c, the board's "touch-ft5x06" and touch-i2c { }). No firmware is uploaded.
+
 config ADRENO_A6XX
 	bool "Adreno 6xx GPU (A660 family): started, and Metal's device for Darwin"
 	default y

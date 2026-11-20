@@ -10,7 +10,7 @@ chosen, so a configuration never breaks the build; what is off is never started,
 was made without:
 
 ```
-kconfig: made of bringup.config, without TOUCH_GOODIX TOUCH_FTS ADRENO_A6XX WIFI_WCN6750 ...
+kconfig: made of bringup.config, without TOUCH_GOODIX TOUCH_FTS TOUCH_FT5X06 ADRENO_A6XX WIFI_WCN6750 ...
 ```
 
 Whether a driver that is started then does anything is still the board's and the boot arguments' to say, as before:

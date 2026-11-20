@@ -63,6 +63,8 @@ enum {
 	                                         * imu { } says: the phone's orientation (board/imu.c) */
 	HAKIOS_HAS_IMU_BMI160      = 1u << 20,  /* ... or a Bosch BMI160 there instead: the same imu { }, the same driver; a
 	                                         * board lists one of the two */
+	HAKIOS_HAS_TOUCH_FT5X06    = 1u << 21,  /* a FocalTech controller of the FT5x06 register family (FT5x06, FT5x46,
+	                                         * FT6x36 ...) on I2C, wired as touch-i2c { } says (board/ft5x06.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
@@ -263,6 +265,23 @@ struct hakios_board {
 		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: none */
 		uint32_t max_x, max_y;          /* the largest coordinates the controller reports; 0: not said */
 	} touch;
+
+	/*
+	 * A touch controller on I2C (board: touch-i2c { }): two of the SoC's pins for its bus, driven by hand, its
+	 * address there, its interrupt and reset, its supplies and what its reports can say. For the feature
+	 * "touch-ft5x06" (board/ft5x06.c).
+	 */
+	struct {
+		uint8_t sda, scl;               /* its I2C bus's two lines */
+		uint8_t interrupt, reset;       /* low: the chip has a report; low: in reset */
+		uint8_t address;                /* its 7-bit I2C address (the family's is 0x38) */
+		uint8_t contacts;               /* how many fingers the chip reports at most: 1 to 10 */
+		int16_t analog_enable;          /* a pin that switches the chip's analog supply on (high), -1: none */
+		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: not
+		                                 * this driver's to switch (always on, or switched by the pin above) */
+		uint16_t analog_mv;             /* what the analog supply is asked for, in millivolts; 0 without one */
+		uint32_t max_x, max_y;          /* the largest coordinates the controller reports */
+	} touch_i2c;
 
 	/* Bluetooth H4 wiring (board: bluetooth { }); GCC offsets are explicit, including the RCG. */
 	struct {

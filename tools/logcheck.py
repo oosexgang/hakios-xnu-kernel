@@ -47,6 +47,7 @@ PARTS = [
      [r'THE DRIVER IS NOT BUILT IN', r'THE HANDSHAKE DID NOT COME THROUGH', r"MICHAEL'S CHECK FAILED TWICE"]),
     ('Touch (Goodix)', 'goodix', [r'touch screen ready'], [r'failed', r'no (goodix|focaltech) touch screen']),
     ('Touch (FocalTech)', 'fts', [r'touchscreen ready'], [r'stopped after repeated', r'failed', r'touchscreen unavailable']),
+    ('Touch (FocalTech on I2C)', 'ft5x06', [r'touch screen ready'], [r'stopped: the chip does not come back', r'touch screen unavailable']),
     ('Touch (FocalTech firmware)', 'focaltech', [], [r'failed', r'is not started']),
     ('Buttons', 'buttons', [r'believed from here on'],
      [r'giving up', r'of the arbiter only: no buttons', r'which has no keys this driver reads', r'has not been read for']),

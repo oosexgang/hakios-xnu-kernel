@@ -58,6 +58,7 @@ global surfaces.
 | `bsd/dev/board/input.c` | `/dev/hakios-touch`: the queue of touches and button presses every source feeds. | — | any |
 | `bsd/dev/board/goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1`; `touchscreen=-1` only looks | part; which engine, its clocks, the pins and the supply are data (`touch { }`) |
 | `bsd/dev/board/fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1`; `touchscreen=-1` only looks | part; which engine, its clocks, the pins and the supplies are data (`touch { }`) |
+| `bsd/dev/board/ft5x06.c` | FocalTech touch controller of the FT5x06 register family (FT5x06, FT5x46, FT6x36 ...) on I2C, the bus driven by hand on two of the SoC's pins. Reads only: nothing is written into the chip, no firmware is uploaded (a chip without its own flash, an FT8719, is not this driver's). Not run on a phone. | `touch-ft5x06`, `touch-i2c { }` / `touchscreen=1`; `touchscreen=-1` only looks (the pins, the chip's identity); `ft5x06_steps=N` | part; its pins, address, supplies, fingers and coordinates are data (`touch-i2c { }`) |
 | `bsd/dev/board/buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`spmi { }`, `buttons { }`); arbiter versions 5, 7 and 8 ([chipsets.md](chipsets.md)) |
 | `bsd/dev/board/rtc.c` | The PMIC's real-time clock, read once at boot and never written: `hw.rtc_seconds`, which process 1 keeps the time of day by across boots without the host (`/private/var/db/rtc-offset`). | `rtc { }` / on unless `rtc=0` | data (`spmi { }`, `rtc { }`); the RTC_RW block of the PM8941's layout (PM8998, PM8150, PM8250) and the PMK8350's |
 | `bsd/dev/board/virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
@@ -226,12 +227,14 @@ says what each test covers and what it leaves out.
 | `board/goodix.c`, `board/fts.c` (their wiring) | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 | `board/goodix.c`, `board/fts.c` (their reports), `board/fts_protocol.h` | `touch_reports_test.c`, `touch_fts_reports_test.c` | (none: a controller's reports in, touches out) |
 | `board/fts.c` (its thread: bring-up, polling, powering off) | `touch_fts_thread_test.c` | the controller behind its SPI transfer (its identity, a report, reads that fail, slowly or at once, or never end); the pins' and the clock controller's registers; RPMh and its command database |
+| `board/ft5x06.c`, `board/ft5x06_report.h` | `touch_ft5x06_test.c` | the pins' registers with the controller on two of them as an I2C device (`i2c_device_model.h`): its identity, its mode, reports it puts out whole; it answers only powered and out of reset, and not at once; it can fall silent, hang until reset, or hold the bus; RPMh and its command database |
 | `board/geni_spi.h` (the touch drivers' SPI) | `geni_spi_test.c` | the serial engine in its FIFO mode, with a device that answers each byte, and that can say an error, stay busy or take no cancel |
 
-The two touch drivers, the camera's, the sound's and the microphones' are compiled into host programs too, but
+The two SPI touch drivers, the camera's, the sound's and the microphones' are compiled into host programs too, but
 not all of their parts are modelled: the touch drivers' tests cover their wiring and what they make of a
 controller's reports, and the FocalTech driver's thread against a model of its controller, not the talk on the
-wire; the others' cover their wiring, and the sound's and the microphones' the rings Darwin writes and reads. The
+wire (the I2C touch driver's test has the wire too, bit by bit, but its chip is a model written from the same
+memory of the registers as the driver: neither has met a controller); the others' cover their wiring, and the sound's and the microphones' the rings Darwin writes and reads. The
 Wi-Fi driver's test calls parts of it one at a time, with no TrustZone and no DSP that runs. The other DSP drivers,
 the GPU's and the storage's have no such test: they are checked for syntax, types and the formats of what
 they print only (`kernel/syntax-check.sh`), and on the phone.

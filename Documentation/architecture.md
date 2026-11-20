@@ -83,12 +83,13 @@ device packages                     tools/boards.py gen        build/boards/boar
   `darwin/userland/inj26.sh`, `kernel/syntax-check.sh` and `workbench/run.sh`. So the kernel, the loader and
   the libraries know the boards whose packages were present when they were built, and the data and the
   code cannot drift apart. Built with no package, they know only the emulator's board.
-- The host tests do not use real phones. They run against five stand-ins in `workbench/devices/`:
+- The host tests do not use real phones. They run against six stand-ins in `workbench/devices/`:
   `phone-cmd` (a command-mode panel on sm7350), `phone-video` (a video-mode panel on sm7325, every
   part driver listed), `phone-keys` (on a made-up chip, with its parts on other pins and buses than the
   first two: the test of a part's driver runs it there too, so a value of one phone left in the code
-  shows), `phone-scmi` (a made-up chip whose cores' speeds are the firmware's, over SCMI) and `phone-buses`
-  (a made-up chip whose PMIC arbiter is of version 7, the phone's PMICs on its second bus).
+  shows), `phone-scmi` (a made-up chip whose cores' speeds are the firmware's, over SCMI), `phone-buses`
+  (a made-up chip whose PMIC arbiter is of version 7, the phone's PMICs on its second bus) and `phone-i2c`
+  (a made-up chip with pins and RPMh only, the phone's touch controller on I2C).
 - At boot the kernel finds its row by `/chosen/darwin-board`. A driver asks
   `hakios_board_has(HAKIOS_HAS_…)` before it starts and reads addresses from `hakios_board()`.
   A board that is not in the table has no feature: nothing of a phone is touched on a machine nobody

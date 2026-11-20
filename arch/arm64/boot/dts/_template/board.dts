@@ -24,7 +24,7 @@
 	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (drivers/board/board.h, Documentation/drivers.md):
-	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, imu-lsm6dso, imu-bmi160, torch-pm8350c,
+	// touch-goodix, touch-ft3658u, touch-ft5x06, speaker-aw88261, haptic-aw86927, imu-lsm6dso, imu-bmi160, torch-pm8350c,
 	// camera-sm7325, wifi-wcn6750, mic-wcd938x, modem-sm7325, bluetooth-wcn-uart
 	// Documentation/features.md has what each needs written down first; tools/boards.py status NAME says it for
 	// this board.
@@ -107,6 +107,24 @@
 		// coordinates = <10800 24000>; // touch-goodix: the largest x and y it reports (goodix,panel-max-x and -y,
 		//                              // or focaltech,display-coords' last two, of the controller's node);
 		//                              // touch-ft3658u the same, 1080 x 2400 when it is left out
+	// };
+
+	// A touch controller on I2C, for the feature "touch-ft5x06": a FocalTech chip of the FT5x06 register family
+	// (FT5x06, FT5x46, FT6x36 ...; a "focaltech,..." node under an i2c@ bus of the device tree) on two
+	// of the SoC's pins, driven by hand. One with its own flash: no firmware is uploaded. Try touchscreen=-1 first.
+	// touch-i2c {
+		// sda = <42>;                  // the I2C bus's data line: the first pin of the bus's pinctrl node
+		// scl = <43>;                  // ... and its clock, the second
+		// interrupt = <59>;            // the controller's node: its interrupt GPIO (focaltech,irq-gpio)
+		// reset = <58>;                // ... and its reset GPIO (focaltech,reset-gpio)
+		// address = <0x38>;            // the node's reg: its I2C address
+		// contacts = <10>;             // how many fingers the chip reports at most (focaltech,max-touch-number): 1 to 10
+		// coordinates = <1080 2340>;   // the largest x and y it reports (focaltech,display-coords' last two), up to 4095
+		// io-supply = "ldoa8";         // optional: its 1.8 V supply (vcc_i2c-supply) by its RPMh name, if a regulator of
+		//                              // RPMh's that this driver is to switch: L8A is "ldoa8"; needs rpmh { } in soc.dtsi
+		// analog-supply = "ldoa17";    // optional: its analog supply (vdd-supply) the same way, with what it is asked for:
+		// analog-millivolts = <3008>;  // ... the regulator's voltage in the device tree, 2600 to 3600
+		// analog-enable = <78>;        // optional: a GPIO that switches its analog supply on, high
 	// };
 
 	// The microphones' codec, for the feature "mic-wcd938x": a WCD938x on the SoC's SoundWire.

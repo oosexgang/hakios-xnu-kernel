@@ -189,11 +189,19 @@ an amplifier has its own registers. These are drivers, in `drivers/board/`, and 
 feature named after the part and the wiring it expects (`touch-goodix`, `haptic-aw86927`, ...).
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
-- If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
+- If it has **one of the SPI touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
   engine or other pins: fill in `touch { }` of the board file. `arch/arm64/boot/dts/_template/board.dts` says
   where each value is in the device tree and in the SoC's clock driver;
   `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
   that driver for you.
+- If its touch controller is **a FocalTech chip on I2C** (a `focaltech,...` node under an `i2c@` bus
+  of the device tree: FT5x06, FT5x46, FT6x36 and their relatives, common on Snapdragon phones): list
+  `touch-ft5x06` and fill in `touch-i2c { }` -- the bus's two pins, the address, interrupt and reset, how many
+  fingers and the largest coordinates, and its supplies if they are RPMh regulators nobody else keeps on. Start
+  with `touchscreen=-1`, which reads the chip's identity and changes nothing; `touchscreen=1` powers and resets
+  it and reads its touches, and `ft5x06_steps=N` stops the bring-up after its Nth step. The driver uploads no
+  firmware: a chip with its own flash runs after a reset, one without (the display-and-touch chips, FT8719 and
+  the like) does not. It has been run against a model only, not on a phone.
 - If it has **the same part on other pins or another bus** and the driver has them in its code, the driver needs those made data. Move
   the constants into the board file and `board/board.h`, as the buttons' driver has its peripherals
   in `buttons { }`, the flashlight's in `torch { }`, the vibration motor's pins in `haptic { }` and the
@@ -206,8 +214,8 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
   `board/board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
   and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
-  two of them, the PMICs, RPMh. `board/fts.c` beside `board/goodix.c` shows two parts of a kind:
-  two touch controllers, one interface to Darwin (`/dev/hakios-touch`, `bsd/sys/board/input.h`).
+  two of them, the PMICs, RPMh. `board/fts.c` and `board/ft5x06.c` beside `board/goodix.c` show parts of a kind:
+  three touch controllers, one interface to Darwin (`/dev/hakios-touch`, `bsd/sys/board/input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.

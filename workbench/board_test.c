@@ -241,7 +241,7 @@ table(void)
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750 |
-		    HAKIOS_HAS_IMU_LSM6DSO | HAKIOS_HAS_IMU_BMI160)) || b->pins.tlmm != 0,
+		    HAKIOS_HAS_IMU_LSM6DSO | HAKIOS_HAS_IMU_BMI160 | HAKIOS_HAS_TOUCH_FT5X06)) || b->pins.tlmm != 0,
 		    "%s: a driver that drives the SoC's pins without pins { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_CAMERA_SM7325)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without clocks { }",
@@ -278,6 +278,14 @@ table(void)
 		    b->touch.vendor_pin[1] >= 0), "%s: the Goodix driver without its analog supply's pin and the two straps", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_TOUCH_FT3658U) || b->touch.analog_supply != NULL,
 		    "%s: the FT3658U's driver without its analog supply", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_TOUCH_FT5X06) || (b->touch_i2c.sda != b->touch_i2c.scl && b->touch_i2c.address != 0 &&
+		    b->touch_i2c.interrupt != b->touch_i2c.reset && b->touch_i2c.contacts >= 1 && b->touch_i2c.contacts <= 10 &&
+		    b->touch_i2c.max_x != 0 && b->touch_i2c.max_x <= 0xfff && b->touch_i2c.max_y != 0 && b->touch_i2c.max_y <= 0xfff),
+		    "%s: the FT5x06 family's driver without its bus, address, fingers or coordinates", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_TOUCH_FT5X06) || (b->touch_i2c.io_supply == NULL && b->touch_i2c.analog_supply == NULL) ||
+		    (b->rpmh.cmd_db != 0 && b->rpmh.rsc != 0), "%s: a touch controller's supplies named without rpmh { }", b->name);
+		CHECK((b->touch_i2c.analog_supply != NULL) == (b->touch_i2c.analog_mv != 0), "%s: touch-i2c { }: an analog supply and its "
+		    "voltage go together", b->name);
 		CHECK(b->storage.blocks == 0 || (b->storage.first_lba != 0 && b->storage.write_first != 0 &&
 		    b->storage.write_first < b->storage.blocks), "%s: a partition to write into that begins at 0, or from a block outside it", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_SPEAKER_AW88261) || (b->speaker.sda != b->speaker.scl &&
@@ -304,7 +312,7 @@ table(void)
 		}
 		CHECK(!(b->features & HAKIOS_HAS_VIRTIO) || !(b->features & ~HAKIOS_HAS_VIRTIO), "%s: virtio beside a phone's parts",
 		    b->name);
-		CHECK(!((b->features & HAKIOS_HAS_TOUCH_GOODIX) && (b->features & HAKIOS_HAS_TOUCH_FT3658U)),
+		CHECK(__builtin_popcount(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_TOUCH_FT5X06)) <= 1,
 		    "%s lists two touch controllers", b->name);
 		for (unsigned j = 0; j < i; j++) {
 			CHECK(strcmp(b->name, hakios_boards[j].name) != 0, "%s is there twice", b->name);

@@ -1,0 +1,30 @@
+/dts-v1/;
+
+// A test phone whose touch controller is on I2C: a FocalTech chip of the FT5x06 family on two of the SoC's pins,
+// its two supplies RPMh's, on a made-up chip (soc.dtsi beside this file). For the test of that driver
+// (workbench/touch_ft5x06_test.c); phone-keys has the same part wired otherwise, and no driver listed for it.
+/ {
+	name = "phone-i2c";
+	description = "Test phone, its touch controller on I2C";
+	soc = "soc-i2c";
+
+	features = "touch-ft5x06";
+
+	backlight {
+		type = "soft";
+	};
+
+	// Its touch controller: ten fingers, at the family's address, both supplies asked of RPMh.
+	touch-i2c {
+		sda = <42>;
+		scl = <43>;
+		interrupt = <59>;
+		reset = <58>;
+		address = <0x38>;
+		contacts = <10>;
+		coordinates = <1080 2340>;
+		io-supply = "ldoa8";
+		analog-supply = "ldoa17";
+		analog-millivolts = <3008>;
+	};
+};

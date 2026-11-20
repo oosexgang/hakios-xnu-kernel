@@ -24,6 +24,20 @@ tags yet, so the current work is one section.
   `imu { }` where the chip is and how it is turned gets `sensors=1` (its identity read, nothing written) and
   `sensors=2` (the accelerometer on at 104 Hz, the orientation followed and said, `hw.sensors.orientation` and
   `hw.sensors.accel`); powered down at the run's end. Not run on a phone yet. ([drivers.md](Documentation/drivers.md))
+- **A touch screen driver for the FocalTech controllers on I2C.** The FT5x06 register family (FT5x06, FT5x16,
+  FT5x46, FT6x06, FT6x36 and their relatives) is on a very large number of Snapdragon phones; a board lists
+  `touch-ft5x06` and says in `touch-i2c { }` which two pins its bus is on, its address, interrupt and reset, how many
+  fingers and the largest coordinates, and its supplies where they are RPMh regulators to switch (or a pin). The bus
+  is driven by hand, as the motion sensor's is. `touchscreen=-1` reads the pins and the chip's identity and powers,
+  configures and writes nothing; `touchscreen=1` powers and resets it, reads its identity and then its reports into
+  `/dev/hakios-touch`, in numbered steps (`ft5x06_steps=N` stops after the Nth); `touch_flip` mirrors as for the
+  other controllers. A finger whose chip falls silent is lifted after a quarter of a second; a chip that stops
+  answering is reset, and given up after four troubles; at the run's end it is powered off and the pins are as they
+  were found. The driver only reads: nothing is written into the chip and **no firmware is uploaded**, so the
+  parts without their own flash (FT8719 and the like) are not served. **It has not been run on a phone**: written
+  from the family's register layout as remembered and run against a model of the chip
+  (`workbench/touch_ft5x06_test.c`). A report costs a core 0.4 ms idle and about 1.6 ms with one finger, the bus
+  being driven by hand. ([drivers.md](Documentation/drivers.md), [porting.md](Documentation/porting.md))
 - **The PMIC drivers through a version 7 arbiter** (two SPMI buses behind one arbiter: SM8450, SM8550, SM8650 and
   their relatives), beside versions 5, 6 and 8. `board/spmi.h` tells it by the arbiter's version register; the SoC file
   has the same `spmi { }` blocks plus `bus` (the node's `qcom,bus-id`, 0 if left out; `tools/boards.py new --dts`

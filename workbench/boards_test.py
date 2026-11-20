@@ -966,6 +966,60 @@ class Generate(Sandbox):
         self.assertEqual(self.problems(), '')
         self.assertIn('.analog_enable = -1, .vendor_pin = { -1, -1 },', boards.table_text(*boards.load()))
 
+    def test_a_touch_controller_on_i2c_needs_its_wiring_and_rpmh_only_for_a_supply_it_names(self):
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "touch-ft5x06"')
+        said = self.problems()
+        self.assertIn('feature "touch-ft5x06" needs pins { } in soc.dtsi', said)
+        self.assertIn('feature "touch-ft5x06" needs touch-i2c { } in the board file', said)
+        self.assertNotIn('feature "touch-ft5x06" needs rpmh { }', said)
+        self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tthermal {')
+        path = self.dir / 'devices/phone/board.dts'
+        plain = path.read_text()
+        good = {'sda': '<42>', 'scl': '<43>', 'interrupt': '<59>', 'reset': '<58>', 'address': '<0x38>', 'contacts': '<10>',
+                'coordinates': '<1080 2340>'}
+
+        def wired(**changed):
+            keys = {**good, **{key.replace('_', '-'): value for key, value in changed.items()}}
+            path.write_text(plain + '/ {\n\ttouch-i2c {\n' + ''.join(f'\t\t{key} = {value};\n' for key, value in keys.items() if value) +
+                            '\t};\n};\n')
+            return self.problems()
+
+        self.assertEqual(wired(), '')
+        table = boards.table_text(*boards.load())
+        self.assertIn('HAKIOS_HAS_TOUCH_FT5X06', table)
+        for line in ('.sda = 42, .scl = 43, .interrupt = 59, .reset = 58,', '.address = 0x38, .contacts = 10, .analog_enable = -1,',
+                     '\t\t\t.analog_mv = 0,', '.max_x = 1080, .max_y = 2340,'):
+            self.assertIn(line, table)
+        self.assertIn('sda, scl, interrupt, reset and analog-enable are different pins of the SoC', wired(reset='<43>'))
+        self.assertIn('different pins of the SoC', wired(sda='<256>'))
+        self.assertIn('different pins of the SoC', wired(analog_enable='<59>'))
+        self.assertIn('address is the chip\'s 7-bit I2C address', wired(address='<0x78>'))
+        self.assertIn('contacts is how many fingers the chip reports at most: 1 to 10', wired(contacts='<11>'))
+        self.assertIn('contacts is how many fingers', wired(contacts='<0>'))
+        self.assertIn('"contacts" is missing', wired(contacts=''))
+        self.assertIn('"coordinates" is missing', wired(coordinates=''))
+        for coordinates in ('<1080>', '<1080 0>', '<4096 2340>', '<1080 2340 1>'):
+            self.assertIn('coordinates are the largest x and y the controller reports', wired(coordinates=coordinates), coordinates)
+        self.assertEqual(wired(coordinates='<4095 4095>', contacts='<1>', analog_enable='<78>'), '')
+        self.assertIn('.analog_enable = 78,', boards.table_text(*boards.load()))
+        # a supply it names is asked of RPMh: the SoC file must say where that is; and the analog one has its voltage
+        said = wired(io_supply='"ldoa8"')
+        self.assertEqual(said, 'devices/phone/board.dts: feature "touch-ft5x06" needs rpmh { } in soc.dtsi (its touch-i2c { } names a '
+                         'supply, which is asked of RPMh)')
+        self.soc('\tthermal {', '\trpmh {\n\t\tcmd-db = <0x80860000>;\n\t\tcmd-db-size = <0x20000>;\n\t\trsc = <0x18220000>;\n\t\ttcs-offset = <0xd00>;\n\t};\n\tthermal {')
+        self.assertEqual(wired(io_supply='"ldoa8"'), '')
+        self.assertIn('analog-supply and analog-millivolts go together', wired(analog_supply='"ldoa17"'))
+        self.assertIn('analog-supply and analog-millivolts go together', wired(analog_millivolts='<3008>'))
+        self.assertIn('2600 to 3600', wired(analog_supply='"ldoa17"', analog_millivolts='<1800>'))
+        self.assertIn('2600 to 3600', wired(analog_supply='"ldoa17"', analog_millivolts='<3700>'))
+        self.assertIn('two different names of RPMh regulators', wired(io_supply='"ldoa17"', analog_supply='"ldoa17"', analog_millivolts='<3008>'))
+        self.assertIn('two different names of RPMh regulators', wired(io_supply='"L8A"'))
+        self.assertEqual(wired(io_supply='"ldoa8"', analog_supply='"ldoa17"', analog_millivolts='<3008>'), '')
+        self.assertIn('.io_supply = "ldoa8", .analog_supply = "ldoa17", .analog_mv = 3008,', boards.table_text(*boards.load()))
+        # a board has one touch controller: this driver's feature beside another's is refused
+        path.write_text(path.read_text().replace('"touch-ft5x06"', '"touch-ft5x06", "touch-ft3658u"'))
+        self.assertIn('features "touch-ft3658u", "touch-ft5x06" are drivers of different touch controllers: a board has one', self.problems())
+
     def test_the_motion_sensor_needs_its_wiring_and_a_real_turn_of_the_chip(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "imu-lsm6dso"')
         said = self.problems()
@@ -2045,7 +2099,7 @@ class Repository(unittest.TestCase):
         problems = boards.Problems()
         socs, found = boards.load(problems)
         self.assertEqual(list(problems), [])
-        for name in ('phone-cmd', 'phone-video', 'phone-keys', 'phone-buses'):
+        for name in ('phone-cmd', 'phone-video', 'phone-keys', 'phone-buses', 'phone-i2c'):
             self.assertIn(name, found)
             names = [argument.split('=')[0] for argument in found[name].get('boot', {}).get('bootargs', [])]
             self.assertEqual(len(names), len(set(names)))
@@ -2059,7 +2113,7 @@ class Repository(unittest.TestCase):
                                       ['gen', '--out', str(out)],
                                       capture_output=True, text=True, env={**os.environ, **environment})
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertIn('phone-buses, phone-cmd, phone-keys, phone-scmi, phone-video', done.stdout)
+                self.assertIn('phone-buses, phone-cmd, phone-i2c, phone-keys, phone-scmi, phone-video', done.stdout)
                 self.assertIn('.name = "phone-cmd"', (out / 'board_table.h').read_text())
         finally:
             shutil.rmtree(out)
