@@ -102,6 +102,16 @@ hakios_plog_start(volatile uint8_t *where)
 }
 #define HAKIOS_PLOG_DATA 0xfff0u
 
+/*
+ * A copy of everything the console says -- the kernel's printf and what user space writes to /dev/console -- in a
+ * ring that the kernel debugger (drivers/core/hakios.dbg.c, "console") hands out over the network. The kernel's own
+ * message buffer holds the kernel's lines only, and the loader's log is out of reach while the system runs.
+ */
+#define HAKIOS_CONSOLE_RING (512 * 1024)
+char hakios_console_ring[HAKIOS_CONSOLE_RING];
+volatile uint32_t hakios_console_head;
+const uint32_t hakios_console_size = HAKIOS_CONSOLE_RING;
+
 void
 loader_log_putc(char c)
 {
@@ -111,6 +121,9 @@ loader_log_putc(char c)
 	if (c == '\r') {
 		return;
 	}
+	/* (a byte at a time into the ring, no lock: two writers at once can lose a character, which a log may) */
+	hakios_console_ring[hakios_console_head % HAKIOS_CONSOLE_RING] = c;
+	hakios_console_head++;
 	if (hakios_plog != NULL) {
 		hakios_plog[8 + (hakios_plog_total % HAKIOS_PLOG_DATA)] = (uint8_t)c;
 		hakios_plog_total++;

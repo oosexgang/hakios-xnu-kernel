@@ -1,4 +1,7 @@
+A610_CCU	arg	a610_ccu	GPU and display	k	hakios.adreno.c	
+A610_DIV	arg	a610_div	GPU and display	k	hakios.adreno.c	
 ADRENO	arg	adreno	GPU and display	k	hakios.adreno.c	
+ADRENO610	arg	adreno610	GPU and display	k	hakios.adreno.c	
 ADRENO_BLIND	arg	adreno_blind	GPU and display	k	hakios.adreno.c	
 ADRENO_DIRTY	arg	adreno_dirty	GPU and display	k	hakios.adreno.c	
 ADRENO_FINE	arg	adreno_fine	GPU and display	k	hakios.adreno.c	the newest step waits like that before every single access
@@ -51,12 +54,12 @@ APFS_WRITE_PATH	arg	apfs_write_path	Storage and APFS	k	hakios.apfs_check.c	the f
 APPLOG	arg	applog	CPU, memory and boot	k	(patch)	
 APPLOG_NAME	arg	applog_name	CPU, memory and boot	k	(patch)	
 AUTOUNLOCK	arg	autounlock	User space	u	inject_sb.c	
-BATTERY	arg	battery	Audio and battery	kl	hakios.adsp.c,hakios.battery.c,loader.c	
+BATTERY	arg	battery	Audio and battery	kl	hakios.adsp.c,hakios.battery.c,loader.c	the Redmi Note 13 4G (sapphiren)
 BATTERY_LEVEL	arg	battery_level	Audio and battery	k	hakios.battery.c	
 BATTMGR	arg	battmgr	Audio and battery	k	hakios.adsp.c	every property once, for the log (which number is which on this phone's firmware)
 BT	arg	bt	User space	k	hakios.bt.c	
 BT_AGAIN	arg	bt_again	User space	k	hakios.bt.c	the second look this many seconds later (0: no second look; 30)
-BUTTONS	arg	buttons	Touch and buttons	k	hakios.buttons.c	
+BUTTONS	arg	buttons	Touch and buttons	k	hakios.buttons.c	the Redmi Note 13 4G (sapphiren, Snapdragon 685, PM6125) instead of redwood
 BUTTONS_STEPS	arg	buttons_steps	Touch and buttons	k	hakios.buttons.c	
 CA_METALLIB	arg	ca_metallib	User space	u	inject.c	
 CA_PROF	arg	ca_prof	User space	u	HakiosMetalCA.m	
@@ -75,8 +78,10 @@ CAM_SETTLE	arg	cam_settle	Cameras	k	hakios.camera.c
 CAM_SHUTTER	arg	cam_shutter	Cameras	k	hakios.camera.c	
 CAM_VBLANK	arg	cam_vblank	Cameras	k	hakios.camera.c	
 CC_FADE	arg	cc_fade	User space	u	inject_sb.c	
+CPUFREQ_OSM	arg	cpufreq_osm	CPU, memory and boot	k	hakios.cpufreq.c	
 CPULOAD	arg	cpuload	CPU, memory and boot	k	hakios.cpufreq.c	every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture)
 CPUMASK	arg	cpumask	Loader	l	loader.c	
+DBG	arg	dbg	User space	k	hakios.dbg.c	
 DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read
 DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c	
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
@@ -84,6 +89,7 @@ DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c	before any ste
 FB_BEAM	arg	fb_beam	GPU and display	k	MiniIOMobileFramebuffer.cpp	frames written to the panel's memory whenever their beat comes, as before
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
+FB_CACHED	arg	fb_cached	GPU and display	k	(patch),MiniIOMobileFramebuffer.cpp	
 FB_DIFF	arg	fb_diff	GPU and display	k	MiniIOMobileFramebuffer.cpp	which pixels of the panel each frame changed (it costs: the panel's memory is slow to read)
 FB_FILTER	arg	fb_filter	GPU and display	k	MiniIOMobileFramebuffer.cpp	the picture is scaled to the panel nearest neighbour, as it once was
 FB_HZ	arg	fb_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	
@@ -99,6 +105,7 @@ FBTRACE	arg	fbtrace	GPU and display	k	MiniIOMobileFramebuffer.cpp	log the first 
 FBWIDTH	arg	fbwidth	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject_sb.c	
 GAMUT	arg	gamut	Loader	l	loader.c	
 GL	arg	gl	User space	u	inject.c,inject_sb.c	not even with a GPU; gl=1: also without one, by Mesa's software driver (slow; for working on eagl.c in QEMU)
+GLALPHA	arg	glalpha	GPU and display	u	eagl.c	alpha-only pictures (GL_ALPHA bytes) are stored as RGBA8 (0, 0, 0, a), not as R8 with a texture swizzle
 GLBLIT	arg	glblit	GPU and display	u	eagl.c	the surface's memory, as before
 GLCENSUS	arg	glcensus	GPU and display	u	eagl.c	
 GLCOMPILE	arg	glcompile	User space	u	inject.c	
@@ -107,6 +114,7 @@ GLENV	arg	glenv	GPU and display	u	eagl.c
 GLFETCH	arg	glfetch	GPU and display	u	eagl.c	
 GLFRAMES	arg	glframes	GPU and display	u	eagl.c	
 GLGROUP	arg	glgroup	GPU and display	u	eagl.c	
+GLMASK	arg	glmask	GPU and display	u	eagl.c	
 GLNO	arg	glno	User space	u	inject.c	
 GLNUMBERS	arg	glnumbers	GPU and display	u	eagl.c	
 GLPLAIN	arg	glplain	GPU and display	u	eagl.c	leave such draws as they are; 2: also those without a texture; 3: the two with a colour matrix drawn plainly too
@@ -139,6 +147,9 @@ GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c
 GPU_KEEP	arg	gpu_keep	GPU and display	k	hakios.gpu.cpp	
 GPU_LOG	arg	gpu_log	GPU and display	k	hakios.adreno.c	
 HAPTIC_EFFECT	arg	haptic_effect	Haptics and torch	k	hakios.haptic.c	
+ICNSS_MSA	arg	icnss_msa	Wi-Fi	k	hakios.wifi.c	physical base (Khaje: 0x51900000)
+ICNSS_MSA_SIZE	arg	icnss_msa_size	Wi-Fi	k	hakios.wifi.c	size (Khaje: 0x100000; capped at 16 MiB)
+ICNSS_PROBE	arg	icnss_probe	Wi-Fi	k	hakios.wifi.c	inspect the reserved MSA RAM, read only
 M2V_UTRACE	arg	m2v_utrace	User space	u	HakiosMetalCA.m	Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run
 MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp	
 MEMBENCH	arg	membench	CPU, memory and boot	k	hakios.cpufreq.c	
@@ -168,10 +179,12 @@ MODEM_DATA_WAIT	arg	modem_data_wait	Cellular	k	hakios.mpss.c
 MODEM_DPM_OFF	arg	modem_dpm_off	Cellular	k	hakios.mpss.c	
 MODEM_IPA	arg	modem_ipa	Cellular	k	hakios.mpss.c	
 MODEM_IPA_BUS_OFF	arg	modem_ipa_bus_off	Cellular	k	hakios.mpss.c	
+MODEM_IPA_CLOCK_SKIP	arg	modem_ipa_clock_skip	Cellular	k	hakios.mpss.c	
 MODEM_IPA_DATA_OFF	arg	modem_ipa_data_off	Cellular	k	hakios.ipa.c	none of this. modem_ipa_data_trace=1: a line per packet.
 MODEM_IPA_DATA_TRACE	arg	modem_ipa_data_trace	Cellular	k	hakios.cell.c,hakios.ipa.c	
 MODEM_IPA_FW	arg	modem_ipa_fw	Cellular	k	hakios.mpss.c	
 MODEM_IPA_FW_AT	arg	modem_ipa_fw_at	Cellular	k	hakios.mpss.c	
+MODEM_IPA_FW_SIZE	arg	modem_ipa_fw_size	Cellular	k	hakios.mpss.c	
 MODEM_IPA_GSI_ENABLE	arg	modem_ipa_gsi_enable	Cellular	k	hakios.mpss.c	
 MODEM_IPA_ITEM	arg	modem_ipa_item	Cellular	k	hakios.mpss.c	
 MODEM_IPA_NO_PROBE	arg	modem_ipa_no_probe	Cellular	k	hakios.mpss.c	
@@ -181,6 +194,7 @@ MODEM_IPA_ROUTES	arg	modem_ipa_routes	Cellular	k	hakios.mpss.c
 MODEM_IPA_SKIP_UC	arg	modem_ipa_skip_uc	Cellular	k	hakios.mpss.c	
 MODEM_IPA_SMMU_OFF	arg	modem_ipa_smmu_off	Cellular	k	hakios.mpss.c	
 MODEM_KEEP	arg	modem_keep	Cellular	k	hakios.mpss.c	
+MODEM_KHAJE	arg	modem_khaje	Cellular	k	hakios.mpss.c	
 MODEM_LISTEN	arg	modem_listen	Cellular	k	hakios.mpss.c	
 MODEM_NAS_WAIT	arg	modem_nas_wait	Cellular	k	hakios.mpss.c	
 MODEM_NEW	arg	modem_new	Cellular	k	hakios.mpss.c	
@@ -200,6 +214,21 @@ MODEM_SIM_SWITCH_OFF	arg	modem_sim_switch_off	Cellular	k	hakios.mpss.c
 MODEM_STEP	arg	modem_step	Cellular	k	hakios.mpss.c	the steps once the root is there, then back to the loader if modem_return=1 says so
 MODEM_WAIT	arg	modem_wait	Cellular	k	hakios.mpss.c	
 MODEM_WDA_OFF	arg	modem_wda_off	Cellular	k	hakios.mpss.c	
+MODEM_WIFI_PASS	arg	modem_wifi_pass	Cellular	k	hakios.mpss.c	
+MODEM_WIFI_SELFTEST	arg	modem_wifi_selftest	Cellular	k	hakios.mpss.c	
+MODEM_WIFI_SSID	arg	modem_wifi_ssid	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_ASSIGN	arg	modem_wlfw_assign	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_BDF	arg	modem_wlfw_bdf	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_CE_PROBE	arg	modem_wlfw_ce_probe	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_CE_START	arg	modem_wlfw_ce_start	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_HTC_CONNECT	arg	modem_wlfw_htc_connect	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_MISSION	arg	modem_wlfw_mission	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_PROBE	arg	modem_wlfw_probe	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_READY	arg	modem_wlfw_ready	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_SCAN	arg	modem_wlfw_scan	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_SMMU_IDENTITY	arg	modem_wlfw_smmu_identity	Cellular	k	hakios.mpss.c	
+MODEM_WLFW_SMMU_PROBE	arg	modem_wlfw_smmu_probe	Cellular	k	hakios.mpss.c	
+MODEM_WMI_LOG	arg	modem_wmi_log	Cellular	k	hakios.mpss.c	
 PMIC_LIST	arg	pmic_list	Chip, thermal and PMIC	k	hakios.pmic.c	only the clock, not the inventory of every block
 PRESS_POWER	arg	press_power	Touch and buttons	k	hakios.buttons.c	a short press of the power key that many seconds after boot, and another ten seconds later, given to Darwin as the key's own are (hakios_touch_post):
 PRESS_POWER_MS	arg	press_power_ms	Touch and buttons	k	hakios.buttons.c	
@@ -221,13 +250,14 @@ SERIAL	arg	serial	Loader	l	loader.c
 SMALL_CORES	arg	small_cores	CPU, memory and boot	k	(patch)	
 SMALL_CORES_AFTER	arg	small_cores_after	CPU, memory and boot	k	GenericARMPE.cpp	
 SOC_CMD_DB	hex	soc_cmd_db	Cellular	k	hakios.mpss.c	
-SOC_GSI_BASE	hex	soc_gsi_base	Cellular	k	hakios.ipa.c	
+SOC_GSI_BASE	hex	soc_gsi_base	Cellular	k	hakios.ipa.c,hakios.mpss.c	
 SOC_IMEM	hex	soc_imem	Cellular	k	hakios.mpss.c	
-SOC_IPA_BASE	hex	soc_ipa_base	Cellular	k	hakios.ipa.c	
+SOC_IPA_BASE	hex	soc_ipa_base	Cellular	k	hakios.ipa.c,hakios.mpss.c	
 SOC_IPA_FW	arg	soc_ipa_fw	Cellular	k	hakios.mpss.c	
 SOC_IPA_STREAM	arg	soc_ipa_stream	Cellular	k	hakios.mpss.c	
 SOC_IPA_STREAM_UC	arg	soc_ipa_stream_uc	Cellular	k	hakios.mpss.c	
 SOC_MPSS_MEM	hex	soc_mpss_mem	Cellular	k	hakios.mpss.c	
+SOC_MPSS_SIZE	hex	soc_mpss_size	Cellular	k	hakios.mpss.c	
 SOC_PAS_IPA	arg	soc_pas_ipa	Cellular	k	hakios.mpss.c	
 SOC_PAS_MPSS	arg	soc_pas_mpss	Cellular	k	hakios.mpss.c	
 SOC_SMEM	hex	soc_smem	Cellular	k	hakios.mpss.c,hakios.socinfo.c	where SMEM is (also the modem driver's argument; 0x80900000 on the reference phone)
@@ -244,7 +274,7 @@ SURF_WRAP	arg	surf_wrap	GPU and display	k	MiniIOSurface.cpp	surfaces around the 
 SURFTRACE	arg	surftrace	GPU and display	k	MiniIOSurface.cpp	log the first N surfaces created (default 24)
 SURFTRACE_OF	arg	surftrace_of	GPU and display	k	MiniIOSurface.cpp	
 SWITCHER_WALLPAPER	arg	switcher_wallpaper	User space	u	inject_sb.c	
-SYNAPTICS_TCM	arg	synaptics_tcm	User space	k	hakios.synaptics.c	every pin below belongs to this phone
+SYNAPTICS_TCM	arg	synaptics_tcm	Touch and buttons	k	hakios.input.c,hakios.synaptics.c	every pin below belongs to this phone
 SYSSLEEP	arg	syssleep	CPU, memory and boot	k	(patch)	
 SYSTRACE	arg	systrace	CPU, memory and boot	k	(patch),user_exception_trace.c	
 SYSTRACE_NAME	arg	systrace_name	CPU, memory and boot	k	(patch)	
@@ -288,6 +318,7 @@ VIRTIO_INPUT	arg	virtio_input	Touch and buttons	k	hakios.virtio_input.c
 VIRTIO_SOUND	arg	virtio_sound	Audio and battery	k	hakios.virtio_sound.c	
 WALLPAPER_CACHE	arg	wallpaper_cache	User space	u	inject_sb.c	the window that shows the wallpaper rasterized by the window server (CALayer's shouldRasterize), drawn from one texture instead of composed again
 WALLPAPER_FREEZE	arg	wallpaper_freeze	User space	u	inject_sb.c	the wallpaper as one still picture
+WIDGET_QUIET	arg	widget_quiet	User space	u	inject_sb.c	a widget's scene that goes away with an error is not handled
 WIFI_AGAIN	arg	wifi_again	Wi-Fi	k	hakios.wifi.c	start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two
 WIFI_ASK	arg	wifi_ask	Wi-Fi	k	hakios.wifi.c	step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer
 WIFI_BA	arg	wifi_ba	Wi-Fi	k	lx_80211.c	
@@ -318,4 +349,5 @@ WIFI_STEP	arg	wifi_step	Wi-Fi	k	hakios.wifi.c
 WIFI_WAIT	arg	wifi_wait	Wi-Fi	k	hakios.wifi.c	how long step 11 watches for the DSP to say that it is up (default 10)
 WIFI_WATCH	arg	wifi_watch	Wi-Fi	k	hakios.wifi.c	
 WIFI_WIDE	arg	wifi_wide	Wi-Fi	k	lx_80211.c	
+WNET	arg	wnet	Cellular	k	hakios.mpss.c	
 XPCPROXY_IDVERSION	arg	xpcproxy_idversion	CPU, memory and boot	k	(patch)	

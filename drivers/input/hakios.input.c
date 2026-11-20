@@ -274,6 +274,8 @@ static const struct cdevsw touch_cdevsw = {
 	.d_mmap = eno_mmap, .d_strategy = eno_strat, .d_type = 0
 };
 
+extern void hakios_dbg_init(void);
+
 void
 hakios_input_init(void)
 {
@@ -304,4 +306,5 @@ hakios_input_init(void)
 	hakios_wifi_init();
 	hakios_adsp_init();
 	hakios_mpss_init();
+	hakios_dbg_init();
 }

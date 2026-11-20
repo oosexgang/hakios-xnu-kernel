@@ -64,6 +64,7 @@
 #include <kern/locks.h>
 #include <kern/thread.h>
 #include <libkern/libkern.h>
+#include <sys/random.h>
 #include <os/atomic_private.h>
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>
@@ -79,6 +80,8 @@
 #include <sys/hakios.input.h>
 #include <sys/hakios.ipa.h>
 #include <sys/hakios.nas.h>
+#include <sys/hakios.net.h>
+#include <sys/hakios.sta.h>
 #include <sys/hakios.qrtr.h>
 #include <sys/sysctl.h>
 
@@ -213,6 +216,19 @@ option(const char *name)
 	uint32_t value = 0;
 
 	return PE_parse_boot_argn(name, &value, sizeof(value)) && value != 0;
+}
+
+/* the radio's every message is noise in the kernel's log once Darwin runs (a scan every few seconds, a message each);
+ * modem_wmi_log=1 brings it back */
+static bool
+khaje_wmi_chatty(void)
+{
+	static int chatty = -1;
+
+	if (chatty < 0) {
+		chatty = option("modem_wmi_log") ? 1 : 0;
+	}
+	return chatty != 0;
 }
 
 /* ---- register access (as in hakios.wifi.c) ------------------------------------------------------- */
@@ -614,6 +630,26 @@ static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
 #define IPCC_SMP2P              2u
 
 static struct block ipcc = { "ipcc", 0x00408000, 0x1000 };
+/* SM6225/Khaje uses the older APCS mailbox: write one bit at +8. */
+static struct block apcs = { "apcs", 0x0f111000, 0x1000 };
+static bool khaje;
+
+#define APCS_IPC                0x08
+#define APCS_MPSS_GLINK_BIT     12
+#define APCS_MPSS_SMP2P_BIT     14
+
+static void
+ring_mpss(uint32_t signal)
+{
+	if (khaje) {
+		need(&apcs);
+		wr(apcs.base + APCS_IPC, 1u << (signal == IPCC_GLINK ? APCS_MPSS_GLINK_BIT : APCS_MPSS_SMP2P_BIT));
+		settle();
+		return;
+	}
+	need(&ipcc);
+	wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | signal);
+}
 
 static struct {
 	uint32_t glink, smp2p, said;
@@ -628,6 +664,10 @@ static struct {
 static void
 doorbells(void)
 {
+	if (khaje) {
+		/* Incoming Khaje GLINK/SMP2P interrupts are polled through SMEM for now. */
+		return;
+	}
 	for (unsigned i = 0; i < 8; i++) {
 		uint32_t who = rd(ipcc.base + IPCC_RECEIVED);
 
@@ -1037,8 +1077,12 @@ step_survey(void)
 	    smem_item(ITEM_SMP2P_OURS, &size) ? "there" : "not there", smem_item(478, &size) ? "there" : "NOT THERE",
 	    smem_item(479, &size) ? "there" : "NOT THERE", smem_item(480, &size) ? "there" : "not there (the DSP makes it)");
 	show_crash_reason();
-	need(&ipcc);
-	printf("mpss: %u: the doorbells say %#x\n", step, rd(ipcc.base + IPCC_RECEIVED));
+	if (khaje) {
+		printf("mpss: %u: Khaje APCS doorbells are write-only; incoming state is polled in SMEM\n", step);
+	} else {
+		need(&ipcc);
+		printf("mpss: %u: the doorbells say %#x\n", step, rd(ipcc.base + IPCC_RECEIVED));
+	}
 	return smem_partition(SMEM_US, SMEM_MPSS, &size, &size) != 0;
 }
 
@@ -1046,7 +1090,8 @@ step_survey(void)
 
 #define MPSS_MEMORY_DEFAULT     0x8b800000u   /* dt: reserved-memory mpss@..., memory-region of qcom,mss */
 static uint32_t mpss_memory = MPSS_MEMORY_DEFAULT;
-#define MPSS_MEMORY_SIZE        0x0f600000u
+#define MPSS_MEMORY_SIZE_DEFAULT 0x0f600000u
+static uint32_t mpss_memory_size = MPSS_MEMORY_SIZE_DEFAULT;
 #define PAS_MPSS_DEFAULT        4               /* dt: qcom,pas-id of qcom,mss */
 static uint32_t pas_mpss = PAS_MPSS_DEFAULT;
 
@@ -1077,7 +1122,7 @@ root_file(const char *name, uint64_t *size)
 	VATTR_INIT(&attributes);
 	VATTR_WANTED(&attributes, va_data_size);
 	if (vnode_getattr(vnode, &attributes, context) != 0 || attributes.va_data_size == 0 ||
-	    attributes.va_data_size > MPSS_MEMORY_SIZE) {
+	    attributes.va_data_size > mpss_memory_size) {
 		vnode_put(vnode);
 		return NULL;
 	}
@@ -1205,7 +1250,7 @@ step_firmware(void)
 			continue;
 		}
 		if (segment.paddr < mpss_memory || segment.file_size > segment.memory_size ||
-		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)mpss_memory + MPSS_MEMORY_SIZE) {
+		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)mpss_memory + mpss_memory_size) {
 			printf("mpss: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			goto fail;
@@ -1243,7 +1288,7 @@ step_firmware(void)
 	image.size = ((highest + 0xfff) & ~0xfffu) - mpss_memory;
 	printf("mpss: %u: the image is whole (%s): a header of %llu bytes (%u of hashes), %u segments, %llu bytes of files, %#x "
 	    "bytes of the DSP's %#x from %#x\n", step, from_root ? "from /fw on the root" : "from the small image", size, hashes,
-	    image.segments, files, image.size, MPSS_MEMORY_SIZE, mpss_memory);
+	    image.segments, files, image.size, mpss_memory_size, mpss_memory);
 	announce("read the modem's four file systems from the phone's storage into memory of ours (rmtfs below)");
 	{
 		unsigned loaded = rmtfs_load();
@@ -1266,6 +1311,10 @@ step_mailbox(void)
 {
 	bool open;
 
+	if (khaje) {
+		announce("Khaje has no AOSS QMP load-state mailbox: TrustZone owns the MPSS start");
+		return true;
+	}
 	announce("open the mailbox to the always-on processor, unless it is open: words of its message memory, and its doorbell");
 	lck_mtx_lock(&hakios_aop_mailbox_lock);
 	open = mailbox_open();
@@ -1363,7 +1412,7 @@ dsp_listen(const struct smp2p *theirs)
 		    step, theirs->flags, smp2p_restart_acked);
 		smem_poke(our_item + SMP2P_AT_FLAGS, (ours.flags & ~SMP2P_RESTART_ACK) | (smp2p_restart_acked ? SMP2P_RESTART_ACK : 0));
 		settle();
-		wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_SMP2P);
+		ring_mpss(IPCC_SMP2P);
 	}
 }
 
@@ -1394,14 +1443,13 @@ dsp_ask_to_stop(uint32_t bound_ms)
 		printf("mpss: %u: the DSP is not asked to stop first: its entry says %#x, not \"up\"\n", step, state);
 		return false;
 	}
-	need(&ipcc);
 	value_at = at + SMP2P_AT_VALUE((uint32_t)entry);
 	printf("mpss: %u: about to ask the DSP to stop: bit 0 of our entry \"%s\" at %#lx, and its SMP2P doorbell\n", step,
 	    OUR_ENTRY_STOP, smem_phys + value_at);
 	snprintf(last_write, sizeof(last_write), "step %u asked the modem to stop", step);
 	smem_poke(value_at, ours.entry[entry].value | DSP_STOP);
 	settle();
-	wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_SMP2P);
+	ring_mpss(IPCC_SMP2P);
 	asked = now = now_us();
 	while (now - asked < bound_ms * 1000ull) {
 		if (dsp_words(&theirs) && (dsp_state(&theirs) & (DSP_STOP_ACK | DSP_FATAL))) {
@@ -1416,7 +1464,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 	    (now - asked) % 1000, state);
 	smem_poke(value_at, ours.entry[entry].value & ~DSP_STOP);
 	settle();
-	wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_SMP2P);
+	ring_mpss(IPCC_SMP2P);
 	return (state & DSP_STOP_ACK) != 0;
 }
 
@@ -1448,11 +1496,15 @@ dsp_shutdown(const char *why)
 	if (!leaving) {
 		rmtfs_share(false);
 	}
-	need(&ipcc);
-	wr(ipcc.base + IPCC_DISABLE, IPCC_MPSS << 16 | IPCC_SMP2P);
+	if (!khaje) {
+		need(&ipcc);
+		wr(ipcc.base + IPCC_DISABLE, IPCC_MPSS << 16 | IPCC_SMP2P);
+	}
 	doorbells();
 	dsp_started = false;
-	mailbox_send("{class: image, res: load_state, name: modem, val: off}");
+	if (!khaje) {
+		mailbox_send("{class: image, res: load_state, name: modem, val: off}");
+	}
 	if (rails_asked) {
 		rails(0);
 		rails_asked = false;
@@ -1506,12 +1558,12 @@ step_header(void)
 	printf("mpss: %u: TRUSTZONE ACCEPTS THE MODEM'S SIGNATURE FROM THIS KERNEL\n", step);
 
 	announce("tell TrustZone where the image will be: the whole of the modem's memory, as Linux does");
-	result = scm("where the image will be", SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, pas_mpss, mpss_memory, MPSS_MEMORY_SIZE, 0, &answer);
+	result = scm("where the image will be", SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, pas_mpss, mpss_memory, mpss_memory_size, 0, &answer);
 	if (result != 0 || answer != 0) {
 		printf("mpss: %u: TRUSTZONE DOES NOT TAKE THE PLACE: the call returns %d, its answer is %#llx\n", step, result, answer);
 		return false;
 	}
-	printf("mpss: %u: TrustZone takes the place: %#x bytes at %#x (the image takes %#x of them)\n", step, MPSS_MEMORY_SIZE, mpss_memory,
+	printf("mpss: %u: TrustZone takes the place: %#x bytes at %#x (the image takes %#x of them)\n", step, mpss_memory_size, mpss_memory,
 	    image.size);
 	return true;
 }
@@ -1746,8 +1798,7 @@ step_our_item(void)
 	smem_poke(our_item + SMP2P_AT_VERSION, SMP2P_RESTART_ACKS << 8 | SMP2P_VERSION);
 	settle();
 	smp2p_agreed = smp2p_restart_acks = smp2p_restart_acked = false;
-	need(&ipcc);
-	wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_SMP2P);
+	ring_mpss(IPCC_SMP2P);
 	if (!smem_peek(our_item, &ours, sizeof(ours)) || ours.magic != SMP2P_MAGIC || smp2p_entry(&ours, OUR_ENTRY_STOP) < 0) {
 		printf("mpss: %u: OUR ITEM DOES NOT READ BACK AS WRITTEN\n", step);
 		return false;
@@ -1760,10 +1811,10 @@ step_our_item(void)
 	 * the modem puts its filter tables there for the IPA to read. The modem looks for it when its IPA driver
 	 * initializes; before the IPA ran here (22 October) an item of 0x2000 made the modem give up before any
 	 * service, since it then went on to the unclocked IPA. Now that the IPA runs, made by default, zeroed
-	 * (modem_ipa_item=0: not; our SMMU context maps all of DDR, so the item needs no mapping of its own).
+	 * (on Khaje omitted by default; modem_ipa_item=497 forces it for comparison; our SMMU context maps all of DDR).
 	 */
 	{
-		uint32_t ipa_item = 497, ipa_size = 0;
+		uint32_t ipa_item = khaje ? 0 : 497, ipa_size = 0;
 
 		PE_parse_boot_argn("modem_ipa_item", &ipa_item, sizeof(ipa_item));
 		if (ipa_item != 0) {
@@ -1812,6 +1863,7 @@ static uint32_t ipa_fw_memory = 0x8b710000u, ipa_fw_size = 0xa000u;
  */
 static struct block ipa_regs = { "ipa", 0x01e40000, 0x1000 };
 static struct block ipa_sram = { "ipa-shared", 0x01e50000, 0x4000 };  /* the local memory: 0x3000 bytes (SHARED_MEM_SIZE) */
+static struct block gsi_regs = { "gsi", 0x01e04000, 0xc000 };
 static struct block gsi_ee0 = { "gsi-ee0", 0x01e16000, 0x1000 };
 
 static void
@@ -2194,36 +2246,38 @@ ipa_firmware_load(void)
 	uint32_t count, loaded = 0, highest = 0, size;
 	int32_t result;
 	bool ok = false;
+	char fw[80], path[96];
 
+	if (khaje && ipa_fw_memory == 0x8b710000u) {
+		ipa_fw_memory = 0x55a00000u;       /* dt: ipa_fw_region, the IPA node's memory-regions */
+	}
 	PE_parse_boot_argn("modem_ipa_fw_at", &ipa_fw_memory, sizeof(ipa_fw_memory));
-	ipa_fw_size = ipa_fw_memory == 0x8b700000u ? 0x1a000u : 0xa000u;
+	ipa_fw_size = khaje ? 0x10000u : (ipa_fw_memory == 0x8b700000u ? 0x1a000u : 0xa000u);
+	PE_parse_boot_argn("modem_ipa_fw_size", &ipa_fw_size, sizeof(ipa_fw_size));
 	announce("turn the IPA's clock on (RPMh), load the IPA's firmware (image 15) into its memory and have TrustZone start it, as "
 	    "Android does before the modem");
 	printf("mpss: %u: the IPA's image goes at %#x (%#x bytes allowed)\n", step, ipa_fw_memory, ipa_fw_size);
-	if (!ipa_clock(true)) {
+	if (khaje && option("modem_ipa_clock_skip")) {
+		printf("mpss: %u: Khaje's IPA clock vote is skipped; this probe relies on the bootloader having left it on\n", step);
+	} else if (!ipa_clock(true)) {
 		printf("mpss: %u: the IPA's clock is not on: its firmware is not loaded (a start without the clock ends the kernel)\n", step);
 		return false;
 	}
 	if (!option("modem_ipa_smmu_off")) {
 		ipa_space_on();
 	}
-	{
-		/* the IPA's firmware file is SoC-specific (dt: qcom,firmware-name of qcom,ipa_fws; "yupik_ipa_fws"
-		 * on the first phone, something else on another SoC); soc_ipa_fw= overrides the name */
-		char fw[80], path[96];
-
-		strlcpy(fw, "yupik_ipa_fws", sizeof(fw));
-		PE_parse_boot_argn("soc_ipa_fw", fw, sizeof(fw));
-		snprintf(path, sizeof(path), "image/%s.mdt", fw);
-		header = root_file(path, &header_size);
-		if (header == NULL) {
-			printf("mpss: %u: no fw/%s: the IPA's firmware is not loaded\n", step, path);
-			return false;
-		}
+	/* the IPA's firmware file is SoC-specific (dt: qcom,firmware-name); soc_ipa_fw= overrides the name */
+	strlcpy(fw, "yupik_ipa_fws", sizeof(fw));
+	PE_parse_boot_argn("soc_ipa_fw", fw, sizeof(fw));
+	snprintf(path, sizeof(path), "image/%s.mdt", fw);
+	header = root_file(path, &header_size);
+	if (header == NULL) {
+		printf("mpss: %u: no fw/%s: the IPA's firmware is not loaded\n", step, path);
+		return false;
 	}
 	count = header_size >= 52 ? header[44] | header[45] << 8 : 0;
 	if (memcmp(header, "\177ELF\1", 5) != 0 || count == 0 || count > 8 || 52 + 32 * count > header_size) {
-		printf("mpss: %u: yupik_ipa_fws.mdt is not such a header (%u segments)\n", step, count);
+		printf("mpss: %u: %s.mdt is not such a header (%u segments)\n", step, fw, count);
 		goto out;
 	}
 	/* (the image is relocatable, bit 27 of the flags: its addresses count from the lowest, which goes at the region's start) */
@@ -2258,7 +2312,7 @@ ipa_firmware_load(void)
 			goto out;
 		}
 		if (segments[i].file_size != 0) {
-			snprintf(name, sizeof(name), "image/yupik_ipa_fws.b%02u", i);
+			snprintf(name, sizeof(name), "image/%s.b%02u", fw, i);
 			segment_file[i] = root_file(name, &segment_size[i]);
 			if (segment_file[i] == NULL || segment_size[i] != segments[i].file_size) {
 				printf("mpss: %u: fw/%s: %s\n", step, name, segment_file[i] == NULL ? "not there" : "not the size the header says");
@@ -2340,22 +2394,22 @@ ipa_firmware_load(void)
 		}
 	}
 	{
-		struct block gsi = { "gsi", 0x01e04000, 0xc000 };       /* GSI_CFG at 0, MCS_CFG at 0xb000 (the panic of cycle 26: 0x1000 mapped) */
-
-		need(&gsi);
+		need(&gsi_regs);       /* GSI_CFG at 0, MCS_CFG at 0xb000 (the panic of cycle 26: 0x1000 mapped) */
 		tell("mpss: %u: GSI_CFG %#x (bit 0 GSI enable, 1 MCS enable, 2 double MCS clock, 3 uC is MCS, 4 power collapse, 5 bypass matrix off, "
-		    "[11:8] sleep clock divider), MCS_CFG %#x (bit 0: the sequencer runs)\n", step, rd(gsi.base + 0), rd(gsi.base + 0xb000));
+		    "[11:8] sleep clock divider), MCS_CFG %#x (bit 0: the sequencer runs)\n", step, rd(gsi_regs.base + 0),
+		    rd(gsi_regs.base + 0xb000));
 		if (option("modem_ipa_gsi_enable")) {
 			/*
 			 * What Android's gsi_enable_fw() writes when the firmware was put into the instruction memory by hand
 			 * rather than by TrustZone (GSI 2.5 and later): the sequencer on, then GSI on with the doubled
 			 * sequencer clock and the sleep clock divided by 2. TrustZone's start is supposed to do the same.
 			 */
-			wr(gsi.base + 0xb000, 1);
-			wr(gsi.base + 0, 1u | 1u << 2 | 2u << 8);
+			wr(gsi_regs.base + 0xb000, 1);
+			wr(gsi_regs.base + 0, 1u | 1u << 2 | 2u << 8);
 			settle();
 			need(&gsi_ee0);
-			tell("mpss: %u: GSI enabled by hand: GSI_CFG %#x, MCS_CFG %#x, status %#x\n", step, rd(gsi.base + 0), rd(gsi.base + 0xb000),
+			tell("mpss: %u: GSI enabled by hand: GSI_CFG %#x, MCS_CFG %#x, status %#x\n", step, rd(gsi_regs.base + 0),
+			    rd(gsi_regs.base + 0xb000),
 			    rd(gsi_ee0.base + 0));
 		}
 	}
@@ -2399,7 +2453,9 @@ ipa_firmware_stop(void)
 	(void)scm("to shut the IPA's firmware down", SCM_PAS_SHUTDOWN, SCM_ONE_VALUE, pas_ipa, 0, 0, 0, &answer);
 	if (!leaving) {
 		ipa_space_off();
-		ipa_clock(false);
+		if (!(khaje && option("modem_ipa_clock_skip"))) {
+			ipa_clock(false);
+		}
 	}
 }
 
@@ -2427,18 +2483,21 @@ step_start(void)
 	PE_parse_boot_argn("modem_wait", &wait_seconds, sizeof(wait_seconds));
 	bzero(&last, sizeof(last));
 	have = dsp_words(&last);
-	announce("listen for the modem's doorbells, ask RPMh for its rails, tell the always-on processor that its image is "
-	    "loaded, and ask TrustZone to authenticate the image and let the DSP out of reset");
-	need(&ipcc);
-	for (unsigned i = 0; i < 8 && (rang = rd(ipcc.base + IPCC_RECEIVED)) != IPCC_NOBODY && rang >> 16 == IPCC_MPSS; i++) {
-		put(&ipcc, "heard", IPCC_CLEAR, rang);
+	announce(khaje ? "ask TrustZone to authenticate the Khaje MPSS image and let the DSP out of reset; poll SMEM for state" :
+	    "listen for the modem's doorbells, ask RPMh for its rails, tell the always-on processor that its image is loaded, "
+	    "and ask TrustZone to authenticate the image and let the DSP out of reset");
+	if (!khaje) {
+		need(&ipcc);
+		for (unsigned i = 0; i < 8 && (rang = rd(ipcc.base + IPCC_RECEIVED)) != IPCC_NOBODY && rang >> 16 == IPCC_MPSS; i++) {
+			put(&ipcc, "heard", IPCC_CLEAR, rang);
+		}
+		put(&ipcc, "listened for", IPCC_ENABLE, IPCC_MPSS << 16 | IPCC_SMP2P);
+		put(&ipcc, "listened for", IPCC_ENABLE, IPCC_MPSS << 16 | IPCC_GLINK);
 	}
-	put(&ipcc, "listened for", IPCC_ENABLE, IPCC_MPSS << 16 | IPCC_SMP2P);
-	put(&ipcc, "listened for", IPCC_ENABLE, IPCC_MPSS << 16 | IPCC_GLINK);
 	bzero(&doorbell, sizeof(doorbell));
 	lck_mtx_lock(&dsp_lock);
 	{
-		uint32_t ipa_fw = 1;
+		uint32_t ipa_fw = khaje ? 0 : 1;
 
 		PE_parse_boot_argn("modem_ipa_fw", &ipa_fw, sizeof(ipa_fw));
 		ipa_loaded = ipa_fw != 0 && ipa_firmware_load();
@@ -2448,12 +2507,12 @@ step_start(void)
 	} else if (!rmtfs_buffer_make() || !rmtfs_share(true)) {
 		printf("mpss: %u: THE MODEM GETS NO BUFFER FOR ITS FILES: it is started all the same, and will offer little\n", step);
 	}
-	if (!rails(384)) {
+	if (!khaje && !rails(384)) {
 		lck_mtx_unlock(&dsp_lock);
 		return false;
 	}
-	rails_asked = true;
-	if (!mailbox_send("{class: image, res: load_state, name: modem, val: on}")) {
+	rails_asked = !khaje;
+	if (!khaje && !mailbox_send("{class: image, res: load_state, name: modem, val: on}")) {
 		rails(0);
 		rails_asked = false;
 		lck_mtx_unlock(&dsp_lock);
@@ -2466,7 +2525,9 @@ step_start(void)
 	if (result != 0 || answer != 0) {
 		printf("mpss: %u: TRUSTZONE DOES NOT START THE MODEM: the call returns %d, its answer is %#llx\n", step, result,
 		    answer);
-		mailbox_send("{class: image, res: load_state, name: modem, val: off}");
+		if (!khaje) {
+			mailbox_send("{class: image, res: load_state, name: modem, val: off}");
+		}
 		rails(0);
 		rails_asked = false;
 		lck_mtx_unlock(&dsp_lock);
@@ -2728,7 +2789,7 @@ glink_put(const void *first, uint32_t first_length, const void *second, uint32_t
 	settle();
 	smem_poke(glink.descriptor + GLINK_OUR_HEAD, (head + padded) % glink.ours_size);
 	settle();
-	wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_GLINK);
+	ring_mpss(IPCC_GLINK);
 	glink.said++;
 	return true;
 }
@@ -2959,7 +3020,7 @@ glink_pump(void)
 		}
 		case GLINK_READ_NOTIFY:
 			glink_advance(length);
-			wr(ipcc.base + IPCC_SEND, IPCC_MPSS << 16 | IPCC_GLINK);
+			ring_mpss(IPCC_GLINK);
 			break;
 		case GLINK_CLOSE:
 			glink_advance(length);
@@ -3435,6 +3496,10 @@ hakios_mpss_qrtr(void)
 /* ---- the link's thread ----------------------------------------------------------------------------- */
 
 static volatile bool link_wanted, link_runs;
+static void khaje_ce_poll(void);
+static void khaje_link_pump(void);
+static void khaje_api_poll(void);
+static bool khaje_link_attached;
 
 /* Everything the modem says once it runs: its SMP2P item, its queue, and from that the datagrams, handed on from here. */
 static void
@@ -3479,6 +3544,7 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 		lck_mtx_lock(&qrtr_calling);
 		qrtr_fresh();
+		khaje_ce_poll();
 		lck_mtx_unlock(&qrtr_calling);
 	}
 	link_runs = false;
@@ -3549,7 +3615,8 @@ link_stop(void)
 #define RMTFS_VERSION           1
 #define RMTFS_INSTANCE          0
 #define RMTFS_SECTOR            512
-#define RMTFS_BUFFER_SIZE       0x280000u       /* dt: reg of qcom,rmtfs_sharedmem@0 */
+/* Redwood asks for 2.5 MiB. Khaje's stock DT asks for a 3 MiB rmtfs_sharedmem window. */
+#define RMTFS_BUFFER_SIZE       (khaje ? 0x300000u : 0x280000u)
 #define RMTFS_OPEN              1
 #define RMTFS_CLOSE             2
 #define RMTFS_RW_IOVEC          3
@@ -3621,12 +3688,13 @@ rmtfs_load(void)
 
 /*
  * The buffer, once. The modem's requests carry addresses of 32 bits, so it has to be below 4 GB,
- * and the kernel's free memory there is not to be had in one piece of 2.5 MB; so it is the first
+ * and the kernel's free memory there is not to be had in one piece. On Redwood it is the first
  * 2.5 MB of the memory reserved for the compute DSP (dt: reserved-memory cdsp@9c700000, 30 MB,
- * no-map: nothing of ours uses it, and the CDSP is never started here), through an uncached
- * window, as the modem reads it.
+ * no-map: nothing of ours uses it, and the CDSP is never started here). On Khaje it is the first
+ * 3 MB of the stock DT's unused gap 0x48000000..0x4aafffff: cdsp_sec ends at 0x48000000 and the
+ * modem reservation begins at 0x4ab00000. Both are mapped through an uncached window.
  */
-#define RMTFS_BUFFER_PA_DEFAULT 0x9c700000ull   /* dt: a window into reserved-memory cdsp@... (the CDSP is not started here) */
+#define RMTFS_BUFFER_PA_DEFAULT (khaje ? 0x48000000ull : 0x9c700000ull)
 
 static bool
 rmtfs_buffer_make(void)
@@ -3646,8 +3714,8 @@ rmtfs_buffer_make(void)
 		*(volatile uint64_t *)(rmtfs_window + i) = 0;
 	}
 	settle();
-	printf("mpss: %u: the modem's buffer: %u bytes at %#llx (the compute DSP's memory, unused here)\n", step, RMTFS_BUFFER_SIZE,
-	    rmtfs_buffer_pa);
+	printf("mpss: %u: the modem's buffer: %u bytes at %#llx (%s)\n", step, RMTFS_BUFFER_SIZE, rmtfs_buffer_pa,
+	    khaje ? "Khaje's reserved-memory gap" : "the compute DSP's memory, unused here");
 	return true;
 }
 
@@ -3980,6 +4048,8 @@ static void servreg_receive(void *context, uint32_t node, uint32_t port, const v
 static struct hakios_qrtr_port *tftp_port, *servreg_port;
 static bool ipa_qmi_start(void);
 static void ipa_qmi_stop(void);
+static void khaje_wlfw_probe_start(void);
+static void khaje_wlfw_probe_stop(void);
 static struct hakios_qrtr_port *ipa_host_port;
 
 /* The port, and the service on it; the partitions are read in step 2, the buffer shared in step 7. */
@@ -4018,6 +4088,9 @@ rmtfs_start(void)
 			our_servers[3].port = ipa_host_port->number;
 		}
 	}
+	if (khaje && (option("modem_wlfw_probe") || option("modem_wlfw_bdf") || option("modem_wlfw_mission") || option("modem_wlfw_ce_probe") || option("modem_wlfw_smmu_probe") || option("modem_wlfw_smmu_identity") || option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan"))) {
+		khaje_wlfw_probe_start();
+	}
 	return true;
 }
 
@@ -4040,6 +4113,7 @@ rmtfs_stop(void)
 		servreg_port = NULL;
 	}
 	ipa_qmi_stop();
+	khaje_wlfw_probe_stop();
 	for (unsigned f = 0; f < 4; f++) {
 		rmtfs_files[f].open = false;
 	}
@@ -4377,6 +4451,8 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 		tftp_refused++;
 		return;
 	}
+	/* A completed transfer can leave this slot marked as borrowed. Reset its ownership. */
+	t->borrowed = false;
 	if (writing) {
 		bzero(t, sizeof(*t));
 		t->written = kalloc_data(TFTP_WRITE_MAX, Z_WAITOK);
@@ -4420,7 +4496,18 @@ tftp_receive(__unused void *context, uint32_t node, uint32_t port, const void *d
 	}
 	if (file == NULL) {
 		snprintf(fwname, sizeof(fwname), "image/%s", tftp_file_of(name));
-		file = root_file(fwname, &size);
+		/* After the root pivot, /fw need not be the diagnostic Boot volume. On Khaje,
+		 * prefer the resident small image, whose uncompressed firmware stays mapped.
+		 * Mark it borrowed: tftp_transfer_end must not free its backing memory. */
+		if (khaje) {
+			file = hakios_image_file("fw", fwname, &size, NULL);
+			if (file != NULL) {
+				t->borrowed = true;
+			}
+		}
+		if (file == NULL) {
+			file = root_file(fwname, &size);
+		}
 	} else {
 		strlcpy(fwname, "(written by the modem)", sizeof(fwname));
 	}
@@ -4556,10 +4643,15 @@ jsn_string(const char *from, const char *end, const char *key, char *out, size_t
 static void
 servreg_load(void)
 {
-	static const char *const files[] = { "modemr.jsn", "adspr.jsn", "adsps.jsn", "adspua.jsn", "battmgr.jsn", "cdspr.jsn", "wpssr.jsn" };
+	static const char *const files[] = { "modemr.jsn", "adspr.jsn", "adsps.jsn", "adspua.jsn", "battmgr.jsn", "cdspr.jsn", "wpssr.jsn", "modemuw.jsn" };
 
 	servreg_maps = 0;
 	for (unsigned f = 0; f < sizeof(files) / sizeof(files[0]); f++) {
+		/* Khaje has a separate WLAN protection domain. Without modemuw.jsn the modem
+		 * asks where kernel/elf_loader is and gets zero domains (150029-run.log). */
+		if (!khaje && f == sizeof(files) / sizeof(files[0]) - 1) {
+			continue;
+		}
 		char name[64], soc[24], domain[24], subdomain[24], instance[16], provider[24], service[24], full[48];
 		uint64_t size = 0;
 		const uint8_t *data;
@@ -4681,6 +4773,3292 @@ servreg_receive(__unused void *context, uint32_t node, uint32_t port, const void
 	answer[5] = (uint8_t)(at - 7);
 	answer[6] = (uint8_t)((at - 7) >> 8);
 	qrtr_send(servreg_port, node, port, answer, at);
+}
+
+/* ---- Khaje/WCN3988 WLFW: opt-in handshake probe ------------------------------------------- */
+
+/* This probes indication registration, host capability and MSA layout. Separate
+ * opt-in paths: modem_wlfw_assign=1 changes MSA ownership before CAP; modem_wlfw_ready=1
+ * asks for MSA_READY/CAP without changing ownership, as observed in ios-sapphire on this
+ * same handset after SCM rejected assignment. Neither downloads board data, changes WLAN
+ * mode or accesses registers unless separately enabled. The gated BDF and mission paths
+ * add board transfer and CE configuration, but never read radio registers.
+ * Khaje WLFW runs on MPSS, instance 0. */
+#define KHAJE_WLFW_SERVICE      0x45
+#define KHAJE_WLFW_IND_REGISTER 0x20
+#define KHAJE_WLFW_HOST_CAP     0x34
+#define KHAJE_WLFW_MSA_INFO     0x2d
+#define KHAJE_WLFW_MSA_READY    0x2e
+#define KHAJE_WLFW_CAP          0x24
+#define KHAJE_WLFW_CFG          0x23
+#define KHAJE_WLFW_MODE         0x22
+#define KHAJE_WLFW_FW_READY     0x21
+#define KHAJE_WLFW_BDF_DOWNLOAD 0x25
+#define KHAJE_WLFW_CAL_REPORT   0x26
+#define KHAJE_WLFW_VMID        0x18
+#define KHAJE_WLFW_CE_VMID     0x19
+#define KHAJE_WLFW_MSA_BASE     0x51900000ull
+#define KHAJE_WLFW_MSA_SIZE     0x100000u
+
+static struct hakios_qrtr_port *khaje_wlfw_port;
+static uint32_t khaje_wlfw_node, khaje_wlfw_peer;
+static uint16_t khaje_wlfw_txn;
+static bool khaje_wlfw_msa_ind, khaje_wlfw_cap_done, khaje_wlfw_bdf_started;
+static bool khaje_wlfw_cal_done, khaje_wlfw_fw_ready, khaje_wlfw_cfg_sent;
+static const uint8_t *khaje_wlfw_bdf;
+static uint32_t khaje_wlfw_bdf_size, khaje_wlfw_bdf_offset, khaje_wlfw_bdf_segment;
+
+static void
+khaje_wlfw_send(uint16_t message, const uint8_t *tlvs, size_t tlv_size)
+{
+	uint8_t packet[40] = { QMI_REQUEST };
+	unsigned length = 7 + (unsigned)tlv_size;
+	int error;
+
+	if (khaje_wlfw_port == NULL || khaje_wlfw_peer == 0 || length > sizeof(packet)) {
+		return;
+	}
+	khaje_wlfw_txn++;
+	packet[1] = (uint8_t)khaje_wlfw_txn;
+	packet[2] = (uint8_t)(khaje_wlfw_txn >> 8);
+	packet[3] = (uint8_t)message;
+	packet[4] = (uint8_t)(message >> 8);
+	packet[5] = (uint8_t)tlv_size;
+	packet[6] = (uint8_t)(tlv_size >> 8);
+	if (tlv_size != 0) {
+		memcpy(packet + 7, tlvs, tlv_size);
+	}
+	error = qrtr_send(khaje_wlfw_port, khaje_wlfw_node, khaje_wlfw_peer, packet, length);
+	printf("mpss: wlfw: request %#x, transaction %u: %s (%d)\n", message, khaje_wlfw_txn,
+	    error == 0 ? "sent" : "NOT SENT", error);
+}
+
+static const uint32_t khaje_tgt_ce[12][5] = {
+	{ 0, 2, 32, 2048, 0 }, { 1, 1, 32, 2048, 0 }, { 2, 1, 64, 2048, 0 }, { 3, 2, 32, 2048, 0 },
+	{ 4, 2, 256, 256, 8 }, { 5, 2, 1024, 64, 8 }, { 6, 3, 32, 16384, 0 }, { 7, 4, 0, 0, 8 },
+	{ 8, 1, 32, 2048, 0 }, { 9, 1, 32, 2048, 0 }, { 10, 1, 32, 2048, 0 }, { 11, 1, 32, 2048, 0 },
+};
+static const uint32_t khaje_svc_ce[][3] = {
+	{ 0x104, 2, 3 }, { 0x104, 1, 2 }, { 0x102, 2, 3 }, { 0x102, 1, 2 }, { 0x101, 2, 3 }, { 0x101, 1, 2 },
+	{ 0x103, 2, 3 }, { 0x103, 1, 2 }, { 0x100, 2, 3 }, { 0x100, 1, 2 }, { 0x001, 2, 0 }, { 0x001, 1, 2 },
+	{ 0xFE00, 2, 0 }, { 0xFE00, 1, 2 }, { 0x300, 2, 4 }, { 0x300, 1, 1 }, { 0xFE00, 2, 5 }, { 0x301, 1, 9 },
+	{ 0x302, 1, 10 }, { 0x600, 1, 11 }, { 0, 0, 0 },
+};
+static const uint16_t khaje_shadow[12][2] = {
+	{ 0, 0x3C }, { 3, 0x3C }, { 4, 0x3C }, { 5, 0x3C }, { 7, 0x3C }, { 1, 0x40 },
+	{ 2, 0x40 }, { 7, 0x40 }, { 8, 0x40 }, { 9, 0x40 }, { 10, 0x40 }, { 11, 0x40 },
+};
+
+/* ath10k SNOC CE tables from ios-sapphire, same handset; QMI only. */
+static void
+khaje_wlfw_configure(void)
+{
+	const unsigned length = 7 + 4 + sizeof(khaje_tgt_ce) + 4 + sizeof(khaje_svc_ce) + 4 + sizeof(khaje_shadow);
+	uint8_t *p;
+	unsigned at = 7;
+	int err;
+
+	if (!(option("modem_wlfw_mission") || option("modem_wlfw_ce_probe") || option("modem_wlfw_smmu_probe") || option("modem_wlfw_smmu_identity") || option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan")) || !khaje_wlfw_fw_ready || !khaje_wlfw_cal_done ||
+	    khaje_wlfw_cfg_sent || khaje_wlfw_peer == 0) {
+		return;
+	}
+	p = kalloc_data(length, Z_WAITOK | Z_ZERO);
+	if (p == NULL) {
+		return;
+	}
+	p[0] = QMI_REQUEST;
+	p[1] = (uint8_t)++khaje_wlfw_txn;
+	p[2] = (uint8_t)(khaje_wlfw_txn >> 8);
+	p[3] = KHAJE_WLFW_CFG;
+	for (unsigned i = 0; i < 3; i++) {
+		const void *data = i == 0 ? (const void *)khaje_tgt_ce : i == 1 ? (const void *)khaje_svc_ce : (const void *)khaje_shadow;
+		unsigned bytes = i == 0 ? sizeof(khaje_tgt_ce) : i == 1 ? sizeof(khaje_svc_ce) : sizeof(khaje_shadow);
+		p[at++] = 0x11 + i;
+		p[at++] = (uint8_t)(bytes + 1);
+		p[at++] = (uint8_t)((bytes + 1) >> 8);
+		p[at++] = i == 0 ? 12 : i == 1 ? sizeof(khaje_svc_ce) / sizeof(khaje_svc_ce[0]) : 12;
+		memcpy(p + at, data, bytes);
+		at += bytes;
+	}
+	if (at != length) {
+		kfree_data(p, length);
+		return;
+	}
+	p[5] = (uint8_t)(at - 7);
+	p[6] = (uint8_t)((at - 7) >> 8);
+	err = qrtr_send(khaje_wlfw_port, khaje_wlfw_node, khaje_wlfw_peer, p, at);
+	kfree_data(p, length);
+	printf("mpss: wlfw: CE config %u bytes: %s (%d)\n", at, err ? "NOT SENT" : "sent", err);
+	khaje_wlfw_cfg_sent = err == 0;
+}
+
+/* Read-only survey of the WLAN SID in the apps SMMU. Do not claim an
+ * available context without checking both the SMR and all existing S2CRs. */
+static void
+khaje_wlfw_smmu_survey(void)
+{
+	const volatile uint32_t *smmu = (const volatile uint32_t *)ml_io_map(apps_smmu.phys, 0x1000);
+	unsigned free_match = ~0u, free_context = ~0u;
+	bool used[256] = { false };
+	uint32_t idr0, idr1, scr0, matches, contexts;
+
+	if (smmu == NULL) {
+		printf("mpss: wlfw: WLAN SMMU survey: map failed\n");
+		return;
+	}
+	scr0 = smmu[SMMU_SCR0 / 4];
+	idr0 = smmu[SMMU_IDR0 / 4];
+	idr1 = smmu[SMMU_IDR1 / 4];
+	matches = idr0 & 0xff;
+	contexts = idr1 & 0xff;
+	printf("mpss: wlfw: WLAN SMMU read-only: base %#llx, scr0 %#x, idr0 %#x, idr1 %#x, %u SMRs, %u CBs\n",
+	    (unsigned long long)apps_smmu.phys, scr0, idr0, idr1, matches, contexts);
+	if (scr0 & 1u << 3) {
+		printf("mpss: wlfw: SMMU stream format differs from expected; not interpreting SMRs\n");
+		return;
+	}
+	for (unsigned n = 0; n < matches && n < 128 && SMMU_SMR(n) < 0xc00; n++) {
+		uint32_t smr = smmu[SMMU_SMR(n) / 4], s2cr = smmu[SMMU_S2CR(n) / 4];
+
+		if (smr >> 31) {
+			if (((smr ^ 0x1a0u) & ~((smr >> 16 & 0x7fffu) | 1u) & 0x7fffu) == 0) {
+				printf("mpss: wlfw: WLAN SID 0x1a0 matches existing SMR %u: smr %#x s2cr %#x\n", n, smr, s2cr);
+			}
+			if (((s2cr >> 16) & 3) == 0 && (s2cr & 0xff) < 256) {
+				used[s2cr & 0xff] = true;
+			}
+		} else if (free_match == ~0u) {
+			free_match = n;
+		}
+	}
+	for (unsigned n = 4; n < contexts && n < 256; n++) {
+		if (!used[n]) {
+			free_context = n;
+			break;
+		}
+	}
+	printf("mpss: wlfw: WLAN SMMU candidate free SMR %u, context %u (no writes)\n", free_match, free_context);
+}
+
+/* Experimental WLAN SID 0x1a0 identity context for the same-model ath10k SNOC path.
+ * Only enabled by modem_wlfw_smmu_identity=1 after WLFW accepted mission mode.
+ * No DMA is started here. Never borrow an active context or existing SID match. */
+static struct {
+	volatile uint32_t *base, *global1, *context_base;
+	unsigned match, context;
+	uint32_t smr, s2cr, cbar, cba2r, sctlr;
+	bool active;
+} khaje_smmu;
+
+static void
+khaje_smmu_restore(void)
+{
+	if (!khaje_smmu.active) {
+		return;
+	}
+	lck_mtx_lock(&hakios_smmu_lock);
+	/* Disable the stream first; callers wait until the DSP has shut down. */
+	khaje_smmu.base[SMMU_SMR(khaje_smmu.match) / 4] = khaje_smmu.smr;
+	khaje_smmu.base[SMMU_S2CR(khaje_smmu.match) / 4] = khaje_smmu.s2cr;
+	khaje_smmu.context_base[SMMU_CB_SCTLR / 4] = 0;
+	khaje_smmu.global1[SMMU_CBAR(khaje_smmu.context) / 4] = khaje_smmu.cbar;
+	khaje_smmu.global1[SMMU_CBA2R(khaje_smmu.context) / 4] = khaje_smmu.cba2r;
+	khaje_smmu.context_base[SMMU_CB_SCTLR / 4] = khaje_smmu.sctlr;
+	__asm__ volatile ("dsb sy" ::: "memory");
+	khaje_smmu.active = false;
+	lck_mtx_unlock(&hakios_smmu_lock);
+	printf("mpss: wlfw: WLAN SMMU stream and context restored\n");
+}
+
+static bool
+khaje_smmu_identity(void)
+{
+	volatile uint32_t *b, *g, *cb;
+	bool used[256] = { false }, sid_claimed = false;
+	unsigned slot = ~0u, bank = ~0u;
+	uint32_t scr0, idr0, idr1, page, pages, matches, contexts;
+
+	if (khaje_smmu.active) {
+		return true;
+	}
+	lck_mtx_lock(&hakios_smmu_lock);
+	b = (volatile uint32_t *)ml_io_map(apps_smmu.phys, 0x1000);
+	if (b == NULL) {
+		goto unavailable;
+	}
+	scr0 = b[SMMU_SCR0 / 4];
+	idr0 = b[SMMU_IDR0 / 4];
+	idr1 = b[SMMU_IDR1 / 4];
+	page = idr1 >> 31 ? 0x10000 : 0x1000;
+	pages = 2u << (idr1 >> 28 & 7);
+	matches = idr0 & 0xff;
+	contexts = idr1 & 0xff;
+	if ((scr0 & (1u << 3)) || 2u * pages * page != 0x80000 || matches > 128 || contexts > 256) {
+		printf("mpss: wlfw: WLAN SMMU unexpected layout: scr0 %#x idr0 %#x idr1 %#x page %#x pages %u\n",
+		    scr0, idr0, idr1, page, pages);
+		goto unavailable;
+	}
+	for (unsigned n = 0; n < matches && SMMU_SMR(n) < 0xc00; n++) {
+		uint32_t smr = b[SMMU_SMR(n) / 4], s2cr = b[SMMU_S2CR(n) / 4];
+		if (smr >> 31) {
+			if (((smr ^ 0x1a0u) & ~((smr >> 16 & 0x7fffu) | 1u) & 0x7fffu) == 0) {
+				sid_claimed = true;
+			}
+			if (((s2cr >> 16) & 3) == 0) {
+				used[s2cr & 0xff] = true;
+			}
+		} else if (slot == ~0u) {
+			slot = n;
+		}
+	}
+	for (unsigned n = 4; n < contexts; n++) {
+		if (!used[n]) {
+			bank = n;
+			break;
+		}
+	}
+	if (sid_claimed || slot == ~0u || bank == ~0u ||
+	    ((uint64_t)pages + bank + 1) * page > 0x80000) {
+		goto unavailable;
+	}
+	g = (volatile uint32_t *)ml_io_map(apps_smmu.phys + page, 0x1000);
+	cb = (volatile uint32_t *)ml_io_map(apps_smmu.phys + ((uint64_t)pages + bank) * page, 0x1000);
+	if (g == NULL || cb == NULL || (cb[SMMU_CB_SCTLR / 4] & 1)) {
+		goto unavailable;
+	}
+	khaje_smmu.base = b;
+	khaje_smmu.global1 = g;
+	khaje_smmu.context_base = cb;
+	khaje_smmu.match = slot;
+	khaje_smmu.context = bank;
+	khaje_smmu.smr = b[SMMU_SMR(slot) / 4];
+	khaje_smmu.s2cr = b[SMMU_S2CR(slot) / 4];
+	khaje_smmu.cbar = g[SMMU_CBAR(bank) / 4];
+	khaje_smmu.cba2r = g[SMMU_CBA2R(bank) / 4];
+	khaje_smmu.sctlr = cb[SMMU_CB_SCTLR / 4];
+	printf("mpss: wlfw: WLAN SMMU candidate SMR %u CB %u, old SCTLR %#x; configuring identity\n",
+	    slot, bank, khaje_smmu.sctlr);
+	/* Same-model ios-sapphire identity context: stage 1 bypass, stage 2 fault. */
+	cb[SMMU_CB_SCTLR / 4] = 0;
+	g[SMMU_CBA2R(bank) / 4] = 1;
+	g[SMMU_CBAR(bank) / 4] = 0x1f000;
+	cb[SMMU_CB_SCTLR / 4] = 0xe0;
+	b[SMMU_S2CR(slot) / 4] = bank;
+	b[SMMU_SMR(slot) / 4] = 0x800101a0u;
+	__asm__ volatile ("dsb sy" ::: "memory");
+	khaje_smmu.active = true;
+	if (b[SMMU_SMR(slot) / 4] != 0x800101a0u ||
+	    (b[SMMU_S2CR(slot) / 4] & 0x300ff) != bank ||
+	    (g[SMMU_CBAR(bank) / 4] & 0x30000) != 0x10000 ||
+	    (g[SMMU_CBA2R(bank) / 4] & 1) != 1 || cb[SMMU_CB_SCTLR / 4] != 0xe0) {
+		printf("mpss: wlfw: WLAN SMMU did not accept the context; rolling back\n");
+		lck_mtx_unlock(&hakios_smmu_lock);
+		khaje_smmu_restore();
+		return false;
+	}
+	lck_mtx_unlock(&hakios_smmu_lock);
+	printf("mpss: wlfw: WLAN SMMU identity accepted for SID 0x1a0 (no CE DMA)\n");
+	return true;
+unavailable:
+	lck_mtx_unlock(&hakios_smmu_lock);
+	printf("mpss: wlfw: WLAN SMMU SID/context unavailable; no changes made\n");
+	return false;
+}
+
+/* WCN3988 SNOC CE bring-up, adapted from same-model ios-sapphire/ath10k.
+ * Opt-in only after accepted WLAN mission mode and verified SMMU identity.
+ * This first stage receives HTC READY, without transmitting or scanning. */
+#define KHAJE_CE_COUNT 12
+#define KHAJE_CE_RX_POST 32
+#define KHAJE_CE_RX_SIZE 2048
+#define KHAJE_CE_POOL_PA 0xe0000000ull
+#define KHAJE_CE_POOL_SIZE 0x00100000u
+struct khaje_ce_desc {
+	uint64_t address;
+	uint16_t bytes, flags;
+	uint32_t hash;
+} __attribute__((packed));
+struct khaje_ce_attr {
+	uint16_t src, max_bytes, dst, flags;
+};
+static const struct khaje_ce_attr khaje_ce_attrs[KHAJE_CE_COUNT] = {
+	{ 16, 2048, 0, 0 }, { 0, 2048, 512, 0 }, { 0, 2048, 64, 0 }, { 32, 2048, 0, 0 },
+	{ 2048, 256, 0, 8 }, { 0, 512, 512, 0 }, { 0, 0, 0, 0 }, { 2, 2048, 2, 0 },
+	{ 0, 2048, 128, 0 }, { 0, 2048, 512, 0 }, { 0, 2048, 512, 0 }, { 0, 2048, 512, 0 },
+};
+static struct {
+	volatile struct khaje_ce_desc *src, *dst;
+	uint64_t src_pa, dst_pa, rx_pa, tx_pa;
+	uint32_t src_count, dst_count, src_write, dst_write, dst_read;
+	uint8_t *rx, *tx;
+	uint32_t received;
+} khaje_ce[KHAJE_CE_COUNT];
+static volatile uint8_t *khaje_ce_regs, *khaje_ce_shadow;
+static volatile uint32_t *khaje_ce_rri;
+static bool khaje_ce_started, khaje_ce_ready;
+
+static inline void
+khaje_ce_barrier(void)
+{
+	__asm__ volatile ("dsb sy" ::: "memory");
+}
+
+static inline uint32_t
+khaje_ce_read(unsigned engine, unsigned offset)
+{
+	return *(volatile uint32_t *)(khaje_ce_regs + engine * 0x1000 + offset);
+}
+
+static inline void
+khaje_ce_write(unsigned engine, unsigned offset, uint32_t value)
+{
+	khaje_ce_barrier();
+	*(volatile uint32_t *)(khaje_ce_regs + engine * 0x1000 + offset) = value;
+}
+
+static unsigned
+khaje_ce_pow2(unsigned n)
+{
+	unsigned p = 1;
+	while (p < n) {
+		p <<= 1;
+	}
+	return n ? p : 0;
+}
+
+static void
+khaje_ce_post(unsigned engine)
+{
+	unsigned slot = khaje_ce[engine].dst_write;
+	khaje_ce[engine].dst[slot].address = khaje_ce[engine].rx_pa + (uint64_t)(slot % KHAJE_CE_RX_POST) * KHAJE_CE_RX_SIZE;
+	khaje_ce[engine].dst[slot].bytes = 0;
+	khaje_ce[engine].dst_write = (slot + 1) & (khaje_ce[engine].dst_count - 1);
+}
+
+static bool
+khaje_ce_start(void)
+{
+	uint64_t required = 0x1000, pa = KHAJE_CE_POOL_PA;
+	uint8_t *pool;
+	volatile uint8_t *shadow;
+
+	if (khaje_ce_started) {
+		return true;
+	}
+	if (!khaje_smmu.active || !(option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan"))) {
+		return false;
+	}
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		unsigned src = khaje_ce_pow2(khaje_ce_attrs[c].src), dst = khaje_ce_pow2(khaje_ce_attrs[c].dst);
+		required += (((uint64_t)src * sizeof(struct khaje_ce_desc) + 0xfff) & ~0xfffull);
+		required += (((uint64_t)dst * sizeof(struct khaje_ce_desc) + 0xfff) & ~0xfffull);
+		required += dst && c != 7 ? KHAJE_CE_RX_POST * KHAJE_CE_RX_SIZE : 0;
+		/* Reserve the TX space in the same offsets as ath10k/ios-sapphire;
+		 * this stage never publishes a TX descriptor. */
+		required += (c == 0 || c == 3 || c == 4) ? MIN(src, 64u) * khaje_ce_attrs[c].max_bytes : 0;
+	}
+	if (required > KHAJE_CE_POOL_SIZE) {
+		printf("mpss: ce: required %#llx exceeds bounded pool\n", required);
+		return false;
+	}
+	pool = (uint8_t *)ml_io_map_unmappable(pa, KHAJE_CE_POOL_SIZE, VM_WIMG_WCOMB);
+	khaje_ce_regs = (volatile uint8_t *)ml_io_map(0x0ca40000, 0xd000);
+	shadow = (volatile uint8_t *)ml_io_map(0x0c832000, 0x1000);
+	if (pool == NULL || khaje_ce_regs == NULL || shadow == NULL) {
+		printf("mpss: ce: pool or register mapping failed\n");
+		return false;
+	}
+	bzero(pool, required);
+	khaje_ce_rri = (volatile uint32_t *)pool;
+	khaje_ce_shadow = shadow;
+	khaje_ce_barrier();
+	printf("mpss: ce: pool %#llx + %#llx mapped, rings preparing\n", pa, required);
+	uint64_t off = 0x1000;
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		unsigned src = khaje_ce_pow2(khaje_ce_attrs[c].src), dst = khaje_ce_pow2(khaje_ce_attrs[c].dst);
+		khaje_ce[c].src_count = src;
+		khaje_ce[c].dst_count = dst;
+		if (src) {
+			khaje_ce[c].src = (volatile struct khaje_ce_desc *)(pool + off);
+			khaje_ce[c].src_pa = pa + off;
+			off += (((uint64_t)src * sizeof(struct khaje_ce_desc) + 0xfff) & ~0xfffull);
+		}
+		if (dst) {
+			khaje_ce[c].dst = (volatile struct khaje_ce_desc *)(pool + off);
+			khaje_ce[c].dst_pa = pa + off;
+			off += (((uint64_t)dst * sizeof(struct khaje_ce_desc) + 0xfff) & ~0xfffull);
+		}
+		if (dst && c != 7) {
+			khaje_ce[c].rx = pool + off;
+			khaje_ce[c].rx_pa = pa + off;
+			off += KHAJE_CE_RX_POST * KHAJE_CE_RX_SIZE;
+		}
+		if (c == 0 || c == 3 || c == 4) {
+			khaje_ce[c].tx = pool + off;
+			khaje_ce[c].tx_pa = pa + off;
+			off += MIN(src, 64u) * khaje_ce_attrs[c].max_bytes;
+		}
+	}
+	if (off != required) {
+		printf("mpss: ce: pool layout mismatch; no registers written\n");
+		return false;
+	}
+	/* RRI first page: per-CE source/destination read indices in host RAM. */
+	*(volatile uint32_t *)(khaje_ce_regs + 0xc004) = (uint32_t)pa;
+	*(volatile uint32_t *)(khaje_ce_regs + 0xc008) = (uint32_t)(pa >> 32) & 0x1f;
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		khaje_ce_write(c, 0x18, khaje_ce_read(c, 0x18) | (1u << 19));
+	}
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		if (khaje_ce[c].src_count) {
+			khaje_ce[c].src_write = khaje_ce_read(c, 0x3c) & (khaje_ce[c].src_count - 1);
+			khaje_ce_write(c, 0x00, (uint32_t)khaje_ce[c].src_pa);
+			khaje_ce_write(c, 0x04, (uint32_t)(khaje_ce[c].src_pa >> 32) & 0x1f);
+			khaje_ce_write(c, 0x08, khaje_ce[c].src_count);
+			khaje_ce_write(c, 0x18, (khaje_ce_read(c, 0x18) & ~(0xffffu | 1u << 17)) | khaje_ce_attrs[c].max_bytes);
+			khaje_ce_write(c, 0x4c, khaje_ce[c].src_count);
+		}
+		if (khaje_ce[c].dst_count) {
+			khaje_ce[c].dst_read = khaje_ce_read(c, 0x48) & (khaje_ce[c].dst_count - 1);
+			khaje_ce[c].dst_write = khaje_ce_read(c, 0x40) & (khaje_ce[c].dst_count - 1);
+			khaje_ce_write(c, 0x0c, (uint32_t)khaje_ce[c].dst_pa);
+			khaje_ce_write(c, 0x10, (khaje_ce_read(c, 0x10) & ~0x1fu) | ((uint32_t)(khaje_ce[c].dst_pa >> 32) & 0x1f));
+			khaje_ce_write(c, 0x14, khaje_ce[c].dst_count);
+			khaje_ce_write(c, 0x18, khaje_ce_read(c, 0x18) & ~(1u << 18));
+			khaje_ce_write(c, 0x50, khaje_ce[c].dst_count);
+		}
+	}
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		if (khaje_ce[c].rx == NULL) {
+			continue;
+		}
+		for (unsigned i = 0; i < KHAJE_CE_RX_POST; i++) {
+			khaje_ce_post(c);
+		}
+		khaje_ce_barrier();
+		khaje_ce_write(c, 0x40, khaje_ce[c].dst_write);
+	}
+	khaje_ce_started = true;
+	printf("mpss: ce: %u engines programmed and RX buffers posted; no TX\n", KHAJE_CE_COUNT);
+	return true;
+}
+
+/* HTC control handshake. No user data, station or scan in this stage. */
+#define KHAJE_HTC_ENDPOINTS 8
+struct khaje_htc_header {
+	uint8_t endpoint, flags;
+	uint16_t length;
+	uint8_t trailer, sequence;
+	uint16_t padding;
+} __attribute__((packed));
+static struct {
+	uint16_t service, max_message;
+	uint8_t uplink, downlink, sequence, credits;
+	bool connected, credit_flow;
+} khaje_htc[KHAJE_HTC_ENDPOINTS];
+static uint8_t khaje_wmi_endpoint = 0xff, khaje_htt_endpoint = 0xff;
+static void khaje_wmi_receive(const uint8_t *, unsigned);
+static void khaje_htt_receive(const uint8_t *, unsigned);
+static void khaje_scan_receive(const uint8_t *, unsigned);
+static bool khaje_htc_setup;
+
+static bool
+khaje_ce_send(unsigned engine, const void *data, unsigned length, unsigned transfer)
+{
+	unsigned mask, read_index, slot, tx_slots;
+	volatile struct khaje_ce_desc *desc;
+
+	if (!khaje_ce_started || engine >= KHAJE_CE_COUNT || khaje_ce[engine].tx == NULL ||
+	    length > khaje_ce_attrs[engine].max_bytes) {
+		return false;
+	}
+	mask = khaje_ce[engine].src_count - 1;
+	read_index = khaje_ce_rri[engine] & 0xffff;
+	tx_slots = MIN(khaje_ce[engine].src_count, 64u);
+	if (((read_index - 1 - khaje_ce[engine].src_write) & mask) == 0 ||
+	    ((khaje_ce[engine].src_write - read_index) & mask) >= tx_slots - 1) {
+		printf("mpss: htc: CE%u TX ring full\n", engine);
+		return false;
+	}
+	slot = khaje_ce[engine].src_write;
+	memcpy(khaje_ce[engine].tx + (slot % tx_slots) * khaje_ce_attrs[engine].max_bytes, data, length);
+	desc = &khaje_ce[engine].src[slot];
+	desc->address = khaje_ce[engine].tx_pa + (uint64_t)(slot % tx_slots) * khaje_ce_attrs[engine].max_bytes;
+	desc->bytes = (uint16_t)length;
+	desc->flags = (uint16_t)((transfer << 4) & 0xfff0);
+	desc->hash = 0;
+	khaje_ce[engine].src_write = (slot + 1) & mask;
+	khaje_ce_barrier();
+	*(volatile uint32_t *)(khaje_ce_shadow + 4 * engine) = khaje_ce[engine].src_write;
+	khaje_ce_barrier();
+	return true;
+}
+
+static bool
+khaje_htc_send(unsigned endpoint, const void *payload, unsigned length)
+{
+	uint8_t packet[2048] = { 0 };
+	struct khaje_htc_header *header = (struct khaje_htc_header *)packet;
+	bool credit;
+
+	if (endpoint >= KHAJE_HTC_ENDPOINTS || length + sizeof(*header) > sizeof(packet) ||
+	    !khaje_htc[endpoint].connected) {
+		return false;
+	}
+	credit = khaje_htc[endpoint].credit_flow;
+	if (credit && khaje_htc[endpoint].credits == 0) {
+		return false;
+	}
+	header->endpoint = (uint8_t)endpoint;
+	header->length = (uint16_t)length;
+	header->flags = credit ? 1 : 0;
+	header->sequence = khaje_htc[endpoint].sequence++;
+	memcpy(packet + sizeof(*header), payload, length);
+	if (!khaje_ce_send(khaje_htc[endpoint].uplink, packet, length + sizeof(*header), endpoint)) {
+		return false;
+	}
+	if (credit) {
+		khaje_htc[endpoint].credits--;
+	}
+	return true;
+}
+
+
+/* WMI commands wait here while the WMI endpoint has no TX credit; the firmware
+ * returns credits in HTC trailers, which is how ios-sapphire sends its scan. */
+#define KHAJE_WMI_QUEUE 6
+static uint8_t khaje_wmi_queue[KHAJE_WMI_QUEUE][2048];
+static uint16_t khaje_wmi_queue_len[KHAJE_WMI_QUEUE];
+static unsigned khaje_wmi_queue_head, khaje_wmi_queue_tail;
+
+static void
+khaje_wmi_pump(void)
+{
+	unsigned sent = 0;
+
+	while (khaje_wmi_queue_head != khaje_wmi_queue_tail && khaje_wmi_endpoint != 0xff) {
+		unsigned i = khaje_wmi_queue_head % KHAJE_WMI_QUEUE;
+
+		if (!khaje_htc_send(khaje_wmi_endpoint, khaje_wmi_queue[i], khaje_wmi_queue_len[i])) {
+			break;
+		}
+		khaje_wmi_queue_head++;
+		sent++;
+	}
+	if (sent != 0) {
+		if (khaje_wmi_chatty()) printf("mpss: wmi: %u queued command(s) sent, %u pending\n", sent,
+		    khaje_wmi_queue_tail - khaje_wmi_queue_head);
+	}
+}
+
+static void
+khaje_htc_connect(uint16_t service)
+{
+	uint8_t request[8] = { 2, 0, (uint8_t)service, (uint8_t)(service >> 8) };
+	uint16_t flags = service == 0x100 ? 1u << 8 : 8;
+
+	request[4] = (uint8_t)flags;
+	request[5] = (uint8_t)(flags >> 8);
+	printf("mpss: htc: connect service %#x: %s\n", service,
+	    khaje_htc_send(0, request, sizeof(request)) ? "sent" : "FAILED");
+}
+
+static void
+khaje_htc_receive(unsigned engine, const uint8_t *data, unsigned bytes)
+{
+	const struct khaje_htc_header *header = (const struct khaje_htc_header *)data;
+	const uint8_t *payload;
+	unsigned length, message;
+
+	if (bytes < sizeof(*header)) {
+		return;
+	}
+	length = MIN((unsigned)header->length, bytes - sizeof(*header));
+	payload = data + sizeof(*header);
+	if (header->flags & 2 && header->trailer <= length) {
+		const uint8_t *trailer = payload + length - header->trailer;
+		for (unsigned at = 0; at + 2 <= header->trailer && at + 2 + trailer[at + 1] <= header->trailer;
+		     at += 2 + trailer[at + 1]) {
+			if (trailer[at] != 1) {
+				continue;
+			}
+			for (unsigned n = 0; n + 1 < trailer[at + 1]; n += 2) {
+				unsigned endpoint = trailer[at + 2 + n];
+				if (endpoint < KHAJE_HTC_ENDPOINTS) {
+					khaje_htc[endpoint].credits += trailer[at + 3 + n];
+				}
+			}
+		}
+		length -= header->trailer;
+		khaje_wmi_pump();
+	}
+	if (header->endpoint == khaje_wmi_endpoint && khaje_wmi_endpoint != 0xff && length >= 4) {
+		uint32_t event = le32(payload) & 0xffffff;
+		if (khaje_wmi_chatty()) printf("mpss: wmi: event %#x, %u bytes on CE%u\n", event, length, engine);
+		khaje_wmi_receive(payload, length);
+		return;
+	}
+	if (header->endpoint == khaje_htt_endpoint && khaje_htt_endpoint != 0xff) {
+		khaje_htt_receive(payload, length);
+		return;
+	}
+	if (header->endpoint != 0 || length < 2) {
+		return;
+	}
+	message = payload[0] | payload[1] << 8;
+	if (message == 1 && length >= 8 && !khaje_ce_ready) {
+		khaje_ce_ready = true;
+		khaje_htc[0].service = 1;
+		khaje_htc[0].uplink = 0;
+		khaje_htc[0].downlink = 2;
+		khaje_htc[0].connected = true;
+		printf("mpss: htc: READY: %u credits x %u bytes, %u endpoints (CE%u)\n",
+		    payload[2] | payload[3] << 8, payload[4] | payload[5] << 8, payload[6], engine);
+		if (option("modem_wlfw_htc_connect") || option("modem_wlfw_scan")) {
+			khaje_htc_connect(0x300); /* HTT data service before WMI control */
+		}
+	} else if (message == 3 && length >= 8) {
+		unsigned service = payload[2] | payload[3] << 8;
+		unsigned status = payload[4], endpoint = payload[5];
+		unsigned max_message = payload[6] | payload[7] << 8;
+		printf("mpss: htc: service %#x connect response status %u endpoint %u max %u\n",
+		    service, status, endpoint, max_message);
+		if (status != 0 || endpoint >= KHAJE_HTC_ENDPOINTS) {
+			return;
+		}
+		khaje_htc[endpoint].service = (uint16_t)service;
+		khaje_htc[endpoint].max_message = (uint16_t)max_message;
+		khaje_htc[endpoint].uplink = service == 0x100 ? 3 : 4;
+		khaje_htc[endpoint].downlink = service == 0x100 ? 2 : 1;
+		khaje_htc[endpoint].connected = true;
+		khaje_htc[endpoint].credit_flow = service == 0x100;
+		khaje_htc[endpoint].credits = service == 0x100 ? 1 : 0;
+		if (service == 0x300) {
+			khaje_htt_endpoint = (uint8_t)endpoint;
+			khaje_htc_connect(0x100);
+		} else if (service == 0x100) {
+			const uint8_t complete[12] = { 5 };
+			khaje_wmi_endpoint = (uint8_t)endpoint;
+			khaje_htc_setup = khaje_htc_send(0, complete, sizeof(complete));
+			printf("mpss: htc: SETUP_COMPLETE_EX %s\n", khaje_htc_setup ? "sent" : "FAILED");
+		}
+	}
+}
+
+/* Minimal WMI-TLV init after HTC services connect. Scan is deliberately not
+ * requested in this stage. Values follow ath10k WCN3988/ios-sapphire. */
+#define KHAJE_WMI_EVENT_SERVICE_READY 0x1
+#define KHAJE_WMI_EVENT_READY 0x2
+#define KHAJE_WMI_EVENT_SERVICE_AVAILABLE 0x3
+#define KHAJE_WMI_CMD_INIT 0x1
+#define KHAJE_WMI_TLV_INIT 0x4a
+#define KHAJE_WMI_TLV_RESOURCE 0x4b
+#define KHAJE_WMI_TLV_SERVICE_READY 0x20
+#define KHAJE_WMI_TLV_SERVICE_AVAILABLE 0x22f
+#define KHAJE_WMI_ABI0 0x01000000u
+#define KHAJE_WMI_ABI1 53u
+#define KHAJE_WMI_NS0 0x5f414351u
+#define KHAJE_WMI_NS1 0x00004c4du
+#define KHAJE_WMI_NUM_VDEVS 4u
+#define KHAJE_WMI_NUM_PEERS 33u
+static bool khaje_wmi_init_sent, khaje_wmi_ready;
+static uint32_t khaje_wmi_services[32], khaje_wmi_services_ext[4];
+
+#define KHAJE_WMI_TAG_STRUCT 0x12
+#define KHAJE_WMI_TAG_HOST_MEM_REQ 0x22
+#define KHAJE_WMI_TAG_HOST_MEM_CHUNK 0x4c
+#define KHAJE_WMI_MEM_PA 0xe0200000ull
+#define KHAJE_WMI_MEM_MAX (4u << 20)
+struct khaje_wmi_mem_req { uint32_t req_id, unit_size, num_unit_info, num_units; };
+static struct khaje_wmi_mem_req khaje_wmi_req[8];
+static uint32_t khaje_wmi_nreq, khaje_wmi_chunk_len[8];
+static uint64_t khaje_wmi_chunk_pa[8];
+
+static uint8_t *
+khaje_wmi_tlv(uint8_t *p, uint16_t tag, uint32_t length)
+{
+	uint16_t l = (uint16_t)length;
+	memcpy(p, &l, 2);
+	memcpy(p + 2, &tag, 2);
+	return p + 4;
+}
+
+static uint8_t *
+khaje_wmi_u32(uint8_t *p, uint32_t value)
+{
+	memcpy(p, &value, 4);
+	return p + 4;
+}
+
+static bool
+khaje_wmi_service(unsigned bit)
+{
+	if (bit < 128) {
+		return (khaje_wmi_services[bit / 4] & (1u << (bit % 4))) != 0;
+	}
+	bit -= 128;
+	return bit < 128 && (khaje_wmi_services_ext[bit / 32] & (1u << (bit % 32))) != 0;
+}
+
+static bool
+khaje_wmi_send(uint32_t command, const void *payload, unsigned length)
+{
+	uint8_t message[2048] = { 0 };
+	uint32_t id = command & 0xffffff;
+	unsigned i;
+
+	if (length + 4 > sizeof(message) || khaje_wmi_endpoint == 0xff) {
+		return false;
+	}
+	memcpy(message, &id, 4);
+	memcpy(message + 4, payload, length);
+	if (khaje_wmi_queue_head == khaje_wmi_queue_tail &&
+	    khaje_htc[khaje_wmi_endpoint].credits != 0) {
+		return khaje_htc_send(khaje_wmi_endpoint, message, length + 4);
+	}
+	if (khaje_wmi_queue_tail - khaje_wmi_queue_head >= KHAJE_WMI_QUEUE) {
+		printf("mpss: wmi: tx queue full, command %#x dropped\n", id);
+		return false;
+	}
+	i = khaje_wmi_queue_tail++ % KHAJE_WMI_QUEUE;
+	memcpy(khaje_wmi_queue[i], message, length + 4);
+	khaje_wmi_queue_len[i] = (uint16_t)(length + 4);
+	if (khaje_wmi_chatty()) printf("mpss: wmi: command %#x queued (%u bytes, no credit)\n", id, length + 4);
+	return true;
+}
+
+static void
+khaje_wmi_send_init(void)
+{
+	uint8_t message[1024] = { 0 }, *p = message, *r;
+	uint32_t resources[44] = { 0 };
+	uint32_t total = 0, chunks = 0;
+	uint8_t *mem = NULL;
+
+	if (khaje_wmi_init_sent || khaje_wmi_endpoint == 0xff) {
+		return;
+	}
+	for (unsigned i = 0; i < khaje_wmi_nreq; i++) {
+		uint32_t units = khaje_wmi_req[i].num_units;
+
+		if (khaje_wmi_req[i].num_unit_info & 6) {
+			units = KHAJE_WMI_NUM_PEERS + 1;
+		} else if (khaje_wmi_req[i].num_unit_info & 1) {
+			units = KHAJE_WMI_NUM_VDEVS + 1;
+		}
+		khaje_wmi_chunk_len[i] = units * ((khaje_wmi_req[i].unit_size + 3) & ~3u);
+		total += (khaje_wmi_chunk_len[i] + 0xfff) & ~0xfffu;
+		printf("mpss: wmi: host memory request %u: id %u unit %u info %#x units %u -> %u bytes\n",
+		    i, khaje_wmi_req[i].req_id, khaje_wmi_req[i].unit_size,
+		    khaje_wmi_req[i].num_unit_info, units, khaje_wmi_chunk_len[i]);
+	}
+	if (total != 0) {
+		if (total > KHAJE_WMI_MEM_MAX ||
+		    (mem = (uint8_t *)ml_io_map_unmappable(KHAJE_WMI_MEM_PA, total, VM_WIMG_WCOMB)) == NULL) {
+			printf("mpss: wmi: host memory %u bytes not given\n", total);
+			total = 0;
+		} else {
+			bzero(mem, total);
+			chunks = khaje_wmi_nreq;
+		}
+	}
+	resources[0] = KHAJE_WMI_NUM_VDEVS;
+	resources[1] = KHAJE_WMI_NUM_PEERS;
+	resources[4] = 2;
+	resources[5] = KHAJE_WMI_NUM_PEERS * 2;
+	resources[6] = 16;
+	resources[7] = resources[8] = 7;
+	resources[9] = resources[10] = resources[11] = 0x64;
+	resources[12] = 0x28;
+	resources[13] = 1;
+	resources[14] = 4;
+	resources[15] = KHAJE_WMI_NUM_VDEVS;
+	resources[16] = KHAJE_WMI_NUM_VDEVS;
+	resources[17] = 8;
+	resources[21] = 0x400;
+	resources[22] = 2;
+	resources[27] = 2;
+	resources[28] = 1056;
+	resources[29] = 2;
+	resources[30] = 1;
+	resources[31] = 0x20;
+	resources[32] = 2;
+	resources[33] = 5;
+	resources[34] = 22;
+	resources[35] = 6;
+	resources[37] = resources[38] = 1;
+	resources[43] = 1u << 9;
+	p = khaje_wmi_tlv(p, KHAJE_WMI_TLV_INIT, 28);
+	p = khaje_wmi_u32(p, KHAJE_WMI_ABI0);
+	p = khaje_wmi_u32(p, KHAJE_WMI_ABI1);
+	p = khaje_wmi_u32(p, KHAJE_WMI_NS0);
+	p = khaje_wmi_u32(p, KHAJE_WMI_NS1);
+	p = khaje_wmi_u32(p, 0);
+	p = khaje_wmi_u32(p, 0);
+	p = khaje_wmi_u32(p, chunks);
+	r = khaje_wmi_tlv(p, KHAJE_WMI_TLV_RESOURCE, sizeof(resources));
+	memcpy(r, resources, sizeof(resources));
+	p = r + sizeof(resources);
+	if (chunks != 0) {
+		uint64_t off = 0;
+
+		p = khaje_wmi_tlv(p, KHAJE_WMI_TAG_STRUCT, chunks * 20);
+		for (unsigned i = 0; i < chunks; i++) {
+			uint8_t *c;
+
+			khaje_wmi_chunk_pa[i] = KHAJE_WMI_MEM_PA + off;
+			off += (khaje_wmi_chunk_len[i] + 0xfff) & ~0xfffu;
+			c = khaje_wmi_tlv(p, KHAJE_WMI_TAG_HOST_MEM_CHUNK, 16);
+			c = khaje_wmi_u32(c, khaje_wmi_req[i].req_id);
+			c = khaje_wmi_u32(c, (uint32_t)khaje_wmi_chunk_pa[i]);
+			c = khaje_wmi_u32(c, khaje_wmi_chunk_len[i]);
+			c = khaje_wmi_u32(c, (uint32_t)(khaje_wmi_chunk_pa[i] >> 32));
+			p += 20;
+		}
+	}
+	khaje_wmi_init_sent = khaje_wmi_send(KHAJE_WMI_CMD_INIT, message, (unsigned)(p - message));
+	printf("mpss: wmi: INIT (%u bytes, %u host chunks, %u bytes): %s\n", (unsigned)(p - message),
+	    chunks, total, khaje_wmi_init_sent ? "sent" : "FAILED");
+}
+
+/* HTT: the host RX ring must exist before a scan, or the firmware's rx path has
+ * nowhere to deliver beacons and wlan_process dies. Ported from ios-sapphire 0125. */
+#define KHAJE_HTT_POOL_PA 0xe0100000ull
+#define KHAJE_HTT_POOL_SIZE 0x00100000u
+#define KHAJE_HTT_RING_SIZE 256
+#define KHAJE_HTT_BUF_SIZE 2048
+#define KHAJE_HTT_MAX_PENDING_TX (1024 + 32)
+#define KHAJE_HTT_EXT_DESC_SIZE 72
+#define KHAJE_H2T_VERSION_REQ 0
+#define KHAJE_H2T_RX_RING_CFG 2
+#define KHAJE_H2T_AGGR_CFG 5
+#define KHAJE_H2T_FRAG_DESC_BANK_CFG 6
+#define KHAJE_T2H_VERSION_CONF 0x00
+#define KHAJE_T2H_RX_IN_ORD_PADDR_IND 0x12
+#define KHAJE_T2H_TX_COMPL 0x07
+#define KHAJE_HTT_OFF_ATTENTION 1
+#define KHAJE_HTT_OFF_FRAG_INFO 2
+#define KHAJE_HTT_OFF_MPDU_START 4
+#define KHAJE_HTT_OFF_MSDU_START 7
+#define KHAJE_HTT_OFF_MSDU_END 12
+#define KHAJE_HTT_OFF_MPDU_END 26
+#define KHAJE_HTT_OFF_PPDU_START 27
+#define KHAJE_HTT_OFF_PPDU_END 37
+#define KHAJE_HTT_OFF_HDR_STATUS 74
+#define KHAJE_HTT_OFF_MSDU_PAYLOAD 90
+static uint8_t *khaje_htt_bank, *khaje_htt_buf;
+static uint64_t khaje_htt_ring_pa, khaje_htt_idx_pa, khaje_htt_bank_pa, khaje_htt_buf_pa;
+static volatile uint64_t *khaje_htt_ring;
+static volatile uint32_t *khaje_htt_idx;
+static uint32_t khaje_htt_alloc, khaje_htt_state, khaje_htt_msdus;
+static uint64_t khaje_htt_req_us;
+
+static bool khaje_scan_request(void);
+static void khaje_sta_mgmt_rx(const uint8_t *, unsigned);
+static void khaje_sta_poll(void);
+static void khaje_sta_args(void);
+static void khaje_net_early(void);
+static void khaje_net_link(bool);
+static void khaje_api_attach(void);
+static void khaje_sta_rx_native(const uint8_t *, unsigned);
+static void khaje_sta_event(uint32_t, const uint8_t *, unsigned);
+static void khaje_htt_tx_compl(const uint8_t *, unsigned);
+
+static bool
+khaje_htt_send(const void *data, unsigned length)
+{
+	return khaje_htt_endpoint != 0xff && khaje_htc_send(khaje_htt_endpoint, data, length);
+}
+
+static void
+khaje_htt_post(uint64_t pa)
+{
+	*(volatile uint32_t *)(khaje_htt_buf + (pa - khaje_htt_buf_pa) + 4 * KHAJE_HTT_OFF_ATTENTION) = 0;
+	khaje_htt_ring[khaje_htt_alloc] = pa;
+	khaje_htt_alloc = (khaje_htt_alloc + 1) & (KHAJE_HTT_RING_SIZE - 1);
+}
+
+static void
+khaje_htt_publish(void)
+{
+	khaje_ce_barrier();
+	*khaje_htt_idx = khaje_htt_alloc;
+	khaje_ce_barrier();
+}
+
+static uint8_t *khaje_htt_put16(uint8_t *p, uint16_t v) { memcpy(p, &v, 2); return p + 2; }
+static uint8_t *khaje_htt_put64(uint8_t *p, uint64_t v) { memcpy(p, &v, 8); return p + 8; }
+
+static void
+khaje_htt_configure(const char *why)
+{
+	uint8_t m[64] = { 0 }, *p = m;
+	uint8_t r[48] = { 0 };
+	uint8_t g[4] = { KHAJE_H2T_AGGR_CFG, 64, 3, 0 };
+	bool a, b, c;
+
+	khaje_htt_state = 2;
+	*p++ = KHAJE_H2T_FRAG_DESC_BANK_CFG;
+	*p++ = 0;
+	*p++ = 1;                                       /* one bank */
+	*p++ = KHAJE_HTT_EXT_DESC_SIZE;
+	p = khaje_htt_put64(p, khaje_htt_bank_pa);
+	p += 3 * 8;
+	p = khaje_htt_put16(p, 0);
+	p = khaje_htt_put16(p, KHAJE_HTT_MAX_PENDING_TX - 1);
+	p += 3 * 4;
+	p += 4 + 2 + 2;
+	*p++ = 1;
+	*p++ = 0;
+	a = khaje_htt_send(m, sizeof(m));
+	for (unsigned i = 0; i < KHAJE_HTT_RING_SIZE - 1; i++) {
+		khaje_htt_post(khaje_htt_buf_pa + (uint64_t)i * KHAJE_HTT_BUF_SIZE);
+	}
+	p = r;
+	*p++ = KHAJE_H2T_RX_RING_CFG;
+	*p++ = 1;
+	p = khaje_htt_put16(p, 0);
+	p = khaje_htt_put64(p, khaje_htt_idx_pa);
+	p = khaje_htt_put64(p, khaje_htt_ring_pa);
+	p = khaje_htt_put16(p, KHAJE_HTT_RING_SIZE);
+	p = khaje_htt_put16(p, KHAJE_HTT_BUF_SIZE);
+	p = khaje_htt_put16(p, 0xffff);                 /* every frame type, mgmt included */
+	p = khaje_htt_put16(p, 0);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_HDR_STATUS);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_MSDU_PAYLOAD);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_PPDU_START);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_PPDU_END);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_MPDU_START);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_MPDU_END);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_MSDU_START);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_MSDU_END);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_ATTENTION);
+	p = khaje_htt_put16(p, KHAJE_HTT_OFF_FRAG_INFO);
+	khaje_htt_publish();
+	b = khaje_htt_send(r, sizeof(r));
+	c = khaje_htt_send(g, sizeof(g));
+	printf("mpss: htt: %s: frag bank %s, rx ring %s (%u bufs), aggr %s\n", why,
+	    a ? "ok" : "FAILED", b ? "ok" : "FAILED", KHAJE_HTT_RING_SIZE - 1, c ? "ok" : "FAILED");
+	if (option("modem_wlfw_scan")) {
+		(void)khaje_scan_request();
+	}
+}
+
+static void
+khaje_htt_start(void)
+{
+	uint8_t *blk;
+	unsigned ring = 0x1000;
+	unsigned bank = (KHAJE_HTT_MAX_PENDING_TX * KHAJE_HTT_EXT_DESC_SIZE + 0xfff) & ~0xfffu;
+	uint8_t m[4] = { KHAJE_H2T_VERSION_REQ, 0, 0, 0 };
+
+	if (khaje_htt_state != 0) {
+		return;
+	}
+	blk = (uint8_t *)ml_io_map_unmappable(KHAJE_HTT_POOL_PA, KHAJE_HTT_POOL_SIZE, VM_WIMG_WCOMB);
+	if (blk == NULL) {
+		printf("mpss: htt: no memory; scanning without HTT\n");
+		if (option("modem_wlfw_scan")) {
+			(void)khaje_scan_request();
+		}
+		return;
+	}
+	bzero(blk, ring + bank + KHAJE_HTT_RING_SIZE * KHAJE_HTT_BUF_SIZE);
+	khaje_htt_ring = (volatile uint64_t *)blk;
+	khaje_htt_ring_pa = KHAJE_HTT_POOL_PA;
+	khaje_htt_idx = (volatile uint32_t *)(blk + KHAJE_HTT_RING_SIZE * 8);
+	khaje_htt_idx_pa = KHAJE_HTT_POOL_PA + KHAJE_HTT_RING_SIZE * 8;
+	khaje_htt_bank = blk + ring;
+	khaje_htt_bank_pa = KHAJE_HTT_POOL_PA + ring;
+	khaje_htt_buf = blk + ring + bank;
+	khaje_htt_buf_pa = KHAJE_HTT_POOL_PA + ring + bank;
+	khaje_htt_state = 1;
+	khaje_htt_req_us = now_us();
+	printf("mpss: htt: VERSION_REQ %s\n", khaje_htt_send(m, sizeof(m)) ? "sent" : "FAILED");
+}
+
+static void
+khaje_htt_receive(const uint8_t *p, unsigned len)
+{
+	uint8_t type = len != 0 ? p[0] : 0xff;
+
+	if (type == KHAJE_T2H_VERSION_CONF && len >= 3) {
+		printf("mpss: htt: VERSION_CONF %u.%u\n", p[2], p[1]);
+		if (khaje_htt_state == 1) {
+			khaje_htt_configure("version conf");
+		}
+		return;
+	}
+	if (type == KHAJE_T2H_TX_COMPL && len >= 4) {
+		khaje_htt_tx_compl(p, len);
+		return;
+	}
+	if (type == KHAJE_T2H_RX_IN_ORD_PADDR_IND && len >= 8) {
+		uint16_t n;
+		const uint8_t *d = p + 8;
+
+		memcpy(&n, p + 6, 2);
+		for (unsigned i = 0; i < n && 8 + (i + 1) * 12 <= len; i++, d += 12) {
+			uint64_t pa;
+
+			memcpy(&pa, d, 8);
+			if (pa < khaje_htt_buf_pa ||
+			    pa >= khaje_htt_buf_pa + (uint64_t)KHAJE_HTT_RING_SIZE * KHAJE_HTT_BUF_SIZE ||
+			    ((pa - khaje_htt_buf_pa) % KHAJE_HTT_BUF_SIZE) != 0) {
+				continue;
+			}
+			{
+				uint16_t mlen;
+
+				memcpy(&mlen, d + 8, 2);
+				if (mlen <= KHAJE_HTT_BUF_SIZE - 4 * KHAJE_HTT_OFF_MSDU_PAYLOAD) {
+					khaje_sta_rx_native(khaje_htt_buf + (pa - khaje_htt_buf_pa) +
+					    4 * KHAJE_HTT_OFF_MSDU_PAYLOAD, mlen);
+				}
+			}
+			khaje_htt_msdus++;
+			khaje_htt_post(pa);
+		}
+		khaje_htt_publish();
+	}
+}
+
+/* Passive scan only. No association, authentication or user data. */
+#define KHAJE_WMI_EVENT_SCAN 0x3001
+#define KHAJE_WMI_EVENT_MGMT_RX 0x7001
+#define KHAJE_WMI_CMD_SCAN_CHANNELS 0x3003
+#define KHAJE_WMI_CMD_START_SCAN 0x3001
+#define KHAJE_WMI_CMD_VDEV_CREATE 0x5001
+#define KHAJE_WMI_TAG_SCAN_CHANNELS 0x4f
+#define KHAJE_WMI_TAG_CHANNEL 0x50
+#define KHAJE_WMI_TAG_START_SCAN 0x4d
+#define KHAJE_WMI_TAG_VDEV_CREATE 0x56
+#define KHAJE_WMI_TAG_FIXED 0x13
+#define KHAJE_WMI_TAG_UINT32 0x10
+#define KHAJE_WMI_TAG_BYTES 0x11
+#define KHAJE_WMI_TAG_SCAN_EVENT 0x24
+#define KHAJE_WMI_TAG_MGMT_RX 0x2c
+#define KHAJE_WMI_TAG_READY_EVENT 0x23
+static const uint16_t khaje_scan_freqs[] = { 2412,2417,2422,2427,2432,2437,2442,2447,2452,2457,2462,2467,2472, 5180,5200,5220,5240,5260,5280,5300,5320,5500,5520,5540,5560,5580,5600,5620,5640,5660,5680,5700,5745,5765,5785,5805,5825 };
+#define KHAJE_SCAN_NFREQ ((unsigned)(sizeof(khaje_scan_freqs) / sizeof(khaje_scan_freqs[0])))
+static const uint8_t khaje_scan_mac[6] = { 0x02, 0x54, 0x4f, 0x50, 0x41, 0x5a };
+static bool khaje_scan_requested, khaje_scan_running;
+static unsigned khaje_scan_count, khaje_scan_frames, khaje_scan_nets;
+struct khaje_bss {
+	uint8_t bssid[6]; char ssid[33]; uint8_t chan; int8_t rssi;
+	uint8_t raw_ssid[32], raw_ssid_len;
+	uint16_t seen;
+	uint16_t freq, bintval, capab, ie_len;
+	uint8_t ie[768];
+};
+static struct khaje_bss khaje_bss[64];
+static uint8_t *khaje_scan_tlv(uint8_t *p, uint16_t tag, uint32_t len) { uint16_t l=(uint16_t)len; memcpy(p,&l,2); memcpy(p+2,&tag,2); return p+4; }
+static uint8_t *khaje_scan_u32(uint8_t *p, uint32_t v) { memcpy(p,&v,4); return p+4; }
+
+static bool
+khaje_scan_send_start(void)
+{
+	uint8_t m[512] = { 0 }, *p = m, *c;
+	const unsigned n = KHAJE_SCAN_NFREQ;
+
+	c = khaje_scan_tlv(p, KHAJE_WMI_TAG_START_SCAN, 100);
+	c = khaje_scan_u32(c, 0xa000 | (khaje_scan_count + 1));
+	c = khaje_scan_u32(c, 0xa000 | 1);
+	c = khaje_scan_u32(c, 0);                       /* vdev 0 */
+	c = khaje_scan_u32(c, 1);                       /* priority low */
+	c = khaje_scan_u32(c, 0x001 | 0x002 | 0x004 | 0x008 | 0x100 | 0x010);
+	c = khaje_scan_u32(c, 50);                      /* dwell active */
+	c = khaje_scan_u32(c, 150);                     /* dwell passive */
+	c = khaje_scan_u32(c, 50);                      /* min rest */
+	c = khaje_scan_u32(c, 500);                     /* max rest */
+	c = khaje_scan_u32(c, 0);
+	c = khaje_scan_u32(c, 0);
+	c = khaje_scan_u32(c, 0);
+	c = khaje_scan_u32(c, 20000);                   /* max scan time */
+	c = khaje_scan_u32(c, 5);                       /* probe delay */
+	c = khaje_scan_u32(c, (0x01 | 0x10) ^ 0x20);    /* passive */
+	c = khaje_scan_u32(c, 0);
+	c = khaje_scan_u32(c, n);
+	c = khaje_scan_u32(c, 1);                       /* one bssid */
+	c = khaje_scan_u32(c, 0);                       /* ssids */
+	c = khaje_scan_u32(c, 0);                       /* ie_len */
+	c = khaje_scan_u32(c, 3);                       /* probes */
+	p = c + 16;                                     /* mac + mask: zero */
+	c = khaje_scan_tlv(p, KHAJE_WMI_TAG_UINT32, n * 4);
+	for (unsigned i = 0; i < n; i++) {
+		c = khaje_scan_u32(c, khaje_scan_freqs[i]);
+	}
+	p = khaje_scan_tlv(c, KHAJE_WMI_TAG_FIXED, 0);
+	c = khaje_scan_tlv(p, KHAJE_WMI_TAG_FIXED, 8);  /* bssid: broadcast */
+	memset(c, 0xff, 6);
+	c += 8;
+	p = khaje_scan_tlv(c, KHAJE_WMI_TAG_BYTES, 0);
+	return khaje_wmi_send(KHAJE_WMI_CMD_START_SCAN, m, (unsigned)(p - m));
+}
+
+static bool
+khaje_scan_request(void)
+{
+	uint8_t m[1536] = { 0 }, v[24] = { 0 }, *p, *c;
+	const unsigned n = KHAJE_SCAN_NFREQ;
+
+	if (khaje_scan_requested || !khaje_wmi_ready) {
+		return false;
+	}
+	khaje_scan_requested = true;
+	p = khaje_scan_tlv(m, KHAJE_WMI_TAG_SCAN_CHANNELS, 4);
+	p = khaje_scan_u32(p, n);
+	p = khaje_scan_tlv(p, KHAJE_WMI_TAG_STRUCT, n * 28);
+	for (unsigned i = 0; i < n; i++) {
+		uint32_t mode = khaje_scan_freqs[i] < 4000 ? 1 : 0;
+		uint32_t flags = mode | (1u << 7) | (1u << 11) | (mode ? 0 : (1u << 12));
+
+		c = khaje_scan_tlv(p, KHAJE_WMI_TAG_CHANNEL, 24);
+		c = khaje_scan_u32(c, khaje_scan_freqs[i]);
+		c = khaje_scan_u32(c, khaje_scan_freqs[i]);
+		c = khaje_scan_u32(c, 0);
+		c = khaje_scan_u32(c, flags);
+		c = khaje_scan_u32(c, (40u << 8) | (40u << 16));
+		p = khaje_scan_u32(c, 40u << 8);
+	}
+	if (!khaje_wmi_send(KHAJE_WMI_CMD_SCAN_CHANNELS, m, (unsigned)(p - m))) {
+		printf("mpss: scan: channel list send failed\n");
+		return false;
+	}
+	c = khaje_scan_tlv(v, KHAJE_WMI_TAG_VDEV_CREATE, 20);
+	c = khaje_scan_u32(c, 0);                       /* vdev 0 */
+	c = khaje_scan_u32(c, 2);                       /* station */
+	c = khaje_scan_u32(c, 0);
+	memcpy(c, khaje_scan_mac, 6);
+	if (!khaje_wmi_send(KHAJE_WMI_CMD_VDEV_CREATE, v, sizeof(v))) {
+		printf("mpss: scan: vdev create failed\n");
+		return false;
+	}
+	khaje_scan_running = khaje_scan_send_start();
+	printf("mpss: scan: passive scan requested on %u channels (%s)\n", n,
+	    khaje_scan_running ? "sent" : "queued or failed");
+	return khaje_scan_running;
+}
+
+static void
+khaje_scan_event(const uint8_t *t, unsigned len)
+{
+	uint16_t tag;
+	uint32_t e[6];
+
+	if (len < 4 + 24) {
+		return;
+	}
+	memcpy(&tag, t + 2, 2);
+	if (tag != KHAJE_WMI_TAG_SCAN_EVENT) {
+		return;
+	}
+	memcpy(e, t + 4, sizeof(e));
+	if (e[0] == 0x008 || e[0] == 0x100 || e[0] == 0x004) {
+		return;
+	}
+	if (e[0] == 0x001) {
+		printf("mpss: scan: STARTED\n");
+	}
+	if (e[0] == 0x002 || e[0] == 0x040 || e[0] == 0x010) {
+		khaje_scan_running = false;
+		khaje_scan_count++;
+		printf("mpss: scan: %u done (event %#x): %u networks, %u frames\n",
+		    khaje_scan_count, e[0], khaje_scan_nets, khaje_scan_frames);
+		khaje_sta_args();
+		khaje_api_attach();
+	}
+}
+
+static void
+khaje_scan_mgmt_rx(const uint8_t *t, unsigned len)
+{
+	uint32_t hdr[6];
+	const uint8_t *f = NULL;
+	unsigned flen = 0;
+	bool have_hdr = false;
+
+	for (unsigned o = 0; o + 4 <= len;) {
+		uint16_t l, tag;
+
+		memcpy(&l, t + o, 2);
+		memcpy(&tag, t + o + 2, 2);
+		if (o + 4 + l > len) {
+			break;
+		}
+		if (tag == KHAJE_WMI_TAG_MGMT_RX && l >= 24 && !have_hdr) {
+			memcpy(hdr, t + o + 4, sizeof(hdr));
+			have_hdr = true;
+		} else if (tag == KHAJE_WMI_TAG_BYTES && f == NULL) {
+			f = t + o + 4;
+			flen = l;
+		}
+		o += 4 + l;
+	}
+	if (!have_hdr || f == NULL) {
+		return;
+	}
+	flen = MIN(hdr[4], flen);
+	if (flen >= 24 && (f[0] & 0x0c) == 0 && (f[0] >> 4) != 8 && (f[0] >> 4) != 5) {
+		khaje_sta_mgmt_rx(f, flen);             /* auth, assoc response, deauth */
+		return;
+	}
+	if (flen < 36 || (f[0] & 0x0c) != 0 || ((f[0] >> 4) != 8 && (f[0] >> 4) != 5)) {
+		return;
+	}
+	{
+		struct khaje_bss *b = NULL;
+		int32_t rssi = (int32_t)hdr[1] - 95;
+		uint32_t chan = hdr[0];
+		bool fresh = false;
+
+		khaje_scan_frames++;
+		for (unsigned o = 36; o + 2 <= flen && o + 2 + f[o + 1] <= flen; o += 2 + f[o + 1]) {
+			if (f[o] == 3 && f[o + 1] == 1) {
+				chan = f[o + 2];
+			}
+		}
+		for (unsigned i = 0; i < khaje_scan_nets; i++) {
+			if (memcmp(khaje_bss[i].bssid, f + 16, 6) == 0) {
+				b = &khaje_bss[i];
+				break;
+			}
+		}
+		if (b == NULL) {
+			if (khaje_scan_nets >= 64) {
+				return;
+			}
+			b = &khaje_bss[khaje_scan_nets++];
+			bzero(b, sizeof(*b));
+			memcpy(b->bssid, f + 16, 6);
+			fresh = true;
+		}
+		b->seen++;
+		b->rssi = (int8_t)rssi;
+		b->chan = (uint8_t)chan;
+		b->freq = (uint16_t)(chan == 14 ? 2484 : chan < 14 ? 2407 + 5 * chan : 5000 + 5 * chan);
+		memcpy(&b->bintval, f + 32, 2);
+		memcpy(&b->capab, f + 34, 2);
+		b->ie_len = (uint16_t)MIN(flen - 36, (uint32_t)sizeof(b->ie));
+		memcpy(b->ie, f + 36, b->ie_len);
+		b->raw_ssid_len = 0;
+		for (unsigned o = 36; o + 2 <= flen && o + 2 + f[o + 1] <= flen; o += 2 + f[o + 1]) {
+			if (f[o] == 0) {
+				b->raw_ssid_len = (uint8_t)MIN((uint32_t)f[o + 1], 32u);
+				memcpy(b->raw_ssid, f + o + 2, b->raw_ssid_len);
+				break;
+			}
+		}
+		for (unsigned i = 0; i + 1 < sizeof(b->ssid); i++) {
+			uint8_t ch = i < b->raw_ssid_len ? b->raw_ssid[i] : 0;
+
+			if (ch == 0) {
+				b->ssid[i] = 0;
+				break;
+			}
+			b->ssid[i] = (ch >= 0x20 && ch != 0x7f) ? (char)ch : '?';
+		}
+		if (b->raw_ssid_len == 0) {
+			strlcpy(b->ssid, "<hidden>", sizeof(b->ssid));
+		}
+		if (fresh) {
+			printf("mpss: scan: net %2u: %02x:%02x:%02x:**:**:** ch %3u %4d dBm '%s'\n",
+			    khaje_scan_nets, b->bssid[0], b->bssid[1], b->bssid[2], b->chan, b->rssi, b->ssid);
+		}
+	}
+}
+
+/* ---------------- WPA2-PSK: SHA-1, HMAC, PBKDF2, PRF, AES-128 unwrap (self-contained) ---------------- */
+
+struct khaje_sha1 { uint32_t h[5]; uint64_t n; uint8_t b[64]; uint32_t bl; };
+
+static inline uint32_t
+khaje_rol32(uint32_t v, int s)
+{
+	return (v << s) | (v >> (32 - s));
+}
+
+static void
+khaje_sha1_block(struct khaje_sha1 *c, const uint8_t *p)
+{
+	uint32_t w[80], a = c->h[0], b = c->h[1], d = c->h[2], e = c->h[3], f = c->h[4];
+
+	for (int i = 0; i < 16; i++) {
+		w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 |
+		    (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+	}
+	for (int i = 16; i < 80; i++) {
+		w[i] = khaje_rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+	}
+	for (int i = 0; i < 80; i++) {
+		uint32_t k, x;
+
+		if (i < 20) {
+			x = (b & d) | (~b & e); k = 0x5a827999;
+		} else if (i < 40) {
+			x = b ^ d ^ e; k = 0x6ed9eba1;
+		} else if (i < 60) {
+			x = (b & d) | (b & e) | (d & e); k = 0x8f1bbcdc;
+		} else {
+			x = b ^ d ^ e; k = 0xca62c1d6;
+		}
+		uint32_t t = khaje_rol32(a, 5) + x + f + k + w[i];
+
+		f = e; e = d; d = khaje_rol32(b, 30); b = a; a = t;
+	}
+	c->h[0] += a; c->h[1] += b; c->h[2] += d; c->h[3] += e; c->h[4] += f;
+}
+
+static void
+khaje_sha1_init(struct khaje_sha1 *c)
+{
+	c->h[0] = 0x67452301; c->h[1] = 0xefcdab89; c->h[2] = 0x98badcfe;
+	c->h[3] = 0x10325476; c->h[4] = 0xc3d2e1f0;
+	c->n = 0;
+	c->bl = 0;
+}
+
+static void
+khaje_sha1_update(struct khaje_sha1 *c, const uint8_t *p, size_t len)
+{
+	c->n += len;
+	while (len > 0) {
+		uint32_t take = (uint32_t)MIN((size_t)(64 - c->bl), len);
+
+		memcpy(c->b + c->bl, p, take);
+		c->bl += take;
+		p += take;
+		len -= take;
+		if (c->bl == 64) {
+			khaje_sha1_block(c, c->b);
+			c->bl = 0;
+		}
+	}
+}
+
+static void
+khaje_sha1_final(struct khaje_sha1 *c, uint8_t out[20])
+{
+	uint64_t bits = c->n * 8;
+	uint8_t pad = 0x80, z = 0, l[8];
+
+	khaje_sha1_update(c, &pad, 1);
+	while (c->bl != 56) {
+		khaje_sha1_update(c, &z, 1);
+	}
+	for (int i = 0; i < 8; i++) {
+		l[i] = (uint8_t)(bits >> (56 - 8 * i));
+	}
+	khaje_sha1_update(c, l, 8);
+	for (int i = 0; i < 5; i++) {
+		out[4 * i] = (uint8_t)(c->h[i] >> 24);
+		out[4 * i + 1] = (uint8_t)(c->h[i] >> 16);
+		out[4 * i + 2] = (uint8_t)(c->h[i] >> 8);
+		out[4 * i + 3] = (uint8_t)c->h[i];
+	}
+}
+
+/* HMAC-SHA1 over up to three pieces */
+static void
+khaje_hmac_sha1(const uint8_t *key, size_t klen, const uint8_t *a, size_t al,
+    const uint8_t *b, size_t bl, const uint8_t *c3, size_t cl, uint8_t out[20])
+{
+	uint8_t k[64] = { 0 }, ipad[64], opad[64], inner[20];
+	struct khaje_sha1 s;
+
+	if (klen > 64) {
+		khaje_sha1_init(&s);
+		khaje_sha1_update(&s, key, klen);
+		khaje_sha1_final(&s, k);
+	} else {
+		memcpy(k, key, klen);
+	}
+	for (int i = 0; i < 64; i++) {
+		ipad[i] = k[i] ^ 0x36;
+		opad[i] = k[i] ^ 0x5c;
+	}
+	khaje_sha1_init(&s);
+	khaje_sha1_update(&s, ipad, 64);
+	if (al) khaje_sha1_update(&s, a, al);
+	if (bl) khaje_sha1_update(&s, b, bl);
+	if (cl) khaje_sha1_update(&s, c3, cl);
+	khaje_sha1_final(&s, inner);
+	khaje_sha1_init(&s);
+	khaje_sha1_update(&s, opad, 64);
+	khaje_sha1_update(&s, inner, 20);
+	khaje_sha1_final(&s, out);
+}
+
+/* PMK = PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32) */
+static void
+khaje_pbkdf2_pmk(const uint8_t *pass, size_t plen, const uint8_t *ssid, size_t slen, uint8_t pmk[32])
+{
+	for (uint32_t blk = 1; blk <= 2; blk++) {
+		uint8_t cnt[4] = { (uint8_t)(blk >> 24), (uint8_t)(blk >> 16), (uint8_t)(blk >> 8), (uint8_t)blk };
+		uint8_t u[20], t[20];
+
+		khaje_hmac_sha1(pass, plen, ssid, slen, cnt, 4, NULL, 0, u);
+		memcpy(t, u, 20);
+		for (int i = 1; i < 4096; i++) {
+			khaje_hmac_sha1(pass, plen, u, 20, NULL, 0, NULL, 0, u);
+			for (int j = 0; j < 20; j++) {
+				t[j] ^= u[j];
+			}
+		}
+		memcpy(pmk + 20 * (blk - 1), t, blk == 1 ? 20 : 12);
+	}
+}
+
+/* IEEE 802.11 PRF-SHA1 */
+static void
+khaje_prf(const uint8_t *key, size_t klen, const char *label, const uint8_t *data,
+    size_t dlen, uint8_t *out, size_t olen)
+{
+	uint8_t buf[128], h[20];
+	size_t ll = strlen(label);
+
+	for (uint8_t i = 0; olen > 0; i++) {
+		memcpy(buf, label, ll);
+		buf[ll] = 0;
+		memcpy(buf + ll + 1, data, dlen);
+		buf[ll + 1 + dlen] = i;
+		khaje_hmac_sha1(key, klen, buf, ll + 2 + dlen, NULL, 0, NULL, 0, h);
+		size_t take = MIN(olen, (size_t)20);
+
+		memcpy(out, h, take);
+		out += take;
+		olen -= take;
+	}
+}
+
+/* AES-128 decryption of one block (FIPS-197), for the key unwrap of the GTK */
+static const uint8_t khaje_aes_sbox[256] = {
+	0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+	0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+	0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+	0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+	0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+	0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+	0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+	0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+};
+
+static uint8_t khaje_aes_xt(uint8_t x) { return (uint8_t)((x << 1) ^ ((x & 0x80) ? 0x1b : 0)); }
+static uint8_t khaje_aes_mul(uint8_t a, uint8_t b) { uint8_t r = 0; while (b) { if (b & 1) r ^= a; a = khaje_aes_xt(a); b >>= 1; } return r; }
+
+static void
+khaje_aes128_expand(const uint8_t key[16], uint8_t rk[176])
+{
+	uint8_t rcon = 1;
+
+	memcpy(rk, key, 16);
+	for (int i = 16; i < 176; i += 4) {
+		uint8_t t[4];
+
+		memcpy(t, rk + i - 4, 4);
+		if (i % 16 == 0) {
+			uint8_t x = t[0];
+
+			t[0] = khaje_aes_sbox[t[1]] ^ rcon;
+			t[1] = khaje_aes_sbox[t[2]];
+			t[2] = khaje_aes_sbox[t[3]];
+			t[3] = khaje_aes_sbox[x];
+			rcon = khaje_aes_xt(rcon);
+		}
+		for (int j = 0; j < 4; j++) {
+			rk[i + j] = rk[i - 16 + j] ^ t[j];
+		}
+	}
+}
+
+static void
+khaje_aes128_decrypt(const uint8_t rk[176], uint8_t s[16])
+{
+	uint8_t inv[256];
+
+	for (int i = 0; i < 256; i++) {
+		inv[khaje_aes_sbox[i]] = (uint8_t)i;
+	}
+	for (int j = 0; j < 16; j++) {
+		s[j] ^= rk[160 + j];
+	}
+	for (int r = 9; r >= 0; r--) {
+		uint8_t t[16];
+
+		for (int c = 0; c < 4; c++) {
+			for (int row = 0; row < 4; row++) {
+				t[4 * ((c + row) % 4) + row] = inv[s[4 * c + row]];
+			}
+		}
+		for (int j = 0; j < 16; j++) {
+			t[j] ^= rk[16 * r + j];
+		}
+		if (r == 0) {
+			memcpy(s, t, 16);
+			break;
+		}
+		for (int c = 0; c < 4; c++) {
+			uint8_t *q = t + 4 * c, a0 = q[0], a1 = q[1], a2 = q[2], a3 = q[3];
+
+			s[4 * c] = khaje_aes_mul(a0, 14) ^ khaje_aes_mul(a1, 11) ^ khaje_aes_mul(a2, 13) ^ khaje_aes_mul(a3, 9);
+			s[4 * c + 1] = khaje_aes_mul(a0, 9) ^ khaje_aes_mul(a1, 14) ^ khaje_aes_mul(a2, 11) ^ khaje_aes_mul(a3, 13);
+			s[4 * c + 2] = khaje_aes_mul(a0, 13) ^ khaje_aes_mul(a1, 9) ^ khaje_aes_mul(a2, 14) ^ khaje_aes_mul(a3, 11);
+			s[4 * c + 3] = khaje_aes_mul(a0, 11) ^ khaje_aes_mul(a1, 13) ^ khaje_aes_mul(a2, 9) ^ khaje_aes_mul(a3, 14);
+		}
+	}
+}
+
+/* RFC 3394 key unwrap with a 128-bit KEK; out gets len-8 bytes. False if the check value is wrong. */
+static bool
+khaje_aes_unwrap(const uint8_t kek[16], const uint8_t *in, size_t len, uint8_t *out)
+{
+	uint8_t rk[176], a[8], b[16];
+	size_t n = len / 8 - 1;
+
+	if (len < 24 || len % 8 != 0) {
+		return false;
+	}
+	khaje_aes128_expand(kek, rk);
+	memcpy(a, in, 8);
+	memcpy(out, in + 8, len - 8);
+	for (int j = 5; j >= 0; j--) {
+		for (size_t i = n; i >= 1; i--) {
+			uint64_t t = (uint64_t)n * (uint64_t)j + i;
+
+			memcpy(b, a, 8);
+			for (int k = 0; k < 8; k++) {
+				b[7 - k] ^= (uint8_t)(t >> (8 * k));
+			}
+			memcpy(b + 8, out + 8 * (i - 1), 8);
+			khaje_aes128_decrypt(rk, b);
+			memcpy(a, b, 8);
+			memcpy(out + 8 * (i - 1), b + 8, 8);
+		}
+	}
+	for (int k = 0; k < 8; k++) {
+		if (a[k] != 0xa6) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool
+khaje_crypto_selftest(void)
+{
+	static const uint8_t kek[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+	static const uint8_t ct[24] = { 0x1f,0xa6,0x8b,0x0a,0x81,0x12,0xb4,0x47,0xae,0xf3,0x4b,0xd8,0xfb,0x5a,0x7b,0x82,
+		0x9d,0x3e,0x86,0x23,0x71,0xd2,0xcf,0xe5 };
+	static const uint8_t pt[16] = { 0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff };
+	static const uint8_t pmk_ref[4] = { 0xf4, 0x2c, 0x6f, 0xc5 };
+	uint8_t out[16], pmk[32];
+	bool a = khaje_aes_unwrap(kek, ct, 24, out) && memcmp(out, pt, 16) == 0;
+	bool b;
+
+	khaje_pbkdf2_pmk((const uint8_t *)"password", 8, (const uint8_t *)"IEEE", 4, pmk);
+	b = memcmp(pmk, pmk_ref, 4) == 0;
+	printf("mpss: sta: crypto self-test: key unwrap %s, pbkdf2 %s\n", a ? "ok" : "FAILED", b ? "ok" : "FAILED");
+	return a && b;
+}
+
+/* ---------------- station: HTT data TX, association, WPA2-PSK 4-way ---------------- */
+
+#define KHAJE_CMD_VDEV_START 0x5003
+#define KHAJE_CMD_VDEV_UP 0x5005
+#define KHAJE_CMD_VDEV_STOP 0x5006
+#define KHAJE_CMD_VDEV_DOWN 0x5007
+#define KHAJE_CMD_VDEV_INSTALL_KEY 0x5009
+#define KHAJE_CMD_PEER_CREATE 0x6001
+#define KHAJE_CMD_PEER_DELETE 0x6002
+#define KHAJE_CMD_PEER_SET_PARAM 0x6004
+#define KHAJE_CMD_PEER_ASSOC 0x6005
+#define KHAJE_CMD_MGMT_TX 0x7008
+#define KHAJE_CMD_STA_PS 0x9001
+#define KHAJE_TAG_VDEV_START 0x58
+#define KHAJE_TAG_VDEV_UP 0x5c
+#define KHAJE_TAG_VDEV_STOP 0x5d
+#define KHAJE_TAG_VDEV_DOWN 0x5e
+#define KHAJE_TAG_VDEV_INSTALL_KEY 0x60
+#define KHAJE_TAG_PEER_CREATE 0x61
+#define KHAJE_TAG_PEER_DELETE 0x62
+#define KHAJE_TAG_PEER_SET_PARAM 0x64
+#define KHAJE_TAG_PEER_ASSOC 0x65
+#define KHAJE_TAG_VHT_RATE 0x66
+#define KHAJE_TAG_STA_PS 0x6c
+#define KHAJE_TAG_MGMT_TX 0x1a6
+#define KHAJE_PEER_FLAG_AUTH 0x1
+#define KHAJE_PEER_FLAG_NEED_PTK_4WAY 0x4
+#define KHAJE_PEER_PARAM_AUTHORIZE 3
+#define KHAJE_CIPHER_TKIP 2
+#define KHAJE_CIPHER_CCMP 4
+#define KHAJE_EVENT_VDEV_START 0x5001
+#define KHAJE_EVENT_PEER_KICKOUT 0x6001
+
+#define KHAJE_STA_POOL_PA 0xe0700000ull
+#define KHAJE_STA_POOL_SIZE 0x00040000u
+#define KHAJE_TX_SLOTS 64
+#define KHAJE_TX_SLOT_SIZE 2048
+#define KHAJE_TX_POOL_OFF 0
+#define KHAJE_MGMT_OFF 0x20000
+#define KHAJE_H2T_TX_FRM 1
+#define KHAJE_TXF0_MAC_HDR 0x01
+#define KHAJE_TXF0_NO_ENCRYPT 0x04
+#define KHAJE_TXF0_NATIVE (1u << 5)
+#define KHAJE_TXF1_TID_NONQOS (16u << 6)
+#define KHAJE_TXF1_POSTPONED (1u << 11)
+#define KHAJE_PREFETCH_LEN 50
+#define KHAJE_T2H_TX_COMPL 0x07
+
+enum khaje_sta_state { KSTA_IDLE, KSTA_START, KSTA_AUTH, KSTA_ASSOC, KSTA_4WAY, KSTA_UP };
+static enum khaje_sta_state khaje_sta_state;
+static int khaje_sta_result;
+static bool khaje_sta_join_asked, khaje_sta_have_pmk, khaje_sta_rsn, khaje_sta_start_resp, khaje_sta_ptk_set;
+static uint32_t khaje_sta_join_done;
+static uint8_t khaje_sta_ssid[32], khaje_sta_ssid_len, khaje_sta_bssid[6], khaje_sta_pmk[32];
+static uint8_t khaje_sta_body[768], khaje_sta_rsn_ie[22];
+static uint32_t khaje_sta_body_len, khaje_sta_freq, khaje_sta_aid, khaje_sta_tries;
+static uint32_t khaje_sta_deadline, khaje_sta_desc, khaje_sta_msg1s;
+static int32_t khaje_sta_start_status;
+static uint8_t khaje_sta_assoc_req[512];
+static uint32_t khaje_sta_assoc_req_len;
+static uint8_t khaje_sta_ptk[48], khaje_sta_anonce[32], khaje_sta_snonce[32], khaje_sta_group_cipher;
+static uint64_t khaje_sta_replay;
+static uint8_t *khaje_sta_pool, *khaje_tx_pool, *khaje_mgmt_va;
+static uint64_t khaje_sta_pool_pa, khaje_tx_pool_pa, khaje_tx_busy, khaje_mgmt_pa;
+static uint32_t khaje_tx_done, khaje_tx_fail;
+
+static uint32_t
+khaje_ms(void)
+{
+	return (uint32_t)(now_us() / 1000);
+}
+
+static bool
+khaje_sta_pool_get(void)
+{
+	if (khaje_sta_pool != NULL) {
+		return true;
+	}
+	khaje_sta_pool = (uint8_t *)ml_io_map_unmappable(KHAJE_STA_POOL_PA, KHAJE_STA_POOL_SIZE, VM_WIMG_WCOMB);
+	if (khaje_sta_pool == NULL) {
+		return false;
+	}
+	bzero(khaje_sta_pool, KHAJE_STA_POOL_SIZE);
+	khaje_sta_pool_pa = KHAJE_STA_POOL_PA;
+	khaje_tx_pool = khaje_sta_pool + KHAJE_TX_POOL_OFF;
+	khaje_tx_pool_pa = KHAJE_STA_POOL_PA + KHAJE_TX_POOL_OFF;
+	khaje_mgmt_va = khaje_sta_pool + KHAJE_MGMT_OFF;
+	khaje_mgmt_pa = KHAJE_STA_POOL_PA + KHAJE_MGMT_OFF;
+	return true;
+}
+
+static uint8_t *
+khaje_sta_p32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); return p + 4; }
+static uint8_t *
+khaje_sta_pmac(uint8_t *p, const uint8_t *mac) { bzero(p, 8); memcpy(p, mac, 6); return p + 8; }
+
+static const uint8_t *
+khaje_sta_find_ie(const uint8_t *ies, uint32_t len, uint8_t id)
+{
+	for (uint32_t o = 0; o + 2 <= len && o + 2 + ies[o + 1] <= len; o += 2 + ies[o + 1]) {
+		if (ies[o] == id) {
+			return ies + o;
+		}
+	}
+	return NULL;
+}
+
+static uint8_t *
+khaje_sta_channel(uint8_t *p, uint32_t freq)
+{
+	uint8_t *c = khaje_wmi_tlv(p, KHAJE_WMI_TAG_CHANNEL, 24);
+
+	c = khaje_sta_p32(c, freq);
+	c = khaje_sta_p32(c, freq);
+	c = khaje_sta_p32(c, 0);
+	c = khaje_sta_p32(c, freq < 4000 ? 1 : 0);
+	c = khaje_sta_p32(c, (40u << 8) | (40u << 16));
+	khaje_sta_p32(c, 40u << 8);
+	return p + 4 + 24;
+}
+
+/* ---- HTT data TX: one frag descriptor in the bank the firmware was given, payload in our pool */
+static bool
+khaje_htt_tx_frame(const uint8_t *f, uint32_t len, bool clear)
+{
+	uint8_t m[20 + 52], *p = m;
+	uint32_t id, pf = (MIN(len, (uint32_t)KHAJE_PREFETCH_LEN) + 3) & ~3u;
+	uint64_t pa;
+	uint32_t lo;
+	uint16_t hi, l16;
+
+	if (!khaje_sta_pool_get() || khaje_htt_bank == NULL || khaje_htt_state != 2 || len > KHAJE_TX_SLOT_SIZE) {
+		return false;
+	}
+	for (id = 0; id < KHAJE_TX_SLOTS && (khaje_tx_busy & (1ull << id)) != 0; id++) {
+	}
+	if (id == KHAJE_TX_SLOTS) {
+		return false;
+	}
+	pa = khaje_tx_pool_pa + (uint64_t)id * KHAJE_TX_SLOT_SIZE;
+	memcpy(khaje_tx_pool + id * KHAJE_TX_SLOT_SIZE, f, len);
+	{
+		uint8_t *ext = khaje_htt_bank + id * KHAJE_HTT_EXT_DESC_SIZE;
+
+		bzero(ext, KHAJE_HTT_EXT_DESC_SIZE);
+		lo = (uint32_t)pa;
+		hi = (uint16_t)(pa >> 32);
+		l16 = (uint16_t)len;
+		memcpy(ext + 24, &lo, 4);
+		memcpy(ext + 28, &hi, 2);
+		memcpy(ext + 30, &l16, 2);
+	}
+	settle();
+	bzero(m, sizeof(m));
+	*p++ = KHAJE_H2T_TX_FRM;
+	*p++ = (uint8_t)(KHAJE_TXF0_MAC_HDR | KHAJE_TXF0_NATIVE | (clear ? KHAJE_TXF0_NO_ENCRYPT : 0));
+	p = khaje_htt_put16(p, (uint16_t)(KHAJE_TXF1_TID_NONQOS | KHAJE_TXF1_POSTPONED));
+	p = khaje_htt_put16(p, (uint16_t)len);
+	p = khaje_htt_put16(p, (uint16_t)id);
+	p = khaje_htt_put64(p, khaje_htt_bank_pa + (uint64_t)id * KHAJE_HTT_EXT_DESC_SIZE);
+	p = khaje_sta_p32(p, 0xffff);
+	memcpy(p, f, MIN(len, pf));
+	if (!khaje_htt_send(m, 20 + pf)) {
+		return false;
+	}
+	khaje_tx_busy |= 1ull << id;
+	return true;
+}
+
+static void
+khaje_htt_tx_compl(const uint8_t *p, unsigned len)
+{
+	uint32_t n = p[2], st = p[1] & 7;
+
+	for (uint32_t i = 0; i < n && 4 + 2 * (i + 1) <= len; i++) {
+		uint16_t id;
+
+		memcpy(&id, p + 4 + 2 * i, 2);
+		if (id < KHAJE_TX_SLOTS) {
+			khaje_tx_busy &= ~(1ull << id);
+		}
+	}
+	khaje_tx_done += n;
+	if (st != 0) {
+		khaje_tx_fail += n;
+		if (khaje_tx_fail <= 4) {
+			printf("mpss: sta: htt tx: %u frame(s) status %u\n", n, st);
+		}
+	}
+}
+
+/* ---- WMI commands for the join (layouts: ath10k wmi-tlv) */
+static bool
+khaje_sta_vdev_start(uint32_t freq, uint32_t bcn, uint32_t dtim)
+{
+	uint8_t m[4 + 72 + 4 + 24 + 4] = { 0 }, *p;
+
+	p = khaje_wmi_tlv(m, KHAJE_TAG_VDEV_START, 72);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_p32(p, bcn);
+	p = khaje_sta_p32(p, dtim);
+	p = khaje_sta_p32(p, 0);
+	p += 36 + 16;
+	p = khaje_sta_channel(p, freq);
+	khaje_wmi_tlv(p, KHAJE_WMI_TAG_STRUCT, 0);
+	return khaje_wmi_send(KHAJE_CMD_VDEV_START, m, sizeof(m));
+}
+
+static bool
+khaje_sta_vdev_simple(uint32_t cmd, uint16_t tag)
+{
+	uint8_t m[8], *p = khaje_wmi_tlv(m, tag, 4);
+
+	khaje_sta_p32(p, 0);
+	return khaje_wmi_send(cmd, m, sizeof(m));
+}
+
+static bool
+khaje_sta_peer(uint32_t cmd, uint16_t tag, bool create)
+{
+	uint8_t m[4 + 16] = { 0 }, *p = khaje_wmi_tlv(m, tag, create ? 16 : 12);
+
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_pmac(p, khaje_sta_bssid);
+	if (create) {
+		khaje_sta_p32(p, 0);
+	}
+	return khaje_wmi_send(cmd, m, create ? 20 : 16);
+}
+
+static bool
+khaje_sta_peer_param(uint32_t param, uint32_t value)
+{
+	uint8_t m[4 + 20], *p = khaje_wmi_tlv(m, KHAJE_TAG_PEER_SET_PARAM, 20);
+
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_pmac(p, khaje_sta_bssid);
+	p = khaje_sta_p32(p, param);
+	khaje_sta_p32(p, value);
+	return khaje_wmi_send(KHAJE_CMD_PEER_SET_PARAM, m, sizeof(m));
+}
+
+static bool
+khaje_sta_ps_off(void)
+{
+	uint8_t m[12], *p = khaje_wmi_tlv(m, KHAJE_TAG_STA_PS, 8);
+
+	p = khaje_sta_p32(p, 0);
+	khaje_sta_p32(p, 0);
+	return khaje_wmi_send(KHAJE_CMD_STA_PS, m, sizeof(m));
+}
+
+static bool
+khaje_sta_mgmt_tx(const uint8_t *f, uint32_t len)
+{
+	uint8_t m[4 + 28 + 4 + 64] = { 0 }, *p;
+	uint32_t buf = (MIN(len, 64u) + 3) & ~3u;
+
+	if (!khaje_sta_pool_get() || len > 0x1000 - 8) {
+		return false;
+	}
+	bzero(khaje_mgmt_va, ((len + 3) & ~3u) + 4);
+	memcpy(khaje_mgmt_va, f, len);
+	settle();
+	p = khaje_wmi_tlv(m, KHAJE_TAG_MGMT_TX, 28);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_p32(p, ++khaje_sta_desc);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_htt_put64(p, khaje_mgmt_pa);
+	p = khaje_sta_p32(p, len);
+	p = khaje_sta_p32(p, buf);
+	p = khaje_wmi_tlv(p, KHAJE_WMI_TAG_BYTES, buf);
+	memcpy(p, khaje_mgmt_va, buf);
+	return khaje_wmi_send(KHAJE_CMD_MGMT_TX, m, 4 + 28 + 4 + buf);
+}
+
+static uint32_t
+khaje_sta_ap_rates(uint8_t *out)
+{
+	static const uint8_t ids[2] = { 1, 50 };
+	uint32_t n = 0;
+
+	for (int k = 0; k < 2; k++) {
+		const uint8_t *ie = khaje_sta_find_ie(khaje_sta_body, khaje_sta_body_len, ids[k]);
+
+		for (uint32_t i = 0; ie != NULL && i < ie[1] && n < 16; i++) {
+			out[n++] = ie[2 + i];
+		}
+	}
+	return n;
+}
+
+static bool
+khaje_sta_peer_assoc(uint32_t caps)
+{
+	uint8_t m[4 + 76 + 4 + 16 + 4 + 4 + 16] = { 0 }, *p, *r, rates[16];
+	uint32_t n = khaje_sta_ap_rates(rates), rl = (MIN(n, 16u) + 3) & ~3u;
+
+	p = khaje_wmi_tlv(m, KHAJE_TAG_PEER_ASSOC, 76);
+	p = khaje_sta_pmac(p, khaje_sta_bssid);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_p32(p, 1);
+	p = khaje_sta_p32(p, khaje_sta_aid);
+	p = khaje_sta_p32(p, KHAJE_PEER_FLAG_AUTH | (khaje_sta_rsn ? KHAJE_PEER_FLAG_NEED_PTK_4WAY : 0));
+	p = khaje_sta_p32(p, caps);
+	p = khaje_sta_p32(p, 1);
+	p += 4 * 6;
+	p -= 4 * 2;
+	p = khaje_sta_p32(p, 1);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_p32(p, khaje_sta_freq < 4000 ? 1 : 0);
+	p += 8;
+	p = khaje_sta_p32(p, MIN(n, 16u));
+	p = khaje_sta_p32(p, 0);
+	r = khaje_wmi_tlv(p, KHAJE_WMI_TAG_BYTES, rl);
+	for (uint32_t i = 0; i < n && i < 16; i++) {
+		uint8_t v = rates[i] & 0x7f;
+
+		r[i] = (v == 2 || v == 4 || v == 11 || v == 22) ? (uint8_t)(v | 0x80) : v;
+	}
+	p = r + rl;
+	p = khaje_wmi_tlv(p, KHAJE_WMI_TAG_BYTES, 0);
+	khaje_wmi_tlv(p, KHAJE_TAG_VHT_RATE, 16);
+	return khaje_wmi_send(KHAJE_CMD_PEER_ASSOC, m, 4 + 76 + 4 + rl + 4 + 4 + 16);
+}
+
+static bool
+khaje_sta_install_key(bool group, uint32_t idx, uint32_t cipher, const uint8_t *key, uint32_t klen)
+{
+	uint8_t m[4 + 92 + 4 + 32] = { 0 }, *p;
+	uint32_t kl = (klen + 3) & ~3u;
+
+	p = khaje_wmi_tlv(m, KHAJE_TAG_VDEV_INSTALL_KEY, 92);
+	p = khaje_sta_p32(p, 0);
+	p = khaje_sta_pmac(p, khaje_sta_bssid);
+	p = khaje_sta_p32(p, idx);
+	p = khaje_sta_p32(p, group ? 1 : 0);
+	p = khaje_sta_p32(p, cipher);
+	p += 3 * 8 + 16 + 16;
+	p = khaje_sta_p32(p, klen);
+	p = khaje_sta_p32(p, cipher == KHAJE_CIPHER_TKIP ? 8 : 0);
+	p = khaje_sta_p32(p, cipher == KHAJE_CIPHER_TKIP ? 8 : 0);
+	p = khaje_wmi_tlv(p, KHAJE_WMI_TAG_BYTES, kl);
+	memcpy(p, key, klen);
+	return khaje_wmi_send(KHAJE_CMD_VDEV_INSTALL_KEY, m, 4 + 92 + 4 + kl);
+}
+
+/* ---- 802.11 management frames */
+static uint8_t *
+khaje_sta_mgmt_hdr(uint8_t *f, uint8_t fc)
+{
+	bzero(f, 24);
+	f[0] = fc;
+	memcpy(f + 4, khaje_sta_bssid, 6);
+	memcpy(f + 10, khaje_scan_mac, 6);
+	memcpy(f + 16, khaje_sta_bssid, 6);
+	return f + 24;
+}
+
+static bool
+khaje_sta_send_auth(void)
+{
+	uint8_t f[30], *b = khaje_sta_mgmt_hdr(f, 0xb0);
+
+	bzero(b, 6);
+	b[2] = 1;
+	return khaje_sta_mgmt_tx(f, sizeof(f));
+}
+
+static void
+khaje_sta_build_assoc_req(void)
+{
+	uint8_t *f = khaje_sta_assoc_req, *p = khaje_sta_mgmt_hdr(f, 0x00), rates[16];
+	uint32_t n = khaje_sta_ap_rates(rates), cap = 0x0001 | 0x0020 | 0x0400;
+
+	if (khaje_sta_rsn) {
+		cap |= 0x0010;
+	}
+	*p++ = (uint8_t)cap;
+	*p++ = (uint8_t)(cap >> 8);
+	*p++ = 10;
+	*p++ = 0;
+	*p++ = 0;
+	*p++ = khaje_sta_ssid_len;
+	memcpy(p, khaje_sta_ssid, khaje_sta_ssid_len);
+	p += khaje_sta_ssid_len;
+	*p++ = 1;
+	*p++ = (uint8_t)MIN(n, 8u);
+	for (uint32_t k = 0; k < n && k < 8; k++) {
+		*p++ = rates[k];
+	}
+	if (n > 8) {
+		*p++ = 50;
+		*p++ = (uint8_t)(n - 8);
+		for (uint32_t k = 8; k < n; k++) {
+			*p++ = rates[k];
+		}
+	}
+	if (khaje_sta_rsn) {
+		memcpy(p, khaje_sta_rsn_ie, sizeof(khaje_sta_rsn_ie));
+		p += sizeof(khaje_sta_rsn_ie);
+	}
+	khaje_sta_assoc_req_len = (uint32_t)(p - f);
+}
+
+/* an Ethernet frame (dst, src, type, payload) to the AP as a to-DS data frame */
+static bool
+khaje_sta_tx_ether(const uint8_t *e, size_t len, bool clear)
+{
+	uint8_t f[KHAJE_TX_SLOT_SIZE];
+	static const uint8_t snap[6] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00 };
+
+	if (len < 14 || len - 14 + 24 + 8 > sizeof(f)) {
+		return false;
+	}
+	bzero(f, 24);
+	f[0] = 0x08;
+	f[1] = (uint8_t)(0x01 | (khaje_sta_ptk_set && !clear ? 0x40 : 0));
+	memcpy(f + 4, khaje_sta_bssid, 6);
+	memcpy(f + 10, khaje_scan_mac, 6);
+	memcpy(f + 16, e, 6);
+	memcpy(f + 24, snap, 6);
+	memcpy(f + 30, e + 12, 2);
+	memcpy(f + 32, e + 14, len - 14);
+	return khaje_htt_tx_frame(f, (uint32_t)(len - 14 + 32), clear);
+}
+
+/* ---- WPA2 4-way handshake (EAPOL-Key, descriptor version 2: HMAC-SHA1-128 MIC, AES key wrap) */
+static void khaje_sta_join_end(int result);
+
+static void
+khaje_sta_eapol_send(uint16_t info, const uint8_t *nonce, const uint8_t *data, uint16_t dlen)
+{
+	uint8_t e[14 + 4 + 95 + 64] = { 0 }, *k = e + 14 + 4, mic[20];
+	uint16_t body = (uint16_t)(95 + dlen);
+
+	memcpy(e, khaje_sta_bssid, 6);
+	memcpy(e + 6, khaje_scan_mac, 6);
+	e[12] = 0x88;
+	e[13] = 0x8e;
+	e[14] = 1;
+	e[15] = 3;
+	e[16] = (uint8_t)(body >> 8);
+	e[17] = (uint8_t)body;
+	k[0] = 2;
+	k[1] = (uint8_t)(info >> 8);
+	k[2] = (uint8_t)info;
+	for (int i = 0; i < 8; i++) {
+		k[5 + i] = (uint8_t)(khaje_sta_replay >> (56 - 8 * i));
+	}
+	if (nonce != NULL) {
+		memcpy(k + 13, nonce, 32);
+	}
+	k[93] = (uint8_t)(dlen >> 8);
+	k[94] = (uint8_t)dlen;
+	if (dlen) {
+		memcpy(k + 95, data, dlen);
+	}
+	khaje_hmac_sha1(khaje_sta_ptk, 16, e + 14, 4 + body, NULL, 0, NULL, 0, mic);
+	memcpy(k + 77, mic, 16);
+	(void)khaje_sta_tx_ether(e, 14 + 4 + body, true);
+}
+
+static bool
+khaje_sta_eapol_mic_ok(uint8_t *eapol, size_t len)
+{
+	uint8_t want[16], got[20];
+
+	if (len < 4 + 95) {
+		return false;
+	}
+	memcpy(want, eapol + 4 + 77, 16);
+	bzero(eapol + 4 + 77, 16);
+	khaje_hmac_sha1(khaje_sta_ptk, 16, eapol, len, NULL, 0, NULL, 0, got);
+	memcpy(eapol + 4 + 77, want, 16);
+	return memcmp(want, got, 16) == 0;
+}
+
+static void
+khaje_sta_eapol_rx(const uint8_t *e, size_t elen)
+{
+	uint8_t frame[512];
+	const uint8_t *src = e + 6;
+	size_t len;
+	uint8_t *k;
+	uint16_t info, dlen;
+	uint64_t replay = 0;
+	bool pairwise, ack, has_mic, install;
+
+	if (khaje_sta_state != KSTA_4WAY || elen < 14 + 4 + 95 || elen - 14 > sizeof(frame) ||
+	    memcmp(src, khaje_sta_bssid, 6) != 0) {
+		return;
+	}
+	len = elen - 14;
+	memcpy(frame, e + 14, len);
+	k = frame + 4;
+	if (frame[1] != 3 || k[0] != 2) {
+		return;
+	}
+	info = (uint16_t)(k[1] << 8 | k[2]);
+	dlen = (uint16_t)(k[93] << 8 | k[94]);
+	for (int i = 0; i < 8; i++) {
+		replay = replay << 8 | k[5 + i];
+	}
+	if (95 + (size_t)dlen > len - 4) {
+		return;
+	}
+	pairwise = info & 0x0008;
+	ack = info & 0x0080;
+	has_mic = info & 0x0100;
+	install = info & 0x0040;
+	if (pairwise && ack && !has_mic) {
+		if (++khaje_sta_msg1s > 3) {
+			printf("mpss: sta: wpa: the AP keeps sending message 1: wrong passphrase\n");
+			khaje_sta_join_end(EAUTH);
+			return;
+		}
+		khaje_sta_replay = replay;
+		memcpy(khaje_sta_anonce, k + 13, 32);
+		read_random(khaje_sta_snonce, 32);
+		{
+			uint8_t data[76];
+			const uint8_t *aa = khaje_sta_bssid, *spa = khaje_scan_mac;
+			bool amin = memcmp(aa, spa, 6) < 0, nmin = memcmp(khaje_sta_anonce, khaje_sta_snonce, 32) < 0;
+
+			memcpy(data, amin ? aa : spa, 6);
+			memcpy(data + 6, amin ? spa : aa, 6);
+			memcpy(data + 12, nmin ? khaje_sta_anonce : khaje_sta_snonce, 32);
+			memcpy(data + 44, nmin ? khaje_sta_snonce : khaje_sta_anonce, 32);
+			khaje_prf(khaje_sta_pmk, 32, "Pairwise key expansion", data, sizeof(data), khaje_sta_ptk, 48);
+		}
+		khaje_sta_eapol_send(0x010a, khaje_sta_snonce, khaje_sta_rsn_ie, sizeof(khaje_sta_rsn_ie));
+		printf("mpss: sta: wpa: message 1 -> message 2 sent\n");
+		return;
+	}
+	if (pairwise && ack && has_mic && install) {
+		uint8_t plain[256], gtk[32], gtk_len = 0, gtk_idx = 1;
+
+		if (!khaje_sta_eapol_mic_ok(frame, len)) {
+			printf("mpss: sta: wpa: message 3 MIC wrong: wrong passphrase\n");
+			khaje_sta_join_end(EAUTH);
+			return;
+		}
+		khaje_sta_replay = replay;
+		if ((info & 0x1000) && dlen >= 24 && dlen <= sizeof(plain) + 8 &&
+		    khaje_aes_unwrap(khaje_sta_ptk + 16, k + 95, dlen, plain)) {
+			for (uint32_t o = 0; o + 2 <= (uint32_t)dlen - 8 &&
+			    o + 2 + plain[o + 1] <= (uint32_t)dlen - 8; o += 2 + plain[o + 1]) {
+				if (plain[o] == 0xdd && plain[o + 1] >= 6 && plain[o + 2] == 0x00 &&
+				    plain[o + 3] == 0x0f && plain[o + 4] == 0xac && plain[o + 5] == 0x01) {
+					gtk_idx = plain[o + 6] & 3;
+					gtk_len = (uint8_t)MIN((uint32_t)plain[o + 1] - 6, 32u);
+					memcpy(gtk, plain + o + 8, gtk_len);
+				}
+			}
+		}
+		khaje_sta_eapol_send(0x030a, NULL, NULL, 0);
+		sleep_ms(5);
+		khaje_sta_install_key(false, 0, KHAJE_CIPHER_CCMP, khaje_sta_ptk + 32, 16);
+		if (gtk_len != 0) {
+			khaje_sta_install_key(true, gtk_idx,
+			    khaje_sta_group_cipher == 2 ? KHAJE_CIPHER_TKIP : KHAJE_CIPHER_CCMP, gtk, gtk_len);
+		}
+		khaje_sta_peer_param(KHAJE_PEER_PARAM_AUTHORIZE, 1);
+		khaje_sta_ptk_set = true;
+		bzero(gtk, sizeof(gtk));
+		printf("mpss: sta: *** WPA2 keys installed (group key %s, idx %u) ***\n",
+		    gtk_len ? "yes" : "NO", gtk_idx);
+		khaje_sta_join_end(0);
+	}
+}
+
+/* ---- the join, step by step */
+static void
+khaje_sta_teardown(void)
+{
+	if (khaje_sta_state >= KSTA_START) {
+		if (khaje_sta_state >= KSTA_4WAY) {
+			khaje_sta_vdev_simple(KHAJE_CMD_VDEV_DOWN, KHAJE_TAG_VDEV_DOWN);
+		}
+		if (khaje_sta_state >= KSTA_AUTH) {
+			khaje_sta_peer(KHAJE_CMD_PEER_DELETE, KHAJE_TAG_PEER_DELETE, false);
+		}
+		khaje_sta_vdev_simple(KHAJE_CMD_VDEV_STOP, KHAJE_TAG_VDEV_STOP);
+	}
+	khaje_sta_state = KSTA_IDLE;
+	khaje_sta_ptk_set = false;
+	khaje_net_link(false);
+}
+
+static void
+khaje_sta_join_end(int result)
+{
+	if (result != 0) {
+		printf("mpss: sta: join: failed (%d) in state %u\n", result, khaje_sta_state);
+		khaje_sta_teardown();
+	} else {
+		khaje_sta_state = KSTA_UP;
+		khaje_net_link(true);
+		printf("mpss: sta: *** joined \"%.*s\" ***\n", (int)khaje_sta_ssid_len, khaje_sta_ssid);
+	}
+	bzero(khaje_sta_pmk, sizeof(khaje_sta_pmk));
+	khaje_sta_result = result;
+	khaje_sta_join_done++;
+}
+
+static void
+khaje_sta_join_begin(void)
+{
+	int best = -1;
+
+	for (unsigned i = 0; i < khaje_scan_nets; i++) {
+		if (khaje_bss[i].raw_ssid_len == khaje_sta_ssid_len &&
+		    memcmp(khaje_bss[i].raw_ssid, khaje_sta_ssid, khaje_sta_ssid_len) == 0 &&
+		    (best < 0 || khaje_bss[i].rssi > khaje_bss[best].rssi)) {
+			best = (int)i;
+		}
+	}
+	if (best < 0) {
+		printf("mpss: sta: join: no such network heard\n");
+		khaje_sta_join_end(ENOENT);
+		return;
+	}
+	memcpy(khaje_sta_bssid, khaje_bss[best].bssid, 6);
+	khaje_sta_freq = khaje_bss[best].freq;
+	khaje_sta_body_len = khaje_bss[best].ie_len;
+	memcpy(khaje_sta_body, khaje_bss[best].ie, khaje_sta_body_len);
+	{
+		const uint8_t *rsn = khaje_sta_find_ie(khaje_sta_body, khaje_sta_body_len, 48);
+		static const uint8_t hdr[4] = { 48, 20, 1, 0 };
+		uint8_t *q;
+
+		khaje_sta_rsn = rsn != NULL;
+		khaje_sta_group_cipher = (rsn != NULL && rsn[1] >= 8) ? rsn[2 + 2 + 3] : 4;
+		memcpy(khaje_sta_rsn_ie, hdr, 4);
+		q = khaje_sta_rsn_ie + 4;
+		*q++ = 0x00; *q++ = 0x0f; *q++ = 0xac; *q++ = khaje_sta_group_cipher;
+		*q++ = 1; *q++ = 0; *q++ = 0x00; *q++ = 0x0f; *q++ = 0xac; *q++ = 4;
+		*q++ = 1; *q++ = 0; *q++ = 0x00; *q++ = 0x0f; *q++ = 0xac; *q++ = 2;
+		*q++ = 0; *q++ = 0;
+	}
+	if (khaje_sta_rsn && !khaje_sta_have_pmk) {
+		printf("mpss: sta: join: \"%.*s\" needs a passphrase and none was given\n",
+		    (int)khaje_sta_ssid_len, khaje_sta_ssid);
+		khaje_sta_join_end(EAUTH);
+		return;
+	}
+	{
+		uint32_t bcn = khaje_bss[best].bintval ? khaje_bss[best].bintval : 100, dtim = 1;
+		const uint8_t *tim = khaje_sta_find_ie(khaje_sta_body, khaje_sta_body_len, 5);
+
+		if (tim != NULL && tim[1] >= 2 && tim[3] != 0) {
+			dtim = tim[3];
+		}
+		khaje_sta_msg1s = 0;
+		khaje_sta_start_resp = false;
+		printf("mpss: sta: join: \"%.*s\" %02x:%02x:%02x:**:**:** %u MHz %s\n",
+		    (int)khaje_sta_ssid_len, khaje_sta_ssid, khaje_sta_bssid[0], khaje_sta_bssid[1],
+		    khaje_sta_bssid[2], khaje_sta_freq, khaje_sta_rsn ? "WPA2" : "open");
+		khaje_sta_ps_off();
+		if (!khaje_sta_vdev_start(khaje_sta_freq, bcn, dtim)) {
+			khaje_sta_join_end(EIO);
+			return;
+		}
+		khaje_sta_state = KSTA_START;
+		khaje_sta_deadline = khaje_ms() + 1500;
+	}
+}
+
+static void
+khaje_sta_mgmt_rx(const uint8_t *f, unsigned len)
+{
+	uint8_t fc;
+	uint16_t v;
+
+	if (len < 26 || khaje_sta_state == KSTA_IDLE || memcmp(f + 10, khaje_sta_bssid, 6) != 0) {
+		return;
+	}
+	fc = f[0];
+	v = (uint16_t)(f[24] | f[25] << 8);
+	if (fc == 0xb0 && khaje_sta_state == KSTA_AUTH && len >= 30 && f[26] == 2) {
+		v = (uint16_t)(f[28] | f[29] << 8);
+		printf("mpss: sta: join: auth reply status %u\n", v);
+		if (v != 0) {
+			khaje_sta_join_end(ECONNREFUSED);
+			return;
+		}
+		khaje_sta_state = KSTA_ASSOC;
+		khaje_sta_tries = 1;
+		khaje_sta_build_assoc_req();
+		khaje_sta_mgmt_tx(khaje_sta_assoc_req, khaje_sta_assoc_req_len);
+		khaje_sta_deadline = khaje_ms() + 400;
+	} else if (fc == 0x10 && khaje_sta_state == KSTA_ASSOC && len >= 30) {
+		v = (uint16_t)(f[26] | f[27] << 8);
+		khaje_sta_aid = (uint32_t)(f[28] | f[29] << 8) & 0x3fff;
+		printf("mpss: sta: join: assoc reply status %u aid %u\n", v, khaje_sta_aid);
+		if (v != 0) {
+			khaje_sta_join_end(ECONNREFUSED);
+			return;
+		}
+		khaje_sta_peer_assoc((uint32_t)(f[24] | f[25] << 8));
+		{
+			uint8_t m[20], *p = khaje_wmi_tlv(m, KHAJE_TAG_VDEV_UP, 16);
+
+			p = khaje_sta_p32(p, 0);
+			p = khaje_sta_p32(p, khaje_sta_aid);
+			khaje_sta_pmac(p, khaje_sta_bssid);
+			khaje_wmi_send(KHAJE_CMD_VDEV_UP, m, sizeof(m));
+		}
+		khaje_sta_state = KSTA_4WAY;
+		if (!khaje_sta_rsn) {
+			khaje_sta_peer_param(KHAJE_PEER_PARAM_AUTHORIZE, 1);
+			khaje_sta_join_end(0);
+		} else {
+			khaje_sta_deadline = khaje_ms() + 8000;
+			printf("mpss: sta: join: associated, waiting for the 4-way handshake\n");
+		}
+	} else if (fc == 0xc0 || fc == 0xa0) {
+		printf("mpss: sta: join: the AP ended the link, reason %u (state %u)\n", v, khaje_sta_state);
+		if (khaje_sta_state == KSTA_UP) {
+			khaje_sta_teardown();
+		} else {
+			khaje_sta_join_end(khaje_sta_state == KSTA_4WAY ? EAUTH : ECONNREFUSED);
+		}
+	}
+}
+
+static void
+khaje_sta_event(uint32_t id, const uint8_t *t, unsigned len)
+{
+	uint16_t l = 0;
+	uint32_t v[4] = { 0 };
+
+	if (len >= 4) {
+		memcpy(&l, t, 2);
+	}
+	if (len < 4u + l) {
+		return;
+	}
+	memcpy(v, t + 4, MIN((uint32_t)l, (uint32_t)sizeof(v)));
+	if (id == KHAJE_EVENT_VDEV_START && l >= 16) {
+		khaje_sta_start_status = (int32_t)v[3];
+		khaje_sta_start_resp = true;
+		printf("mpss: sta: vdev start response, status %d\n", khaje_sta_start_status);
+	} else if (id == KHAJE_EVENT_PEER_KICKOUT && khaje_sta_state == KSTA_UP) {
+		printf("mpss: sta: join: peer kickout\n");
+		khaje_sta_teardown();
+	}
+}
+
+static bool khaje_sta_args_read, khaje_sta_args_join;
+
+static void
+khaje_sta_args(void)
+{
+	char all[128] = { 0 }, pass[96] = { 0 };
+	size_t sl = 0, pl = 0;
+
+	if (khaje_sta_args_read) {
+		return;
+	}
+	khaje_sta_args_read = true;
+	/* One short argument, "wnet=SSID:passphrase": the kernel command line is
+	 * 607 characters and two long names pushed the passphrase off its end. */
+	if (PE_parse_boot_argn("wnet", all, sizeof(all)) && all[0] != 0) {
+		char *colon = strchr(all, ':');
+
+		if (colon == NULL) {
+			sl = strlen(all);
+		} else {
+			sl = (size_t)(colon - all);
+			for (pl = 0; pl + 1 < sizeof(pass) && colon[1 + pl] != 0; pl++) {
+				pass[pl] = colon[1 + pl];
+			}
+		}
+		if (sl > sizeof(all) - 1) {
+			sl = sizeof(all) - 1;
+		}
+	} else if (PE_parse_boot_argn("modem_wifi_ssid", all, sizeof(all)) && all[0] != 0) {
+		sl = strlen(all);
+		if (!(PE_parse_boot_argn("modem_wifi_pass", pass, sizeof(pass)) && pass[0] != 0)) {
+			pl = 0;
+		}
+	} else {
+		if (option("modem_wifi_selftest")) {
+			(void)khaje_crypto_selftest();
+		}
+		return;
+	}
+	if (sl > 32) {
+		printf("mpss: sta: the SSID is too long\n");
+		bzero(pass, sizeof(pass));
+		return;
+	}
+	memcpy(khaje_sta_ssid, all, sl);
+	khaje_sta_ssid_len = (uint8_t)sl;
+	if (pl != 0) {
+		pass[sizeof(pass) - 1] = 0;
+		pl = strlen(pass);
+		if (pl < 8 || pl > 63) {
+			printf("mpss: sta: the passphrase must be 8..63 characters\n");
+			bzero(pass, sizeof(pass));
+			return;
+		}
+		khaje_pbkdf2_pmk((const uint8_t *)pass, pl, khaje_sta_ssid, sl, khaje_sta_pmk);
+		khaje_sta_have_pmk = true;
+	}
+	bzero(pass, sizeof(pass));
+	bzero(all, sizeof(all));
+	khaje_sta_args_join = true;
+	printf("mpss: sta: join asked for \"%.*s\" (%s)\n", (int)sl, khaje_sta_ssid,
+	    khaje_sta_have_pmk ? "WPA2" : "open");
+}
+
+static void
+khaje_sta_poll(void)
+{
+	uint32_t now;
+
+	if (khaje_sta_state == KSTA_IDLE &&
+	    (!khaje_sta_args_join && !khaje_sta_join_asked || khaje_scan_running)) {
+		return;
+	}
+	if (khaje_sta_join_done != 0 && !khaje_sta_join_asked) {
+		return;
+	}
+	now = khaje_ms();
+	if (khaje_sta_state == KSTA_IDLE || khaje_sta_join_asked) {
+		static bool selftested, crypto_ok;
+
+		khaje_sta_args_join = false;
+		khaje_sta_join_asked = false;
+		if (khaje_sta_state != KSTA_IDLE) {
+			khaje_sta_teardown();
+		}
+		if (!selftested) {
+			selftested = true;
+			crypto_ok = khaje_crypto_selftest();
+		}
+		if (khaje_sta_have_pmk && !crypto_ok) {
+			printf("mpss: sta: crypto self-test failed; not joining\n");
+			khaje_sta_join_done = 1;
+			return;
+		}
+		khaje_sta_join_begin();
+		return;
+	}
+	if (khaje_sta_state == KSTA_START) {
+		if (khaje_sta_start_resp) {
+			if (khaje_sta_start_status != 0) {
+				printf("mpss: sta: vdev start status %d\n", khaje_sta_start_status);
+				khaje_sta_join_end(EIO);
+				return;
+			}
+			khaje_sta_state = KSTA_AUTH;
+			khaje_sta_tries = 1;
+			khaje_sta_peer(KHAJE_CMD_PEER_CREATE, KHAJE_TAG_PEER_CREATE, true);
+			khaje_sta_send_auth();
+			khaje_sta_deadline = now + 400;
+		} else if ((int32_t)(now - khaje_sta_deadline) > 0) {
+			khaje_sta_join_end(ETIMEDOUT);
+		}
+	} else if ((khaje_sta_state == KSTA_AUTH || khaje_sta_state == KSTA_ASSOC) &&
+	    (int32_t)(now - khaje_sta_deadline) > 0) {
+		if (khaje_sta_tries >= 4) {
+			khaje_sta_join_end(ETIMEDOUT);
+		} else {
+			khaje_sta_tries++;
+			if (khaje_sta_state == KSTA_AUTH) {
+				khaje_sta_send_auth();
+			} else {
+				khaje_sta_mgmt_tx(khaje_sta_assoc_req, khaje_sta_assoc_req_len);
+			}
+			khaje_sta_deadline = now + 400;
+		}
+	} else if (khaje_sta_state == KSTA_4WAY && (int32_t)(now - khaje_sta_deadline) > 0) {
+		printf("mpss: sta: join: no 4-way handshake (%u message 1s)\n", khaje_sta_msg1s);
+		khaje_sta_join_end(khaje_sta_msg1s != 0 ? EAUTH : ETIMEDOUT);
+	}
+}
+
+/* a received data frame (native wifi, from the HTT rx ring) */
+static void
+khaje_sta_rx_native(const uint8_t *f, unsigned len)
+{
+	uint8_t e[14 + 1600];
+	uint32_t hl;
+	const uint8_t *da, *sa, *llc;
+	uint32_t plen;
+
+	if (len < 24 + 8 || (f[0] & 0x0c) != 0x08) {
+		return;
+	}
+	hl = ((f[1] & 3) == 3) ? 30 : 24;
+	da = f + 4;
+	sa = (f[1] & 2) ? f + 16 : f + 10;
+	llc = f + hl;
+	if (len < hl + 8 || llc[0] != 0xaa || llc[1] != 0xaa || llc[2] != 0x03) {
+		return;
+	}
+	plen = len - hl - 8;
+	if (plen > 1600) {
+		return;
+	}
+	memcpy(e, da, 6);
+	memcpy(e + 6, sa, 6);
+	memcpy(e + 12, llc + 6, 2);
+	memcpy(e + 14, llc + 8, plen);
+	if (e[12] == 0x88 && e[13] == 0x8e) {
+		khaje_sta_eapol_rx(e, 14 + plen);
+	} else if (khaje_sta_state == KSTA_UP && khaje_link_attached && 14 + plen <= HAKIOS_NET_FRAME_MAX) {
+		hakios_net_input(e, 14 + plen);
+	}
+}
+
+/* ---- en0: the Khaje radio as a network link ---- */
+#define KHAJE_LINK_QUEUE 128
+struct khaje_link_frame {
+	uint16_t length;
+	uint8_t bytes[HAKIOS_NET_FRAME_MAX];
+};
+static LCK_GRP_DECLARE(khaje_link_group, "hakios-khaje-net");
+static LCK_MTX_DECLARE(khaje_link_lock, &khaje_link_group);
+static struct khaje_link_frame *khaje_link_queue;
+static uint32_t khaje_link_in, khaje_link_out;
+static uint64_t khaje_link_dropped, khaje_link_sent;
+/* attachment flag declared above for the modem poller */
+
+static bool
+khaje_link_transmit(mbuf_t packet, size_t length)
+{
+	struct khaje_link_frame *frame;
+
+	if (!khaje_link_attached || khaje_sta_state != KSTA_UP || length < 14 || length > HAKIOS_NET_FRAME_MAX) {
+		return false;
+	}
+	lck_mtx_lock(&khaje_link_lock);
+	if (khaje_link_in - khaje_link_out == KHAJE_LINK_QUEUE) {
+		khaje_link_dropped++;
+		lck_mtx_unlock(&khaje_link_lock);
+		return false;
+	}
+	frame = &khaje_link_queue[khaje_link_in % KHAJE_LINK_QUEUE];
+	if (mbuf_copydata(packet, 0, length, frame->bytes) != 0) {
+		lck_mtx_unlock(&khaje_link_lock);
+		return false;
+	}
+	frame->length = (uint16_t)length;
+	khaje_link_in++;
+	lck_mtx_unlock(&khaje_link_lock);
+	return true;
+}
+
+/* Called on the modem's link thread, the only writer of CE/HTT TX descriptors. */
+static void
+khaje_link_pump(void)
+{
+	for (unsigned i = 0; i < 16; i++) {
+		struct khaje_link_frame *frame;
+		uint8_t bytes[HAKIOS_NET_FRAME_MAX];
+		uint16_t length;
+
+		lck_mtx_lock(&khaje_link_lock);
+		if (khaje_link_out == khaje_link_in) {
+			lck_mtx_unlock(&khaje_link_lock);
+			break;
+		}
+		frame = &khaje_link_queue[khaje_link_out % KHAJE_LINK_QUEUE];
+		length = frame->length;
+		memcpy(bytes, frame->bytes, length);
+		lck_mtx_unlock(&khaje_link_lock);
+		if (khaje_sta_state == KSTA_UP && !khaje_sta_tx_ether(bytes, length, false)) {
+			break; /* HTT slots/credits full: try again on the next poll */
+		}
+		lck_mtx_lock(&khaje_link_lock);
+		khaje_link_out++;
+		if (khaje_sta_state == KSTA_UP) {
+			khaje_link_sent++;
+		} else {
+			khaje_link_dropped++;
+		}
+		lck_mtx_unlock(&khaje_link_lock);
+	}
+}
+
+static struct hakios_net_link khaje_link = {
+	.name = "the phone's radio (WCN3988)",
+	.unit = 0,
+	.wireless = true,
+	.transmit = khaje_link_transmit,
+};
+
+/* Attach before the userland Wi-Fi clients first look for en0. */
+static void
+khaje_net_early(void)
+{
+	if (khaje_link_attached) {
+		return;
+	}
+	khaje_link_queue = kalloc_data(KHAJE_LINK_QUEUE * sizeof(*khaje_link_queue), Z_WAITOK | Z_ZERO);
+	if (khaje_link_queue == NULL) {
+		printf("mpss: no memory for en0 TX queue\n");
+		return;
+	}
+	memcpy(khaje_link.address, khaje_scan_mac, 6);
+	khaje_link_attached = hakios_net_attach(&khaje_link);
+	printf("mpss: %s\n", khaje_link_attached ? "the Khaje radio is the link behind en0" :
+	    "en0 already has another link");
+}
+
+static void
+khaje_net_link(bool up)
+{
+	if (khaje_link_attached) {
+		hakios_net_link_state(up);
+	}
+}
+/* Darwin's Apple80211 station boundary. Calls arrive on its own serialized thread;
+ * only the modem's link thread sends commands to the radio. */
+static volatile bool khaje_api_scan_asked, khaje_api_leave_asked;
+static bool khaje_api_attached;
+
+static int
+khaje_api_power(bool on)
+{
+	if (!on) {
+		khaje_api_leave_asked = true;
+	}
+	return 0;
+}
+
+static int
+khaje_api_scan(const struct hakios_sta_scan *what)
+{
+	uint32_t before;
+
+	(void)what; /* passive full-band scan; selected-channel scans are not implemented yet */
+	if (!khaje_wmi_ready) {
+		return ENXIO;
+	}
+	before = khaje_scan_count;
+	khaje_api_scan_asked = true;
+	for (int i = 0; i < 300 && khaje_scan_count == before; i++) {
+		sleep_ms(100);
+	}
+	return khaje_scan_count != before ? 0 : ETIMEDOUT;
+}
+
+static void
+khaje_api_heard(void (*each)(const struct hakios_sta_bss *, void *), void *ctx)
+{
+	for (unsigned i = 0; i < khaje_scan_nets; i++) {
+		struct hakios_sta_bss *out = kalloc_data(sizeof(*out), Z_WAITOK | Z_ZERO);
+		struct khaje_bss *b = &khaje_bss[i];
+
+		if (out == NULL) {
+			return;
+		}
+		memcpy(out->bssid, b->bssid, 6);
+		memcpy(out->ssid, b->raw_ssid, b->raw_ssid_len);
+		out->ssid_length = b->raw_ssid_len;
+		out->frequency = b->freq;
+		out->rssi = b->rssi;
+		out->beacon_interval = b->bintval;
+		out->capability = b->capab;
+		out->elements_length = b->ie_len;
+		memcpy(out->elements, b->ie, b->ie_len);
+		each(out, ctx);
+		kfree_data(out, sizeof(*out));
+	}
+}
+
+static int
+khaje_api_join(const struct hakios_sta_join *what)
+{
+	uint32_t before;
+
+	if (!khaje_wmi_ready || what->ssid_length == 0 || what->ssid_length > 32 || khaje_scan_running) {
+		return ENXIO;
+	}
+	if (what->security != HAKIOS_STA_OPEN && what->security != HAKIOS_STA_WPA2_PSK) {
+		return EOPNOTSUPP;
+	}
+	if (what->security == HAKIOS_STA_WPA2_PSK && what->passphrase_length != 0 &&
+	    (what->passphrase_length < 8 || what->passphrase_length > 63)) {
+		return EINVAL;
+	}
+	khaje_sta_join_done = 0;
+	before = 0;
+	memcpy(khaje_sta_ssid, what->ssid, what->ssid_length);
+	khaje_sta_ssid_len = what->ssid_length;
+	khaje_sta_have_pmk = what->security == HAKIOS_STA_WPA2_PSK;
+	if (khaje_sta_have_pmk) {
+		if (what->passphrase_length) {
+			khaje_pbkdf2_pmk(what->passphrase, what->passphrase_length, what->ssid,
+			    what->ssid_length, khaje_sta_pmk);
+		} else {
+			memcpy(khaje_sta_pmk, what->pmk, 32);
+		}
+	}
+	khaje_sta_join_asked = true;
+	for (int i = 0; i < 300 && khaje_sta_join_done == before; i++) {
+		sleep_ms(100);
+	}
+	return khaje_sta_join_done != before ? khaje_sta_result : ETIMEDOUT;
+}
+
+static int
+khaje_api_leave(void)
+{
+	khaje_api_leave_asked = true;
+	return 0;
+}
+
+static void
+khaje_api_state(struct hakios_sta_state *out)
+{
+	bzero(out, sizeof(*out));
+	if (!khaje_wmi_ready) {
+		out->phase = HAKIOS_STA_OFF;
+	} else if (khaje_scan_running) {
+		out->phase = HAKIOS_STA_SCANNING;
+	} else if (khaje_sta_state == KSTA_UP) {
+		out->phase = HAKIOS_STA_JOINED;
+	} else if (khaje_sta_state != KSTA_IDLE) {
+		out->phase = HAKIOS_STA_JOINING;
+	} else {
+		out->phase = HAKIOS_STA_IDLE;
+	}
+	out->last_error = khaje_sta_result;
+	if (out->phase == HAKIOS_STA_JOINED || out->phase == HAKIOS_STA_JOINING) {
+		for (unsigned i = 0; i < khaje_scan_nets; i++) {
+			if (memcmp(khaje_bss[i].bssid, khaje_sta_bssid, 6) == 0) {
+				struct khaje_bss *b = &khaje_bss[i];
+				memcpy(out->bss.bssid, b->bssid, 6);
+				memcpy(out->bss.ssid, b->raw_ssid, b->raw_ssid_len);
+				out->bss.ssid_length = b->raw_ssid_len;
+				out->bss.frequency = b->freq;
+				out->bss.rssi = b->rssi;
+				out->bss.beacon_interval = b->bintval;
+				out->bss.capability = b->capab;
+				out->bss.elements_length = b->ie_len;
+				memcpy(out->bss.elements, b->ie, b->ie_len);
+				break;
+			}
+		}
+	}
+}
+
+static unsigned
+khaje_api_channels(struct hakios_sta_channel *out, unsigned most)
+{
+	unsigned n = MIN(KHAJE_SCAN_NFREQ, most);
+
+	for (unsigned i = 0; i < n; i++) {
+		out[i].frequency = khaje_scan_freqs[i];
+		out[i].flags = khaje_scan_freqs[i] >= 5500 && khaje_scan_freqs[i] <= 5700 ?
+		    HAKIOS_STA_CHANNEL_PASSIVE | HAKIOS_STA_CHANNEL_RADAR : 0;
+	}
+	return n;
+}
+
+static struct hakios_sta_ops khaje_api_ops = {
+	.power = khaje_api_power,
+	.scan = khaje_api_scan,
+	.heard = khaje_api_heard,
+	.join = khaje_api_join,
+	.leave = khaje_api_leave,
+	.state = khaje_api_state,
+	.channels = khaje_api_channels,
+};
+
+/* for the kernel debugger's guard: the radio is joined and its keys are in */
+bool hakios_khaje_joined(void);
+bool
+hakios_khaje_joined(void)
+{
+	return khaje_sta_state == KSTA_UP;
+}
+
+static void
+khaje_api_attach(void)
+{
+	if (!khaje_api_attached && khaje_link_attached) {
+		memcpy(khaje_api_ops.address, khaje_scan_mac, 6);
+		khaje_api_attached = true;
+		hakios_sta_attach(&khaje_api_ops);
+		printf("mpss: sta: Apple80211 station attached\n");
+	}
+}
+static void
+khaje_api_poll(void)
+{
+	if (khaje_api_leave_asked) {
+		khaje_api_leave_asked = false;
+		khaje_sta_teardown();
+	}
+	if (khaje_api_scan_asked && !khaje_scan_running &&
+	    (khaje_sta_state == KSTA_IDLE || khaje_sta_state == KSTA_UP)) {
+		khaje_api_scan_asked = false;
+		khaje_scan_nets = 0;
+		khaje_scan_frames = 0;
+		khaje_scan_running = khaje_scan_send_start();
+	}
+}
+
+static void
+khaje_scan_receive(const uint8_t *d, unsigned len)
+{
+	uint32_t e;
+
+	if (len < 4) {
+		return;
+	}
+	memcpy(&e, d, 4);
+	e &= 0xffffff;
+	if (e == KHAJE_WMI_EVENT_SCAN) {
+		khaje_scan_event(d + 4, len - 4);
+	} else if (e == KHAJE_WMI_EVENT_MGMT_RX) {
+		khaje_scan_mgmt_rx(d + 4, len - 4);
+	}
+}
+
+static void
+khaje_wmi_receive(const uint8_t *data, unsigned length)
+{
+	uint32_t event;
+	if (length < 4) {
+		return;
+	}
+	memcpy(&event, data, 4);
+	event &= 0xffffff;
+	if (event == KHAJE_WMI_EVENT_SCAN || event == KHAJE_WMI_EVENT_MGMT_RX) {
+		khaje_scan_receive(data, length);
+	} else if (event == KHAJE_EVENT_VDEV_START || event == KHAJE_EVENT_PEER_KICKOUT) {
+		khaje_sta_event(event, data + 4, length - 4);
+	} else if (event == KHAJE_WMI_EVENT_SERVICE_AVAILABLE) {
+		uint16_t tag = 0;
+		if (length >= 12) {
+			memcpy(&tag, data + 6, 2);
+		}
+		if (tag == KHAJE_WMI_TLV_SERVICE_AVAILABLE && length >= 12 + sizeof(khaje_wmi_services_ext)) {
+			memcpy(khaje_wmi_services_ext, data + 12, sizeof(khaje_wmi_services_ext));
+		}
+		printf("mpss: wmi: SERVICE_AVAILABLE received\n");
+	} else if (event == KHAJE_WMI_EVENT_SERVICE_READY) {
+		printf("mpss: wmi: SERVICE_READY received (%u bytes), sending INIT\n", length);
+		for (unsigned o = 4; o + 4 <= length;) {
+			uint16_t l, tag;
+			memcpy(&l, data + o, 2);
+			memcpy(&tag, data + o + 2, 2);
+			if (o + 4 + l > length) {
+				break;
+			}
+			if (tag == 0x10 && l <= sizeof(khaje_wmi_services) && l != 0) {
+				memcpy(khaje_wmi_services, data + o + 4, l);
+			} else if (tag == KHAJE_WMI_TAG_STRUCT && khaje_wmi_nreq == 0) {
+				const uint8_t *v = data + o + 4;
+
+				for (unsigned q = 0; q + 4 <= l;) {
+					uint16_t ql, qt;
+
+					memcpy(&ql, v + q, 2);
+					memcpy(&qt, v + q + 2, 2);
+					if (q + 4 + ql > l) {
+						break;
+					}
+					if (qt == KHAJE_WMI_TAG_HOST_MEM_REQ &&
+					    ql >= sizeof(struct khaje_wmi_mem_req) && khaje_wmi_nreq < 8) {
+						memcpy(&khaje_wmi_req[khaje_wmi_nreq], v + q + 4,
+						    sizeof(struct khaje_wmi_mem_req));
+						khaje_wmi_nreq++;
+					}
+					q += 4 + ql;
+				}
+			}
+			o += 4 + l;
+		}
+		khaje_wmi_send_init();
+	} else if (event == KHAJE_WMI_EVENT_READY) {
+		bool ready = false;
+
+		for (unsigned o = 4; o + 4 <= length;) {
+			uint16_t l, tag;
+
+			memcpy(&l, data + o, 2);
+			memcpy(&tag, data + o + 2, 2);
+			if (o + 4 + l > length) {
+				break;
+			}
+			if (tag == KHAJE_WMI_TAG_READY_EVENT && l >= 24 + 8 + 4) {
+				const uint8_t *mac = data + o + 4 + 24;
+
+				printf("mpss: wmi: WMI READY (fw MAC %02x:%02x:%02x:**:**:**)\n",
+				    mac[0], mac[1], mac[2]);
+				ready = true;
+			}
+			o += 4 + l;
+		}
+		if (!ready) {
+			printf("mpss: wmi: READY without firmware event; scan not requested\n");
+			return;
+		}
+		khaje_wmi_ready = true;
+		if (option("modem_wlfw_scan")) {
+			khaje_htt_start();      /* host rx ring first, then the scan */
+		}
+	}
+}
+
+static void
+khaje_ce_poll(void)
+{
+	if (!khaje_ce_started) {
+		return;
+	}
+	if (khaje_wmi_ready) {
+		khaje_api_poll();
+		khaje_sta_poll();
+	}
+	if (khaje_htt_state == 1 && now_us() - khaje_htt_req_us > 2000000ull) {
+		printf("mpss: htt: no VERSION_CONF in 2 s; configuring anyway\n");
+		khaje_htt_configure("timeout");
+	}
+	for (unsigned c = 0; c < KHAJE_CE_COUNT; c++) {
+		if (khaje_ce[c].rx == NULL) {
+			continue;
+		}
+		for (unsigned n = 0; n < 16; n++) {
+			unsigned slot = khaje_ce[c].dst_read;
+			unsigned length = khaje_ce[c].dst[slot].bytes;
+			if (length == 0) {
+				break;
+			}
+			khaje_ce_barrier();
+			khaje_ce[c].dst[slot].bytes = 0;
+			khaje_ce[c].dst_read = (slot + 1) & (khaje_ce[c].dst_count - 1);
+			if (length >= 8 && length <= KHAJE_CE_RX_SIZE) {
+				const uint8_t *frame = khaje_ce[c].rx + (slot % KHAJE_CE_RX_POST) * KHAJE_CE_RX_SIZE;
+				khaje_htc_receive(c, frame, length);
+			}
+			khaje_ce[c].received++;
+			khaje_ce_post(c);
+			khaje_ce_barrier();
+			khaje_ce_write(c, 0x40, khaje_ce[c].dst_write);
+		}
+	}
+	if (khaje_link_attached) {
+		khaje_link_pump();
+	}
+}
+
+/* Send the handset's own generic board file in QMI's maximum 6144-byte segments.
+ * The diagnostic APFS image retains this file uncompressed and mapped. This is
+ * separately gated from the QMI-only MSA_READY/CAP probe. */
+#define KHAJE_WLFW_BDF_SEGMENT 6144u
+static void
+khaje_wlfw_bdf_next(void)
+{
+	uint32_t chunk, total, at = 7;
+	uint8_t *packet;
+	int error;
+
+	if (khaje_wlfw_bdf == NULL || khaje_wlfw_bdf_offset >= khaje_wlfw_bdf_size || khaje_wlfw_port == NULL) {
+		return;
+	}
+	chunk = MIN(KHAJE_WLFW_BDF_SEGMENT, khaje_wlfw_bdf_size - khaje_wlfw_bdf_offset);
+	packet = kalloc_data(KHAJE_WLFW_BDF_SEGMENT + 128, Z_WAITOK | Z_ZERO);
+	if (packet == NULL) {
+		printf("mpss: wlfw: no buffer for board segment\n");
+		return;
+	}
+	packet[0] = QMI_REQUEST;
+	packet[1] = (uint8_t)++khaje_wlfw_txn;
+	packet[2] = (uint8_t)(khaje_wlfw_txn >> 8);
+	packet[3] = KHAJE_WLFW_BDF_DOWNLOAD;
+	/* TLV 0x01 valid=1 */
+	packet[at++] = 1; packet[at++] = 1; packet[at++] = 0; packet[at++] = 1;
+	/* TLVs 0x10 file_id, 0x11 total_size, 0x12 segment_id. */
+	for (unsigned i = 0; i < 3; i++) {
+		uint32_t value = i == 0 ? 0 : i == 1 ? khaje_wlfw_bdf_size : khaje_wlfw_bdf_segment;
+		packet[at++] = 0x10 + i; packet[at++] = 4; packet[at++] = 0;
+		for (unsigned b = 0; b < 4; b++) {
+			packet[at++] = (uint8_t)(value >> (8 * b));
+		}
+	}
+	/* TLV 0x13: u16 data length followed by data. */
+	packet[at++] = 0x13;
+	packet[at++] = (uint8_t)(chunk + 2);
+	packet[at++] = (uint8_t)((chunk + 2) >> 8);
+	packet[at++] = (uint8_t)chunk;
+	packet[at++] = (uint8_t)(chunk >> 8);
+	memcpy(packet + at, khaje_wlfw_bdf + khaje_wlfw_bdf_offset, chunk);
+	at += chunk;
+	packet[at++] = 0x14; packet[at++] = 1; packet[at++] = 0;
+	packet[at++] = khaje_wlfw_bdf_offset + chunk == khaje_wlfw_bdf_size ? 1 : 0;
+	total = at;
+	packet[5] = (uint8_t)(total - 7);
+	packet[6] = (uint8_t)((total - 7) >> 8);
+	error = qrtr_send(khaje_wlfw_port, khaje_wlfw_node, khaje_wlfw_peer, packet, total);
+	kfree_data(packet, KHAJE_WLFW_BDF_SEGMENT + 128);
+	printf("mpss: wlfw: board segment %u, %u bytes: %s (%d)\n", khaje_wlfw_bdf_segment, chunk,
+	    error == 0 ? "sent" : "NOT SENT", error);
+	if (error == 0) {
+		khaje_wlfw_bdf_offset += chunk;
+		khaje_wlfw_bdf_segment++;
+	}
+}
+
+static void
+khaje_wlfw_bdf_start(void)
+{
+	uint64_t bytes = 0;
+
+	if (!(option("modem_wlfw_bdf") || option("modem_wlfw_mission") || option("modem_wlfw_ce_probe") || option("modem_wlfw_smmu_probe") || option("modem_wlfw_smmu_identity") || option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan")) || khaje_wlfw_bdf_started ||
+	    !khaje_wlfw_msa_ind || !khaje_wlfw_cap_done) {
+		return;
+	}
+	khaje_wlfw_bdf_started = true;
+	khaje_wlfw_bdf = hakios_image_file("fw", "image/bdwlan.bin", &bytes, NULL);
+	if (khaje_wlfw_bdf == NULL || bytes == 0 || bytes > 128u * 1024) {
+		khaje_wlfw_bdf = NULL;
+		printf("mpss: wlfw: no valid resident board data; not starting BDF\n");
+		return;
+	}
+	khaje_wlfw_bdf_size = (uint32_t)bytes;
+	khaje_wlfw_bdf_offset = khaje_wlfw_bdf_segment = 0;
+	printf("mpss: wlfw: sending handset board data (%u bytes, local only)\n", khaje_wlfw_bdf_size);
+	khaje_wlfw_bdf_next();
+}
+
+/* SCM MP_ASSIGN: the two regions were returned by WLFW and must first fit the DT's
+ * reserved MSA window. This is opt-in independently of the read-only QMI probe. */
+static bool
+khaje_wlfw_assign(uint64_t address, uint32_t bytes, bool secure)
+{
+	struct {
+		uint64_t address, size;
+		uint64_t pad0[6];
+		uint32_t sources[3];
+		uint32_t pad1[13];
+		struct {
+			uint32_t vmid, permission;
+			uint64_t context;
+			uint32_t context_size, unused;
+		} destinations[3];
+		uint8_t pad2[40];
+		uint64_t more[7];
+	} *page;
+	vm_offset_t memory = 0;
+	uint64_t answer = ~0ull, pa;
+	unsigned count = secure ? 2 : 3;
+	int32_t result;
+
+	if ((address & 0xfff) != 0 || (bytes & 0xfff) != 0 || address < KHAJE_WLFW_MSA_BASE || bytes == 0 ||
+	    bytes > KHAJE_WLFW_MSA_SIZE || address - KHAJE_WLFW_MSA_BASE > KHAJE_WLFW_MSA_SIZE - bytes ||
+	    kmem_alloc(kernel_map, &memory, PAGE_SIZE, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		return false;
+	}
+	page = (void *)memory;
+	page->address = address;
+	page->size = bytes;
+	page->sources[0] = VMID_HLOS;
+	page->destinations[0].vmid = VMID_MSS_MSA;
+	page->destinations[1].vmid = KHAJE_WLFW_VMID;
+	page->destinations[2].vmid = KHAJE_WLFW_CE_VMID;
+	for (unsigned i = 0; i < count; i++) {
+		page->destinations[i].permission = VM_PERM_RW;
+	}
+	pa = kvtophys(memory);
+	page->more[0] = 4;
+	page->more[1] = pa + 128;
+	page->more[2] = count * sizeof(page->destinations[0]);
+	for (vm_offset_t line = memory; line < memory + PAGE_SIZE; line += 64) {
+		__asm__ volatile ("dc civac, %0" : : "r" (line));
+	}
+	settle();
+	result = scm("to assign a checked WLAN MSA region", SCM_MP_ASSIGN, SCM_ASSIGN_ARGUMENTS, pa, 16,
+	    pa + 64, pa + 240, &answer);
+	kmem_free(kernel_map, memory, PAGE_SIZE);
+	printf("mpss: wlfw: MSA %#llx + %#x (%s), %u recipients: SCM %d answer %#llx\n",
+	    (unsigned long long)address, bytes, secure ? "secure" : "non-secure", count, result, answer);
+	return result == 0 && answer == 0;
+}
+
+static void
+khaje_wlfw_receive(__unused void *context, uint32_t node, uint32_t port, const void *data, size_t length)
+{
+	const uint8_t *m = data, *result;
+	uint16_t size = 0, message, status, error;
+
+	if (length < 7 || node != khaje_wlfw_node || port != khaje_wlfw_peer) {
+		return;
+	}
+	message = (uint16_t)(m[3] | m[4] << 8);
+	if (m[0] == 4) { /* QMI indication */
+		printf("mpss: wlfw: indication %#x (%u bytes)\n", message, (unsigned)length);
+		if (message == 0x2b) { /* MSA_READY indication */
+			khaje_wlfw_msa_ind = true;
+			khaje_wlfw_bdf_start();
+		} else if (message == KHAJE_WLFW_FW_READY) {
+			khaje_wlfw_fw_ready = true;
+			printf("mpss: wlfw: FIRMWARE READY\n");
+			khaje_wlfw_configure();
+		}
+		return;
+	}
+	if (m[0] != QMI_RESPONSE) {
+		return;
+	}
+	result = qmi_tlv(m, length, 2, &size);
+	if (result == NULL || size != 4) {
+		printf("mpss: wlfw: reply %#x has no valid result TLV (%u bytes)\n", message, (unsigned)length);
+		return;
+	}
+	status = (uint16_t)(result[0] | result[1] << 8);
+	error = (uint16_t)(result[2] | result[3] << 8);
+	printf("mpss: wlfw: reply %#x: result %u, error %u\n", message, status, error);
+	if (message == KHAJE_WLFW_IND_REGISTER && status == 0) {
+		/* WCN3990 host_cap: daemon_support=0. No memory is assigned by this probe. */
+		static const uint8_t host_cap[] = { 0x10, 4, 0, 0, 0, 0, 0 };
+
+		khaje_wlfw_send(KHAJE_WLFW_HOST_CAP, host_cap, sizeof(host_cap));
+	} else if (message == KHAJE_WLFW_HOST_CAP && status == 0) {
+		/* MSA base and size from the sapphiren DT. Read its layout only. */
+		static const uint8_t msa_info[] = {
+			1, 8, 0, 0, 0, 0x90, 0x51, 0, 0, 0, 0,
+			2, 4, 0, 0, 0, 0x10, 0,
+		};
+
+		khaje_wlfw_send(KHAJE_WLFW_MSA_INFO, msa_info, sizeof(msa_info));
+	} else if (message == KHAJE_WLFW_MSA_INFO && status == 0) {
+		uint16_t region_size = 0;
+		const uint8_t *regions = qmi_tlv(m, length, 3, &region_size);
+		unsigned count = regions != NULL && region_size >= 1 ? regions[0] : 0;
+
+		printf("mpss: wlfw: MSA layout: %u region(s), %u bytes\n", count, region_size);
+		if (regions == NULL || region_size != 1 + count * 13 || count > 16) {
+			printf("mpss: wlfw: MSA layout malformed; not assigning memory\n");
+			return;
+		}
+		/* Validate the entire list before changing the ownership of any of its pages. */
+		bool all_valid = count != 0;
+		for (unsigned i = 0; i < count; i++) {
+			const uint8_t *r = regions + 1 + 13 * i;
+			uint64_t address = (uint64_t)le32(r) | (uint64_t)le32(r + 4) << 32;
+			uint32_t bytes = le32(r + 8);
+			bool valid = address >= KHAJE_WLFW_MSA_BASE && bytes != 0 &&
+			    bytes <= KHAJE_WLFW_MSA_SIZE && address - KHAJE_WLFW_MSA_BASE <= KHAJE_WLFW_MSA_SIZE - bytes &&
+			    (address & 0xfff) == 0 && (bytes & 0xfff) == 0 && r[12] <= 1;
+
+			printf("mpss: wlfw:   region %u: %#llx + %#x, secure %u: %s\n", i,
+			    (unsigned long long)address, bytes, r[12], valid ? "inside DT MSA" : "INVALID");
+			all_valid &= valid;
+			for (unsigned j = 0; j < i; j++) {
+				const uint8_t *prev = regions + 1 + 13 * j;
+				uint64_t earlier = (uint64_t)le32(prev) | (uint64_t)le32(prev + 4) << 32;
+				if (valid && address < earlier + le32(prev + 8) && earlier < address + bytes) {
+					all_valid = false;
+				}
+			}
+		}
+		if (!option("modem_wlfw_assign") && !option("modem_wlfw_ready") && !option("modem_wlfw_bdf") && !option("modem_wlfw_mission") && !option("modem_wlfw_ce_probe") && !option("modem_wlfw_smmu_probe") && !option("modem_wlfw_smmu_identity") && !option("modem_wlfw_ce_start") && !option("modem_wlfw_htc_connect") && !option("modem_wlfw_scan")) {
+			printf("mpss: wlfw: read-only MSA probe; no memory assigned\n");
+			return;
+		}
+		if (!all_valid) {
+			printf("mpss: wlfw: MSA regions invalid or overlapping; no MSA_READY sent\n");
+			return;
+		}
+		if ((option("modem_wlfw_ready") || option("modem_wlfw_bdf") || option("modem_wlfw_mission") || option("modem_wlfw_ce_probe") || option("modem_wlfw_smmu_probe") || option("modem_wlfw_smmu_identity") || option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan")) && !option("modem_wlfw_assign")) {
+			/* ios-sapphire observes this same SCM -2/0x56 on the same handset,
+			 * yet reaches mission mode and passive scans. Probe QMI only;
+			 * do not touch MSA ownership, WLAN registers or board data here. */
+			printf("mpss: wlfw: experimental MSA_READY without MP_ASSIGN; QMI only\n");
+			khaje_wlfw_send(KHAJE_WLFW_MSA_READY, NULL, 0);
+			return;
+		}
+		/* ath10k waits 20 ms after MSA_INFO before the XPU permission change:
+		 * some MPSS firmware otherwise reports a security violation. */
+		printf("mpss: wlfw: waiting 20 ms after MSA_INFO before SCM MP_ASSIGN\n");
+		sleep_ms(20);
+		for (unsigned i = 0; i < count; i++) {
+			const uint8_t *r = regions + 1 + 13 * i;
+			uint64_t address = (uint64_t)le32(r) | (uint64_t)le32(r + 4) << 32;
+			if (!khaje_wlfw_assign(address, le32(r + 8), r[12] != 0)) {
+				printf("mpss: wlfw: MSA assignment failed; no MSA_READY sent\n");
+				return;
+			}
+		}
+		khaje_wlfw_send(KHAJE_WLFW_MSA_READY, NULL, 0);
+	} else if (message == KHAJE_WLFW_MSA_READY && status == 0) {
+		khaje_wlfw_send(KHAJE_WLFW_CAP, NULL, 0);
+	} else if (message == KHAJE_WLFW_CAP && status == 0) {
+		uint16_t board_size = 0;
+		const uint8_t *board = qmi_tlv(m, length, 0x11, &board_size);
+
+		printf("mpss: wlfw: firmware board id %s%#x\n",
+		    board != NULL && board_size >= 4 ? "" : "not supplied; fallback ",
+		    board != NULL && board_size >= 4 ? le32(board) : 0xff);
+		uint16_t chip_size = 0;
+		const uint8_t *chip = qmi_tlv(m, length, 0x10, &chip_size);
+		if (chip != NULL && chip_size >= 8) {
+			printf("mpss: wlfw: chip_id %#x family %#x\n", le32(chip), le32(chip + 4));
+		}
+		khaje_wlfw_cap_done = true;
+		khaje_wlfw_bdf_start();
+	} else if (message == KHAJE_WLFW_BDF_DOWNLOAD) {
+		if (status != 0 || khaje_wlfw_bdf == NULL) {
+			printf("mpss: wlfw: board segment rejected; stopping transfer\n");
+			return;
+		}
+		if (khaje_wlfw_bdf_offset < khaje_wlfw_bdf_size) {
+			khaje_wlfw_bdf_next();
+		} else {
+			static const uint8_t empty_cal[] = { 1, 1, 0, 0 };
+
+			printf("mpss: wlfw: board transfer accepted; reporting no host CAL files\n");
+			khaje_wlfw_send(KHAJE_WLFW_CAL_REPORT, empty_cal, sizeof(empty_cal));
+		}
+	} else if (message == KHAJE_WLFW_CAL_REPORT) {
+		printf("mpss: wlfw: CAL report %s; waiting for firmware indication\n", status == 0 ? "accepted" : "rejected");
+		khaje_wlfw_cal_done = status == 0;
+		khaje_wlfw_configure();
+	} else if (message == KHAJE_WLFW_CFG && status == 0 && khaje_wlfw_cfg_sent) {
+		static const uint8_t mission[] = { 1, 4, 0, 0, 0, 0, 0, 0x10, 1, 0, 0 };
+		khaje_wlfw_send(KHAJE_WLFW_MODE, mission, sizeof(mission));
+	} else if (message == KHAJE_WLFW_MODE && status == 0) {
+		printf("mpss: wlfw: MISSION MODE accepted (no station yet)\n");
+		if (option("modem_wlfw_smmu_identity") || option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan")) {
+			if (khaje_smmu_identity() && (option("modem_wlfw_ce_start") || option("modem_wlfw_htc_connect") || option("modem_wlfw_scan"))) {
+				sleep_ms(100); /* ath10k: CE access only after mission mode */
+				(void)khaje_ce_start();
+			}
+		} else if (option("modem_wlfw_smmu_probe")) {
+			khaje_wlfw_smmu_survey();
+		} else if (option("modem_wlfw_ce_probe")) {
+			/* ath10k SNOC CE base = 0x0c800000 + 0x240000. Never
+			 * touch it before mission; this diagnostic is read-only. */
+			const volatile uint32_t *ce = (const volatile uint32_t *)ml_io_map(0x0ca40000, 0x1000);
+
+			if (ce == NULL) {
+				printf("mpss: wlfw: CE register map failed\n");
+			} else {
+				printf("mpss: wlfw: CE0 CTRL1 %#x, SR_SIZE %#x, DR_SIZE %#x (read only)\n",
+				    ce[0x18 / 4], ce[0x08 / 4], ce[0x14 / 4]);
+			}
+		}
+	}
+}
+
+static void
+khaje_wlfw_server(__unused void *context, bool arrived, uint32_t service, uint32_t version, uint32_t instance,
+    uint32_t node, uint32_t port)
+{
+	static const uint8_t indications[] = {
+		0x10, 1, 0, 1, 0x13, 1, 0, 1, 0x15, 4, 0, 0x4c, 0x45, 0x4e, 0x4b,
+	}; /* fw_ready_enable, msa_ready_enable, client_id = KNEL (ath10k) */
+
+	if (service != KHAJE_WLFW_SERVICE || version != 1 || instance != 0) {
+		return;
+	}
+	if (!arrived) {
+		if (khaje_wlfw_node == node && khaje_wlfw_peer == port) {
+			khaje_wlfw_node = khaje_wlfw_peer = 0;
+		}
+		return;
+	}
+	khaje_wlfw_node = node;
+	khaje_wlfw_peer = port;
+	printf("mpss: wlfw: Khaje firmware at node %u port %u, instance 0\n", node, port);
+	khaje_wlfw_send(KHAJE_WLFW_IND_REGISTER, indications, sizeof(indications));
+}
+
+static void
+khaje_wlfw_probe_start(void)
+{
+	if (khaje_wlfw_port == NULL) {
+		khaje_wlfw_port = qrtr_open(khaje_wlfw_receive, khaje_wlfw_server, NULL);
+	}
+	if (khaje_wlfw_port == NULL || qrtr_lookup(khaje_wlfw_port, KHAJE_WLFW_SERVICE, 1, 0) != 0) {
+		printf("mpss: wlfw: cannot watch for the Khaje service\n");
+	}
+}
+
+static void
+khaje_wlfw_probe_stop(void)
+{
+	if (khaje_wlfw_port != NULL) {
+		qrtr_close(khaje_wlfw_port);
+		khaje_wlfw_port = NULL;
+	}
+	khaje_wlfw_node = khaje_wlfw_peer = 0;
+	khaje_wlfw_msa_ind = khaje_wlfw_cap_done = khaje_wlfw_bdf_started = false;
+	khaje_wlfw_cal_done = khaje_wlfw_fw_ready = khaje_wlfw_cfg_sent = false;
+	khaje_wlfw_bdf = NULL;
+	khaje_wlfw_bdf_size = khaje_wlfw_bdf_offset = khaje_wlfw_bdf_segment = 0;
 }
 
 /* ---- the IPA's QMI handshake with the modem (Linux's ipa_qmi.c) ------------------------------------- */
@@ -4917,10 +8295,15 @@ ipa_init_driver(void)
 		}
 	}
 	at += qmi_put_pair(packet + at, 0x19, o + 0x0ad0, o + 0x0ad0 + 0x0ac0 - 1); /* the modem's processing contexts (Android: 0xad0, 0xac0) */
-	at += qmi_put_pair(packet + at, 0x1b, o + 0x0488, routes - 1);          /* hashed IPv4 routes */
-	at += qmi_put_pair(packet + at, 0x1c, o + 0x0588, routes - 1);          /* hashed IPv6 routes */
-	at += qmi_put_u32(packet + at, 0x1d, o + 0x0288);                       /* hashed IPv4 filters */
-	at += qmi_put_u32(packet + at, 0x1e, o + 0x0388);                       /* hashed IPv6 filters */
+	/* Khaje IPA v4.2 rejects all four hashed-table valid bits (ipa_qmi_server.c:418).
+	 * Omitting them only fixes that assertion: the local-memory map and GSI setup below
+	 * remain v4.11 and must be ported before the modem can stay up. Leave redwood unchanged. */
+	if (!khaje) {
+		at += qmi_put_pair(packet + at, 0x1b, o + 0x0488, routes - 1);  /* hashed IPv4 routes */
+		at += qmi_put_pair(packet + at, 0x1c, o + 0x0588, routes - 1);  /* hashed IPv6 routes */
+		at += qmi_put_u32(packet + at, 0x1d, o + 0x0288);               /* hashed IPv4 filters */
+		at += qmi_put_u32(packet + at, 0x1e, o + 0x0388);               /* hashed IPv6 filters */
+	}
 	at += qmi_put_u32(packet + at, 0x1f, o + 0x1d00);                       /* the modem's quota statistics (Android: stats_quota_q6 0x1d00, 0x30) */
 	at += qmi_put_u32(packet + at, 0x20, 0x30);
 	at += qmi_put_u32(packet + at, 0x21, o + 0x27b0);                       /* drop statistics (Android: stats_drop 0x27b0, 0x20) */
@@ -6196,6 +9579,10 @@ steps_over(uint32_t done)
 		dsp_shutdown("the steps are over");
 	}
 	lck_mtx_unlock(&dsp_lock);
+	if (!dsp_started) {
+		khaje_ce_started = khaje_ce_ready = false;
+		khaje_smmu_restore();
+	}
 }
 
 /* When the run ends in order: a DSP that runs is shut down, for the next kernel to start again. */
@@ -6220,6 +9607,10 @@ hakios_mpss_stop(void)
 		    "DID NOT SAY IT HAD STOPPED", down ? "has shut it down" : "DID NOT SHUT IT DOWN");
 	}
 	lck_mtx_unlock(&dsp_lock);
+	if (!dsp_started) {
+		khaje_ce_started = khaje_ce_ready = false;
+		khaje_smmu_restore();
+	}
 }
 
 /* The same on a panic's way back to the loader: one processor, interrupts off, no lock, no sleep. */
@@ -6313,10 +9704,12 @@ static void
 soc_override(void)
 {
 	static const struct { const char *arg; struct block *block; } blocks[] = {
-		{ "soc_aoss", &aoss }, { "soc_ipcc", &ipcc }, { "soc_rsc", &rsc }, { "soc_smem_lock", &smem_lock },
+		{ "soc_aoss", &aoss }, { "soc_ipcc", &ipcc }, { "soc_apcs", &apcs }, { "soc_rsc", &rsc },
+		{ "soc_smem_lock", &smem_lock },
 		{ "soc_ipa_regs", &ipa_regs }, { "soc_ipa_sram", &ipa_sram }, { "soc_gsi_ee0", &gsi_ee0 }, { "soc_apps_smmu", &apps_smmu },
 	};
 	unsigned said = 0;
+	uint32_t ipa_base = 0, gsi_base = 0;
 
 	for (unsigned i = 0; i < sizeof(blocks) / sizeof(blocks[0]); i++) {
 		uint32_t phys = 0;
@@ -6329,14 +9722,29 @@ soc_override(void)
 	PE_parse_boot_argn("soc_smem", &smem_phys, sizeof(smem_phys));
 	PE_parse_boot_argn("soc_cmd_db", &cmd_db_phys, sizeof(cmd_db_phys));
 	PE_parse_boot_argn("soc_mpss_mem", &mpss_memory, sizeof(mpss_memory));
+	PE_parse_boot_argn("soc_mpss_size", &mpss_memory_size, sizeof(mpss_memory_size));
 	PE_parse_boot_argn("soc_imem", &ipa_imem, sizeof(ipa_imem));
+	/* tools/soc-args.py emits the IPA configuration-register base and the GSI resource base. */
+	if (PE_parse_boot_argn("soc_ipa_base", &ipa_base, sizeof(ipa_base)) && ipa_base != 0) {
+		ipa_regs.phys = ipa_base;
+		/* Direct SRAM access is 0x10000 after the configuration registers on the supported v4.x IPAs. */
+		ipa_sram.phys = ipa_base + 0x10000u;
+		said += 2;
+	}
+	if (PE_parse_boot_argn("soc_gsi_base", &gsi_base, sizeof(gsi_base)) && gsi_base != 0) {
+		gsi_regs.phys = gsi_base;
+		gsi_ee0.phys = gsi_base + 0x12000u;
+		said += 2;
+	}
 	PE_parse_boot_argn("soc_ipa_stream", &ipa_stream, sizeof(ipa_stream));
 	PE_parse_boot_argn("soc_ipa_stream_uc", &ipa_stream_uc, sizeof(ipa_stream_uc));
 	PE_parse_boot_argn("soc_pas_mpss", &pas_mpss, sizeof(pas_mpss));
 	PE_parse_boot_argn("soc_pas_ipa", &pas_ipa, sizeof(pas_ipa));
-	if (said != 0 || smem_phys != SMEM_PHYS_DEFAULT || mpss_memory != MPSS_MEMORY_DEFAULT) {
+	if (said != 0 || smem_phys != SMEM_PHYS_DEFAULT || mpss_memory != MPSS_MEMORY_DEFAULT ||
+	    mpss_memory_size != MPSS_MEMORY_SIZE_DEFAULT) {
 		printf("mpss: SoC addresses from boot-args: %u register blocks; shared memory %#x, command DB %#x, the modem's "
-		    "memory %#x, the SoC's internal memory %#x\n", said, smem_phys, cmd_db_phys, mpss_memory, ipa_imem);
+		    "memory %#x+%#x, the SoC's internal memory %#x\n", said, smem_phys, cmd_db_phys, mpss_memory, mpss_memory_size,
+		    ipa_imem);
 	}
 }
 
@@ -6355,7 +9763,15 @@ hakios_mpss_init(void)
 		printf("mpss: modem=1 and modem_step=N are for the phone's modem, and this is not the phone\n");
 		return;
 	}
+	khaje = option("modem_khaje");
 	soc_override();
+	if (khaje) {
+		printf("mpss: Khaje/APCS backend selected (GLINK bit %u, SMP2P bit %u)\n", APCS_MPSS_GLINK_BIT,
+		    APCS_MPSS_SMP2P_BIT);
+		if (last_step == 0 || option("modem_wlfw_scan")) {
+			khaje_net_early();
+		}
+	}
 	if (last_step == 0) {
 		/* all of it, on a thread of its own, and left up */
 		last_step = STEPS;

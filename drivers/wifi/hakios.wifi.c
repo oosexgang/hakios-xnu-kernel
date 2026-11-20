@@ -4194,6 +4194,53 @@ hakios_wifi_quiesce(void)
 
 extern vm_offset_t pe_arm_get_soc_base_phys(void);
 
+/*
+ * Khaje/sapphiren has Qualcomm's older integrated WLAN architecture: the radio is exposed by
+ * qcom,icnss and its firmware service lives on MPSS (the device tree marks the modem
+ * "legacy-wlan").  It is not the WCN6750/WPSS path implemented by the steps in this file.
+ *
+ * This deliberately small first probe only reads the reserved MSA RAM described by that phone's
+ * device tree.  It does not map the ICNSS register block, change a rail, start MPSS or send QMI.
+ * Keeping it behind its own argument also prevents wifi=1 from silently applying redwood's
+ * addresses to a different WLAN architecture.
+ *
+ *   icnss_probe=1             inspect the reserved MSA RAM, read only
+ *   icnss_msa=ADDRESS         physical base (Khaje: 0x51900000)
+ *   icnss_msa_size=BYTES      size (Khaje: 0x100000; capped at 16 MiB)
+ */
+static void
+icnss_probe(void)
+{
+	uint32_t requested = 0, physical = 0x51900000u, size = 0x100000u;
+	volatile const uint8_t *memory;
+	uint32_t nonzero = 0, hash = 2166136261u;
+
+	if (!PE_parse_boot_argn("icnss_probe", &requested, sizeof(requested)) || requested != 1) {
+		return;
+	}
+	PE_parse_boot_argn("icnss_msa", &physical, sizeof(physical));
+	PE_parse_boot_argn("icnss_msa_size", &size, sizeof(size));
+	if ((physical & PAGE_MASK) != 0 || size == 0 || size > 16u * 1024u * 1024u || (size & PAGE_MASK) != 0) {
+		printf("icnss: refusing malformed MSA range %#x + %#x\n", physical, size);
+		return;
+	}
+	memory = (volatile const uint8_t *)ml_io_map_unmappable(physical, size, VM_WIMG_WCOMB);
+	if (memory == NULL) {
+		printf("icnss: cannot map MSA RAM %#x + %#x\n", physical, size);
+		return;
+	}
+	for (uint32_t i = 0; i < size; i++) {
+		uint8_t byte = memory[i];
+
+		nonzero += byte != 0;
+		hash = (hash ^ byte) * 16777619u;
+	}
+	ml_io_unmap((vm_offset_t)memory, size);
+	printf("icnss: read-only Khaje MSA survey: %#x bytes at %#x, %u nonzero bytes, FNV-1a %#x\n", size, physical,
+	    nonzero, hash);
+	printf("icnss: qcom,icnss/legacy-wlan needs the MPSS GLINK/QRTR backend; WCN6750 wifi=1 is not used\n");
+}
+
 /* The steps' end: the DSP stopped, or left as asked. */
 static void
 steps_over(uint32_t done)
@@ -4317,6 +4364,7 @@ hakios_wifi_init(void)
 	uint64_t size = 0;
 	thread_t thread;
 
+	icnss_probe();
 	PE_parse_boot_argn("wifi_step", &last_step, sizeof(last_step));
 	if (last_step == 0 && (!PE_parse_boot_argn("wifi", &on, sizeof(on)) || on == 0)) {
 		return;

@@ -61,6 +61,7 @@ net      bsd/dev/hakios.virtio_net.c
 
 core     bsd/dev/hakios.version.c
 core     bsd/dev/hakios.platform.c
+core     bsd/dev/hakios.dbg.c
 core     bsd/dev/hakios.stubs.c
 core     iokit/Kernel/hakios.stubs.cpp
 core    bsd/dev/hakios.socinfo.c

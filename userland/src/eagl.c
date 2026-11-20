@@ -374,7 +374,7 @@ static int sync_frames = 1;             /* boot-arg glsync=0 (a test): a frame's
  * tools/mesa/freedreno-darwin.patch, fd6_draw.cc.) Boot-arg glfetch=0 keeps the extension from
  * CoreAnimation, to see the difference.
  */
-static int fetch_offered = 1;
+static int fetch_offered = 0;
 
 #define GL_SCISSOR_TEST                 0x0c11
 #define GL_SCISSOR_BOX                  0x0c10
@@ -572,6 +572,56 @@ internal_format(GLenum internal, GLenum format)
 	return format == GL_BGRA && internal == GL_RGBA ? GL_BGRA : internal;
 }
 
+/*
+ * GL_ALPHA, GL_LUMINANCE and GL_LUMINANCE_ALPHA are part of the API CoreAnimation was
+ * written for, but not of an OpenGL ES 3 core context.  The no-error Mesa context accepts
+ * their numbers without reporting that no texture was made, which leaves masks as black
+ * rectangles.  Store their bytes in ES3 R/RG textures and reproduce the legacy sampled
+ * values with the texture swizzle:
+ *
+ *     alpha             -> (0, 0, 0, R)
+ *     luminance         -> (R, R, R, 1)
+ *     luminance + alpha -> (R, R, R, G)
+ */
+static GLenum
+texture_format(GLenum format)
+{
+	return format == 0x1906 || format == 0x1909 ? 0x1903 :
+	    format == 0x190a ? 0x8227 : format;
+}
+
+static GLenum
+texture_internal(GLenum internal, GLenum format)
+{
+	if (internal == 0x1906 || internal == 0x1909) {             /* alpha, luminance -> R8 */
+		return 0x8229;
+	}
+	if (internal == 0x190a) {                                  /* luminance + alpha -> RG8 */
+		return 0x822b;
+	}
+	return internal_format(internal, format);
+}
+
+static void
+texture_legacy_swizzle(GLenum target, GLenum format)
+{
+	/* ES3 names are deliberately absent from the Darwin headers used here; these are their registry values. */
+	if (format == 0x1906) {                                    /* alpha */
+		glTexParameteri(target, 0x8e42, 0);                      /* SWIZZLE_R, ZERO */
+		glTexParameteri(target, 0x8e43, 0);                      /* SWIZZLE_G, ZERO */
+		glTexParameteri(target, 0x8e44, 0);                      /* SWIZZLE_B, ZERO */
+		glTexParameteri(target, 0x8e45, 0x1903);                 /* SWIZZLE_A, RED */
+	} else if (format == 0x1909 || format == 0x190a) {          /* luminance, luminance + alpha */
+		glTexParameteri(target, 0x8e42, 0x1903);                 /* SWIZZLE_R, RED */
+		glTexParameteri(target, 0x8e43, 0x1903);                 /* SWIZZLE_G, RED */
+		glTexParameteri(target, 0x8e44, 0x1903);                 /* SWIZZLE_B, RED */
+		glTexParameteri(target, 0x8e45, format == 0x1909 ? 1 : 0x1904); /* SWIZZLE_A, ONE/GREEN */
+	}
+}
+
+/* glalpha=1: alpha-only pictures (GL_ALPHA bytes) are stored as RGBA8 (0, 0, 0, a), not as R8 with a texture swizzle */
+static bool alpha_as_rgba;
+
 static unsigned
 bytes_a_pixel(GLenum format, GLenum type)
 {
@@ -743,12 +793,32 @@ surface_to_texture(struct eagl *e, struct image *image)
 	}
 	glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
 	glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+	if (alpha_as_rgba && image->format == 0x1906 && image->type == GL_UNSIGNED_BYTE && pixel == 1) {
+		uint8_t *wide = calloc((size_t)image->width * 4, (size_t)image->height);
+
+		if (wide != NULL) {
+			for (GLsizei y = 0; y < image->height; y++) {
+				for (GLsizei x = 0; x < image->width; x++) {
+					wide[((size_t)y * (size_t)image->width + (size_t)x) * 4 + 3] = base[row * (size_t)y + (size_t)x];
+				}
+			}
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glTexImage2D(image->to, 0, GL_RGBA, image->width, image->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, wide);
+			free(wide);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+			goto uploaded;
+		}
+	}
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(row / pixel));
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
-	    image->format, image->type, base);
+	glTexImage2D(image->to, 0, (GLint)texture_internal(image->internal, image->format), image->width, image->height, 0,
+	    texture_format(image->format), image->type, base);
+	texture_legacy_swizzle(image->to, image->format);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+uploaded:
 	if (trace_placing) {
 		size_t set[4] = { 0, 0, 0, 0 }, size = row * (size_t)(image->height - 1) + (size_t)image->width * pixel;
 
@@ -3247,6 +3317,28 @@ my_glVertexAttribPointer(void *context, GLuint index, GLint size, GLenum type, G
 	EAGL_LEAVE(e, 0x1000);
 }
 
+/*
+ * (on unless glmask=0) a draw of a program that samples an alpha-only picture (a text or shadow mask) with blending off is made with
+ * blending on (the library's own blend function stays): a mask drawn over what is behind it, not instead of it.
+ */
+static bool mask_blend_on;
+
+static bool
+mask_blend_begin(struct eagl *e)
+{
+	struct image *image;
+
+	if (!mask_blend_on || e->program == 0 || e->bound[0] == 0 || glIsEnabled(GL_BLEND)) {
+		return false;
+	}
+	image = image_of(e, e->bound[0]);
+	if (image == NULL || (image->format != 0x1906 && image->format != 0x190a)) {
+		return false;
+	}
+	glEnable(GL_BLEND);
+	return true;
+}
+
 static void
 my_glDrawArrays(void *context, GLenum mode, GLint first, GLsizei count)
 {
@@ -3266,6 +3358,8 @@ my_glDrawArrays(void *context, GLenum mode, GLint first, GLsizei count)
 	if (trace_placing) {
 		trace_placed_draw(e, mode, 0, NULL, first, count);
 	}
+	bool forced_blend = mask_blend_begin(e);
+
 	if (skipping != 0 && skip_draw(e)) {
 		/* glskip=N: nothing is drawn, so that what this program puts there can be seen missing */
 	} else if (group_draw_begin(e, enabled)) {
@@ -3277,6 +3371,9 @@ my_glDrawArrays(void *context, GLenum mode, GLint first, GLsizei count)
 		if (plain) {
 			plain_draw_end(e, enabled);
 		}
+	}
+	if (forced_blend) {
+		glDisable(GL_BLEND);
 	}
 	if (trace_listed) {
 		trace_placed_look(e);
@@ -3306,6 +3403,8 @@ my_glDrawElements(void *context, GLenum mode, GLsizei count, GLenum type, const 
 	if (trace_placing) {
 		trace_placed_draw(e, mode, type, indices, 0, count);
 	}
+	bool forced_blend = mask_blend_begin(e);
+
 	if (skipping != 0 && skip_draw(e)) {
 		/* glskip=N: see my_glDrawArrays */
 	} else if (group_draw_begin(e, enabled)) {
@@ -3317,6 +3416,9 @@ my_glDrawElements(void *context, GLenum mode, GLsizei count, GLenum type, const 
 		if (plain) {
 			plain_draw_end(e, enabled);
 		}
+	}
+	if (forced_blend) {
+		glDisable(GL_BLEND);
 	}
 	if (trace_listed) {
 		trace_placed_look(e);
@@ -3477,7 +3579,9 @@ my_glTexImage2D(void *context, GLenum target, GLint level, GLint internal, GLsiz
 		group_forget(e, e->bound[e->unit]);
 	}
 	uint64_t began = slow_calls_us != 0 ? now_us() : 0;
-	glTexImage2D(target, level, (GLint)internal_format((GLenum)internal, format), width, height, border, format, type, pixels);
+	glTexImage2D(target, level, (GLint)texture_internal((GLenum)internal, format), width, height, border,
+	    texture_format(format), type, pixels);
+	texture_legacy_swizzle(target, format);
 	if (began != 0 && now_us() - began >= slow_calls_us) {
 		/* (with glslow=US: which pictures take long to hand over) */
 		say("tl: slow-tex %dx%d level %d format %#x type %#x%s %llu at %llu\n", width, height, level, format, type,
@@ -3503,7 +3607,7 @@ my_glTexSubImage2D(void *context, GLenum target, GLint level, GLint x, GLint y, 
 		group_read(e, e->bound[e->unit]);
 		group_forget(e, e->bound[e->unit]);
 	}
-	glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
+	glTexSubImage2D(target, level, x, y, width, height, texture_format(format), type, pixels);
 	EAGL_LEAVE(e, 0x9a0);
 }
 
@@ -4247,6 +4351,8 @@ install(void)
 		if ((argument = strstr(arguments, "gltrace_frames=")) != NULL) {
 			trace_frames = (unsigned)strtoul(argument + 15, NULL, 10);
 		}
+		alpha_as_rgba = strstr(arguments, "glalpha=1") != NULL;
+		mask_blend_on = strstr(arguments, "glmask=0") == NULL;
 		trace_lit = strstr(arguments, "gltrace_lit=1") != NULL;
 		trace_look = strstr(arguments, "gltrace_look=1") != NULL;
 		trace_shaders = strstr(arguments, "gltrace_shaders=1") != NULL;
@@ -4255,7 +4361,7 @@ install(void)
 		if ((argument = strstr(arguments, "gltrace_corners=")) != NULL) {
 			trace_corners = (GLsizei)strtol(argument + 16, NULL, 10);
 		}
-		fetch_offered = strstr(arguments, "glfetch=0") == NULL;
+		fetch_offered = strstr(arguments, "glfetch=1") != NULL;      /* (off unless glfetch=1: with it the translucent materials come out black) */
 		group_vibrant_on = strstr(arguments, "glgroup=0") == NULL;
 		if ((argument = strstr(arguments, "gltrace_place=")) != NULL) {
 			char *end = (char *)argument + 14;

@@ -2252,6 +2252,25 @@ index e26a1d70f470..f91095c98d26 100644
  
  #if APPLE_ARM64_ARCH_FAMILY
  	configure_late_apple_regs();
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+index 18ef2f02122f..76c32b4cfac6 100644
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -105,9 +105,12 @@ io_map(
+ 		start = virtual_space_start;
+ 		virtual_space_start += round_page(size);
+ 
+-		assert(flags == VM_WIMG_WCOMB || flags == VM_WIMG_IO);
++		assert(flags == VM_WIMG_WCOMB || flags == VM_WIMG_IO || flags == VM_WIMG_COPYBACK);
+ 
+-		if (flags == VM_WIMG_WCOMB) {
++		if (flags == VM_WIMG_COPYBACK) {
++			pmap_map_bd_with_options(start, phys_addr,
++			    phys_addr + alloc_size, prot, PMAP_MAP_BD_CACHED);
++		} else if (flags == VM_WIMG_WCOMB) {
+ 			pmap_map_bd_with_options(start, phys_addr,
+ 			    phys_addr + alloc_size, prot, PMAP_MAP_BD_WCOMB);
+ 		} else {
 diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
 index 39daaf8db949..64ceb1a5f201 100644
 --- a/osfmk/arm/model_dep.c
@@ -2281,7 +2300,7 @@ index 39daaf8db949..64ceb1a5f201 100644
  	}
  	os_atomic_clear_exclusive();
 diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
-index fc2096fa0010..8f198ed1b820 100644
+index fc2096fa0010..6b470c68383a 100644
 --- a/osfmk/arm/pmap/pmap.c
 +++ b/osfmk/arm/pmap/pmap.c
 @@ -93,6 +93,8 @@
@@ -2293,7 +2312,18 @@ index fc2096fa0010..8f198ed1b820 100644
  #include <san/kasan.h>
  #include <sys/cdefs.h>
  
-@@ -4676,8 +4678,8 @@ pmap_page_protect_options_with_flush_range(
+@@ -1813,6 +1815,10 @@ pmap_map_bd_with_options(
+ 	case PMAP_MAP_BD_POSTED_COMBINED_REORDERED:
+ 		mem_attr = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED);
+ 		break;
++	case PMAP_MAP_BD_CACHED:
++		mem_attr = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
++		mem_attr |= ARM_PTE_SH(SH_OUTER_MEMORY);
++		break;
+ 	default:
+ 		mem_attr = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_DISABLE);
+ 		break;
+@@ -4676,8 +4682,8 @@ pmap_page_protect_options_with_flush_range(
  			}
  #endif
  			if (remove && (options & PMAP_OPTIONS_COMPRESSOR)) {
@@ -2304,7 +2334,7 @@ index fc2096fa0010..8f198ed1b820 100644
  			}
  			goto protect_skip_pve_pass1;
  		}
-@@ -6877,7 +6879,8 @@ void
+@@ -6877,7 +6883,8 @@ void
  pmap_sync_page_attributes_phys(
  	ppnum_t pp)
  {
@@ -2314,7 +2344,7 @@ index fc2096fa0010..8f198ed1b820 100644
  }
  
  #if CONFIG_COREDUMP
-@@ -11623,7 +11626,8 @@ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+@@ -11623,7 +11630,8 @@ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
  #if XNU_MONITOR
  	pmap_ppl_lockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
  #else
@@ -2324,7 +2354,7 @@ index fc2096fa0010..8f198ed1b820 100644
  #endif
  }
  
-@@ -11633,7 +11637,8 @@ pmap_cs_unlockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+@@ -11633,7 +11641,8 @@ pmap_cs_unlockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
  #if XNU_MONITOR
  	pmap_ppl_unlockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
  #else
@@ -2335,7 +2365,7 @@ index fc2096fa0010..8f198ed1b820 100644
  }
  
 diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
-index df672c65b144..d7e1da7c5db2 100644
+index df672c65b144..6b0e4a3cf5ba 100644
 --- a/osfmk/arm/pmap/pmap.h
 +++ b/osfmk/arm/pmap/pmap.h
 @@ -112,7 +112,13 @@
@@ -2362,6 +2392,14 @@ index df672c65b144..d7e1da7c5db2 100644
  #endif /* HAS_APPLE_PAC */
  
  	bool reserved11;
+@@ -538,6 +544,7 @@ extern void pmap_map_globals(void);
+ #define PMAP_MAP_BD_POSTED                    0x2
+ #define PMAP_MAP_BD_POSTED_REORDERED          0x3
+ #define PMAP_MAP_BD_POSTED_COMBINED_REORDERED 0x4
++#define PMAP_MAP_BD_CACHED                    0x5
+ #define PMAP_MAP_BD_MASK                      0x7
+ 
+ extern vm_map_address_t pmap_map_bd_with_options(vm_map_address_t va, vm_offset_t sa, vm_offset_t ea, vm_prot_t prot, int32_t options);
 diff --git a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
 index b9549da357b4..cca31ea32502 100644
 --- a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
@@ -2983,10 +3021,10 @@ index c40d57bcc677..1b7a1fcdfcdf 100644
 +osfmk/arm64/gic_v3_irq.c	optional nos_arm_asm
 +osfmk/arm64/psci_smp.c	optional nos_arm_asm
 diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
-index 384118e8d7a9..2573d2ebd4e6 100644
+index 384118e8d7a9..46ff3d0d86e5 100644
 --- a/osfmk/console/video_console.c
 +++ b/osfmk/console/video_console.c
-@@ -2855,8 +2855,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+@@ -2855,15 +2855,23 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
  			gc_acquired = TRUE;
  		} else {
  			if (makeMapping) {
@@ -3000,6 +3038,18 @@ index 384118e8d7a9..2573d2ebd4e6 100644
  				 * Framebuffers would normally use VM_WIMG_RT, which
  				 * io_map doesn't support.  However this buffer is set up
  				 * by the bootloader and doesn't require D$ cleaning, so
+ 				 * VM_WIMG_RT and VM_WIMG_WCOMB are functionally
+ 				 * equivalent.
+ 				 */
+-				unsigned int flags = VM_WIMG_WCOMB;
++				int fb_cached = 0;
++				unsigned int flags;
++
++				PE_parse_boot_argn("fb_cached", &fb_cached, sizeof(fb_cached));
++				flags = fb_cached ? VM_WIMG_COPYBACK : VM_WIMG_WCOMB;
+ #else
+ 				unsigned int flags = VM_WIMG_IO;
+ #endif
 diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
 index 0a00656a0fdd..bfad3cbca5bc 100644
 --- a/osfmk/kern/debug.c

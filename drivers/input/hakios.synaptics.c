@@ -27,8 +27,8 @@
  * the bootloader picks one for the panel that is fitted; the first run on the phone found 0x38 answering. So the driver tells
  * them apart by which address acknowledges, and for the FocalTech FTS (Linux drivers/input/touchscreen/focaltech_touch/, from
  * memory of its register map) reads the touch registers by hand: register 0x01 gives the gesture, 0x02 the number of fingers (low
- * four bits), then 6 bytes a finger: event (2 bits: 0 down, 1 up, 2 contact) and x (12 bits), the finger's id (4 bits) and y
- * (12 bits), pressure, area. The device tree gives the extent 17279 x 38399: the panel's 1080 x 2400, each times 16.
+ * four bits), then 6 bytes a finger: event (2 bits: 0 down, 1 up, 2 contact), x and y (12 integer bits plus two fractional
+ * bits in byte 4), the finger's id (4 bits), and area. This FT3519T reports 0..8639 x 0..9599 for the 1080 x 2400 panel.
  */
 #include <kern/clock.h>
 #include <kern/locks.h>
@@ -484,6 +484,16 @@ finished:
 	}
 }
 
+static char fts_note[320];
+static unsigned fts_note_len;
+#define FTS_NOTE(...) do { \
+	if (fts_note_len + 1 < sizeof(fts_note)) { \
+		int n_ = snprintf(fts_note + fts_note_len, sizeof(fts_note) - fts_note_len, __VA_ARGS__); \
+		if (n_ > 0) { fts_note_len += (unsigned)n_; } \
+		if (fts_note_len >= sizeof(fts_note)) { fts_note_len = (unsigned)sizeof(fts_note) - 1; } \
+	} \
+} while (0)
+
 /* ---- FocalTech FTS (address 0x38) ---------------------------------------------------------------- */
 
 #define FTS_ADDRESS             0x38
@@ -491,8 +501,8 @@ finished:
 #define FTS_REG_FW_VER          0xa6
 #define FTS_REG_VENDOR_ID       0xa8
 #define FTS_REG_CHIP_ID2        0x9f
-#define FTS_MAX_X               17279   /* 1080 * 16 - 1, from the device tree's focaltech,display-coords */
-#define FTS_MAX_Y               38399   /* 2400 * 16 - 1 */
+#define FTS_RAW_MAX_X           8639    /* 2160 * 4 - 1: two fractional bits */
+#define FTS_RAW_MAX_Y           9599    /* 2400 * 4 - 1 */
 
 static bool
 fts_read(uint8_t reg, uint8_t *buf, unsigned n)
@@ -512,10 +522,17 @@ fts_read(uint8_t reg, uint8_t *buf, unsigned n)
 	return ok;
 }
 
-/* the touch registers: 0x01.. (gesture, count, then 6 bytes a finger); only as many bytes as the count says */
+/*
+ * The touch registers: 0x01.. (gesture, count, then 6 bytes a finger). Android's driver always reads the whole block in one go --
+ * FTS_TOUCH_DATA_LEN (10 fingers x 6 + 3) plus the gesture area, 91 bytes -- and a shorter read made this chip
+ * present a new frame only every 366 ms (the traces of 8 November: frames 366 ms apart, a swipe was five points). So the block is read
+ * whole and only the fingers it counts are handed on.
+ */
+#define FTS_BLOCK       91
 static bool
 fts_read_touches(uint8_t *buf, unsigned *count)
 {
+	uint8_t block[FTS_BLOCK];
 	bool ok;
 
 	i2c_start();
@@ -528,49 +545,116 @@ fts_read_touches(uint8_t *buf, unsigned *count)
 		i2c_stop();
 		return false;
 	}
-	buf[0] = i2c_read_byte(true);
-	buf[1] = i2c_read_byte(true);
-	*count = buf[1] & 0x0f;
+	for (unsigned i = 0; i < FTS_BLOCK; i++) {
+		block[i] = i2c_read_byte(i + 1 < FTS_BLOCK);
+	}
+	i2c_stop();
+	buf[0] = block[0];
+	buf[1] = block[1];
+	*count = block[1] & 0x0f;
 	if (*count > MAX_FINGERS) {
-		i2c_read_byte(false);
-		i2c_stop();
 		*count = 0;
 		return false;
 	}
-	for (unsigned i = 0; i < *count * 6; i++) {
-		buf[2 + i] = i2c_read_byte(i + 1 < *count * 6);
-	}
-	if (*count == 0) {
-		(void)i2c_read_byte(false);
-	}
-	i2c_stop();
+	memcpy(buf + 2, block + 2, 6 * *count);
 	return true;
+}
+
+/* One line for each touch, to see what the chip really sends during a swipe: how long, how many frames, how many different positions, the longest silence. */
+struct fts_stroke {
+	uint64_t t0, last, longest_gap;
+	uint32_t frames, positions, x0, y0, x1, y1;
+};
+static struct fts_stroke fts_stroke[MAX_FINGERS];
+static uint32_t fts_strokes_shown;
+
+static void
+fts_stroke_frame(unsigned f, uint32_t x, uint32_t y, bool first)
+{
+	struct fts_stroke *k = &fts_stroke[f];
+	uint64_t now = mach_absolute_time();
+
+	if (first) {
+		memset(k, 0, sizeof(*k));
+		k->t0 = now;
+		k->x0 = x;
+		k->y0 = y;
+		k->positions = 1;
+	} else {
+		if (now - k->last > k->longest_gap) {
+			k->longest_gap = now - k->last;
+		}
+		k->positions += (x != k->x1 || y != k->y1);
+	}
+	k->last = now;
+	k->frames++;
+	k->x1 = x;
+	k->y1 = y;
+}
+
+static void
+fts_stroke_end(unsigned f, const char *how)
+{
+	struct fts_stroke *k = &fts_stroke[f];
+	uint64_t ns, gap_ns;
+
+	if (fts_strokes_shown++ >= 80 || k->frames == 0) {
+		return;
+	}
+	absolutetime_to_nanoseconds(k->last - k->t0, &ns);
+	absolutetime_to_nanoseconds(k->longest_gap, &gap_ns);
+	printf("synaptics: FocalTech: touch %u over (%s): %u frames in %u ms, %u positions, longest silence %u ms, from %u,%u to %u,%u\n",
+	    f, how, k->frames, (unsigned)(ns / 1000000), k->positions, (unsigned)(gap_ns / 1000000), k->x0, k->y0, k->x1, k->y1);
+	k->frames = 0;
 }
 
 static void
 fts_thread(void)
 {
 	uint8_t buf[2 + 6 * MAX_FINGERS];
-	uint32_t looks = 0, touches = 0, bad_reads = 0, irq_low = 0, valid = 0, invalid = 0;
-	uint64_t last_seen[MAX_FINGERS] = { 0 }, release_after;
+	uint32_t looks = 0, touches = 0, bad_reads = 0, irq_low = 0, valid = 0, invalid = 0, n_down = 0, n_move = 0, n_up = 0, n_empty = 0, n_stale = 0;
+	uint64_t last_seen[MAX_FINGERS] = { 0 }, pending_since[MAX_FINGERS] = { 0 }, lift_since[MAX_FINGERS] = { 0 }, confirm_after, release_after, lift_hold, starved_after, previous_look = 0, longest_gap = 0;
+	uint32_t n_multi = 0;
+	uint32_t n_starved = 0;
 	bool seen[MAX_FINGERS];
 
-	nanoseconds_to_absolutetime(60 * NSEC_PER_MSEC, &release_after);
+	nanoseconds_to_absolutetime(400 * NSEC_PER_MSEC, &release_after);
+	nanoseconds_to_absolutetime(40 * NSEC_PER_MSEC, &confirm_after);
+	/* a lift is believed only when the finger stays away for this long: the chip loses a finger for a frame or two
+	 * and gets it back (with the same id), which read as a lift and a new touch -- two taps for one press, on the keyboard */
+	nanoseconds_to_absolutetime(35 * NSEC_PER_MSEC, &lift_hold);
+	nanoseconds_to_absolutetime(20 * NSEC_PER_MSEC, &starved_after);
 	/*
 	 * The chip's touch registers hold 0xff while it has no frame (the first run on the phone read 00 ff ff ... at rest), and
 	 * a frame is announced by the interrupt line going low, for how long is not known. So the line is looked at every
 	 * millisecond and a frame read whenever it is low, and in any case every sixteenth look; a finger is taken to have lifted
-	 * when a frame says so or when 60 ms pass without a valid one.
+	 * when a frame says so or when 400 ms pass without a valid one. With the whole block read (fts_read_touches) the chip does say when a finger lifts (a frame without it), and
+	 * it goes quiet for ~250 ms at the start of a stroke: 80 ms cut every swipe in two (a dot, a gap, then the line: Freeform, 8 November).
 	 */
 	for (;; sleep_ms(1)) {
 		unsigned count = 0;
 		bool low = !gpio_get(PIN_INT);
+		uint64_t now_look = mach_absolute_time();
 
+		/* When this thread was not run for a while (the system is busy), the time without frames was not the chip's silence: do not count it
+		 * against the fingers that are down. */
+		if (previous_look != 0 && now_look - previous_look > starved_after) {
+			uint64_t gap = now_look - previous_look;
+
+			n_starved++;
+			longest_gap = gap > longest_gap ? gap : longest_gap;
+			for (unsigned f = 0; f < MAX_FINGERS; f++) {
+				if (fingers[f].down) {
+					last_seen[f] += gap;
+				}
+			}
+		}
+		previous_look = now_look;
 		looks++;
 		irq_low += low;
-		if (looks % 60000 == 0) {
-			printf("synaptics: FocalTech: %u looks, interrupt low in %u, %u valid frames, %u without data, %u finger positions, %u bad reads\n",
-			    looks, irq_low, valid, invalid, touches, bad_reads);
+		if (looks % 10000 == 0) {
+			printf("synaptics: FocalTech %s: %u looks, interrupt low in %u, %u valid frames (%u empty), %u without data, %u finger positions, %u bad reads; posted %u down, %u move, %u up; thread starved %u times, %u ms at most; %u stale reads ignored\n", fts_note,
+			    looks, irq_low, valid, n_empty, invalid, touches, bad_reads, n_down, n_move, n_up, n_starved, (unsigned)({ uint64_t ns_; absolutetime_to_nanoseconds(longest_gap, &ns_); ns_ / 1000000; }), n_stale);
 		}
 		if (low || looks % 16 == 0) {
 			if (!fts_read_touches(buf, &count)) {
@@ -585,54 +669,429 @@ fts_thread(void)
 				goto lifted;
 			}
 			valid++;
+			n_empty += count == 0;
+			{
+				/* a trace of the frames that differ from the one before, to see what a swipe really is on the wire */
+				static uint8_t last_raw[2 + 6 * MAX_FINGERS];
+				static unsigned last_len;
+				static uint64_t last_time;
+				static uint32_t traced;
+				unsigned len = 2 + 6 * count;
+
+				if (traced < 700 && (len != last_len || memcmp(last_raw, buf, len) != 0)) {
+					uint64_t now_t = mach_absolute_time(), dt_ns;
+
+					absolutetime_to_nanoseconds(now_t - last_time, &dt_ns);
+					printf("tr %u: +%u us int=%d n=%u", traced, (unsigned)(dt_ns / 1000), low, count);
+					for (unsigned i = 0; i < count && i < 3; i++) {
+						const uint8_t *q = buf + 2 + 6 * i;
+
+						printf(" [id%u ev%u %u,%u]", q[2] >> 4, q[0] >> 6, ((q[0] & 0xf) << 8 | q[1]) << 2 | q[4] >> 6,
+						    ((q[2] & 0xf) << 8 | q[3]) << 2 | (q[4] >> 4 & 3));
+					}
+					printf("\n");
+					traced++;
+					last_time = now_t;
+					last_len = len;
+					memcpy(last_raw, buf, len);
+				}
+			}
+			if (!low && count != 0) {
+				/* read without the chip's call: its registers keep the last report after a lift, so this is a stale one -- not proof that a
+				 * finger is down (taking it for one held a lifted finger "down" for seconds, and a tap became a long press) */
+				n_stale++;
+				goto lifted;
+			}
 			memset(seen, 0, sizeof(seen));
 			for (unsigned i = 0; i < count; i++) {
 				const uint8_t *p = buf + 2 + 6 * i;
 				unsigned event = p[0] >> 6, id = p[2] >> 4;
-				uint32_t x = (uint32_t)(p[0] & 0x0f) << 8 | p[1], y = (uint32_t)(p[2] & 0x0f) << 8 | p[3];
+				uint32_t whole_x = (uint32_t)(p[0] & 0x0f) << 8 | p[1];
+				uint32_t whole_y = (uint32_t)(p[2] & 0x0f) << 8 | p[3];
+				uint32_t x = whole_x << 2 | p[4] >> 6;
+				uint32_t y = whole_y << 2 | (p[4] >> 4 & 3);
 
 				if (id >= MAX_FINGERS || event == 3) {
 					continue;
 				}
 				if (touches < 16) {
-					printf("synaptics: FocalTech: finger %u event %u at %u, %u (pressure %u)\n", id, event, x, y, p[4]);
+					printf("synaptics: FocalTech: finger %u event %u at %u, %u (raw %u.%u, %u.%u)\n", id, event,
+					    x, y, whole_x, p[4] >> 6, whole_y, p[4] >> 4 & 3);
 				}
 				touches++;
-				if (x > FTS_MAX_X) x = FTS_MAX_X;
-				if (y > FTS_MAX_Y) y = FTS_MAX_Y;
-				uint32_t px = (uint32_t)((uint64_t)x * 65535 / FTS_MAX_X), py = (uint32_t)((uint64_t)y * 65535 / FTS_MAX_Y);
+				if (x > FTS_RAW_MAX_X) x = FTS_RAW_MAX_X;
+				if (y > FTS_RAW_MAX_Y) y = FTS_RAW_MAX_Y;
+				uint32_t px = (uint32_t)((uint64_t)x * 65535 / FTS_RAW_MAX_X);
+				uint32_t py = (uint32_t)((uint64_t)y * 65535 / FTS_RAW_MAX_Y);
 
 				if (event == 1) {                            /* the chip says it lifted */
 					continue;
 				}
 				seen[id] = true;
 				last_seen[id] = mach_absolute_time();
+				lift_since[id] = 0;                  /* (it is back: the lift was a dropout) */
+				if (!fingers[id].down) {
+					/* a finger that arrives while another is down must last 40 ms before it counts: the ghosts of this panel (a second
+					 * touch with nobody's finger on it) come and go in a frame or two */
+					bool others = false;
+
+					for (unsigned o = 0; o < MAX_FINGERS; o++) {
+						others = others || (o != id && fingers[o].down);
+					}
+					if (pending_since[id] == 0) {
+						pending_since[id] = mach_absolute_time();
+						if (n_multi++ < 40 && others) {
+							printf("synaptics: FocalTech: a further finger %u appears at %u, %u (frame count %u)\n", id, x, y, count);
+						}
+					}
+					if (others && mach_absolute_time() - pending_since[id] < confirm_after) {
+						continue;
+					}
+					pending_since[id] = 0;
+				}
+				fts_stroke_frame(id, x, y, !fingers[id].down);
 				if (!fingers[id].down) {
 					hakios_touch_post(HAKIOS_TOUCH_DOWN, id, px, py);
+					if (n_down++ < 60) {
+						printf("synaptics: FocalTech: DOWN %u at %u, %u (frame count %u, event %u)\n", id, x, y, count, event);
+					}
 					fingers[id].down = true;
 				} else if (fingers[id].x != px || fingers[id].y != py) {
 					hakios_touch_post(HAKIOS_TOUCH_MOVE, id, px, py);
+					n_move++;
 				}
 				fingers[id].x = px;
 				fingers[id].y = py;
 			}
+			for (unsigned f = 0; f < MAX_FINGERS; f++) {
+				if (!seen[f] && !fingers[f].down) {
+					pending_since[f] = 0;           /* (not in this frame: a ghost that has gone) */
+				}
+			}
 			/* a valid frame with fewer fingers than before: those it does not list have lifted */
 			for (unsigned f = 0; f < MAX_FINGERS; f++) {
 				if (fingers[f].down && !seen[f]) {
+					if (lift_since[f] == 0) {
+						lift_since[f] = mach_absolute_time();
+					}
+					if (mach_absolute_time() - lift_since[f] < lift_hold) {
+						continue;                   /* wait: it may be a dropout; the loop below ends it if no frame comes */
+					}
+					lift_since[f] = 0;
+					if (n_up++ < 60) {
+						printf("synaptics: FocalTech: UP %u at %u, %u (frame count %u)\n", f, fingers[f].x, fingers[f].y, count);
+					}
+					fts_stroke_end(f, "frame");
 					hakios_touch_post(HAKIOS_TOUCH_UP, f, fingers[f].x, fingers[f].y);
 					fingers[f].down = false;
 				}
 			}
 		}
 lifted:
-		/* ... and a finger not heard of for 60 ms has lifted as well */
+		/* ... and a finger not heard of for 400 ms has lifted as well */
 		for (unsigned f = 0; f < MAX_FINGERS; f++) {
+			if (fingers[f].down && lift_since[f] != 0 && mach_absolute_time() - lift_since[f] >= lift_hold) {
+				lift_since[f] = 0;
+				fts_stroke_end(f, "lift");
+				hakios_touch_post(HAKIOS_TOUCH_UP, f, fingers[f].x, fingers[f].y);
+				fingers[f].down = false;
+				continue;
+			}
 			if (fingers[f].down && mach_absolute_time() - last_seen[f] > release_after) {
+				static unsigned timeouts;
+
+				if (timeouts++ < 8) {
+					printf("synaptics: FocalTech: finger %u lifted by the timeout (no frame for 400 ms)\n", f);
+				}
+				fts_stroke_end(f, "timeout");
 				hakios_touch_post(HAKIOS_TOUCH_UP, f, fingers[f].x, fingers[f].y);
 				fingers[f].down = false;
 			}
 		}
 	}
+}
+
+
+/* ---- FocalTech FT3519T: loading the controller's firmware ------------------------------------------
+ * After a cold start the chip answers 0xef to everything: its application is gone.  Android's driver (focaltech_ts_i2c) fixes that
+ * by putting the chip in its boot ROM, loading a small RAM program (the "pramboot"), and with it erasing and writing the
+ * application into the chip's flash.  The sequence below is that driver's, read from the module.  The application is only written
+ * after the pramboot has proven itself (it runs, and its checksum matches), and only when the chip has no valid application.
+ */
+/*
+ * The controller's firmware is FocalTech's, taken from the phone, and is not in the repository (tools/provenance.allow): put
+ * drivers/input/hakios.focaltech_ft5452j.h (the arrays ft_pramboot and ft_app) in the kernel tree's bsd/dev/ to build the loader.
+ * Without it the chip is only talked to, never reloaded.
+ */
+#if __has_include("hakios.focaltech_ft5452j.h")
+#include "hakios.focaltech_ft5452j.h"
+#define FT_FIRMWARE 1
+#else
+static const unsigned char ft_pramboot[1], ft_app[1];
+#define FT_FIRMWARE 0
+#endif
+
+#define FTS_STATE_ROM   2
+#define FTS_STATE_PRAM  3
+
+static bool
+fts_wr(const uint8_t *b, unsigned n)
+{
+	bool ok;
+
+	i2c_start();
+	ok = i2c_write_byte(FTS_ADDRESS << 1);
+	for (unsigned i = 0; ok && i < n; i++) {
+		ok = i2c_write_byte(b[i]);
+	}
+	i2c_stop();
+	return ok;
+}
+
+static bool
+fts_rd(const uint8_t *cmd, unsigned cn, uint8_t *out, unsigned n)
+{
+	bool ok;
+
+	i2c_start();
+	ok = i2c_write_byte(FTS_ADDRESS << 1);
+	for (unsigned i = 0; ok && i < cn; i++) {
+		ok = i2c_write_byte(cmd[i]);
+	}
+	if (ok) {
+		i2c_start();
+		ok = i2c_write_byte((FTS_ADDRESS << 1) | 1);
+	}
+	for (unsigned i = 0; ok && i < n; i++) {
+		out[i] = i2c_read_byte(i + 1 < n);
+	}
+	i2c_stop();
+	return ok;
+}
+
+static bool
+fts_wr1(uint8_t cmd)
+{
+	return fts_wr(&cmd, 1);
+}
+
+/* 55 AA, 12 ms, then read command 90: the boot ID.  54 52 = boot ROM, 54 5b = pramboot, 54 5e = bootloader */
+static unsigned
+fts_boot_state(void)
+{
+	static const uint8_t ask[2] = { 0x55, 0xaa }, rd[4] = { 0x90, 0, 0, 0 };
+	uint8_t id[3] = { 0 };
+
+	if (!fts_wr(ask, 2)) {
+		return 0;
+	}
+	sleep_ms(12);
+	if (!fts_rd(rd, 4, id, 3)) {
+		return 0;
+	}
+	printf("synaptics: FocalTech boot id %02x %02x %02x\n", id[0], id[1], id[2]);
+	if (id[0] == 0x54 && id[1] == 0x52) {
+		return FTS_STATE_ROM;
+	}
+	if (id[0] == 0x54 && id[1] == 0x5b) {
+		return FTS_STATE_PRAM;
+	}
+	return id[0] == 0x54 && id[1] == 0x5e ? 4 : 0;
+}
+
+static uint16_t
+fts_crc16(const uint8_t *b, unsigned n)
+{
+	uint16_t ecc = 0;
+
+	for (unsigned i = 0; i + 1 < n; i += 2) {
+		ecc ^= (uint16_t)(b[i] << 8 | b[i + 1]);
+		for (unsigned j = 0; j < 16; j++) {
+			ecc = (ecc & 1) ? (uint16_t)((ecc >> 1) ^ 0x8408) : (uint16_t)(ecc >> 1);
+		}
+	}
+	return ecc;
+}
+
+/* command 6A answers a 16-bit status, big endian */
+static bool
+fts_status_is(uint16_t want)
+{
+	uint8_t cmd = 0x6a, v[2] = { 0 };
+
+	return fts_rd(&cmd, 1, v, 2) && (uint16_t)(v[0] << 8 | v[1]) == want;
+}
+
+static bool
+fts_load_pramboot(void)
+{
+	const unsigned len = sizeof(ft_pramboot);
+	uint8_t p[6 + 32];
+
+	if (!FT_FIRMWARE) {
+		return false;
+	}
+
+	for (unsigned i = 0, off = 0; off < len; i++, off += 32) {
+		unsigned n = len - off < 32 ? len - off : 32;
+
+		p[0] = 0xad; p[1] = (uint8_t)(off >> 16); p[2] = (uint8_t)(off >> 8); p[3] = (uint8_t)off;
+		if (!fts_wr(p, 4)) {
+			printf("synaptics: FocalTech: pramboot address %u failed\n", i);
+			return false;
+		}
+		p[0] = 0xae;
+		memcpy(p + 1, ft_pramboot + off, n);
+		if (!fts_wr(p, n + 1)) {
+			printf("synaptics: FocalTech: pramboot data %u failed\n", i);
+			return false;
+		}
+	}
+	uint16_t crc = fts_crc16(ft_pramboot, len);
+	uint8_t ecc[8] = { 0xcc, 0, 0, 0, (uint8_t)(len >> 16), (uint8_t)(len >> 8), (uint8_t)len, 0xcc };
+	uint8_t c = 0xce, v = 0, cd = 0xcd, r[2] = { 0 };
+	unsigned t;
+
+	if (!fts_wr(ecc, 8)) {
+		return false;
+	}
+	for (t = 0; t < 100; t++) {
+		sleep_ms(1);
+		if (fts_rd(&c, 1, &v, 1) && v == 0x33) {
+			break;
+		}
+	}
+	if (t == 100 || !fts_rd(&cd, 1, r, 2)) {
+		printf("synaptics: FocalTech: pramboot checksum did not finish (last %02x)\n", v);
+		return false;
+	}
+	printf("synaptics: FocalTech: pramboot checksum in chip %04x, here %04x\n", r[0] << 8 | r[1], crc);
+	if ((uint16_t)(r[0] << 8 | r[1]) != crc) {
+		return false;
+	}
+	if (!fts_wr1(0x08)) {
+		return false;
+	}
+	sleep_ms(100);
+	for (t = 0; t < 30; t++) {
+		if (fts_boot_state() == FTS_STATE_PRAM) {
+			return true;
+		}
+		sleep_ms(20);
+	}
+	printf("synaptics: FocalTech: the pramboot does not run\n");
+	return false;
+}
+
+static bool
+fts_flash_app(void)
+{
+	const unsigned len = sizeof(ft_app);
+	uint8_t p[6 + 32], x = 0;
+	unsigned t;
+
+	if (!FT_FIRMWARE) {
+		return false;
+	}
+
+	{
+		uint8_t a[2] = { 0x09, 0x0b }, b[4] = { 0xb0, (uint8_t)(len >> 16), (uint8_t)(len >> 8), (uint8_t)len };
+
+		if (!fts_wr(a, 2) || !fts_wr(b, 4)) {
+			return false;
+		}
+	}
+	printf("synaptics: FocalTech: erasing the chip's flash\n");
+	if (!fts_wr1(0x61)) {
+		return false;
+	}
+	sleep_ms(1350);
+	for (t = 0; t < 50 && !fts_status_is(0xf0aa); t++) {
+		sleep_ms(400);
+	}
+	if (t == 50) {
+		printf("synaptics: FocalTech: the erase did not finish\n");
+		return false;
+	}
+	printf("synaptics: FocalTech: writing %u bytes of application\n", len);
+	for (unsigned off = 0; off < len; off += 32) {
+		unsigned n = len - off < 32 ? len - off : 32;
+
+		p[0] = 0xbf; p[1] = (uint8_t)(off >> 16); p[2] = (uint8_t)(off >> 8); p[3] = (uint8_t)off; p[4] = 0; p[5] = (uint8_t)n;
+		memcpy(p + 6, ft_app + off, n);
+		for (unsigned i = 0; i < n; i++) {
+			x ^= ft_app[off + i];
+		}
+		if (!fts_wr(p, n + 6)) {
+			printf("synaptics: FocalTech: flash write failed at %u\n", off);
+			return false;
+		}
+		sleep_ms(1);
+		for (t = 0; t < 100 && !fts_status_is((uint16_t)(0x1000 + off / n)); t++) {
+			sleep_ms(1);
+		}
+	}
+	{
+		uint8_t e[7] = { 0x65, 0, 0, 0, (uint8_t)(len >> 16), (uint8_t)(len >> 8), (uint8_t)len }, c = 0x66, v = 0;
+
+		if (!fts_wr1(0x64) || !fts_wr(e, 7)) {
+			return false;
+		}
+		sleep_ms(200);
+		for (t = 0; t < 40 && !fts_status_is(0xf055); t++) {
+			sleep_ms(50);
+		}
+		if (!fts_rd(&c, 1, &v, 1)) {
+			return false;
+		}
+		printf("synaptics: FocalTech: application checksum in chip %02x, here %02x\n", v, x);
+		if (v != x) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool
+fts_recover(void)
+{
+	unsigned state = fts_boot_state();
+	bool ok = false;
+
+	FTS_NOTE("[recover: boot state %u]", state);
+	printf("synaptics: FocalTech: no valid application; loading the firmware (boot state %u)\n", state);
+	for (unsigned attempt = 0; state != FTS_STATE_ROM && attempt < 3; attempt++) {
+		uint8_t aa[2] = { 0xfc, 0xaa }, f5[2] = { 0xfc, 0x55 };
+
+		/* an application that runs is told to jump to the ROM; anything else is reset */
+		(void)fts_wr(aa, 2);
+		sleep_ms(10);
+		(void)fts_wr(f5, 2);
+		sleep_ms(80);
+		state = fts_boot_state();
+		for (unsigned t = 0; state != FTS_STATE_ROM && t < 30; t++) {
+			(void)fts_wr1(0x07);
+			sleep_ms(10);
+			state = fts_boot_state();
+			sleep_ms(5);
+		}
+	}
+	if (state != FTS_STATE_ROM) {
+		FTS_NOTE("[no boot ROM, state %u]", state);
+		printf("synaptics: FocalTech: the chip does not reach its boot ROM (state %u)\n", state);
+		return false;
+	}
+	if (!fts_load_pramboot()) {
+		FTS_NOTE("[pramboot FAILED]");
+		return false;
+	}
+	FTS_NOTE("[pramboot ok]");
+	ok = fts_flash_app();
+	FTS_NOTE("[flash %s]", ok ? "ok" : "FAILED");
+	(void)fts_wr1(0x07);                    /* reset: the new application starts */
+	sleep_ms(300);
+	printf("synaptics: FocalTech: firmware %s\n", ok ? "written" : "NOT written");
+	return ok;
 }
 
 static bool
@@ -644,6 +1103,20 @@ fts_bring_up(void)
 	ok = ok && fts_read(FTS_REG_CHIP_ID2, &id2, 1);
 	(void)fts_read(FTS_REG_FW_VER, &fw, 1);
 	(void)fts_read(FTS_REG_VENDOR_ID, &vendor, 1);
+	FTS_NOTE("[id %02x %02x fw %02x]", id, id2, fw);
+	{
+		/* the mode and rate registers: 0x80 sensitivity, 0x85 gesture/idle, 0x86 idle->monitor time, 0x87 idle rate, 0x88 active rate (x10 Hz), 0x89 monitor rate, 0xa5 power mode */
+		static const uint8_t regs[] = { 0x80, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8c, 0xa4, 0xa5, 0xa7, 0xad };
+		uint8_t v;
+
+		FTS_NOTE("[regs");
+		for (unsigned i = 0; i < sizeof(regs); i++) {
+			v = 0xee;
+			(void)fts_read(regs[i], &v, 1);
+			FTS_NOTE(" %02x=%02x", regs[i], v);
+		}
+		FTS_NOTE("]");
+	}
 	printf("synaptics: FocalTech FTS at %#x: chip id %#x %#x, firmware %#x, vendor %#x (%s)\n", FTS_ADDRESS, id, id2, fw, vendor,
 	    ok && id == 0x54 && id2 == 0x52 ? "read" : ok ? "invalid; the controller is not ready" : "the registers did not answer");
 	/* An acknowledged I2C transaction is not enough to call the controller ready.  During GPU bring-up this panel has
@@ -721,6 +1194,10 @@ bring_up(void)
 			gpio_set(PIN_RESET, true);
 			bus_pins();
 			sleep_ms(300);
+			fts_chip = fts_bring_up();
+		}
+		if (!fts_chip && fts_recover()) {
+			bus_pins();
 			fts_chip = fts_bring_up();
 		}
 		goto out;

@@ -1,4 +1,7 @@
+a610_ccu	k
+a610_div	k
 adreno	k
+adreno610	k
 adreno_blind	k
 adreno_dirty	k
 adreno_fine	k
@@ -82,9 +85,11 @@ cam_shutter	k
 cam_vblank	k
 cc_fade	u
 cpufreq	k
+cpufreq_osm	k
 cpuload	k
 cpumask	l
 cpus	l
+dbg	k
 ddr	k
 ddr_rest	k
 ddr_vote	k
@@ -93,6 +98,7 @@ epoch	k
 fb_beam	k
 fb_beat	k
 fb_ca_hz	k
+fb_cached	k
 fb_diff	k
 fb_filter	k
 fb_hz	k
@@ -108,6 +114,7 @@ fbtrace	k
 fbwidth	ku
 gamut	l
 gl	u
+glalpha	u
 glblit	u
 glcensus	u
 glcompile	u
@@ -116,6 +123,7 @@ glenv	u
 glfetch	u
 glframes	u
 glgroup	u
+glmask	u
 glno	u
 glnumbers	u
 glplain	u
@@ -152,6 +160,9 @@ hakios_kver	k
 haptic	k
 haptic_effect	k
 hv_wdt_pet	k
+icnss_msa	k
+icnss_msa_size	k
+icnss_probe	k
 loader_return_after	kl
 m2v_utrace	u
 machine_name	k
@@ -186,10 +197,12 @@ modem_data_wait	k
 modem_dpm_off	k
 modem_ipa	k
 modem_ipa_bus_off	k
+modem_ipa_clock_skip	k
 modem_ipa_data_off	k
 modem_ipa_data_trace	k
 modem_ipa_fw	k
 modem_ipa_fw_at	k
+modem_ipa_fw_size	k
 modem_ipa_gsi_enable	k
 modem_ipa_item	k
 modem_ipa_no_probe	k
@@ -199,6 +212,7 @@ modem_ipa_routes	k
 modem_ipa_skip_uc	k
 modem_ipa_smmu_off	k
 modem_keep	k
+modem_khaje	k
 modem_listen	k
 modem_nas_wait	k
 modem_new	k
@@ -218,6 +232,21 @@ modem_sim_switch_off	k
 modem_step	k
 modem_wait	k
 modem_wda_off	k
+modem_wifi_pass	k
+modem_wifi_selftest	k
+modem_wifi_ssid	k
+modem_wlfw_assign	k
+modem_wlfw_bdf	k
+modem_wlfw_ce_probe	k
+modem_wlfw_ce_start	k
+modem_wlfw_htc_connect	k
+modem_wlfw_mission	k
+modem_wlfw_probe	k
+modem_wlfw_ready	k
+modem_wlfw_scan	k
+modem_wlfw_smmu_identity	k
+modem_wlfw_smmu_probe	k
+modem_wmi_log	k
 net_names	k
 net_trace	k
 pmic	k
@@ -250,6 +279,7 @@ soc_ipa_fw	k
 soc_ipa_stream	k
 soc_ipa_stream_uc	k
 soc_mpss_mem	k
+soc_mpss_size	k
 soc_pas_ipa	k
 soc_pas_mpss	k
 soc_smem	k
@@ -321,6 +351,7 @@ virtio_net	k
 virtio_sound	k
 wallpaper_cache	u
 wallpaper_freeze	u
+widget_quiet	u
 wifi	k
 wifi_again	k
 wifi_ask	k
@@ -352,4 +383,5 @@ wifi_step	k
 wifi_wait	k
 wifi_watch	k
 wifi_wide	k
+wnet	k
 xpcproxy_idversion	k

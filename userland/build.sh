@@ -81,6 +81,7 @@
 #                    the kernel's apfs_lib has to read every volume back as the directory it was made of
 #                    (../tools/apfs/check-image.sh; the system image takes a few minutes more)
 set -e
+umask 022
 # a copy of a tree that shares its files' data: hard links (Linux), clones of the files (macOS's APFS, whose cp has no -l)
 linkcopy() { if [ "$(uname)" = Darwin ]; then cp -cRp "$1" "$2"; else cp -al "$1" "$2"; fi; }
 cd "$(dirname "$(readlink -f "$0")")"
@@ -689,8 +690,18 @@ if [ -z "${FLASHBOOT_RESIDENT_BIG:-}" ] && [ -f $DARWIN/system.manifest ] && [ -
 	# This stages the files; a separate XNU MPSS driver is still required to start the modem.
 	if [ -n "$MODEM" ]; then
 		[ -f ../fw-modem/modem.mdt ] || { echo "build.sh: MODEM=1 needs ../fw-modem/modem.mdt" >&2; exit 1; }
-		../devices/redwood/tools/modem_firmware.py --dtb ../devices/redwood/prebuilt/device-tree.dtb --firmware-dir ../fw-modem \
-			--node /soc/qcom,mss@4080000 >/dev/null
+		modem_device=$(sed -n 's/^CONFIG_DEVICE="\([^"]*\)"/\1/p' ../.config)
+		if [ "$modem_device" = sapphiren ]; then
+			modem_dtb=../devices/sapphiren/prebuilt/device-tree.dtb
+			modem_node=/soc/remoteproc-mss@6080000
+			modem_pas="--pas-id 4"
+		else
+			modem_dtb=../devices/redwood/prebuilt/device-tree.dtb
+			modem_node=/soc/qcom,mss@4080000
+			modem_pas=
+		fi
+		../devices/redwood/tools/modem_firmware.py --dtb "$modem_dtb" --firmware-dir ../fw-modem \
+			--node "$modem_node" $modem_pas >/dev/null
 		mkdir -p sysroot/fw
 		cp ../fw-modem/modem.mdt ../fw-modem/modem.b[0-9][0-9] sysroot/fw/
 		# ... and the firmware partition's image/ (its mcfg configurations and the registry's *.jsn, pulled from

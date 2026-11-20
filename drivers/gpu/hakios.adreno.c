@@ -3638,6 +3638,8 @@ hakios_gpu_report(const char *why)
 #define A610_CBCR_FORCE_MEM     (1u << 14)
 #define A610_CBCR_FORCE_PERIPH  (1u << 13)
 
+static uint32_t core_khz_wanted = 300000;
+
 static bool
 cx610_ready(void)
 {
@@ -3709,9 +3711,25 @@ step610_power(void)
 	printf("adreno: %u: CX half on: cx %#x, ahb %#x\n", step, rd(gpucc.base + GPUCC_CX_GDSCR),
 	    rd(gpucc.base + GPUCC_AHB_CBCR));
 
-	announce("A610: the 3D core's clock from the 600 MHz PLL / 2 = 300 MHz, memories forced on, then its GX power switch");
-	if (!clock_source("gx_gfx3d_src", A610_GX_GFX3D_RCGR, 5u << 8 | 3u)) {
-		return false;
+	/*
+	 * Boot-arg a610_div=N: the 3D core's clock is the global 600 MHz PLL through the clock controller's divider; N is that
+	 * register's field, twice the divider less one: 3 is /2 = 300 MHz (what this ran at at first), 2 is /1.5 = 400 MHz (the default),
+	 * 1 is /1 = 600 MHz. Nothing here raises a voltage: a clock the rail does not carry hangs the core (the phone's buttons
+	 * then restart it); it does not harm it.
+	 */
+	{
+		uint32_t field = 2;                     /* (400 MHz by default: 600 gave no more frames, and costs more power) */
+
+		PE_parse_boot_argn("a610_div", &field, sizeof(field));
+		if (field > 3) {
+			field = 3;
+		}
+		core_khz_wanted = field >= 3 ? 300000 : field == 2 ? 400000 : 600000;
+		announce("A610: the 3D core's clock from the 600 MHz PLL (divider field a610_div), memories forced on, then its GX power switch");
+		printf("adreno: %u: 3D core clock: field %u = %u MHz\n", step, field, core_khz_wanted / 1000);
+		if (!clock_source("gx_gfx3d_src", A610_GX_GFX3D_RCGR, 5u << 8 | field)) {
+			return false;
+		}
 	}
 	was = get(&gpucc, "gx_gfx3d clock", A610_GX_GFX3D_CBCR);
 	put(&gpucc, "gx_gfx3d clock", A610_GX_GFX3D_CBCR, was | A610_CBCR_FORCE_MEM | A610_CBCR_FORCE_PERIPH | CBCR_ENABLE);
@@ -3726,7 +3744,7 @@ step610_power(void)
 	get(&gpu, "rbbm_status", RBBM_STATUS);
 	get(&gpu, "rbbm_int_0_status", RBBM_INT_0_STATUS);
 	core_is_on = true;
-	core_khz = 300000;
+	core_khz = core_khz_wanted;
 	printf("adreno: %u: THE A610'S 3D CORE HAS POWER AND ANSWERS\n", step);
 	return true;
 }
@@ -4115,9 +4133,8 @@ hakios_adreno_init(void)
 	uint32_t only = 0, done = 0, failed = 0, keep = 0;
 	bool by_itself = false;
 
-	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only) {
-		display_probe();
-	}
+	/* Select the SoC's GCC address before display_probe: otherwise the probe reads an unmapped clock register. */
+	bool probe_display = PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only;
 	if (PE_parse_boot_argn("adreno610", &only, sizeof(only)) && only) {
 		volatile uint8_t *old_log = (volatile uint8_t *)ml_io_map(PLOG_PHYS, PLOG_SIZE);
 		uint32_t total = *(volatile uint32_t *)(old_log + 4);
@@ -4152,6 +4169,9 @@ hakios_adreno_init(void)
 		zap_memory = 0x55a15000ull;             /* dt: zap-shader memory-region (phandle 0x140) */
 		printf("adreno: Adreno 610 (no GMU): gcc %#x, gpucc %#x, gpu %#x, smmu %#x\n", gcc.phys, gpucc.phys, gpu.phys,
 		    smmu.phys);
+	}
+	if (probe_display) {
+		display_probe();
 	}
 	if (!PE_parse_boot_argn("adreno", &last_step, sizeof(last_step))) {
 		if (!(PE_parse_boot_argn("gpu", &only, sizeof(only)) && only) || !start_by_itself()) {
