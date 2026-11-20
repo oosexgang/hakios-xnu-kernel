@@ -480,6 +480,8 @@ static void script_start(IOHIDServiceClientRef screen, IOHIDServiceClientRef but
 #include "hid_orientation.h"
 /* ... and the accelerometer's samples, for Darwin's motion stack, as another */
 #include "hid_motion.h"
+/* ... and the gyroscope's rates, for the same, as a third */
+#include "hid_gyro.h"
 
 /*
  * /dev/hakios-touch, opened for reading. One program may read it (board/input.c): while another does -- a
@@ -549,6 +551,7 @@ input_thread(__unused void *arg)
 		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 		orientation_start(client);      /* (the phone's orientation, when the kernel follows it: hid_orientation.h) */
 		motion_start(client);           /* (the accelerometer's samples, when the kernel gives them: hid_motion.h) */
+		gyro_start(client);             /* (the gyroscope's rates, when the kernel gives them: hid_gyro.h) */
 	}
 	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */

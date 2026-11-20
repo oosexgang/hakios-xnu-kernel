@@ -136,6 +136,21 @@ tags yet, so the current work is one section.
   `hw.sensors.hid` and `hw.sensors.motion` say 1; `motion_hid=0` turns it off and leaves the orientation
   (`userland/userland/src/hid_motion.h`, in both backboardd libraries). The numbers are iOS 16.7's, after the idea of
   the OnePlus Nord 2 port's piece 0760; not yet seen on Darwin 26 and 27 or on our phone.
+- **Darwin's motion stack is given the gyroscope's rates too** (`sensors=2`): while the samples are for the motion
+  stack, the LSM6DSO's gyroscope is switched on with the accelerometer (104 Hz, +-2000 dps: 70 mdps a count, the
+  datasheet's sensitivity), read in the same twelve-byte burst the driver always read -- so no more bus time -- turned
+  onto Darwin's axes by the board's mount (the accelerometer's with its signs turned back: that one also turns the
+  chip's +1 g up into Darwin's -1 g) and put in the same `hw.sensors.sample` as the accelerometer's milli-g, three
+  numbers more in milli-rad/s (a reader of the first five reads them as before). backboardd's library makes a third
+  service, the gyroscope's an iPhone's motion processor has -- Apple's page 0xff00, usage 9, built in -- and sends the
+  rates through it as gyroscope events in radians per second, dated when they were read, at the rate the service is
+  asked for and never more than the kernel's 10 a second (`userland/userland/src/hid_gyro.h`, in both backboardd
+  libraries). Never made up: no rates until two of the gyroscope's reads after its first three have differed, none
+  once it has read the very same for ten seconds (then it is powered down; `hw.sensors.gyro` says which), and no service
+  for a gyroscope that never answered or a board mount no chip can have. Powered down at the run's end and whenever
+  the samples are not for the motion stack; `gyro_hid=0` keeps it off and leaves the accelerometer's. After the idea of
+  the OnePlus Nord 2 port's piece 0760, which gave iOS its hub's gyroscope too; not yet seen on Darwin 26 and 27 or on
+  our phone.
 - **A charger plugged in or pulled out is shown within a second**, not up to ten seconds later: between two of the
   battery manager's rounds (`adsp=1`) the USB port alone is asked about every half second, and when it is not as the
   last round read it a round is made at once, and two more a second and three seconds after, while the charger starts

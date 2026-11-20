@@ -26,9 +26,9 @@
  *                  reads no more often). A program that asks CoreMotion for 50 or 100 a second gets those 10, at the
  *                  times they were read.
  *
- * The accelerometer alone. The chip's gyroscope is not switched on and nothing here makes a gyroscope's or a
- * compass's service: what CoreMotion works out from those (device motion, attitude, rotation rate, heading) is not
- * there. The orientation does not need them: it comes from the orientation service.
+ * The accelerometer alone here: the gyroscope's rates, which the kernel puts in the same samples (three more numbers
+ * after the five, read past here), have a service of their own (hid_gyro.h); there is no compass's, so what CoreMotion
+ * works out with one (heading) is not there. The orientation needs neither: it comes from the orientation service.
  *
  * The numbers are those the OnePlus Nord 2 port of iOS read out of locationd of iOS 16.7, where locationd opened its
  * kernel's own accelerometer service, set its rate and was sent samples; that Darwin 26 and 27 read the same is not
@@ -113,7 +113,8 @@ struct motion_sample {
 	int mg[3];                      /* x y z, milli-g on Darwin's axes */
 };
 
-/* The kernel's latest sample. False: it could not be read, or did not say five numbers. */
+/* The kernel's latest sample. False: it could not be read, or did not say five numbers (the gyroscope's three after them, if
+ * any, are hid_gyro.h's). */
 static bool
 motion_kernel_sample(struct motion_sample *s)
 {

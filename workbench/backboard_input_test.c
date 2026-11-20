@@ -6,8 +6,8 @@
  * What it is given of CoreFoundation, IOKit's HID event calls, dispatch, notify and the Mach clock is this
  * file's: the events it makes are kept and looked at, and counted, so that one not let go is seen; and so are
  * its open(), read() and close() of /dev/hakios-touch, which play a script of samples and errors. The phone's
- * orientation (userland/userland/src/hid_orientation.h, included by the part) and the accelerometer's samples
- * (hid_motion.h) are played the same way: what the kernel's sysctls say is a script, what a client asks of a
+ * orientation (userland/userland/src/hid_orientation.h, included by the part), the accelerometer's samples
+ * (hid_motion.h) and the gyroscope's rates (hid_gyro.h) are played the same way: what the kernel's sysctls say is a script, what a client asks of a
  * service is set through the service's own callbacks, and the calls the part looks up by name are this file's, or
  * missing.
  *
@@ -141,8 +141,8 @@ static uint64_t mach_absolute_time(void) { return clock_now++; }
 static int mach_timebase_info(mach_timebase_info_data_t *t) { t->numer = t->denom = 1; return 0; }
 
 /*
- * The kernel's numbers, as hid_orientation.h and hid_motion.h ask for them: hw.sensors.hid, hw.sensors.orientation and
- * hw.sensors.motion each say the values of a script in turn, the last one for good; a name without a script is not
+ * The kernel's numbers, as hid_orientation.h, hid_motion.h and hid_gyro.h ask for them: hw.sensors.hid,
+ * hw.sensors.orientation, hw.sensors.motion and hw.sensors.gyro each say the values of a script in turn, the last one for good; a name without a script is not
  * there (and kern.bootargs is not, as before). hw.sensors.sample says the texts of its own script the same way.
  */
 struct number_script {
@@ -151,7 +151,7 @@ struct number_script {
 	unsigned count, next, asked;
 };
 static struct number_script kernel_hid = { .name = "hw.sensors.hid" }, kernel_orientation = { .name = "hw.sensors.orientation" },
-	kernel_motion = { .name = "hw.sensors.motion" };
+	kernel_motion = { .name = "hw.sensors.motion" }, kernel_gyro = { .name = "hw.sensors.gyro" };
 static struct {
 	const char *texts[64];          /* NULL: a read that fails */
 	long long asked_before[64];     /* before the look that reads this text, a client sets the "ReportInterval" ... */
@@ -164,7 +164,8 @@ static int
 sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is)
 {
 	struct number_script *script = strcmp(n, kernel_hid.name) == 0 ? &kernel_hid :
-	    strcmp(n, kernel_orientation.name) == 0 ? &kernel_orientation : strcmp(n, kernel_motion.name) == 0 ? &kernel_motion : NULL;
+	    strcmp(n, kernel_orientation.name) == 0 ? &kernel_orientation : strcmp(n, kernel_motion.name) == 0 ? &kernel_motion :
+	    strcmp(n, kernel_gyro.name) == 0 ? &kernel_gyro : NULL;
 	int value;
 
 	(void)i; (void)is;
@@ -204,6 +205,7 @@ sysctlbyname(const char *n, void *o, size_t *s, void *i, size_t is)
 #define RTLD_DEFAULT    ((void *)0)
 static bool hid_calls_missing;
 static bool accelerometer_call_missing;        /* IOHIDEventCreateAccelerometerEvent alone */
+static bool gyro_call_missing;                 /* IOHIDEventCreateGyroEvent alone */
 static void *test_dlsym(void *handle, const char *name);
 #define dlsym   test_dlsym
 
@@ -306,6 +308,7 @@ struct __IOHIDEvent {
 	uint64_t time;
 	uint32_t mask, index, usage;
 	bool accelerometer;             /* IOHIDEventCreateAccelerometerEvent()'s, with its z in `z` */
+	bool gyro;                      /* IOHIDEventCreateGyroEvent()'s, the same */
 	double x, y, z;
 	bool range, touch, down;
 	unsigned children;
@@ -532,7 +535,8 @@ client_asks(long long interval)
 	    CFNumberCreate(NULL, kCFNumberSInt64Type, &interval));
 }
 
-/* IOHIDEventCreate(), IOHIDEventCreateVendorDefinedEvent() and IOHIDEventCreateAccelerometerEvent(), as the part finds them by name */
+/* IOHIDEventCreate(), IOHIDEventCreateVendorDefinedEvent(), IOHIDEventCreateAccelerometerEvent() and IOHIDEventCreateGyroEvent(), as
+ * the part finds them by name */
 static IOHIDEventRef
 test_event_create(CFAllocatorRef allocator, uint32_t type, uint64_t time, uint32_t options)
 {
@@ -573,12 +577,29 @@ test_accelerometer_create(CFAllocatorRef allocator, uint64_t time, double x, dou
 	return e;
 }
 
+static IOHIDEventRef
+test_gyro_create(CFAllocatorRef allocator, uint64_t time, double x, double y, double z, uint32_t options)
+{
+	struct __IOHIDEvent *e = made(event_new());
+
+	(void)allocator; (void)options;
+	e->gyro = true;
+	e->time = time;
+	e->x = x;
+	e->y = y;
+	e->z = z;
+	return e;
+}
+
 static void *
 test_dlsym(void *handle, const char *name)
 {
 	(void)handle;
 	if (hid_calls_missing) {
 		return NULL;
+	}
+	if (strcmp(name, "IOHIDEventCreateGyroEvent") == 0) {
+		return gyro_call_missing ? NULL : (void *)test_gyro_create;
 	}
 	if (strcmp(name, "IOHIDEventCreateAccelerometerEvent") == 0) {
 		return accelerometer_call_missing ? NULL : (void *)test_accelerometer_create;
@@ -644,7 +665,8 @@ static const struct sent *
 frame(unsigned n)
 {
 	for (unsigned i = 0; i < sent_count; i++) {
-		if (!sent[i].event.keyboard && sent[i].event.type != HID_EVENT_ORIENTATION && !sent[i].event.accelerometer && n-- == 0) {
+		if (!sent[i].event.keyboard && sent[i].event.type != HID_EVENT_ORIENTATION && !sent[i].event.accelerometer &&
+		    !sent[i].event.gyro && n-- == 0) {
 			return &sent[i];
 		}
 	}
@@ -1132,6 +1154,212 @@ scenario_motion_without_the_call(void)
 	    service_count, sent_count, kernel_sample.asked);
 }
 
+static const struct sent *gyro_event(unsigned n);
+
+/* The kernel's samples with the gyroscope's rates after the five: the accelerometer's service reads its five as ever. */
+static void
+scenario_motion_reads_past_the_rates(void)
+{
+	static const int hid[] = { 1, 1, 1, 1, 0 }, motion[] = { 1 };
+	static const char *const texts[] = { "1 5000000 0 -1000 0 1222 -40 3", "2 105000000 500 500 -707 0 0 0" };
+
+	kernel_says(&kernel_hid, 5, hid);
+	kernel_says(&kernel_motion, 1, motion);
+	samples_say(2, texts);
+	motion_thread(&the_client);
+	CHECK(accelerometer_events() == 2, "%u samples sent, not 2", accelerometer_events());
+	check_accelerometer_event(0, 5000000, 0, -1, 0);
+	check_accelerometer_event(1, 105000000, 0.5, 0.5, -0.707);
+	CHECK(gyro_event(0) == NULL, "the accelerometer's service sent rates");
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/* ---- the gyroscope's rates (hid_gyro.h) ------------------------------------------------------- */
+
+/* the gyroscope events that reached the event server, the n-th of them, or NULL */
+static const struct sent *
+gyro_event(unsigned n)
+{
+	for (unsigned i = 0; i < sent_count; i++) {
+		if (sent[i].event.gyro && n-- == 0) {
+			return &sent[i];
+		}
+	}
+	return NULL;
+}
+
+static unsigned
+gyro_events(void)
+{
+	unsigned n = 0;
+
+	while (gyro_event(n) != NULL) {
+		n++;
+	}
+	return n;
+}
+
+/* A gyroscope event as locationd reads it: x y z in rad/s, built in, dated when the kernel read the sample. */
+static void
+check_gyro_event(unsigned n, uint64_t time, double x, double y, double z)
+{
+	const struct sent *s = gyro_event(n);
+
+	CHECK(s != NULL, "no gyroscope event %u", n);
+	if (s == NULL) {
+		return;
+	}
+	CHECK(s->event.time == time, "event %u: dated %llu, not %llu (when the kernel read it)", n, (unsigned long long)s->event.time,
+	    (unsigned long long)time);
+	CHECK(fabs(s->event.x - x) < 1e-9 && fabs(s->event.y - y) < 1e-9 && fabs(s->event.z - z) < 1e-9,
+	    "event %u: %f %f %f rad/s, not %f %f %f", n, s->event.x, s->event.y, s->event.z, x, y, z);
+	CHECK(field_of(&s->event, FIELD_IS_BUILT_IN) == 1, "event %u: not built in", n);
+	CHECK(!s->event.accelerometer && s->event.children == 0 && s->event.type == 0, "event %u: an accelerometer's %d, %u children, "
+	    "type %u", n, s->event.accelerometer, s->event.children, s->event.type);
+}
+
+/*
+ * The kernel gives the gyroscope's rates (hw.sensors.hid, .motion and .gyro 1): the service is made on Apple's page
+ * 0xff00, usage 9, and each sample that carries rates is sent once, in rad/s (the kernel's milli-rad/s over 1000), on
+ * the axes the kernel gives, dated when it was read -- not one not read yet, not one read twice, not a read that
+ * failed, not a sample without rates (five numbers) nor one of seven; once the kernel says the rates are not for
+ * Darwin any more (here hw.sensors.gyro 0: the gyroscope held stuck), the looking stops though the samples go on.
+ */
+static void
+scenario_gyro_followed(void)
+{
+	static const int one[] = { 1 }, gyro[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 };
+	static const char *const texts[] = {
+		"0 0 0 0 0", "1 5000000 0 -1000 0", "2 105000000 0 -1000 0 1222 -40 3", "2 105000000 0 -1000 0 1222 -40 3", NULL,
+		"3 205000000 0 0 -1000", "4 305000000 0 0 -1000 -2443 0 40034", "5 405000000 0 0 -1000 1 2",
+		"6 505000000 0 0 -1000 0 0 -1",
+	};
+
+	kernel_says(&kernel_hid, 1, one);
+	kernel_says(&kernel_motion, 1, one);
+	kernel_says(&kernel_gyro, 11, gyro);
+	samples_say(9, texts);
+	gyro_thread(&the_client);
+	CHECK(service_count == 1, "%u services made, not the gyroscope's alone", service_count);
+	CHECK(made_services[0].page == 0xff00 && made_services[0].usage == 0x09, "the service is page %#llx usage %#llx, not Apple's "
+	    "gyroscope (0xff00, 9)", made_services[0].page, made_services[0].usage);
+	CHECK(gyro_events() == 3, "%u rates sent, not 3", gyro_events());
+	check_gyro_event(0, 105000000, 1.222, -0.04, 0.003);
+	check_gyro_event(1, 305000000, -2.443, 0, 40.034);
+	check_gyro_event(2, 505000000, 0, 0, -0.001);
+	CHECK(kernel_sample.asked == 9, "the kernel's sample looked at %u times, not 9: looked at after hw.sensors.gyro said 0",
+	    kernel_sample.asked);
+	CHECK(accelerometer_events() == 0 && frames() == 0 && orientation_event(0) == NULL, "accelerometer events, touch frames or "
+	    "orientations sent");
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/*
+ * What a client asks of the gyroscope's service ("ReportInterval") is what is sent, as for the accelerometer's: every
+ * sample while what was asked says "not configured", every other at 200 ms, every one at 10 ms (the kernel reads no more
+ * often), none while it is 0, when the kernel's sample is not even looked at.
+ */
+static void
+scenario_gyro_as_asked(void)
+{
+	static const int one[] = { 1 }, motion[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 };
+	static const char *const texts[] = {
+		"1 100000000 0 0 -1000 10 0 0", "2 200000000 0 0 -1000 20 0 0", "3 300000000 0 0 -1000 30 0 0",
+		"4 400000000 0 0 -1000 40 0 0", "5 500000000 0 0 -1000 50 0 0", "6 600000000 0 0 -1000 60 0 0",
+		"7 700000000 0 0 -1000 70 0 0", "8 800000000 0 0 -1000 80 0 0",
+	};
+
+	kernel_says(&kernel_hid, 1, one);
+	kernel_says(&kernel_motion, 23, motion);
+	kernel_says(&kernel_gyro, 1, one);
+	samples_say(8, texts);
+	sample_asked(1, 0xffffffffLL);          /* "not configured": every one (1 before it, as nobody had asked, and 2) */
+	sample_asked(2, 200000);                /* 5 a second: every other (not 3, 4, not 5) */
+	sample_asked(5, 10000);                 /* 100 a second: every one the kernel has (6) */
+	sample_asked(6, 0);                     /* none: 7 is never read */
+	gyro_thread(&the_client);
+	CHECK(gyro_events() == 4, "%u rates sent, not 4", gyro_events());
+	for (unsigned n = 0; n < 4; n++) {
+		static const uint64_t times[] = { 100000000, 200000000, 400000000, 600000000 };
+		static const double x[] = { 0.01, 0.02, 0.04, 0.06 };
+
+		check_gyro_event(n, times[n], x[n], 0, 0);
+	}
+	CHECK(kernel_sample.asked == 6, "the kernel's sample looked at %u times, not 6: looked at while none was wanted",
+	    kernel_sample.asked);
+	CHECK(live_events == 0, "%d events never let go of", live_events);
+}
+
+/*
+ * The kernel gives no rates: gyro_hid=0, or a gyroscope it has not seen answer (hw.sensors.gyro 0 throughout, waited
+ * for as hw.sensors.hid is), a kernel from before hw.sensors.gyro, the samples kept from the motion stack
+ * (motion_hid=0), or taken from it while the rates are waited for: no gyroscope service, no sample read.
+ */
+static void
+scenario_gyro_kept_from_darwin(void)
+{
+	static const int one[] = { 1 }, off[] = { 0 }, motion_goes[] = { 1, 1, 1, 0 };
+	static const char *const texts[] = { "1 5000000 0 -1000 0 1222 -40 3" };
+
+	kernel_says(&kernel_hid, 1, one);
+	kernel_says(&kernel_motion, 1, one);
+	kernel_says(&kernel_gyro, 1, off);
+	samples_say(1, texts);
+	gyro_thread(&the_client);
+	CHECK(kernel_gyro.asked == ORIENTATION_WAIT_S + 1, "hw.sensors.gyro asked %u times, not %d", kernel_gyro.asked,
+	    ORIENTATION_WAIT_S + 1);
+	CHECK(service_count == 0 && kernel_sample.asked == 0 && sent_count == 0, "hw.sensors.gyro 0: %u services, the sample read "
+	    "%u times, %u events", service_count, kernel_sample.asked, sent_count);
+	kernel_gyro.count = 0;
+	gyro_thread(&the_client);
+	CHECK(service_count == 0 && kernel_sample.asked == 0, "without hw.sensors.gyro: %u services, the sample read %u times",
+	    service_count, kernel_sample.asked);
+	kernel_says(&kernel_gyro, 1, one);
+	kernel_says(&kernel_motion, 1, off);
+	kernel_gyro.asked = 0;
+	gyro_thread(&the_client);
+	CHECK(service_count == 0 && kernel_sample.asked == 0 && kernel_gyro.asked == 0, "motion_hid=0: %u services, the sample read "
+	    "%u times, hw.sensors.gyro asked %u times", service_count, kernel_sample.asked, kernel_gyro.asked);
+	kernel_says(&kernel_gyro, 1, off);
+	kernel_says(&kernel_motion, 4, motion_goes);
+	kernel_gyro.asked = 0;
+	gyro_thread(&the_client);
+	CHECK(service_count == 0 && kernel_sample.asked == 0 && kernel_gyro.asked <= 4, "the samples taken from the motion stack "
+	    "while waited for: %u services, the sample read %u times, hw.sensors.gyro asked %u times", service_count,
+	    kernel_sample.asked, kernel_gyro.asked);
+}
+
+/* The kernel does not follow the sensor for Darwin (hw.sensors.hid never 1): waited for, then nothing. */
+static void
+scenario_gyro_waits_for_the_kernel(void)
+{
+	static const int never[] = { 0 }, one[] = { 1 };
+
+	kernel_says(&kernel_hid, 1, never);
+	kernel_says(&kernel_motion, 1, one);
+	kernel_says(&kernel_gyro, 1, one);
+	gyro_thread(&the_client);
+	CHECK(kernel_hid.asked == ORIENTATION_WAIT_S + 1, "asked %u times, not %d", kernel_hid.asked, ORIENTATION_WAIT_S + 1);
+	CHECK(service_count == 0 && kernel_sample.asked == 0, "a service made, or a sample read, without the kernel");
+}
+
+/* A Darwin whose IOKit has not got IOHIDEventCreateGyroEvent: no gyroscope service, nothing sent, nothing read. */
+static void
+scenario_gyro_without_the_call(void)
+{
+	static const int one[] = { 1, 1, 0 };
+	static const char *const texts[] = { "1 5000000 0 -1000 0 1222 -40 3" };
+
+	gyro_call_missing = true;
+	kernel_says(&kernel_hid, 3, one);
+	kernel_says(&kernel_motion, 3, one);
+	kernel_says(&kernel_gyro, 3, one);
+	samples_say(1, texts);
+	gyro_thread(&the_client);
+	CHECK(service_count == 0 && sent_count == 0 && kernel_sample.asked == 0, "%u services, %u events, the sample read %u times",
+	    service_count, sent_count, kernel_sample.asked);
+}
+
 static const struct {
 	const char *name;
 	void (*run)(void);
@@ -1151,6 +1379,12 @@ static const struct {
 	{ "motion_kept_from_darwin", scenario_motion_kept_from_darwin },
 	{ "motion_waits_for_the_kernel", scenario_motion_waits_for_the_kernel },
 	{ "motion_without_the_call", scenario_motion_without_the_call },
+	{ "motion_reads_past_the_rates", scenario_motion_reads_past_the_rates },
+	{ "gyro_followed", scenario_gyro_followed },
+	{ "gyro_as_asked", scenario_gyro_as_asked },
+	{ "gyro_kept_from_darwin", scenario_gyro_kept_from_darwin },
+	{ "gyro_waits_for_the_kernel", scenario_gyro_waits_for_the_kernel },
+	{ "gyro_without_the_call", scenario_gyro_without_the_call },
 };
 
 int

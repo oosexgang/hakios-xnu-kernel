@@ -56,8 +56,9 @@ the IOSurfaces marked volatile counted, which its 0417 and 0418 purge (`drivers/
 counted here, nothing purged), the phone's orientation given to Darwin as orientation events of a sensor service, as
 an iPhone's always-on processor gives it (its 0761; `userland/userland/src/hid_orientation.h`, `drivers/board/imu.c`),
 the accelerometer's samples given to Darwin's motion stack as accelerometer events of Apple's own sensor service, in g
-and at the rate the service is asked for, as far as the kernel reads them (its 0760; `userland/userland/src/hid_motion.h`,
-`drivers/board/imu.c`), and a charger plugged in or pulled out between two of the battery's rounds calling for a round at once (its 0703;
+and at the rate the service is asked for, as far as the kernel reads them, and the gyroscope's rates beside them as
+gyroscope events of Apple's own gyroscope service, in radians per second on the same axes (its 0760;
+`userland/userland/src/hid_motion.h`, `userland/userland/src/hid_gyro.h`, `drivers/board/imu.c`), and a charger plugged in or pulled out between two of the battery's rounds calling for a round at once (its 0703;
 `drivers/board/plug_watch_core.h`, `drivers/board/adsp.c`).
 
 ## Excluded from this repository

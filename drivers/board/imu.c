@@ -20,8 +20,8 @@
  *   sensors=2  ... and, the identity being the LSM6DSO's, the chip reset (CTRL3_C), its output kept whole
  *              while it is read and the register address counting up across a read (BDU, IF_INC), and
  *              the accelerometer switched on at 104 Hz and the board's range (CTRL1_XL; the gyroscope
- *              stays off), each write read back. Then its output read about every 100 ms, turned onto
- *              Darwin's axes and into milli-g, each change of orientation said, and the latest in
+ *              too only for Darwin's motion stack, below), each write read back. Then its output read about
+ *              every 100 ms, turned onto Darwin's axes and into milli-g, each change of orientation said, and the latest in
  *              hw.sensors.orientation (a UIDeviceOrientation: 1 portrait ... 6 face down, 0 not known yet, or
  *              not any more once the chip stops answering) and hw.sensors.accel (milli-g, "x y z" on Darwin's
  *              axes). While it is followed, hw.sensors.hid says 1: backboardd's library then gives the
@@ -33,7 +33,12 @@
  *              hears of a turn, as before there was such a service. Nor its motion stack the samples (below).
  *
  *   motion_hid=0  the samples themselves are not given to Darwin's motion stack: hw.sensors.motion stays 0 and
- *              backboardd's library makes no accelerometer service; the orientation is given as ever.
+ *              backboardd's library makes no accelerometer service; the orientation is given as ever. Nor the
+ *              gyroscope's rates (below): it stays powered down.
+ *
+ *   gyro_hid=0  the accelerometer's samples are given as ever, but the gyroscope is not switched on: it stays powered
+ *              down (CTRL2_G as the reset leaves it, 0), hw.sensors.gyro stays 0, no sample carries rates and
+ *              backboardd's library makes no gyroscope service.
  *
  * The samples for Darwin's motion stack (CoreMotion, through locationd): while hw.sensors.hid says 1, and unless
  * the boot-arg above keeps them, hw.sensors.motion says 1 too, and backboardd's library gives each sample of
@@ -45,12 +50,41 @@
  * phone is up -- too dear while nothing on the phone has been seen to need more. A program that asks CoreMotion for
  * more gets those 10 a second, dated when they were read.
  *
+ * The gyroscope's rates go with them (after the idea of the OnePlus Nord 2 port's piece 0760 too, which gave iOS its
+ * hub's gyroscope as well): only while the samples are for the motion stack (hw.sensors.motion 1), and unless the
+ * boot-arg gyro_hid above keeps it off, the gyroscope is switched on with the accelerometer (CTRL2_G: 104 Hz, the same
+ * rate, at +-2000 dps, where the datasheet's sensitivity is 70 mdps a count: GYRO_FS), read in the same burst -- the
+ * twelve output bytes from OUTX_L_G (0x22) to OUTZ_H_A (0x2d) follow each other and IF_INC counts the address up,
+ * gyroscope first -- turned
+ * onto Darwin's axes as the accelerometer is (the same chip axes; the board's accelerometer mounting with its signs
+ * turned back, sensor_axes_core.h: sensor_gyro_mount()) and into milli-rad/s, and put out with the accelerometer's
+ * sample under the same lock: hw.sensors.sample says "NUMBER TIME X Y Z GX GY GZ" for a read that has the
+ * gyroscope's rates, "NUMBER TIME X Y Z" as before for one that has not (a reader of the five reads what it read).
+ * backboardd's library sends them from a gyroscope service of their own (userland/userland/src/hid_gyro.h).
+ *
+ * What it costs: the bus time is no more than before -- this file has always read the twelve bytes in one go, the
+ * gyroscope's six with the accelerometer's (a read of the accelerometer's six alone, from OUTX_L_A, would be some 81
+ * bits, 0.8 ms, against the 135 bits, 1.4 ms, of the twelve: about 0.55 ms a read, 0.55 % of a core at 10 a second, is what
+ * the gyroscope's half of the burst costs, and it was already being paid for six bytes of zeros) -- and one more
+ * register written and read back at the start and at the run's end. What it does cost is current: the gyroscope is
+ * the chip's dearer half to keep running (the datasheet puts the two together at about 0.55 mA at full performance),
+ * hence powered down whenever nothing of Darwin's is to have its rates. And at 10 reads a second each rate is the
+ * one the chip had at that moment, not an average over the tenth of a second: a rotation is caught as it is when
+ * read, which is coarse for whatever integrates the rates into an attitude.
+ *
+ * Never a made-up rate: the gyroscope's output is not taken for its first GYRO_SETTLE reads after it is switched on,
+ * then not until two of its reads have been seen to differ (a gyroscope at rest still wobbles by a count or so; one
+ * that is powered down, or does not answer, reads the same zeros each time), and once it reads the very same rates on
+ * all three axes for GYRO_STUCK reads in a row it is held stuck: hw.sensors.gyro goes back to 0, the samples carry no
+ * rates any more, and the gyroscope is powered down for the rest of the run.
+ *
  * Limits, whatever asks: another chip's identity, a byte nobody acknowledges, a write that does not read
  * back or a bus that is not at rest, and nothing more is done for the rest of the run, with a line that
  * says why. At the run's end (and on a panic's way out) the reading stops and the accelerometer is
  * powered down (CTRL1_XL 0), if it was switched on, a bus the chip holds down (cut off in a byte it was
- * sending) is clocked free, at a look too, and the pins are as they were found. Nothing is written
- * anywhere but to the chip's two control registers and the bus's two pins.
+ * sending) is clocked free, at a look too, and the pins are as they were found. The gyroscope, if it was switched
+ * on, is powered down too (CTRL2_G 0), before the accelerometer. Nothing is written anywhere but to the chip's three
+ * control registers and the bus's two pins.
  */
 #include <kern/clock.h>
 #include <kern/locks.h>
@@ -71,6 +105,7 @@
 static vm_offset_t tlmm;
 static uint32_t level;
 static bool switched_on;                /* the accelerometer was (or may have been) switched on: the run's end switches it off */
+static bool gyro_switched_on;           /* ... and the gyroscope */
 static bool leaving;                    /* the run's end has the chip (hakios_imu_quiesce()) */
 static bool busy;                       /* the thread is using the bus: the run's end waits for it */
 static bool on_bus;                     /* ... from just before it takes the pins until it gives them back */
@@ -84,7 +119,10 @@ HAKIOS_DEFINE_SAY(!__atomic_load_n(&leaving, __ATOMIC_SEQ_CST) && ml_get_interru
 #define wait_ms(ms)             hakios_wait_ms((ms), __atomic_load_n(&leaving, __ATOMIC_SEQ_CST))   /* (spun on the way out) */
 
 #define POLL_MS                 100     /* how often the output is read: at most 10 samples a second (this file's head) */
-#define ODR_104_HZ              4       /* CTRL1_XL's output data rate code for 104 Hz (lsm6dso_core.h: lsm6dso_ctrl1_xl()) */
+#define ODR_104_HZ              4       /* CTRL1_XL's output data rate code for 104 Hz (lsm6dso_core.h: lsm6dso_ctrl1_xl()); CTRL2_G's too */
+#define GYRO_FS                 LSM6DSO_FS_G_2000DPS    /* the gyroscope's range: +-2000 dps, 70 mdps a count (lsm6dso_core.h) */
+#define GYRO_SETTLE             3       /* reads after the gyroscope is switched on whose rates are not taken (this file's head) */
+#define GYRO_STUCK              100     /* reads in a row (10 s) of the very same rates that say the gyroscope is stuck */
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
@@ -269,6 +307,7 @@ identified(void)
 }
 
 static uint8_t full_scale;              /* the board's range as CTRL1_XL has it (LSM6DSO_FS_*) */
+static bool gyro_wanted;                /* the gyroscope to be switched on: its rates for Darwin's motion stack (this file's head) */
 
 /* reset, whole samples read in one go, then the accelerometer on at 104 Hz and the board's range */
 static bool
@@ -276,7 +315,8 @@ configure(void)
 {
 	uint8_t control = LSM6DSO_CTRL3_SW_RESET;
 
-	say("imu: the chip is reset and its accelerometer switched on: 104 Hz, +-%u g\n", hakios_board()->imu.full_scale);
+	say("imu: the chip is reset and its accelerometer switched on: 104 Hz, +-%u g%s\n", hakios_board()->imu.full_scale,
+	    gyro_wanted ? "; its gyroscope too, for Darwin's motion stack: 104 Hz, +-2000 dps" : "");
 	if (!reg_write(LSM6DSO_REG_CTRL3_C, LSM6DSO_CTRL3_SW_RESET)) {
 		say("imu: 0x%02x <- 0x%02x NOT WRITTEN\n", LSM6DSO_REG_CTRL3_C, LSM6DSO_CTRL3_SW_RESET);
 		give_up(failed);
@@ -298,7 +338,14 @@ configure(void)
 		return false;
 	}
 	switched_on = true;             /* (from the write on, whether it went through or not: the run's end switches it off) */
-	return put(LSM6DSO_REG_CTRL1_XL, lsm6dso_ctrl1_xl(ODR_104_HZ, full_scale));
+	if (!put(LSM6DSO_REG_CTRL1_XL, lsm6dso_ctrl1_xl(ODR_104_HZ, full_scale))) {
+		return false;
+	}
+	if (!gyro_wanted) {
+		return true;            /* (the gyroscope stays as the reset left it: powered down) */
+	}
+	gyro_switched_on = true;
+	return put(LSM6DSO_REG_CTRL2_G, lsm6dso_ctrl2_g(ODR_104_HZ, GYRO_FS));
 }
 
 /* ---- the orientation, for Darwin: hw.sensors ----------------------------------------------------- */
@@ -317,6 +364,15 @@ static uint32_t give_darwin = 1;                /* boot-arg orientation_hid (thi
 static volatile int32_t followed_for_darwin;    /* hw.sensors.hid: 1 while the orientation is followed and Darwin is to have it */
 static uint32_t give_motion = 1;                /* boot-arg motion_hid (this file's head): 0 keeps the samples from Darwin's motion stack */
 static volatile int32_t motion_for_darwin;      /* hw.sensors.motion: 1 while hw.sensors.hid is and the samples are for the motion stack */
+static uint32_t give_gyro = 1;                  /* boot-arg gyro_hid (this file's head): 0 keeps the gyroscope powered down */
+static volatile int32_t gyro_for_darwin;        /* hw.sensors.gyro: 1 while hw.sensors.motion is and the samples carry the gyroscope's rates */
+static struct sensor_mount gyro_mount;          /* the gyroscope's turn onto Darwin's axes: the accelerometer's, signs back (sensor_gyro_mount()) */
+static struct sensor_scale gyro_scale;          /* its counts -> milli-rad/s */
+static int32_t shown_rate[3];                   /* the latest sample's rates, milli-rad/s on Darwin's axes ... */
+static bool shown_rate_ok;                      /* ... if it has them */
+static unsigned gyro_reads, gyro_same;          /* the gyroscope's reads since it was switched on, and how many in a row said the same */
+static int16_t gyro_last[3];                    /* what the last one said, in counts */
+static bool gyro_live, gyro_stuck;              /* seen to answer; held stuck (this file's head) */
 
 static const char *const orientation_names[] = {
 	[ORIENT_UNKNOWN] = "not known", [ORIENT_PORTRAIT] = "portrait", [ORIENT_PORTRAIT_UPSIDE_DOWN] = "portrait upside down",
@@ -342,24 +398,34 @@ sysctl_accel SYSCTL_HANDLER_ARGS
 	return SYSCTL_OUT(req, text, strlen(text) + 1);
 }
 
-/* hw.sensors.sample: "NUMBER TIME X Y Z", one sample's, read together under the lock (TIME in mach_absolute_time) */
+/*
+ * hw.sensors.sample: "NUMBER TIME X Y Z", one sample's, read together under the lock (TIME in mach_absolute_time), and
+ * " GX GY GZ" after them when that sample has the gyroscope's rates (milli-rad/s on Darwin's axes)
+ */
 static int
 sysctl_sample SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg1, arg2)
-	char text[80];
-	int32_t mg[3];
+	char text[128];
+	int32_t mg[3], rate[3];
 	uint32_t number;
 	uint64_t time;
+	bool rated;
+	int length;
 
 	lck_spin_lock(&shown_lock);
 	number = shown_number;
 	time = shown_time;
+	rated = shown_rate_ok;
 	for (unsigned i = 0; i < 3; i++) {
 		mg[i] = shown_mg[i];
+		rate[i] = shown_rate[i];
 	}
 	lck_spin_unlock(&shown_lock);
-	snprintf(text, sizeof(text), "%u %llu %d %d %d", number, (unsigned long long)time, mg[0], mg[1], mg[2]);
+	length = snprintf(text, sizeof(text), "%u %llu %d %d %d", number, (unsigned long long)time, mg[0], mg[1], mg[2]);
+	if (rated && length > 0 && (size_t)length < sizeof(text)) {
+		snprintf(text + length, sizeof(text) - (size_t)length, " %d %d %d", rate[0], rate[1], rate[2]);
+	}
 	return SYSCTL_OUT(req, text, strlen(text) + 1);
 }
 
@@ -375,7 +441,8 @@ SYSCTL_UINT(_hw_sensors, OID_AUTO, samples, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOL
  * when it happened to look. "0 0 0 0 0" until the first is read.
  */
 SYSCTL_PROC(_hw_sensors, OID_AUTO, sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 0, sysctl_sample, "A",
-    "the latest accelerometer sample: its number, the time it was read (mach_absolute_time), x y z in milli-g on Darwin's axes");
+    "the latest sample: its number, the time it was read (mach_absolute_time), x y z in milli-g on Darwin's axes, "
+    "and the gyroscope's x y z in milli-rad/s when it has them");
 /*
  * Whether backboardd's library is to give the orientation to Darwin (userland/userland/src/hid_orientation.h): 1 from
  * the moment the orientation is followed until the reading stops -- the chip lost, the run's end -- and never with
@@ -390,6 +457,14 @@ SYSCTL_INT(_hw_sensors, OID_AUTO, hid, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE
  */
 SYSCTL_INT(_hw_sensors, OID_AUTO, motion, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &motion_for_darwin), 0,
     "1 while hw.sensors.hid is 1 and Darwin's motion stack is to be given the samples (boot-arg motion_hid=0: never)");
+/*
+ * Whether backboardd's library is to give the gyroscope's rates to Darwin's motion stack (hid_gyro.h): 1 only while
+ * hw.sensors.motion is 1, from the read that shows the gyroscope answers, until it is held stuck or the reading stops,
+ * and never with gyro_hid=0. While it says 1 the samples of hw.sensors.sample carry rates; set after hw.sensors.motion
+ * and let go of before it.
+ */
+SYSCTL_INT(_hw_sensors, OID_AUTO, gyro, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &gyro_for_darwin), 0,
+    "1 while hw.sensors.motion is 1 and the samples carry the gyroscope's rates (boot-arg gyro_hid=0: never)");
 
 /* The bus is the thread's from here until it calls done(); false when the run's end has it already. */
 static bool
@@ -409,13 +484,45 @@ done(void)
 	__atomic_store_n(&busy, false, __ATOMIC_SEQ_CST);
 }
 
+/*
+ * Whether the gyroscope's rates of this read (counts) are its own, to be given (this file's head): not in its first
+ * GYRO_SETTLE reads, nor before two reads after those have been seen to differ, nor once GYRO_STUCK in a row have said
+ * the very same -- when it is held stuck, said, and powered down for the rest of the run.
+ */
+static bool
+gyro_taken(const int16_t raw[3])
+{
+	bool same = raw[0] == gyro_last[0] && raw[1] == gyro_last[1] && raw[2] == gyro_last[2];
+
+	for (unsigned i = 0; i < 3; i++) {
+		gyro_last[i] = raw[i];
+	}
+	if (gyro_stuck || ++gyro_reads <= GYRO_SETTLE + 1) {
+		return false;           /* (the first after the settling ones is only what the next is held against) */
+	}
+	gyro_same = same ? gyro_same + 1 : 0;
+	if (gyro_same + 1 >= GYRO_STUCK) {     /* (the first of them and the GYRO_STUCK - 1 after it that said the same) */
+		gyro_stuck = true;
+		__atomic_store_n(&gyro_for_darwin, 0, __ATOMIC_SEQ_CST);
+		say("imu: the gyroscope has read %d %d %d (counts) %u times in a row: %s; it is powered down (CTRL2_G 0%s)\n", raw[0],
+		    raw[1], raw[2], gyro_same + 1, gyro_live ? "stuck, its rates NOT GIVEN ANY MORE" :
+		    "it does not answer, its rates NOT GIVEN", reg_write(LSM6DSO_REG_CTRL2_G, 0) ? "" : ": NOT WRITTEN");
+		return false;
+	}
+	if (!gyro_live && !same) {
+		gyro_live = true;       /* (said by the caller, which has the rates on Darwin's axes) */
+	}
+	return gyro_live;
+}
+
 /* One sample: read, turned onto Darwin's axes, into the orientation; a change of it said. */
 static bool
 sample(void)
 {
 	uint8_t out[LSM6DSO_OUTPUT_BYTES];
 	struct lsm6dso_sample raw;
-	struct sensor_sample mg;
+	struct sensor_sample mg, rate = { { 0, 0, 0 } };
+	bool rated;
 	int now;
 
 	if (!regs_read(LSM6DSO_REG_OUTX_L_G, out, sizeof(out))) {
@@ -428,6 +535,10 @@ sample(void)
 	}
 	raw = lsm6dso_decode(out);
 	mg = sensor_to_darwin(&accel.mount, &accel.scale, (struct sensor_sample){ { raw.accel[0], raw.accel[1], raw.accel[2] } });
+	rated = gyro_switched_on && gyro_taken(raw.gyro);
+	if (rated) {
+		rate = sensor_to_darwin(&gyro_mount, &gyro_scale, (struct sensor_sample){ { raw.gyro[0], raw.gyro[1], raw.gyro[2] } });
+	}
 	now = sensors_accel_raw(&accel, raw.accel[0], raw.accel[1], raw.accel[2]);
 	if (now != shown_orientation) {
 		changes++;
@@ -437,11 +548,19 @@ sample(void)
 	lck_spin_lock(&shown_lock);
 	for (unsigned i = 0; i < 3; i++) {
 		shown_mg[i] = mg.v[i];
+		shown_rate[i] = rate.v[i];
 	}
+	shown_rate_ok = rated;
 	shown_orientation = now;
 	shown_time = mach_absolute_time();
 	shown_number = ++samples;
 	lck_spin_unlock(&shown_lock);
+	if (rated && !__atomic_load_n(&gyro_for_darwin, __ATOMIC_SEQ_CST) && !__atomic_load_n(&leaving, __ATOMIC_SEQ_CST)) {
+		/* (once: only stuck takes it back, for good) */
+		say("imu: the gyroscope answers at its read %u (%d %d %d milli-rad/s; the chip's %d %d %d): its rates are given to Darwin's "
+		    "motion stack (hw.sensors.gyro 1)\n", gyro_reads, rate.v[0], rate.v[1], rate.v[2], raw.gyro[0], raw.gyro[1], raw.gyro[2]);
+		__atomic_store_n(&gyro_for_darwin, 1, __ATOMIC_SEQ_CST);
+	}
 	return true;
 }
 
@@ -458,9 +577,11 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 		done();
 		if (followed) {
 			say("imu: the orientation is followed from here on (hw.sensors.orientation, hw.sensors.accel), until the run ends; "
-			    "%s%s\n", give_darwin ? "Darwin is given it (hw.sensors.hid 1)" : "Darwin is not given it (orientation_hid=0)",
+			    "%s%s%s\n", give_darwin ? "Darwin is given it (hw.sensors.hid 1)" : "Darwin is not given it (orientation_hid=0)",
 			    !give_darwin ? "" : give_motion ? ", and its motion stack the samples (hw.sensors.motion 1)" :
-			    ", not its motion stack the samples (motion_hid=0)");
+			    ", not its motion stack the samples (motion_hid=0)", !give_darwin || !give_motion ? "" :
+			    gyro_wanted ? ", with the gyroscope's rates once it is seen to answer (hw.sensors.gyro)" :
+			    !give_gyro ? ", without the gyroscope's rates (gyro_hid=0)" : ", without the gyroscope's rates (the board's mount)");
 			/* (the motion first: the library looks at it once hw.sensors.hid says 1) */
 			__atomic_store_n(&motion_for_darwin, give_darwin && give_motion ? 1 : 0, __ATOMIC_SEQ_CST);
 			__atomic_store_n(&followed_for_darwin, give_darwin ? 1 : 0, __ATOMIC_SEQ_CST);
@@ -474,6 +595,7 @@ imu_thread(__unused void *parameter, __unused wait_result_t result)
 				wait_ms(POLL_MS);
 			}
 			/* (nothing more is read: the library's services fall silent, and keep what they said last) */
+			__atomic_store_n(&gyro_for_darwin, 0, __ATOMIC_SEQ_CST);
 			__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);
 			__atomic_store_n(&motion_for_darwin, 0, __ATOMIC_SEQ_CST);
 		}
@@ -527,14 +649,24 @@ hakios_imu_init(void)
 	PE_parse_boot_argn("orientation_hid", &give_darwin, sizeof(give_darwin));
 	/* boot-arg motion_hid=0: the samples not given to Darwin's motion stack (this file's head) */
 	PE_parse_boot_argn("motion_hid", &give_motion, sizeof(give_motion));
+	/* boot-arg gyro_hid=0: the gyroscope not switched on, its rates not given (this file's head) */
+	PE_parse_boot_argn("gyro_hid", &give_gyro, sizeof(give_gyro));
+	gyro_wanted = level >= 2 && give_darwin && give_motion && give_gyro;
+	if (gyro_wanted && !sensor_gyro_mount(&accel.mount, &gyro_mount)) {
+		say("imu: the gyroscope is not switched on: the board's mount (imu { }) is not a turn a chip's axes can have "
+		    "(the accelerometer's, which turns its +1 g up into Darwin's -1 g, must be a mirror), so its rates could not be "
+		    "put the right way round on Darwin's axes\n");
+		gyro_wanted = false;
+	}
+	gyro_scale = sensor_gyro_scale(lsm6dso_gyro_udps_per_count(GYRO_FS));
 	if (kernel_thread_start(imu_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}
 }
 
 /*
- * At the run's end and on a panic's way out: the reading stopped, the bus at rest, the accelerometer powered
- * down if it was switched on, the pins as they were found.
+ * At the run's end and on a panic's way out: the reading stopped, the bus at rest, the gyroscope and the accelerometer
+ * powered down if they were switched on, the pins as they were found.
  */
 void
 hakios_imu_quiesce(void)
@@ -546,11 +678,13 @@ hakios_imu_quiesce(void)
 		return;
 	}
 	__atomic_store_n(&leaving, true, __ATOMIC_SEQ_CST);
-	__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);  /* (whether its thread gets that far or not) */
+	__atomic_store_n(&gyro_for_darwin, 0, __ATOMIC_SEQ_CST);      /* (whether its thread gets that far or not) */
+	__atomic_store_n(&followed_for_darwin, 0, __ATOMIC_SEQ_CST);
 	__atomic_store_n(&motion_for_darwin, 0, __ATOMIC_SEQ_CST);
 	for (unsigned i = 0; i < 100 && __atomic_load_n(&busy, __ATOMIC_SEQ_CST); i++) {
 		wait_ms(1);             /* (the thread finishing what it reads: 100 ms at most, a stopped core's never ends) */
 	}
+	__atomic_store_n(&gyro_for_darwin, 0, __ATOMIC_SEQ_CST);      /* (again: a read that ended after the first might have said 1) */
 	if (__atomic_load_n(&on_bus, __ATOMIC_SEQ_CST)) {
 		/*
 		 * the thread stopped in the middle of a transfer, or of taking the pins (a panic, its core stopped): ended, the
@@ -577,6 +711,10 @@ hakios_imu_quiesce(void)
 	}
 	if (!switched_on) {
 		return;
+	}
+	if (gyro_switched_on) {
+		off = reg_write(LSM6DSO_REG_CTRL2_G, 0);
+		say("imu: at the run's end: the gyroscope %s\n", off ? "is powered down (CTRL2_G 0)" : "COULD NOT BE POWERED DOWN");
 	}
 	off = reg_write(LSM6DSO_REG_CTRL1_XL, 0);
 	say("imu: at the run's end: %u samples read, the orientation changed %u times; the accelerometer %s\n", samples, changes,

@@ -8,7 +8,9 @@
  * right orientation through the board's turned mounting; at the run's end it is powered down and the pins
  * are as they were found, also when the driver's thread was stopped (as the run's end stops the other cores)
  * while it took the pins or while the chip was sending it a byte; and what it says to Darwin's side (hw.sensors.hid,
- * hw.sensors.motion, the timed hw.sensors.sample) and when.
+ * hw.sensors.motion, the timed hw.sensors.sample) and when; and the gyroscope: switched on only when its rates are for
+ * Darwin's motion stack, given only once it is seen to answer and not once it is stuck, its counts turned onto Darwin's
+ * axes and into milli-rad/s, and powered down at the run's end.
  *
  *   imu_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
@@ -30,6 +32,7 @@ extern char log_text[];
 
 #define WHO_AM_I        0x0f
 #define CTRL1_XL        0x10
+#define CTRL2_G         0x11
 #define CTRL3_C         0x12
 #define OUTX_L_G        0x22
 
@@ -39,11 +42,13 @@ static unsigned resets, written_after_reset;
 static int deaf_register = -1;                  /* a register that does not take what is written into it */
 static bool reset_never_ends;                   /* CTRL3_C's reset bit stays set */
 static volatile unsigned output_reads;          /* reads of the first output byte: samples taken */
+static volatile bool gyro_wobbles;              /* the gyroscope's x says one count more or less on every other read, as one at rest does */
 
 static void
 chip_reset(void)
 {
 	device.reg[CTRL1_XL] = 0x00;
+	device.reg[CTRL2_G] = 0x00;
 	device.reg[CTRL3_C] = 0x04;             /* IF_INC, as the chip comes out of reset */
 }
 
@@ -70,6 +75,9 @@ chip_read(uint8_t reg)
 {
 	if (reg == OUTX_L_G) {
 		output_reads++;
+		if (gyro_wobbles) {
+			device.reg[OUTX_L_G] ^= 1;
+		}
 	}
 	return device.reg[reg];
 }
@@ -121,15 +129,36 @@ static int failures;
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 #define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
 
+/* what the chip's gyroscope reads, in its own axes and counts: the first six of the twelve output bytes */
+static int16_t rates[3] = { 11, -22, 33 };      /* (not what the orientation is made of; the same each read: not answering) */
+
+static void
+output_word(unsigned i, int16_t v)
+{
+	device.reg[OUTX_L_G + 2 * i] = (uint8_t)((uint16_t)v & 0xff);
+	device.reg[OUTX_L_G + 2 * i + 1] = (uint8_t)((uint16_t)v >> 8);
+}
+
+static void
+chip_rates(int16_t x, int16_t y, int16_t z)
+{
+	rates[0] = x;
+	rates[1] = y;
+	rates[2] = z;
+	for (unsigned i = 0; i < 3; i++) {
+		output_word(i, rates[i]);
+	}
+}
+
 /* what the chip's accelerometer reads, in its own axes and counts: the last six of the twelve output bytes */
 static void
 chip_reads(int16_t x, int16_t y, int16_t z)
 {
-	int16_t v[6] = { 11, -22, 33, x, y, z };      /* (the gyroscope's first: not what the orientation is made of) */
+	int16_t v[3] = { x, y, z };
 
-	for (unsigned i = 0; i < 6; i++) {
-		device.reg[OUTX_L_G + 2 * i] = (uint8_t)((uint16_t)v[i] & 0xff);
-		device.reg[OUTX_L_G + 2 * i + 1] = (uint8_t)((uint16_t)v[i] >> 8);
+	for (unsigned i = 0; i < 3; i++) {
+		output_word(i, rates[i]);
+		output_word(3 + i, v[i]);
 	}
 }
 
@@ -175,12 +204,12 @@ pins_as_found(void)
 	}
 }
 
-/* only the two control registers, if anything */
+/* only the three control registers, if anything */
 static bool
 only_the_control_registers(void)
 {
 	for (unsigned reg = 0; reg < 256; reg++) {
-		if (register_written[reg] && reg != CTRL1_XL && reg != CTRL3_C) {
+		if (register_written[reg] && reg != CTRL1_XL && reg != CTRL2_G && reg != CTRL3_C) {
 			fprintf(stderr, "register 0x%02x was written\n", reg);
 			return false;
 		}
@@ -306,7 +335,7 @@ configured(void)
 	CHECK(device.reg[CTRL1_XL] == 0x48, "CTRL1_XL: 104 Hz (4 << 4) at +-4 g (2 << 2), 0x48: %#x", device.reg[CTRL1_XL]);
 	CHECK(logged("imu: 0x12 <- 0x44, reads 0x44") && logged("imu: 0x10 <- 0x48, reads 0x48"), "each write read back: %s", log_text);
 	CHECK(logged("104 Hz, +-4 g"), "the board's range said: %s", log_text);
-	CHECK(only_the_control_registers(), "nothing but CTRL3_C and CTRL1_XL was written");
+	CHECK(only_the_control_registers(), "nothing but CTRL3_C, CTRL1_XL and CTRL2_G was written");
 	CHECK(device.driven_high == 0 && model.elsewhere == 0, "the bus was used as a bus");
 	hakios_imu_quiesce();
 }
@@ -352,6 +381,8 @@ teardown(void)
 	CHECK(device.reg[CTRL1_XL] != 0, "on while the run goes on");
 	hakios_imu_quiesce();
 	CHECK(device.reg[CTRL1_XL] == 0, "CTRL1_XL 0, power-down, at the run's end: %#x", device.reg[CTRL1_XL]);
+	CHECK(device.reg[CTRL2_G] == 0 && logged("imu: at the run's end: the gyroscope is powered down (CTRL2_G 0)"),
+	    "the gyroscope too: %#x, %s", device.reg[CTRL2_G], log_text);
 	CHECK(logged("imu: at the run's end:") && logged("the accelerometer is powered down (CTRL1_XL 0)"), "said: %s", log_text);
 	pins_as_found();
 	usleep(300000);                         /* (the thread's wait, spun now: a poll's) */
@@ -665,6 +696,218 @@ stopped_taking_the_pins(void)
 	pins_as_found();
 }
 
+/* ---- the gyroscope ------------------------------------------------------------------------------- */
+
+/* hw.sensors.sample's numbers: how many it says (5, or 8 with the gyroscope's rates), and them */
+static int
+sample_says(int mg[3], int rate[3])
+{
+	unsigned number;
+	unsigned long long time;
+
+	return sscanf(get_string("sample"), "%u %llu %d %d %d %d %d %d", &number, &time, &mg[0], &mg[1], &mg[2], &rate[0], &rate[1],
+	    &rate[2]);
+}
+
+/* until hw.sensors.sample carries these rates (milli-rad/s on Darwin's axes), 3 s at most */
+static bool
+rates_said(int x, int y, int z)
+{
+	int mg[3], rate[3];
+
+	for (int waited = 0; waited < 3000; waited += 5) {
+		if (sample_says(mg, rate) == 8 && rate[0] == x && rate[1] == y && rate[2] == z) {
+			return true;
+		}
+		usleep(5000);
+	}
+	fprintf(stderr, "hw.sensors.sample: %s, not the rates %d %d %d\n", get_string("sample"), x, y, z);
+	return false;
+}
+
+/* a gyroscope that answers (its x wobbling by a count), until it is given: sensors=2 and whatever else ARGS says */
+static void
+gyro_answering(const char *args)
+{
+	phone("phone-video", 0x6c);
+	chip_reads(-8192, 0, 0);
+	chip_rates(1000, 0, 0);
+	gyro_wobbles = true;
+	boot_args = args;
+	hakios_imu_init();
+	WAIT_FOR(get("gyro") == 1, 10000);
+}
+
+/*
+ * The samples are for Darwin's motion stack (sensors=2, by default): the gyroscope is switched on with the
+ * accelerometer, at the same 104 Hz and +-2000 dps (CTRL2_G 0x4c), the write read back -- but not given before it is
+ * seen to answer; at the run's end it is powered down (CTRL2_G 0) with the accelerometer.
+ */
+static void
+gyro_configured(void)
+{
+	following();
+	CHECK(device.reg[CTRL2_G] == 0x4c, "CTRL2_G: 104 Hz (4 << 4) at +-2000 dps (3 << 2), 0x4c: %#x", device.reg[CTRL2_G]);
+	CHECK(logged("imu: 0x11 <- 0x4c, reads 0x4c") && logged("its gyroscope too, for Darwin's motion stack: 104 Hz, +-2000 dps"),
+	    "said: %s", log_text);
+	CHECK(logged("with the gyroscope's rates once it is seen to answer (hw.sensors.gyro)"), "said: %s", log_text);
+	CHECK(get("gyro") == 0, "the rates given before the gyroscope was seen to answer: %u", get("gyro"));
+	hakios_imu_quiesce();
+	CHECK(device.reg[CTRL2_G] == 0 && device.reg[CTRL1_XL] == 0, "powered down: CTRL2_G %#x, CTRL1_XL %#x", device.reg[CTRL2_G],
+	    device.reg[CTRL1_XL]);
+	CHECK(logged("imu: at the run's end: the gyroscope is powered down (CTRL2_G 0)"), "said: %s", log_text);
+	CHECK(only_the_control_registers(), "nothing else written");
+}
+
+/*
+ * The rates, once the gyroscope answers: from its fifth read (three let settle, the fourth what the fifth is held
+ * against), in the same sample as the accelerometer's milli-g, turned onto Darwin's axes as the accelerometer is but
+ * with the board's signs turned back (the board: "-y", "x", "-z" for the accelerometer; for the rates Darwin's x is
+ * the chip's +y, its y the chip's -x, its z the chip's +z) and into milli-rad/s at 70 mdps a count: 1000 counts are 70
+ * dps, 1.2217 rad/s.
+ */
+static void
+gyro_rates_through_the_mounting(void)
+{
+	int mg[3], rate[3];
+
+	gyro_answering("sensors=2");
+	CHECK(get("gyro") == 1, "the rates not given: %s", log_text);
+	CHECK(logged("imu: the gyroscope answers at its read 5 ("), "given from another read than its fifth: %s", log_text);
+	CHECK(logged("its rates are given to Darwin's motion stack (hw.sensors.gyro 1)"), "said: %s", log_text);
+	gyro_wobbles = false;
+	chip_rates(1000, 0, 0);
+	CHECK(rates_said(0, -1222, 0), "the chip's x is Darwin's -y");
+	CHECK(sample_says(mg, rate) == 8 && mg[0] == 0 && mg[1] == -1000 && mg[2] == 0, "with the accelerometer's portrait: %s",
+	    get_string("sample"));
+	chip_rates(0, 2000, 0);
+	CHECK(rates_said(2443, 0, 0), "the chip's y is Darwin's x: 140 dps, 2.4435 rad/s");
+	chip_rates(0, 0, -32768);
+	CHECK(rates_said(0, 0, -40034), "the chip's z is Darwin's z, all the range: -2293.76 dps, -40.0335 rad/s");
+	chip_rates(-1, 1, 1);
+	CHECK(rates_said(1, 1, 1), "a count is 1.22 milli-rad/s, rounded to the nearest");
+	CHECK(only_the_control_registers(), "reading wrote nothing");
+	hakios_imu_quiesce();
+	CHECK(get("gyro") == 0, "given after the run's end: %u", get("gyro"));
+	CHECK(device.reg[CTRL2_G] == 0, "not powered down at the run's end: %#x", device.reg[CTRL2_G]);
+}
+
+/* What keeps the gyroscope off: never written, never given, no sample with rates -- and nothing to power down at the end. */
+static void
+gyro_kept_off(const char *args, const char *said)
+{
+	int mg[3], rate[3];
+
+	gyro_answering(args);
+	WAIT_FOR(get("samples") >= 12, 10000);
+	CHECK(get("samples") >= 12, "followed: %u samples", get("samples"));
+	CHECK(!register_written[CTRL2_G] && device.reg[CTRL2_G] == 0, "the gyroscope switched on: %#x", device.reg[CTRL2_G]);
+	CHECK(get("gyro") == 0 && sample_says(mg, rate) == 5, "rates given: hw.sensors.gyro %u, %s", get("gyro"), get_string("sample"));
+	CHECK(!logged("imu: the gyroscope answers"), "said: %s", log_text);
+	CHECK(said == NULL || logged(said), "not said \"%s\": %s", said, log_text);
+	hakios_imu_quiesce();
+	CHECK(!register_written[CTRL2_G] && !logged("the gyroscope is powered down"), "written at the run's end: %s", log_text);
+}
+
+/* gyro_hid=0: the accelerometer's samples given as ever, the gyroscope powered down */
+static void
+gyro_hid_off(void)
+{
+	gyro_kept_off("sensors=2 gyro_hid=0", "without the gyroscope's rates (gyro_hid=0)");
+	CHECK(get("motion") == 0 && logged("and its motion stack the samples (hw.sensors.motion 1)"), "the samples not given: %s",
+	    log_text);
+}
+
+/* ... nor without the samples for the motion stack (motion_hid=0), nor without Darwin given anything (orientation_hid=0) */
+static void
+gyro_not_without_motion(void)
+{
+	gyro_kept_off("sensors=2 motion_hid=0", NULL);
+}
+
+static void
+gyro_not_without_darwin(void)
+{
+	gyro_kept_off("sensors=2 orientation_hid=0", NULL);
+}
+
+/* a board whose accelerometer mount is no mirror: the gyroscope's rates could only be guessed the right way round: off */
+static void
+gyro_board_mount_refused(void)
+{
+	static struct hakios_board mirrored;
+
+	phone("phone-video", 0x6c);
+	mirrored = *hakios_board();
+	mirrored.imu.sign[0] = (int8_t)-mirrored.imu.sign[0];   /* ("y", "x", "-z": a turn, which no accelerometer's mount is) */
+	found = &mirrored;
+	gyro_kept_off("sensors=2", "the gyroscope is not switched on: the board's mount (imu { }) is not a turn");
+	CHECK(logged("without the gyroscope's rates (the board's mount)"), "said: %s", log_text);
+}
+
+/* a gyroscope that reads the same zeros each time (one that does not answer): never given, and powered down again */
+static void
+gyro_zeros_not_given(void)
+{
+	int mg[3], rate[3];
+	bool given = false;
+
+	phone("phone-video", 0x6c);
+	chip_reads(-8192, 0, 0);
+	chip_rates(0, 0, 0);
+	boot_args = "sensors=2";
+	hakios_imu_init();
+	for (int waited = 0; waited < 15000 && !logged("does not answer"); waited += 5) {
+		given |= get("gyro") != 0 || sample_says(mg, rate) == 8;
+		usleep(5000);
+	}
+	CHECK(!given, "rates given for zeros");
+	CHECK(logged("imu: the gyroscope has read 0 0 0 (counts) 100 times in a row: it does not answer, its rates NOT GIVEN; "
+	    "it is powered down (CTRL2_G 0)"), "said: %s", log_text);
+	CHECK(device.reg[CTRL2_G] == 0, "not powered down: %#x", device.reg[CTRL2_G]);
+	WAIT_FOR(get("orientation") == 1, 3000);
+	CHECK(get("orientation") == 1 && get("motion") == 1, "the accelerometer not followed as ever");
+	hakios_imu_quiesce();
+}
+
+/* a gyroscope that answered and then reads the very same for ten seconds: held stuck, its rates taken back */
+static void
+gyro_stuck_taken_back(void)
+{
+	int mg[3], rate[3];
+	uint32_t before;
+
+	gyro_answering("sensors=2");
+	CHECK(get("gyro") == 1, "the rates not given: %s", log_text);
+	gyro_wobbles = false;
+	WAIT_FOR(logged("stuck"), 15000);
+	CHECK(logged("times in a row: stuck, its rates NOT GIVEN ANY MORE; it is powered down (CTRL2_G 0)"), "said: %s", log_text);
+	CHECK(get("gyro") == 0, "still given: %u", get("gyro"));
+	CHECK(device.reg[CTRL2_G] == 0, "not powered down: %#x", device.reg[CTRL2_G]);
+	before = get("samples");
+	WAIT_FOR(get("samples") >= before + 2, 3000);
+	CHECK(sample_says(mg, rate) == 5 && get("samples") >= before + 2, "the samples go on without rates: %s",
+	    get_string("sample"));
+	gyro_wobbles = true;                    /* (and it is not taken back up: stuck is for the run) */
+	WAIT_FOR(get("samples") >= before + 10, 3000);
+	CHECK(get("gyro") == 0 && sample_says(mg, rate) == 5, "given again: %s", get_string("sample"));
+	hakios_imu_quiesce();
+}
+
+/* the chip lost: the rates are not given any more (hw.sensors.gyro 0); the run's end powers it down all the same */
+static void
+gyro_lost_with_the_chip(void)
+{
+	gyro_answering("sensors=2");
+	CHECK(get("gyro") == 1, "the rates not given: %s", log_text);
+	device.absent = true;
+	WAIT_FOR(logged("imu: done"), 5000);
+	CHECK(get("gyro") == 0 && get("motion") == 0, "given after the chip was lost: gyro %u, motion %u", get("gyro"), get("motion"));
+	device.absent = false;
+	hakios_imu_quiesce();
+	CHECK(device.reg[CTRL2_G] == 0 && logged("the gyroscope is powered down (CTRL2_G 0)"), "not powered down: %s", log_text);
+}
+
 /* a level past the last is the last */
 static void
 level_past_the_last(void)
@@ -709,6 +952,11 @@ main(int argc, char **argv)
 		{ "stopped_in_a_read_at_a_look", stopped_in_a_read_at_a_look },
 		{ "stopped_in_a_read_before_switched_on", stopped_in_a_read_before_switched_on },
 		{ "stopped_taking_the_pins_first", stopped_taking_the_pins_first }, { "stopped_taking_the_pins", stopped_taking_the_pins },
+		{ "gyro_configured", gyro_configured }, { "gyro_rates_through_the_mounting", gyro_rates_through_the_mounting },
+		{ "gyro_hid_off", gyro_hid_off }, { "gyro_not_without_motion", gyro_not_without_motion },
+		{ "gyro_not_without_darwin", gyro_not_without_darwin }, { "gyro_board_mount_refused", gyro_board_mount_refused },
+		{ "gyro_zeros_not_given", gyro_zeros_not_given }, { "gyro_stuck_taken_back", gyro_stuck_taken_back },
+		{ "gyro_lost_with_the_chip", gyro_lost_with_the_chip },
 	};
 
 	scenario_thread = pthread_self();
