@@ -1,0 +1,20 @@
+/dts-v1/;
+
+// A made-up chip whose PMIC arbiter is of version 7: two SPMI buses behind one arbiter, the PMICs of this
+// phone on the second, this system the arbiter's second (ee = 1). Addresses where no real chip has them.
+// For the tests of what the drivers of PMICs do through such an arbiter (workbench/spmi_test.c,
+// buttons_driver_test.c, rtc_driver_test.c, torch_driver_test.c).
+/ {
+	name = "soc-buses";
+	description = "A made-up chip for the tests, two SPMI buses behind its arbiter";
+
+	// A version 7 PMIC arbiter: the blocks of version 5 by name (its cnfg the second bus's own), and which bus.
+	spmi {
+		core = <0x0a400000>;
+		cnfg = <0x0a42d000>;
+		observer = <0x0a480000>;
+		channels = <0x0a500000>;
+		ee = <1>;
+		bus = <1>;
+	};
+};

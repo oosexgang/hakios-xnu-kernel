@@ -292,6 +292,36 @@ another_chip(void)
 	dark_at_the_end();
 }
 
+/* the same part behind an arbiter of version 7, on the second of its two buses, this system the arbiter's
+ * second. The first bus has a flash module at the same address, through channels of the same numbers: it
+ * is not read and, above all, not written. */
+static void
+second_bus(void)
+{
+	static struct spmi_peripheral namesake;
+
+	phone("phone-buses");
+	spmi_version_7(hakios_board()->spmi.observer, 1, 24, 40);
+	namesake = flash_model;
+	namesake.written = NULL;
+	namesake.bus = 0;
+	spmi_channel(11, &namesake, 3);
+	spmi_channel(20, &namesake, spmi.ee);
+	boot_args = "torch=2 torch_secs=1";
+	hakios_torch_init();
+	WAIT_FOR(lit_now(), 5000);
+	CHECK(logged("channel 20 is the PM8350C's flash LED module (0x4ee00); written by system 1, which is us"),
+	    "the channel of this system on the second bus: %s", log_text);
+	CHECK(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 9, "lit at Android's current");
+	WAIT_FOR(logged("torch: done"), 5000);
+	CHECK(!lit_now() && times_lit == 1 && spmi.denied == 0, "and dark again; no write was refused (%u)", spmi.denied);
+	CHECK(namesake.writes == 0 && flash_model.writes > 0, "every write to this bus's module, none to the other's (%u, %u)",
+	    flash_model.writes, namesake.writes);
+	CHECK(spmi.past_the_table == 0, "%u reads of the first bus's part of the tables", spmi.past_the_table);
+	never();
+	dark_at_the_end();
+}
+
 /* torch=3: the level Darwin writes is the light, never above Android's current, and a read says what is lit */
 static void
 for_darwin(void)
@@ -747,11 +777,11 @@ static void
 another_arbiter(void)
 {
 	phone("phone-video");
-	spmi.version = 0x70000000;
+	spmi.version = 0x30000000;
 	boot_args = "torch=2";
 	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
-	CHECK(logged("PMIC arbiter version 0x70000000, not 5: nothing done"), "said in the log: %s", log_text);
+	CHECK(logged("PMIC arbiter version 0x30000000, not 5, 7 or 8: nothing done"), "said in the log: %s", log_text);
 	CHECK(spmi.transfers == 0, "not a transfer on the bus (%u)", spmi.transfers);
 	never();
 }
@@ -794,7 +824,7 @@ main(int argc, char **argv)
 		{ "lit_and_then_given_up", lit_and_then_given_up }, { "short_writes_and_reads", short_writes_and_reads },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part }, { "only_the_six", only_the_six },
-		{ "dropped_and_asked_again", dropped_and_asked_again },
+		{ "dropped_and_asked_again", dropped_and_asked_again }, { "second_bus", second_bus },
 		{ "light_once_read_back_fails", light_once_read_back_fails }, { "flags_read_fails_while_lit", flags_read_fails_while_lit },
 		{ "battery_goes_quiet_while_lit", battery_goes_quiet_while_lit },
 		{ "battery_quiet_before_the_light", battery_quiet_before_the_light }, { "no_battery_at_all", no_battery_at_all },

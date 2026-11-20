@@ -493,6 +493,21 @@ class Check(Sandbox):
         self.assertIn('.channels = 0x0c600000,', boards.table_text(*boards.load()))
         self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d },', text)
 
+    def test_a_version_7_arbiters_bus_is_the_soc_files(self):
+        self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n'
+                                '\t\tbus = <1>;\n\t};\n\tthermal {')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.observer = 0x0e600000, .channels = 0x00000000, .ee = 0, .bus = 1 },', boards.table_text(*boards.load()))
+        # the first bus is what a file that says nothing has, and the table says nothing of it either
+        self.soc('bus = <1>;', 'bus = <0>;')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.observer = 0x0e600000, .channels = 0x00000000, .ee = 0 },', boards.table_text(*boards.load()))
+        self.soc('bus = <0>;', 'bus = <2>;')
+        self.assertIn('bus is 2: a version 7 arbiter has the buses 0 and 1', self.problems())
+        # (the second bus of a version 8 arbiter, whose tables are apart, is nothing the drivers know)
+        self.soc('bus = <2>;', 'bus = <1>;\n\t\tchannel-map = <0xc3f0000>;')
+        self.assertIn('bus = 1 is for a version 7 arbiter, channel-map for a version 8 one', self.problems())
+
     def test_a_pmic_clock_is_described(self):
         # optional: a board without it has none in the table, and its driver reads nothing
         self.assertNotIn('.rtc =', boards.table_text(*boards.load()))
@@ -1476,6 +1491,12 @@ class DeviceTree(Sandbox):
         self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
                                        'channels': 0xc600000})
         self.assertEqual(board['buttons'], {'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM7325'})
+        # a version 7 arbiter's node is one of its two buses: which, when it is not the first
+        soc, _, _ = devicetree.from_dts(source.replace('qcom,ee = <0>;', 'qcom,ee = <0>; qcom,bus-id = <1>;'))
+        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
+                                       'channels': 0xc600000, 'bus': 1})
+        soc, _, _ = devicetree.from_dts(source.replace('qcom,ee = <0>;', 'qcom,ee = <0>; qcom,bus-id = <0>;'))
+        self.assertNotIn('bus', soc['spmi'])
 
     def test_a_gpu_that_is_only_half_in_the_tree_is_left_to_be_filled_in(self):
         soc, board, notes = devicetree.from_dts('''/ { soc {
@@ -1823,7 +1844,7 @@ class Repository(unittest.TestCase):
         problems = boards.Problems()
         socs, found = boards.load(problems)
         self.assertEqual(list(problems), [])
-        for name in ('phone-cmd', 'phone-video', 'phone-keys'):
+        for name in ('phone-cmd', 'phone-video', 'phone-keys', 'phone-buses'):
             self.assertIn(name, found)
             names = [argument.split('=')[0] for argument in found[name].get('boot', {}).get('bootargs', [])]
             self.assertEqual(len(names), len(set(names)))
@@ -1837,7 +1858,7 @@ class Repository(unittest.TestCase):
                                       ['gen', '--out', str(out)],
                                       capture_output=True, text=True, env={**os.environ, **environment})
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertIn('phone-cmd, phone-keys, phone-scmi, phone-video', done.stdout)
+                self.assertIn('phone-buses, phone-cmd, phone-keys, phone-scmi, phone-video', done.stdout)
                 self.assertIn('.name = "phone-cmd"', (out / 'board_table.h').read_text())
         finally:
             shutil.rmtree(out)

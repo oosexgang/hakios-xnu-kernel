@@ -211,6 +211,37 @@ another_wiring(void)
 	no_write();
 }
 
+/* a phone whose arbiter is of version 7, its PMICs on the second of the arbiter's two buses, this system the
+ * arbiter's second: the same driver, the same three keys. The first bus has chips at the same addresses,
+ * through channels of the same numbers, whose keys are nobody's: a driver that looked at the first bus's
+ * part of the tables would watch those. */
+static void
+second_bus(void)
+{
+	static struct spmi_peripheral pon_namesake, pin_namesake;
+
+	phone("phone-buses");
+	spmi_version_7(hakios_board()->spmi.observer, 1, 24, 40);
+	pon_namesake = pon_model;
+	pin_namesake = pin_model;
+	pon_namesake.bus = pin_namesake.bus = 0;
+	spmi_channel(3, &pon_namesake, spmi.ee);
+	spmi_channel(9, &pin_namesake, spmi.ee);
+	boot_args = "buttons=1";
+	hakios_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	CHECK(logged("PMIC arbiter version 0x70000000, 40 channels"), "the second bus's own channels: %s", log_text);
+	CHECK(logged("map the PMIC arbiter (0xa400000, 0xa42d000, 0xa480000)"), "the arbiter where the SoC file has it");
+	CHECK(logged("channel 3 is the PMY300's power-on block (0x11300); written by system 1"), "its power-on block");
+	CHECK(logged("channel 9 is GPIO4 of the PMY300 (0x18b00); written by system 1"), "its pin, through this system's channel");
+	CHECK(logged("step 5: watching power volume-up volume-down"), "all three are watched");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(volume_down_down, pon_up, HAKIOS_BUTTON_VOLUME_DOWN, "volume down");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
+	CHECK(spmi.past_the_table == 0, "%u reads of the first bus's part of the tables", spmi.past_the_table);
+	no_write();
+}
+
 /* on with the touch screen when nothing is said of the buttons, off when buttons=0 says so */
 static void
 with_the_touch_screen(void)
@@ -557,11 +588,11 @@ static void
 another_arbiter(void)
 {
 	phone("phone-cmd");
-	spmi.version = 0x70000000;
+	spmi.version = 0x30000000;
 	boot_args = "buttons=1";
 	hakios_buttons_init();
 	WAIT_FOR(logged("no buttons"), 3000);
-	CHECK(logged("this driver knows versions 5 and 8 of the arbiter only"), "said in the log: %s", log_text);
+	CHECK(logged("this driver knows versions 5, 7 and 8 of the arbiter only"), "said in the log: %s", log_text);
 	usleep(100 * 1000);
 	CHECK(spmi.transfers == 0, "not one transfer on the bus (%u)", spmi.transfers);
 	no_write();
@@ -685,7 +716,7 @@ main(int argc, char **argv)
 		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pon_generation_2", pon_generation_2 }, { "pon_generation_1", pon_generation_1 }, { "pon_without_keys", pon_without_keys },
 		{ "pin_not_set_up", pin_not_set_up }, { "pin_pulled_down", pin_pulled_down },
-		{ "pin_an_output", pin_an_output }, { "pin_switched_off", pin_switched_off }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
+		{ "pin_an_output", pin_an_output }, { "pin_switched_off", pin_switched_off }, { "another_arbiter", another_arbiter }, { "second_bus", second_bus }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "three_steps", three_steps }, { "four_steps", four_steps },
 		{ "board_without_keys", board_without_keys }, { "held_in_the_summary", held_in_the_summary },
 		{ "a_short_silence", a_short_silence }, { "held_when_the_bus_stops", held_when_the_bus_stops },

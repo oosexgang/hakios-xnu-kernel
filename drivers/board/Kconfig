@@ -51,7 +51,8 @@ config QCOM_CMD_DB
 config QCOM_SPMI
 	bool
 	help
-	  The PMICs through the SPMI arbiter, versions 5 and 6 (board/spmi.h).
+	  The PMICs through the SPMI arbiter (board/spmi.h): versions 5 and 6, version 7 (two buses behind one
+	  arbiter; which one is the SoC file's spmi { bus }) and version 8 (with spmi { channel-map }).
 
 config QCOM_GENI
 	bool

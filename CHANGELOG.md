@@ -24,6 +24,13 @@ tags yet, so the current work is one section.
   `imu { }` where the chip is and how it is turned gets `sensors=1` (its identity read, nothing written) and
   `sensors=2` (the accelerometer on at 104 Hz, the orientation followed and said, `hw.sensors.orientation` and
   `hw.sensors.accel`); powered down at the run's end. Not run on a phone yet. ([drivers.md](Documentation/drivers.md))
+- **The PMIC drivers through a version 7 arbiter** (two SPMI buses behind one arbiter: SM8450, SM8550, SM8650 and
+  their relatives), beside versions 5, 6 and 8. `board/spmi.h` tells it by the arbiter's version register; the SoC file
+  has the same `spmi { }` blocks plus `bus` (the node's `qcom,bus-id`, 0 if left out; `tools/boards.py new --dts`
+  reads it), since `cnfg` is that bus's own. The keys, the PMIC's clock, the flashlight, the camera's PMIC GPIO, the
+  Bluetooth enable and the Wi-Fi supplies' survey go through it unchanged. Written from memory of where Linux's
+  driver has the registers and run against a model only, not on a phone: begin with a driver that only reads.
+  ([chipsets.md](Documentation/chipsets.md))
 - **The motion sensor's driver knows a second chip, the Bosch BMI160.** A board lists `imu-bmi160` instead of
   `imu-lsm6dso` (one of the two; `tools/boards.py check` refuses both) and writes the same `imu { }` -- the address
   0x68 or 0x69. Everything else is as for the LSM6DSO: `sensors=1` reads the identity (CHIP_ID, 0xd1) and writes

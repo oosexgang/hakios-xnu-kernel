@@ -94,7 +94,7 @@ SOC_SCHEMA = {
     'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
     'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'channels': (int, False),
-             'ee': (int, False), 'channel_map': (int, False)},
+             'ee': (int, False), 'channel_map': (int, False), 'bus': (int, False)},
     'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
@@ -855,6 +855,13 @@ def load(problems=None):
                 problems.add(rel, '[thermal] needs [cpufreq] or [scmi_perf] in soc.dtsi')
             if len(soc.get('thermal', {}).get('tsens', [])) > TSENS_MAX:
                 problems.add(rel, f'soc.dtsi: at most {TSENS_MAX} TSENS controllers')
+        bus = soc.get('spmi', {}).get('bus', 0) if isinstance(soc.get('spmi'), dict) else 0
+        if isinstance(bus, int) and bus not in (0, 1):
+            problems.add(rel, f'soc.dtsi [spmi]: bus is {bus}: a version 7 arbiter has the buses 0 and 1 (qcom,bus-id)')
+        elif bus == 1 and soc['spmi'].get('channel_map'):
+            # (board/spmi.h takes neither: a version 8 arbiter's second bus has tables of its own, which nothing here reads)
+            problems.add(rel, 'soc.dtsi [spmi]: bus = 1 is for a version 7 arbiter, channel_map for a version 8 one: '
+                              'the second bus of a version 8 arbiter is not known to the drivers')
         if 'rtc' in data and 'spmi' not in soc:
             # (no feature to list: the section is the board's word that the clock is there, and the arbiter the way to it)
             problems.add(rel, '[rtc] needs [spmi] in soc.dtsi')
@@ -962,7 +969,8 @@ def table_text(socs, boards):
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
                        f'.observer = {spmi["observer"]:#010x}, .channels = {spmi.get("channels", 0):#010x}, '
                        f'.ee = {spmi.get("ee", 0)}'
-                       + (f', .channel_map = {spmi["channel_map"]:#010x}' if spmi.get('channel_map') else '') + ' },')
+                       + (f', .channel_map = {spmi["channel_map"]:#010x}' if spmi.get('channel_map') else '')
+                       + (f', .bus = {spmi["bus"]}' if spmi.get('bus') else '') + ' },')
         adreno = soc.get('adreno')
         if adreno:
             out += ['\t\t.adreno = {',
@@ -1293,7 +1301,7 @@ def show_text(data, depth=0):
     return '\n'.join(line for line in out if line) + '\n'
 
 
-COUNTS = ('cores', 'core_shift', 'ee', 'timeout_scale', 'domain_cores')     # numbers a person counts in
+COUNTS = ('cores', 'core_shift', 'ee', 'bus', 'timeout_scale', 'domain_cores')     # numbers a person counts in
 
 
 def soc_number(key, value):

@@ -469,7 +469,7 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	known = hakios_spmi_map(&arb);
 	printf("buttons: PMIC arbiter version %#x, %u channels\n", arb.version, arb.channels);
 	if (!known) {
-		printf("buttons: this driver knows versions 5 and 8 of the arbiter only: no buttons\n");
+		printf("buttons: this driver knows versions 5, 7 and 8 of the arbiter only: no buttons\n");
 		goto out;
 	}
 	if (steps < 2) {

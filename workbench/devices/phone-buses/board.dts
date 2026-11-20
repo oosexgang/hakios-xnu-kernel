@@ -1,0 +1,33 @@
+/dts-v1/;
+
+// A test phone on a made-up chip whose PMIC arbiter is of version 7 (soc.dtsi beside this file): its keys,
+// its clock and its flashlight on PMICs of the arbiter's second bus. For the tests of the drivers of PMICs
+// through such an arbiter (workbench/buttons_driver_test.c, rtc_driver_test.c, torch_driver_test.c).
+/ {
+	name = "phone-buses";
+	description = "Test phone, its PMICs on the second bus of a version 7 arbiter";
+	soc = "soc-buses";
+
+	features = "buttons-pmic", "torch-pm8350c";
+
+	backlight {
+		type = "soft";
+	};
+
+	torch {
+		flash = <0x4ee>;                // (its PM8350C the bus's fifth chip)
+		alarm = <0x40a>;
+	};
+
+	buttons {
+		pon = <0x113>;                  // slave 1, registers 0x1300
+		pon-name = "the PMY300's power-on block";
+		volume-up = <0x18b>;            // slave 1, registers 0x8b00: GPIO4 of a pinctrl@8800
+		volume-up-name = "GPIO4 of the PMY300";
+	};
+
+	rtc {
+		peripheral = <0x161>;           // slave 1, registers 0x6100
+		name = "the PMY300's RTC";
+	};
+};

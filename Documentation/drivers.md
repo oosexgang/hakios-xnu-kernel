@@ -58,7 +58,7 @@ global surfaces.
 | `bsd/dev/board/input.c` | `/dev/hakios-touch`: the queue of touches and button presses every source feeds. | — | any |
 | `bsd/dev/board/goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1`; `touchscreen=-1` only looks | part; which engine, its clocks, the pins and the supply are data (`touch { }`) |
 | `bsd/dev/board/fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1`; `touchscreen=-1` only looks | part; which engine, its clocks, the pins and the supplies are data (`touch { }`) |
-| `bsd/dev/board/buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`spmi { }`, `buttons { }`); arbiter version 5 |
+| `bsd/dev/board/buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`spmi { }`, `buttons { }`); arbiter versions 5, 7 and 8 ([chipsets.md](chipsets.md)) |
 | `bsd/dev/board/rtc.c` | The PMIC's real-time clock, read once at boot and never written: `hw.rtc_seconds`, which process 1 keeps the time of day by across boots without the host (`/private/var/db/rtc-offset`). | `rtc { }` / on unless `rtc=0` | data (`spmi { }`, `rtc { }`); the RTC_RW block of the PM8941's layout (PM8998, PM8150, PM8250) and the PMK8350's |
 | `bsd/dev/board/virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 | `bsd/dev/board/imu.c` | An ST LSM6DSO or a Bosch BMI160 accelerometer and gyroscope on I2C (the board's feature says which chip; the BMI160's part is from its datasheet as remembered and has not met a chip): the phone's orientation, `hw.sensors.*`, which backboardd's library gives to Darwin as an iPhone's always-on processor does (`userland/userland/src/hid_orientation.h`; `orientation_hid=0`: not), and its samples, about 10 a second, to Darwin's motion stack as an iPhone's motion processor does (`userland/userland/src/hid_motion.h`; `motion_hid=0`: not), with the gyroscope's rates in the same samples, from a gyroscope service of their own (`userland/userland/src/hid_gyro.h`; the gyroscope is switched on only for that, and `gyro_hid=0` keeps it powered down). | `imu-lsm6dso` or `imu-bmi160` / `sensors=` | part; which pins it is on, its address, its range and how it is turned on the board are data (`imu { }`); each chip's facts are a header of its own, `board/lsm6dso_core.h` and `board/bmi160_core.h`, and a row of the driver's table of chips; the turn and the orientation are `board/sensor_axes_core.h`, `board/sensors_core.h` |
@@ -130,9 +130,9 @@ UART. Without the names, or with `bt_fw=0`, the controller runs its ROM. There i
 been seen on a phone yet. [bluetooth.md](bluetooth.md) has all of it.
 
 Validated against host register models only, including both wrapper sampling rates and H4 event forms.
-SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects
-v7 and later before any PMIC transfer. Its map/owner layout needs shared-helper support before this
-board can power BT_EN. UART/PMIC/HCI register facts follow the sources named in the driver and board
+SM8845's Android DT describes a v8 SPMI arbiter: the shared helper (`board/spmi.h`) supports v5/v6, v7 (either of its
+two buses, `spmi { bus }`) and v8 where the SoC file has `spmi { channel-map }`, and rejects any other before any
+PMIC transfer. The v7 and v8 layouts have not been run on a phone. UART/PMIC/HCI register facts follow the sources named in the driver and board
 comments; hardware behavior and the controller's actual version-event variant remain unverified.
 
 Wi-Fi (`wifi=1`) shows the radio its memory through the SMMU before the DSP is started, and takes it away at every

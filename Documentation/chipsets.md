@@ -15,7 +15,7 @@ alone, the first kernel of a new chip ([porting.md](porting.md)).
 | Driver | What the SoC file gives it | The kinds it knows | What it does with another |
 | --- | --- | --- | --- |
 | The storage (`board/ufs.c`, `board/ufshc.c`) | `platform { ufs }`: the UFS host controller (`ufs_mem`, Linux's first reg of `qcom,ufshc`) | Through the loader: any UEFI that drives the storage. The kernel's own (`ufs_native=1`): a UFS 2.x or 3.x host as JEDEC lays it out | Its version is said; eMMC (some 4- and 6-series phones) has no driver |
-| The keys (`board/buttons.c`) | `spmi { }`, and the board's `buttons { }` (the PON block and the GPIO of volume up) | The PMIC arbiter of version 5, and of version 8 with `channel-map`; the power-on block of every generation Linux's `pm8941-pwrkey.c` reads -- 1 and 2 (the PM8998's, the PM8150's: the keys in bits 0 and 1), 3's half for the operating system (the PMK8350's and after: bits 7 and 6) -- and the PMIC's GPIOs | Arbiter versions 2, 3 and 7: said, no keys. A power-on block without keys (a secondary one): said, left alone |
+| The keys (`board/buttons.c`) | `spmi { }`, and the board's `buttons { }` (the PON block and the GPIO of volume up) | The PMIC arbiter of version 5, of version 7 (the bus that `spmi { bus }` names) and of version 8 with `channel-map`; the power-on block of every generation Linux's `pm8941-pwrkey.c` reads -- 1 and 2 (the PM8998's, the PM8150's: the keys in bits 0 and 1), 3's half for the operating system (the PMK8350's and after: bits 7 and 6) -- and the PMIC's GPIOs | Arbiter versions 2 and 3: said, no keys. A power-on block without keys (a secondary one): said, left alone |
 | The PMIC's clock (`board/rtc.c`) | `spmi { }`, and the board's `rtc { }` (the PMIC's RTC_RW block) | The arbiter's versions the keys' driver knows; the RTC_RW block as Linux's `rtc-pm8xxx.c` reads it on the PM8941's layout (PM8998, PM8150, PM8250: `rtc@6000`) and the PMK8350's (`rtc@6100`): the count at 0x48, its control at 0x46 | A block of another subtype, or a clock that is stopped: said, not read (starting it would be a write) |
 | The battery (`board/battery.c`) | Nothing: what the loader reads from UEFI | Any UEFI with Qualcomm's charger protocols | Nothing to read: said |
 | Temperatures (`board/thermal.c`) | `thermal { tsens }`: each TSENS controller's readings (`tsens_tm_physical`, Linux's first reg of `qcom,tsens-v2`) | TSENS version 2: every chip since the MSM8996; the groups' rows in either layout of the frequency block | A group whose hardware is not in charge of its clock: looked at, never held back |
@@ -50,6 +50,20 @@ keeps its table of channels in the core block; version 8 keeps it apart, which t
 `spmi { channel-map }` (the core node's second block in Linux's tree). `tools/boards.py new --dts` reads the blocks
 by their reg-names (`core`, `chnls`, `obsrvr`, `cnfg`), which Linux's trees and the vendor's both have.
 
+Version 7 (SM8450, SM8550, SM8650 and their relatives) has two SPMI buses behind one arbiter. Its SoC file has the
+blocks of version 5 by the same names, and the drivers tell it by the version register; what is new is `spmi { bus }`,
+the node's `qcom,bus-id` (0, the first bus, if left out; `new --dts` reads it), because `cnfg` is then that bus's own
+table of who writes through a channel. The arbiter numbers the channels of both buses in one row, the first bus's
+first: the drivers count a bus's channels from 0, so a channel a log names on the second bus is that many after the
+first bus's. **Version 7 has not been seen on a phone**: its layout (the table of channels at 0x2000 of the core, the
+buses' numbers of channels at 0x004 and 0x008, the observer 0x8000 a system and 0x20 a channel, the write channels
+0x1000 each) is written from memory of where Linux's `spmi-pmic-arb.c` has it. On the first boot of such a chip use
+a driver that only reads (`buttons=1`): it says the version and the bus's number of channels, finds each key's
+channel and reads the peripheral's type before it watches anything, so a layout that is not as written here shows as
+a key that is not found or not of the kind expected. Only then try a driver that writes (`torch=`, `cam=`, `bt=1`). A
+tree in Linux's newer form, with a node for each bus under the arbiter's, is not read by `new --dts`: fill `spmi { }`
+in by hand from the bus's `cnfg` and the arbiter's `core`, `chnls` and `obsrvr`.
+
 **The power-on block.** Its subtype (register 0x05) says its generation: 1 or 4 the primary block of before
 (the keys in bits 0 and 1 of its status), 9 the half of generation 3's for the operating system (bits 7 and 6); the
 buttons driver reads it at its step 3 and says which. The board's `buttons { pon }` is where it is, which
@@ -77,9 +91,9 @@ reg of `qcom,ufshc`); both are read.
 
 ## Not done yet
 
-- The PMIC arbiter of versions 2 and 3 (older 8-series) and 7 (between the 5 and the 8): their registers are
-  elsewhere, and they are not taken from memory without a phone to see them on. The keys and the flashlight say the
-  version and do nothing.
+- The PMIC arbiter of versions 2 and 3 (older 8-series): their registers are elsewhere, and they are not taken
+  from memory without a phone to see them on. The keys and the flashlight say the version and do nothing. The second
+  bus of a version 8 arbiter is not known either (`bus = <1>` with `channel-map` is refused).
 - eMMC storage, and UFS 4 hosts' vendor registers beyond what JEDEC lays out.
 - The flash LED of PMICs other than the PM8350C.
 - The table's core-count field and per-core DCVS of the cores' frequency block ([drivers.md](drivers.md)).

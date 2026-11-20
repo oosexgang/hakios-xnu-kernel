@@ -201,6 +201,29 @@ another_wiring(void)
 	no_write();
 }
 
+/* a phone whose arbiter is of version 7, the clock on a PMIC of the arbiter's second bus, this system the
+ * arbiter's second. The first bus has a clock at the same address, through channels of the same numbers,
+ * that counts from another time: not the one read. */
+static void
+second_bus(void)
+{
+	static struct spmi_peripheral namesake;
+	uint64_t seconds;
+
+	phone("phone-buses");
+	spmi_version_7(hakios_board()->spmi.observer, 1, 24, 40);
+	namesake = clock_model;                 /* (at 1234567890) */
+	namesake.bus = 0;
+	spmi_channel(4, &namesake, 3);
+	spmi_channel(6, &namesake, spmi.ee);
+	set_count(7);
+	hakios_rtc_init();
+	CHECK(rtc_seconds(&seconds) == 0 && seconds <= 8, "read: %llu", (unsigned long long)seconds);
+	CHECK(logged("rtc: the PMY300's RTC (slave 1, registers 0x6100, channel 6"), "where the board says: %s", log_text);
+	CHECK(spmi.past_the_table == 0, "%u reads of the first bus's part of the tables", spmi.past_the_table);
+	no_write();
+}
+
 /* the emulator's board names no clock: nothing read, and said */
 static void
 board_without_a_clock(void)
@@ -304,7 +327,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "reads_the_count", reads_the_count }, { "counts_on", counts_on }, { "a_carry", a_carry }, { "no_carry", no_carry },
-		{ "another_wiring", another_wiring }, { "board_without_a_clock", board_without_a_clock },
+		{ "another_wiring", another_wiring }, { "second_bus", second_bus }, { "board_without_a_clock", board_without_a_clock },
 		{ "unknown_board", unknown_board }, { "off_when_told", off_when_told }, { "stopped", stopped },
 		{ "not_the_clock", not_the_clock }, { "nobody_there", nobody_there }, { "no_channel", no_channel },
 		{ "dropped", dropped },

@@ -48,7 +48,11 @@
 		channel-map = <0>;              // arbiter version 8 only: its table of channels (the "core" node's
 		//                              // second block); cnfg is then the table of owners, observer and
 		//                              // channels 0x20 and 0x200 a channel (Linux spmi-pmic-arb.c).
-		//                              // Optional; 0 or left out for version 5
+		//                              // Optional; 0 or left out for versions 5 and 7
+		bus = <0>;                      // arbiter version 7 only (two buses behind one arbiter): which of them,
+		//                              // qcom,bus-id of the node; cnfg above is then that bus's own. The
+		//                              // drivers tell version 7 by the arbiter's version register.
+		//                              // Optional; 0 (the first bus) if left out
 	};
 
 	// The SMMU between the SoC's devices and memory, for the part drivers that give a device its addresses

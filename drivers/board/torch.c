@@ -651,7 +651,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 	say("torch: level %u: %s\n", level, level == 1 ? "a look, reading only" : level == 2 ? "the light on once" :
 	    "the light for Darwin");
 	if (!hakios_spmi_map(&arb)) {
-		say("torch: PMIC arbiter version %#x, not 5: nothing done\n", arb.version);
+		say("torch: PMIC arbiter version %#x, not 5, 7 or 8: nothing done\n", arb.version);
 		goto out;
 	}
 	find_channel(&flash);
@@ -678,7 +678,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 		say("torch: the channel is not ours to write through: nothing written\n");
 		goto out;
 	}
-	flash.write = hakios_spmi_map_write(flash.channel);
+	flash.write = hakios_spmi_map_write(&arb, flash.channel);
 	PE_parse_boot_argn("torch_max_s", &max_secs, sizeof(max_secs));
 	max_secs = max_secs < 1 ? 1 : max_secs > 120 ? 120 : max_secs;
 	if (level == 2) {

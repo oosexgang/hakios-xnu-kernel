@@ -390,6 +390,9 @@ def from_dts(text, panel=None):
                            'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
             if reg_named(node, 'chnls'):
                 soc['spmi']['channels'] = reg_named(node, 'chnls')
+            # (a version 7 arbiter's node is one of its two buses, and "cnfg" that bus's: the first is the default)
+            if (cells(node.props.get('qcom,bus-id')) or [0])[0]:
+                soc['spmi']['bus'] = cells(node.props.get('qcom,bus-id'))[0]
         if 'qcom,cmd-db' in compatible:
             reg = cells(node.props.get('reg'))
             if len(reg) in (2, 4):              # address and size, of one cell each or two

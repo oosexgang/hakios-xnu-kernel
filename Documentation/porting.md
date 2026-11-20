@@ -42,7 +42,8 @@ reads:
   PSCI method;
 - the panel: brightness range, byte order, command or video mode. Pass `--panel NODE` if it reports
   several panels;
-- the PMIC arbiter, and which PMIC peripherals the power and volume keys and the flashlight are on;
+- the PMIC arbiter (and, of a version 7 arbiter's two buses, which one the node is: `bus` in `spmi { }`), and which
+  PMIC peripherals the power and volume keys and the flashlight are on;
 - the touch controller's reset and interrupt pins (and its serial engine, where the tree has the
   controller under its bus), as a `touch { }` section for you to complete;
 - the SoC's own pins, its SMMU, the way to its other processors, the UFS host controller, the audio
@@ -167,7 +168,7 @@ in [chipsets.md](chipsets.md).
 | CPU frequency | `cpufreq-epss`, `cpufreq { }` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
 | Memory bandwidth | `ddr-rpmh`, `rpmh { }` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
 | GPU (Adreno 642, 642L, 643) | `gpu-a660`, `gpu { }`, `adreno { }` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: Darwin draws in software without it. [metal-glass.md](metal-glass.md) |
-| Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
+| Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…` (or `0x7…`, `0x8…`: [chipsets.md](chipsets.md)), each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi`, `uefi-charger` in `loader { }` | `battery=1` | `battery: Qualcomm UEFI cache at …`, then a state of charge that matches Android's. Without `uefi-charger` the loader never asks the firmware. |
 | Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
 

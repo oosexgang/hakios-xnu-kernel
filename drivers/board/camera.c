@@ -449,7 +449,7 @@ pgpio_find(void)
 		}
 	}
 	if (pgpio_found && pgpio_writable) {
-		pgpio_write = hakios_spmi_map_write(pgpio_channel);
+		pgpio_write = hakios_spmi_map_write(&arb, pgpio_channel);
 	}
 }
 
@@ -4248,7 +4248,7 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	gcc = ml_io_map(GCC_PHYS, 0x30000);
 	camcc = ml_io_map(CAMCC_PHYS, CAMCC_SIZE);
 	if (!hakios_spmi_map(&arb)) {
-		say("camera: PMIC arbiter version %#x, not 5: the PM8008i's reset GPIO is left alone\n", arb.version);
+		say("camera: PMIC arbiter version %#x, not 5, 7 or 8: the PM8008i's reset GPIO is left alone\n", arb.version);
 		arb.channels = 0;       /* (no channel is looked for, so nothing of a PMIC is read or written) */
 	}
 	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for Darwin" :

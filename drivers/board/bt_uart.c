@@ -185,7 +185,7 @@ inspect(void)
 		if (SPMI_ID_OF(hakios_spmi_channel_map(&arb, n)) == W->enable_ppid &&
 		    hakios_spmi_channel_owner(&arb, n) == arb.system) {
 			enable_read = hakios_spmi_observer(&arb, n);
-			enable_write = hakios_spmi_map_write(n);
+			enable_write = hakios_spmi_map_write(&arb, n);
 			break;
 		}
 	}

@@ -98,11 +98,11 @@ class LogCheck(unittest.TestCase):
         code, said = run('Darwin Kernel Version 12377.121.6: ...\n'
                          'cpufreq: group 0 (4 of our cores): row 2 -> 7 of the frequency table, 1804 MHz\n'
                          'cpufreq: group 1 (3 of our cores): the hardware is not in charge of its clock: left alone\n'
-                         'buttons: PMIC arbiter version 0x70000000, 512 channels\n'
-                         'buttons: this driver knows versions 5 and 8 of the arbiter only: no buttons\n')
+                         'buttons: PMIC arbiter version 0x30000000, 512 channels\n'
+                         'buttons: this driver knows versions 5, 7 and 8 of the arbiter only: no buttons\n')
         self.assertEqual(code, 1, said)
         self.assertRegex(said, r'CPU frequency +STOPPED +cpufreq: group 1 .*not in charge of its clock')
-        self.assertRegex(said, r'Buttons +STOPPED +buttons: this driver knows versions 5 and 8')
+        self.assertRegex(said, r'Buttons +STOPPED +buttons: this driver knows versions 5, 7 and 8')
         _, said = run('buttons: ... a power-on block of subtype 0x5, which has no keys this driver reads: left alone\n')
         self.assertRegex(said, r'Buttons +STOPPED')
 
