@@ -1573,7 +1573,8 @@ def tree_to_compare(text, panel=None):
     """What a device tree says, for comparing: as from_dts() has it, without what the reader assumed where
     the tree said nothing. Returns (soc_values, board_values, notes to show)."""
     tree_soc, tree_board, notes = from_dts(text, panel)
-    said = [note for note in notes if 'several panels' in note]
+    # (and which of an arbiter's two buses the tree's spmi { } is, with what was left out for being on the other)
+    said = [note for note in notes if 'several panels' in note or 'PMIC arbiter' in note]
     if any('"not named"' in note for note in notes):
         # a panel node that does not say how its light is controlled (a fragment whose other half is
         # elsewhere): "soft" was the reader's choice for a new board, not the tree's word

@@ -7,7 +7,8 @@
  * IFE's starts and ends of frames, which come at the sensor's frame length). Nothing of what is tested here
  * needs the frames' pixels.
  *
- * What is tested: a frame length any process may ask for through /dev/hakios-camera, up to the longest, is waited
+ * What is tested: the PM8008i's reset GPIO found on the second bus of a version 7 arbiter, let out of reset and put
+ * back through that bus's channel, a namesake on the first bus left alone; a frame length any process may ask for through /dev/hakios-camera, up to the longest, is waited
  * for and the frames go on; a match register of the SMMU the driver found free and never wrote is not "put back"
  * over the driver that took it meanwhile; a sensor with two supplies switched by pins gets each pin back as it
  * was found; and a sensor whose tables cannot be used leaves the node saying so (EIO) rather than taking opens
@@ -143,9 +144,7 @@ rsc_wr(uint32_t at, uint32_t value)
 static bool
 in_spmi(vm_offset_t address)
 {
-	return (address >= spmi.core && address < spmi.core + 0x1100) || (address >= spmi.cnfg && address < spmi.cnfg + 0x1000) ||
-	       (address >= spmi.observer && address < spmi.observer + 0x80 * SPMI_CHANNELS) ||
-	       (spmi.channels != 0 && address >= spmi.channels && address < spmi.channels + 0x10000ull * SPMI_CHANNELS);
+	return spmi_model_has(address);         /* (as wide as any version's blocks: what is amiss in them the model counts) */
 }
 
 /*
@@ -379,7 +378,7 @@ rails_there(void)
 static struct spmi_peripheral pgpio_model;
 
 static void
-arbiter(void)
+arbiter_there(void)
 {
 	const struct hakios_board *b = hakios_board();
 
@@ -395,6 +394,13 @@ arbiter(void)
 	pgpio_model.reg[PGPIO_DIG_PULL_CTL] = 5;
 	pgpio_model.reg[PGPIO_OUT_SOURCE_CTL] = 0x80;
 	pgpio_model.reg[PGPIO_EN_CTL] = 0x80;
+}
+
+/* ... and the driver's first look at it */
+static void
+arbiter(void)
+{
+	arbiter_there();
 	CHECK(hakios_spmi_map(&arb), "the arbiter mapped");
 	pgpio_find();
 }
@@ -577,6 +583,84 @@ two_switched_supplies(void)
 }
 
 /*
+ * The test phone's cameras on a chip whose PMIC arbiter is of version 7, the PMIC with the PM8008i's reset GPIO on
+ * the second of its two buses (the arbiter of workbench/devices/phone-buses: this system its second). The GPIO is
+ * found through that bus's channel, the PM8008i held in reset is let out by writes to it, and at the kernel's end
+ * it is put back as it was found. The first bus has a GPIO at the same address, through the arbiter's channel of
+ * the same number and this system's to write: a driver that looked at the first bus's part of the tables, or
+ * counted the bus's channels from the arbiter's first, would read and drive that one. It is neither read nor written.
+ */
+static unsigned namesake_reads;
+
+static void
+namesake_looked(struct spmi_peripheral *p __unused, uint8_t reg __unused)
+{
+	namesake_reads++;
+}
+
+static void
+second_bus(void)
+{
+	static struct spmi_peripheral namesake;
+	static const uint8_t held[5] = { 1, 4, 0, 0, 0 };       /* (vin, pull, mode, source, enable: an input, pulled down, off) */
+	struct hakios_board *b;
+	uint8_t as_it_was[256];
+
+	board = "phone-video";
+	b = board_to_change();
+	for (unsigned i = 0; i < hakios_board_count; i++) {
+		if (strcmp(hakios_boards[i].name, "phone-buses") == 0) {
+			b->spmi = hakios_boards[i].spmi;
+		}
+	}
+	CHECK(b->spmi.bus == 1 && b->spmi.channels != 0, "the arbiter of the phone with two buses: bus %u", b->spmi.bus);
+	sda_pin = b->cameras.pmic_sda;
+	scl_pin = b->cameras.pmic_scl;
+	CHECK(sensors_from_board(), "the board's sensors: %s", log_text);
+	pmic_bus.pins.sda = b->cameras.pmic_sda;
+	pmic_bus.pins.scl = b->cameras.pmic_scl;
+	select_sensor(0);
+	pins();
+	device.read = pm8008_read;
+	arbiter_there();
+	for (int i = 0; i < 5; i++) {
+		pgpio_model.reg[pgpio_which[i]] = held[i];
+	}
+	spmi_version_7(b->spmi.observer, 1, 24, 40);
+	namesake = pgpio_model;
+	namesake.bus = 0;
+	namesake.looked_at = namesake_looked;
+	spmi_channel(9, &namesake, spmi.ee);
+	memcpy(as_it_was, namesake.reg, sizeof(as_it_was));
+
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 40, "the arbiter mapped, the second bus's own channels: %u", arb.channels);
+	pgpio_find();
+	CHECK(logged("camera: channel 9 is the PM8008i's reset GPIO (0x28a00); written by system 1, which is us"),
+	    "its channel on the second bus: %s", log_text);
+	CHECK(pgpio_found && pgpio_writable && pgpio_write != 0, "found, and this system's to write");
+	CHECK(pm8008_up() && !broken, "the PM8008i let out of reset: %s", log_text);
+	CHECK(logged("the PM8008i is held in reset (GPIO 3 vin, pull, mode, source, enable: 01 04 00 00 00)"),
+	    "read as this bus's GPIO has it: %s", log_text);
+	CHECK(spmi_get(&pgpio_model, PGPIO_DIG_VIN_CTL) == 0 && spmi_get(&pgpio_model, PGPIO_DIG_PULL_CTL) == 5 &&
+	    spmi_get(&pgpio_model, PGPIO_MODE_CTL) == 1 && spmi_get(&pgpio_model, PGPIO_OUT_SOURCE_CTL) == 0x80 &&
+	    spmi_get(&pgpio_model, PGPIO_EN_CTL) == 0x80 && pgpio_model.writes == 5, "an output, high, as Android has it: %u writes",
+	    pgpio_model.writes);
+	leaving = true;
+	power_down();
+	CHECK(logged("the PM8008i's reset GPIO back as it was found"), "put back at the kernel's end: %s", log_text);
+	for (int i = 0; i < 5; i++) {
+		CHECK(spmi_get(&pgpio_model, pgpio_which[i]) == held[i], "register %#x as it was found: %#x", pgpio_which[i],
+		    spmi_get(&pgpio_model, pgpio_which[i]));
+	}
+	CHECK(pgpio_model.writes == 10 && spmi.writes == 10, "every write to this bus's GPIO: %u of %u", pgpio_model.writes, spmi.writes);
+	CHECK(namesake.writes == 0 && namesake_reads == 0 && memcmp(as_it_was, namesake.reg, sizeof(as_it_was)) == 0,
+	    "the first bus's GPIO neither written nor read (%u, %u)", namesake.writes, namesake_reads);
+	CHECK(spmi.past_the_table == 0, "%u reads of the first bus's part of the tables", spmi.past_the_table);
+	CHECK(spmi.elsewhere == 0 && spmi.denied == 0, "nothing where a version 7 arbiter has nothing (%u), no write refused (%u)",
+	    spmi.elsewhere, spmi.denied);
+}
+
+/*
  * A sensor whose tables cannot be used (none in the small image): no frames in this run, and the node says so --
  * an open or a read is refused (EIO) at once, not taken and left waiting for frames nobody makes
  */
@@ -610,6 +694,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "long_frame_asked", long_frame_asked }, { "smmu_found_not_taken", smmu_found_not_taken },
 		{ "two_switched_supplies", two_switched_supplies }, { "no_tables_no_frames", no_tables_no_frames },
+		{ "second_bus", second_bus },
 	};
 
 	if (argc < 2) {

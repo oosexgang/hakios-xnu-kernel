@@ -346,7 +346,7 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 	return answered;
 }
 
-/* ---- the PMIC arbiter (version 5), for the PMIC GPIO of the PM8008i's reset: as in board/torch.c ------ */
+/* ---- the PMIC arbiter (versions 5 to 8: board/spmi.h), for the PMIC GPIO of the PM8008i's reset: as in board/torch.c ------ */
 
 /* Where its blocks are: the SoC file's spmi { } (board/board.h). */
 #include "spmi.h"

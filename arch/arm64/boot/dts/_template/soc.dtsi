@@ -50,7 +50,8 @@
 		//                              // channels 0x20 and 0x200 a channel (Linux spmi-pmic-arb.c).
 		//                              // Optional; 0 or left out for versions 5 and 7
 		bus = <0>;                      // arbiter version 7 only (two buses behind one arbiter): which of them,
-		//                              // qcom,bus-id of the node; cnfg above is then that bus's own. The
+		//                              // qcom,bus-id of the node, or the place of the bus's node under the
+		//                              // arbiter's; cnfg above is then that bus's own. The
 		//                              // drivers tell version 7 by the arbiter's version register.
 		//                              // Optional; 0 (the first bus) if left out
 	};

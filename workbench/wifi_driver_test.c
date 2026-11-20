@@ -7,13 +7,18 @@
  * alone; only the Wi-Fi DSP's doorbells are heard and cleared, the other processors' left for their own
  * drivers; a channel the DSP closes and opens again starts afresh, our intents offered once a session; what
  * the DSP writes reaches the log only as printable text; and once it says it has given up, nothing sent to
- * it waits for an intent of its.
+ * it waits for an intent of its; and the survey of the supplies (step 4) through a version 7 arbiter reads the
+ * regulators of the second bus when the SoC file names that one, and nothing of a namesake on the first.
  *
  *   wifi_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
  */
 #include <unistd.h>
 
 #include "fakekernel.h"
+/* the PMIC arbiter of the survey of the supplies (the driver has a spmi_channel() of its own: the model's by another name) */
+#define spmi_channel model_channel
+#include "spmi_model.h"
+#undef spmi_channel
 
 extern char log_text[];
 
@@ -70,6 +75,9 @@ hakios_test_rd(vm_offset_t address)
 	if (address >= AOSS_AT && address < AOSS_AT + 0x400) {
 		return aoss_regs[(address - AOSS_AT) / 4];
 	}
+	if (spmi_model_has(address)) {
+		return spmi_model_rd(address);
+	}
 	return 0;
 }
 
@@ -91,6 +99,10 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 		} else {
 			*smmu_reg((uint32_t)address) = value;
 		}
+		return;
+	}
+	if (spmi_model_has(address)) {
+		spmi_model_wr(address, value);
 		return;
 	}
 	if (address == IPCC_AT + 0x1c) {                                /* (IPCC_CLEAR): that one heard, the next named */
@@ -620,6 +632,91 @@ dsp_gives_up(void)
 	CHECK(!link_runs && !glink.up, "the link is down, its thread ended");
 }
 
+/*
+ * The survey of the supplies (step 4) on a chip whose PMIC arbiter is of version 7, the PMICs with the radio's
+ * regulators on the second of its two buses (the arbiter of workbench/devices/phone-buses: this system its second).
+ * What is said of each regulator is what the second bus's has. The first bus has peripherals at the same addresses,
+ * through the arbiter's channels of the same numbers, which say something else: none of them is asked anything.
+ * The step writes the arbiter's command words for its reads and nothing to a PMIC.
+ */
+static unsigned namesake_reads;
+
+static void
+namesake_looked(struct spmi_peripheral *p __unused, uint8_t reg __unused)
+{
+	namesake_reads++;
+}
+
+/* a switching regulator's control: its type, in regulation or not, the millivolts asked for and made, full power */
+static void
+regulator(struct spmi_peripheral *p, uint16_t id, uint8_t type, uint8_t subtype, unsigned mv, bool enabled)
+{
+	p->id = id;
+	p->reg[0x04] = type;
+	p->reg[0x05] = subtype;
+	p->reg[0x08] = enabled ? 0x80 : 0;
+	p->reg[0x40] = p->reg[0x42] = (uint8_t)mv;
+	p->reg[0x41] = p->reg[0x43] = (uint8_t)(mv >> 8);
+	p->reg[0x45] = 7;
+	p->reg[0x46] = enabled ? 0x80 : 0;
+}
+
+static void
+second_bus(void)
+{
+	static struct spmi_peripheral s1, pin, s8, other[3];
+	static struct hakios_board copy;
+
+	phone();
+	copy = *hakios_board();
+	for (unsigned i = 0; i < hakios_board_count; i++) {
+		if (strcmp(hakios_boards[i].name, "phone-buses") == 0) {
+			copy.spmi = hakios_boards[i].spmi;
+		}
+	}
+	found = &copy;
+	CHECK(copy.spmi.bus == 1 && copy.spmi.ee == 1, "the arbiter of the phone with two buses: bus %u", copy.spmi.bus);
+	spmi.core = copy.spmi.core;
+	spmi.cnfg = copy.spmi.cnfg;
+	spmi.channels = copy.spmi.channels;
+	spmi.ee = copy.spmi.ee;
+	regulator(&s1, 0x114, TYPE_FTS, 0x0a, 800, true);       /* (slave 1, registers 0x1400) */
+	pin.id = 0x188;                                         /* (a GPIO of slave 1: named, and no regulator) */
+	pin.reg[0x04] = 0x10;
+	pin.reg[0x05] = 0x01;
+	regulator(&s8, 0x21a, TYPE_BUCK, 0x03, 1352, false);    /* (slave 2, registers 0x1a00) */
+	model_channel(5, &s1, 4);
+	model_channel(6, &pin, spmi.ee);
+	model_channel(12, &s8, 4);
+	spmi_version_7(copy.spmi.observer, 1, 24, 40);
+	/* the first bus's, at the arbiter's channels 5, 6 and 12: a regulator that is off, a peripheral of another kind
+	 * where the second bus has a GPIO, a regulator at another voltage */
+	regulator(&other[0], 0x114, TYPE_FTS, 0x0a, 600, false);
+	regulator(&other[1], 0x188, TYPE_ULT_BUCK, 0x02, 1100, true);
+	regulator(&other[2], 0x21a, TYPE_BUCK, 0x03, 1900, true);
+	for (unsigned i = 0; i < 3; i++) {
+		other[i].bus = 0;
+		other[i].looked_at = namesake_looked;
+		model_channel(i == 0 ? 5 : i == 1 ? 6 : 12, &other[i], 4);
+	}
+	step = 4;
+	CHECK(step_rails(), "the survey made");
+	CHECK(logged("wifi: 4: arbiter version 0x70000000, 40 channels") && !logged("the supplies are not read"),
+	    "the second bus's own channels: %s", log_text);
+	CHECK(logged("slave 1 (PM7325), peripheral:type/subtype: 14:1c/a 88:10/1\n"), "slave 1's peripherals, as this bus has them: %s", log_text);
+	CHECK(logged("slave 2 (PM8350C), peripheral:type/subtype: 1a:3/3\n"), "slave 2's");
+	CHECK(logged("slave 1, the regulator at 0x1400 (type 0x1c/0xa): ENABLED, status 0x80 0 (in regulation); asked 800 mV, makes 800 mV; "
+	    "mode 0x7; registers 0x40..0x47: 20 03 20 03 00 07 80 00"), "slave 1's regulator, as this bus has it: %s", log_text);
+	CHECK(logged("slave 2, the regulator at 0x1a00 (type 0x3/0x3): NOT ENABLED, status 0 0 (not in regulation); asked 1352 mV, makes "
+	    "1352 mV"), "slave 2's regulator");
+	CHECK(!logged("the regulator at 0x8800") && !logged("600 mV") && !logged("1900 mV") && !logged("1100 mV"),
+	    "nothing said of the first bus's: %s", log_text);
+	CHECK(namesake_reads == 0, "%u reads of the first bus's peripherals", namesake_reads);
+	CHECK(spmi.past_the_table == 0, "%u reads of the first bus's part of the tables", spmi.past_the_table);
+	CHECK(spmi.transfers == 3 + 2 * 2 && spmi.writes == 0 && spmi.elsewhere == 0 && s1.writes + pin.writes + s8.writes == 0,
+	    "the reads the survey needs and no write (%u transfers, %u writes, %u elsewhere)", spmi.transfers, spmi.writes, spmi.elsewhere);
+}
+
 static const struct {
 	const char *name;
 	void (*run)(void);
@@ -631,6 +728,7 @@ static const struct {
 	{ "glink_reopened", glink_reopened },
 	{ "dsp_text_filtered", dsp_text_filtered },
 	{ "dsp_gives_up", dsp_gives_up },
+	{ "second_bus", second_bus },
 };
 
 int

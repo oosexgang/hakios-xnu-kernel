@@ -49,8 +49,9 @@
  * them, a read that fails or a write that does not read back, and the light goes off and stays off
  * for the rest of the run. At the run's end (and on a panic's way out) it goes off.
  *
- * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (arbiter version 5: a system's write
- * channel for a peripheral is 0x10000 bytes of "chnls" per channel), Xiaomi's leds-qti-flash.c,
+ * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (the arbiter, versions 5 to 8, through
+ * board/spmi.h, which knows where each version has a peripheral's write channel in "chnls": 0x10000
+ * bytes a channel in version 5), Xiaomi's leds-qti-flash.c,
  * drivers/thermal/qcom/qcom-spmi-temp-alarm.c.
  */
 #include <kern/clock.h>
@@ -114,7 +115,7 @@ note(const char *format, ...)
 
 #define wait_ms(ms)             hakios_wait_ms((ms), leaving)   /* (spun on the way out) */
 
-/* ---- the PMIC arbiter (version 5) ---------------------------------------------------------------- */
+/* ---- the PMIC arbiter (versions 5 to 8: board/spmi.h) -------------------------------------------- */
 
 /* Where its blocks are, its registers and one transfer: board/spmi.h, shared with the other drivers of PMICs. */
 #include "spmi.h"

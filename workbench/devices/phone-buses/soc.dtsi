@@ -3,7 +3,8 @@
 // A made-up chip whose PMIC arbiter is of version 7: two SPMI buses behind one arbiter, the PMICs of this
 // phone on the second, this system the arbiter's second (ee = 1). Addresses where no real chip has them.
 // For the tests of what the drivers of PMICs do through such an arbiter (workbench/spmi_test.c,
-// buttons_driver_test.c, rtc_driver_test.c, torch_driver_test.c).
+// buttons_driver_test.c, rtc_driver_test.c, torch_driver_test.c; and camera_driver_test.c, bt_uart_test.c and
+// wifi_driver_test.c, which put this arbiter under the test phone with the parts they drive).
 / {
 	name = "soc-buses";
 	description = "A made-up chip for the tests, two SPMI buses behind its arbiter";

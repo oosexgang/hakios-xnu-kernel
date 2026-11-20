@@ -1498,6 +1498,207 @@ class DeviceTree(Sandbox):
         soc, _, _ = devicetree.from_dts(source.replace('qcom,ee = <0>;', 'qcom,ee = <0>; qcom,bus-id = <0>;'))
         self.assertNotIn('bus', soc['spmi'])
 
+    # A made-up chip's arbiter in the newer form of a tree: the node has the blocks its two buses share, a child for
+    # each bus that bus's "cnfg", and the PMICs are under the buses. {0} and {1}: what is on each bus.
+    BUSES = """/ {{ soc@0 {{ #address-cells = <2>; #size-cells = <2>;
+        arbiter@a400000 {{ compatible = "qcom,sm0000-spmi-pmic-arb";
+            reg = <0 0x0a400000 0 0x3000>, <0 0x0a500000 0 0x400000>, <0 0x0a480000 0 0x80000>;
+            reg-names = "core", "chnls", "obsrvr";
+            qcom,ee = <0>; qcom,channel = <0>; #address-cells = <2>; #size-cells = <2>; ranges;
+            spmi_bus0: spmi@a42d000 {{ reg = <0 0x0a42d000 0 0x4000>, <0 0x0a4c0000 0 0x10000>; reg-names = "cnfg", "intr";
+                #address-cells = <2>; #size-cells = <0>; {0} }};
+            spmi_bus1: spmi@a432000 {{ reg = <0 0x0a432000 0 0x4000>, <0 0x0a4d0000 0 0x10000>; reg-names = "cnfg", "intr";
+                #address-cells = <2>; #size-cells = <0>; {1} }};
+        }}; }};
+        gpio-keys {{ compatible = "gpio-keys";
+            key-volume-up {{ gpios = <&pmy300_gpios 4 1>; linux,code = <0x73>; }}; }}; }};"""
+    KEYS = '''pmic@1 { compatible = "qcom,pmy300", "qcom,spmi-pmic"; reg = <0x1 0>;
+        pon@1300 { compatible = "qcom,pmk8350-pon"; reg = <0x1300>; };
+        pmy300_gpios: gpio@8800 { compatible = "qcom,pmy300-gpio", "qcom,spmi-gpio"; reg = <0x8800>; }; };'''
+    VOLUME = '''pmic@1 { compatible = "qcom,pmy300", "qcom,spmi-pmic"; reg = <0x1 0>;
+        pmy300_gpios: gpio@8800 { compatible = "qcom,pmy300-gpio", "qcom,spmi-gpio"; reg = <0x8800>; }; };'''
+    CLOCK = '''pmic@0 { compatible = "qcom,pmz100", "qcom,spmi-pmic"; reg = <0x0 0>;
+        rtc@6100 { compatible = "qcom,pmk8350-rtc"; reg = <0x6100>, <0x6200>; }; };'''
+    BUS0 = {'core': 0xa400000, 'cnfg': 0xa42d000, 'observer': 0xa480000, 'ee': 0, 'channels': 0xa500000}
+    BUS1 = {'core': 0xa400000, 'cnfg': 0xa432000, 'observer': 0xa480000, 'ee': 0, 'channels': 0xa500000, 'bus': 1}
+
+    @staticmethod
+    def of_the_arbiter(notes):
+        return [note for note in notes if 'arbiter' in note]
+
+    def test_an_arbiter_with_a_node_for_each_bus_is_read(self):
+        # the power key's PMIC on the second bus: that bus's cnfg and its number, and the first is said to be there
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', self.KEYS))
+        self.assertEqual(soc['spmi'], self.BUS1)
+        self.assertEqual(board['buttons'], {'pon': 0x113, 'pon_name': "the PMY300's power-on block",
+                                            'volume_up': 0x18b, 'volume_up_name': 'GPIO4 of the PMY300'})
+        self.assertEqual(self.of_the_arbiter(notes), [
+            "the PMIC arbiter has two SPMI buses (version 7): spmi { } is bus 1's (cnfg = <0x0a432000>), the one with the "
+            "power key's PMIC. The other, bus 0 (cnfg = <0x0a42d000>), exists: the drivers reach the PMICs of one bus, so for "
+            "a part on bus 0 spmi { } wants that cnfg and bus = <0> (Documentation/chipsets.md)"])
+        # ... on the first: the first, without `bus', and the second is said to be there
+        soc, board, notes = devicetree.from_dts(self.BUSES.format(self.KEYS, self.CLOCK))
+        self.assertEqual(soc['spmi'], self.BUS0)
+        self.assertIn("spmi { } is bus 0's (cnfg = <0x0a42d000>), the one with the power key's PMIC. The other, bus 1 "
+                      "(cnfg = <0x0a432000>), exists", self.of_the_arbiter(notes)[0])
+        # what is on the bus not taken is not put into the board file: there its address is another chip's
+        self.assertNotIn('rtc', board)
+        self.assertEqual(self.of_the_arbiter(notes)[1:], [
+            "the PMIC's clock is on bus 1 of the PMIC arbiter, not on the bus spmi { } is of (bus 0): left out of the board "
+            "file, where its address would be another chip's"])
+        soc, board, notes = devicetree.from_dts(self.BUSES.format(self.CLOCK, self.KEYS))
+        self.assertEqual((soc['spmi'], 'rtc' in board, len(self.of_the_arbiter(notes))), (self.BUS1, False, 2))
+        # ... the flashlight and Bluetooth's enable GPIO as well, which a driver would write to
+        parts = """pmic@3 { compatible = "qcom,pmw350c", "qcom,spmi-pmic"; reg = <0x3 0>;
+            led-controller@ee00 { compatible = "qcom,pm8350c-flash-led"; reg = <0xee00>; };
+            temp-alarm@a00 { compatible = "qcom,spmi-temp-alarm"; reg = <0xa00>; };
+            pmw_gpios: gpio@8800 { compatible = "qcom,spmi-gpio"; reg = <0x8800>; }; };"""
+        radio = '\n/ { bluetooth { compatible = "qcom,wcn0000-bt"; qcom,bt-reset-gpio = <&pmw_gpios 7 0>; }; };'
+        soc, board, notes = devicetree.from_dts(self.BUSES.format(parts, self.KEYS) + radio)
+        self.assertEqual((soc['spmi'], 'torch' in board, 'bluetooth' in board), (self.BUS1, False, False))
+        self.assertEqual([note[:note.index(' is on bus')] for note in self.of_the_arbiter(notes)[1:]],
+                         ['the flashlight', "Bluetooth's enable GPIO"])
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', self.KEYS + parts) + radio)
+        self.assertEqual((soc['spmi'], board['torch'], board['bluetooth']),
+                         (self.BUS1, {'flash': 0x3ee, 'alarm': 0x30a}, {'enable_ppid': 0x38e}))
+        self.assertEqual(len(self.of_the_arbiter(notes)), 1)
+        # all on one bus: nothing left out
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', self.KEYS + self.CLOCK))
+        self.assertEqual((soc['spmi'], board['rtc']['peripheral'], len(self.of_the_arbiter(notes))), (self.BUS1, 0x061, 1))
+
+    def test_without_a_power_key_the_bus_is_that_of_what_the_board_uses_or_the_first(self):
+        # no power key in the tree: the bus that has everything else the board uses of a PMIC
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', self.VOLUME + self.CLOCK))
+        self.assertEqual(soc['spmi'], self.BUS1)
+        self.assertEqual((board['buttons'], board['rtc']['peripheral']),
+                         ({'volume_up': 0x18b, 'volume_up_name': 'GPIO4 of the PMY300'}, 0x061))
+        self.assertIn("spmi { } is bus 1's (cnfg = <0x0a432000>), the one with what the board uses of a PMIC (the PMIC's "
+                      "clock, volume up's GPIO). The other, bus 0 (cnfg = <0x0a42d000>), exists", self.of_the_arbiter(notes)[0])
+        # ... on both: the first, and what is on the second left out
+        soc, board, notes = devicetree.from_dts(self.BUSES.format(self.CLOCK, self.VOLUME))
+        self.assertEqual((soc['spmi'], board['rtc']['peripheral'], 'buttons' in board), (self.BUS0, 0x061, False))
+        said = self.of_the_arbiter(notes)
+        self.assertIn("spmi { } is bus 0's (cnfg = <0x0a42d000>), the first: the tree has what the board uses of a PMIC on "
+                      "both. The other, bus 1 (cnfg = <0x0a432000>), exists", said[0])
+        self.assertIn("volume up's GPIO is on bus 1 of the PMIC arbiter", said[1])
+        # nothing of a PMIC in the tree (the PMICs in a file that is not in it): the first, and why
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', ''))
+        self.assertEqual(soc['spmi'], self.BUS0)
+        self.assertNotIn('buttons', board)
+        self.assertEqual(self.of_the_arbiter(notes), [
+            "the PMIC arbiter has two SPMI buses (version 7): spmi { } is bus 0's (cnfg = <0x0a42d000>), the first: the tree "
+            "does not say which bus the power key's PMIC is on. The other, bus 1 (cnfg = <0x0a432000>), exists: the drivers "
+            "reach the PMICs of one bus, so for a part on bus 1 spmi { } wants that cnfg and bus = <1> "
+            "(Documentation/chipsets.md)"])
+
+    def test_the_pmics_of_a_bus_are_found_where_a_source_adds_them_by_its_label(self):
+        # as Linux's sources have them: the PMIC's file adds its node to the bus by the bus's label, after the chip's
+        source = self.BUSES.format('', '') + '\n&spmi_bus1 {\n' + self.KEYS + '\n};\n&spmi_bus0 {\n' + self.CLOCK + '\n};\n'
+        soc, board, notes = devicetree.from_dts(source)
+        self.assertEqual(soc['spmi'], self.BUS1)
+        self.assertEqual(board['buttons']['pon'], 0x113)
+        self.assertNotIn('rtc', board)
+        self.assertEqual(len(self.of_the_arbiter(notes)), 2)
+        tree = devicetree.parse_dts(source)
+        bus = next(node for node in tree.walk() if 'spmi_bus1' in node.labels)
+        self.assertEqual([child.name for child in bus.children], ['pmic@1'])
+        # a label the text has not: its nodes stay where they are written, and its properties are not the root's
+        tree = devicetree.parse_dts('/ { model = "a"; };\n&elsewhere { status = "okay"; pmic@2 { reg = <2 0>; }; };\n/ { later { }; };')
+        self.assertEqual(tree.props, {})
+        self.assertEqual([node.name for node in tree.walk()], ['/', '/', '&elsewhere', 'pmic@2', '/', 'later'])
+        self.assertEqual(tree.children[0].props, {'model': '"a"'})
+        # ... and there the tree does not say which bus the power key's PMIC is on
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', '') + '\n&pmics {\n' + self.KEYS + '\n};\n')
+        self.assertEqual((soc['spmi'], board['buttons']['pon']), (self.BUS0, 0x113))
+        self.assertIn('the first: the tree does not say which bus', self.of_the_arbiter(notes)[0])
+
+    def test_a_bus_of_the_arbiter_that_is_not_plain_is_not_guessed(self):
+        tree = self.BUSES.format('', self.KEYS)
+        # one cell an address, as a vendor's tree may have it; the generic name beside the chip's
+        narrow = tree.replace('<0 0x', '<0x').replace(' 0 0x', ' 0x').replace(
+            '"qcom,sm0000-spmi-pmic-arb"', '"qcom,sm0000-spmi-pmic-arb", "qcom,spmi-pmic-arb"')
+        self.assertIn('reg = <0x0a42d000 0x4000>, <0x0a4c0000 0x10000>;', narrow)
+        self.assertEqual(devicetree.from_dts(narrow)[0]['spmi'], self.BUS1)
+        # a bus switched off is not taken, whatever is under it, and is said to be off
+        off = 'reg-names = "cnfg", "intr"; status = "disabled";'
+        soc, board, notes = devicetree.from_dts(self.BUSES.format('', 'status = "disabled"; ' + self.KEYS))
+        self.assertEqual(soc['spmi'], self.BUS0)
+        self.assertIn('The other, bus 1 (cnfg = <0x0a432000>), exists and is switched off in the tree (status = "disabled")',
+                      self.of_the_arbiter(notes)[0])
+        self.assertNotIn('buttons', board)      # (its keys are not the first bus's)
+        self.assertEqual(len(self.of_the_arbiter(notes)), 3, notes)
+        soc, _, notes = devicetree.from_dts(tree.replace('reg-names = "cnfg", "intr";', off))
+        self.assertNotIn('spmi', soc)
+        self.assertEqual(self.of_the_arbiter(notes),
+                         ['the PMIC arbiter\'s buses are all switched off in the tree (status = "disabled"): spmi { } is left out'])
+        # the buses numbered by their nodes (qcom,bus-id in each) are taken by those numbers
+        numbered = tree.replace('spmi_bus0: spmi@a42d000 {', 'spmi_bus0: spmi@a42d000 { qcom,bus-id = <0>;').replace(
+            'spmi_bus1: spmi@a432000 {', 'spmi_bus1: spmi@a432000 { qcom,bus-id = <1>;')
+        self.assertEqual(devicetree.from_dts(numbered)[0]['spmi'], self.BUS1)
+        # not plain, and so left to the porter: the nodes' order against their blocks', a number in one node only,
+        # the same number twice, a third bus, a bus without its block
+        for odd in (tree.replace('0x0a42d000', '0x0a439000'),
+                    numbered.replace(' qcom,bus-id = <0>;', ''),
+                    numbered.replace('qcom,bus-id = <0>;', 'qcom,bus-id = <1>;'),
+                    numbered.replace('qcom,bus-id = <1>;', 'qcom,bus-id = <2>;'),
+                    tree.replace('spmi_bus0:', 'spmi@a428000 { reg = <0 0x0a428000 0 0x4000>; reg-names = "cnfg"; };\n spmi_bus0:'),
+                    tree.replace('reg = <0 0x0a432000 0 0x4000>, <0 0x0a4d0000 0 0x10000>;', '')):
+            soc, board, notes = devicetree.from_dts(odd)
+            self.assertNotIn('spmi', soc, odd)
+            self.assertEqual(len(self.of_the_arbiter(notes)), 1, notes)
+            self.assertIn('which bus is which is not plain', self.of_the_arbiter(notes)[0])
+            self.assertIn('spmi { } is left out; fill it in by hand (Documentation/chipsets.md)', self.of_the_arbiter(notes)[0])
+            self.assertEqual(board['buttons']['pon'], 0x113)       # (the keys are still the tree's word)
+        # an arbiter's node with no bus under it and no cnfg of its own is no arbiter this reads; nothing is said of it
+        soc, _, notes = devicetree.from_dts(self.BUSES.format('', '').replace('reg-names = "cnfg", "intr";', ''))
+        self.assertEqual(('spmi' in soc, self.of_the_arbiter(notes)), (False, []))
+
+    def test_the_older_form_of_two_buses_is_chosen_from_alike(self):
+        # a node a bus, each with all the blocks' names and its number: the bus with the power key's PMIC, whichever
+        # node comes first, and the other said to be there
+        def node(number, cnfg, under):
+            return f"""spmi@{cnfg:x} {{ compatible = "qcom,spmi-pmic-arb";
+                reg = <0xa400000 0x3000>, <0xa500000 0x400000>, <0xa480000 0x80000>, <{cnfg:#x} 0x4000>;
+                reg-names = "core", "chnls", "obsrvr", "cnfg"; qcom,ee = <0>; qcom,bus-id = <{number}>; {under} }};"""
+        for order in (0, 1):
+            nodes = [node(0, 0xa42d000, self.CLOCK), node(1, 0xa432000, self.KEYS)]
+            soc, board, notes = devicetree.from_dts('/ { soc { ' + ' '.join(nodes[::-1] if order else nodes) + ' }; };')
+            self.assertEqual(soc['spmi'], self.BUS1)
+            self.assertEqual((board['buttons']['pon'], 'rtc' in board), (0x113, False))
+            self.assertIn("spmi { } is bus 1's (cnfg = <0x0a432000>), the one with the power key's PMIC. The other, bus 0 "
+                          "(cnfg = <0x0a42d000>), exists", self.of_the_arbiter(notes)[0])
+            # nothing to tell them by: the first bus, wherever its node is
+            soc, _, notes = devicetree.from_dts('/ { soc { ' + ' '.join(
+                (nodes[::-1] if order else nodes)).replace(self.KEYS, '').replace(self.CLOCK, '') + ' }; };')
+            self.assertEqual(soc['spmi'], self.BUS0)
+            self.assertIn('the first: the tree does not say which bus', self.of_the_arbiter(notes)[0])
+        # one node, as before: its bus, and nothing said
+        soc, _, notes = devicetree.from_dts('/ { soc { ' + node(1, 0xa432000, self.KEYS) + ' }; };')
+        self.assertEqual((soc['spmi'], self.of_the_arbiter(notes)), (self.BUS1, []))
+
+    def test_a_new_board_from_a_tree_of_two_buses_says_which_was_taken(self):
+        dts = self.dir / 'phone4.dts'
+        dts.write_text(self.BUSES.format(self.CLOCK, self.KEYS))
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            boards.new_board('phone4', 'sm0004', dts, None, 'A phone of two buses')
+        text = (self.dir / 'devices/phone4/soc.dtsi').read_text()
+        for line in ('core = <0x0a400000>;', 'cnfg = <0x0a432000>;', 'observer = <0x0a480000>;', 'channels = <0x0a500000>;',
+                     'bus = <1>;'):
+            self.assertIn(line, text)
+        said = re.sub(r'\s+', ' ', said.getvalue())
+        self.assertIn("note: the PMIC arbiter has two SPMI buses (version 7): spmi { } is bus 1's (cnfg = <0x0a432000>), the "
+                      "one with the power key's PMIC. The other, bus 0 (cnfg = <0x0a42d000>), exists", said)
+        self.assertIn("note: the PMIC's clock is on bus 0 of the PMIC arbiter", said)
+        board = (self.dir / 'devices/phone4/board.dts').read_text()
+        self.assertIn('pon = <0x113>;', board)
+        self.assertNotIn('rtc {', board)
+        self.assertIn('.bus = 1 },', boards.table_text(*boards.load()))
+        # compared with the same tree, which bus the tree's values are of is said again
+        tree_soc, _, notes = boards.tree_to_compare(dts.read_text())
+        self.assertEqual(tree_soc['spmi'], self.BUS1)
+        self.assertEqual([note[:44] for note in notes],
+                         ['the PMIC arbiter has two SPMI buses (version', "the PMIC's clock is on bus 0 of the PMIC arb"])
+
     def test_a_gpu_that_is_only_half_in_the_tree_is_left_to_be_filled_in(self):
         soc, board, notes = devicetree.from_dts('''/ { soc {
             qcom,kgsl-3d0@3d00000 { reg = <0x3d00000 0x40000>; reg-names = "kgsl_3d0_reg_memory"; };

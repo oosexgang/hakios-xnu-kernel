@@ -135,6 +135,25 @@ spmi_v7_first(void)
 	return spmi.bus == 1 ? spmi.bus_channels[0] : 0;
 }
 
+/*
+ * Is that address in one of the arbiter's blocks, as wide as any version this models has them: for a test
+ * whose driver reaches other blocks as well, which sends what is here to spmi_model_rd() and
+ * spmi_model_wr(). So an access at another version's distances (a channel 0x80 of the observer after the
+ * last where a version 7 arbiter has them 0x20 apart) is the model's to count (`elsewhere'), not lost
+ * among the test's other registers.
+ */
+static inline bool
+spmi_model_has(uintptr_t address)
+{
+	uint32_t tables = spmi.channel_map ? 0x8000 : 0x1000;
+
+	return (spmi.core != 0 && address >= spmi.core && address < spmi.core + 0x2800) ||
+	       (spmi.cnfg != 0 && address >= spmi.cnfg && address < spmi.cnfg + tables) ||
+	       (spmi.channel_map != 0 && address >= spmi.channel_map && address < spmi.channel_map + tables) ||
+	       (spmi.observer != 0 && address >= spmi.observer && address < spmi.observer + 0x80 * SPMI_CHANNELS) ||
+	       (spmi.channels != 0 && address >= spmi.channels && address < spmi.channels + 0x10000ull * SPMI_CHANNELS);
+}
+
 /* for the test's own thread: a peripheral's register, as the hardware would change it */
 static inline void
 spmi_set(struct spmi_peripheral *p, uint8_t reg, uint8_t value)

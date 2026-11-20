@@ -45,7 +45,7 @@
  * before (the PM8998's and the PM8150's, "generations" 1 and 2: the keys in bits 0 and 1). Which it is, its subtype
  * says at step 3.
  *
- * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (arbiter version 5),
+ * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (the arbiter, versions 5 to 8: through board/spmi.h),
  * drivers/input/misc/pm8941-pwrkey.c (every kind of it), drivers/pinctrl/qcom/pinctrl-spmi-gpio.c,
  * and the phone's own device tree (qcom,spmi@c440000, pon_hlos@1300, gpio_keys).
  */

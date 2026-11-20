@@ -30,6 +30,11 @@ tags yet, so the current work is one section.
   reads it), since `cnfg` is that bus's own. The keys, the PMIC's clock, the flashlight, the camera's PMIC GPIO, the
   Bluetooth enable and the Wi-Fi supplies' survey go through it unchanged. Written from memory of where Linux's
   driver has the registers and run against a model only, not on a phone: begin with a driver that only reads.
+  `tools/boards.py new --dts` also reads the tree's newer form of such an arbiter, a node for each bus under the
+  arbiter's (and the PMICs a source adds to a bus by its label): of two buses it takes the one with the power key's
+  PMIC, or with whatever else the board uses of a PMIC, else the first, says in its notes which it took and where
+  the other is, and leaves what is on the other bus out of the board file. The camera's, Bluetooth's and Wi-Fi's
+  drivers are now tested on the second bus as the keys', the clock's and the flashlight's were.
   ([chipsets.md](Documentation/chipsets.md))
 - **The motion sensor's driver knows a second chip, the Bosch BMI160.** A board lists `imu-bmi160` instead of
   `imu-lsm6dso` (one of the two; `tools/boards.py check` refuses both) and writes the same `imu { }` -- the address

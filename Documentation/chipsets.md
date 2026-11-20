@@ -52,7 +52,7 @@ by their reg-names (`core`, `chnls`, `obsrvr`, `cnfg`), which Linux's trees and 
 
 Version 7 (SM8450, SM8550, SM8650 and their relatives) has two SPMI buses behind one arbiter. Its SoC file has the
 blocks of version 5 by the same names, and the drivers tell it by the version register; what is new is `spmi { bus }`,
-the node's `qcom,bus-id` (0, the first bus, if left out; `new --dts` reads it), because `cnfg` is then that bus's own
+the node's `qcom,bus-id` (0, the first bus, if left out; `new --dts` reads it, below), because `cnfg` is then that bus's own
 table of who writes through a channel. The arbiter numbers the channels of both buses in one row, the first bus's
 first: the drivers count a bus's channels from 0, so a channel a log names on the second bus is that many after the
 first bus's. **Version 7 has not been seen on a phone**: its layout (the table of channels at 0x2000 of the core, the
@@ -60,9 +60,21 @@ buses' numbers of channels at 0x004 and 0x008, the observer 0x8000 a system and 
 0x1000 each) is written from memory of where Linux's `spmi-pmic-arb.c` has it. On the first boot of such a chip use
 a driver that only reads (`buttons=1`): it says the version and the bus's number of channels, finds each key's
 channel and reads the peripheral's type before it watches anything, so a layout that is not as written here shows as
-a key that is not found or not of the kind expected. Only then try a driver that writes (`torch=`, `cam=`, `bt=1`). A
-tree in Linux's newer form, with a node for each bus under the arbiter's, is not read by `new --dts`: fill `spmi { }`
-in by hand from the bus's `cnfg` and the arbiter's `core`, `chnls` and `obsrvr`.
+a key that is not found or not of the kind expected. Only then try a driver that writes (`torch=`, `cam=`, `bt=1`).
+
+A tree has such an arbiter in one of two forms, and `new --dts` reads both. In the older, a bus is a node with all
+four blocks' names and its `qcom,bus-id`. In the newer (Linux's, for an arbiter of two buses: a compatible with the
+chip's name, `qcom,...-spmi-pmic-arb`) the arbiter's node has `core`, `chnls` and `obsrvr`, and under it a node for
+each bus with that bus's `cnfg` and `intr` and its PMICs; the buses are numbered in the order of their nodes. The SoC
+file has one bus, so of two `new --dts` takes the one with the PMIC of the power key; where the tree does not say
+which that is (the PMICs in a file that is not in it), the one with everything else the board uses of a PMIC (volume
+up's GPIO, the clock, the flashlight, Bluetooth's enable); else the first. Its notes say which bus was taken and why,
+and the other bus's `cnfg` and number, to be put into `spmi { }` by hand if the choice was not right. What the tree
+has on the bus not taken is left out of the board file and named in the notes: there its address would be another
+chip's. A tree whose buses cannot be told apart for certain (more than two, numbers in some nodes only, nodes in
+another order than their `cnfg` blocks) gets no `spmi { }` and a note: fill it in by hand from the bus's `cnfg` and
+the arbiter's `core`, `chnls` and `obsrvr`. The newer form is read as remembered from Linux's binding, not from a
+phone's tree: compare what was written with the tree (`tools/boards.py compare`).
 
 **The power-on block.** Its subtype (register 0x05) says its generation: 1 or 4 the primary block of before
 (the keys in bits 0 and 1 of its status), 9 the half of generation 3's for the operating system (bits 7 and 6); the

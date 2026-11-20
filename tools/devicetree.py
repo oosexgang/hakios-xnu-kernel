@@ -29,12 +29,13 @@ class Node:
 def parse_dts(text):
     """A device tree source (dtc -I dtb -O dts, or a vendor's .dts with its includes already merged) as a
     tree of nodes. Properties keep their text; cells(), strings() below read it. Not a full parser: what it
-    does not understand (/directives/, labels, deletions) it skips."""
+    does not understand (/directives/, deletions) it skips. What a source adds to a node by its label
+    (&label { ... }) goes into that node where the label was seen before, as the PMICs of a bus do."""
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
     text = re.sub(r'(?m)//.*$', '', text)
     position, root = 0, Node('/')
     stack = [root]
-    token = re.compile(r'\s*(?:(?P<close>\}\s*;)|(?P<node>(?P<labels>(?:[\w,.+-]+:\s*)*)(?P<name>[\w,.+@/-]+)\s*\{)|'
+    token = re.compile(r'\s*(?:(?P<close>\}\s*;)|(?P<node>(?P<labels>(?:[\w,.+-]+:\s*)*)(?P<name>&?[\w,.+@/-]+)\s*\{)|'
                        r'(?P<prop>[\w,.+#?-]+)\s*(?:=\s*(?P<value>(?:"(?:[^"\\]|\\.)*"|<[^>]*>|\[[^\]]*\]|[^;"<\[])*))?;)')
     while position < len(text):
         match = token.match(text, position)
@@ -48,8 +49,12 @@ def parse_dts(text):
             if len(stack) > 1:
                 stack.pop()
         elif match['node']:
-            node = Node(match['name'], stack[-1], re.findall(r'([\w,.+-]+):', match['labels']))
-            stack[-1].children.append(node)
+            node = None
+            if match['name'].startswith('&'):
+                node = next((n for n in root.walk() if match['name'][1:] in n.labels), None)
+            if node is None:        # (a label of a file that is not in the text stays a node of its own, where it is)
+                node = Node(match['name'], stack[-1], re.findall(r'([\w,.+-]+):', match['labels']))
+                stack[-1].children.append(node)
             stack.append(node)
         else:
             stack[-1].props[match['prop']] = (match['value'] or '').strip()
@@ -185,6 +190,107 @@ def pmic_of(node):
     return slave, name.upper()
 
 
+def arbiter_buses(node, notes):
+    """The SPMI buses of a PMIC arbiter's node, each as {'node': where its PMICs are, 'bus': its number, 'off': switched
+    off in the tree, 'spmi': the SoC file's spmi { } for it}. A tree has an arbiter in one of two forms. The older: the
+    node has "core", "chnls", "obsrvr" and "cnfg" among its reg-names and is the bus itself; a version 7 arbiter's
+    second bus is then a node with qcom,bus-id = <1>. The newer (an arbiter of two buses): the node has the blocks the
+    buses share, "core", "chnls" and "obsrvr", and a child for each bus with that bus's "cnfg" (and "intr"), the PMICs
+    under it; the buses are numbered in the order of their nodes, which is the order of their cnfg blocks. What is
+    neither for certain is said in the notes and left out."""
+    if not (reg_named(node, 'core') and reg_named(node, 'obsrvr')):
+        return []
+    shared = {'core': reg_named(node, 'core'), 'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
+    if reg_named(node, 'chnls'):
+        shared['channels'] = reg_named(node, 'chnls')
+
+    def bus(where, number, cnfg):
+        spmi = {'core': shared['core'], 'cnfg': cnfg, **{k: v for k, v in shared.items() if k != 'core'}}
+        if number:
+            spmi['bus'] = number
+        return {'node': where, 'bus': number, 'off': strings(where.props.get('status')) == ['disabled'], 'spmi': spmi}
+    if reg_named(node, 'cnfg'):
+        # (a version 7 arbiter's node is one of its two buses, and "cnfg" that bus's: the first unless it says)
+        return [bus(node, (cells(node.props.get('qcom,bus-id')) or [0])[0], reg_named(node, 'cnfg'))]
+    children = [child for child in node.children if 'cnfg' in strings(child.props.get('reg-names'))]
+    if not children:
+        return []
+    said = [cells(child.props.get('qcom,bus-id')) for child in children]
+    numbers = [n[0] for n in said] if all(len(n) == 1 for n in said) else None if any(said) else list(range(len(children)))
+    blocks = [reg_named(child, 'cnfg') for child in children]
+    in_order = [block for _, block in sorted(zip(numbers or [], blocks), key=lambda pair: pair[0])]
+    if (numbers is None or None in blocks or len(set(numbers)) != len(numbers) or
+            any(n not in (0, 1) for n in numbers) or in_order != sorted(set(in_order))):
+        notes.append(f'the PMIC arbiter {node.name} has a node for each of its buses ('
+                     + ', '.join(child.name for child in children) + '), but which bus is which is not plain (two at '
+                     'most, numbered in the order of their nodes and of their "cnfg" blocks): spmi { } is left out; '
+                     'fill it in by hand (Documentation/chipsets.md)')
+        return []
+    return [bus(child, number, block) for child, number, block in zip(children, numbers, blocks)]
+
+
+def bus_of(node, buses):
+    """The bus (of arbiter_buses) a PMIC's node is on, by the nodes above it; None where the tree does not say (a
+    PMIC added by a label the text has not)."""
+    while node is not None:
+        for bus in buses:
+            if bus['node'] is node:
+                return bus
+        node = node.parent
+    return None
+
+
+def choose_bus(buses, uses, soc, board, keys, clock, notes):
+    """spmi { } of the SoC file is one bus's. Of an arbiter's two, the one with the PMIC of the power key; where the
+    tree does not say which that is, the one that has everything else the board uses of a PMIC; else the first. The
+    notes say which was taken and what the other is, and what was found on the other is left out of the board: an
+    address there is another chip's on the bus taken."""
+    there = [bus for bus in buses if not bus['off']]
+    if not there:
+        if buses:
+            notes.append('the PMIC arbiter\'s buses are all switched off in the tree (status = "disabled"): spmi { } is left out')
+        return
+    names = {'pon': "the power key's block", 'volume_up': "volume up's GPIO", 'rtc': "the PMIC's clock",
+             'torch': 'the flashlight', 'bt_enable': "Bluetooth's enable GPIO"}
+    where = {key: bus_of(node, buses) for key, node in uses.items()}
+    used = [bus for bus in there if any(on is bus for on in where.values())]
+    if any(where.get('pon') is bus for bus in there):
+        chosen, why = where['pon'], "the one with the power key's PMIC"
+    elif len(used) == 1:
+        chosen = used[0]
+        why = 'the one with what the board uses of a PMIC (' + ', '.join(names[k] for k, on in where.items() if on is chosen) + ')'
+    else:
+        chosen = min(there, key=lambda bus: bus['bus'])
+        why = ('the first: the tree has what the board uses of a PMIC on both' if used else
+               'the first: the tree does not say which bus the power key\'s PMIC is on')
+    soc['spmi'] = chosen['spmi']
+    # (the same arbiter's: of the newer form its node's other child, of the older another node with the same core)
+    others = [bus for bus in buses if bus is not chosen and bus['spmi']['core'] == chosen['spmi']['core']]
+    for other in others[:1]:
+        state = ' and is switched off in the tree (status = "disabled")' if other['off'] else ''
+        notes.append(f'the PMIC arbiter has two SPMI buses (version 7): spmi {{ }} is bus {chosen["bus"]}\'s '
+                     f'(cnfg = <{chosen["spmi"]["cnfg"]:#010x}>), {why}. The other, bus {other["bus"]} '
+                     f'(cnfg = <{other["spmi"]["cnfg"]:#010x}>), exists{state}: the drivers reach the PMICs of one bus, '
+                     f'so for a part on bus {other["bus"]} spmi {{ }} wants that cnfg and bus = <{other["bus"]}> '
+                     '(Documentation/chipsets.md)')
+    for key, on in where.items():
+        if on is None or on is chosen:
+            continue
+        notes.append(f'{names[key]} is on bus {on["bus"]} of the PMIC arbiter, not on the bus spmi {{ }} is of '
+                     f'(bus {chosen["bus"]}): left out of the board file, where its address would be another chip\'s')
+        if key in ('pon', 'volume_up'):
+            keys.pop(key, None)
+            keys.pop(key + '_name', None)
+        elif key == 'rtc':
+            clock.clear()
+        elif key == 'torch':
+            board.pop('torch', None)
+        elif key == 'bt_enable' and 'bluetooth' in board:
+            board['bluetooth'].pop('enable_ppid', None)
+            if not board['bluetooth']:
+                board.pop('bluetooth')
+
+
 def first_stream(node):
     """The first entry of a node's iommus: [stream, mask]. In a source the SMMU is a reference (&apps_smmu ...),
     in a compiled tree a number that comes first."""
@@ -200,6 +306,7 @@ def from_dts(text, panel=None):
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
     platform, keys, rpmh, adreno, ipc, radio_pins, streams, lpass, clock = {}, {}, {}, {}, {}, {}, {}, {}, {}
+    buses, uses = [], {}        # the PMIC arbiter's buses, and the nodes of what the board uses of a PMIC (choose_bus)
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -280,6 +387,7 @@ def from_dts(text, panel=None):
                           if 'qcom,spmi-temp-alarm' in strings(n.props.get('compatible')) and unit_address(n) is not None), None)
             if slave is not None and alarm is not None:
                 board['torch'] = {'flash': slave << 8 | unit_address(node) >> 8, 'alarm': slave << 8 | unit_address(alarm) >> 8}
+                uses['torch'] = node
         # the touch controller on an SPI bus: its reset and its interrupt, pins of the SoC (<&tlmm PIN FLAGS>), as the
         # vendors' drivers name them; and the bus it is on, where the tree has the controller under it
         if 'spi-max-frequency' in node.props:
@@ -320,6 +428,7 @@ def from_dts(text, panel=None):
                     base = unit_address(controller)
                     if sid is not None and base is not None and 1 <= pin <= 16:
                         bt[key] = sid << 8 | ((base + (pin - 1) * 0x100) >> 8)
+                        uses['bt_enable'] = controller
                 elif 'gpio-controller' in controller.props and any('tlmm' in c or 'pinctrl' in c for c in strings(controller.props.get('compatible'))):
                     bt[key] = pin
             if not bt:
@@ -385,14 +494,9 @@ def from_dts(text, panel=None):
                 board['mic'] = {'codec_reset': pin_of(state)}
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
-        if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
-            soc['spmi'] = {'core': reg_named(node, 'core'), 'cnfg': reg_named(node, 'cnfg'),
-                           'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
-            if reg_named(node, 'chnls'):
-                soc['spmi']['channels'] = reg_named(node, 'chnls')
-            # (a version 7 arbiter's node is one of its two buses, and "cnfg" that bus's: the first is the default)
-            if (cells(node.props.get('qcom,bus-id')) or [0])[0]:
-                soc['spmi']['bus'] = cells(node.props.get('qcom,bus-id'))[0]
+        # the PMIC arbiter: "qcom,spmi-pmic-arb", or a chip's own name for one with a node for each of its buses
+        if any(re.fullmatch(r'qcom,([a-z0-9]+-)?spmi-pmic-arb', c) for c in compatible):
+            buses += arbiter_buses(node, notes)
         if 'qcom,cmd-db' in compatible:
             reg = cells(node.props.get('reg'))
             if len(reg) in (2, 4):              # address and size, of one cell each or two
@@ -433,6 +537,7 @@ def from_dts(text, panel=None):
             slave, pmic = pmic_of(node)
             if slave is not None:
                 keys.update(pon=slave << 8 | unit_address(node) >> 8, pon_name=f"the {pmic}'s power-on block")
+                uses['pon'] = node
         if not clock and strings(node.props.get('status')) != ['disabled']:
             # the PMIC's real-time clock, its RTC_RW block: Linux's rtc-pm8xxx.c names it by its compatible
             # (qcom,pm8941-rtc, qcom,pmk8350-rtc) at that block's unit address; the vendor's qpnp-rtc.c has a node of
@@ -446,6 +551,7 @@ def from_dts(text, panel=None):
                     (slave, pmic), block = pmic_of(node), unit_address(rw)
             if slave is not None:
                 clock.update(peripheral=slave << 8 | block >> 8, name=f"the {pmic}'s RTC")
+                uses['rtc'] = node
         if 'gpio-keys' in compatible:
             for key in node.children:
                 code, pins = cells(key.props.get('linux,code')), cells(key.props.get('gpios'))
@@ -462,6 +568,7 @@ def from_dts(text, panel=None):
                 # GPIO n of pinctrl@8800 has its registers at 0x8800 + 0x100 * (n - 1)
                 keys.update(volume_up=slave << 8 | ((unit_address(gpios) >> 8) + number - 1),
                             volume_up_name=f'GPIO{number} of the {pmic}')
+                uses['volume_up'] = gpios
     wanted = ('aoss', 'ipcc', 'smem', 'smem_size', 'smem_lock')
     if all(key in ipc for key in wanted):
         soc['ipc'] = {key: ipc[key] for key in wanted}
@@ -481,6 +588,7 @@ def from_dts(text, panel=None):
         soc['lpass'] = lpass
     if len(radio_pins) == 3 and len(set(radio_pins.values())) == 3:
         board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
+    choose_bus(buses, uses, soc, board, keys, clock, notes)
     if keys:
         board['buttons'] = keys
     if clock:

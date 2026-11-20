@@ -10,6 +10,10 @@
 
 static const struct hakios_board *b;
 static struct spmi_peripheral en;
+/* "second_bus": the enable GPIO on the second bus of a version 7 arbiter, and a GPIO at its address on the first */
+static bool on_second_bus;
+static struct spmi_peripheral namesake;
+static unsigned namesake_reads;
 static uint32_t engine[0x1000], clocks[0x60000 / 4];
 static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_starts, rpmh_count;
 static unsigned loopbacks, rx_cancels;
@@ -88,6 +92,13 @@ pmic_written(struct spmi_peripheral *p, uint8_t reg, uint8_t value)
 	CHECK(reg != 0x44 || value == 0 || value == 0x80, "valid output source");
 	CHECK(power_steps == 7, "six supplies then RF clock before enable (%u)", power_steps);
 	p->reg[reg] = value;
+}
+
+/* the first bus's GPIO at the enable GPIO's address: nothing of it is the driver's to ask or to change */
+static void
+namesake_looked(struct spmi_peripheral *p __unused, uint8_t reg __unused)
+{
+	namesake_reads++;
 }
 
 static void
@@ -451,6 +462,20 @@ setup(void)
 {
 	board = "phone-video";
 	b = hakios_board();
+	if (on_second_bus) {
+		/* the same phone on a chip with the arbiter of workbench/devices/phone-buses: version 7, the second
+		 * bus, this system the arbiter's second */
+		static struct hakios_board copy;
+
+		copy = *b;
+		for (unsigned i = 0; i < hakios_board_count; i++) {
+			if (!strcmp(hakios_boards[i].name, "phone-buses")) {
+				copy.spmi = hakios_boards[i].spmi;
+			}
+		}
+		CHECK(copy.spmi.bus == 1 && copy.spmi.channels, "the arbiter of the phone with two buses");
+		found = b = &copy;
+	}
 	spmi.core = b->spmi.core;
 	spmi.cnfg = b->spmi.cnfg;
 	spmi.channels = b->spmi.channels;
@@ -462,6 +487,17 @@ setup(void)
 	en.written = pmic_written;
 	spmi_channel(3, &en, 3);          /* another system's alias first */
 	spmi_channel(7, &en, spmi.ee);
+	if (on_second_bus) {
+		/* 24 channels of the first bus before the second's 40: the arbiter's channels 3 and 7 are the first
+		 * bus's, of a GPIO at the same address, the second of them this system's to write as well */
+		spmi_version_7(b->spmi.observer, 1, 24, 40);
+		namesake = en;
+		namesake.bus = 0;
+		namesake.looked_at = namesake_looked;
+		namesake.written = NULL;
+		spmi_channel(3, &namesake, 3);
+		spmi_channel(7, &namesake, spmi.ee);
+	}
 	rsc.base = b->rpmh.rsc + b->rpmh.tcs_offset;
 	tlmm_model_at(b->pins.tlmm);
 	model.input[b->bluetooth.sw_ctrl] = true;
@@ -651,7 +687,7 @@ main(int argc, char **argv)
 	    "not_an_event", "darwins", "not_darwins", "firmware", "firmware_elf", "firmware_refused", "firmware_missing", "firmware_rom",
 	    "firmware_junk", "firmware_no_reset",
 	    "fifo_narrow", "fifo_shallow", "fifo_four", "rx_shallow", "rx_four", "shortest_version", "short_complete", "other_first",
-	    "last_word_four", "no_mapping", "clocks_off", "look_clocks_off" };
+	    "last_word_four", "no_mapping", "clocks_off", "look_clocks_off", "second_bus" };
 	if (argc < 2) {
 		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
 			puts(scenarios[i]);
@@ -687,6 +723,7 @@ main(int argc, char **argv)
 		odd_resource = 6;
 		odd_name = "nothing.lvl";       /* (the RF clock's name nowhere in the database) */
 	}
+	on_second_bus = !strcmp(scenario, "second_bus");
 	setup();
 	boot_args = "bt=1";
 	if (!strcmp(scenario, "enable_not_ours")) {
@@ -828,6 +865,8 @@ main(int argc, char **argv)
 			CHECK(en.reg[0x44] == 0x80, "enable high until quiesce");
 			CHECK(en.reg[0x40] == 1 && en.reg[0x46] == 0x80, "the enable GPIO a digital output, and enabled: mode %#x, enable %#x",
 			    en.reg[0x40], en.reg[0x46]);
+			CHECK(en.writes == 4 && spmi.writes == 4, "the four writes of the power-up, all to the enable GPIO: %u of %u", en.writes,
+			    spmi.writes);
 			packing_and_clock();
 			unsigned count = rpmh_count;
 			quiesce();
@@ -842,6 +881,15 @@ main(int argc, char **argv)
 	if (!strcmp(scenario, "clocks_off")) {
 		CHECK(logged("the serial engine's clocks are off") && logged("GENI_FW_REVISION_RO 0x200"), "looked at once voted: %s",
 		    log_text);
+	}
+	if (on_second_bus) {
+		/* the controller answered (above), so the GPIO the driver inspected and drove is the second bus's; the first
+		 * bus's, through the arbiter's channels of the same numbers, was never asked and is as it was */
+		CHECK(logged("identification complete") && pmic_reads == 0x7f && en.writes == 5 && spmi.writes == 5,
+		    "inspected and driven on the second bus: reads %#x, %u of %u writes", pmic_reads, en.writes, spmi.writes);
+		CHECK(!namesake.writes && !namesake_reads && !namesake.reg[0x40] && !namesake.reg[0x44] && !namesake.reg[0x46],
+		    "the first bus's GPIO neither read nor written (%u, %u)", namesake_reads, namesake.writes);
+		CHECK(!spmi.past_the_table, "%u reads of the first bus's part of the tables", spmi.past_the_table);
 	}
 	CHECK(!unexpected && !spmi.elsewhere && !model.elsewhere && !rsc.elsewhere, "all traffic inside declared register models");
 	CHECK(!rsc.changed_while_sent && !spmi.denied && !rpmh_locks && !spmi_locks && canary_whole(), "shared transports and database intact");
