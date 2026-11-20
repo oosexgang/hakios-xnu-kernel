@@ -4,7 +4,7 @@ Apple's XNU kernel (`xnu-12377.121.6`, the kernel of Darwin 26 and 27) with what
 Qualcomm phones and in QEMU: our loader, our drivers, and stand-ins for Apple's closed parts.
 
 Nothing of Apple's is in this repository: no firmware, no IPSW, no system images, no screenshots. They are made
-on your machine from files you have. По-русски: [README.ru.md](README.ru.md).
+on your machine from files you have.
 
 ## Where things are
 
@@ -32,8 +32,8 @@ different statements.
 
 | What | State |
 | --- | --- |
-| Darwin 27.2 (24B119, the iPhone12,1's files) | The home screen on Renoir (Snapdragon 780G), from RAM, drawn in software (`gpu=0`); in QEMU the lock screen. [darwin26-boot.md](Documentation/darwin26-boot.md) |
-| Darwin 26.6.2 (23G90) | The home screen on Renoir, first on 31 October 2026. Same document. |
+| Darwin 27.2 (24B119, the iPhone12,1's files) | The home screen on a Snapdragon 780G phone, from RAM, drawn in software (`gpu=0`); in QEMU the lock screen. [darwin26-boot.md](Documentation/darwin26-boot.md) |
+| Darwin 26.6.2 (23G90) | The home screen on the same phone, first on 31 October 2026. Same document. |
 | Each driver | What it has been seen to do, and how tied it is to one phone: [drivers.md](Documentation/drivers.md); what a phone can turn on next: `tools/boards.py status NAME`. |
 | New, not yet seen on a phone | Bluetooth for Darwin (`bt=2`: the controller's firmware, bluetoothd's service, channel and control), the kernel's own UFS driver in `phone_perf`, one image for a phone ([images.md](Documentation/images.md)). Held by the host tests and, where it can be, by QEMU. |
 | Not there | What Darwin draws with the GPU -- applications' icons, Liquid Glass -- while the GPU is off ([metal-glass.md](Documentation/metal-glass.md)). |
