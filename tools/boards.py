@@ -369,9 +369,15 @@ def features_text():
                            for section, keys in part.items()) or 'nothing' for part in (of_soc, of_board)]
         out.append(f'| `{feature}` | {cells[0]} | {cells[1]} | `{FEATURE_BOOTARGS.get(feature, "")}` |')
     out += ['',
-            'The brightness (`[backlight]`), the thermal floors (`[thermal]`) and the partition that may be',
-            'written (`[storage]`) are not features: a board has them by giving the section. `display-scan`',
-            'is for a command-mode panel only.',
+            'The brightness (`[backlight]`), the thermal floors (`[thermal]`), the PMIC\'s clock (`[rtc]`, which',
+            'needs `[spmi]` in the SoC file) and the partition that may be written (`[storage]`) are not',
+            'features: a board has them by giving the section. `display-scan` is for a command-mode panel only.',
+            '',
+            '"nothing" is what the checker asks for, not what the driver needs of the phone. `modem-sm7325` has',
+            'where an SM7325 keeps its shared memory, its command database and the modem\'s memory in its code',
+            '(`drivers/board/mpss.c`): it is for a phone on that chip with the same memory map. `battery-uefi`',
+            'shows what the loader read from the firmware: with the loader here, `uefi_charger` in `[loader]`',
+            'of the board file.',
             '']
     return as_written('\n'.join(out))
 
@@ -394,6 +400,8 @@ def status_text(name, board, soc):
     line('thermal', 'its floors are set (thermal=1 looks, thermal=2 limits)' if 'thermal' in board else
          'no [thermal] section' + ('' if 'thermal' in soc and ('cpufreq' in soc or 'scmi_perf' in soc) else
                                    ': needs [thermal] and [cpufreq] or [scmi_perf] in soc.dtsi first'))
+    line('rtc', "the PMIC's clock is read once at boot (rtc=0 leaves it alone)" if 'rtc' in board else
+         'no [rtc] section: the time is not read from the PMIC' + ('' if 'spmi' in soc else '; needs [spmi] in soc.dtsi first'))
     out.append('')
     for _, feature in feature_bits():
         needs = feature_needs(feature, board, soc)
@@ -405,6 +413,9 @@ def status_text(name, board, soc):
             line(feature, "an emulator's devices: not for a phone")
         elif needs:
             line(feature, 'needs ' + ', '.join(needs))
+        elif feature == 'battery-uefi' and not board.get('loader', {}).get('uefi_charger'):
+            # (not the checker's to refuse: a phone another loader starts may be given the battery by that one)
+            line(feature, 'needs uefi_charger in [loader] of the board file: the loader reads the battery for it')
         elif part:
             line(feature, "one part's driver: only if this phone has that part wired the same way (Documentation/drivers.md)")
         else:
@@ -1385,14 +1396,34 @@ def soc_name_of(path):
         return None
 
 
-def new_board(name, soc_name, dts=None, panel=None, description=None):
-    if not NAME.match(name) or not NAME.match(soc_name):
-        raise SystemExit('names are lower-case letters, digits and dashes')
+def tree_source(dts):
+    """The text of a device tree's source, FILE of --dts; a SystemExit that says what to do when it is none: a file
+    that is not there, or the compiled tree as the phone gives it (/sys/firmware/fdt), which dtc turns into source."""
+    try:
+        data = Path(dts).read_bytes()
+    except OSError as error:
+        raise SystemExit(f'--dts {dts}: {error.strerror or error}: it is the phone\'s device tree as source '
+                         '(Documentation/porting.md, "What you need from the phone")')
+    if data[:4] == b'\xd0\x0d\xfe\xed':
+        raise SystemExit(f'--dts {dts} is a compiled device tree, and its source is what is read: '
+                         f'dtc -I dtb -O dts {dts} > phone.dts, then --dts phone.dts')
+    return data.decode(errors='replace')
+
+
+def new_board(name, soc_name, dts=None, panel=None, description=None, moved=False):
+    """moved: the package is taken elsewhere by the caller (tools/device.py init), who says where it is and what is
+    next; nothing is said here of where it was made."""
+    for what, given in (('the board', name), ('the SoC (--soc)', soc_name)):
+        if not NAME.match(given):
+            like = re.sub(r'[^a-z0-9-]+', '-', given.lower()).strip('-')
+            raise SystemExit(f'"{given}": {what} is named in lower-case letters, digits and dashes' +
+                             (f' ("{like}")' if like else ''))
     board_path = DEVICES / name / 'board.dts'
     soc_path = board_path.parent / 'soc.dtsi'
     if board_path.exists():
         raise SystemExit(f'{shown(board_path)} is there already')
-    soc, board, notes = from_dts(dts.read_text(errors='replace'), panel) if dts else ({}, {}, [])
+    soc, board, notes = from_dts(tree_source(dts), panel) if dts else ({}, {}, [])
+    said = (lambda text: None) if moved else print
     started = 'Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.'
     out = Writer()
     out.comment(f'{description or name}. {started}',
@@ -1475,18 +1506,18 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     out.end()
     board_path.parent.mkdir(parents=True)
     board_path.write_text(out.text())
-    print(f'wrote {shown(board_path)}')
+    said(f'wrote {shown(board_path)}')
     # the package's README, from the template: what works is for the porter to say
     template = DEVICES / '_template' / 'README.md'
     if template.exists():
         readme = board_path.parent / 'README.md'
         readme.write_text(template.read_text().replace('MAKER MODEL', description or name).replace('NAME', name)
                           .replace('(SOC)', f'({soc_name})'))
-        print(f'wrote {shown(readme)}: say there what works, and how it was verified')
+        said(f'wrote {shown(readme)}: say there what works, and how it was verified')
     same = next((path for path in sibling_socs() if soc_name_of(path) == soc_name), None)
     if same:
         soc_path.write_text(same.read_text())
-        print(f'wrote {shown(soc_path)}: a copy of {shown(same)}')
+        said(f'wrote {shown(soc_path)}: a copy of {shown(same)}')
     else:
         out = Writer()
         out.comment(f'{soc_name}. {started}', 'What every board with this SoC shares: where its blocks are (Documentation/porting.md).')
@@ -1516,10 +1547,10 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                 ('io_size', 0x3FC00000, '(these two are what the Snapdragon 7-series ports use)')))
         out.end()
         soc_path.write_text(out.text())
-        print(f'wrote {shown(soc_path)}')
+        said(f'wrote {shown(soc_path)}')
     for note in notes:
         print(as_written(f'note: {note}'))
-    print('next: tools/boards.py check, then Documentation/porting.md')
+    said('next: tools/boards.py check, then Documentation/porting.md')
 
 
 def tree_to_compare(text, panel=None):
@@ -1586,29 +1617,35 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
     return as_written('\n'.join(out)) + '\n', counts['differ']
 
 
-def main():
+def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--devices', action='append', default=[], type=Path, metavar='DIR',
                         help='a directory of device packages (DIR/NAME/board.dts) to take as well as arch/arm64/boot/dts/')
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('list')
-    commands.add_parser('show').add_argument('board')
-    commands.add_parser('status').add_argument('board')
-    commands.add_parser('check')
-    commands.add_parser('features')
-    commands.add_parser('gen').add_argument('--out', type=Path, default=OUT, metavar='DIR')
-    compare = commands.add_parser('compare')
-    compare.add_argument('board')
-    compare.add_argument('--dts', type=Path, required=True)
-    compare.add_argument('--panel')
-    new = commands.add_parser('new')
-    new.add_argument('name')
-    new.add_argument('--soc', required=True)
-    new.add_argument('--dts', type=Path)
-    new.add_argument('--panel')
-    new.add_argument('--description')
-    commands.add_parser('convert').add_argument('files', nargs='+', type=Path, metavar='FILE.toml')
-    options = parser.parse_args()
+    tree = 'the phone\'s Android device tree as source: dtc -I dtb -O dts fdt.dtb > phone.dts (Documentation/porting.md)'
+    which_panel = 'the panel\'s node, when the tree has several (msm_drm.dsi_display0= in Android\'s /proc/cmdline names it)'
+    commands.add_parser('list', help='the boards, one a line')
+    commands.add_parser('show', help='one board with its SoC\'s values').add_argument('board', metavar='BOARD')
+    commands.add_parser('status', help='what a board has on, and what it can turn on next').add_argument('board', metavar='BOARD')
+    commands.add_parser('check', help='validate every board and SoC file')
+    commands.add_parser('features', help='Documentation/features.md: what each feature needs written down')
+    commands.add_parser('gen', help='write the tables the code is built with').add_argument(
+        '--out', type=Path, default=OUT, metavar='DIR', help='where (build/boards)')
+    compare = commands.add_parser('compare', help='a board and its SoC file against a device tree')
+    compare.add_argument('board', metavar='BOARD')
+    compare.add_argument('--dts', type=Path, required=True, metavar='FILE', help=tree)
+    compare.add_argument('--panel', metavar='NODE', help=which_panel)
+    new = commands.add_parser('new', help='start a board file and its SoC file')
+    new.add_argument('name', metavar='NAME', help='the package\'s name, lower-case letters, digits and dashes: the phone\'s '
+                     'codename (arch/arm64/boot/dts/NAME/, and what the loader tells the kernel)')
+    new.add_argument('--soc', required=True, help='the chip\'s name, in lower case (sm7325): soc.dtsi is copied from a '
+                     'package here that has it, else started new')
+    new.add_argument('--dts', type=Path, metavar='FILE', help=tree + '; without it the files are started empty')
+    new.add_argument('--panel', metavar='NODE', help=which_panel)
+    new.add_argument('--description', metavar='TEXT', help='"Maker Model", for people: logs, lists, the README')
+    commands.add_parser('convert', help='a board.toml of before as board.dts').add_argument(
+        'files', nargs='+', type=Path, metavar='FILE.toml')
+    options = parser.parse_args(arguments)
     MORE_DEVICES.extend(options.devices)
     MORE_DEVICES.extend(Path(d) for d in os.environ.get('HAKIOS_DEVICES', '').split(os.pathsep) if d)
 
@@ -1634,19 +1671,27 @@ def main():
         if not problems:
             print(f'{len(boards)} boards, {len({board["soc"] for board in boards.values()})} SoCs: ok')
         return 1 if problems else 0
+    if options.command == 'status':
+        # (one phone's: what is wrong with another package here is that package's, and `check` says it)
+        problems = Problems()
+        socs, boards = load(problems)
+        mine = [problem for problem in problems if f'/{options.board}/' in problem]
+        if options.board not in boards and not mine:
+            raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
+        if mine:
+            raise SystemExit('\n'.join(mine) + f'\n{options.board}: its files are not right yet: status says what a board '
+                             'that passes tools/boards.py check can turn on')
+        print(status_text(options.board, boards[options.board], socs[options.board]), end='')
+        return 0
     socs, boards = load()
     if options.command == 'list':
         for name, board in sorted(boards.items()):
             print(f'{name:12} {board["soc"]:10} {board["description"]}')
-    elif options.command == 'status':
-        if options.board not in boards:
-            raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
-        print(status_text(options.board, boards[options.board], socs[options.board]), end='')
     elif options.command == 'compare':
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
         board = boards[options.board]
-        tree_soc, tree_board, notes = tree_to_compare(options.dts.read_text(errors='replace'), options.panel)
+        tree_soc, tree_board, notes = tree_to_compare(tree_source(options.dts), options.panel)
         text, differ = compare_text(options.board, board, socs[options.board], tree_soc, tree_board, options.dts.name)
         print(text, end='')
         for note in notes:

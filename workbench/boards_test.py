@@ -593,7 +593,16 @@ class Check(Sandbox):
         self.assertRegex(said, r'loader +known by its framebuffer')
         self.assertRegex(said, r'backlight +the panel takes MIPI DCS brightness')
         self.assertRegex(said, r'cpufreq-epss +on \(cpufreq=1\)\n')
-        self.assertRegex(said, r'battery-uefi +can be listed: what it needs is there \(then battery=1\)')
+        # (the loader reads the battery for the kernel only when the board says its firmware has the charger's protocols:
+        # arch/arm64/boot/src/charger_start.c. Said, not refused: another loader may give it)
+        self.assertRegex(said, r'battery-uefi +needs uefi-charger in loader \{ \} of the board file')
+        self.board('fb-base = <0xe1000000>;', 'fb-base = <0xe1000000>;\n\t\tuefi-charger;')
+        self.assertRegex(status(), r'battery-uefi +can be listed: what it needs is there \(then battery=1\)')
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "battery-uefi"')
+        self.assertEqual(self.problems(), '')
+        self.board('"cpufreq-epss", "battery-uefi"', '"cpufreq-epss"')
+        # the PMIC's clock is a section's driver, as the brightness and the floors are: it has its line, with what it needs
+        self.assertRegex(said, r'rtc +no rtc \{ \} section: the time is not read from the PMIC; needs spmi \{ \} in soc.dtsi first')
         # by the same rules as the checker: what is missing is named, file and section
         self.assertRegex(said, r'buttons-pmic +needs spmi \{ \} in soc.dtsi, buttons \{ \} in the board file')
         self.assertRegex(said, r'ddr-rpmh +needs rpmh \{ \} in soc.dtsi')
@@ -624,9 +633,50 @@ class Check(Sandbox):
         self.assertRegex(status(), r'buttons-pmic +can be listed')
         self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
         self.assertRegex(status(), r'buttons-pmic +on \(buttons=1\)\n')
+        self.assertRegex(status(), r'rtc +no rtc \{ \} section: the time is not read from the PMIC\n')
+        path.write_text(path.read_text() + '/ {\n\trtc {\n\t\tperipheral = <0x061>;\n\t};\n};\n')
+        self.assertRegex(status(), r"rtc +the PMIC's clock is read once at boot \(rtc=0 leaves it alone\)")
         # every feature the kernel knows has its line
         for _, feature in boards.feature_bits():
             self.assertRegex(said, rf'(?m)^  {feature} ')
+
+    def tool(self, *arguments):
+        """tools/boards.py ARGUMENTS: (what it returned or stopped with, what it printed)."""
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            try:
+                code = boards.main(list(arguments))
+            except SystemExit as stop:
+                code = stop.code
+        return code, said.getvalue()
+
+    def test_status_is_one_phone_s_and_not_stopped_by_another_package(self):
+        # a second package that is not right yet (somebody's work in progress beside the phone's)
+        (self.dir / 'devices/other').mkdir()
+        (self.dir / 'devices/other/soc.dtsi').write_text(SOC)
+        (self.dir / 'devices/other/board.dts').write_text(BOARD.replace('name = "phone"', 'name = "other"')
+                                                          .replace('fb-base = <0xe1000000>', 'fb-base = <0xe2000000>')
+                                                          .replace('\tloader {', '\twarp {\n\t\tfactor = <9>;\n\t};\n\tloader {'))
+        self.assertIn('devices/other/board.dts: unknown section warp { }', self.problems())
+        code, said = self.tool('status', 'phone')
+        self.assertEqual(code, 0)
+        self.assertIn('phone: A phone (sm0001)', said)
+        self.assertRegex(said, r'cpufreq-epss +on \(cpufreq=1\)\n')
+        # its own are said, and only its own
+        code, said = self.tool('status', 'other')
+        self.assertIn('devices/other/board.dts: unknown section warp { }', str(code))
+        self.assertIn('other: its files are not right yet', str(code))
+        self.assertNotIn('devices/phone/', str(code))
+        self.assertEqual(said, '')
+        self.assertIn('no board "nosuch"', str(self.tool('status', 'nosuch')[0]))
+
+    def test_each_option_of_new_says_what_it_is(self):
+        code, said = self.tool('new', '--help')
+        self.assertEqual(code, 0)
+        said = ' '.join(said.split())            # (as one line: the help is folded to the terminal's width)
+        for text in ('NAME', 'lower-case letters, digits and dashes', '--soc SOC', 'copied from a', '--dts FILE',
+                     'dtc -I dtb -O dts', '--panel NODE', '--description TEXT'):
+            self.assertIn(text, said)
 
     def test_status_says_which_bluetooth_firmware_is_sent(self):
         socs, found = boards.load()
@@ -1484,6 +1534,39 @@ class DeviceTree(Sandbox):
         self.assertTrue(any('[backlight] is not compared' in note for note in notes), notes)
         # ... and with several panels, which one was taken is said
         self.assertTrue(any('several panels' in note for note in boards.tree_to_compare(DTS)[2]))
+
+    def test_a_tree_that_cannot_be_read_is_said_to_be_and_nothing_is_started(self):
+        def refused(*arguments, **more):
+            with self.assertRaises(SystemExit) as stop, contextlib.redirect_stdout(io.StringIO()):
+                boards.new_board(*arguments, **more)
+            return str(stop.exception.code)
+        # the file is not there: its name and why, not a traceback
+        said = refused('phone2', 'sm0002', self.dir / 'nowhere.dts')
+        self.assertIn('nowhere.dts: No such file or directory', said)
+        # the tree as the phone gives it (/sys/firmware/fdt), not its source: a board with nothing in it was written
+        compiled = self.dir / 'fdt.dtb'
+        compiled.write_bytes(b'\xd0\x0d\xfe\xed' + bytes(60))
+        said = refused('phone2', 'sm0002', compiled)
+        self.assertIn('is a compiled device tree', said)
+        self.assertIn(f'dtc -I dtb -O dts {compiled} > phone.dts', said)
+        self.assertFalse((self.dir / 'devices/phone2').exists())
+        with self.assertRaises(SystemExit) as stop:
+            boards.tree_source(compiled)                 # (compare reads its tree the same way)
+        self.assertIn('compiled device tree', str(stop.exception.code))
+        # which of the two names is not one, and what it could be
+        self.assertIn('"SM0002": the SoC (--soc) is named in lower-case letters, digits and dashes ("sm0002")',
+                      refused('phone2', 'SM0002'))
+        self.assertIn('"Phone_2": the board is named in lower-case letters, digits and dashes ("phone-2")',
+                      refused('Phone_2', 'sm0002'))
+        self.assertEqual(sorted(p.name for p in (self.dir / 'devices').iterdir()), ['phone'])
+
+    def test_a_package_that_is_moved_away_is_not_said_to_be_here(self):
+        # tools/device.py init makes the package here and takes it to the phone's own repository: where it was on the
+        # way, and that `check` is next here, would send the porter to files that are gone
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            boards.new_board('phone2', 'sm0002', None, None, 'Another phone', moved=True)
+        self.assertEqual(said.getvalue(), '')
+        self.assertTrue((self.dir / 'devices/phone2/board.dts').is_file())
 
     def test_a_new_board_is_started_from_a_device_tree(self):
         dts = self.dir / 'phone2.dts'

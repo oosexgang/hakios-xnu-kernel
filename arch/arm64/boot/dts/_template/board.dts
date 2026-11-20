@@ -13,7 +13,8 @@
 	// cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs cpufreq { } in the SoC file
 	// cpufreq-scmi    firmware CPU performance queries (scmi_perf=1); needs scmi-perf { } in the SoC file
 	// ddr-rpmh        memory bandwidth votes through RPMh (ddr=); needs rpmh { } in the SoC file
-	// battery-uefi    the battery as the firmware reports it to the loader (battery=1)
+	// battery-uefi    the battery as the firmware reports it to the loader (battery=1); needs uefi-charger in
+	// loader { }
 	// buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1); needs buttons { },
 	// and spmi { } in the SoC file
 	// adsp            the audio DSP: sound, and the battery manager behind it (adsp=1); needs adsp { }
@@ -24,7 +25,9 @@
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (drivers/board/board.h, Documentation/drivers.md):
 	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, imu-lsm6dso, torch-pm8350c, camera-sm7325,
-	// wifi-wcn6750, mic-wcd938x, modem-sm7325
+	// wifi-wcn6750, mic-wcd938x, modem-sm7325, bluetooth-wcn-uart
+	// Documentation/features.md has what each needs written down first; tools/boards.py status NAME says it for
+	// this board.
 	features = <>;
 
 	// The panel's light (Documentation/backlight.md).
@@ -277,25 +280,25 @@
 		//                              // `--boot-arg NAME=VALUE` adds to these or replaces one (Documentation/boot-args.md)
 	// };
 
-	// Bluetooth H4: values below are illustrative; fill from the board's UART and power nodes.
-	// Feature "bluetooth-wcn-uart": bt=-1 inspects, bt=1 powers and identifies, bt=2 sends the firmware named below
-	// and hands the controller to Darwin.
-	bluetooth {
-		serial-engine = <0x898000>;     // UART SE register page
-		wrapper = <0x8c0000>;           // QUP wrapper common registers (HW_VER at +4)
-		clocks = <0x23298 0x2329c 0x1e76c>; // GCC halt offsets: m_ahb, s_ahb, SE
-		clock-source = <0x1e77c>;       // GCC CMD_RCGR offset, independent of SE halt
-		vote-register = <0x52010>;      // GCC application processor votes
-		votes = <3 0 2 1 10>;           // core_2x, core, m_ahb, s_ahb, SE bit numbers
-		uart-pins = <24 25 26 27>;      // TLMM CTS, RTS, TX, RX, in that order
-		uart-function = <1>;           // TLMM alternate function
-		enable-ppid = <0x38a>;          // PMIC GPIO: (sid << 8) | (base >> 8)
-		sw-ctrl = <18>;                // TLMM input, controller ready
-		supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
-		supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
-		rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
+	// Bluetooth H4, for the feature "bluetooth-wcn-uart": the values below are illustrative; fill them in from the
+	// board's UART and power nodes. bt=-1 inspects, bt=1 powers and identifies, bt=2 sends the firmware named below
+	// and hands the controller to Darwin. Leave the section out on a phone without the part.
+	// bluetooth {
+		// serial-engine = <0x898000>;     // UART SE register page
+		// wrapper = <0x8c0000>;           // QUP wrapper common registers (HW_VER at +4)
+		// clocks = <0x23298 0x2329c 0x1e76c>; // GCC halt offsets: m_ahb, s_ahb, SE
+		// clock-source = <0x1e77c>;       // GCC CMD_RCGR offset, independent of SE halt
+		// vote-register = <0x52010>;      // GCC application processor votes
+		// votes = <3 0 2 1 10>;           // core_2x, core, m_ahb, s_ahb, SE bit numbers
+		// uart-pins = <24 25 26 27>;      // TLMM CTS, RTS, TX, RX, in that order
+		// uart-function = <1>;           // TLMM alternate function
+		// enable-ppid = <0x38a>;          // PMIC GPIO: (sid << 8) | (base >> 8)
+		// sw-ctrl = <18>;                // TLMM input, controller ready
+		// supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
+		// supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
+		// rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
 		// firmware = "fw-bt";          // the small image's directory with the controller's firmware (default fw)
 		// rampatch = "msbtfw11.mbn";   // the patch to its ROM, from the phone's own vendor/firmware (bt_fw=0: not sent)
 		// nvm = "msnv11.bin";          // its configuration, sent after the patch; without either the ROM runs as it is
-	};
+	// };
 };
