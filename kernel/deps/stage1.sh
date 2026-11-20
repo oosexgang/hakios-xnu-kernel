@@ -12,13 +12,13 @@
 #
 # What is there already is left alone, so it can be run again at any time. kernel/build.sh runs it by
 # itself when no darwin-renoir checkout provides the same (Documentation/building.md).
-# Needs: git curl tar xz make cc flex bison m4 perl autoconf automake.
+# Needs: git curl tar xz make cc flex bison m4 perl autoconf automake on Linux; Xcode's tools on macOS.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 [ $# -eq 1 ] || { echo "usage: stage1.sh DIR" >&2; exit 1; }
 mkdir -p "$1"
 D=$(cd "$1" && pwd)
-JOBS=${JOBS:-$(nproc)}
+JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)}
 MACOS_SDK_URL=https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz
 MACOS_SDK_SHA256=518e35eae6039b3f64e8025f4525c1c43786cc5cf39459d609852faf091e34be
 
@@ -40,6 +40,46 @@ fetch() {
 	git -C "$D/$1" fetch -q --depth 1 "$2" "$3" || die "cannot fetch $3 from $2"
 	git -C "$D/$1" -c advice.detachedHead=false checkout -q FETCH_HEAD
 }
+
+stage1_darwin() {
+	local sdk tool path name
+	for tool in git curl tar xz make cc clang flex bison m4 perl xcrun; do
+		command -v "$tool" > /dev/null || die "not installed: $tool"
+	done
+	sdk=$(/usr/bin/xcrun --sdk iphoneos --show-sdk-path) || die "no iPhoneOS SDK in Xcode (xcode-select -p?)"
+	[ -d "$sdk/usr/include" ] || die "no iPhoneOS SDK headers in $sdk"
+
+	fetch AvailabilityVersions https://github.com/apple-oss-distributions/AvailabilityVersions.git \
+		5d9baee345b3bc72b26c71adc65f94f2d5e9ced2        # AvailabilityVersions-115.4
+	fetch libdispatch https://github.com/apple-oss-distributions/libdispatch.git \
+		a641558f447659d90ad002ef0ee6f0212273fbfc        # libdispatch-1415.100.11
+	fetch libpthread https://github.com/apple-oss-distributions/libpthread.git \
+		a6c70ca0e544347a0377babf748f831577ec24f9        # libpthread-514.100.2
+	mkdir -p "$D/host/bin"
+	for tool in mig migcom unifdef; do
+		path=$(/usr/bin/xcrun --sdk iphoneos --find "$tool") || die "Xcode does not provide $tool"
+		[ -x "$path" ] || die "Xcode tool is missing: $path"
+		ln -sfn "$path" "$D/host/bin/$tool"
+	done
+	for tool in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool ld; do
+		path=$(/usr/bin/xcrun --sdk iphoneos --find "$tool") || die "Xcode does not provide $tool"
+		[ -x "$path" ] || die "Xcode tool is missing: $path"
+		name=$tool
+		[ "$tool" != ld ] || name=ld64
+		ln -sfn "$path" "$D/host/bin/$name"
+	done
+	ln -sfn /bin/tcsh "$D/host/bin/tcsh"
+	ln -sfn /bin/csh "$D/host/bin/csh"
+	if [ ! -x "$D/host/bin/unzbm" ]; then
+		cc -O2 -w -o "$D/host/bin/unzbm" "$HERE/build/lzbitmap/unzbm.c" "$HERE/build/lzbitmap/libzbitmap.c"
+	fi
+	log "done: $D (macOS, iPhoneOS SDK: $sdk)"
+}
+
+if [ "$(uname -s)" = Darwin ]; then
+	stage1_darwin
+	exit 0
+fi
 
 fetch AvailabilityVersions https://github.com/apple-oss-distributions/AvailabilityVersions.git \
 	5d9baee345b3bc72b26c71adc65f94f2d5e9ced2        # AvailabilityVersions-115.4

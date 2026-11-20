@@ -1,30 +1,51 @@
 #!/bin/bash
-# Build the kernel on Linux: Apple's release (kernel/UPSTREAM) with kernel/overlay and kernel/patches,
+# Build the kernel on Linux or macOS: Apple's release (kernel/UPSTREAM) with kernel/overlay and kernel/patches,
 # as plain arm64 (no PAC), MACHINE=BCM2837, DEVELOPMENT. One kernel serves every board: which one it runs
 # on it learns at boot (/chosen/darwin-board; arch/arm64/boot/dts/).
 #
-#   kernel/build.sh [make args]      e.g. build.sh -j12 (default -j$(nproc))
+#   kernel/build.sh [make args]      e.g. build.sh -j12 (default: available logical CPUs)
 #
 # From scratch it makes, in order (each step is skipped when its result is already there):
 #   1. $XNU_SRC (default: next to the repository, named after the release): kernel/assemble.sh; a tree
 #      that is there already is brought up to date with the repository (only changed files are touched)
 #   2. $XNUDEPS ($XNU_SRC-deps): Apple's open sources and the host tools (kernel/deps/stage1.sh fetches
-#      and builds them there, unless a darwin-renoir checkout has them), kernel/deps' wrappers, its own
-#      SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
+#      and builds or links them, unless a darwin-renoir checkout has them), kernel/deps' wrappers, its own
+#      SDK (links to Xcode's SDK on macOS or theos' iPhoneOS SDK on Linux, plus usr/local)
 #   3. the kernel's exported headers, then libfirehose_kernel.a and libpthread_kext.a built against them
 #   4. the kernel: $XNU_SRC/BUILD/obj/mach.development.bcm2837
-# Needs iPhoneOS16.5.sdk's headers, and Mach-O tools: theos' cctools, or LLVM's; see Documentation/building.md.
+# Needs an iPhoneOS SDK and Mach-O tools: Xcode on macOS, or theos/LLVM on Linux; see Documentation/building.md.
 set -e -o pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"         # (focaltech_stub)
 K=$HAKIOS_KERNEL
 BD=$K/deps
-JOBS=$(nproc)
+HOST_OS=$(uname -s)
+JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)}
 log() { echo "build.sh: $*"; }
 die() { echo "build.sh: $*" >&2; exit 1; }
 link() { [ "$(readlink "$2" 2>/dev/null)" = "$1" ] || ln -sfn "$1" "$2"; }
 update() { cat > "$1.new"; if cmp -s "$1.new" "$1"; then rm "$1.new"; else mv "$1.new" "$1"; fi; }
+
+if [ "$HOST_OS" = Darwin ]; then
+	PYTHON3=${PYTHON3:-$(command -v python3.12 || command -v python3)}
+	"$PYTHON3" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' ||
+		die "Python 3.12 or newer is needed (install Homebrew python@3.12)"
+	mkdir -p "$XNUDEPS/host/bin"
+	ln -sfn "$PYTHON3" "$XNUDEPS/host/bin/python3"
+	export PATH="$XNUDEPS/host/bin:$PATH"
+	if [ -z "${XNU_CLANG_DIR:-}" ]; then
+		if [ "${TOOLCHAIN:-}" = llvm ]; then
+			XNU_CLANG_DIR=$(brew --prefix llvm 2>/dev/null)/bin
+		else
+			XNU_CLANG_DIR=$(dirname "$(/usr/bin/xcrun --find clang)")
+		fi
+	fi
+	DARWIN_SDK=${DARWIN_SDK:-$(/usr/bin/xcrun --sdk iphoneos --show-sdk-path)}
+	TOOLCHAIN=${TOOLCHAIN:-apple}
+else
+	export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}
+fi
 
 # --- 1. the tree ------------------------------------------------------------------------------
 if [ ! -e "$XNU_SRC" ]; then
@@ -58,12 +79,13 @@ if [ ! -x "$RD/host/bin/migcom" ] || [ ! -x "$RD/host/bin/tcsh" ] || [ ! -d "$RD
 	RD=$XNUDEPS/stage1
 	"$BD/stage1.sh" "$RD"
 fi
-# The Mach-O tools: theos' cctools (TOOLCHAIN=cctools), or LLVM's beside the clang the kernel is compiled
-# with (TOOLCHAIN=llvm: ld64.lld and its fellows in XNU_CLANG_DIR, through kernel/host/llvm). Unset: theos'
-# when it is there, else LLVM's when they are. The SDK's headers are theos' unless DARWIN_SDK says where.
+# The Mach-O tools: Xcode's on macOS (TOOLCHAIN=apple), theos' cctools (TOOLCHAIN=cctools), or LLVM's beside
+# the clang the kernel is compiled with (TOOLCHAIN=llvm: ld64.lld and its fellows in XNU_CLANG_DIR). Linux
+# defaults to theos when present, else LLVM. DARWIN_SDK selects the SDK.
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
-DARWIN_SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
-export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}
+if [ "$HOST_OS" != Darwin ]; then
+	DARWIN_SDK=${DARWIN_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
+fi
 if [ -z "${TOOLCHAIN:-}" ]; then
 	if [ -x "$CCTOOLS/ld" ]; then
 		TOOLCHAIN=cctools
@@ -74,7 +96,8 @@ fi
 [ -d "$DARWIN_SDK/usr/include" ] || die "no iPhoneOS16.5.sdk at $DARWIN_SDK (theos' sdks/, or DARWIN_SDK=DIR)"
 mkdir -p "$XNUDEPS/host/bin" "$XNUDEPS/build/firehose" "$XNUDEPS/build/pthread" "$XNUDEPS/sdk/Platforms/iPhoneOS.platform"
 cd "$XNUDEPS"
-for d in AvailabilityVersions libdispatch libpthread MacOSX13.3.sdk; do link "$RD/$d" $d; done
+for d in AvailabilityVersions libdispatch libpthread; do link "$RD/$d" "$d"; done
+if [ "$HOST_OS" != Darwin ]; then link "$RD/MacOSX13.3.sdk" MacOSX13.3.sdk; fi
 link "$BD/hostinc" hostinc
 # iig implementation stand-ins: kernel/deps', plus kernel/iig-impl for classes new in xnu-12377
 [ -L iig-impl ] && rm iig-impl
@@ -104,12 +127,30 @@ if [ ! -d $MACOS26/System/Library/Frameworks/Kernel.framework/Headers/DriverKit 
 	log "downloading the macOS 26.5 SDK for its DriverKit headers"
 	U=https://github.com/socheatsok78/macos-sdks/releases/download/rolling/$MACOS26.tar.xz
 	curl -L --fail --retry 3 -s -o macos26.tar.xz $U || die "download failed: $U"
-	echo "e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190  macos26.tar.xz" | sha256sum -c --quiet ||
-		die "$U: unexpected checksum"
-	tar -xJf macos26.tar.xz --wildcards "*$MACOS26/System/Library/Frameworks/Kernel.framework*" || die "cannot unpack $U"
+	if [ "$HOST_OS" = Darwin ]; then
+		echo "e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190  macos26.tar.xz" | shasum -a 256 -c - > /dev/null ||
+			die "$U: unexpected checksum"
+		tar -xJf macos26.tar.xz "*$MACOS26/System/Library/Frameworks/Kernel.framework*" ||
+			die "cannot unpack $U"
+	else
+		echo "e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190  macos26.tar.xz" | sha256sum -c --quiet ||
+			die "$U: unexpected checksum"
+		tar -xJf macos26.tar.xz --wildcards "*$MACOS26/System/Library/Frameworks/Kernel.framework*" ||
+			die "cannot unpack $U"
+	fi
 	rm -f macos26.tar.xz
 fi
 case ${TOOLCHAIN:-} in
+apple)
+	[ "$HOST_OS" = Darwin ] || die "TOOLCHAIN=apple is only available on macOS"
+	log "Mach-O tools: Xcode's, from the iPhoneOS SDK"
+	for t in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
+		tool=$(/usr/bin/xcrun --sdk iphoneos --find "$t") || die "Xcode does not provide $t"
+		link "$tool" "host/bin/$t"
+	done
+	tool=$(/usr/bin/xcrun --sdk iphoneos --find ld) || die "Xcode does not provide ld"
+	link "$tool" host/bin/ld64
+	;;
 cctools)
 	[ -x "$CCTOOLS/ld" ] || die "TOOLCHAIN=cctools: no theos toolchain in $THEOS"
 	for t in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
@@ -137,7 +178,17 @@ esac
 if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then
 	log "making the SDK: links to $DARWIN_SDK"
 	rm -rf "$XNU_SDK_PATH"
-	cp -rs "$(cd "$DARWIN_SDK" && pwd)" "$XNU_SDK_PATH"
+	if [ "$HOST_OS" = Darwin ]; then
+		mkdir -p "$XNU_SDK_PATH/usr"
+		for f in "$DARWIN_SDK"/*; do
+			[ "$(basename "$f")" = usr ] || ln -s "$f" "$XNU_SDK_PATH/"
+		done
+		for f in "$DARWIN_SDK"/usr/*; do
+			[ "$(basename "$f")" = local ] || ln -s "$f" "$XNU_SDK_PATH/usr/"
+		done
+	else
+		cp -rs "$(cd "$DARWIN_SDK" && pwd)" "$XNU_SDK_PATH"
+	fi
 fi
 SL=$XNU_SDK_PATH/usr/local
 mkdir -p $SL/include/kernel/os $SL/include/os $SL/lib/kernel $SL/libexec
@@ -157,7 +208,7 @@ WIFI_OBJECT=$XNUDEPS/build/ath11k/out/ath11k.o
 [ -f "$WIFI_OBJECT" ] || WIFI_OBJECT=
 # (make does not know the kernel depends on it: an ath11k.o newer than the linked kernel would not be in it, the old
 # driver linked again from the link's leftovers. Those go, and the kernel is linked anew with it.)
-OBJECT=mach.${KERNEL_CONFIG,,}.${MACHINE_CONFIG,,}         # (mach.development.bcm2837: build.config.arm64)
+OBJECT=mach.$(printf '%s' "$KERNEL_CONFIG" | tr '[:upper:]' '[:lower:]').$(printf '%s' "$MACHINE_CONFIG" | tr '[:upper:]' '[:lower:]') # (mach.development.bcm2837)
 LINKED=$XNU_SRC/BUILD/obj/${KERNEL_CONFIG}_${ARCH_CONFIG}_${MACHINE_CONFIG}/$OBJECT
 if [ -n "$WIFI_OBJECT" ] && [ -e "$LINKED" ] && [ "$WIFI_OBJECT" -nt "$LINKED" ]; then
 	rm -rf "$LINKED"*
@@ -168,10 +219,11 @@ fi
 KERNEL_BUILD_DATE=${KERNEL_BUILD_DATE:-$(LC_ALL=C date -u)}
 export KERNEL_BUILD_DATE
 xnumake() {
+	HOST_CC="clang -include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration"
 	(cd "$XNU_SRC" && make DEFAULT_TARGET=build HAKIOS_OBJECTS="$WIFI_OBJECT" SDKROOT=iphoneos ARCH_CONFIGS="$ARCH_CONFIG" MACHINE_CONFIGS="$MACHINE_CONFIG" \
 		KERNEL_CONFIGS="$KERNEL_CONFIG" ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} \
 		BUILD_WERROR="$BUILD_WERROR" BUILD_LTO="$BUILD_LTO" DO_CTFMERGE=0 BUILD_DSYM=0 PLUTIL=plutil \
-		HOST_CC="clang -include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration" \
+		HOST_CC="$HOST_CC" \
 		HOST_FLEX=flex HOST_BISON=bison HOST_GM4=m4 CC=xnu-clang CXX=xnu-clang++ LOGCOLORS=n "$@")
 }
 
@@ -234,4 +286,9 @@ if [ "${XNU_WARNINGS:-0}" = 1 ]; then
 fi
 KF=$XNU_SRC/BUILD/obj/$OBJECT
 [ -f "$KF" ] || die "no $KF"
-log "kernel: $KF ($(stat -L -c %s "$KF") bytes)${WIFI_OBJECT:+, with the Wi-Fi driver}, linked with $TOOLCHAIN's tools"
+if [ "$HOST_OS" = Darwin ]; then
+	KERNEL_SIZE=$(stat -L -f %z "$KF")
+else
+	KERNEL_SIZE=$(stat -L -c %s "$KF")
+fi
+log "kernel: $KF ($KERNEL_SIZE bytes)${WIFI_OBJECT:+, with the Wi-Fi driver}, linked with $TOOLCHAIN's tools"

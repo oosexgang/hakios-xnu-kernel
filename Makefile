@@ -1,7 +1,7 @@
 # What can be run from a checkout. `make` alone lists it.
 #
 # Everything under "check" needs no phone, no Darwin files and no kernel toolchain: a C compiler,
-# Python 3.11 or newer and git. The aarch64 half of the driver tests also wants
+# Python 3.12 or newer and git. The aarch64 half of the driver tests also wants
 # gcc-aarch64-linux-gnu and qemu-user, and is left out without them.
 
 .DEFAULT_GOAL := help
@@ -34,6 +34,7 @@ help:
 	@echo "make kernel         build the kernel (kernel/build.sh; Documentation/building.md says what it needs)"
 	@echo "make loader         build the loader (arch/arm64/boot/build.sh: clang and lld)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos)"
+	@echo "make setup-macos    check the Xcode and Homebrew tools for a native macOS kernel build"
 	@echo "make qemu           boot the built kernel in QEMU, try it from its shell and run its own tests (KERNEL=FILE)"
 
 .PHONY: check
@@ -158,6 +159,10 @@ analyze-userland:
 .PHONY: kernel
 kernel:
 	kernel/build.sh
+
+.PHONY: setup-macos
+setup-macos:
+	scripts/setup-macos.sh
 
 .PHONY: kernel-check
 kernel-check:

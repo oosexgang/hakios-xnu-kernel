@@ -6,11 +6,16 @@
 . "$HAKIOS/build.config.arm64"
 
 export TOOLCHAIN=${TOOLCHAIN:-llvm}
-# the newest LLVM of the machine's that has ld64.lld (Debian/Ubuntu: /usr/lib/llvm-N/bin), unless XNU_CLANG_DIR says
-# which; with none, /usr/bin, and kernel/build.sh says what is missing there
+# the newest LLVM with ld64.lld (Homebrew's on macOS, /usr/lib/llvm-N/bin on Debian/Ubuntu), unless XNU_CLANG_DIR
+# says which; with none, /usr/bin, and kernel/build.sh says what is missing there
 if [ -z "${XNU_CLANG_DIR:-}" ]; then
-	for llvm in $(ls -d /usr/lib/llvm-*/bin 2> /dev/null | sort -V); do
+	if [ "$(uname -s)" = Darwin ]; then
+		llvm=$(brew --prefix llvm 2> /dev/null)/bin
 		[ -x "$llvm/ld64.lld" ] && XNU_CLANG_DIR=$llvm
-	done
+	else
+		for llvm in $(ls -d /usr/lib/llvm-*/bin 2> /dev/null | sort -V); do
+			[ -x "$llvm/ld64.lld" ] && XNU_CLANG_DIR=$llvm
+		done
+	fi
 fi
 export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}

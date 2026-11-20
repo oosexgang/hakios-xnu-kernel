@@ -35,7 +35,7 @@ first lines; `make` lists the common ones.
 | `qemu/` | Helpers for a kernel in QEMU: `screendump.sh` (a picture of its screen), `touch.py` (a touch through QMP). |
 | `qemu-init/` | The program that is `/sbin/launchd` of `qemu-root.sh`'s root: says what the kernel says of itself, then a shell whose commands try the rest of the kernel. |
 
-The tools need Python 3.11 or newer and git, nothing else. They are tested in `workbench/`
+The tools need Python 3.12 or newer and git, nothing else. They are tested in `workbench/`
 (`boards_test.py`, `device_test.py`, `bootargs_test.py`, `tools_test.py`), in small repositories of
 their own.
 

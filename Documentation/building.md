@@ -4,9 +4,9 @@ What can be built, from the least setup to the most.
 
 | What | Command | Needs |
 | --- | --- | --- |
-| The checks | `make check` | A C compiler, Python 3.11+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
+| The checks | `make check` | A C compiler, Python 3.12+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
 | The loader | `arch/arm64/boot/build.sh` | `clang`, `lld`. |
-| The kernel | `kernel/build.sh` | Linux, the system packages below with clang 19 or newer, theos or LLVM's Mach-O tools, and the device package of the phone it is for. |
+| The kernel | `kernel/build.sh` | Linux or macOS, the host packages below, the iPhoneOS SDK and the device package of the phone it is for. |
 | Darwin images, and a boot | [darwin26-boot.md](darwin26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
 
 ## The checks
@@ -62,9 +62,38 @@ another file of the top to read instead: a configuration of your own is a file t
 
 ## The kernel
 
+### macOS
+
+Use Xcode with an installed iPhoneOS SDK and Homebrew. The setup check lists what is missing; add `--install` to
+install the Homebrew packages it needs:
+
+```sh
+scripts/setup-macos.sh --check
+scripts/setup-macos.sh --install       # gawk, LLVM, Python 3.12 and xz
+```
+
+Build with Xcode's clang, iPhoneOS SDK and Mach-O tools. The XNU source and its dependencies are kept beside the
+checkout, not in it:
+
+```sh
+kernel/build.sh
+```
+
+On macOS the build selects `TOOLCHAIN=apple` by default. This uses Xcode's linker for the phone kernel. To compile
+and link with Homebrew LLVM instead (a build check, not the image to boot on the phone):
+
+```sh
+BUILD_CONFIG=build.config.arm64.llvm kernel/build.sh
+```
+
+`DARWIN_SDK` can point to another iPhoneOS SDK, and `XNU_CLANG_DIR` can select another clang/toolchain directory.
+Python 3.12 is placed first for the build because some project tools use syntax added in that version.
+
+### Linux
+
 Requirements:
 
-- Linux (the team builds on Arch under WSL). Packages: `base-devel git curl clang lld python perl xz
+- Packages: `base-devel git curl clang lld python perl xz
   flex bison m4 autoconf automake gawk`. GNU awk is needed even where another awk is the default (Debian's
   and Ubuntu's mawk): the syscall table's generator writes an escape that mawk keeps as it is. On
   Ubuntu: `apt-get install build-essential git curl clang lld python3 perl xz-utils flex bison m4 autoconf

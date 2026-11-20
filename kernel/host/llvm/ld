@@ -9,7 +9,8 @@
 #   XNU asserts, and place-kernel.py beside this file then moves the image to its address and gives it a
 #   kernel's load commands (its own head says how).
 # (the platform by its number in mach-o/loader.h: 2, the one the phones' SDK builds for)
-HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+SCRIPT=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")
+HERE=$(cd "$(dirname "$SCRIPT")" && pwd)
 args=(-platform_version 2 "${XNU_SDK_VERSION:-16.5}" "${XNU_SDK_VERSION:-16.5}")
 out='' base='' headerpad=()
 while [ $# -gt 0 ]; do
