@@ -197,6 +197,11 @@ class Packages(Sandbox):
             (self.dir / 'arch/arm64/boot/dts/mine/README.md').unlink()
             shutil.rmtree(out / 'mine')
             self.run_tool('export', 'mine', str(out))
+            # (the Android tree the package was started from lies beside it, as Documentation/porting.md names it, with
+            # a dump: neither is sent to where packages are published)
+            (self.dir / 'arch/arm64/boot/dts/mine/phone.dts').write_text('/ { };\n')
+            (self.dir / 'arch/arm64/boot/dts/mine/fdt.dtb').write_bytes(b'\xd0\x0d\xfe\xed')
+            self.run_tool('export', 'mine', str(out))
             self.assertEqual(sorted(str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()),
                              ['mine/board.dts', 'mine/notes/pins.md', 'mine/soc.dtsi'])    # (not the note of where it came from)
             # ... and can be brought in from there again
@@ -239,7 +244,7 @@ class Packages(Sandbox):
         url = f'file://{bare}'
         code, said, _ = self.run_tool('available', '--from', url)
         self.assertEqual(code, 0, said)
-        self.assertRegex(said, r'1 packages\n  zeta +sm0001 +Phone zeta')
+        self.assertRegex(said, r'1 package\n  zeta +sm0001 +Phone zeta')
         code, said, complained = self.run_tool('add', 'zeta', '--from', url)
         self.assertEqual((code, complained), (0, ''))
         self.assertRegex(said, r'arch/arm64/boot/dts/zeta: from file://.*My_Phone-port\.git \([0-9a-f]{12}\)')
@@ -332,15 +337,55 @@ class Packages(Sandbox):
         self.assertTrue((target / '.git').is_dir(), 'a git repository')
         self.assertIn('name = "sm0001"', (target / 'soc.dtsi').read_text())
         self.assertIn('make image DEVICE=kappa', (target / 'BUILDING.md').read_text())
+        # (the phone is named: a board that is new has no uefi { } section for the image's tool to choose it by)
+        self.assertIn('make phone FROM=URL-OF-THIS-REPOSITORY DEVICE=kappa', (target / 'BUILDING.md').read_text())
         self.assertFalse((self.dir / 'arch/arm64/boot/dts/kappa').exists(), 'nothing of it left in the checkout')
-        # what a build reads of it, and only that: not its git, its checks or its images
+        # what is said is where the files are now, not where they were made on the way
+        self.assertNotIn('arch/arm64/boot/dts/kappa', said)
+        self.assertNotIn('next: tools/boards.py check', said)
+        for name in ('board.dts', 'soc.dtsi', 'BUILDING.md', '.gitignore', '.github/workflows/check.yml'):
+            self.assertIn(f'\n  {name}\n', said)
+        self.assertIn(f'tools/device.py add --from {target}', said)
+        # what a build reads of it, and only that: not its git, its checks, its images or how to build from it ...
         (target / 'images/v1').mkdir(parents=True)
         (target / 'images/v1/kappa.payload').write_bytes(b'XNUP')
+        # ... and not what lies beside a package where it is worked on, which its .gitignore keeps out of git and a
+        # plain copy would have taken into the checkout: the vendor's firmware, the Android tree, what the tools made
+        (target / 'firmware/kappa/uefi').mkdir(parents=True)
+        (target / 'firmware/kappa/uefi/BootShim.bin').write_bytes(b'the vendor\'s')
+        (target / 'build').mkdir()
+        (target / 'build/left').write_text('made\n')
+        (target / 'phone.dts').write_text('/ { };\n')
+        (target / 'fdt.dtb').write_bytes(b'\xd0\x0d\xfe\xed')
+        (target / 'notes').mkdir()
+        (target / 'notes/pins.md').write_text('pins\n')
+        (target / 'notes/build').write_text('a note of that name, not at the top: the phone\'s\n')
+        (target / 'notes/dump.dtb').write_bytes(b'\xd0\x0d\xfe\xed')
         code, said, complained = self.run_tool('add', '--from', str(target))
         self.assertEqual((code, complained), (0, ''), said)
-        brought = {p.name for p in (self.dir / 'arch/arm64/boot/dts/kappa').iterdir()}
-        self.assertEqual(brought, {'board.dts', 'soc.dtsi', 'BUILDING.md', '.gitignore', '.from'})
+        package = self.dir / 'arch/arm64/boot/dts/kappa'
+        brought = {str(p.relative_to(package)) for p in package.rglob('*') if p.is_file()}
+        self.assertEqual(brought, {'board.dts', 'soc.dtsi', '.from', 'notes/pins.md', 'notes/build'})
+        self.assertTrue((target / 'firmware/kappa/uefi/BootShim.bin').is_file(), 'left where it was')
         self.assertEqual(sorted(boards.load()[1]), ['emulator', 'kappa'])
+        self.assertIn('1 package\n', self.run_tool('available', '--from', str(target))[1])
+
+    def test_the_sample_s_gitignore_is_what_is_never_brought_in(self):
+        top, anywhere = device.never_held()
+        for name in ('firmware', 'build', 'phone.dts', 'dts-android'):
+            self.assertIn(name, top)
+        for name in ('*.dtb', '*.ipsw', 'identity.bin', '*.payload'):
+            self.assertIn(name, anywhere)
+        # (a package's own two files are never among them, whatever is added to the sample)
+        ignore = device.package_only(self.dir)
+        self.assertEqual(ignore(str(self.dir), ['board.dts', 'soc.dtsi', 'README.md', 'notes']), [])
+
+    def test_which_phone_is_asked_before_the_devices_branch_is_looked_for(self):
+        self.git('branch', '-D', 'devices')
+        code, _, _ = self.run_tool('add')
+        self.assertIn('which phone?', str(code))
+        self.assertIn('--from SOURCE', str(code))
+        self.assertNotIn('neither a directory', str(code))
 
     def test_a_repository_is_made_only_where_there_is_nothing(self):
         there = Path(tempfile.mkdtemp())
@@ -366,6 +411,17 @@ class Packages(Sandbox):
             self.assertEqual(code, 1)
             self.assertIn('arch/arm64/boot/dts/odd/board.dts: unknown section warp { }', complained)
             self.assertIn('does not fit this checkout', complained)
+            (elsewhere / 'odd/board.dts').write_text(board('odd').replace('features = <>;', 'features = "warp-drive";'))
+            self.assertIn('does not fit this checkout', self.run_tool('add', 'odd', '--from', str(elsewhere))[2])
+            # one that only lacks something is the porter's to finish, not of another time than the code: a board
+            # started from a tree is like this until the offsets no tree has are filled in
+            (elsewhere / 'odd/board.dts').write_text(board('odd').replace('features = <>;', 'features = "buttons-pmic";'))
+            code, _, complained = self.run_tool('add', 'odd', '--from', str(elsewhere))
+            self.assertEqual(code, 1)
+            self.assertIn('needs spmi { } in soc.dtsi', complained)
+            self.assertNotIn('does not fit this checkout', complained)
+            self.assertIn('is not right yet', complained)
+            self.assertIn('tools/device.py update odd', complained)
         finally:
             shutil.rmtree(elsewhere)
 

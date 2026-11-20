@@ -16,9 +16,13 @@
                                                 samples/device-repo/ has (BUILDING.md, .gitignore, a check on push)
 
 A device package is a directory NAME with board.dts in it (arch/arm64/boot/dts/_template/board.dts explains the
-file) and whatever else belongs to the phone: its README, its notes. The repository itself describes no
-phone: packages are kept on its `devices` branch, one directory each, and whoever builds for a phone
-brings its package in. What is built -- the kernel, the loader, the libraries -- then knows the boards
+file) and whatever else belongs to the phone: its soc.dtsi, its README, its notes. What a phone's repository has around
+it -- .git, .github/, .gitignore, BUILDING.md, images/ -- is not brought in, and neither is what such a repository
+never holds (samples/device-repo/.gitignore: the vendor's firmware and device tree, Apple's files); `export` sends
+neither on. Documentation/porting.md, "Or keep it in a repository of your own", has the layout.
+
+The repository itself describes no phone: packages are kept on its `devices` branch, one directory each, and whoever
+builds for a phone brings its package in. What is built -- the kernel, the loader, the libraries -- then knows the boards
 that are there (tools/boards.py gen).
 
 SOURCE is where packages are taken from:
@@ -37,6 +41,7 @@ of the code. A new phone is made here (tools/boards.py new), and sent with `expo
   tools/device.py export NAME ../hakios-devices
 """
 import argparse
+import fnmatch
 import re
 import shutil
 import subprocess
@@ -51,7 +56,10 @@ BRANCH = 'devices'              # where packages are kept when nothing else is s
 NOTE = '.from'                  # arch/arm64/boot/dts/NAME/.from: where a package that was brought in is from
 # a line of arch/arm64/boot/dts/_template/README.md that a README somebody has written no longer has
 TEMPLATE_LINE = 'One sentence: how far it boots'
-
+SAMPLE = Path(__file__).resolve().parents[1] / 'samples/device-repo'   # (the repository's own, wherever boards look)
+# what a phone's repository has around its package, which is the repository's and not the package's: its git, its
+# check, how to build from it, its images
+AROUND = ('.git', '.github', '.gitignore', 'BUILDING.md', 'images', NOTE)
 
 
 def git(*arguments, check=True):
@@ -112,6 +120,32 @@ def clone(given):
     return cache, commit
 
 
+def never_held():
+    """What a phone's repository never holds, as samples/device-repo/.gitignore names it (the vendor's firmware and
+    device tree, Apple's files, what the tools make): (names at the package's top, names anywhere), fnmatch patterns."""
+    top, anywhere = [], []
+    for line in (SAMPLE / '.gitignore').read_text().splitlines() if (SAMPLE / '.gitignore').is_file() else []:
+        line = line.strip()
+        if line and not line.startswith(('#', '!')):
+            (top if line.startswith('/') else anywhere).append(line.strip('/'))
+    return top, anywhere
+
+
+def package_only(top):
+    """For shutil.copytree of a package at TOP: leaves out what is around a package in a repository (AROUND) and what
+    such a repository never holds. A package made in a directory of one's own has the vendor's files beside it --
+    firmware/, the Android tree it was started from -- where git ignores them and a plain copy would not: they would
+    be in the checkout, and `export` would send them on."""
+    at_top, anywhere = never_held()
+
+    def ignore(directory, names):
+        first = Path(directory).resolve() == Path(top).resolve()
+        return [name for name in names if
+                (first and (name in AROUND or any(fnmatch.fnmatch(name, pattern) for pattern in at_top))) or
+                any(fnmatch.fnmatch(name, pattern) for pattern in anywhere)]
+    return ignore
+
+
 class Source:
     """Where packages are taken from: a directory, another repository, or a commit of this repository."""
 
@@ -153,9 +187,10 @@ class Source:
     def copy(self, name, to):
         """The package's files into the directory `to`, which is not there yet."""
         if self.directory is not None:
-            # (a phone's repository's own: its git, its checks, its images, which no build reads)
-            shutil.copytree(self.directory if self.single is not None else self.directory / name, to,
-                            ignore=shutil.ignore_patterns('.git', '.github', 'images', NOTE))
+            # (not a phone's repository's own -- its git, its checks, its images, which no build reads -- and not the
+            # vendor's files that lie beside a package where it is worked on)
+            top = self.directory if self.single is not None else self.directory / name
+            shutil.copytree(top, to, ignore=package_only(top))
             return
         to.mkdir(parents=True)
         for path in git('ls-tree', '-r', '--name-only', self.commit, '--', f'{name}/').stdout.split('\n'):
@@ -214,9 +249,15 @@ def add(names, source):
     mine = [problem for problem in problems if any(f'arch/arm64/boot/dts/{name}/' in problem for name in names)]
     for problem in mine:
         print(problem, file=sys.stderr)
-    if mine:
+    if mine and any('unknown ' in problem or 'is not one the kernel knows' in problem for problem in mine):
         print('the package does not fit this checkout: a package and the code change together when a key is added '
               '(arch/arm64/boot/dts/_template/board.dts has every key of this checkout)', file=sys.stderr)
+        return 1
+    if mine:
+        # (a package that is being written: what it lacks is its own, and is filled in where it is kept)
+        print('the package is here and is not right yet: fill in what is named above where the package is kept, then '
+              f'bring it in again (tools/device.py update {" ".join(names)}); tools/boards.py check says the same',
+              file=sys.stderr)
         return 1
     for name in names:
         print(f'next: tools/boards.py status {name}; the builds make their tables themselves')
@@ -254,16 +295,13 @@ def export(name, directory):
     target = directory / name
     if target.exists():
         shutil.rmtree(target)
-    shutil.copytree(source, target, ignore=shutil.ignore_patterns('.git', NOTE))
+    shutil.copytree(source, target, ignore=package_only(source))
     readme = target / 'README.md'
     print(f'{target}: the package {name}' + (
         '; it has no README.md yet: say there what works and how it was verified' if not readme.exists() else
         '; its README.md is still the template: say there what works and how it was verified'
         if TEMPLATE_LINE in readme.read_text() else ''))
     return 0
-
-
-SAMPLE = Path(__file__).resolve().parents[1] / 'samples/device-repo'   # (the repository's own, wherever boards look)
 
 
 def init(directory, name, soc, dts=None, description=None, with_git=True):
@@ -276,7 +314,7 @@ def init(directory, name, soc, dts=None, description=None, with_git=True):
                          f'(tools/device.py remove {name}, or another name)')
     # made where tools/boards.py makes packages, beside the others (a SoC's file is copied from one that has it), then
     # moved: nothing of it is left in this checkout
-    boards.new_board(name, soc, Path(dts) if dts else None, None, description)
+    boards.new_board(name, soc, Path(dts) if dts else None, None, description, moved=True)
     directory.parent.mkdir(parents=True, exist_ok=True)
     if directory.exists():
         directory.rmdir()
@@ -290,8 +328,11 @@ def init(directory, name, soc, dts=None, description=None, with_git=True):
         subprocess.run(['git', 'init', '-q', str(directory)], check=True)
     print(f'{directory}: the repository of {name}' + (' (git init: commit it, and push it where others can clone it)'
                                                       if with_git else ''))
-    print(f'next: fill in {directory}/board.dts and soc.dtsi (Documentation/porting.md), then: '
-          f'tools/device.py add --from {directory}')
+    for path in sorted(p for p in directory.rglob('*') if p.is_file() and '.git' not in p.relative_to(directory).parts):
+        print(f'  {path.relative_to(directory)}')
+    print(f'next: fill in {directory}/board.dts and soc.dtsi (Documentation/porting.md, step 1), then '
+          f'tools/device.py add --from {directory} brings it into this checkout, where tools/boards.py check and '
+          f'tools/boards.py status {name} read it; after a change there, tools/device.py update {name}')
     return 0
 
 
@@ -336,12 +377,15 @@ def main(arguments=None):
     commands.add_parser('list')
     commands.add_parser('update').add_argument('names', nargs='*', metavar='NAME')
     command = commands.add_parser('init')
-    command.add_argument('directory', metavar='DIR')
-    command.add_argument('--name', required=True)
-    command.add_argument('--soc', required=True)
-    command.add_argument('--dts', metavar='FILE', help='the phone\'s Android device tree, to start from what it says')
-    command.add_argument('--description')
-    command.add_argument('--no-git', action='store_true')
+    command.add_argument('directory', metavar='DIR', help='where: a directory that is not there yet, or is empty')
+    command.add_argument('--name', required=True, help='the package\'s name, lower-case letters, digits and dashes: the '
+                         'phone\'s codename (what board.dts is given as its name)')
+    command.add_argument('--soc', required=True, help='the chip\'s name, in lower case (sm7325): soc.dtsi is copied from a '
+                         'package here that has it, else started new')
+    command.add_argument('--dts', metavar='FILE', help='the phone\'s Android device tree as source, to start from what it '
+                         'says (dtc -I dtb -O dts fdt.dtb > phone.dts)')
+    command.add_argument('--description', metavar='TEXT', help='"Maker Model", for people')
+    command.add_argument('--no-git', action='store_true', help='the directory only, without git init')
     options = parser.parse_args(arguments)
     if options.command == 'update':
         return update(options.names)
@@ -351,7 +395,7 @@ def main(arguments=None):
     if options.command == 'available':
         source = Source(options.source)
         names = source.packages()
-        print(f'{source.name}: {len(names)} packages')
+        print(f'{source.name}: {len(names)} package{"" if len(names) == 1 else "s"}')
         for name in names:
             if source.single is not None:
                 print('  ' + described(None, name, source.directory / 'board.dts'))
@@ -366,9 +410,11 @@ def main(arguments=None):
                     print(f'  {name:14} (its board.dts cannot be read)')
         return 0
     if options.command == 'add':
-        source = Source(options.source)
+        # (asked before the devices branch is looked for: with neither, that there is no such branch is not the answer)
         if not options.names and options.source is None:
-            raise SystemExit('which phone? tools/device.py add NAME (tools/device.py available lists them)')
+            raise SystemExit('which phone? tools/device.py add NAME (tools/device.py available lists those of the '
+                             f'{BRANCH} branch), or add --from SOURCE: a phone\'s own repository or directory')
+        source = Source(options.source)
         # (no NAME with a source of its own -- somebody's phone repository, a directory -- takes all it has)
         return add(options.names or source.packages(), source)
     if options.command == 'remove':

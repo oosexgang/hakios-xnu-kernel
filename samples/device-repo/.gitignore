@@ -6,9 +6,10 @@ DeviceTree*.bin
 identity.bin
 *.apfs
 *.dmg
-# a device tree as Android has it, and its source: the vendor's
+# a device tree as Android has it, and its source: the vendor's (phone.dts is what Documentation/porting.md calls it)
 *.dtb
 *.dtbo
+/phone.dts
 /dts-android/
 # what the kernel's tools make, when run in here
 /build/
