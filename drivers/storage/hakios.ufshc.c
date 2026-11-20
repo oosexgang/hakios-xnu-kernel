@@ -73,7 +73,6 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern void IOSleep(unsigned int milliseconds);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
-#define UFSHC_PHYS          0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in the phone's Android device tree */
 #define UFSHC_SIZE          0x3000
 
 /* UFSHCI registers (JESD223). 0x38..0x48, the UIC error codes, clear when read: never read here. */
@@ -145,6 +144,7 @@ struct hc_slot {
 };
 
 static vm_offset_t hc;                          /* the registers */
+static uint64_t hc_phys;
 static struct ufshc_loader hc_loader;
 static uint32_t hc_list_lo, hc_list_hi;         /* this kernel's list's address */
 static volatile uint32_t *hc_uefi_list;         /* UEFI's list, not cached here, only read */
@@ -225,9 +225,15 @@ hc_say_late(const char *format, ...)
 }
 
 static inline uint32_t
+hc_read_at(vm_offset_t base, uint32_t reg)
+{
+	return *(volatile uint32_t *)(base + reg);
+}
+
+static inline uint32_t
 hc_read(uint32_t reg)
 {
-	return *(volatile uint32_t *)(hc + reg);
+	return hc_read_at(hc, reg);
 }
 
 static inline void
@@ -1142,6 +1148,40 @@ ufshc_report(const char *when)
 /* ---- the probe ---- */
 
 /*
+ * A read-only look at a controller that firmware may have left running. This does not need the
+ * loader's UFS service and does not change a register, start a list, or issue a UIC command.
+ */
+void
+ufshc_survey(uint64_t pa)
+{
+	vm_offset_t base;
+	uint32_t cap, ver, hcs, hce;
+
+	if ((pa & PAGE_MASK) != 0 || pa + UFSHC_SIZE < pa || pmap_valid_address(pa) ||
+	    pmap_valid_address(pa + UFSHC_SIZE - 1)) {
+		printf("ufs: survey: controller address %llx is not page-aligned MMIO\n", pa);
+		return;
+	}
+	base = ml_io_map((vm_offset_t)pa, UFSHC_SIZE);
+	cap = hc_read_at(base, UFSHC_CAP);
+	ver = hc_read_at(base, UFSHC_VER);
+	hcs = hc_read_at(base, UFSHC_HCS);
+	hce = hc_read_at(base, UFSHC_HCE);
+	printf("ufs: survey: controller at %llx: CAP %08x (%u slots, 64-bit %s), VER %08x, HCDDID %08x, HCPMID %08x\n",
+	    pa, cap, CAP_NUTRS(cap), (cap & CAP_64AS) ? "yes" : "no", ver, hc_read_at(base, UFSHC_HCDDID),
+	    hc_read_at(base, UFSHC_HCPMID));
+	printf("ufs: survey: HCE %08x, HCS %08x (device %s, transfer list %s), IS %08x, IE %08x, "
+	    "UTRIACR %08x, AHIT %08x\n", hce, hcs, (hcs & HCS_DP) ? "present" : "absent",
+	    (hcs & HCS_UTRLRDY) ? "ready" : "not ready", hc_read_at(base, UFSHC_IS), hc_read_at(base, UFSHC_IE),
+	    hc_read_at(base, UFSHC_UTRIACR), hc_read_at(base, UFSHC_AHIT));
+	printf("ufs: survey: transfer list %08x:%08x, doorbell %08x, run %08x, completion %08x; "
+	    "task management list %08x:%08x, doorbell %08x, run %08x\n", hc_read_at(base, UFSHC_UTRLBAU),
+	    hc_read_at(base, UFSHC_UTRLBA), hc_read_at(base, UFSHC_UTRLDBR), hc_read_at(base, UFSHC_UTRLRSR),
+	    hc_read_at(base, UFSHC_UTRLCNR), hc_read_at(base, UFSHC_UTMRLBAU), hc_read_at(base, UFSHC_UTMRLBA),
+	    hc_read_at(base, UFSHC_UTMRLDBR), hc_read_at(base, UFSHC_UTMRLRSR));
+}
+
+/*
  * What the controller looks like as UEFI left it, and whether this kernel may put a list of its
  * own in (only == true: say so and do not use it).
  */
@@ -1169,7 +1209,8 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 	}
 	PE_parse_boot_argn("ufs_native_leave", &hc_leave, sizeof(hc_leave));
 	PE_parse_boot_argn("ufs_native_hang", &hc_hang_after, sizeof(hc_hang_after));
-	if (loader->hc_pa != UFSHC_PHYS || loader->area_pa == 0 || loader->slots != SLOTS || (loader->area_pa & 0x3ff) ||
+	if (loader->hc_pa == 0 || (loader->hc_pa & PAGE_MASK) != 0 || loader->area_pa == 0 || loader->slots != SLOTS ||
+	    (loader->area_pa & 0x3ff) ||
 	    loader->ucd_size < UCD_PRDT + 16 * (hc_slot_buffer / PRD_MAX + 1) || (loader->ucd_offset & 0x7f) ||
 	    (loader->ucd_size & 0x7f) || loader->ucd_offset < SLOTS * 32 ||
 	    loader->area_size < loader->ucd_offset + SLOTS * loader->ucd_size) {
@@ -1182,7 +1223,8 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 		hc_say("ufs: native: not used: the loader's area %llx is memory this kernel manages\n", loader->area_pa);
 		return false;
 	}
-	hc = ml_io_map(UFSHC_PHYS, UFSHC_SIZE);
+	hc_phys = loader->hc_pa;
+	hc = ml_io_map((vm_offset_t)hc_phys, UFSHC_SIZE);
 	cap = hc_read(UFSHC_CAP);
 	ver = hc_read(UFSHC_VER);
 	hcs = hc_read(UFSHC_HCS);
@@ -1201,7 +1243,7 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 	tm_db = hc_read(UFSHC_UTMRLDBR);
 	tm_rsr = hc_read(UFSHC_UTMRLRSR);
 	hc_say("ufs: native: controller at %llx: CAP %08x (%u slots, 64-bit %s), VER %08x, HCDDID %08x, HCPMID %08x\n",
-	    UFSHC_PHYS, cap, CAP_NUTRS(cap), (cap & CAP_64AS) ? "yes" : "no", ver, hc_read(UFSHC_HCDDID),
+	    hc_phys, cap, CAP_NUTRS(cap), (cap & CAP_64AS) ? "yes" : "no", ver, hc_read(UFSHC_HCDDID),
 	    hc_read(UFSHC_HCPMID));
 	hc_say("ufs: native: HCE %08x, HCS %08x, IS %08x, IE %08x, UTRIACR %08x, AHIT %08x\n", hce, hcs, is, ie, iacr, ahit);
 	hc_say("ufs: native: transfer list %08x:%08x (the loader's note of UEFI's: %08x:%08x), doorbell %08x, run %08x, "

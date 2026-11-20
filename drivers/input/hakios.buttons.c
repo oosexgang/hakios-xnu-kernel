@@ -94,11 +94,11 @@ wr(vm_offset_t address, uint32_t value)
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
-#define ARB_CORE_PHYS           0x0c440000UL    /* "core": the version, and which peripheral each channel is */
+#define ARB_CORE_PHYS_REDWOOD   0x0c440000UL    /* "core": the version, and which peripheral each channel is */
 #define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL    /* "cnfg": which system owns each channel */
+#define ARB_CNFG_PHYS_REDWOOD   0x0c40a000UL    /* "cnfg": which system owns each channel */
 #define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
+#define ARB_OBSERVER_PHYS_REDWOOD 0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
 #define ARB_OBSERVER_SIZE       0x10000UL       /* ours is the first */
 #define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
 
@@ -123,6 +123,18 @@ wr(vm_offset_t address, uint32_t value)
 #define READ_TIMEOUT_US         2000            /* a read takes some tens of microseconds */
 
 static vm_offset_t arb_core, arb_cnfg, arb_observer;
+
+/*
+ * Boot-arg buttons=2: the Redmi Note 13 4G (sapphiren, Snapdragon 685, PM6125) instead of redwood. Its device tree
+ * (qcom,spmi@1c40000: core 0x1c40000, cnfg 0x1c0a000, obsrvr 0x3e00000, qcom,ee 0): power is KPDPWR and volume down RESIN of the
+ * PM6125's power-on block (registers 0x800 of slave 0), volume up is its GPIO5 (0xc400). This chip's block is not the PMK8350's:
+ * Linux's pm8998-pon has the power key at bit 0 of the status and RESIN at bit 1, so those are tried, and every change of the raw
+ * status byte is logged so that a wrong bit shows at once. Reads only, as ever.
+ */
+static unsigned long ARB_CORE_PHYS = ARB_CORE_PHYS_REDWOOD, ARB_CNFG_PHYS = ARB_CNFG_PHYS_REDWOOD, ARB_OBSERVER_PHYS = ARB_OBSERVER_PHYS_REDWOOD;
+static uint8_t PON_KPDPWR = 0x80, PON_RESIN = 0x40;
+static bool khaje;
+static uint8_t last_raw = 0xff;
 
 /* one transfer at a time through the arbiter: hakios_spmi_lock() (drivers/core/hakios.platform.c) */
 
@@ -215,6 +227,92 @@ find_channel(struct peripheral *p, uint32_t channels)
 	}
 }
 
+/*
+ * Any register of any PMIC, read only, for other drivers (the battery's: drivers/power/hakios.battery.c).
+ * `sid` is the slave, `addr` the 16-bit register address (peripheral << 8 | register). The channel of a
+ * peripheral is found the first time it is asked for. 0, or a negative number: -1 the arbiter is not
+ * mapped yet (buttons=N has not got that far), -2 nobody has that peripheral, -3 the transfer failed.
+ */
+static uint32_t arb_channels;
+static bool arb_ready;
+static struct peripheral pmic_cache[10];
+
+int hakios_pmic_read(unsigned sid, unsigned addr, uint8_t *out);
+int
+hakios_pmic_read(unsigned sid, unsigned addr, uint8_t *out)
+{
+	struct peripheral *p = NULL;
+	uint16_t id = (uint16_t)((sid << 8) | ((addr >> 8) & 0xff));
+
+	if (!arb_ready) {
+		return -1;
+	}
+	for (unsigned i = 0; i < sizeof(pmic_cache) / sizeof(pmic_cache[0]); i++) {
+		if (pmic_cache[i].id == id) {
+			p = &pmic_cache[i];
+			break;
+		}
+		if (pmic_cache[i].id == 0) {
+			p = &pmic_cache[i];
+			p->id = id;
+			p->name = "a peripheral another driver reads";
+			find_channel(p, arb_channels);
+			break;
+		}
+	}
+	if (p == NULL || !p->found) {
+		return -2;
+	}
+	return spmi_read(p, (uint8_t)(addr & 0xff), out, 1) == NULL ? 0 : -3;
+}
+
+/*
+ * The ONE register this kernel writes in a PMIC: the power-on block's spare, slave 0 register 0x088f, which the boot
+ * firmware reads after a restart as "why" (bits 7:1: 1 recovery, 2 bootloader; Linux's qcom-pon, reason_shift 1; same
+ * phone's other port, ios-sapphire 0221). Through the channel's own registers in "chnls" (0x1e00000, 0x10000 a channel:
+ * +0x00 command, +0x08 status, +0x10 data) and only if the channel is ours to write (owner system 0). 0 or negative.
+ */
+#define CHNLS_PHYS      0x01e00000UL
+
+int hakios_pmic_set_reboot_reason(unsigned mode);
+int
+hakios_pmic_set_reboot_reason(unsigned mode)
+{
+	uint8_t old = 0;
+	struct peripheral *p = NULL;
+	vm_offset_t ch;
+	uint32_t status = 0;
+
+	if (mode > 0x7f || hakios_pmic_read(0, 0x088f, &old) != 0) {
+		return -1;
+	}
+	for (unsigned i = 0; i < sizeof(pmic_cache) / sizeof(pmic_cache[0]); i++) {
+		if (pmic_cache[i].id == 0x008) {
+			p = &pmic_cache[i];
+		}
+	}
+	if (p == NULL || !p->found || (rd(arb_cnfg + ARB_OWNER(p->channel)) & 7) != ARB_SYSTEM) {
+		return -2;
+	}
+	ch = ml_io_map(CHNLS_PHYS + 0x10000UL * p->channel, 0x1000);
+	if (ch == 0) {
+		return -3;
+	}
+	hakios_spmi_lock();
+	wr(ch + 0x10, (uint32_t)((old & 1u) | (mode << 1)));
+	__asm__ volatile ("dmb oshst" ::: "memory");
+	wr(ch + 0x00, (0x8fu) << 4);                    /* a one-byte write to register 0x8f of the peripheral */
+	__asm__ volatile ("dsb osh" ::: "memory");
+	for (unsigned i = 0; i < 1000 && !((status = rd(ch + 0x08)) & 1u); i++) {
+		delay_for_interval(1, NSEC_PER_USEC);
+	}
+	hakios_spmi_unlock();
+	if ((status & 0x0e) || !(status & 1u)) {
+		return -4;
+	}
+	return hakios_pmic_read(0, 0x088f, &old) == 0 && (old >> 1) == mode ? 0 : -5;
+}
+
 /* ---- the two peripherals ------------------------------------------------------------------------- */
 
 /* every peripheral of these PMICs */
@@ -231,8 +329,6 @@ find_channel(struct peripheral *p, uint32_t channels)
 /* the power-on block, of the kind that is split in two ("generation 3"): this is its half for the operating system */
 #define PON_TYPE                0x01
 #define PON_SUBTYPE_HLOS        0x09
-#define PON_KPDPWR              0x80            /* in the status and in the interrupt registers */
-#define PON_RESIN               0x40
 
 /* a GPIO of the low or medium voltage kind */
 #define GPIO_TYPE               0x10
@@ -319,6 +415,10 @@ buttons_poll(void)
 	if (power.usable || volume_down.usable) {
 		problem = spmi_read(&pon, REG_RT_STATUS, &status, 1);
 		if (problem == NULL) {
+			if (khaje && status != last_raw) {
+				printf("buttons: power-on status byte %#04x\n", status);
+				last_raw = status;
+			}
 			button_look(&power, status & PON_KPDPWR);
 			button_look(&volume_down, status & PON_RESIN);
 		} else if (said < 8) {
@@ -436,6 +536,17 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	uint32_t steps = (uint32_t)(uintptr_t)parameter, version, channels;
 	bool pon_known, pin_known;
 
+	if (khaje) {
+		ARB_CORE_PHYS = 0x01c40000UL;
+		ARB_CNFG_PHYS = 0x01c0a000UL;
+		ARB_OBSERVER_PHYS = 0x03e00000UL;
+		PON_KPDPWR = 0x01;
+		PON_RESIN = 0x02;
+		pon.id = 0x008;
+		pon.name = "the PM6125's power-on block";
+		pin.id = 0x0c4;
+		pin.name = "GPIO5 of the PM6125";
+	}
 	printf("buttons: step 1: map the PMIC arbiter (%#lx, %#lx, %#lx) and read its version\n", ARB_CORE_PHYS, ARB_CNFG_PHYS,
 	    ARB_OBSERVER_PHYS);
 	arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
@@ -451,6 +562,8 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	if (channels == 0 || channels > ARB_MAX_CHANNELS) {
 		channels = ARB_MAX_CHANNELS;
 	}
+	arb_channels = channels;
+	arb_ready = true;
 	if (steps < 2) {
 		goto out;
 	}
@@ -463,8 +576,8 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	}
 
 	printf("buttons: step 3: the first transfers on the SPMI bus\n");
-	pon_known = identify(&pon, PON_TYPE, PON_SUBTYPE_HLOS, PON_SUBTYPE_HLOS);
-	pin_known = identify(&pin, GPIO_TYPE, GPIO_SUBTYPE_LV, GPIO_SUBTYPE_MV_VIN3);
+	pon_known = identify(&pon, PON_TYPE, khaje ? 0x00 : PON_SUBTYPE_HLOS, khaje ? 0xff : PON_SUBTYPE_HLOS);
+	pin_known = identify(&pin, GPIO_TYPE, khaje ? 0x00 : GPIO_SUBTYPE_LV, khaje ? 0xff : GPIO_SUBTYPE_MV_VIN3);
 	if (steps < 4) {
 		goto out;
 	}
@@ -581,6 +694,7 @@ hakios_buttons_init(void)
 	if (!enabled) {
 		return;
 	}
+	khaje = enabled == 2;
 	PE_parse_boot_argn("buttons_steps", &steps, sizeof(steps));
 	if (steps == 0) {
 		return;

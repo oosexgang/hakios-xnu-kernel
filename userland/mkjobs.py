@@ -222,7 +222,12 @@ DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'loca
         # these start, crash and are asked for again, over and over. (aggregated, which was among them, is where
         # Darwin userland 16 keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
         # waits for; it now runs through a session.)
-        'homed', 'routined', 'duetexpertd', 'com.apple.dmd', 'syncdefaultsd', 'photoanalysisd', 'avconferenced')
+        'homed', 'routined', 'duetexpertd', 'com.apple.dmd', 'syncdefaultsd', 'photoanalysisd', 'avconferenced',
+        # measured on the phone (cputop, 8 cores at 600-780% for the first five minutes, 8 nov 2026): widgets (chronod and its twenty
+        # extensions, 90% each for two minutes -- and the home screen's widgets do not even draw), the voicemail daemon (one core, all
+        # the time, with no SIM), Spotlight's searchd, and daemons for services this phone does not have
+        'chronod', 'voicemail.vmd', 'searchd', 'healthd', 'activityawardsd', 'maild', 'destinationd', 'mapspushd',
+        'financed', 'gamed')
 
 # ALLOW="word ..." in the environment lets jobs through that DENY would stop: for trying one out
 DENY = tuple(word for word in DENY if word not in os.environ.get('ALLOW', '').split())
@@ -273,6 +278,12 @@ for label in labels:
     job.pop('_LimitLoadToDeviceTree', None)
     if 'all' in oslog or label in oslog:
         job.setdefault('EnvironmentVariables', {})['OS_ACTIVITY_DT_MODE'] = 'YES'
+    # JOBENV="label:NAME=value label2:NAME=value": an environment variable for a job, to try one out (nothing by default)
+    for item in os.environ.get('JOBENV', '').split():
+        target, _, assignment = item.partition(':')
+        name, equals, value = assignment.partition('=')
+        if target == label and equals:
+            job.setdefault('EnvironmentVariables', {})[name] = value
     with open(f'{dest}/{label}.plist', 'wb') as f:
         plistlib.dump(job, f, fmt=plistlib.FMT_BINARY)
     program = job.get('Program') or job['ProgramArguments'][0]

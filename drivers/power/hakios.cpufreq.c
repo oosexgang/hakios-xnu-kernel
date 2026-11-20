@@ -556,6 +556,58 @@ hakios_ddr_quiesce(void)
 	tell("ddr: memory bandwidth vote %u for the loader: %s\n", rest, done ? "done" : "FAILED");
 }
 
+
+/*
+ * The Snapdragon 685 (khaje; sapphiren): the same job as above for the "OSM" variant of the hardware, two groups (cores 0-3 and 4-7)
+ * at 0xf521000 and 0xf523000 (the device tree's qcom,cpufreq-hw), with the registers of Linux drivers/cpufreq/qcom-cpufreq-hw.c
+ * for a non-EPSS part: ENABLE at 0x0, the table of up to twelve rows of 32 bytes from 0x110 ([31:30] source, [7:0] multiple), the
+ * wanted row at 0x920. Boot-arg cpufreq_osm=1: it LOGS the table and the row each group is at, then asks for the top row, and
+ * logs how fast a loop ran before and after. (cpufreq=1 is redwood's: other addresses.)
+ */
+#define OSM_PHYS                0x0f521000UL
+#define OSM_DOMAIN_STRIDE       0x2000UL        /* 0xf521000, 0xf523000 */
+#define OSM_DOMAINS             2
+#define OSM_ENABLE              0x000
+#define OSM_FREQ_LUT            0x110
+#define OSM_LUT_ROW             32
+#define OSM_LUT_ROWS            12
+#define OSM_PERF_STATE          0x920
+
+static void
+osm_raise(void)
+{
+	uint32_t before = loop_speed();
+
+	for (uint32_t domain = 0; domain < OSM_DOMAINS; domain++) {
+		vm_offset_t base = ml_io_map(OSM_PHYS + domain * OSM_DOMAIN_STRIDE, 0x1000);
+		uint32_t enable = *(volatile uint32_t *)(base + OSM_ENABLE);
+		uint32_t was = *(volatile uint32_t *)(base + OSM_PERF_STATE);
+		uint32_t top = 0, top_khz = 0;
+
+		tell("cpufreq_osm: group %u: enable %#x, row now %u\n", domain, enable, was);
+		for (uint32_t row = 0; row < OSM_LUT_ROWS; row++) {
+			uint32_t entry = *(volatile uint32_t *)(base + OSM_FREQ_LUT + OSM_LUT_ROW * row);
+			uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;     /* (source 0 is the fixed ~300 MHz row: 0x7000f on the 685; its "multiple" is not one) */
+
+			tell("cpufreq_osm: group %u row %u: %#x = %u MHz\n", domain, row, entry, khz / 1000);
+			if (khz > top_khz) {
+				top = row;
+				top_khz = khz;
+			}
+		}
+		if ((enable & 1) == 0 || top_khz == 0) {
+			tell("cpufreq_osm: group %u: not enabled or no table: left alone\n", domain);
+			continue;
+		}
+		*(volatile uint32_t *)(base + OSM_PERF_STATE) = top;
+		delay_for_interval(20, NSEC_PER_MSEC);
+		tell("cpufreq_osm: group %u: row %u -> %u (%u MHz), reads back %u\n", domain, was, top, top_khz / 1000,
+		    *(volatile uint32_t *)(base + OSM_PERF_STATE));
+	}
+	tell("cpufreq_osm: on core %u a loop ran at %u, now at %u\n", (uint32_t)(__builtin_arm_rsr64("MPIDR_EL1") >> 8) & 0xff, before,
+	    loop_speed());
+}
+
 void
 hakios_cpufreq_init(void)
 {
@@ -563,6 +615,9 @@ hakios_cpufreq_init(void)
 	uint32_t enabled = 0, membench = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
 
 	load_start();
+	if (PE_parse_boot_argn("cpufreq_osm", &enabled, sizeof(enabled)) && enabled) {
+		osm_raise();
+	}
 	enabled = 2;
 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));
 	if (enabled == 1) {

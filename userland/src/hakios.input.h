@@ -41,6 +41,7 @@ void hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
 void hakios_input_init(void);
 void hakios_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio pointer and keyboard */
 void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's touch screen */
+void hakios_synaptics_init(void);     /* boot-arg synaptics_tcm=1: the Redmi Note 13 4G NFC's Synaptics touch screen (I2C, by hand) */
 void hakios_cpufreq_init(void);        /* boot-arg cpufreq=1: the phone's processor at full speed */
 #endif
 

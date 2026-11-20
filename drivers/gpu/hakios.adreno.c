@@ -113,12 +113,33 @@ static char last_write[96] = "nothing written";
 static bool quiet;                      /* repeating accesses that have been announced and seen to work: say nothing */
 
 /*
+ * Adreno 610 (Snapdragon 685, "khaje"; boot-arg adreno610=1): a core with no GMU. Its power is two switches of the
+ * GPU clock controller and some clocks, which are operated from here (Linux's "GMU wrapper" case in a6xx_gpu.c).
+ * Everything that follows the power -- the SMMU, TrustZone and the zap shader, the ring, the command processor --
+ * is the same code as the 642L's, with other addresses and other files.
+ */
+static bool a610;
+static uint32_t smmu_stream_mask = 0x400;
+static const char *fw_zap_mdt = "a660_zap.mdt", *fw_zap_seg = "a660_zap.b02", *fw_sqe = "a660_sqe.fw";
+static uint64_t zap_memory = 0x8b71a000ull;
+
+/*
+ * A run that ends in a reset without a word leaves no log. This one is kept where a reset does not clear it, in
+ * memory the phone reserves for its own crash records (ramoops, 0x5d000000, 2 MB; 64 KB of it from 0x5d100000):
+ * the next kernel that comes up with adreno610=1 prints what the last one said, then starts the record anew.
+ */
+#define PLOG_PHYS               0x5d100000ul
+#define PLOG_SIZE               0x10000u
+#define PLOG_MAGIC              0x61363130u     /* "a610" */
+
+/*
  * The kernel's log reaches the loader when a run is over, and a run that ends in a reset
  * without a word leaves none. The loader also reads a log of the kernel's from another core
  * while it runs (loader_return.c; xl keeps it with XL_FOLLOW): every line said here goes there
  * as well, before the next register is touched.
  */
 extern void loader_log_putc(char c);
+extern void hakios_plog_start(volatile uint8_t *where);
 
 static int say(const char *format, ...) __printflike(1, 2);
 
@@ -855,10 +876,17 @@ measure_clocks(void)
  * What every later step stands on: CX powered, the GMU's clock running by its control register,
  * and the register bus's clock running by measurement (see above).
  */
+static bool cx610_ready(void);
+static void stop610(void);
+
 static bool
 cx_ready(void)
 {
 	uint32_t gmu_clock, ahb_hz;
+
+	if (a610) {
+		return cx610_ready();
+	}
 
 	if (!gpucc_answers()) {
 		return false;
@@ -1184,7 +1212,7 @@ step_gmu_memory(void)
 
 #define SMMU_S2CR_FAULT         (2u << 16)
 #define SMMU_SMR_VALID          (1u << 31)
-#define SMMU_STREAM_MASK        0x400           /* dt: the second cell of every "iommus" of this SMMU */
+#define SMMU_STREAM_MASK        smmu_stream_mask /* dt: the second cell of every "iommus" of this SMMU */
 #define SMMU_CBAR_STAGE_1       (1u << 16 | 3u << 8 | 0xfu << 12)       /* our tables alone decide; weakest defaults */
 #define SMMU_CBA2R(n)           (0x800 + 4 * (n))                       /* in the second page, like CBAR */
 #define SMMU_CBA2R_64_BIT       1
@@ -1648,7 +1676,7 @@ zap_header(uint64_t *phys)
 	uint64_t size = 0;
 	uint32_t segments, hashes;
 
-	header = image_file("fw", "a660_zap.mdt", &size);
+	header = image_file("fw", fw_zap_mdt, &size);
 	if (header == NULL) {
 		return false;
 	}
@@ -2565,9 +2593,15 @@ step_core_space(void)
 	if (!cx_ready() || !core_is_on) {
 		return false;
 	}
+	if (a610) {
+		stream1 = 0;            /* one entry (stream 0, mask 1) already covers both; there is no LPAC */
+	}
 	PE_parse_boot_argn("adreno_stream1", &stream1, sizeof(stream1));
+	if (a610) {
+		stream1 = 0;
+	}
 	announce("make the 3D core's memory: its ring, its microcode (fw/a660_sqe.fw), a page to try writing to");
-	microcode = image_file("fw", "a660_sqe.fw", &size);
+	microcode = image_file("fw", fw_sqe, &size);
 	if (microcode == NULL || size < 8 || size > 0x40000 ||
 	    !block_new(&core_space, &core_ring, CORE_RING_ADDRESS, CORE_RING_SIZE, PTE_CORE) ||
 	    !block_new(&core_space, &core_sqe, CORE_SQE_ADDRESS, (uint32_t)size - 4, PTE_CORE | PTE_READ_ONLY) ||
@@ -2623,7 +2657,7 @@ step_core_space(void)
  * (Step 21 is what tells whether the 3D core gets out of secure mode with it.) There was a
  * boot-arg adreno_zap=0 for the second and later runs of a started phone; nothing reads it now.
  */
-#define ZAP_MEMORY              0x8b71a000ull
+#define ZAP_MEMORY              zap_memory
 #define ZAP_MEMORY_SIZE         0x2000u
 #define SCM_PAS_MEM_SETUP       SCM_CALL(2, 2)
 #define SCM_THREE_VALUES        3
@@ -2651,7 +2685,7 @@ step_zap_load(void)
 	announce("ask TrustZone to give up a zap shader that a kernel before this one may have left");
 	printf("adreno: %u: %s\n", step, zap_unload() ? "TrustZone has given up what it had (it says so with none, too)" :
 	    "TRUSTZONE DOES NOT GIVE IT UP: the next answers tell whether it keeps one");
-	segment = image_file("fw", "a660_zap.b02", &size);
+	segment = image_file("fw", fw_zap_seg, &size);
 	if (segment == NULL || size == 0 || size > 0x1000) {
 		return false;
 	}
@@ -2904,7 +2938,15 @@ step_frame(void)
 	}
 	ring_command(CP_SET_MARKER, 1);
 	ring(12);                               /* "2D blits follow" */
-	ring_register(RB_CCU_CNTL, 0x10000004); /* Mesa's for this GPU when it draws straight into memory */
+	{
+		/* Mesa's for the 642L when it draws straight into memory; the 610 has 132 KB of GMEM, so its colour cache goes at 8 KB:
+		 * with the 642L's value (128 KB) every other 256 bytes of the picture were never written back (seen: exactly 50 %) */
+		uint32_t ccu = a610 ? 0x01000000 : 0x10000004;
+
+		PE_parse_boot_argn("a610_ccu", &ccu, sizeof(ccu));
+		printf("adreno: %u: RB_CCU_CNTL = %#x\n", step, ccu);
+		ring_register(RB_CCU_CNTL, ccu);
+	}
 	ring_fill(0, 800, 255, 128, 0);         /* orange */
 	ring_fill(800, 1600, 255, 255, 255);
 	ring_fill(1600, TARGET_HEIGHT, 0, 128, 255);
@@ -2938,6 +2980,34 @@ step_frame(void)
 	    pixel[3], pixel[1200 * TARGET_ROW + 2160], pixel[1200 * TARGET_ROW + 2161], pixel[1200 * TARGET_ROW + 2162],
 	    pixel[1200 * TARGET_ROW + 2163], pixel[2399 * TARGET_ROW + 4316], pixel[2399 * TARGET_ROW + 4317],
 	    pixel[2399 * TARGET_ROW + 4318], pixel[2399 * TARGET_ROW + 4319]);
+	{
+		/* coverage: how much of each band is the colour it was told, every 4th pixel of every 4th row */
+		static const uint8_t want[3][3] = { { 0x00, 0x80, 0xff }, { 0xff, 0xff, 0xff }, { 0xff, 0x80, 0x00 } };
+		uint32_t good[3] = { 0, 0, 0 }, total[3] = { 0, 0, 0 }, first_bad_row = ~0u, first_bad_col = ~0u;
+
+		for (uint32_t y = 0; y < TARGET_HEIGHT; y += 4) {
+			uint32_t band = y < 800 ? 0 : y < 1600 ? 1 : 2;
+
+			for (uint32_t x = 0; x < TARGET_WIDTH; x += 4) {
+				const volatile uint8_t *q = pixel + (uint64_t)y * TARGET_ROW + x * 4;
+
+				total[band]++;
+				if (q[0] == want[band][0] && q[1] == want[band][1] && q[2] == want[band][2]) {
+					good[band]++;
+				} else if (first_bad_row == ~0u) {
+					first_bad_row = y;
+					first_bad_col = x;
+				}
+			}
+		}
+		printf("adreno: %u: coverage of the picture: orange %u of %u, white %u of %u, blue %u of %u samples right; first wrong at "
+		    "row %u column %u\n", step, good[0], total[0], good[1], total[1], good[2], total[2], first_bad_row, first_bad_col);
+		for (uint32_t x = 0; x < 64; x += 8) {
+			const volatile uint8_t *q = pixel + (uint64_t)8 * TARGET_ROW + x * 4;
+
+			printf("adreno: %u: row 8 column %u: %02x %02x %02x %02x\n", step, x, q[0], q[1], q[2], q[3]);
+		}
+	}
 	if ((pixel[0] | pixel[1] | pixel[2]) == 0 || pixel[1200 * TARGET_ROW + 2160] == 0 || (pixel[2399 * TARGET_ROW + 4316] |
 	    pixel[2399 * TARGET_ROW + 4317] | pixel[2399 * TARGET_ROW + 4318]) == 0) {
 		printf("adreno: %u: the picture is not what the 3D core was told to draw\n", step);
@@ -3041,6 +3111,11 @@ gpu_block_stop(void)
 	uint32_t slumber[3] = { 0, 0, 0 };
 	bool power_off = false;
 
+	if (a610) {
+		stop610();
+		return;
+	}
+
 	step = 0;
 	newest_step = ~0u;
 	if (core_runs && core_is_on) {
@@ -3132,6 +3207,17 @@ gpu_block_stop(void)
 void
 hakios_adreno_quiesce(void)
 {
+	if (a610) {
+		if (core_runs) {
+			wr(gpu.base + RBBM_GBIF_HALT, 1);
+			core_runs = false;
+		}
+		if (core_space_is_on) {
+			wr(smmu.base + smmu_context(&core_space) + SMMU_CB_SCTLR, 0);
+			core_space_is_on = false;
+		}
+		return;
+	}
 	if (cx_off) {
 		return;
 	}
@@ -3266,10 +3352,10 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = 0;
 		return true;
 	case 0x02:                              /* GMEM_SIZE */
-		*value = 512 * 1024;
+		*value = a610 ? 128 * 1024 + 4096 : 512 * 1024;
 		return true;
 	case 0x03:                              /* CHIP_ID, with the speed bin above it */
-		*value = GPU_CHIP_ID | (uint64_t)speed_bin << 32;
+		*value = a610 ? 0x06010001ull : (GPU_CHIP_ID | (uint64_t)speed_bin << 32);
 		return true;
 	case 0x04:                              /* MAX_FREQ */
 		*value = core_khz * 1000ull;
@@ -3281,13 +3367,13 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = 1;
 		return true;
 	case 0x10:                              /* HIGHEST_BANK_BIT */
-		*value = 14;
+		*value = a610 ? 13 : 14;
 		return true;
 	case 0x12:                              /* UBWC_SWIZZLE */
-		*value = 6;
+		*value = a610 ? 7 : 6;
 		return true;
 	case 0x13:                              /* MACROTILE_MODE */
-		*value = 1;
+		*value = a610 ? 0 : 1;
 		return true;
 	default:                                /* among them VA_START, VA_SIZE: addresses are ours to give */
 		return false;
@@ -3525,6 +3611,265 @@ hakios_gpu_report(const char *why)
 	}
 }
 
+
+/* ---- the Adreno 610: power without a GMU -------------------------------------------------------------------- */
+
+/*
+ * Addresses: dt of the phone's Android (qcom,kgsl-3d0@5900000, clock-controller@5990000, kgsl-smmu@59a0000), and
+ * Linux's gcc-sm6115.c and gpucc-sm6115.c for the registers. The 3D core's registers are at 0x5900000 (one block,
+ * with its bus interface at words 0x3c00), the clock controller at 0x5990000.
+ */
+#define A610_GCC                0x01400000ul
+#define A610_GPU                0x05900000ul
+#define A610_GPUCC              0x05990000ul
+#define A610_SMMU               0x059a0000ul
+#define A610_GCC_GPLL0_VOTE     0x79004         /* bit 15: gcc_gpu_gpll0_clk_src (600 MHz), 16: ..._div_clk_src */
+#define A610_GCC_GPU_CFG_AHB    0x36004
+#define A610_GCC_GPU_MEMNOC_GFX 0x3600c
+#define A610_GCC_GPU_SNOC_DVM   0x36018
+#define A610_GCC_BIMC_GPU_AXI   0x71154
+#define A610_GX_CLAMP_IO        0x1508
+#define A610_GX_BCR             0x1008
+#define A610_GX_GFX3D_CBCR      0x1054
+#define A610_GX_GFX3D_RCGR      0x101c
+#define A610_CX_GFX3D_CBCR      0x10a4
+#define A610_CX_SNOC_DVM_CBCR   0x108c
+#define A610_GX_CXO_CBCR        0x1060
+#define A610_CBCR_FORCE_MEM     (1u << 14)
+#define A610_CBCR_FORCE_PERIPH  (1u << 13)
+
+static uint32_t core_khz_wanted = 300000;
+
+static bool
+cx610_ready(void)
+{
+	need(&gpucc);
+	if (!(rd(gpucc.base + GPUCC_CX_GDSCR) & GDSC_POWER_ON) ||
+	    (rd(gpucc.base + GPUCC_AHB_CBCR) & (CBCR_ENABLE | CBCR_OFF)) != CBCR_ENABLE) {
+		printf("adreno: %u: needs the CX switch on and the register bus clock running (cx %#x, ahb %#x)\n", step,
+		    rd(gpucc.base + GPUCC_CX_GDSCR), rd(gpucc.base + GPUCC_AHB_CBCR));
+		return false;
+	}
+	return true;
+}
+
+/* One power switch on, the way gdsc.c does it: reset pulse and clamp first (where it has them), then the collapse bit */
+static bool
+gdsc610_on(const char *name, uint32_t gdscr, bool reset_and_clamp)
+{
+	if (rd(gpucc.base + gdscr) & GDSC_POWER_ON) {
+		printf("adreno: %u: %s is on already (%#x)\n", step, name, rd(gpucc.base + gdscr));
+		return true;
+	}
+	if (reset_and_clamp) {
+		put(&gpucc, "gx bcr (reset on)", A610_GX_BCR, 1);
+		sleep_us(2);
+		put(&gpucc, "gx bcr (reset off)", A610_GX_BCR, 0);
+		sleep_us(2);
+		put(&gpucc, "gx clamp_io_ctrl (clamp off)", A610_GX_CLAMP_IO, 0);
+	}
+	put(&gpucc, name, gdscr, rd(gpucc.base + gdscr) & ~GDSC_SW_COLLAPSE);
+	if (!wait_for(&gpucc, gdscr, GDSC_POWER_ON, GDSC_POWER_ON, 100)) {
+		printf("adreno: %u: %s does not come on (%#x)\n", step, name, rd(gpucc.base + gdscr));
+		return false;
+	}
+	sleep_us(2);
+	get(&gpucc, name, gdscr);
+	return true;
+}
+
+static bool
+step610_power(void)
+{
+	uint32_t was;
+
+	need(&gcc);
+	need(&gpucc);
+	announce("A610: the clocks of the bus the GPU hangs on (GCC), and the 600 MHz PLL's taps");
+	set(&gcc, "gpu gpll0 vote", A610_GCC_GPLL0_VOTE, 3u << 15);
+	if (!clock_on(&gcc, "gpu_cfg_ahb", A610_GCC_GPU_CFG_AHB, true) ||
+	    !clock_on(&gcc, "bimc_gpu_axi", A610_GCC_BIMC_GPU_AXI, false) ||
+	    !clock_on(&gcc, "gpu_memnoc_gfx", A610_GCC_GPU_MEMNOC_GFX, false) ||
+	    !clock_on(&gcc, "gpu_snoc_dvm_gfx", A610_GCC_GPU_SNOC_DVM, false)) {
+		return false;
+	}
+
+	announce("A610: the CX power switch, then the clocks of that half");
+	if (!gdsc610_on("cx_gdscr", GPUCC_CX_GDSCR, false)) {
+		return false;
+	}
+	/* the "GMU" clock (it is only a clock here): 200 MHz, the 600 MHz PLL / 3 (source 5, pre-divider field 5) */
+	if (!clock_source("gmu_clk_src", GPUCC_GMU_RCGR, 5u << 8 | 5u)) {
+		return false;
+	}
+	if (!clock_on(&gpucc, "cxo", GPUCC_CXO_CBCR, true) || !clock_on(&gpucc, "ahb", GPUCC_AHB_CBCR, true) ||
+	    !clock_on(&gpucc, "cx_gmu", GPUCC_CX_GMU_CBCR, true) || !clock_on(&gpucc, "smmu vote", GPUCC_SMMU_VOTE_CBCR, false) ||
+	    !clock_on(&gpucc, "cx_snoc_dvm", A610_CX_SNOC_DVM_CBCR, false) ||
+	    !clock_on(&gpucc, "cx_gfx3d", A610_CX_GFX3D_CBCR, false)) {
+		return false;
+	}
+	printf("adreno: %u: CX half on: cx %#x, ahb %#x\n", step, rd(gpucc.base + GPUCC_CX_GDSCR),
+	    rd(gpucc.base + GPUCC_AHB_CBCR));
+
+	/*
+	 * Boot-arg a610_div=N: the 3D core's clock is the global 600 MHz PLL through the clock controller's divider; N is that
+	 * register's field, twice the divider less one: 3 is /2 = 300 MHz (what this ran at at first), 2 is /1.5 = 400 MHz (the default),
+	 * 1 is /1 = 600 MHz. Nothing here raises a voltage: a clock the rail does not carry hangs the core (the phone's buttons
+	 * then restart it); it does not harm it.
+	 */
+	{
+		uint32_t field = 2;                     /* (400 MHz by default: 600 gave no more frames, and costs more power) */
+
+		PE_parse_boot_argn("a610_div", &field, sizeof(field));
+		if (field > 3) {
+			field = 3;
+		}
+		core_khz_wanted = field >= 3 ? 300000 : field == 2 ? 400000 : 600000;
+		announce("A610: the 3D core's clock from the 600 MHz PLL (divider field a610_div), memories forced on, then its GX power switch");
+		printf("adreno: %u: 3D core clock: field %u = %u MHz\n", step, field, core_khz_wanted / 1000);
+		if (!clock_source("gx_gfx3d_src", A610_GX_GFX3D_RCGR, 5u << 8 | field)) {
+			return false;
+		}
+	}
+	was = get(&gpucc, "gx_gfx3d clock", A610_GX_GFX3D_CBCR);
+	put(&gpucc, "gx_gfx3d clock", A610_GX_GFX3D_CBCR, was | A610_CBCR_FORCE_MEM | A610_CBCR_FORCE_PERIPH | CBCR_ENABLE);
+	clock_on(&gpucc, "gx_cxo", A610_GX_CXO_CBCR, false);
+	if (!gdsc610_on("gx_gdscr", GPUCC_GX_GDSCR, true)) {
+		return false;
+	}
+	printf("adreno: %u: gx %#x, gfx3d clock %#x\n", step, rd(gpucc.base + GPUCC_GX_GDSCR),
+	    rd(gpucc.base + A610_GX_GFX3D_CBCR));
+
+	announce("A610: read the first registers of the 3D core itself");
+	get(&gpu, "rbbm_status", RBBM_STATUS);
+	get(&gpu, "rbbm_int_0_status", RBBM_INT_0_STATUS);
+	core_is_on = true;
+	core_khz = core_khz_wanted;
+	printf("adreno: %u: THE A610'S 3D CORE HAS POWER AND ANSWERS\n", step);
+	return true;
+}
+
+/* The 610's registers before its command processor starts: Linux's a6xx_hw_init for this core, GMU-less */
+static bool
+step610_core_start(void)
+{
+	static const uint32_t address_modes[] = { 0x0842, 0x0c01, 0x8601, 0x8e05, 0x9e01, 0xbe05, 0xa601, 0x9601, 0x0e00,
+		                                  0xae01, 0xb601, 0xf810 };
+
+	if (!cx_ready() || !core_is_on || !core_space_is_on) {
+		return false;
+	}
+	announce("A610: write the 3D core's registers, then start its command processor");
+	put(&gpu, "rbbm_gbif_halt", RBBM_GBIF_HALT, 0);
+	put(&gpu, "rbbm_secvid_tsb_cntl", RBBM_SECVID_TSB_CNTL, 0);
+	put64(&gpu, "rbbm_secvid_tsb_trusted_base", RBBM_SECVID_TSB_TRUSTED_BASE, 0);
+	put(&gpu, "rbbm_secvid_tsb_trusted_size", RBBM_SECVID_TSB_TRUSTED_SIZE, 0);
+	for (unsigned i = 0; i < sizeof(address_modes) / sizeof(address_modes[0]); i++) {
+		put(&gpu, "address mode: 64 bits", GPU_WORD(address_modes[i]), 1);
+	}
+	for (unsigned i = 0; i < 4; i++) {
+		put(&gbif, "qsb_side", GBIF_QSB_SIDE0 + 4 * i, 0x00071620);
+	}
+	put(&gpu, "rbbm_gbif_client_qos_cntl", RBBM_GBIF_CLIENT_QOS_CNTL, 3);
+	put(&gpu, "rbbm_perfctr_gpu_busy_masked", RBBM_PERFCTR_GPU_BUSY_MASKED, 0xffffffff);
+	put64(&gpu, "uche_write_range_max", UCHE_WRITE_RANGE_MAX, 0x0001fffffffff000ull + 0xfc0);
+	put64(&gpu, "uche_trap_base", UCHE_TRAP_BASE, 0x0001fffffffff000ull);
+	put64(&gpu, "uche_write_thru_base", UCHE_WRITE_THRU_BASE, 0x0001fffffffff000ull);
+	put64(&gpu, "uche_gmem_range_min", GPU_WORD(0x0e0b), 0x100000);
+	put64(&gpu, "uche_gmem_range_max", GPU_WORD(0x0e0d), 0x100000 + (128 * 1024 + 4096) - 1);
+	put(&gpu, "uche_filter_cntl", UCHE_FILTER_CNTL, 0x804);
+	put(&gpu, "uche_cache_ways", UCHE_CACHE_WAYS, 0x4);
+	put(&gpu, "cp_roq_thresholds_2", CP_ROQ_THRESHOLDS_2, 0x00800060);
+	put(&gpu, "cp_roq_thresholds_1", CP_ROQ_THRESHOLDS_1, 0x40201b16);
+	put(&gpu, "cp_mem_pool_size", CP_MEM_POOL_SIZE, 48);
+	put(&gpu, "cp_mem_pool_dbg_addr", GPU_WORD(0x0bd0), 47);
+	put(&gpu, "pc_dbg_eco_cntl", PC_DBG_ECO_CNTL, 0x00080000);
+	put(&gpu, "cp_ahb_cntl", CP_AHB_CNTL, 1);
+	put(&gpu, "rbbm_perfctr_cntl", RBBM_PERFCTR_CNTL, 1);
+	put(&gpu, "rbbm_interface_hang_int_cntl", RBBM_INTERFACE_HANG_INT_CNTL, 1u << 30 | 0x3ffff);
+	put(&gpu, "uche_client_pf", UCHE_CLIENT_PF, 1u << 7 | 1);
+	/* (no CP_APRIV_CNTL and no CP_CHICKEN_DBG: Linux sets them for a650 and later, a660 only; not for a610) */
+	/* how tiled and compressed textures are laid out (Linux a6xx_calc_ubwc_config for the a610: highest bank bit 13,
+	 * minimum access length 64 bits, mode 1) */
+	put(&gpu, "rb_nc_mode_cntl", GPU_WORD(0x8e08), 1u << 3 | 1);
+	put(&gpu, "tpl1_nc_mode_cntl", GPU_WORD(0xb604), 1u << 3 | 1);
+	put(&gpu, "sp_nc_mode_cntl", GPU_WORD(0xae02), 1u << 3 | 1);
+	put(&gpu, "uche_mode_cntl", GPU_WORD(0x0e01), 1u << 23);
+	put(&gpu, "rbbm_nc_mode_cntl", GPU_WORD(0x0534), 0);
+	put64(&gpu, "cp_sqe_instr_base", CP_SQE_INSTR_BASE, CORE_SQE_ADDRESS);
+	put64(&gpu, "cp_rb_base", CP_RB_BASE, CORE_RING_ADDRESS);
+	put(&gpu, "cp_rb_cntl", CP_RB_CNTL, CP_RB_CNTL_VALUE);
+	get(&gpu, "cp_sqe_instr_base", CP_SQE_INSTR_BASE);
+	get(&gpu, "cp_rb_base", CP_RB_BASE);
+	get(&gpu, "rbbm_status", RBBM_STATUS);
+
+	announce("A610: start the command processor");
+	core_runs = true;
+	put(&gpu, "cp_sqe_cntl", CP_SQE_CNTL, 1);
+	sleep_ms(20);
+	printf("adreno: %u: alive after it; status %#x, interrupts %#x, command processor: fault %#x, interrupts %#x, "
+	    "protection %#x, ring read up to %u\n", step, rd(gpu.base + RBBM_STATUS), rd(gpu.base + RBBM_INT_0_STATUS),
+	    rd(gpu.base + CP_HW_FAULT), rd(gpu.base + CP_INTERRUPT_STATUS), rd(gpu.base + CP_PROTECT_STATUS),
+	    rd(gpu.base + CP_RB_RPTR));
+	if (space_faulted(&core_space)) {
+		return false;
+	}
+	announce("A610: the first command, \"initialize\"");
+	ring_command(CP_ME_INIT, 8);
+	ring(0x0000002f);
+	ring(0x00000003);
+	ring(0x20000000);
+	ring(0);
+	ring(0);
+	ring(0);
+	ring(0);
+	ring(0);
+	if (!ring_run("initialize its command processor")) {
+		return false;
+	}
+	printf("adreno: %u: THE A610 TAKES COMMANDS\n", step);
+	return true;
+}
+
+/* The way back for the 610: bus halted, zap shader given up, SMMU context off, GX then CX switched off */
+static void
+stop610(void)
+{
+	step = 0;
+	newest_step = ~0u;
+	if (core_runs) {
+		wr(gpu.base + RBBM_GBIF_HALT, 1);
+		for (int i = 0; i < 100000 && !(rd(gpu.base + RBBM_GBIF_HALT_ACK) & 1); i++) {
+		}
+		wr(gbif.base + GBIF_HALT, 1);
+		for (int i = 0; i < 100000 && !(rd(gbif.base + GBIF_HALT_ACK) & 1); i++) {
+		}
+		core_runs = false;
+	}
+	if (zap_is_loaded) {
+		printf("adreno: the zap shader: %s\n", zap_unload() ? "TrustZone has given it up" : "TRUSTZONE DOES NOT GIVE IT UP");
+		zap_is_loaded = false;
+	}
+	if (core_space_is_on) {
+		space_faulted(&core_space);
+		space_off(&core_space, CORE_MATCH);
+		core_space_is_on = false;
+	}
+	if (gpucc.base != 0) {
+		uint32_t gx = rd(gpucc.base + GPUCC_GX_GDSCR);
+
+		if (gx & GDSC_POWER_ON) {
+			wr(gpucc.base + GPUCC_GX_GDSCR, gx | GDSC_SW_COLLAPSE);
+			wait_for(&gpucc, GPUCC_GX_GDSCR, GDSC_POWER_ON, 0, 100);
+		}
+		wr(gpucc.base + A610_GX_GFX3D_CBCR, rd(gpucc.base + A610_GX_GFX3D_CBCR) & ~CBCR_ENABLE);
+		wr(gpucc.base + GPUCC_CX_GDSCR, rd(gpucc.base + GPUCC_CX_GDSCR) | GDSC_SW_COLLAPSE);
+		wait_for(&gpucc, GPUCC_CX_GDSCR, GDSC_POWER_ON, 0, 100);
+		printf("adreno: 610 given back: gx %#x, cx %#x\n", rd(gpucc.base + GPUCC_GX_GDSCR), rd(gpucc.base + GPUCC_CX_GDSCR));
+	}
+	core_is_on = false;
+}
+
 /* ---- all of it together ---------------------------------------------------------------------------- */
 
 static bool(*const steps[])(void) = {
@@ -3534,6 +3879,13 @@ static bool(*const steps[])(void) = {
 	step_frame,
 };
 #define STEPS                   ((uint32_t)(sizeof(steps) / sizeof(steps[0])))
+
+/* The Adreno 610's own order: power (no GMU), the SMMU, TrustZone, the zap shader, the core's memory, its start, a frame */
+static bool(*const steps610[])(void) = {
+	step610_power, step_smmu, step_trustzone, step_zap_signature, step_core_space, step_zap_load, step610_core_start,
+	step_core_commands, step_frame,
+};
+#define STEPS610                ((uint32_t)(sizeof(steps610) / sizeof(steps610[0])))
 
 /* ---- beside the steps: how warm the GPU is ------------------------------------------------------------------ */
 
@@ -3555,8 +3907,8 @@ hakios_adreno_minute(void)
 {
 	int32_t tenths[2];
 
-	if (!gpu_kept) {
-		return;
+	if (!gpu_kept || a610) {
+		return;         /* (the sensors' address is the 642L board's: on the 685 that read hangs the bus, seen 7 November) */
 	}
 	need(&tsens);
 	for (unsigned i = 0; i < 2; i++) {
@@ -3729,6 +4081,22 @@ start_by_itself(void)
 	const char *missing = NULL;
 	uint64_t size;
 
+	if (a610) {
+		static const char *const files610[] = { "a630_sqe.fw", "a610_zap.mdt", "a610_zap.b02" };
+
+		image_asked_quietly = true;
+		for (unsigned i = 0; i < sizeof(files610) / sizeof(files610[0]) && missing == NULL; i++) {
+			if (image_file("fw", files610[i], &size) == NULL) {
+				missing = files610[i];
+			}
+		}
+		image_asked_quietly = false;
+		if (missing != NULL) {
+			printf("adreno: THE GPU IS NOT STARTED: the small image has no fw/%s (fw-gpu/)\n", missing);
+			return false;
+		}
+		return true;
+	}
 	if (pe_arm_get_soc_base_phys() != HAKIOS_SOC_BASE) {
 		printf("adreno: THE GPU IS NOT STARTED: gpu=1 is for the phone, and this is not it\n");
 		return false;
@@ -3765,7 +4133,44 @@ hakios_adreno_init(void)
 	uint32_t only = 0, done = 0, failed = 0, keep = 0;
 	bool by_itself = false;
 
-	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only) {
+	/* Select the SoC's GCC address before display_probe: otherwise the probe reads an unmapped clock register. */
+	bool probe_display = PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only;
+	if (PE_parse_boot_argn("adreno610", &only, sizeof(only)) && only) {
+		volatile uint8_t *old_log = (volatile uint8_t *)ml_io_map(PLOG_PHYS, PLOG_SIZE);
+		uint32_t total = *(volatile uint32_t *)(old_log + 4);
+
+		/* what the last run said, if it ended without saying goodbye: its last bytes, in order */
+		if (*(volatile uint32_t *)old_log == PLOG_MAGIC && total > 0) {
+			uint32_t size = 0xfff0u, have = total < size ? total : size, start = total < size ? 0 : total % size;
+			uint32_t from = have > 12000 ? have - 12000 : 0;
+
+			printf("adreno: ==== THE PREVIOUS RUN'S PERSISTENT LOG (%u bytes written, the last %u shown) ====\n", total,
+			    have - from);
+			for (uint32_t i = from; i < have; i++) {
+				loader_log_putc((char)old_log[8 + (start + i) % size]);
+			}
+			printf("\nadreno: ==== END OF THE PREVIOUS RUN'S LOG ====\n");
+		}
+		*(volatile uint32_t *)old_log = PLOG_MAGIC;
+		hakios_plog_start(old_log);
+
+		a610 = true;
+		gcc.phys = A610_GCC;
+		gcc.size = 0x1f0000;
+		gpucc.phys = A610_GPUCC;
+		gpu.phys = A610_GPU;
+		gbif.phys = A610_GPU + 4 * 0x3c00;
+		smmu.phys = A610_SMMU;
+		smmu.size = 0x10000;
+		smmu_stream_mask = 0x1;                 /* dt: iommus = <&adreno_smmu 0 1> */
+		fw_zap_mdt = "a610_zap.mdt";
+		fw_zap_seg = "a610_zap.b02";
+		fw_sqe = "a630_sqe.fw";
+		zap_memory = 0x55a15000ull;             /* dt: zap-shader memory-region (phandle 0x140) */
+		printf("adreno: Adreno 610 (no GMU): gcc %#x, gpucc %#x, gpu %#x, smmu %#x\n", gcc.phys, gpucc.phys, gpu.phys,
+		    smmu.phys);
+	}
+	if (probe_display) {
 		display_probe();
 	}
 	if (!PE_parse_boot_argn("adreno", &last_step, sizeof(last_step))) {
@@ -3773,14 +4178,14 @@ hakios_adreno_init(void)
 			return;
 		}
 		by_itself = true;
-		last_step = 21;
-		skip_steps = 1u << 10 | 1u << 11 | 1u << 12;
+		last_step = a610 ? STEPS610 - 1 : 21;   /* (the 610's last step draws a test picture) */
+		skip_steps = a610 ? 0 : 1u << 10 | 1u << 11 | 1u << 12;
 		pause_ms = 0;
 		watch_seconds = 0;
 		keep = 1;
 	}
 	PE_parse_boot_argn("adreno_skip", &skip_steps, sizeof(skip_steps));
-	if (PE_parse_boot_argn("adreno_only", &only, sizeof(only)) && only > 0 && only <= STEPS) {
+	if (PE_parse_boot_argn("adreno_only", &only, sizeof(only)) && only > 0 && only <= (a610 ? STEPS610 : STEPS)) {
 		last_step = only;
 		skip_steps = ~(1u << only);
 	}
@@ -3789,8 +4194,8 @@ hakios_adreno_init(void)
 	if (last_step == 0) {
 		return;                                 /* (adreno=0: the GPU is left alone) */
 	}
-	if (last_step > STEPS) {
-		last_step = STEPS;
+	if (last_step > (a610 ? STEPS610 : STEPS)) {
+		last_step = a610 ? STEPS610 : STEPS;
 	}
 	PE_parse_boot_argn("adreno_watch", &watch_seconds, sizeof(watch_seconds));
 	for (newest_step = last_step; newest_step > 0 && (skip_steps & 1u << newest_step); newest_step--) {
@@ -3802,7 +4207,7 @@ hakios_adreno_init(void)
 		if (skip_steps & 1u << step) {
 			continue;
 		}
-		if (!steps[step - 1]()) {
+		if (!(a610 ? steps610[step - 1]() : steps[step - 1]())) {
 			printf("adreno: step %u: FAILED; the steps after it are not attempted\n", step);
 			failed = step;
 			break;
@@ -3812,7 +4217,7 @@ hakios_adreno_init(void)
 	}
 	PE_parse_boot_argn("adreno_keep", &keep, sizeof(keep));
 	if (keep) {
-		if (done >= 21 && core_runs) {
+		if (done >= (a610 ? STEPS610 - 1 : 21) && core_runs) {
 			gpu_free[0].start = GPU_ADDRESSES_START;
 			gpu_free[0].size = GPU_ADDRESSES_SIZE;
 			gpu_free_count = 1;

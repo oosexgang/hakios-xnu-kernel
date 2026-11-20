@@ -39,6 +39,7 @@ extern struct vc_info vinfo;            /* the boot framebuffer, as the text con
 #include "MiniIOSurface.h"
 
 extern "C" void hakios_tl(const char * format, ...) __printflike(1, 2);
+extern "C" void clean_dcache(vm_offset_t addr, unsigned count, int phys);
 
 /* IOConnectCallMethod selectors of the framebuffer user client (Darwin userland 16.5) */
 enum {
@@ -189,6 +190,12 @@ static TUNABLE(uint32_t, gOnTheBeat, "fb_beat", 1);
  * to 10 (the phone, 15 October; fb_threads=1 is how it was).
  */
 static TUNABLE(uint32_t, gThreads, "fb_threads", 3);
+/*
+ * fb_cached=1 maps the boot framebuffer as write-back memory.  Each processor cleans the rows it wrote before
+ * it finishes its share, so the display controller sees them.  The usual write-combined mapping is kept as the
+ * default: cached and uncached aliases of the scanout memory must never be used at the same time.
+ */
+static TUNABLE(uint32_t, gCached, "fb_cached", 0);
 /*
  * Boot-arg fb_pri=N: the scheduling priority of the threads that put frames on the panel (the presenter and its
  * helpers); 0 is the kernel's default for its threads. By default 92 (BASEPRI_PREEMPT): at the kernel's they lost the
@@ -896,6 +903,9 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 			}
 		}
 	}
+	if (gCached && y1 > y0) {
+		clean_dcache((vm_offset_t) (fBase + (size_t) y0 * fRowBytes), (unsigned) ((size_t) (y1 - y0) * fRowBytes), false);
+	}
 }
 
 /* A helper of the scaling (fb_threads): waits for rows to do, does them, says so. */
@@ -1512,6 +1522,9 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			if (layer == 0 && (set & 1) && fGraphics) {
 				for (uint32_t y = 0; y < fPanelHeight; y++) {
 					bzero(fBase + (size_t) y * fRowBytes, (size_t) fPanelWidth * 4);
+				}
+				if (gCached) {
+					clean_dcache((vm_offset_t) fBase, (unsigned) ((size_t) fPanelHeight * fRowBytes), false);
 				}
 			}
 			continue;

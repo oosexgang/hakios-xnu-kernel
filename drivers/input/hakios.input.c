@@ -16,6 +16,8 @@
 
 #define TOUCH_QUEUE     512             /* records; a power of two */
 
+extern void IOSleep(unsigned int milliseconds);
+
 /*
  * Boot-arg touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every
  * sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time),
@@ -272,10 +274,13 @@ static const struct cdevsw touch_cdevsw = {
 	.d_mmap = eno_mmap, .d_strategy = eno_strat, .d_type = 0
 };
 
+extern void hakios_dbg_init(void);
+
 void
 hakios_input_init(void)
 {
 	int major = cdevsw_add(-1, &touch_cdevsw);
+	uint32_t touch_enabled = 0, gpu_enabled = 0;
 
 	if (major < 0 || devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-touch") == NULL) {
 		printf("hakios-touch: cannot create the device\n");
@@ -284,6 +289,15 @@ hakios_input_init(void)
 	hakios_cpufreq_init();
 	hakios_virtio_input_init();
 	hakios_goodix_init();
+	hakios_synaptics_init();
+	/* The FocalTech bring-up runs in its own kernel thread.  On sapphiren the synchronous A610 power sequence otherwise
+	 * wins the race and every FocalTech register reads as 0xef.  Let the controller identify itself before the GPU
+	 * changes the shared SoC clock/power state; the touch reader keeps running while the GPU comes up afterwards. */
+	if (PE_parse_boot_argn("synaptics_tcm", &touch_enabled, sizeof(touch_enabled)) && touch_enabled &&
+	    PE_parse_boot_argn("gpu", &gpu_enabled, sizeof(gpu_enabled)) && gpu_enabled) {
+		printf("hakios-touch: waiting for the FocalTech bring-up before GPU power\n");
+		IOSleep(750);
+	}
 	hakios_buttons_init();
 	hakios_battery_init();
 	hakios_ufs_init();
@@ -292,4 +306,5 @@ hakios_input_init(void)
 	hakios_wifi_init();
 	hakios_adsp_init();
 	hakios_mpss_init();
+	hakios_dbg_init();
 }

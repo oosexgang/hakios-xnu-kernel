@@ -90,6 +90,23 @@ def reg_address(nodes, path, index=0):
     return int.from_bytes(data[at:at + 4 * address_cells], 'big')
 
 
+def reg_size(nodes, path, index=0):
+    """A size from reg tuple `index`, or None if that tuple or its size is absent."""
+    if path is None or 'reg' not in nodes[path]:
+        return None
+    parent = nodes[path.rsplit('/', 1)[0]]
+    address_cells = u32(parent.get('#address-cells', struct.pack('>I', 2)))
+    size_cells = u32(parent.get('#size-cells', struct.pack('>I', 1)))
+    if address_cells not in (1, 2) or size_cells not in (1, 2):
+        return None
+    stride = 4 * (address_cells + size_cells)
+    at = index * stride + 4 * address_cells
+    data = nodes[path]['reg']
+    if at + 4 * size_cells > len(data):
+        return None
+    return int.from_bytes(data[at:at + 4 * size_cells], 'big')
+
+
 def aoss_mailbox(nodes):
     """The address of the AOSS QMP mailbox, which one phone's device tree describes in two ways.
 
@@ -158,7 +175,21 @@ def main():
 
     reserved('cmd_db', 'soc_cmd_db')
     reserved('mpss', 'soc_mpss_mem')
-    reserved('ipa_gsi', 'modem_ipa_fw_at')              # where the IPA's firmware is loaded (the ipa_gsi reservation)
+    # Newer IPA nodes point directly at the firmware reservation (Khaje calls it ipa_fw_region).
+    # Older trees used the ipa_gsi reservation, retained as a fallback.
+    _, ipa = find(nodes, 'qcom,ipa')
+    ipa_memory = None
+    if ipa:
+        memory = ipa.get('memory-regions', ipa.get('memory-region'))
+        if memory and len(memory) >= 4:
+            ipa_memory = by_phandle.get(u32(memory))
+    if ipa_memory:
+        address('modem_ipa_fw_at', reg_address(nodes, ipa_memory[0]))
+        address('modem_ipa_fw_size', reg_size(nodes, ipa_memory[0]))
+    else:
+        path, _ = find_named(nodes, 'ipa_gsi')
+        address('modem_ipa_fw_at', reg_address(nodes, path))
+        address('modem_ipa_fw_size', reg_size(nodes, path))
     _, smem = find(nodes, 'qcom,smem')
     if smem and 'memory-region' in smem:
         target = by_phandle.get(u32(smem['memory-region']))

@@ -41,6 +41,10 @@ void hakios_virtio_input_init(void) {}
 void hakios_goodix_init(void) {}
 #endif
 
+#ifndef HAKIOS_SYNAPTICS_TCM
+void hakios_synaptics_init(void) {}
+#endif
+
 #ifndef HAKIOS_BUTTONS
 void hakios_buttons_init(void) {}
 #endif

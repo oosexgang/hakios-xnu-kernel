@@ -44,7 +44,23 @@ fi
 # drivers the .config builds (CONFIG_HAKIOS_*; every driver when there is no .config): docs/drivers-config.md
 if [ -d xnu-src/xnu-8796.121.2 ]; then
 	xnu/sync-drivers.sh xnu-src/xnu-8796.121.2 || exit 1
+	# the kernel debugger's password (drivers/core/hakios.dbg.c) comes from a file outside the repository
+	dbg_token_file=${HAKIOS_DBG_TOKEN_FILE:-$HOME/hakios-work/dbg-token}
+	if [ -f "$dbg_token_file" ]; then
+		printf '#define DBG_TOKEN "%s"\n' "$(tr -d '\n' < "$dbg_token_file")" > xnu-src/xnu-8796.121.2/bsd/dev/dbg_token_local.h
+	else
+		rm -f xnu-src/xnu-8796.121.2/bsd/dev/dbg_token_local.h
+	fi
 	python3 tools/hakios-config.py kernel --tree xnu-src/xnu-8796.121.2 || exit 1
+fi
+
+# Khaje's Kryo 265 cores implement ARMv8.0 and do not have PSTATE.PAN.  The
+# shared BCM2837 machine target otherwise enables PAN for newer ARMv8.2 phones,
+# which makes a clean sapphiren build trap on `msr PAN, #1` during arm_init.
+# Derive the compiler switch from the selected device so plain `make kernel`
+# is safe and reproducible; an explicitly supplied value still wins.
+if [ -z "${HAKIOS_ARMV8_0+x}" ] && grep -qE '^CONFIG_(DEVICE="sapphiren"|SOC="khaje")$' .config 2>/dev/null; then
+	export HAKIOS_ARMV8_0=1
 fi
 log=${KERNEL_LOG:-xnu-build.log}
 ./xnu-build.sh -k "$@" 2>&1 | tee "$log"

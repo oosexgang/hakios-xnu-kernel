@@ -146,14 +146,17 @@ stall_say(thread_t thread, uint64_t ms)
 		}
 	}
 	thread_resume(thread);
-	at = snprintf(line, sizeof(line), "tl: t %llu", ms);
+	/* Keep the sampled time and turn start beside the stack so it can be matched to a gesture and a commit. */
+	at = snprintf(line, sizeof(line), "tl: t %llu at %llu woke %llu", ms, now_us(), turn_began * timebase.numer / timebase.denom / 1000);
 	for (unsigned i = 0; i < depth && at < (int)sizeof(line) - 96; i++) {
 		Dl_info info;
 
 		if (dladdr((void *)pcs[i], &info) != 0 && info.dli_fname != NULL) {
 			const char *image = strrchr(info.dli_fname, '/');
 
-			at += info.dli_sname != NULL && pcs[i] - (uintptr_t)info.dli_saddr < 0x4000 ?
+			/* dladdr says "<redacted>" for the cache's local symbols: keep image+offset for those */
+			at += info.dli_sname != NULL && strcmp(info.dli_sname, "<redacted>") != 0 &&
+			    pcs[i] - (uintptr_t)info.dli_saddr < 0x4000 ?
 			    snprintf(line + at, sizeof(line) - at, " %s", info.dli_sname) :
 			    snprintf(line + at, sizeof(line) - at, " %s+%#lx", image != NULL ? image + 1 : info.dli_fname, pcs[i] - (uintptr_t)info.dli_fbase);
 		} else {
@@ -826,6 +829,76 @@ ui_lite(void)
 	notify_post("com.apple.accessibility.cache.enhance.background.contrast");
 	notify_post("com.apple.accessibility.cache.reduce.motion");
 	say("hakios: SpringBoard: ui_lite=%c: Reduce Transparency and Reduce Motion %s\n", argument[8], on == kCFBooleanTrue ? "on" : "off");
+}
+
+/*
+ * Boot-arg widget_quiet=1: a widget's scene that goes away with an error is not handled. There is no chronod here (mkjobs.py
+ * keeps it out: twenty extensions at 90% each), so every widget on the home screen's pages asks for its scene and is told
+ * "Could not find job with label com.apple.chronod" some twenty times a second; SpringBoard's main thread then spends
+ * 30 to 300 ms a turn in -[CHUISWidgetHostViewController sceneDidDeactivate:withError:] -- tearing the scene down and
+ * formatting the NSError for os_log -- and that is what jerks a page change (tl: t, symbolized with
+ * tools/symbolize-stalls.py: 44 of the 174 samples of turns over 75 ms). The widgets do not draw either way.
+ */
+static void
+widget_scene_deactivated(__unused id self, __unused SEL selector, __unused id scene, __unused id error)
+{
+}
+
+/*
+ * widget_quiet=2 as well: the widget never asks for its scene (nothing would answer it: no chronod). A page change to the widgets
+ * page was ~15-22 frames a second against ~45-60 for the other way, in every repeat, and its stalls were scenes being activated and
+ * torn down (FBScene activateWithTransitionContext, deactivateAndInvalidate) for each of the twenty. What UIViewController does for
+ * an appearance is left to it (super); what the widget host adds -- the scene -- is not done.
+ */
+static void
+widget_will_appear(id self, SEL selector, BOOL animated)
+{
+	struct objc_super super = { self, class_getSuperclass(objc_getClass("CHUISWidgetHostViewController")) };
+
+	((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&super, selector, animated);
+}
+
+static void
+widget_moved_to_window(id self, SEL selector, id window, BOOL appear)
+{
+	struct objc_super super = { self, class_getSuperclass(objc_getClass("CHUISWidgetHostViewController")) };
+
+	if (class_getInstanceMethod(super.super_class, selector) != NULL) {
+		((void (*)(struct objc_super *, SEL, id, BOOL))objc_msgSendSuper)(&super, selector, window, appear);
+	}
+}
+
+static void
+widget_scene_foreground(__unused id self, __unused SEL selector, __unused BOOL foreground)
+{
+}
+
+static void
+widget_quiet(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "widget_quiet=")) == NULL || (argument != arguments && argument[-1] != ' ') ||
+	    argument[13] == '0') {
+		return;
+	}
+	if (replace_method("CHUISWidgetHostViewController", "sceneDidDeactivate:withError:", 0x1b0c6fc00UL,
+	    (IMP)widget_scene_deactivated) != NULL) {
+		say("hakios: SpringBoard: widget_quiet=1: widget scenes that fail are left alone\n");
+	}
+	if (strstr(arguments, "widget_quiet=2") != NULL) {
+		int done = 0;
+
+		done += replace_method("CHUISWidgetHostViewController", "viewWillAppear:", 0x1b0c6d478UL, (IMP)widget_will_appear) != NULL;
+		done += replace_method("CHUISWidgetHostViewController", "viewDidMoveToWindow:shouldAppearOrDisappear:", 0x1b0c6d52cUL,
+		    (IMP)widget_moved_to_window) != NULL;
+		done += replace_method("CHUISWidgetHostViewController", "_updateSceneToForeground:", 0x1b0c738b0UL,
+		    (IMP)widget_scene_foreground) != NULL;
+		say("hakios: SpringBoard: widget_quiet=2: %d of 3 widget scene methods replaced\n", done);
+	}
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -2160,6 +2233,7 @@ hakios_springboard_init(void)
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
 	ui_lite();
+	widget_quiet();
 	wallpaper_cache();
 	status_bar_fallback_is_split();
 	wallpaper_freeze();

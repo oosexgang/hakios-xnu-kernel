@@ -5,6 +5,9 @@
 standard bsd/dev/hakios.version.c
 	help    kern.hakios.version, and the version in the boot log
 
+standard bsd/dev/hakios.dbg.c
+	help    dbg=1: a debugger in the kernel on TCP port 2323 (nc PHONE 2323): the kernel's log, PMIC registers, the battery
+
 standard bsd/dev/hakios.platform.c
 	help    what the drivers share (the locks of the PMIC arbiter, the always-on processor, RPMh and the SMMU), and
 	help    kern.hakios.drivers, the list of the drivers built in

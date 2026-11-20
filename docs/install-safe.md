@@ -24,12 +24,24 @@ A phone is bricked by writing the wrong thing to the chain it starts from, or by
 | 1 | **Backup.** The boot-related partitions of both slots, `vbmeta*`, `persist`, `modemst1/2`, `fsg`, the partition tables, and with `--with-bootchain` the chain. Each copy is proven by three SHA-256s (the phone's before, the host's, the phone's after) | nothing; reads, as root | **written and tested** against a stand-in adb: `tools/backup-partitions.py` (`tools/backup-partitions-test.py`). Not run on a phone: the phone was not on USB when it was finished |
 | 2 | **Carve `darwin`** off the end of Android's userdata | **Android's data is shrunk and moved**: the f2fs is resized and the GPT rewritten. Back up the phone's data first (the user's own, with Android's tools); the tool does not | plan only: `tools/userdata-carve.py` prints the commands and writes nothing |
 | 3 | **Write the system image to `darwin`** with the guarded writer | writes `darwin` only; the writer refuses any other partition and reads every write back | exists: `tools/darwin-write.py`; its self-test refuses the wrong partition. Never run on a phone |
-| 4 | **Boot from the phone's storage, still from RAM.** `fastboot boot` the loader, and the kernel mounts its root from `darwin` (`root_apfs=`) instead of from an image uploaded to RAM | `fastboot boot` writes nothing; `ufs_write` stays 0 | **not verified**: the arguments the flash recipe needs are not confirmed. Repeat until it is boring; this is the gate before stage 5 |
+| 4 | **Boot from the phone's storage, still from RAM.** `fastboot boot` the loader, and the kernel mounts its root from `darwin` (`root_apfs=`) instead of from an image uploaded to RAM | `fastboot boot` writes nothing; `ufs_write` stays 0 | **UFS adoption in progress**: on sapphiren the controller survey and two list switches work without issuing a storage command; no block has been read yet. Repeat the eventual root boot until it is boring; this is the gate before stage 5 |
 | 5 | **The boot image into the inactive slot**, `fastboot set_active` to it, once | writes the inactive slot's `boot` (and what its recipe needs); the active slot is not touched | **not done, not tried**; whether Project Silicium's boot manager behaves from a boot slot, and what `vbmeta` says to a modified boot image, are unknown |
 | 6 | **A way back**, tested before it is needed: `fastboot set_active a` (or b) from the bootloader, and Android's own slot switch | writes the slot flag | the standard fastboot command; not tried here |
 
 Stage 4 is the one that changes the project: it makes "the system lives in RAM for the length of a session" false, and it does so
 without any step that can brick. A phone that boots from `darwin` by `fastboot boot` is already "not RAM"; stage 5 only removes the cable.
+
+### Sapphiren UFS adoption
+
+The Android device tree puts UFSHCI at `0x4804000`, not the SC7280 address the first native driver used. A read-only survey showed
+UFSHCI 3.0 enabled, 32 transfer slots, 64-bit addressing, the device present and the transfer list ready. ABL's list lives in RAM
+that XNU manages, so it is not a safe restoration target. For a native-only run the loader now replaces it, while idle, with an
+inert list in loader-owned memory. Its slot 0 contains a whitelisted READ(10) shape only for inspection; its doorbell is never rung.
+
+`ufs_native=2 ufs_hc_pa=0x4804000` validated the controller and standby list without changing the list. Then `ufs_native=3` switched
+the kernel's 32-slot list in and out twice and restored the standby list, still with zero commands and zero reads. The next gate is
+`ufs_native=4`: TEST UNIT READY followed by one READ(10) of LUN 0's GPT header and a signature/CRC check. It is compiled but has not
+completed on the phone yet; partition creation and every write remain later stages.
 
 ## The gates
 

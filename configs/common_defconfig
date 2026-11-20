@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 371 symbols in 18 groups; 34 are set, 25 of them drivers built in.
+# 378 symbols in 18 groups; 35 are set, 26 of them drivers built in.
 #
 
 #
@@ -19,7 +19,7 @@
 CONFIG_FIRMWARE="device"
 
 #
-# Drivers built in (25)
+# Drivers built in (26)
 #
 
 # the audio DSP started and linked (adsp=1, adsp_step=N); the battery's state comes through it too. Needs the DSP's ... [hakios.adsp.c]
@@ -60,6 +60,9 @@ CONFIG_HAKIOS_VIRTIO_INPUT=y
 
 # the touch screen: a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680 on SPI (touchscreen=1). The bus, pins and ... [hakios.goodix.c]
 CONFIG_HAKIOS_GOODIX=y
+
+# the touch screen of the Redmi Note 13 4G NFC: a Synaptics controller (TCM) on I2C, driven by hand on GPIO 6 and 7 ... [hakios.synaptics.c]
+CONFIG_HAKIOS_SYNAPTICS_TCM=y
 
 # the power and volume keys, read from the PMIC through the SPMI arbiter (buttons=1) [hakios.buttons.c]
 CONFIG_HAKIOS_BUTTONS=y
@@ -165,7 +168,7 @@ CONFIG_HAKIOS_WIFI=y
 # CONFIG_XPCPROXY_IDVERSION is not set
 
 #
-# Storage and APFS (44)
+# Storage and APFS (45)
 #
 
 # the phone's storage: 1 a survey, read only; 2 the loader's block service, through which the kernel reads it (the ...
@@ -270,7 +273,7 @@ CONFIG_UFS=2
 # read by hakios.ufs.c (kernel)
 # CONFIG_UFS_CHECK is not set
 
-# through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as ...
+# one known read from LUN 0, without needing UEFI Block I/O or a partition table
 # CONFIG_UFS_NATIVE is not set
 
 # read by hakios.ufs.c (kernel)
@@ -293,6 +296,9 @@ CONFIG_UFS=2
 
 # read by hakios.ufshc.c (kernel)
 # CONFIG_UFS_NATIVE_SPIN is not set
+
+# Report a firmware-initialised UFSHCI controller using register reads only
+# CONFIG_UFS_PROBE_PA is not set
 
 # read by hakios.ufs.c (kernel)
 # CONFIG_VAR_SAVE_MS is not set
@@ -335,7 +341,7 @@ CONFIG_TOUCHSCREEN=y
 # CONFIG_VIRTIO_INPUT is not set
 
 #
-# GPU and display (76)
+# GPU and display (77)
 #
 
 # rendering on Adreno (an image built with GL=1; the GPU's firmware from your phone) [needs fw-gpu/ from the phone]
@@ -398,6 +404,9 @@ CONFIG_GPU=y
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_HZ is not set
 
+# the registers of the display interface the panel is on, for a port
+# CONFIG_FB_INTF is not set
+
 # how often the panel is really refreshed
 # CONFIG_FB_MEASURE is not set
 
@@ -422,7 +431,7 @@ CONFIG_GPU=y
 # log the first N calls of every selector (default 3)
 # CONFIG_FBTRACE is not set
 
-# read by MiniIOMobileFramebuffer.cpp (kernel)
+# read by MiniIOMobileFramebuffer.cpp, inject_sb.c (kernel and user space)
 # CONFIG_FBWIDTH is not set
 
 # the surface's memory, as before
@@ -567,7 +576,7 @@ CONFIG_GPU=y
 # CONFIG_VBLUR is not set
 
 #
-# Audio and battery (32)
+# Audio and battery (33)
 #
 
 # the audio DSP; the battery level in the UI and charging state come through it [needs fw-audio/ from the phone]
@@ -614,6 +623,9 @@ CONFIG_SOUND=4
 
 # read by hakios.adsp.c, hakios.battery.c, loader.c (kernel and loader)
 # CONFIG_BATTERY is not set
+
+# read by hakios.battery.c (kernel)
+# CONFIG_BATTERY_LEVEL is not set
 
 # every property once, for the log (which number is which on this phone's firmware)
 # CONFIG_BATTMGR is not set
@@ -1065,7 +1077,7 @@ CONFIG_MODEM_AGAIN=y
 # CONFIG_USTACKS_TNAME is not set
 
 #
-# Loader (4)
+# Loader (5)
 #
 
 # read by loader.c (loader)
@@ -1077,11 +1089,14 @@ CONFIG_MODEM_AGAIN=y
 # read by loader.c (loader)
 # CONFIG_SERIAL is not set
 
+# Use the UFSHCI register address from this device's firmware description
+# CONFIG_UFS_HC_PA is not set
+
 # read by loader.c (loader)
 # CONFIG_UFS_PROBE is not set
 
 #
-# User space (33)
+# User space (35)
 #
 
 # read by inject_sb.c (user space)
@@ -1165,8 +1180,14 @@ CONFIG_MODEM_AGAIN=y
 # the root is to be the Darwin root volume on /dev/DEV -- the phone's flash, read only
 # CONFIG_ROOT_APFS is not set
 
+# read by gic_v3_irq.c (kernel)
+# CONFIG_SOC_VTIMER is not set
+
 # read by inject_sb.c (user space)
 # CONFIG_SWITCHER_WALLPAPER is not set
+
+# every pin below belongs to this phone
+# CONFIG_SYNAPTICS_TCM is not set
 
 # Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...)
 # CONFIG_TU_DEBUG is not set

@@ -20,6 +20,7 @@ struct ufshc_loader {
 };
 
 bool ufshc_probe(const struct ufshc_loader *loader, bool only);
+void ufshc_survey(uint64_t pa);
 bool ufshc_available(void);
 void ufshc_set_luns(uint32_t mask);
 int ufshc_switch_in(bool prove);

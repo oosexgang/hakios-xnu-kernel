@@ -81,6 +81,7 @@
 #                    the kernel's apfs_lib has to read every volume back as the directory it was made of
 #                    (../tools/apfs/check-image.sh; the system image takes a few minutes more)
 set -e
+umask 022
 # a copy of a tree that shares its files' data: hard links (Linux), clones of the files (macOS's APFS, whose cp has no -l)
 linkcopy() { if [ "$(uname)" = Darwin ]; then cp -cRp "$1" "$2"; else cp -al "$1" "$2"; fi; }
 cd "$(dirname "$(readlink -f "$0")")"
@@ -552,14 +553,17 @@ done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
 # Programs and libraries of more than 4 MB (Turnip, UniXNU's Metal on Vulkan: TURNIP=1, M2V=1) live in the system
 # image, in /usr/local/redwood, with a link in their place here: the small image is loaded with the kernel, in the
-# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB).
+# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB). FLASHBOOT_RESIDENT_BIG=1 keeps them in that
+# resident image instead, for testing a new userland against an already-written, read-only Darwin volume.
 rm -rf big
-for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
-	mkdir -p big/$(dirname $f)
-	mv root/$f big/$f
-	ln -s /usr/local/redwood/$f root/$f
-	echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
-done
+if [ -z "${FLASHBOOT_RESIDENT_BIG:-}" ]; then
+	for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
+		mkdir -p big/$(dirname $f)
+		mv root/$f big/$f
+		ln -s /usr/local/redwood/$f root/$f
+		echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
+	done
+fi
 [ -d big ] && SYSTEM=1          # (the links point into it: it is made again with them)
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
@@ -644,7 +648,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 fi
 
 # --- the system image -----------------------------------------------------------------------------
-if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
+if [ -z "${FLASHBOOT_RESIDENT_BIG:-}" ] && [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	{ [ ! -f system.apfs ] || [ obj/stage0 -nt system.apfs ] || [ $DARWIN/system.manifest -nt system.apfs ] ||
 	  [ $DARWIN/cryptex -nt system.apfs ] || [ $DARWIN/cryptex-app -nt system.apfs ] || [ -n "$SYSTEM" ]; }; then
 	# what sysimage/select-system.py has chosen since sysimage/rootfs was extracted is not in it, and would not be
@@ -686,8 +690,18 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	# This stages the files; a separate XNU MPSS driver is still required to start the modem.
 	if [ -n "$MODEM" ]; then
 		[ -f ../fw-modem/modem.mdt ] || { echo "build.sh: MODEM=1 needs ../fw-modem/modem.mdt" >&2; exit 1; }
-		../devices/redwood/tools/modem_firmware.py --dtb ../devices/redwood/prebuilt/device-tree.dtb --firmware-dir ../fw-modem \
-			--node /soc/qcom,mss@4080000 >/dev/null
+		modem_device=$(sed -n 's/^CONFIG_DEVICE="\([^"]*\)"/\1/p' ../.config)
+		if [ "$modem_device" = sapphiren ]; then
+			modem_dtb=../devices/sapphiren/prebuilt/device-tree.dtb
+			modem_node=/soc/remoteproc-mss@6080000
+			modem_pas="--pas-id 4"
+		else
+			modem_dtb=../devices/redwood/prebuilt/device-tree.dtb
+			modem_node=/soc/qcom,mss@4080000
+			modem_pas=
+		fi
+		../devices/redwood/tools/modem_firmware.py --dtb "$modem_dtb" --firmware-dir ../fw-modem \
+			--node "$modem_node" $modem_pas >/dev/null
 		mkdir -p sysroot/fw
 		cp ../fw-modem/modem.mdt ../fw-modem/modem.b[0-9][0-9] sysroot/fw/
 		# ... and the firmware partition's image/ (its mcfg configurations and the registry's *.jsn, pulled from
