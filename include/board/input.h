@@ -77,6 +77,12 @@ struct hakios_battery_state {
 	int32_t charge_uah, full_uah, design_uah, cycles;      /* 0 when not known (yet) */
 	int32_t usb_type;               /* Linux's POWER_SUPPLY_USB_TYPE_*: 1 a computer's port, 2 a charger, ... */
 	int32_t usb_voltage_uv, usb_current_ua;                 /* what the port gives */
+	/*
+	 * The minutes until the battery is empty (with no charger), and until it is full (while it takes charge): -1 not
+	 * known or not what is happening, -2 nothing to be said of it (battery_time=0). battery.c works them out and
+	 * writes them: what a source leaves here is not looked at.
+	 */
+	int32_t minutes_to_empty, minutes_to_full;
 };
 void hakios_battery_report(const struct hakios_battery_state *state);
 void hakios_net_init(void);            /* en0, if there is something to carry its frames: sys/board/net.h */

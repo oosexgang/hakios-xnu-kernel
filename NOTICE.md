@@ -43,7 +43,7 @@ extensions, the application log's name alone. From its own findings, not its cod
 signer waiting on fairplayd, `components/location/inject_locationd.c`) and the motor's tap as one short tick at a low
 fixed gain (`board/haptic.c`, `haptic_tap_gain=`). Nothing of its GPU stack, which it says derives from sources whose licence it has not checked,
 is taken; nor its device data.
-Twelve more are taken as ideas only, written anew here with nothing of its code or text, because what it wrote for them
+Thirteen more are taken as ideas only, written anew here with nothing of its code or text, because what it wrote for them
 is not, or not wholly, under the APSL by its own notes (a file of ios-sweet's, a file a patch adds, its own tools): a
 floor under the clock (its piece 0530; `drivers/iokit/build_date.h`, `init/init.c`), `/private/var` named "apfs" to
 fileproviderd (0734; `fs/ramfs/ramfs.c`), a container path for application extensions (0730;
@@ -58,8 +58,10 @@ an iPhone's always-on processor gives it (its 0761; `userland/userland/src/hid_o
 the accelerometer's samples given to Darwin's motion stack as accelerometer events of Apple's own sensor service, in g
 and at the rate the service is asked for, as far as the kernel reads them, and the gyroscope's rates beside them as
 gyroscope events of Apple's own gyroscope service, in radians per second on the same axes (its 0760;
-`userland/userland/src/hid_motion.h`, `userland/userland/src/hid_gyro.h`, `drivers/board/imu.c`), and a charger plugged in or pulled out between two of the battery's rounds calling for a round at once (its 0703;
-`drivers/board/plug_watch_core.h`, `drivers/board/adsp.c`).
+`userland/userland/src/hid_motion.h`, `userland/userland/src/hid_gyro.h`, `drivers/board/imu.c`), a charger plugged in or pulled out between two of the battery's rounds calling for a round at once (its 0703;
+`drivers/board/plug_watch_core.h`, `drivers/board/adsp.c`), and how long the charge lasts, or until the battery is
+full, said by Darwin's power source in minutes from the charge and an averaged current (its 0701;
+`drivers/board/battery_core.h`, `drivers/board/battery.c`, `drivers/iokit/BoardBattery.cpp`).
 
 ## Excluded from this repository
 

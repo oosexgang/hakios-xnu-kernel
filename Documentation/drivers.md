@@ -37,7 +37,7 @@ needs its feature in the board's `features`.
 | `iokit/Kernel/MiniIOSurface.cpp` | IOSurface. | any |
 | `iokit/Kernel/MiniAppleKeyStore.cpp` | AppleKeyStore: a device without a passcode. | any |
 | `iokit/Kernel/MiniIONetworkStack.cpp`, `BoardWLAN.cpp` | The registry entries by which Darwin finds network interfaces. | any |
-| `iokit/Kernel/BoardBattery.cpp` | The battery as Darwin looks for it (IOPMPowerSource). Fed by `board/battery.c` or the audio DSP. | any |
+| `iokit/Kernel/BoardBattery.cpp` | The battery as Darwin looks for it (IOPMPowerSource). Fed by `board/battery.c` or the audio DSP. Says how long the charge lasts too (below). | any |
 | `iokit/Kernel/BoardGPU.cpp` | The GPU for user space: the interface of Linux's msm DRM driver, as Mesa's freedreno speaks it. | any Adreno the kernel has started |
 | `libkern/amfi/`, `bsd/kern/kern_minimac.c` | AMFI and Sandbox policies. | any |
 | `osfmk/minicrypto/` | corecrypto. | any |
@@ -86,6 +86,26 @@ such -- and per-core DCVS (0xb0: a group
 whose cores each vote, where only the first is written here). `cpufreq=1` raises every group to its top row and
 leaves it there for the loader; `scmi_perf=2` asks its domains back to the levels they were found at, and `ddr=` gives
 its vote back, at the run's end.
+
+**How long the charge lasts.** Darwin's power source says it in minutes, as a fuel gauge of Apple's does:
+`TimeRemaining` (-1 while not known), `AvgTimeToEmpty` and `AvgTimeToFull` (65535 for the one that is not happening
+or not known). `board/battery.c` works the minutes out of every reading it hands on (`board/battery_core.h`):
+
+| | |
+| --- | --- |
+| the current | averaged over about a minute, each reading weighed by the time since the one before; begun anew when a charger is put in or pulled out, and when the source has said nothing for more than a minute |
+| to empty | with no charger: the charge in the battery at the average current out of it |
+| to full | while it charges: what is missing to the full charge at the average current into it, 0 once the gauge counts it full. "At this rate" -- the current falls as the cell fills, and the figure is corrected as it does |
+| the charge | the gauge's count in uAh; without one, the full charge it has learnt at the percentage shown |
+| nothing said | for the first half minute of an average; under 20 mA either way; on a port and not charging; with no battery; when no charge in uAh is known -- the loader's cache alone (`battery-uefi` without `adsp=1`) has a percentage and no charge, so a phone with only that is never told a time; beyond 65534 minutes |
+
+`kern.hakios.battery_minutes` (-1 not known, -2 switched off) and `kern.hakios.battery_average_ma` (more than 0 into
+the battery) have what was worked out, and the log says it once each time the charge turns (`battery: at -412 mA on
+average, 371 min until it is empty`). `battery_time=0` works nothing out and leaves the three keys off the power
+source, as it was before. After the idea of the OnePlus Nord 2 port's piece 0701. **Not run on a phone**: that powerd
+of Darwin 26 and 27 takes its time to empty and to full charge from these keys is what the port found on iOS 16 and
+has not been seen here; `battery_test` (userland) prints the power source's properties and powerd's list side by
+side to see it by.
 
 ## Sound, camera, haptics, flashlight
 

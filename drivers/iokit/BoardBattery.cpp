@@ -17,6 +17,12 @@
  * As on Apple's newer batteries, CurrentCapacity is the percentage that the fuel gauge shows (and
  * MaxCapacity 100); the charges in mAh are AppleRawCurrentCapacity, AppleRawMaxCapacity (what the
  * gauge has learnt a full charge to be), NominalChargeCapacity and DesignCapacity.
+ *
+ * How long the charge lasts is said as a fuel gauge of Apple's says it, in minutes: TimeRemaining (-1 while it is
+ * not known), and AvgTimeToEmpty and AvgTimeToFull, of which the one that does not apply, or is not known, is 65535.
+ * The minutes are battery.c's (board/battery_core.h: the charge at the current averaged over a minute); with
+ * battery_time=0 none of the three is there, as before. After the idea of the OnePlus Nord 2 port's piece 0701
+ * (frxncyyy/ios-denniz), which found these the keys to say it by; nothing of its code is here.
  */
 
 #include <IOKit/IOLib.h>
@@ -39,6 +45,7 @@ struct hakios_battery_state {
 	int32_t charge_uah, full_uah, design_uah, cycles;
 	int32_t usb_type;
 	int32_t usb_voltage_uv, usb_current_ua;
+	int32_t minutes_to_empty, minutes_to_full;      /* -1 not known or not what is happening, -2 not to be said */
 };
 
 extern "C" void HakiosBatteryReport(const void * state, unsigned size);
@@ -145,6 +152,12 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 	}
 	if (b->cycles > 0) {
 		setCycleCount((unsigned) b->cycles);
+	}
+	if (b->minutes_to_empty >= -1 && b->minutes_to_full >= -1) {
+		/* (battery.c knows at most one of the two at a time) */
+		setTimeRemaining(b->minutes_to_empty >= 0 ? b->minutes_to_empty : b->minutes_to_full);
+		number("AvgTimeToEmpty", b->minutes_to_empty >= 0 ? b->minutes_to_empty : 65535);
+		number("AvgTimeToFull", b->minutes_to_full >= 0 ? b->minutes_to_full : 65535);
 	}
 
 	if (b->external) {

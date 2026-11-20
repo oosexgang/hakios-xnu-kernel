@@ -192,6 +192,20 @@ tags yet, so the current work is one section.
   last round read it a round is made at once, and two more a second and three seconds after, while the charger starts
   (`board/plug_watch_core.h`). `battmgr_plug=MS` looks that often (100 to 5000), `battmgr_plug=0` not at all, as
   before. After the idea of the OnePlus Nord 2 port's piece 0703; not yet seen on our phone.
+- **How long the charge lasts, said to Darwin.** The battery's power source said a percentage, a voltage and a current,
+  and nothing of time: powerd had no figure of the gauge's to make "time to empty" and "time to full charge" of
+  (`IOPSCopyPowerSourcesInfo`, `IOPSGetTimeRemainingEstimate`). Now it carries `TimeRemaining`, `AvgTimeToEmpty` and
+  `AvgTimeToFull`, in minutes: the charge in the battery (or what is missing to the full charge, while it takes
+  charge) at the current averaged over about a minute. Nothing is said for the first half minute, after a charger is
+  put in or pulled out until the average has settled again, while the battery neither gives nor takes 20 mA, while it
+  is on a port and not charging, and when the charge in mAh is not known -- so only with the audio DSP's battery
+  manager (`adsp=1`), not from the loader's cache alone, which has a percentage and no charge. To full is "at this
+  rate": a charger lets the current fall as the cell fills, and the figure is corrected as it does.
+  `kern.hakios.battery_minutes` and `battery_average_ma` have what was worked out; `battery_time=0` leaves the power
+  source as it was. After the idea of the OnePlus Nord 2 port's piece 0701, which found these the keys; the
+  arithmetic is ours (`board/battery_core.h`, six new scenarios in `workbench/battery_driver_test.c`). Not run on a
+  phone: what powerd and Settings make of the three keys on Darwin 26 and 27 has not been seen
+  (`battery_test` prints the power source and powerd's list side by side). ([drivers.md](Documentation/drivers.md))
 
 ### Fixes
 

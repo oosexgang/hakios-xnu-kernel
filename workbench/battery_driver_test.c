@@ -858,6 +858,277 @@ shown_as_told(void)
 }
 
 
+/* ---- how long the charge lasts (battery_core.h's bat_time, battery.c's battery_time_tell) ------------ */
+
+/* the arithmetic: the average, what it takes before anything is said, the two ways, the edges */
+static void
+time_arithmetic(void)
+{
+	struct bat_time t = { 0 };
+
+	CHECK(bat_time_way(0, 2) == -1 && bat_time_way(0, 1) == -1 && bat_time_way(1, 1) == 1 && bat_time_way(1, 3) == 0 &&
+	    bat_time_way(1, 4) == 0, "giving with no charger whatever the gauge calls it, taking only while charging");
+	CHECK(bat_time_minutes(&t, 2500000, 4000000) == BAT_TIME_UNKNOWN, "no look: nothing said");
+	bat_time_look(&t, -1, -500000, 1000);
+	CHECK(t.average_ua == -500000 && t.covered_ms == 0 && bat_time_minutes(&t, 2500000, 4000000) == BAT_TIME_UNKNOWN,
+	    "the first look is the average, and nothing is said of one look");
+	bat_time_look(&t, -1, -500000, 30999);
+	CHECK(bat_time_minutes(&t, 2500000, 4000000) == BAT_TIME_UNKNOWN, "nor a millisecond short of half a minute: %u", t.covered_ms);
+	bat_time_look(&t, -1, -500000, 31000);
+	CHECK(bat_time_minutes(&t, 2500000, 4000000) == 300, "2500 mAh at 500 mA: five hours, %d", bat_time_minutes(&t, 2500000, 4000000));
+	CHECK(bat_time_minutes(&t, 2500000, 0) == 300, "to empty the full charge is not asked for");
+	CHECK(bat_time_minutes(&t, 0, 4000000) == BAT_TIME_UNKNOWN, "no charge known: nothing said");
+	/* a look weighs as the time since the one before: 15 s of a minute is a quarter */
+	bat_time_look(&t, -1, -900000, 46000);
+	CHECK(t.average_ua == -600000, "a quarter of the way to 900 mA: %d", t.average_ua);
+	CHECK(bat_time_minutes(&t, 2500000, 4000000) == 250, "and the time follows: %d", bat_time_minutes(&t, 2500000, 4000000));
+	/* a clock that has not moved, or went back, changes nothing */
+	bat_time_look(&t, -1, -100000, 46000);
+	bat_time_look(&t, -1, -100000, 45000);
+	CHECK(t.average_ua == -600000, "no time, no weight: %d", t.average_ua);
+	/* a current that cannot be is no look */
+	bat_time_look(&t, -1, -60000000, 50000);
+	bat_time_look(&t, 1, 60000000, 50000);
+	CHECK(t.average_ua == -600000 && t.way == -1 && t.last_ms == 46000, "60 A either way is not looked at");
+	/* the charger put in: begun anew, and to full */
+	bat_time_look(&t, 1, 1000000, 51000);
+	CHECK(t.average_ua == 1000000 && t.covered_ms == 0 && bat_time_minutes(&t, 2500000, 4000000) == BAT_TIME_UNKNOWN,
+	    "a turn begins the average anew");
+	bat_time_look(&t, 1, 1000000, 81000);
+	CHECK(bat_time_minutes(&t, 2500000, 4000000) == 90, "1500 mAh missing at 1 A: %d", bat_time_minutes(&t, 2500000, 4000000));
+	CHECK(bat_time_minutes(&t, 2500000, 0) == BAT_TIME_UNKNOWN, "to full with the full charge not known: nothing said");
+	CHECK(bat_time_minutes(&t, 4000000, 4000000) == 0 && bat_time_minutes(&t, 4100000, 4000000) == 0, "full, or over it: none left");
+	/* on a charger and not charging: nothing */
+	bat_time_look(&t, 0, 0, 82000);
+	bat_time_look(&t, 0, 300000, 120000);
+	CHECK(t.covered_ms == BAT_TIME_SETTLE_MS && bat_time_minutes(&t, 2500000, 4000000) == BAT_TIME_UNKNOWN, "on hold: nothing said");
+	/* the last look more than a minute old: begun anew */
+	bat_time_look(&t, -1, -400000, 130000);
+	bat_time_look(&t, -1, -400000, 165000);
+	CHECK(bat_time_minutes(&t, 2500000, 0) == 375, "settled again: %d", bat_time_minutes(&t, 2500000, 0));
+	bat_time_look(&t, -1, -100000, 165000 + BAT_TIME_TAU_MS + 1);
+	CHECK(t.average_ua == -100000 && t.covered_ms == 0 && bat_time_minutes(&t, 2500000, 0) == BAT_TIME_UNKNOWN,
+	    "after a silence the old average is not what the phone draws now");
+	bat_time_look(&t, -1, -100000, 165000 + 2 * BAT_TIME_TAU_MS + 1);
+	CHECK(t.covered_ms == BAT_TIME_SETTLE_MS && bat_time_minutes(&t, 2500000, 0) == 1500, "a look a minute apart still counts: %d",
+	    bat_time_minutes(&t, 2500000, 0));
+	/* too little either way, the wrong way, and more minutes than there are */
+	t.average_ua = -BAT_TIME_LEAST_UA + 1;
+	CHECK(bat_time_minutes(&t, 2500000, 0) == BAT_TIME_UNKNOWN, "under 20 mA nothing is said");
+	t.average_ua = -BAT_TIME_LEAST_UA;
+	CHECK(bat_time_minutes(&t, 2500000, 0) == 7500, "at 20 mA it is: %d", bat_time_minutes(&t, 2500000, 0));
+	t.average_ua = 300000;
+	CHECK(bat_time_minutes(&t, 2500000, 0) == BAT_TIME_UNKNOWN, "no charger and charge said to go in: nothing said");
+	t.average_ua = -BAT_TIME_LEAST_UA;
+	CHECK(bat_time_minutes(&t, 21844667, 0) == 65534 && bat_time_minutes(&t, 21845000, 0) == BAT_TIME_UNKNOWN,
+	    "65534 minutes are the most: %d", bat_time_minutes(&t, 21844667, 0));
+	t.average_ua = -BAT_MOST_MA * 1000;
+	CHECK(bat_time_minutes(&t, INT32_MAX, 0) == 6442, "the largest charge an int holds at the largest current: %d",
+	    bat_time_minutes(&t, INT32_MAX, 0));
+	/* the charge: the gauge's count, else the full charge at the percentage, else none */
+	CHECK(bat_time_charge_uah(2500000, 4000000, 1000) == 2500000, "the count when there is one");
+	CHECK(bat_time_charge_uah(0, 4000000, 6250) == 2500000 && bat_time_charge_uah(-5, 4000000, 10000) == 4000000,
+	    "else the full charge at the percentage");
+	CHECK(bat_time_charge_uah(0, 0, 6250) == 0 && bat_time_charge_uah(0, 4000000, -100) == 0 &&
+	    bat_time_charge_uah(0, 4000000, 10160) == 0 && bat_time_charge_uah(0, INT32_MAX, 10000) == INT32_MAX,
+	    "neither, or a percentage that is none: no charge");
+}
+
+/* what Darwin's power source is handed of it: to empty E and to full F */
+static bool
+time_told(int e, int f)
+{
+	return told()->minutes_to_empty == e && told()->minutes_to_full == f;
+}
+
+/* the audio DSP's readings on the battery alone: nothing for half a minute, then the minutes, in what Darwin is handed */
+static void
+time_to_empty(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6250, .voltage_uv = 3900000, .current_ua = -500000,
+		.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2, .charge_uah = 2500000,
+		.full_uah = 4000000, .minutes_to_empty = 77, .minutes_to_full = 78,
+	};
+
+	phone("phone-cmd");
+	hakios_battery_report(&state);
+	CHECK(reported == 1 && reported_size == sizeof(state) && time_told(-1, -1) && s("battery_minutes") == -1,
+	    "one reading: not known, whatever the source left there (%d)", told()->minutes_to_empty);
+	CHECK(told()->charge_uah == 2500000 && told()->current_ua == -500000 && told()->percent_hundredths == 6250,
+	    "the rest handed on as it was");
+	clock_ahead(15);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1) && !logged("min until"), "a quarter of a minute: not yet");
+	clock_ahead(31);
+	hakios_battery_report(&state);
+	CHECK(time_told(300, -1) && s("battery_minutes") == 300 && s("battery_average_ma") == -500,
+	    "2500 mAh at 500 mA: %d min, %d mA", told()->minutes_to_empty, s("battery_average_ma"));
+	CHECK(times_said("at -500 mA on average, 300 min until it is empty") == 1, "said once: %s", log_text);
+	/* the phone draws more: the average follows, a look at a time, and the log is not told again */
+	state.current_ua = -1500000;
+	clock_ahead(61);
+	hakios_battery_report(&state);
+	CHECK(told()->minutes_to_empty > 145 && told()->minutes_to_empty < 155 && told()->minutes_to_full == -1 &&
+	    s("battery_average_ma") < -990 && s("battery_average_ma") > -1010,
+	    "half a minute at 1.5 A after 500 mA: about 1 A, %d min at %d mA", told()->minutes_to_empty, s("battery_average_ma"));
+	CHECK(times_said("min until") == 1, "the log has it once a turn");
+	/* the gauge loses its count: the full charge at the percentage instead */
+	state.charge_uah = 0;
+	state.percent_hundredths = 5000;
+	state.current_ua = -1000000;
+	clock_ahead(62);
+	hakios_battery_report(&state);
+	CHECK(told()->minutes_to_empty >= 119 && told()->minutes_to_empty <= 121, "half of 4000 mAh at 1 A: %d", told()->minutes_to_empty);
+	/* ... and its full charge with it: the one it said before is kept */
+	state.full_uah = 0;
+	clock_ahead(63);
+	hakios_battery_report(&state);
+	CHECK(told()->minutes_to_empty >= 119 && told()->minutes_to_empty <= 121, "the full charge learnt earlier: %d", told()->minutes_to_empty);
+	/* no battery: no time */
+	state.present = 0;
+	clock_ahead(64);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1) && s("battery_minutes") == -1, "no battery, no time: %d", told()->minutes_to_empty);
+}
+
+/* the charger put in and the battery filled: begun anew, to full, none left when full, nothing on hold */
+static void
+time_to_full(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6250, .voltage_uv = 3900000, .current_ua = -500000,
+		.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2, .charge_uah = 2500000,
+		.full_uah = 4000000,
+	};
+
+	phone("phone-cmd");
+	hakios_battery_report(&state);
+	clock_ahead(40);
+	hakios_battery_report(&state);
+	CHECK(time_told(300, -1), "on the battery: %d", told()->minutes_to_empty);
+	state.external = 1;
+	state.status = 1;
+	state.current_ua = 1000000;
+	clock_ahead(41);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1) && s("battery_average_ma") == 1000, "the charger put in: not the old average's time (%d)",
+	    told()->minutes_to_full);
+	clock_ahead(72);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, 90) && s("battery_minutes") == 90, "1500 mAh missing at 1 A: %d", told()->minutes_to_full);
+	CHECK(times_said("at 1000 mA on average, 90 min until it is full") == 1 && times_said("min until") == 2, "said at the turn: %s",
+	    log_text);
+	state.charge_uah = 4000000;
+	state.current_ua = 100000;
+	clock_ahead(102);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, 0), "full while it still takes a little: none left, %d", told()->minutes_to_full);
+	state.status = 4;
+	state.current_ua = 0;
+	clock_ahead(103);
+	hakios_battery_report(&state);
+	clock_ahead(140);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1), "full and on hold: nothing to count, %d", told()->minutes_to_full);
+	/* a port that gives less than the phone draws: on a charger, not charging, nothing said */
+	state.status = 3;
+	state.charge_uah = 3000000;
+	state.current_ua = -200000;
+	clock_ahead(180);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1), "on a charger and losing charge: no time to full, and none to empty said (%d)",
+	    told()->minutes_to_full);
+}
+
+/* what cannot be counted is not: a phone at rest, a current that cannot be, a silence */
+static void
+time_not_said(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6250, .voltage_uv = 3900000, .current_ua = -12000,
+		.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2, .charge_uah = 2500000,
+		.full_uah = 4000000,
+	};
+
+	phone("phone-cmd");
+	hakios_battery_report(&state);
+	clock_ahead(35);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1) && s("battery_average_ma") == -12, "12 mA is no rate to count by: %d", told()->minutes_to_empty);
+	state.current_ua = -400000;
+	clock_ahead(36 + 60);
+	hakios_battery_report(&state);
+	clock_ahead(36 + 60 + 31);
+	hakios_battery_report(&state);
+	CHECK(time_told(375, -1), "400 mA: %d", told()->minutes_to_empty);
+	/* a reading whose current cannot be: not averaged, the time as it was */
+	state.current_ua = INT32_MIN;
+	clock_ahead(36 + 60 + 40);
+	hakios_battery_report(&state);
+	CHECK(time_told(375, -1) && s("battery_average_ma") == -400, "not looked at: %d min, %d mA", told()->minutes_to_empty,
+	    s("battery_average_ma"));
+	/* ... and if it comes with the charger, it is not the battery's time that is said for the charger's */
+	state.external = 1;
+	state.status = 1;
+	clock_ahead(36 + 60 + 45);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1), "the average is of the other way: nothing said (%d)", told()->minutes_to_empty);
+	/* the source says nothing for two minutes: what it says then is one look */
+	state.external = 0;
+	state.status = 2;
+	state.current_ua = -400000;
+	clock_ahead(36 + 60 + 50);
+	hakios_battery_report(&state);
+	CHECK(time_told(375, -1), "back on the battery within the minute: the average goes on, %d", told()->minutes_to_empty);
+	clock_ahead(36 + 60 + 50 + 121);
+	hakios_battery_report(&state);
+	CHECK(time_told(-1, -1), "after a silence: begun anew, %d", told()->minutes_to_empty);
+}
+
+/* the loader's cache has no charge to count: its current is averaged, and no time is ever said */
+static void
+time_without_a_charge(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 60, 3900, 400, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(time_told(-1, -1), "the first look: %d", told()->minutes_to_empty);
+	clock_ahead(40);
+	{
+		unsigned before = reported;
+
+		publish(VALID | PRESENT | VOLTAGE_VALID, 60, 3900, 400, 30);
+		WAIT_FOR(reported > before + 1, 2000);
+	}
+	CHECK(s("battery_average_ma") == -400, "its current is averaged, Darwin's way round: %d", s("battery_average_ma"));
+	CHECK(time_told(-1, -1) && s("battery_minutes") == -1 && !logged("min until"),
+	    "no charge in mAh, no time: %d", told()->minutes_to_empty);
+}
+
+/* battery_time=0: nothing averaged, and Darwin's power source told to say nothing of it */
+static void
+time_asked_for_none(void)
+{
+	static char arguments[128];
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 6250, .voltage_uv = 3900000, .current_ua = -500000,
+		.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2, .charge_uah = 2500000,
+		.full_uah = 4000000,
+	};
+
+	phone("phone-cmd");
+	snprintf(arguments, sizeof(arguments), "%s battery_time=0", boot_args);
+	boot_args = arguments;
+	hakios_battery_report(&state);
+	clock_ahead(40);
+	hakios_battery_report(&state);
+	CHECK(time_told(-2, -2) && s("battery_minutes") == -2 && s("battery_average_ma") == 0 && !logged("min until"),
+	    "nothing: %d, %d mA", told()->minutes_to_empty, s("battery_average_ma"));
+	CHECK(told()->charge_uah == 2500000 && s("battery_soc") == 63, "the rest as ever");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -874,6 +1145,9 @@ main(int argc, char **argv)
 		{ "dsp_quiet_loader_takes_over", dsp_quiet_loader_takes_over },
 		{ "a_current_that_cannot_be", a_current_that_cannot_be }, { "a_temperature_that_cannot_be", a_temperature_that_cannot_be },
 		{ "dsp_speaks_as_the_cache_is_taken", dsp_speaks_as_the_cache_is_taken },
+		{ "time_arithmetic", time_arithmetic }, { "time_to_empty", time_to_empty }, { "time_to_full", time_to_full },
+		{ "time_not_said", time_not_said }, { "time_without_a_charge", time_without_a_charge },
+		{ "time_asked_for_none", time_asked_for_none },
 	};
 
 	if (argc < 2) {

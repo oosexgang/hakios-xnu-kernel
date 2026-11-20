@@ -204,6 +204,60 @@ SYSCTL_INT(_kern_hakios, OID_AUTO, battery_shown, CTLFLAG_RD | CTLFLAG_LOCKED, &
 extern void HakiosBatteryReport(const void *state, unsigned size);     /* iokit/Kernel/BoardBattery.cpp */
 
 /*
+ * How long the charge lasts, for Darwin's power source to say beside the percentage (battery_core.h has what is
+ * said when; after the idea of the OnePlus Nord 2 port's piece 0701). The current of every reading that is handed
+ * on, the loader's or the audio DSP's, goes into the one average; the charge is the gauge's count of it, or the full
+ * charge the gauge has learnt at the percentage shown -- so a phone whose only source is the loader's cache, which
+ * has neither, is never told a time, and one whose audio DSP reports is.
+ * Boot-arg battery_time=0: nothing is averaged and nothing of it is said to Darwin, whose power source is then as
+ * it was before this (no TimeRemaining, AvgTimeToEmpty or AvgTimeToFull at all).
+ */
+static struct bat_time battery_time;
+static uint32_t battery_time_wanted = ~0u;      /* (~0: the boot-arg is not read yet) */
+static int battery_minutes = BAT_TIME_UNKNOWN, battery_average_ma;
+static int battery_time_said_way = 2;           /* which way the charge went when a time was last said in the log */
+static int battery_full_uah;                    /* (below, with the audio DSP's other figures) */
+
+SYSCTL_INT(_kern_hakios, OID_AUTO, battery_minutes, CTLFLAG_RD | CTLFLAG_LOCKED, &battery_minutes, 0,
+    "minutes until the battery is empty, or full while it takes charge; -1 not known, -2 not worked out (battery_time=0)");
+SYSCTL_INT(_kern_hakios, OID_AUTO, battery_average_ma, CTLFLAG_RD | CTLFLAG_LOCKED, &battery_average_ma, 0,
+    "the battery's current averaged over about a minute, in milliamps, more than 0 while it takes charge");
+
+/* What is handed on gets its minutes, and the average its look. Under battery_report_lock, as all of a report. */
+static void
+battery_time_tell(struct hakios_battery_state *state)
+{
+	uint64_t now_ns;
+	int way, minutes;
+
+	if (battery_time_wanted == ~0u) {
+		battery_time_wanted = 1;
+		PE_parse_boot_argn("battery_time", &battery_time_wanted, sizeof(battery_time_wanted));
+	}
+	if (!battery_time_wanted) {
+		state->minutes_to_empty = state->minutes_to_full = battery_minutes = BAT_TIME_OFF;
+		return;
+	}
+	absolutetime_to_nanoseconds(mach_absolute_time(), &now_ns);
+	way = bat_time_way(state->external, state->status);
+	bat_time_look(&battery_time, way, state->current_ua, now_ns / NSEC_PER_MSEC);
+	/* (no battery: no time. The average is the look's own way, which is this reading's unless its current cannot be) */
+	minutes = state->present && battery_time.way == way ? bat_time_minutes(&battery_time,
+	    bat_time_charge_uah(state->charge_uah, state->full_uah > 0 ? state->full_uah : battery_full_uah,
+	    state->percent_hundredths), state->full_uah > 0 ? state->full_uah : battery_full_uah) : BAT_TIME_UNKNOWN;
+	battery_average_ma = battery_time.average_ua / 1000;
+	if (minutes >= 0 && battery_time_said_way != way) {
+		/* (once each time the charge turns: what Darwin is told can be read beside it, userland's battery_test) */
+		battery_time_said_way = way;
+		printf("battery: at %d mA on average, %d min until it is %s: said to Darwin from here on\n", battery_average_ma,
+		    minutes, way > 0 ? "full" : "empty");
+	}
+	battery_minutes = minutes;
+	state->minutes_to_empty = way < 0 ? minutes : BAT_TIME_UNKNOWN;
+	state->minutes_to_full = way > 0 ? minutes : BAT_TIME_UNKNOWN;
+}
+
+/*
  * HakiosBatteryReport() takes one caller at a time, and two threads call it: the loader's readings here and the audio DSP's
  * battery manager (hakios_battery_report()). Both at once had the service's properties replaced under the other's
  * update, or two power sources made at the first reading. The lock is held around each report, and the readings
@@ -254,6 +308,7 @@ battery_tell_ios(const struct loader_battery *sample)
 	state.status = !external ? 2 : gaining ? 1 : battery_shown_tenths >= 1000 ? 4 : 3;
 	lck_mtx_lock(&battery_report_lock);
 	if (!battery_source_dsp) {
+		battery_time_tell(&state);
 		HakiosBatteryReport(&state, sizeof(state));
 	}
 	lck_mtx_unlock(&battery_report_lock);
@@ -329,7 +384,7 @@ battery_poll(void)
  * the values that Android shows, from where Android takes them. They are kept here for the sysctls
  * and passed on to the power source that Darwin reads (iokit/Kernel/BoardBattery.cpp).
  */
-static int battery_full_uah, battery_design_uah, battery_cycles;
+static int battery_design_uah, battery_cycles;  /* (and battery_full_uah, above) */
 
 SYSCTL_INT(_kern_hakios, OID_AUTO, battery_full_uah, CTLFLAG_RD | CTLFLAG_LOCKED,
     &battery_full_uah, 0, "the battery's full charge as the fuel gauge has learnt it, in uAh (0 if unknown)");
@@ -345,6 +400,7 @@ hakios_battery_report(const struct hakios_battery_state *b)
 {
 	int percent = (b->percent_hundredths + 50) / 100;
 	const int hundredths = b->temperature_hundredths;
+	struct hakios_battery_state told = *b;  /* what is handed on: the DSP's, and how long the charge lasts */
 	bool back;
 
 	/* (under the lock, as the loader's readings: see battery_report_lock) */
@@ -378,7 +434,8 @@ hakios_battery_report(const struct hakios_battery_state *b)
 	__atomic_store_n(&battery_fresh_at, mach_absolute_time(), __ATOMIC_RELAXED);
 	__atomic_store_n(&battery_heard, true, __ATOMIC_RELAXED);
 	battery_updates++;
-	HakiosBatteryReport(b, sizeof(*b));
+	battery_time_tell(&told);
+	HakiosBatteryReport(&told, sizeof(told));
 	lck_mtx_unlock(&battery_report_lock);
 	if (back) {
 		printf("battery: the audio DSP's battery manager speaks again: its readings are passed on again\n");

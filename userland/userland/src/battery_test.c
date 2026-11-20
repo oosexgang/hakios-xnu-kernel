@@ -116,6 +116,9 @@ once(void)
 	    kernel("kern.hakios.battery_temperature_c"), kernel("kern.hakios.battery_present"),
 	    kernel("kern.hakios.battery_charger_present"), kernel("kern.hakios.battery_charging"),
 	    kernel("kern.hakios.battery_from_dsp"));
+	/* (what the power source's TimeRemaining, AvgTimeToEmpty and AvgTimeToFull below are made of; -1 not known, -2 off) */
+	printf("battery_test: the kernel says %d min left at %d mA on average\n", kernel("kern.hakios.battery_minutes"),
+	    kernel("kern.hakios.battery_average_ma"));
 	if (service != 0) {
 		CFMutableDictionaryRef properties = NULL;
 		io_name_t name = "";
