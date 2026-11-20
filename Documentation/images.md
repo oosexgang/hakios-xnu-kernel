@@ -11,7 +11,7 @@ build/images/NAME/
   NAME.payload     the loader (loader.efi), the kernel and the boot arguments, in the XNUP container the phone's
                    UEFI starts: the loader runs the kernel from it, once, and resets when it is done
   boot.img         the phone's UEFI with that payload, as `fastboot boot` takes it -- when the phone's UEFI build is
-                   in firmware/NAME/uefi/ (Documentation/porting.md, step 3)
+                   in firmware/NAME/uefi/ (Documentation/porting.md, step 2)
   manifest.json    what went in: the code's commit, the device package and where it came from, the defconfig and the
                    boot arguments, the SHA-256 of the kernel, of the loader and of each file
   README.md        how to boot it

@@ -100,12 +100,27 @@ anything else. If it cannot be there, change it in the shim and build the loader
 (`LOADER_CFLAGS="-DPAYLOAD_BASE=... -DPAYLOAD_MAX_SIZE=..." arch/arm64/boot/build.sh`;
 `arch/arm64/boot/src/conventions.h` has both). The loader keeps the kernel's memory clear of that range.
 
+The build's three files go into `firmware/NAME/uefi/` of this checkout (`SILICIUM_UEFI.fd`, `BootShim.bin`,
+`device-tree.dtb`: [firmware/README.md](../firmware/README.md) says where Mu-Silicium leaves each; git ignores the
+directory, they are never published), and the board file says where that UEFI runs:
+
+```dts
+	uefi {
+		fd-base = <0x9FD00000>;      // FD_BASE of the port's memory map
+		fd-size = <0x200000>;        // the size of SILICIUM_UEFI.fd
+	};
+```
+
+With the two, `arch/arm64/boot/mkboot.py`, `./bench` and `tools/image.py` can pack what `fastboot boot` takes, and
+they know which phone is meant when it is the only package here with a `uefi { }` section.
+
 ## 3. The loader
 
-Build it and start it once without a kernel:
+Build it and start it once without a kernel (the phone connected, in Android or in its bootloader):
 
 ```sh
 arch/arm64/boot/build.sh
+BENCH_BOARD=mido ./bench log      # the loader alone, started with fastboot boot; its log, also in logs/loader.log
 ```
 
 At start it prints `display W x H at ADDRESS`. Put that address in the board file:
@@ -153,7 +168,7 @@ in [chipsets.md](chipsets.md).
 | Memory bandwidth | `ddr-rpmh`, `rpmh { }` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
 | GPU (Adreno 642, 642L, 643) | `gpu-a660`, `gpu { }`, `adreno { }` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: Darwin draws in software without it. [metal-glass.md](metal-glass.md) |
 | Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
-| Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
+| Battery | `battery-uefi`, `uefi-charger` in `loader { }` | `battery=1` | `battery: Qualcomm UEFI cache at …`, then a state of charge that matches Android's. Without `uefi-charger` the loader never asks the firmware. |
 | Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
 
 `BENCH_DEFCONFIG=phone_look ./bench run` asks every part above that has a level that only reads for it, on every core,
@@ -240,31 +255,74 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 ### Or keep it in a repository of your own
 
 A phone does not have to wait for the `devices` branch: its package can live in a repository of its own, which
-anyone builds from. `tools/device.py init ../mido --name mido --soc sm7325` makes one (the package as
-`tools/boards.py new` starts it, and what `samples/device-repo/` has: how to build from it, a `.gitignore` for what
-never goes in, a check on every push). The repository needs nothing but the package at its top (its `board.dts` names
-it):
+anyone builds from. `tools/device.py init ../mido --name mido --soc sm7325 [--dts phone.dts]` makes one: the package
+as `tools/boards.py new` starts it, and what `samples/device-repo/` has. This is all of it, with what comes later
+(`_template/` is `arch/arm64/boot/dts/_template/`):
 
 ```
-my-phone/                 a repository on any git host, called anything
-  board.dts               name = "mido"; ... (arch/arm64/boot/dts/_template/board.dts explains every key)
-  soc.dtsi                the SoC file, unless the SoC's is already in a package you bring in with it
-  README.md               what works, what was verified on the phone and when
+my-phone/                        a repository on any git host, called anything            written by           in git
+  board.dts                      what the phone has and where; name = "mido" names the    device.py init       yes
+                                 package (_template/board.dts explains every key)         (boards.py new)
+  soc.dtsi                       where its chip's blocks are (_template/soc.dtsi); a      device.py init       yes
+                                 copy of a package's here when one has the SoC
+  README.md                      what works, what was verified on the phone and when      device.py init, as   yes
+                                                                                          the form; then you
+  BUILDING.md                    how to build and boot from this repository               device.py init       yes
+  .gitignore                     what is never committed (the last rows)                  device.py init       yes
+  .github/workflows/check.yml    every push held to the kernel's checks of a package      device.py init       yes
+  notes/, ...                    anything else of the phone: yours, brought in with it    you                  yes
+  images/                        images for others to boot (images.md)                    make publish         yes
+    README.md                    the index of the versions, newest first                  each publish, anew   yes
+    VERSION/                     DATE-COMMIT unless VERSION=v1 (--version v1)
+      mido.payload               the loader, the kernel and the boot arguments            make publish         yes
+      manifest.json              what went in, and each file's SHA-256                    make publish         yes
+      README.md                  how to boot it                                           make publish         yes
+      boot.img                   the phone's UEFI with the payload: only from             image.py publish     yes
+                                 tools/image.py publish --with-uefi                       --with-uefi
+  .git/                          git init, unless --no-git                                device.py init       --
+  firmware/, build/, *.payload   the vendor's firmware; what the kernel's tools make      you, the tools       never
+                                 when run in here (a payload outside images/)
+  phone.dts, *.dtb, *.dtbo,      the Android device tree the package was started from     you                  never
+  dts-android/
+  *.ipsw, *.im4p, *.apfs, *.dmg, Apple's files, and an identity made from one             you                  never
+  DeviceTree*.bin, identity.bin
 ```
 
-(A repository with several phones has a directory each, `NAME/board.dts`, as the `devices` branch has.) Then,
-in a checkout of this repository:
+Only `board.dts` and `soc.dtsi` are needed, at the top: a build reads those two and nothing else. The package is
+`board.dts`, `soc.dtsi`, `README.md` and your notes; that is what `tools/device.py add` brings into a checkout and
+what `export` sends to the `devices` branch, where a package is the same files in a directory `NAME/`. The rows
+marked "never" are left where they are even when they lie in the directory the package is brought in from. (A
+repository with several phones has a directory each, `NAME/board.dts`, as the `devices` branch has.)
+
+Nothing is written into the phone's repository but by `init`, by you and by `make publish`. What a build makes is
+in the checkout of this repository, and git ignores all of it there:
+
+```
+arch/arm64/boot/dts/mido/        the package, brought in (tools/device.py add, make device, make phone), with
+                                 .from: where it came from. Changed in its repository, not here: update takes it again
+build/device-sources/            the clone of a repository given by its URL
+build/boards/                    the tables the kernel and the loader are built with, for the packages that are here
+build/images/mido/               mido.payload, manifest.json, README.md, and boot.img when firmware/mido/uefi/ is
+                                 there (make phone, make image); one directory a run with make images
+firmware/mido/uefi/              the phone's UEFI build, yours (step 2)
+```
+
+Then, in a checkout of this repository:
 
 ```sh
-make phone FROM=https://git.example/you/my-phone.git           # the package brought in, the kernel built for it
+make phone FROM=https://git.example/you/my-phone.git DEVICE=mido   # the package brought in, the kernel built for it
 tools/device.py add --from https://git.example/you/my-phone.git#v1   # or only bring it in, at a tag or commit
+tools/device.py add --from ../mido                                   # or from the directory you work in
 ```
+
+(`DEVICE=mido` may be left out once the board has a `uefi { }` section and is the only one here that has: that is
+how the image's tool knows which phone is meant.)
 
 The repository is cloned into `build/device-sources/` and its package copied into `arch/arm64/boot/dts/` and
 validated against the code here; `tools/device.py list` says where each package came from, and the same command
-again takes what the repository has now. `make phone` ends with one image of the loader, the kernel and the boot
-arguments (`build/images/NAME/`), which `make publish DEVICE=NAME REPO=DIR` puts into that repository's `images/` for
-others to boot ([images.md](images.md)). Every driver and feature of the kernel is there for your phone as for
+again, or `tools/device.py update mido`, takes what the repository has now. `make phone` ends with one image of the
+loader, the kernel and the boot arguments (`build/images/NAME/`), which `make publish DEVICE=NAME REPO=DIR` puts into
+that repository's `images/` for others to boot ([images.md](images.md)). Every driver and feature of the kernel is there for your phone as for
 any other: what a board turns on is its `features`, and what each feature needs is in
 [features.md](features.md) (`tools/boards.py status NAME` says what yours can turn on next).
 
@@ -302,6 +360,11 @@ Stated plainly, so nobody finds out the hard way:
   amplifiers that is all: a phone with one of those parts wired differently needs its section of the
   board file filled in and no change to the driver. [features.md](features.md) lists what each
   feature needs.
+- **The modem** (`modem-sm7325`, `board/mpss.c`) has its addresses in its code: where an SM7325 has the register
+  blocks it uses, its shared memory, its command database and the modem's reserved memory, the TrustZone numbers of
+  its images and the IPA's SMMU streams. No section of either file is asked for, so `tools/boards.py status` cannot say
+  whether it fits: it is for a phone on that chip with that memory map (the `soc_*` boot arguments of
+  [boot-args.md](boot-args.md) give other addresses for a look).
 - **Darwin's camera** (`components/camera/src/camera_device.c`, of the Darwin 16.5 generation) presents two
   cameras the way an iPhone X has them (optics and formats, which Darwin's capture stack matches its
   presets to). Which of the phone's sensors is the back and which the front camera, and whether a

@@ -124,7 +124,7 @@ def check(name, board, runs, env):
     uefi = ROOT / 'firmware' / name / 'uefi'
     report.add('ok' if uefi.is_dir() and any(uefi.iterdir()) else 'MISSING', 'uefi',
                f'{uefi}' if uefi.is_dir() and any(uefi.iterdir()) else
-               f'nothing in {uefi}: the phone\'s UEFI build (Documentation/porting.md, "The phone\'s UEFI")')
+               f'nothing in {uefi}: the phone\'s UEFI build (Documentation/porting.md, step 2)')
 
     kernel = Path(env.get('BENCH_KERNEL') or xnu_src / 'BUILD/obj/mach.development.bcm2837')
     if not kernel.is_file():

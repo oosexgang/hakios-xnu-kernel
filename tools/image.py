@@ -166,8 +166,10 @@ def board_of(name):
     phones = {n: b for n, b in found.items() if 'uefi' in b}
     if name is None:
         if len(phones) != 1:
-            die('which phone? --board NAME (here: ' + (', '.join(sorted(phones)) or
-                'no package with a uefi { } node; tools/device.py add NAME') + ')')
+            # (a package just brought in is here, and has no uefi { } yet: it is named, not asked for again)
+            others = sorted(n for n in found if n not in phones)
+            die('which phone? --board NAME (here: ' + (', '.join(sorted(phones)) or 'no package with a uefi { } node to '
+                'choose by; ' + (f'without one: {", ".join(others)}' if others else 'tools/device.py add NAME')) + ')')
         name = next(iter(phones))
     if name not in found:
         die(f'no board "{name}" here (tools/device.py list)')

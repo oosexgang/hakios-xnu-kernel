@@ -8,6 +8,18 @@ tags yet, so the current work is one section.
 
 ### For whoever brings up a phone
 
+- **The way from nothing to a package, walked with a made-up phone, and what it tripped on put right.** One page has
+  the whole layout of a phone's repository: every file and directory, who writes it and whether it is committed
+  ([porting.md](Documentation/porting.md), "Or keep it in a repository of your own"). Bringing a package in from the
+  directory it is worked in, and `tools/device.py export`, leave the vendor's files that lie beside it where they
+  are (`firmware/`, the Android tree, `build/`: what the sample's `.gitignore` names), and the repository's own
+  (`BUILDING.md`, `.gitignore`). `tools/boards.py new --dts` says so when the file is not there or is the compiled
+  tree instead of its source, and which of the two names is not one; `tools/boards.py status NAME` is no longer
+  stopped by another package's mistake, has a line for the PMIC's clock and says that `battery-uefi` needs
+  `uefi-charger` in `loader { }`; `tools/device.py init` says where the files are, not where they were made, and a
+  package that only lacks values is told to be finished, not that it "does not fit". The guide now says where the
+  UEFI build goes and how the loader is started the first time (steps 2 and 3), and that the modem's addresses are
+  in its driver. ([features.md](Documentation/features.md))
 - **The phone's orientation from an LSM6DSO on the SoC's own pins.** A board that lists `imu-lsm6dso` and says in
   `imu { }` where the chip is and how it is turned gets `sensors=1` (its identity read, nothing written) and
   `sensors=2` (the accelerometer on at 104 Hz, the orientation followed and said, `hw.sensors.orientation` and

@@ -136,6 +136,18 @@ class Build(Sandbox):
         self.assertIn('tools/image.py personalize zeta.payload --identity', readme)
         self.assertIn('zeta.payload', said)
 
+    def test_a_phone_that_has_no_uefi_node_yet_is_named_not_asked_for_again(self):
+        # a package just made and brought in (make phone FROM=...) has no uefi { } section to choose it by: it is here,
+        # and "tools/device.py add NAME" is not what is missing
+        path = boards.DEVICES / 'zeta/board.dts'
+        path.write_text(path.read_text().replace('\tuefi {\n\t\tfd-base = <0x9FD00000>;\n\t\tfd-size = <0x1000>;\n\t};\n', ''))
+        with self.assertRaises(SystemExit) as stop:
+            image.board_of(None)
+        self.assertIn('which phone? --board NAME', str(stop.exception.code))
+        self.assertIn('no package with a uefi { } node to choose by; without one: zeta', str(stop.exception.code))
+        self.assertNotIn('tools/device.py add', str(stop.exception.code))
+        self.assertEqual(image.board_of('zeta')[0], 'zeta')            # (named, it is built for)
+
     def test_with_the_phone_s_uefi_a_boot_image_that_carries_the_payload(self):
         self.uefi()
         self.build()
