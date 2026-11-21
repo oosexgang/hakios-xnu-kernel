@@ -97,9 +97,24 @@ efi_main(efi_handle image, efi_system_table *st)
 	wdt_arm();
 
 	int have_payload = parse_payload(&pi, 0);
-	if (have_payload && pi.usb_mode && usb_start()) {
+	/* ABL/U-Boot may start the loader without an XNUP payload. That is a
+	 * recoverable packaging or transfer error, not a reason to cold-reset the
+	 * phone: bring up the same fastboot channel used by --usb payloads so the
+	 * host can send a payload and run it. */
+	if (!have_payload) {
+		print("no XNUP payload; entering USB recovery\n");
+	}
+	if ((!have_payload || pi.usb_mode) && usb_start()) {
 		flush_log();
 		usb_command_loop();
+	}
+	if (!have_payload) {
+		print("USB recovery unavailable; holding in loader\n");
+		flush_log();
+		for (;;) {
+			wdt_pet();
+			BS->stall(100000);
+		}
 	}
 
 	/* One-shot mode: run the kernel that came with the image, then reset. */
