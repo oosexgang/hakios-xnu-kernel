@@ -10,7 +10,9 @@ anything; [porting.md](porting.md) is the step-by-step guide for a new device.
 In more detail:
 
 ```
-stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the phone; nothing is flashed)
+stock fastboot ──"fastboot boot"──► UEFI
+                                      ├─ Mu-Silicium (existing path)
+                                      └─ Redwood U-Boot (menu, EFI services, USB shell; RAM-only)
                                       │
                                       ▼
                          loader (arch/arm64/boot/, a UEFI application)
@@ -33,6 +35,8 @@ stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the pho
 
 When the kernel is done, or panics, it returns to the loader, which still holds the phone's USB link.
 A reboot brings Android back.
+
+For the POCO X5 Pro's U-Boot path, see [the Redwood U-Boot build and console guide](../arch/arm64/boot/u-boot/README.md). U-Boot supplies the EFI environment and command shell; `loader.efi` still builds the XNU handoff.
 
 ## Three layers, three kinds of change
 

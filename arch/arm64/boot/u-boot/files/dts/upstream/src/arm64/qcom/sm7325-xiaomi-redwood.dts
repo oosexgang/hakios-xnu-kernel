@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * The POCO X5 Pro 5G (redwood, SM7325) for HakiOS's U-Boot.
+ *
+ * Only what U-Boot needs: the memory the firmware and the remote processors keep, the panel's framebuffer as the
+ * bootloader left it, the keys, USB as a device (fastboot) and UFS. Every address is the phone's own: the reserved
+ * memory is the Android device tree's (devices/redwood/prebuilt/device-tree.dtb) and Silicium's memory map
+ * (uefi/files/Platforms/Xiaomi/redwoodPkg/Library/MemoryMapLib/MemoryMapLib.c), whichever reserves more.
+ *
+ * The size of RAM is not here: ABL writes it into the device tree it hands over (the appended Android one), and U-Boot
+ * reads it from there (arch/arm/mach-snapdragon/board.c, qcom_parse_memory()).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include "sm7325.dtsi"
+#include "pm7325.dtsi"
+#include "pm8350b.dtsi" /* PM7325B */
+#include "pm8350c.dtsi" /* PM7350C */
+#include "pmk8350.dtsi" /* PMK7325 */
+
+/*
+ * kodiak.dtsi's carve-outs are a Chromebook's; the phone's differ (below). Its rmtfs and ADSP RPC heap fall inside the
+ * phone's CDSP image and pil_mem, which reserve them anyway.
+ */
+/delete-node/ &rmtfs_mem;
+
+/ {
+	model = "Xiaomi POCO X5 Pro 5G";
+	compatible = "xiaomi,redwood", "qcom,sm7325";
+	chassis-type = "handset";
+
+	/* what ABL matches against; the appended Android device tree carries the same */
+	qcom,msm-id = <QCOM_ID_SM7325 0x10000>, <499 0x10000>;
+	qcom,board-id = <0 0>;
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * The panel as ABL left it: 1080 x 2400, 32 bits. At 0xE1000000 the HakiOS loader knows the phone by it
+		 * (xnuloader/loader.c, efi_main()). No clocks: U-Boot keeps the display running by not touching it.
+		 */
+		framebuffer0: framebuffer@e1000000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xe1000000 0x0 (1080 * 2400 * 4)>;
+			width = <1080>;
+			height = <2400>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		pinctrl-0 = <&kypd_volp_n>;
+		pinctrl-names = "default";
+
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+		};
+	};
+
+	reserved-memory {
+		/* the Android device tree's, where kodiak.dtsi has other addresses or nothing */
+		camera_mem: camera@86200000 {
+			reg = <0x0 0x86200000 0x0 0x500000>;
+			no-map;
+		};
+
+		cvp_mem: cvp@8b200000 {
+			reg = <0x0 0x8b200000 0x0 0x500000>;
+			no-map;
+		};
+
+		ipa_gsi_mem: ipa-gsi@8b710000 {
+			reg = <0x0 0x8b710000 0x0 0xa000>;
+			no-map;
+		};
+
+		/* Silicium's "PIL Reserved": all of the remote processors' images, with what lies between them */
+		pil_mem: pil@85300000 {
+			reg = <0x0 0x85300000 0x0 0x19300000>;
+			no-map;
+		};
+
+		usb_ucsi_mem: usb-ucsi@a0000000 {
+			reg = <0x0 0xa0000000 0x0 0x2000>;
+			no-map;
+		};
+
+		mpss_efs_mem: mpss-efs@a0800000 {
+			reg = <0x0 0xa0800000 0x0 0x300000>;
+			no-map;
+		};
+
+		hyp_reserved_mem: hyp-reserved@b0000000 {
+			reg = <0x0 0xb0000000 0x0 0x9700000>;
+			no-map;
+		};
+
+		/* removed_region, QTEE, the trusted apps and the ADSP's RPC heap, in one */
+		removed_mem: removed@c0000000 {
+			reg = <0x0 0xc0000000 0x0 0x6d00000>;
+			no-map;
+		};
+
+		tgcm_mem: tgcm@ce500000 {
+			reg = <0x0 0xce500000 0x0 0x1400000>;
+			no-map;
+		};
+
+		guest_vm_mem: guest-vm@d0000000 {
+			reg = <0x0 0xd0000000 0x0 0x10000000>;
+			no-map;
+		};
+
+		dbi_dump_mem: dbi-dump@e0000000 {
+			reg = <0x0 0xe0000000 0x0 0xf00000>;
+			no-map;
+		};
+
+		/* the panel's memory and the display's dfps data after it */
+		cont_splash_mem: cont-splash@e1000000 {
+			reg = <0x0 0xe1000000 0x0 0x2400000>;
+			no-map;
+		};
+
+		/*
+		 * Where the HakiOS loader takes its payload from (PAYLOAD_BASE, 64 MiB with the panic log in its last MiB).
+		 * Mapped (no no-map): the hakios command writes the payload here, and nothing else in U-Boot may take it.
+		 */
+		hakios_payload_mem: hakios-payload@f0000000 {
+			reg = <0x0 0xf0000000 0x0 0x4000000>;
+		};
+	};
+};
+
+&adsp_mem {
+	reg = <0x0 0x86700000 0x0 0x4000000>;
+};
+
+&video_mem {
+	reg = <0x0 0x8ad00000 0x0 0x500000>;
+};
+
+&cdsp_mem {
+	reg = <0x0 0x9c700000 0x0 0x1e00000>;
+};
+
+&pm7325_gpios {
+	kypd_volp_n: kypd-volp-n-state {
+		pins = "gpio6";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		power-source = <1>;
+		bias-pull-up;
+		input-enable;
+	};
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	status = "okay";
+};
+
+/* USB 2.0 as a device: U-Boot's fastboot; the SuperSpeed PHY is left as ABL left it */
+&usb_1 {
+	qcom,select-utmi-as-pipe-clk;
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	phys = <&usb_1_hsphy>;
+	phy-names = "usb2-phy";
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	status = "okay";
+};

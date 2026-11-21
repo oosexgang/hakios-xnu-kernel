@@ -1,0 +1,41 @@
+# HakiOS's U-Boot for the POCO X5 Pro 5G (redwood): started by ABL from RAM (fastboot boot), never flashed.
+# The common Qualcomm configuration, with the phone settings of board/qualcomm/qcom-phone.config, and the hakios
+# command that starts the HakiOS loader from memory (cmd/hakios.c).
+#include "qcom_defconfig"
+
+CONFIG_ARM=y
+CONFIG_DEFAULT_DEVICE_TREE="qcom/sm7325-xiaomi-redwood"
+CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/hakios-redwood.env"
+CONFIG_CMD_HAKIOS=y
+# the HakiOS loader talks fastboot to the host itself, through Qualcomm's USB device protocol (xl)
+CONFIG_EFI_QCOM_USB_DEVICE=y
+
+# from qcom-phone.config: the panic stays on the screen, the boot menu, fastboot and the console over USB
+CONFIG_PANIC_HANG=y
+CONFIG_CMD_PAUSE=y
+CONFIG_BOOT_RETRY=y
+CONFIG_BOOT_RETRY_TIME=1
+CONFIG_BUTTON_REMAP_PHONE_KEYS=y
+CONFIG_RETRY_BOOTCMD=y
+CONFIG_USB_FUNCTION_FASTBOOT=y
+CONFIG_USB_FUNCTION_ACM=y
+CONFIG_CMD_UMS_ABORT_KEYED=y
+CONFIG_CONSOLE_RECORD=y
+CONFIG_CONSOLE_RECORD_INIT_F=y
+CONFIG_CONSOLE_RECORD_OUT_SIZE=0x6000
+CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
+CONFIG_FASTBOOT_OEM_RUN=y
+# CONFIG_REQUIRE_SERIAL_CONSOLE is not set
+
+# the fastboot buffer takes a whole HKUB container: the loader and a payload of up to 63 MiB
+CONFIG_FASTBOOT_BUF_SIZE=0x8000000
+
+# The HakiOS loader keeps U-Boot's boot services while the kernel runs and has a watchdog of its own (wdt_arm()):
+# a watchdog U-Boot started would bite the phone in the middle of a run.
+# CONFIG_WATCHDOG_AUTOSTART is not set
+
+# Nothing on the phone's storage is ever written by this U-Boot: no capsule updates (they flash a partition through DFU)
+# CONFIG_EFI_RUNTIME_UPDATE_CAPSULE is not set
+# CONFIG_EFI_CAPSULE_ON_DISK is not set
+# CONFIG_EFI_CAPSULE_FIRMWARE_RAW is not set
+# CONFIG_TOOLS_MKEFICAPSULE is not set

@@ -16,6 +16,8 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | `mkboot.py` | Packs a phone's UEFI and a payload into the Android boot image `fastboot boot` takes. The board's `[uefi]` section says where the UEFI runs; its build (`SILICIUM_UEFI.fd`, `BootShim.bin`, `device-tree.dtb`) is in `firmware/NAME/uefi/`, which is never published. |
 | `build.sh` | Makes `platforms.h`, then builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
 
+For the POCO X5 Pro alternative based on U-Boot, with a U-Boot menu and USB serial command console, see [`u-boot/README.md`](u-boot/README.md). It boots the same `loader.efi` through U-Boot's `bootefi` service.
+
 ## The parts
 
 `loader.c` includes them in this order; a part may use what the parts before it define. They are not
