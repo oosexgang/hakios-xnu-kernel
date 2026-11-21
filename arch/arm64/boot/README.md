@@ -18,6 +18,8 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 
 For the POCO X5 Pro alternative based on U-Boot, with a U-Boot menu and USB serial command console, see [`u-boot/README.md`](u-boot/README.md). It boots the same `loader.efi` through U-Boot's `bootefi` service.
 
+At EFI entry, the loader clears the text screen and shows the colored HackiOS banner before its hardware and recovery status lines.
+
 ## The parts
 
 `loader.c` includes them in this order; a part may use what the parts before it define. They are not

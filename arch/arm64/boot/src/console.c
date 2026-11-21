@@ -5,6 +5,41 @@
  */
 static int screen_quiet;
 
+enum {
+	EFI_TEXT_LIGHTGRAY = 7,
+	EFI_TEXT_LIGHTCYAN = 11,
+	EFI_TEXT_YELLOW = 14,
+	EFI_TEXT_BLACK = 0,
+};
+
+#define EFI_TEXT_ATTRIBUTE(fg, bg) ((fg) | ((bg) << 4))
+
+static void print(const char *fmt, ...);
+
+static void
+console_attribute(uint64_t attribute)
+{
+	if (ST->con_out != NULL && ST->con_out->set_attribute != NULL) {
+		ST->con_out->set_attribute(ST->con_out, attribute);
+	}
+}
+
+static void
+console_banner(void)
+{
+	if (ST->con_out != NULL && ST->con_out->clear_screen != NULL) {
+		ST->con_out->clear_screen(ST->con_out);
+	}
+	console_attribute(EFI_TEXT_ATTRIBUTE(EFI_TEXT_LIGHTCYAN, EFI_TEXT_BLACK));
+	print("+--------------------------------------------------+\n");
+	console_attribute(EFI_TEXT_ATTRIBUTE(EFI_TEXT_YELLOW, EFI_TEXT_BLACK));
+	print("|  HackiOS                                         |\n");
+	console_attribute(EFI_TEXT_ATTRIBUTE(EFI_TEXT_LIGHTCYAN, EFI_TEXT_BLACK));
+	print("+--------------------------------------------------+\n");
+	console_attribute(EFI_TEXT_ATTRIBUTE(EFI_TEXT_LIGHTGRAY, EFI_TEXT_BLACK));
+	print("  Open XNU boot environment  /  POCO X5 Pro\n\n");
+}
+
 static void
 put_char(char c)
 {
