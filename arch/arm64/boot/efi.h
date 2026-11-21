@@ -216,11 +216,7 @@ typedef struct efi_cpu_arch {
 /* Index of fields in EFI_SYSTEM_CONTEXT_AARCH64 viewed as an array of u64 */
 enum { EXC_CTX_FP = 29, EXC_CTX_LR = 30, EXC_CTX_SP = 31, EXC_CTX_ELR = 96, EXC_CTX_SPSR = 97, EXC_CTX_ESR = 99, EXC_CTX_FAR = 100 };
 
-/*
- * Qualcomm EFI_USB_DEVICE_PROTOCOL (interface as published in the open-source
- * ABL, QcomModulePkg/Include/Protocol/EFIUsbDevice.h): a polled USB
- * peripheral-mode API. The stock fastboot is built on it.
- */
+/* HakiOS's polled EFI USB gadget protocol; U-Boot implements it over its USB device-controller API. */
 enum { UsbDeviceEventNoEvent, UsbDeviceEventDeviceStateChange, UsbDeviceEventTransferNotification, UsbDeviceEventOemEvent };
 enum { UsbDeviceTransferStatusActive, UsbDeviceTransferStatusCompleteOK, UsbDeviceTransferStatusCancelled,
        UsbDeviceTransferStatusCompleteError };

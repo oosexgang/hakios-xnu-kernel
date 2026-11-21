@@ -55,22 +55,25 @@ usb_dummy_notify(void *event, void *ctx)
 static int
 usb_start(void)
 {
-	static const efi_guid usb_guid = QCOM_USB_DEVICE_GUID;
+	static const efi_guid usb_guid = HAKIOS_USB_DEVICE_GUID;
+	static const efi_guid qcom_usb_guid = QCOM_USB_DEVICE_GUID;
 	static const efi_guid init_guid = QCOM_USB_INIT_EVENT_GUID;
 	static const void *cfg = usb_cfg_desc, *ss_cfg = usb_ss_cfg_desc;
 	static const void *strings[5] = { usb_str0, usb_str_mfr, usb_str_prod, usb_str_serial, usb_str_iface };
 	static usb_device_descriptor_set set;
 	void *event;
 
-	/* Ask the platform to bring the controller up in peripheral mode (as the stock fastboot does). */
-	if (!EFI_ERROR(BS->create_event_ex(0x200 /* EVT_NOTIFY_SIGNAL */, 8 /* TPL_CALLBACK */, usb_dummy_notify, NULL,
-	    &init_guid, &event))) {
-		BS->signal_event(event);
-		BS->close_event(event);
-	}
 	if (EFI_ERROR(BS->locate_protocol(&usb_guid, NULL, (void **)&USB))) {
-		print("usb: device protocol not found\n");
-		return 0;
+		/* Stock Qualcomm UEFI uses its private protocol and event to enable device mode. */
+		if (!EFI_ERROR(BS->create_event_ex(0x200 /* EVT_NOTIFY_SIGNAL */, 8 /* TPL_CALLBACK */, usb_dummy_notify, NULL,
+		    &init_guid, &event))) {
+			BS->signal_event(event);
+			BS->close_event(event);
+		}
+		if (EFI_ERROR(BS->locate_protocol(&qcom_usb_guid, NULL, (void **)&USB))) {
+			print("usb: HakiOS and vendor device protocols not found\n");
+			return 0;
+		}
 	}
 	set.device_descriptor = usb_dev_desc;
 	set.descriptors = &cfg;
