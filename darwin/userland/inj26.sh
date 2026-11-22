@@ -6,10 +6,14 @@ set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=env.sh
 source "$RN/userland/env.sh"
+sed_inplace() {
+	if [ "$(uname -s)" = Darwin ]; then sed -i '' "$@"; else sed -i "$@"; fi
+}
 BUILD=${BUILD:-$(python3 -c "import plistlib, sys; print(plistlib.load(open(sys.argv[1], 'rb'))['ProductBuildVersion'])" "$IOS/BuildManifest.plist")}
 O=$OBJ
 mkdir -p "$O" "$O/src"
 cp "$US"/src/*.c "$O/src/"
+cp "$US"/src/*.h "$O/src/"
 cp -R "$US/src/board" "$O/src/"    # (the headers the libraries share with the kernel's drivers: board/input.h, ...)
 # SpringBoard's methods that are replaced, at the build's addresses: only those whose code was read and
 # found to do the same as on 16.5 (inject_sb.c checks each against the address it expects and leaves a
@@ -22,21 +26,22 @@ cp -R "$US/src/board" "$O/src/"    # (the headers the libraries share with the k
 #   -[SBPolicyAggregator _allowsCapabilityPosterSwitcherWithExplanation:] (16.5's SBMainDisplayPolicyAggregator): a BOOL
 #     and the explanation through its pointer, as on 16.5; on 27.2 the switcher is offered (HAKIOS_POSTER_SWITCHER=1):
 #     with PosterBoard a launch angel again (mkimage26.py) it opens, where 16.5's is black
+SB_DEFS=()
 case $BUILD in
 23G90)	SB_ACTIVATION=0x22450fdc0 SB_SETUP=0x224675b68 SB_SNAPSHOT_FORMAT='' SB_LONG_PRESS='' SB_POSTER='' ;;
-24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc SB_SNAPSHOT_FORMAT=0x2b42c8d38 SB_LONG_PRESS=0x227922350 SB_POSTER=0x2272817c4 ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
+24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc SB_SNAPSHOT_FORMAT=0x2b42c8d38 SB_LONG_PRESS=0x227922350 SB_POSTER=0x2272817c4 SB_DEFS=(-DHAKIOS_IOS27) ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
 *)	echo "inj26.sh: no SpringBoard addresses for $BUILD: those hooks will be left alone" >&2
 	SB_ACTIVATION='' SB_SETUP='' SB_SNAPSHOT_FORMAT='' SB_LONG_PRESS='' SB_POSTER='' ;;
 esac
-[ -z "$SB_ACTIVATION" ] || sed -i -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" "$O/src/inject_sb.c"
-[ -z "$SB_SNAPSHOT_FORMAT" ] || sed -i -e "s/0x1f1c91480UL/${SB_SNAPSHOT_FORMAT}UL/" "$O/src/inject_sb.c"
-[ -z "$SB_LONG_PRESS" ] || sed -i -e "s/0x1c4f6ab44UL/${SB_LONG_PRESS}UL/" "$O/src/inject_sb.c"
-[ -z "$SB_POSTER" ] || sed -i -e "s/0x1c507e0fcUL/${SB_POSTER}UL/" -e 's/"SBMainDisplayPolicyAggregator"/"SBPolicyAggregator"/' "$O/src/inject_sb.c"
+[ -z "$SB_ACTIVATION" ] || sed_inplace -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" "$O/src/inject_sb.c"
+[ -z "$SB_SNAPSHOT_FORMAT" ] || sed_inplace -e "s/0x1f1c91480UL/${SB_SNAPSHOT_FORMAT}UL/" "$O/src/inject_sb.c"
+[ -z "$SB_LONG_PRESS" ] || sed_inplace -e "s/0x1c4f6ab44UL/${SB_LONG_PRESS}UL/" "$O/src/inject_sb.c"
+[ -z "$SB_POSTER" ] || sed_inplace -e "s/0x1c507e0fcUL/${SB_POSTER}UL/" -e 's/"SBMainDisplayPolicyAggregator"/"SBPolicyAggregator"/' "$O/src/inject_sb.c"
 $DYN -dynamiclib -install_name /hakios/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios.dylib" "$O/src/inject.c"
 # the status bar's clock past the hole punch: components/statusbar/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
 # (what it knows of each board, user_boards.h, is made from the device packages that are there now)
 "$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
-$DYN -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/../components/statusbar/inject_statusbar.c"
+$DYN "${SB_DEFS[@]}" -DHAKIOS_POSTER_SWITCHER=1 -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o "$O/libhakios-sb.dylib" "$O/src/inject_sb.c" -I"$O/boards" "$RN/../components/statusbar/inject_statusbar.c"
 # Camera.app's preview given a size where AVFoundation leaves it none (components/camera/src/inject_camera_app.c)
 $DYN -dynamiclib -install_name /hakios/lib/libhakios-camapp.dylib -lobjc -o "$O/libhakios-camapp.dylib" "$RN/../components/camera/src/inject_camera_app.c"
 # (libhakios-statusbar.dylib, in every application, also names an uncaught exception on the console: darwin/userland/uncaught.c)

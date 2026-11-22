@@ -261,11 +261,19 @@ def cmd_plan(image, block, write=False):
         return
     if os.environ.get('DARWIN_WRITE') != 'yes':
         raise Refused('DARWIN_WRITE=yes is not set: nothing written')
-    r = subprocess.run(['adb', 'push', image, TMP], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise Refused('adb push: ' + r.stderr.strip())
     try:
         there = phone('sha256sum %s\n' % TMP).split()[0]
+    except Refused:
+        there = ''
+    if there != digest:
+        r = subprocess.run(['adb', 'push', image, TMP], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise Refused('adb push: ' + r.stderr.strip())
+        try:
+            there = phone('sha256sum %s\n' % TMP).split()[0]
+        except Refused as e:
+            raise Refused('checking the copy on the phone: ' + str(e))
+    try:
         if there != digest:
             raise Refused('the copy on the phone has sha256 %s, not %s' % (there, digest))
         identity()                                   # once more, right before the write

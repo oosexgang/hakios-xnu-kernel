@@ -64,6 +64,7 @@
 #define BLOCK_MAX_PARTS    160
 #define BLOCK_MAX_UNITS    16
 #define BLOCK_PART_UNIT    1u                          /* a whole logical unit, not a partition */
+#define BLOCK_PART_RAW_GPT 4u                          /* GPT slice on raw UEFI Block I/O */
 #define BLOCK_OP_READ      0u
 #define BLOCK_OP_WRITE     1u
 

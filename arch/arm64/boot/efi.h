@@ -141,13 +141,13 @@ typedef struct efi_gop {
  * stock ChargerExDxe of a phone's UEFI image (it was found in one) and is safe to use for
  * read-only charger/battery queries while boot services remain resident.
  */
-typedef struct {
+typedef struct efi_charger_ex {
 	uint64_t revision;
-	efi_status (EFIAPI *get_charger_presence)(uint8_t *present);
-	efi_status (EFIAPI *get_battery_presence)(uint8_t *present);
-	efi_status (EFIAPI *get_battery_voltage)(uint32_t *millivolts);
-	efi_status (EFIAPI *is_offmode_charging)(uint8_t *offmode);
-	efi_status (EFIAPI *is_power_ok)(uint32_t type, void *info);
+	efi_status (EFIAPI *get_charger_presence)(struct efi_charger_ex *self, uint8_t *present);
+	efi_status (EFIAPI *get_battery_presence)(struct efi_charger_ex *self, uint8_t *present);
+	efi_status (EFIAPI *get_battery_voltage)(struct efi_charger_ex *self, uint32_t *millivolts);
+	efi_status (EFIAPI *is_offmode_charging)(struct efi_charger_ex *self, uint8_t *offmode);
+	efi_status (EFIAPI *is_power_ok)(struct efi_charger_ex *self, uint32_t type, void *info);
 } efi_charger_ex;
 
 /*
@@ -157,13 +157,14 @@ typedef struct {
  * only as a status read: the loader never calls take_action and therefore does
  * not change current/voltage limits or bypass the firmware's JEITA checks.
  */
-typedef struct {
+typedef struct efi_qcom_charger {
 	uint64_t revision;
-	efi_status (EFIAPI *initialize)(uint8_t enable);
+	efi_status (EFIAPI *initialize)(struct efi_qcom_charger *self, uint8_t enable);
 	void *reserved_10;
 	void *reserved_18;
-	efi_status (EFIAPI *get_charging_action)(uint32_t *action, void *battery_status, uint8_t display);
-	efi_status (EFIAPI *take_action)(uint32_t action, const void *battery_status);
+	efi_status (EFIAPI *get_charging_action)(struct efi_qcom_charger *self, uint32_t *action, void *battery_status,
+	    uint8_t display);
+	efi_status (EFIAPI *take_action)(struct efi_qcom_charger *self, uint32_t action, const void *battery_status);
 } efi_qcom_charger;
 
 /* Block I/O + Partition Info (used to persist the log on the phone) */
@@ -253,6 +254,8 @@ typedef struct {
 } usb_device_protocol;
 
 #define EFI_CPU_ARCH_GUID       { 0x26baccb1, 0x6f42, 0x11d4, { 0xbc, 0xe7, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81 } }
+#define HAKIOS_USB_DEVICE_GUID  { 0x0ebd8a1f, 0x88b5, 0x4b1e, { 0xa6, 0x59, 0x8d, 0x79, 0xf2, 0x94, 0x2b, 0x31 } }
+/* Fallback used when the loader runs under the stock Qualcomm UEFI instead of HakiOS U-Boot. */
 #define QCOM_USB_DEVICE_GUID    { 0xd9d9ce48, 0x44b8, 0x4f49, { 0x8e, 0x3e, 0x2a, 0x3b, 0x92, 0x7d, 0xc6, 0xc1 } }
 #define QCOM_USB_INIT_EVENT_GUID { 0x1c0cffce, 0xfc8d, 0x4e44, { 0x8c, 0x78, 0x9c, 0x9e, 0x5b, 0x53, 0x0d, 0x36 } }
 #define EFI_GOP_GUID            { 0x9042a9de, 0x23dc, 0x4a38, { 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a } }

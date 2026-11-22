@@ -2703,11 +2703,12 @@ battmgr_start(void)
 	if (wanted == 0 || battmgr.runs) {
 		return;
 	}
-	if (option("battery")) {
-		/* (the loader's way, through Qualcomm's UEFI charger drivers: one way to the battery at a time) */
-		tell("adsp: battmgr: not with battery=1: the battery is asked about the loader's way\n");
-		return;
-	}
+	/*
+	 * The DSP and resident loader can both report.  battery.c arbitrates them: the DSP wins while
+	 * it is speaking, and the loader's cache is the fallback if the DSP goes quiet.  This matters
+	 * when a UEFI has no Qualcomm charger protocols: the loader cache stays unknown, but the DSP
+	 * can still provide real fuel-gauge readings.
+	 */
 	battmgr.wanted = true;
 	if (kernel_thread_start(battmgr_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);

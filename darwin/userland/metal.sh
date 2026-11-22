@@ -37,4 +37,5 @@ $DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framew
 	$M2V_LEFT
 pac_strip "$OBJ/HakiosMetal"
 "$LDID" -S "$OBJ/HakiosMetal"
-echo "  HakiosMetal: $(file -b "$OBJ/HakiosMetal" | cut -c1-60), $(stat -c %s "$OBJ/HakiosMetal") bytes"
+if [ "$(uname -s)" = Darwin ]; then SIZE=$(stat -f %z "$OBJ/HakiosMetal"); else SIZE=$(stat -c %s "$OBJ/HakiosMetal"); fi
+echo "  HakiosMetal: $(file -b "$OBJ/HakiosMetal" | cut -c1-60), $SIZE bytes"

@@ -55,7 +55,18 @@ export IOS OBJ BOARD LDID US SDK
 # pacstrip (arch/arm64/tools/pacstrip.c): made here when it is missing or older than its source
 PACSTRIP=$IOS_REPO/arch/arm64/tools/pacstrip
 if [ ! -x "$PACSTRIP" ] || [ "$IOS_REPO/arch/arm64/tools/pacstrip.c" -nt "$PACSTRIP" ]; then
-	cc -O2 -o "$PACSTRIP" "$IOS_REPO/arch/arm64/tools/pacstrip.c" -lcrypto || { echo "pacstrip did not build (it needs libcrypto)" >&2; exit 1; }
+	PACSTRIP_CFLAGS=()
+	PACSTRIP_LDFLAGS=()
+	if [ "$(uname -s)" = Darwin ]; then
+		for openssl in /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3 /opt/homebrew/opt/openssl; do
+			if [ -f "$openssl/include/openssl/sha.h" ]; then
+				PACSTRIP_CFLAGS+=("-I$openssl/include")
+				PACSTRIP_LDFLAGS+=("-L$openssl/lib")
+				break
+			fi
+		done
+	fi
+	cc -O2 "${PACSTRIP_CFLAGS[@]}" -o "$PACSTRIP" "$IOS_REPO/arch/arm64/tools/pacstrip.c" "${PACSTRIP_LDFLAGS[@]}" -lcrypto || { echo "pacstrip did not build (it needs libcrypto)" >&2; exit 1; }
 fi
 # pac_strip IN [OUT]: IN with its PAC instructions rewritten, into OUT or in place; the build stops when pacstrip
 # refuses it (a file that is not arm64e), where "pacstrip ... && mv" let it through as it was

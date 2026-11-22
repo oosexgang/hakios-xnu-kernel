@@ -1,4 +1,93 @@
 /* Part of the loader (included by loader.c, not compiled alone): ufs=2, the service itself: the storage's units and partitions listed, the kernel's requests answered. */
+/* Qualcomm's UEFI sometimes exposes raw Block I/O but omits EFI_PARTITION_INFO_PROTOCOL.
+ * Read GPT directly in that case; this is read-only and keeps the same partition bounds. */
+static uint32_t
+block_gpt_crc32(const uint8_t *p, uint64_t n)
+{
+	uint32_t crc = ~0u;
+
+	for (uint64_t i = 0; i < n; i++) {
+		crc ^= p[i];
+		for (unsigned b = 0; b < 8; b++) {
+			crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+		}
+	}
+	return ~crc;
+}
+
+static uint64_t
+block_gpt_fallback(efi_block_io *bio, uint64_t unit, uint8_t lun)
+{
+	static efi_partition_info info[BLOCK_MAX_PARTS];
+	uint64_t bs = bio->media->block_size, count, entry_size, entries_lba, bytes, read, parts = 0;
+	uint8_t header[512];
+	uint32_t header_size, saved_crc, entries_crc;
+
+	if (bs < 512 || bs > BLOCK_BUFFER_SIZE || bio->media->last_block < 1 ||
+	    EFI_ERROR(bio->read_blocks(bio, bio->media->media_id, 1, bs, block_buffer)) ||
+	    memcmp(block_buffer, "EFI PART", 8) != 0) {
+		return 0;
+	}
+	memcpy(header, block_buffer, sizeof(header));
+	header_size = *(uint32_t *)(header + 12);
+	saved_crc = *(uint32_t *)(header + 16);
+	entries_lba = *(uint64_t *)(header + 72);
+	count = *(uint32_t *)(header + 80);
+	entry_size = *(uint32_t *)(header + 84);
+	entries_crc = *(uint32_t *)(header + 88);
+	if (header_size < 92 || header_size > sizeof(header) || count == 0 || count > BLOCK_MAX_PARTS ||
+	    entry_size < 128 || entry_size > 4096 || count > UINT64_MAX / entry_size) {
+		return 0;
+	}
+	*(uint32_t *)(header + 16) = 0;
+	if (block_gpt_crc32(header, header_size) != saved_crc) {
+		print("ufs: unit GPT header CRC failed; refusing its partitions\n");
+		return 0;
+	}
+	bytes = count * entry_size;
+	if (bytes > BLOCK_BUFFER_SIZE || entries_lba > bio->media->last_block ||
+	    bytes > (bio->media->last_block + 1 - entries_lba) * bs) {
+		return 0;
+	}
+	read = (bytes + bs - 1) / bs * bs;
+	if (EFI_ERROR(bio->read_blocks(bio, bio->media->media_id, entries_lba, read, block_buffer)) ||
+	    block_gpt_crc32(block_buffer, bytes) != entries_crc) {
+		print("ufs: unit GPT table CRC failed; refusing its partitions\n");
+		return 0;
+	}
+	for (uint64_t i = 0; i < count && block_shared.parts + parts + 1 + BLOCK_MAX_UNITS < BLOCK_MAX_PARTS; i++) {
+		const uint8_t *entry = block_buffer + i * entry_size;
+		efi_partition_info *p = &info[parts];
+		uint8_t any = 0;
+
+		for (unsigned j = 0; j < 16; j++) any |= entry[j];
+		if (any == 0) continue;
+		memset(p, 0, sizeof(*p));
+		p->revision = 0x00010000;
+		p->type = 2;
+		memcpy(&p->type_guid, entry, 16);
+		memcpy(&p->unique_guid, entry + 16, 16);
+		p->start_lba = *(const uint64_t *)(entry + 32);
+		p->end_lba = *(const uint64_t *)(entry + 40);
+		p->attributes = *(const uint64_t *)(entry + 48);
+		memcpy(p->name, entry + 56, sizeof(p->name));
+		if (p->start_lba > p->end_lba || p->end_lba > bio->media->last_block) continue;
+		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
+		ufs_name(p, bp->name, sizeof(bp->name));
+		bp->block_size = (uint32_t)bs;
+		bp->blocks = p->end_lba - p->start_lba + 1;
+		bp->start_lba = p->start_lba;
+		bp->unit = (uint16_t)unit;
+		bp->lun = lun;
+		bp->flags = BLOCK_PART_RAW_GPT;
+		block_bios[block_shared.parts++] = bio;
+		block_keep_last();
+		parts++;
+	}
+	print("ufs: GPT fallback: %d partitions from raw Block I/O\n", parts);
+	return parts;
+}
+
 static void
 block_start(void)
 {
@@ -23,23 +112,36 @@ block_start(void)
 	if (!EFI_ERROR(BS->locate_handle_buffer(ByProtocol, &blk_guid, NULL, &count, &handles))) {
 		for (uint64_t i = 0; i < count && nunits < BLOCK_MAX_UNITS; i++) {
 			efi_block_io *bio;
-			efi_device_path *dp;
+			efi_device_path *dp = NULL;
 
 			if (EFI_ERROR(BS->handle_protocol(handles[i], &blk_guid, (void **)&bio)) || bio->media->logical ||
-			    bio->media->block_size == 0 || bio->media->block_size > BLOCK_BUFFER_SIZE ||
-			    EFI_ERROR(BS->handle_protocol(handles[i], &dp_guid, (void **)&dp))) {
+			    bio->media->block_size == 0 || bio->media->block_size > BLOCK_BUFFER_SIZE) {
 				continue;
 			}
 			units[nunits].bio = bio;
-			units[nunits].path = dp;
-			units[nunits].path_bytes = device_path_bytes(dp);
-			units[nunits].lun = device_path_print(nunits, dp);
+			units[nunits].path = NULL;
+			units[nunits].path_bytes = 0;
+			units[nunits].lun = 0xff;
+			if (!EFI_ERROR(BS->handle_protocol(handles[i], &dp_guid, (void **)&dp))) {
+				units[nunits].path = dp;
+				units[nunits].path_bytes = device_path_bytes(dp);
+				units[nunits].lun = device_path_print(nunits, dp);
+			} else {
+				print("ufs: unit %d: no EFI device path; scanning its GPT directly\n", nunits);
+			}
 			nunits++;
 		}
 	}
 	if (EFI_ERROR(BS->locate_handle_buffer(ByProtocol, &part_guid, NULL, &count, &handles))) {
-		print("ufs: no partition information: the block service is off\n");
-		return;
+		/* Keep storage usable on firmware that publishes only whole-device Block I/O handles. */
+		for (uint64_t u = 0; u < nunits && block_shared.parts + nunits < BLOCK_MAX_PARTS; u++) {
+			block_gpt_fallback(units[u].bio, u, units[u].lun);
+		}
+		if (block_shared.parts == 0) {
+			print("ufs: no partition information and GPT fallback found no partitions; block service is off\n");
+			return;
+		}
+		goto partitions_done;
 	}
 	for (uint64_t i = 0; i < count && block_shared.parts + nunits < BLOCK_MAX_PARTS; i++) {
 		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
@@ -63,7 +165,7 @@ block_start(void)
 			uint64_t bytes = device_path_bytes(dp);
 
 			for (uint64_t u = 0; u < nunits; u++) {
-				if (units[u].path_bytes < bytes &&
+				if (units[u].path != NULL && units[u].path_bytes < bytes &&
 				    memcmp(units[u].path, dp, units[u].path_bytes) == 0) {
 					bp->unit = (uint16_t)u;
 					bp->lun = units[u].lun;
@@ -80,6 +182,7 @@ block_start(void)
 			block_io2_probe(handles[i], bio);
 		}
 	}
+	partitions_done:
 	for (uint64_t u = 0; u < nunits; u++) {
 		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
 		char *n = bp->name;
@@ -286,7 +389,8 @@ block_poll(void)
 				flush_dcache((uint64_t)(uintptr_t)block_buffer, (uint64_t)(uintptr_t)block_buffer + bytes);
 			}
 		} else if (op == BLOCK_OP_WRITE) {
-			if (block_write_part < 0 || part != (uint32_t)block_write_part || lba < BLOCK_WRITE_FIRST) {
+			if ((block_part_kept[part].flags & BLOCK_PART_RAW_GPT) || block_write_part < 0 ||
+			    part != (uint32_t)block_write_part || lba < BLOCK_WRITE_FIRST) {
 				/* not darwin, or not past what the build writes from the computer: never */
 				if (block_writes_refused++ < 8) {
 					print("ufs: a write of %d blocks from %d of partition %d: REFUSED\n", count, lba, part);
@@ -329,9 +433,24 @@ block_poll(void)
 				}
 			}
 		} else if (op == BLOCK_OP_READ) {
-			s = bio->read_blocks(bio, bio->media->media_id, lba, bytes, block_buffer);
-			/* what the controller wrote is in memory; drop whatever this core held of the buffer */
-			flush_dcache((uint64_t)(uintptr_t)block_buffer, (uint64_t)(uintptr_t)block_buffer + bytes);
+			uint64_t io_lba = lba;
+
+			if (block_part_kept[part].flags & BLOCK_PART_RAW_GPT) {
+				if (io_lba > UINT64_MAX - block_part_kept[part].start_lba) {
+					io_lba = UINT64_MAX;
+				} else {
+					io_lba += block_part_kept[part].start_lba;
+				}
+			}
+			if (io_lba > bio->media->last_block || count > bio->media->last_block + 1 - io_lba) {
+				s = 0x8000000000000002ULL;
+				bytes = 0;
+			} else {
+				s = bio->read_blocks(bio, bio->media->media_id, io_lba, bytes, block_buffer);
+				/* what the controller wrote is in memory; drop whatever this core held of the buffer */
+				flush_dcache((uint64_t)(uintptr_t)block_buffer,
+				    (uint64_t)(uintptr_t)block_buffer + bytes);
+			}
 		} else {
 			bytes = 0;              /* an operation this loader does not know: nothing is touched */
 		}

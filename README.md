@@ -57,6 +57,9 @@ What each needs: [Documentation/building.md](Documentation/building.md).
   `phone_first`, `phone_look`, `phone_metal`, `phone_ufs_check`, `phone_perf` on a phone's first day.
   `tools/defconfig.py --list` names the defconfigs.
 
+The Redwood device package and its U-Boot/Mu-Silicium port are kept in the separate `poco-x5-pro-device` and
+`poco-x5-pro-uefi` repositories beside this checkout; the kernel stays device-generic.
+
 A new phone: [Documentation/porting.md](Documentation/porting.md). A phone kept in a repository of its own
 (its `board.dts` at the top) is built with `make phone FROM=URL`.
 

@@ -31,6 +31,7 @@
 #define BLOCK_MAX_UNITS    16
 #define BLOCK_PART_UNIT    1u                          /* the entry is a whole logical unit, not a partition */
 #define BLOCK_PART_DSU     2u                          /* the DSU image: blocks mapped through its extents, read only */
+#define BLOCK_PART_RAW_GPT 4u                          /* GPT slice on a raw UEFI Block I/O handle */
 #define BLOCK_OP_READ      0u
 #define BLOCK_OP_WRITE     1u
 

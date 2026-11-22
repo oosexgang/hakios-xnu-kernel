@@ -397,7 +397,15 @@ copy_file(const char *in, const char *out)
 		die("create", out);
 	left_bytes = si.st_size;
 	while (left_bytes > 0) {
-		ssize_t n = copy_file_range(fi, NULL, fo, NULL, (size_t)(left_bytes > (1 << 30) ? (1 << 30) : left_bytes), 0);
+		ssize_t n;
+
+#if defined(__APPLE__)
+		/* macOS has no copy_file_range; use the portable read/write path below. */
+		errno = ENOSYS;
+		n = -1;
+#else
+		n = copy_file_range(fi, NULL, fo, NULL, (size_t)(left_bytes > (1 << 30) ? (1 << 30) : left_bytes), 0);
+#endif
 
 		if (n < 0 && (errno == EXDEV || errno == ENOSYS || errno == EOPNOTSUPP || errno == EINVAL)) {
 			static char buf[1 << 20];

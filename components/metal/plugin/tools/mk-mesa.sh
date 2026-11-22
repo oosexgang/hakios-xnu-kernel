@@ -32,14 +32,21 @@ B=$XNUDEPS/build/mesa
 mkdir -p "$B"
 cd "$B"
 
+hash256() {
+	if [ "$(uname -s)" = Darwin ]; then shasum -a 256 "$@"; else sha256sum "$@"; fi
+}
+check_hash256() {
+	if [ "$(uname -s)" = Darwin ]; then shasum -a 256 -c -s; else sha256sum -c --quiet; fi
+}
+
 # the patches of a build of the compiler; ir3-dump.patch is not one of them (it is the host's fixture writer,
 # applied by tools/kernels.mk to a copy of ir3_cmdline.c)
-PATCHES=(air-frontend.patch air-ir3.patch freedreno-darwin.patch ir3-round-default.patch ir3-shift-split.patch
-	ir3-ssbo-subdword.patch)
-STAMP=$(cd "$HERE/mesa" && cat "${PATCHES[@]}" | sha256sum | cut -d' ' -f1)
+PATCHES=(air-frontend.patch air-ir3.patch freedreno-darwin.patch darwin-sdk.patch ir3-round-default.patch
+	ir3-shift-split.patch ir3-ssbo-subdword.patch)
+STAMP=$(cd "$HERE/mesa" && cat "${PATCHES[@]}" | hash256 | cut -d' ' -f1)
 if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.hakios-patches 2>/dev/null)" != "$STAMP" ]; then
 	[ -f mesa-$VERSION.tar.xz ] || curl -sL --fail -o mesa-$VERSION.tar.xz https://archive.mesa3d.org/mesa-$VERSION.tar.xz
-	echo "$SHA256  mesa-$VERSION.tar.xz" | sha256sum -c --quiet
+	echo "$SHA256  mesa-$VERSION.tar.xz" | check_hash256
 	rm -rf mesa-$VERSION build-*
 	tar xJf mesa-$VERSION.tar.xz
 	for p in "${PATCHES[@]}"; do
@@ -47,11 +54,11 @@ if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.hakios-patches 2>/dev/null)
 	done
 	echo "$STAMP" > mesa-$VERSION/.hakios-patches
 fi
-# ours: copied in at every run (freedreno-darwin.patch's meson names src/darwin-drm, so it has to be there
+# ours: copied in at every run (freedreno-darwin.patch's meson names src/hakios-drm, so it has to be there
 # for the build to be set up, though nothing of it is compiled here)
-rm -rf mesa-$VERSION/src/compiler/air mesa-$VERSION/src/darwin-drm
+rm -rf mesa-$VERSION/src/compiler/air mesa-$VERSION/src/hakios-drm
 cp -r "$HERE/mesa/air" mesa-$VERSION/src/compiler/air
-cp -r "$HERE/mesa/darwin-drm" mesa-$VERSION/src/darwin-drm
+cp -r "$HERE/mesa/hakios-drm" mesa-$VERSION/src/hakios-drm
 
 if [ ! -x venv/bin/python3 ]; then
 	python3 -m venv venv
@@ -60,9 +67,9 @@ fi
 export PATH=$B/venv/bin:$PATH
 cat > cross-$IOS_ARCH.ini <<INI
 [binaries]
-c = ['$CC', '-arch', '$IOS_ARCH', '-isysroot', '$SDK']
-cpp = ['$CC++', '-arch', '$IOS_ARCH', '-isysroot', '$SDK', '-fuse-cxa-atexit']
-objc = ['$CC', '-arch', '$IOS_ARCH', '-isysroot', '$SDK']
+c = ['$CC', '-arch', '$IOS_ARCH', '-isysroot', '$SDK', '-D_DARWIN_C_SOURCE']
+cpp = ['$CC++', '-arch', '$IOS_ARCH', '-isysroot', '$SDK', '-D_DARWIN_C_SOURCE', '-fuse-cxa-atexit']
+objc = ['$CC', '-arch', '$IOS_ARCH', '-isysroot', '$SDK', '-D_DARWIN_C_SOURCE']
 ar = 'llvm-ar'
 ranlib = 'llvm-ranlib'
 strip = 'llvm-strip'

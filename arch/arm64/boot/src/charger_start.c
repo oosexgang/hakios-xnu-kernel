@@ -13,7 +13,7 @@ charger_start(void)
 	qcom_status = BS->locate_protocol(&qcom_charger_guid, NULL, (void **)&QCOM_CHARGER);
 	if (!EFI_ERROR(qcom_status) && QCOM_CHARGER != NULL) {
 		/* Re-open the driver's status path after QcomChargerApp handed off to the OS. */
-		init_status = QCOM_CHARGER->initialize(1);
+		init_status = QCOM_CHARGER->initialize(QCOM_CHARGER, 1);
 	}
 	charger_enabled = (!EFI_ERROR(ex_status) && CHARGER_EX != NULL) ||
 	    (!EFI_ERROR(qcom_status) && QCOM_CHARGER != NULL);

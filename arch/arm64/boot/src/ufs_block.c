@@ -13,6 +13,8 @@ static uint32_t block_parts_kept;
 static struct {
 	uint32_t block_size;
 	uint64_t blocks;
+	uint64_t start_lba;
+	uint8_t flags;
 } block_part_kept[BLOCK_MAX_PARTS];
 
 /* the partition just listed (the shared page's last), kept */
@@ -23,6 +25,8 @@ block_keep_last(void)
 
 	block_part_kept[p].block_size = block_shared.part[p].block_size;
 	block_part_kept[p].blocks = block_shared.part[p].blocks;
+	block_part_kept[p].start_lba = block_shared.part[p].start_lba;
+	block_part_kept[p].flags = block_shared.part[p].flags;
 	block_parts_kept = block_shared.parts;
 }
 static int block_enabled;

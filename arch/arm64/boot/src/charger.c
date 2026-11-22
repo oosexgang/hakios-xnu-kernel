@@ -23,6 +23,8 @@ charger_poll(void)
 	uint32_t action = 0xffffffffu, flags = 0, voltage = 0;
 	uint8_t present = 0, plugged = 0;
 	efi_status s;
+	efi_status presence_status = (efi_status)-1, charger_status = (efi_status)-1;
+	efi_status voltage_status = (efi_status)-1, gauge_status = (efi_status)-1;
 	int have_soc = 0, have_voltage = 0;
 
 	if (!charger_enabled) {
@@ -33,11 +35,14 @@ charger_poll(void)
 	charger_shared.sequence++;
 	__asm__ volatile ("dmb ish" ::: "memory");
 	if (CHARGER_EX != NULL) {
-		s = CHARGER_EX->get_battery_presence(&present);
+		presence_status = CHARGER_EX->get_battery_presence(CHARGER_EX, &present);
+		s = presence_status;
 		if (!EFI_ERROR(s) && present) flags |= LOADER_BATTERY_PRESENT;
-		s = CHARGER_EX->get_charger_presence(&plugged);
+		charger_status = CHARGER_EX->get_charger_presence(CHARGER_EX, &plugged);
+		s = charger_status;
 		if (!EFI_ERROR(s) && plugged) flags |= LOADER_BATTERY_CHARGER_PRESENT;
-		s = CHARGER_EX->get_battery_voltage(&voltage);
+		voltage_status = CHARGER_EX->get_battery_voltage(CHARGER_EX, &voltage);
+		s = voltage_status;
 		if (!EFI_ERROR(s) && voltage >= 2500 && voltage <= 5000) {
 			have_voltage = 1;
 			flags |= LOADER_BATTERY_VOLTAGE_VALID;
@@ -45,7 +50,8 @@ charger_poll(void)
 		}
 	}
 	if (QCOM_CHARGER != NULL) {
-		s = QCOM_CHARGER->get_charging_action(&action, &status, 0);
+		gauge_status = QCOM_CHARGER->get_charging_action(QCOM_CHARGER, &action, &status, 0);
+		s = gauge_status;
 		if (!EFI_ERROR(s)) {
 			charger_shared.charger_action = action;
 			if (status.battery_voltage_mv >= 2500 && status.battery_voltage_mv <= 5000) {
@@ -86,6 +92,11 @@ charger_poll(void)
 	charger_shared.flags = flags;
 	charger_shared.polls++;
 	if (!(flags & LOADER_BATTERY_VALID)) charger_shared.failures++;
+	if (charger_shared.polls == 1 || !(flags & LOADER_BATTERY_VALID)) {
+		print("battery: query status presence=%x charger=%x voltage=%x gauge=%x; present=%d plugged=%d action=%x\n",
+		    (uint64_t)presence_status, (uint64_t)charger_status, (uint64_t)voltage_status,
+		    (uint64_t)gauge_status, (uint64_t)present, (uint64_t)plugged, (uint64_t)action);
+	}
 	__asm__ volatile ("dmb ish" ::: "memory");
 	charger_shared.sequence++;
 	clean_dcache((uint64_t)(uintptr_t)&charger_shared,

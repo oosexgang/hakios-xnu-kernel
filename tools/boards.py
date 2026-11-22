@@ -1137,10 +1137,11 @@ def table_text(socs, boards):
                        f'.charge_counter_divisor = {adsp.get("charge_counter_divisor", 1)} }},')
         radio = board.get('wifi')
         if radio:
+            supplies = ", ".join(c_string(name) for name in radio.get("supplies", ["", "", ""]))
             out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)}, '
                        f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x},\n\t\t\t'
                        f'.pin = {{ {", ".join(str(pin) for pin in radio.get("pins", [-1, -1, -1]))} }}, '
-                       f'.supply = {{ {", ".join(f'"{name}"' for name in radio.get("supplies", ["", "", ""]))} }},\n\t\t\t'
+                       f'.supply = {{ {supplies} }},\n\t\t\t'
                        f'.board_data = {c_string(radio.get("board_data", "board.bin"))}, .regdb = {c_string(radio.get("regdb", "regdb.bin"))} }},')
         cameras = board.get('camera')
         if cameras:

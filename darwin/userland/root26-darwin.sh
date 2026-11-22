@@ -16,6 +16,9 @@ set -eo pipefail
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=env.sh
 source "$RN/userland/env.sh"
+sed_inplace() {
+	if [ "$(uname -s)" = Darwin ]; then sed -i '' "$@"; else sed -i "$@"; fi
+}
 T=$IOS/root26-darwin-tree
 JOBS=${JOBS-"
 	com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.apple.logd
@@ -112,7 +115,7 @@ python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for
 cp "$IOS/var.skel" "$T/etc/var.skel"
 zone=$(timedatectl show -p Timezone --value 2> /dev/null || readlink /etc/localtime 2> /dev/null | sed 's#.*/zoneinfo/##' || true)
 zone=${zone:-UTC}
-sed -i -e 's|^l\t/usr/share/zoneinfo\t/private/var/db/timezone/zoneinfo$|l\t/usr/share/zoneinfo.default\t/private/var/db/timezone/zoneinfo|' \
+sed_inplace -e 's|^l\t/usr/share/zoneinfo\t/private/var/db/timezone/zoneinfo$|l\t/usr/share/zoneinfo.default\t/private/var/db/timezone/zoneinfo|' \
 	-e "s|^l\t/var/db/timezone/zoneinfo/[^\t]*\t/private/var/db/timezone/localtime\$|l\t/var/db/timezone/zoneinfo/$zone\t/private/var/db/timezone/localtime|" "$T/etc/var.skel"
 # ... and our files there (US/var): those under mobile/ are the user mobile's. The setup assistant is marked
 # done the way iOS 26's SetupAssistant and SpringBoard read it (with iOS 16.5's file unlocking started
@@ -425,8 +428,8 @@ PY
 # SETTINGS_NUDE=1: Preferences gets none of our injected libraries, to tell a white Settings screen that is
 # our doing from one that is the system's. Done after @apps is expanded, so it strips the explicit name too.
 if [ -n "${SETTINGS_NUDE:-}" ]; then
-	sed -i 's/ Preferences\b//g' "$T/etc/inject.conf"
-	sed -i '/\.dylib[[:space:]]*$/d' "$T/etc/inject.conf"
+	sed_inplace 's/ Preferences\b//g' "$T/etc/inject.conf"
+	sed_inplace '/\.dylib[[:space:]]*$/d' "$T/etc/inject.conf"
 	echo "root26-darwin.sh: Preferences gets none of our libraries (SETTINGS_NUDE)"
 fi
 # chronod's CoreDuet store cannot create its missing parent directories in the fresh RAM /var.

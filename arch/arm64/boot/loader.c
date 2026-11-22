@@ -88,8 +88,13 @@ efi_main(efi_handle image, efi_system_table *st)
 		for (unsigned i = 0; i < sizeof(platforms) / sizeof(platforms[0]); i++)
 			if (platforms[i]->fb_base == SCREEN.base)
 				PLAT = platforms[i];
-		if (PLAT == &platform_qemu_virt)
+		/* Only QEMU maps fw_cfg at 0x09020000. A real phone with an
+		 * unrecognized GOP base still has a usable firmware framebuffer;
+		 * don't probe QEMU MMIO just because no board profile matched. */
+		if (PLAT == &platform_qemu_virt && SCREEN.base == platform_qemu_virt.fb_base)
 			ramfb_phone_screen();
+		else if (PLAT == &platform_qemu_virt)
+			print("display: unknown framebuffer; keeping the firmware mode\n");
 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	}
 	print("platform %s\n", PLAT->name);

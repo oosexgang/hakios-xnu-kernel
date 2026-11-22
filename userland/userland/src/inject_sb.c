@@ -134,7 +134,7 @@ static uintptr_t slide;
 
 /*
  * Replace -[CLASS SELECTOR] (or +[CLASS SELECTOR]: `kind` is that first character), whose code must now
- * be at the unslid address `expected` (Darwin 16.5, 20F66: what a replacement does depends on what the
+ * be at the build's verified unslid address `expected` (what a replacement does depends on what the
  * original did). The original goes into *original_out (when that is not NULL) before the replacement is
  * set, because another thread can call the replacement at once; returns whether it was replaced.
  * (dyld interposing of the C functions underneath does not reach calls made from inside the
@@ -166,6 +166,25 @@ replace_method(const char *class_name, const char *selector, uintptr_t expected,
 {
 	return replace_method_of_kind('-', class_name, selector, expected, replacement, original_out);
 }
+
+/* UIKitCore 24B119 (iOS 27.2); the values below are unslid IMPs from its dyld shared cache. */
+#if defined(HAKIOS_IOS27)
+#define UIDeviceBatteryLevelIMP             0x1855c6becUL
+#define UIDeviceBatteryStateIMP             0x184c6c448UL
+#define UIBatteryViewShowsPercentageIMP     0x184dd3838UL
+#define UIBatteryViewSetShowsPercentageIMP  0x1847a8908UL
+#define UIBatteryViewShouldShowBoltIMP      0x184d8deacUL
+#define UIBatteryViewChargePercentIMP       0x184a90bbcUL
+#define UIBatteryViewSetChargePercentIMP    0x184e58184UL
+#else
+#define UIDeviceBatteryLevelIMP             0x1897021b0UL
+#define UIDeviceBatteryStateIMP             0x189209794UL
+#define UIBatteryViewShowsPercentageIMP     0x189a9370cUL
+#define UIBatteryViewSetShowsPercentageIMP  0x18926e150UL
+#define UIBatteryViewShouldShowBoltIMP      0x189203e28UL
+#define UIBatteryViewChargePercentIMP       0x189a935d8UL
+#define UIBatteryViewSetChargePercentIMP    0x18928d310UL
+#endif
 
 /*
  * -[SBLockdownManager _setupActivationState] asks MobileActivation and keeps the answer in the
@@ -224,8 +243,8 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
  * Darwin reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
  * status bar reads it the same way via SBBatteryController. Where the battery has no power source
  * of its own in the kernel (battery=1, the loader's way through Qualcomm's UEFI charger protocols),
- * we hook the UIDevice accessors to return what XNU publishes as kern.hakios.battery_soc (0..100)
- * and kern.hakios.battery_charging.
+ * we hook the UIDevice accessors to return what XNU publishes as kern.redwood.battery_soc (0..100)
+ * and kern.redwood.battery_charging.
  * When the sysctl is missing (battery=1 not in boot-args, or the driver never started) we hand
  * back the value the real implementation computed; the status bar then shows whatever Darwin last
  * knew, which is better than crashing.
@@ -270,7 +289,7 @@ battery_power_source(void)
 static float
 battery_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	if (soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_level ? original_battery_level(self, sel) : -1.0f;
@@ -282,10 +301,10 @@ battery_level(id self, SEL sel)
 static long
 battery_state(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.hakios.battery_charging");
-	int present = sysctl_int("kern.hakios.battery_present");
-	int plugged = sysctl_int("kern.hakios.battery_charger_present");
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int charging = sysctl_int("kern.redwood.battery_charging");
+	int present = sysctl_int("kern.redwood.battery_present");
+	int plugged = sysctl_int("kern.redwood.battery_charger_present");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	if (charging == -1 || present == -1 || plugged == -1 || soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_state ? original_battery_state(self, sel) : 0;
@@ -303,7 +322,7 @@ battery_state(id self, SEL sel)
 static BOOL
 battery_view_shows_percentage(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return YES;
 	return original_battery_view_shows_percentage ? original_battery_view_shows_percentage(self, sel) : NO;
@@ -312,7 +331,7 @@ battery_view_shows_percentage(id self, SEL sel)
 static void
 battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	original_battery_view_set_shows_percentage(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? YES : shows);
 }
@@ -320,9 +339,9 @@ battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 static BOOL
 battery_view_should_show_bolt(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.hakios.battery_charging");
-	int present = sysctl_int("kern.hakios.battery_present");
-	int plugged = sysctl_int("kern.hakios.battery_charger_present");
+	int charging = sysctl_int("kern.redwood.battery_charging");
+	int present = sysctl_int("kern.redwood.battery_present");
+	int plugged = sysctl_int("kern.redwood.battery_charger_present");
 
 	if (charging != -1 && present != -1 && plugged != -1 && !battery_power_source()) return charging && present && plugged;
 	return original_battery_view_should_show_bolt ? original_battery_view_should_show_bolt(self, sel) : NO;
@@ -338,7 +357,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 static double
 battery_view_charge_percent(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_battery_view_charge_percent ? original_battery_view_charge_percent(self, sel) : 0.0;
@@ -347,7 +366,7 @@ battery_view_charge_percent(id self, SEL sel)
 static void
 battery_view_set_charge_percent(id self, SEL sel, double p)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	original_battery_view_set_charge_percent(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? (double)soc / 100.0 : p);
 }
@@ -356,7 +375,7 @@ battery_view_set_charge_percent(id self, SEL sel, double p)
 static double
 ring_charging_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.hakios.battery_soc");
+	int soc = sysctl_int("kern.redwood.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_ring_charging_level ? original_ring_charging_level(self, sel) : 0.0;
@@ -1425,17 +1444,17 @@ hakios_springboard_init(void)
 	 * hooking them here in the SpringBoard process covers both the status bar and any app that
 	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for Darwin 16.5 (20F66).
 	 */
-	replace_method("UIDevice", "batteryLevel", 0x1897021b0UL, (IMP)battery_level, (IMP *)&original_battery_level);
-	replace_method("UIDevice", "batteryState", 0x189209794UL, (IMP)battery_state, (IMP *)&original_battery_state);
-	replace_method("_UIBatteryView", "showsPercentage", 0x189a9370cUL, (IMP)battery_view_shows_percentage,
+	replace_method("UIDevice", "batteryLevel", UIDeviceBatteryLevelIMP, (IMP)battery_level, (IMP *)&original_battery_level);
+	replace_method("UIDevice", "batteryState", UIDeviceBatteryStateIMP, (IMP)battery_state, (IMP *)&original_battery_state);
+	replace_method("_UIBatteryView", "showsPercentage", UIBatteryViewShowsPercentageIMP, (IMP)battery_view_shows_percentage,
 	    (IMP *)&original_battery_view_shows_percentage);
-	replace_method("_UIBatteryView", "setShowsPercentage:", 0x18926e150UL, (IMP)battery_view_set_shows_percentage,
+	replace_method("_UIBatteryView", "setShowsPercentage:", UIBatteryViewSetShowsPercentageIMP, (IMP)battery_view_set_shows_percentage,
 	    (IMP *)&original_battery_view_set_shows_percentage);
-	replace_method("_UIBatteryView", "_shouldShowBolt", 0x189203e28UL, (IMP)battery_view_should_show_bolt,
+	replace_method("_UIBatteryView", "_shouldShowBolt", UIBatteryViewShouldShowBoltIMP, (IMP)battery_view_should_show_bolt,
 	    (IMP *)&original_battery_view_should_show_bolt);
-	replace_method("_UIBatteryView", "chargePercent", 0x189a935d8UL, (IMP)battery_view_charge_percent,
+	replace_method("_UIBatteryView", "chargePercent", UIBatteryViewChargePercentIMP, (IMP)battery_view_charge_percent,
 	    (IMP *)&original_battery_view_charge_percent);
-	replace_method("_UIBatteryView", "setChargePercent:", 0x18928d310UL, (IMP)battery_view_set_charge_percent,
+	replace_method("_UIBatteryView", "setChargePercent:", UIBatteryViewSetChargePercentIMP, (IMP)battery_view_set_charge_percent,
 	    (IMP *)&original_battery_view_set_charge_percent);
 	replace_method("CSBatteryChargingRingView", "batteryChargingLevel", 0x1c48c2cf4UL, (IMP)ring_charging_level,
 	    (IMP *)&original_ring_charging_level);
@@ -1488,8 +1507,8 @@ hakios_springboard_init(void)
 			}
 		}
 		say("hakios: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
-		    sysctl_int("kern.hakios.battery_soc"), sysctl_int("kern.hakios.battery_present"),
-		    sysctl_int("kern.hakios.battery_charger_present"), sysctl_int("kern.hakios.battery_charging"));
+	    sysctl_int("kern.redwood.battery_soc"), sysctl_int("kern.redwood.battery_present"),
+	    sysctl_int("kern.redwood.battery_charger_present"), sysctl_int("kern.redwood.battery_charging"));
 		battery_post_notifications();
 	});
 	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
