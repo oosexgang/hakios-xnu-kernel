@@ -9,3 +9,68 @@
  }
  
  #ifdef VM_MEMATTR_DEVICE
+@@ -441,11 +441,61 @@
+     _ioremap_attr((addr), (size), VM_MEMATTR_WRITE_BACK)
+ void iounmap(void *addr);
+ 
+-#define	memset_io(a, b, c)	memset((a), (b), (c))
+-#define	memcpy_fromio(a, b, c)	memcpy((a), (b), (c))
+-#define	memcpy_toio(a, b, c)	memcpy((a), (b), (c))
++/*
++ * Device memory (a PCIe BAR, mapped Device-nGnRE) faults on an unaligned access, and memcpy()/memset()
++ * may make one (an unaligned head or tail, LDP/STP pairs, overlapping stores): these copy with volatile
++ * accesses only, 32-bit where the device address is 32-bit aligned, a byte at a time at the edges.
++ * (brcmfmac's firmware, NVRAM and ring tables go into the chip's RAM through them.)
++ */
++static inline void
++memcpy_toio(volatile void *to, const void *from, size_t len)
++{
++	volatile uint8_t *d = to;
++	const uint8_t *s = from;
++	uint32_t v;
++
++	for (; len > 0 && ((uintptr_t)d & 3) != 0; len--)
++		*d++ = *s++;
++	for (; len >= 4; len -= 4, d += 4, s += 4) {
++		__builtin_memcpy(&v, s, 4);
++		*(volatile uint32_t *)d = v;
++	}
++	for (; len > 0; len--)
++		*d++ = *s++;
++}
++
++static inline void
++memcpy_fromio(void *to, const volatile void *from, size_t len)
++{
++	uint8_t *d = to;
++	const volatile uint8_t *s = from;
++	uint32_t v;
+ 
++	for (; len > 0 && ((uintptr_t)s & 3) != 0; len--)
++		*d++ = *s++;
++	for (; len >= 4; len -= 4, d += 4, s += 4) {
++		v = *(const volatile uint32_t *)s;
++		__builtin_memcpy(d, &v, 4);
++	}
++	for (; len > 0; len--)
++		*d++ = *s++;
++}
++
+ static inline void
++memset_io(volatile void *to, int c, size_t len)
++{
++	volatile uint8_t *d = to;
++	uint32_t v = (uint8_t)c * 0x01010101u;
++
++	for (; len > 0 && ((uintptr_t)d & 3) != 0; len--)
++		*d++ = (uint8_t)c;
++	for (; len >= 4; len -= 4, d += 4)
++		*(volatile uint32_t *)d = v;
++	for (; len > 0; len--)
++		*d++ = (uint8_t)c;
++}
++
++static inline void
+ __iowrite32_copy(void *to, const void *from, size_t count)
+ {
+ 	const uint32_t *src;
