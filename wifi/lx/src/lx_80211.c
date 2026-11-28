@@ -122,6 +122,7 @@ struct lx_radio {
 	unsigned ba_sessions, ba_refused;
 	struct ieee80211_key_conf *pairwise_key, *group_key;
 	volatile bool joined;			/* keys set: frames pass */
+	bool powersave;				/* 802.11 power save, as asked (hakios_sta_ask_powersave); off at first */
 	volatile bool joining;
 	int reached;				/* how far the access point has come as the driver's station (IEEE80211_STA_...) */
 	int8_t signal;				/* dBm, of the last beacon of the network joined */
@@ -1475,6 +1476,19 @@ bss_changed(struct lx_radio *radio, u64 what)
 	mutex_unlock(&radio->wiphy->mtx);
 }
 
+/*
+ * 802.11 power save while joined, as mac80211 has it: vif->cfg.ps and BSS_CHANGED_PS. ath11k (mac.c, where the chip
+ * has supports_sta_ps, as the WCN6855 does) then gives the firmware the inactivity time (a beacon interval) and the
+ * vdev's power save mode by WMI; the firmware dozes between beacons and wakes for what the access point holds.
+ */
+static void
+station_powersave(struct lx_radio *radio)
+{
+	radio->vif->cfg.ps = radio->powersave;
+	bss_changed(radio, BSS_CHANGED_PS);
+	lx_tell("lx: power save %s (the firmware told: WMI sta_ps_param and pdev_set_ps_mode)\n", radio->powersave ? "ON" : "OFF");
+}
+
 /* Everything a join has made, undone in mac80211's order; as far as it got. */
 static void
 station_leave(struct lx_radio *radio)
@@ -1496,7 +1510,7 @@ station_leave(struct lx_radio *radio)
 			frame[0] = 3;
 			frame[1] = 0;
 			frame_send(radio, skb);
-			lx_pause_ms(50);
+			lx_pause_ms(200);		/* for it to leave before the station is taken from the driver */
 		}
 	}
 	cancel_work_sync(&radio->group_work);
@@ -1771,7 +1785,13 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	}
 	radio->reached = IEEE80211_STA_AUTH;
 
-	/* association: what we can do, and that we want its protection */
+	/*
+	 * association: what we can do, and that we want its protection. An access point that still
+	 * counts us as its station (from before the machine was started again, with the same address)
+	 * refuses "for now" (status 30) and says in a timeout interval element (56, of kind 3) when to
+	 * come back; by then it has asked the old station whether it is there and forgotten it.
+	 */
+	for (unsigned comeback = 0;; comeback++) {
 	answer = ANSWER_NONE;
 	for (unsigned attempt = 0; attempt < 3 && answer == ANSWER_NONE; attempt++) {
 		radio->answer = ANSWER_NONE;
@@ -1788,6 +1808,21 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 		skb_trim(skb, 28 + length);
 		frame_send(radio, skb);
 		answer = answer_wait(radio, 500);
+	}
+	if (answer == ANSWER_REFUSED && radio->answer_status == 30 && comeback < 4) {
+		const uint8_t *e = element(radio->answer_elements, radio->answer_length, 56);
+		unsigned ms = 1000;
+
+		if (e != NULL && e[1] >= 5 && e[2] == 3) {
+			ms = (unsigned)((e[3] | e[4] << 8 | e[5] << 16 | (uint32_t)e[6] << 24) * 1024ull / 1000);
+		}
+		ms = ms < 100 ? 100 : ms > 5000 ? 5000 : ms;
+		lx_tell("lx: ASSOCIATION: the access point says to come back (status 30%s): again in %u ms\n", e != NULL ?
+		    ", with a time" : "", ms + 100);
+		lx_pause_ms(ms + 100);
+		continue;
+	}
+	break;
 	}
 	lx_tell("lx: ASSOCIATION: %s (status %u); we are its station number %u; its answer has %u bytes of elements\n", answer ==
 	    ANSWER_ASSOCIATED ? "THE ACCESS POINT ACCEPTS" : answer == ANSWER_NONE ? "NO ANSWER from the access point to three "
@@ -1866,6 +1901,9 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	radio->joined = true;
 	lx_os_net_link(1);
 	lx_tell("lx: THE NETWORK IS JOINED: frames can pass\n");
+	if (radio->powersave) {
+		station_powersave(radio);
+	}
 	return (0);
 out:
 	station_leave(radio);
@@ -2048,6 +2086,23 @@ boundary_leave(void)
 	return (0);
 }
 
+static int
+boundary_powersave(bool on)
+{
+	struct lx_radio *radio = the_radio;
+
+	if (radio == NULL || radio->vif == NULL) {
+		return (ENXIO);
+	}
+	radio->powersave = on;
+	if (radio->joined) {
+		station_powersave(radio);
+	} else {
+		lx_tell("lx: power save %s, from the next join\n", on ? "on" : "off");
+	}
+	return (0);
+}
+
 /* (on any thread: nothing here but reading) */
 static void
 boundary_state(struct hakios_sta_state *state)
@@ -2105,6 +2160,7 @@ static struct hakios_sta_ops boundary = {
 	.leave = boundary_leave,
 	.state = boundary_state,
 	.channels = boundary_channels,
+	.powersave = boundary_powersave,
 };
 
 /*

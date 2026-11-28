@@ -44,6 +44,12 @@
  * them, a read that fails or a write that does not read back, and the light goes off and stays off
  * for the rest of the run. At the run's end (and on a panic's way out) it goes off.
  *
+ * The Xiaomi 12 Pro (zeus, SM8450) has the same module at the same place, the rear LED on channel 0 through
+ * led:switch_0, the same 12.5 mA steps and the alarm at 0x0a00; devices/zeus/drivers/camera/hakios.torch.sm8450.c
+ * builds this file with TORCH_SM8450, which changes only two things: the SM8450's arbiter is version 7 (other
+ * addresses, 0x20 bytes of observer and 0x1000 of "chnls" per channel), and Android's torch there is 160 mA
+ * (overrideFlashTorchCurrent in /vendor/etc/camera/camxoverridesettings.txt; ITARGET code 12, so 162.5 mA).
+ *
  * Register layouts: Linux drivers/spmi/spmi-pmic-arb.c (arbiter version 5: a system's write
  * channel for a peripheral is 0x10000 bytes of "chnls" per channel), Xiaomi's leds-qti-flash.c,
  * drivers/thermal/qcom/qcom-spmi-temp-alarm.c.
@@ -151,24 +157,44 @@ wait_ms(uint32_t ms)
 	}
 }
 
-/* ---- the PMIC arbiter (version 5) ---------------------------------------------------------------- */
+/* ---- the PMIC arbiter (version 5; the SM8450's version 7) -------------------------------------------- */
 
+#ifdef TORCH_SM8450
+#define ARB_CORE_PHYS           0x0c400000UL    /* the version, and which peripheral each channel is */
+#define ARB_CORE_SIZE           0x3000UL
+#define ARB_CNFG_PHYS           0x0c42d000UL    /* which system may write through each channel (the first bus) */
+#define ARB_CNFG_SIZE           0x1000UL
+#define ARB_OBSERVER_PHYS       0x0c440000UL    /* reads: 0x20 per channel for our system (the first) */
+#define ARB_OBSERVER_SIZE       0x8000UL
+#define ARB_OBSERVER_CHANNEL    0x20UL
+#define ARB_CHNLS_PHYS          0x0c500000UL    /* writes: 0x1000 per channel */
+#define ARB_CHNLS_CHANNEL       0x1000UL
+#define ARB_VERSION_MIN         0x70000000u     /* version 7 */
+#define ARB_VERSION_END         0x80000000u
+#define ARB_VERSION_NAME        "7"
+#define ARB_CHANNEL(n)          (0x2000 + 4 * (n))      /* [19:8] slave and peripheral */
+#define ARB_OWNER(n)            (4 * (n))               /* [2:0] the system that may write through channel n */
+#else
 #define ARB_CORE_PHYS           0x0c440000UL    /* the version, and which peripheral each channel is */
 #define ARB_CORE_SIZE           0x1100UL
 #define ARB_CNFG_PHYS           0x0c40a000UL    /* which system may write through each channel */
 #define ARB_CNFG_SIZE           0x1000UL
 #define ARB_OBSERVER_PHYS       0x0e600000UL    /* reads: 0x80 per channel for our system (the first) */
 #define ARB_OBSERVER_SIZE       0x10000UL
+#define ARB_OBSERVER_CHANNEL    0x80UL
 #define ARB_CHNLS_PHYS          0x0c600000UL    /* writes: 0x10000 per channel */
+#define ARB_CHNLS_CHANNEL       0x10000UL
+#define ARB_VERSION_MIN         0x50000000u     /* versions 5 and 6 */
+#define ARB_VERSION_END         0x70000000u
+#define ARB_VERSION_NAME        "5"
+#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* [19:8] slave and peripheral */
+#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* [2:0] the system that may write through channel n */
+#endif
 #define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
 
 #define ARB_VERSION             0x000
-#define ARB_VERSION_5           0x50000000u
-#define ARB_VERSION_7           0x70000000u
 #define ARB_FEATURES            0x004
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* [19:8] slave and peripheral */
-#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* [2:0] the system that may write through channel n */
-#define ARB_MAX_CHANNELS        512
+#define ARB_MAX_CHANNELS        (ARB_OBSERVER_SIZE / ARB_OBSERVER_CHANNEL)
 
 #define CHANNEL_COMMAND         0x00
 #define CHANNEL_STATUS          0x08
@@ -251,7 +277,7 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
 static const char *
 spmi_read_once(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * p->channel;
+	vm_offset_t channel = arb_observer + ARB_OBSERVER_SIZE * ARB_SYSTEM + ARB_OBSERVER_CHANNEL * p->channel;
 	const char *problem;
 	uint32_t data[2];
 
@@ -297,9 +323,14 @@ spmi_read_once(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t
 #define ALARM_SUBTYPE           0x05            /* 0x08: the first generation, 0x09 the second */
 #define ALARM_STATUS            0x08            /* the over-temperature stage: [1:0] (first generation) or [6:4] */
 
+#ifdef TORCH_SM8450
+#define ANDROID_TORCH_MA        160             /* the Xiaomi 12 Pro's: CamX's overrideFlashTorchCurrent */
+#define ANDROID_ITARGET         12              /* round(160000 / 12500) - 1: 162.5 mA, the most ever written */
+#else
 #define ANDROID_TORCH_MA        125             /* led:torch_0 while Android's flashlight is on */
-#define IRES_UA                 12500           /* its resolution ("qcom,ires-ua") */
 #define ANDROID_ITARGET         9               /* round(125000 / 12500) - 1: the most ever written */
+#endif
+#define IRES_UA                 12500           /* its resolution ("qcom,ires-ua") */
 #define HOTTEST_BATTERY_C       45
 
 static const uint8_t writable_regs[] = {
@@ -663,8 +694,8 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
 	version = rd(arb_core + ARB_VERSION);
 	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
-		say("torch: PMIC arbiter version %#x, not 5: nothing done\n", version);
+	if (version < ARB_VERSION_MIN || version >= ARB_VERSION_END) {
+		say("torch: PMIC arbiter version %#x, not " ARB_VERSION_NAME ": nothing done\n", version);
 		goto out;
 	}
 	if (channels == 0 || channels > ARB_MAX_CHANNELS) {
@@ -694,7 +725,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 		say("torch: the channel is not ours to write through: nothing written\n");
 		goto out;
 	}
-	flash.write = ml_io_map(ARB_CHNLS_PHYS + 0x10000UL * flash.channel, 0x1000);
+	flash.write = ml_io_map(ARB_CHNLS_PHYS + ARB_CHNLS_CHANNEL * flash.channel, 0x1000);
 	PE_parse_boot_argn("torch_max_s", &max_secs, sizeof(max_secs));
 	max_secs = max_secs < 1 ? 1 : max_secs > 120 ? 120 : max_secs;
 	if (level == 2) {

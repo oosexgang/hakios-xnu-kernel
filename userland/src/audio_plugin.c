@@ -240,6 +240,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int sink = -1;                   /* /dev/hakios-audio */
 static Float64 ticks_per_frame;
 static UInt64 written, refused;         /* frames since the speaker's I/O started */
+static int32_t loudest;                 /* the largest sample given since then, as an absolute value (silence or sound?) */
 static Boolean inactive[OBJECT_LAST + 1];       /* streams the HAL has switched off */
 static Float32 volume = 1.0f;           /* the speaker's volume control, 0 to 1 (Darwin sets it once it routes there) */
 
@@ -892,7 +893,7 @@ start_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unu
 		d->anchor = mach_absolute_time();
 		d->periods = 0;
 		if (d->output != 0) {
-			written = refused = 0;
+			written = refused = 0, loudest = 0;
 			say("hakios: audio: playing\n");
 		}
 		if (d->object == OBJECT_CODEC) {
@@ -916,8 +917,9 @@ stop_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unus
 		if (d->object == OBJECT_CODEC) {
 			codec_close();
 		} else if (d->output != 0) {
-			say("hakios: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / HAKIOS_AUDIO_RATE,
-			    written % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, refused, HAKIOS_AUDIO_DEVICE);
+			say("hakios: audio: stopped after %llu.%02llu s (%llu frames not taken by %s), peak %d%% of full scale\n",
+			    written / HAKIOS_AUDIO_RATE, written % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, refused,
+			    HAKIOS_AUDIO_DEVICE, loudest * 100 / 32768);
 		}
 	}
 	pthread_mutex_unlock(&lock);
@@ -1016,6 +1018,15 @@ do_io_operation(__unused AudioServerPlugInDriverRef driver, __unused AudioObject
 	} else if (operation == kAudioServerPlugInIOOperationWriteMix && stream == OBJECT_ACTUATOR_OUTPUT) {
 		actuator_write(buffer, frames);
 	} else if (operation == kAudioServerPlugInIOOperationWriteMix && stream == d->output) {
+		const int16_t *samples = buffer;
+
+		for (UInt32 i = 0; i < frames * 2; i++) {
+			int32_t level = samples[i] < 0 ? -(int32_t)samples[i] : samples[i];
+
+			if (level > loudest) {
+				loudest = level;
+			}
+		}
 		/* the kernel takes it all or leaves it: this thread must not wait */
 		if (sink < 0 || write(sink, buffer, (size_t)frames * HAKIOS_AUDIO_FRAME) < 0) {
 			refused += frames;

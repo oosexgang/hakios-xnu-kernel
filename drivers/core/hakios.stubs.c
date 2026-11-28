@@ -41,7 +41,11 @@ void hakios_virtio_input_init(void) {}
 void hakios_goodix_init(void) {}
 #endif
 
-#ifndef HAKIOS_BUTTONS
+#ifndef HAKIOS_FTS
+void hakios_fts_init(void) {}
+#endif
+
+#if !defined(HAKIOS_BUTTONS) && !defined(HAKIOS_BUTTONS_SM8450)
 void hakios_buttons_init(void) {}
 #endif
 
@@ -64,30 +68,41 @@ int hakios_battery_temperature(void) { return -273; }      /* "not known", as th
 void hakios_battery_report(__unused const struct hakios_battery_state *state) {}
 #endif
 
-#ifndef HAKIOS_CPUFREQ
+#if !defined(HAKIOS_CPUFREQ) && !defined(HAKIOS_CPUFREQ_SM8450)
 void hakios_cpufreq_init(void) {}
 void hakios_ddr_quiesce(void) {}
+uint32_t hakios_cpufreq_cap(__unused uint32_t domain, __unused uint32_t steps) { return 0; }    /* no brake: nothing raised */
+uint32_t hakios_cpufreq_steps(__unused uint32_t domain) { return 0; }
 #endif
 
-#ifndef HAKIOS_ADRENO
+#if !defined(HAKIOS_ADRENO) && !defined(HAKIOS_A730)
 void hakios_adreno_init(void) {}
 void hakios_adreno_quiesce(void) {}
 void hakios_adreno_stop(void) {}
 void hakios_adreno_minute(void) {}
 #endif
 
-#ifndef HAKIOS_WIFI
+#if !defined(HAKIOS_WIFI) && !defined(HAKIOS_WLAN_SM8450)
 void hakios_wifi_init(void) {}
 void hakios_wifi_stop(void) {}
 void hakios_wifi_quiesce(void) {}
+#endif
+
+#ifndef HAKIOS_WIFI_LX
 errno_t hakios_apple80211_ioctl(__unused u_long command, __unused void *data) { return EOPNOTSUPP; }
 void HakiosWLANStart(__unused const char *interface, __unused const uint8_t *address) {}
 #endif
 
-#ifndef HAKIOS_ADSP
+#if !defined(HAKIOS_ADSP) && !defined(HAKIOS_ADSP_SM8450)
 void hakios_adsp_init(void) {}
 void hakios_adsp_stop(void) {}
 void hakios_adsp_quiesce(void) {}
+#endif
+
+#ifndef HAKIOS_SLPI_SM8450
+void hakios_slpi_init(void) {}
+void hakios_slpi_stop(void) {}
+void hakios_slpi_quiesce(void) {}
 #endif
 
 #ifndef HAKIOS_MODEM
@@ -104,11 +119,11 @@ void hakios_virtio_net_init(void) {}
 void hakios_virtio_sound_init(void) {}
 #endif
 
-#ifndef HAKIOS_SPEAKER
+#if !defined(HAKIOS_SPEAKER) && !defined(HAKIOS_CS35L41)
 void hakios_speaker_init(void) {}
 #endif
 
-#ifndef HAKIOS_SOUND
+#if !defined(HAKIOS_SOUND) && !defined(HAKIOS_SOUND_SM8450)
 void hakios_sound_dsp_up(void) {}
 void hakios_sound_dsp_down(void) {}
 void hakios_sound_quiesce(void) {}
@@ -120,18 +135,23 @@ void hakios_mic_dsp_down(void) {}
 void hakios_mic_quiesce(void) {}
 #endif
 
-#ifndef HAKIOS_HAPTIC
+#if !defined(HAKIOS_HAPTIC) && !defined(HAKIOS_HAPTIC_SM8450)
 void hakios_haptic_init(void) {}
 void hakios_haptic_quiesce(void) {}
 void hakios_haptic_pretend(__unused uint32_t peak) {}
 #endif
 
-#ifndef HAKIOS_TORCH
+#if !defined(HAKIOS_TORCH) && !defined(HAKIOS_TORCH_SM8450)
 void hakios_torch_init(void) {}
 void hakios_torch_quiesce(void) {}
 #endif
 
-#ifndef HAKIOS_CAMERA
+#if !defined(HAKIOS_CAMERA) && !defined(HAKIOS_CAMERA_SM8450)
 void hakios_camera_init(void) {}
 void hakios_camera_quiesce(void) {}
+#endif
+
+#ifndef HAKIOS_CAMERA_SM8450
+void hakios_video_stop(void);
+void hakios_video_stop(void) {}         /* (the video codec is built with zeus's camera) */
 #endif

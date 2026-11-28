@@ -317,6 +317,8 @@ private:
     std::unordered_multimap<const uint32_t*, Uploaded> uploaded_;
 
     CommandQueue& queue_;
+    // false (and the command buffer failed with WHAT and the reason) on a GPU whose register streams are not ported yet
+    bool needsRenderer(const char* what);
     std::atomic<Status> status_{kNotEnqueued};
     std::string error_;
     pm4::Stream stream_;

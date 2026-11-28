@@ -81,6 +81,7 @@ struct hakios_sta_ops {
 	int (*leave)(void);
 	void (*state)(struct hakios_sta_state *state);         /* on any thread; does not sleep */
 	unsigned (*channels)(struct hakios_sta_channel *channels, unsigned most);      /* what the radio may tune to */
+	int (*powersave)(bool on);              /* 802.11 power save, now if joined and for the joins to come; NULL: none */
 	uint8_t address[6];
 };
 
@@ -106,6 +107,8 @@ int      hakios_sta_ask_join(const struct hakios_sta_join *what);
 /* ... and joined again whenever the radio is turned on, until some other network is asked for */
 int      hakios_sta_ask_join_standing(const struct hakios_sta_join *what);
 int      hakios_sta_ask_leave(void);
+int      hakios_sta_ask_powersave(bool on);
+int      hakios_sta_powersave(void);                                   /* as last asked: 1 on, 0 off, -1 never asked */
 bool     hakios_sta_busy(void);                                        /* something asked for is not over yet */
 bool     hakios_sta_powered(void);
 /* the `index`th access point the last scan heard: true, or false when there are not that many */

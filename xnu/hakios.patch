@@ -119,10 +119,10 @@ index 4b83160780c3..8997af1f0e1b 100644
  include $(MakeInc_rule)
  include $(MakeInc_dir)
 diff --git a/bsd/conf/files b/bsd/conf/files
-index 44274016a4cf..27cccab98c8e 100644
+index 44274016a4cf..e58ca63bf66d 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,51 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,68 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
@@ -138,8 +138,8 @@ index 44274016a4cf..27cccab98c8e 100644
 +bsd/dev/hakios.apfs_check.c              optional apfs
 +bsd/dev/hakios.adsp.c                    optional hakios_adsp
 +bsd/dev/hakios.speaker.c                 optional hakios_speaker
++bsd/dev/hakios.guard.c                   optional hakios_guard
 +bsd/dev/hakios.sound.c                   optional hakios_sound
-+bsd/dev/hakios.guard.c                   optional hakios_sound
 +bsd/dev/hakios.mic.c                     optional hakios_mic
 +bsd/dev/hakios.virtio_sound.c            optional hakios_virtio_sound
 +bsd/dev/hakios.bt.c                      optional hakios_bt
@@ -156,6 +156,7 @@ index 44274016a4cf..27cccab98c8e 100644
 +bsd/dev/hakios.cell.c                    optional hakios_modem
 +bsd/dev/hakios.nas.c                     optional hakios_modem
 +bsd/dev/hakios.ipa.c                     optional hakios_modem
++bsd/dev/hakios.loc.c                     optional hakios_gnss
 +bsd/dev/hakios.virtio_net.c              optional hakios_virtio_net
 +bsd/dev/hakios.battery.c                 optional hakios_battery
 +bsd/dev/hakios.cpufreq.c                 optional hakios_cpufreq
@@ -165,16 +166,32 @@ index 44274016a4cf..27cccab98c8e 100644
 +bsd/dev/hakios.ufs.c                     optional hakios_ufs
 +bsd/dev/hakios.ufshc.c                   optional hakios_ufs
 +bsd/dev/hakios.virtio_blk.c              optional hakios_virtio_blk
++bsd/dev/hakios.lx.c                      optional hakios_wifi_lx
++bsd/dev/hakios.sta.c                     optional hakios_wifi_lx
++bsd/dev/hakios.apple80211.c              optional hakios_wifi_lx
 +bsd/dev/hakios.wifi.c                    optional hakios_wifi
 +bsd/dev/hakios.wlfw.c                    optional hakios_wifi
-+bsd/dev/hakios.lx.c                      optional hakios_wifi
-+bsd/dev/hakios.sta.c                     optional hakios_wifi
-+bsd/dev/hakios.apple80211.c              optional hakios_wifi
++bsd/dev/hakios.adsp.sm8450.c             optional hakios_adsp_sm8450
++bsd/dev/hakios.cs35l41.c                 optional hakios_cs35l41
++bsd/dev/hakios.sound.sm8450.c            optional hakios_sound_sm8450
++bsd/dev/hakios.bt.sm8450.c               optional hakios_bt_sm8450
++bsd/dev/hakios.camera.sm8450.c           optional hakios_camera_sm8450
++bsd/dev/hakios.video.sm8450.c            optional hakios_camera_sm8450
++bsd/dev/hakios.torch.sm8450.c            optional hakios_torch_sm8450
++bsd/dev/hakios.a730.c                    optional hakios_a730
++bsd/dev/hakios.haptic.sm8450.c           optional hakios_haptic_sm8450
++bsd/dev/hakios.fts.c                     optional hakios_fts
++bsd/dev/hakios.buttons.sm8450.c          optional hakios_buttons_sm8450
++bsd/dev/hakios.cpufreq.sm8450.c          optional hakios_cpufreq_sm8450
++bsd/dev/hakios.thermal.sm8450.c          optional hakios_thermal_sm8450
++bsd/dev/hakios.slpi.sm8450.c             optional hakios_slpi_sm8450
++bsd/dev/hakios.wlan.sm8450.c             optional hakios_wlan_sm8450
++bsd/dev/hakios.wlan.sm8450.lx.c          optional hakios_wlan_sm8450
 +# end of the HakiOS drivers
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
-@@ -155,6 +200,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+@@ -155,6 +217,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
  bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
@@ -227,7 +244,7 @@ index 44274016a4cf..27cccab98c8e 100644
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
-@@ -361,6 +452,7 @@ bsd/security/audit/audit_syscalls.c		standard
+@@ -361,6 +469,7 @@ bsd/security/audit/audit_syscalls.c		standard
  bsd/security/audit/audit_worker.c		optional config_audit
  
  bsd/pthread/pthread_shims.c		standard
@@ -235,7 +252,7 @@ index 44274016a4cf..27cccab98c8e 100644
  bsd/pthread/pthread_priority.c		standard
  bsd/pthread/pthread_workqueue.c		standard
  
-@@ -383,6 +475,7 @@ bsd/kern/kern_debug.c			standard
+@@ -383,6 +492,7 @@ bsd/kern/kern_debug.c			standard
  bsd/kern/kern_symfile.c			standard
  bsd/kern/kern_descrip.c			standard
  bsd/kern/kern_guarded.c			standard
@@ -519,7 +536,7 @@ index 95192dd62449..b00da803b5b4 100644
  
  	/*
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
-index 1d71c66629fb..a22095ccf5f0 100644
+index 1d71c66629fb..105a20f71c90 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
 @@ -1157,6 +1157,9 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
@@ -712,7 +729,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	ret = persona_proc_adopt(p, persona, cred);
  
  	kauth_cred_unref(&cred);
-@@ -5586,10 +5685,75 @@ bad:
+@@ -5586,10 +5685,90 @@ bad:
   * Note:	The argument and environment vectors are user space pointers
   *		to arrays of user space pointers.
   */
@@ -722,18 +739,22 @@ index 1d71c66629fb..a22095ccf5f0 100644
 + * environment, so that dyld loads our library into it. Several such groups may follow each
 + * other, separated by ";". A program named in more than one group gets every one of those
 + * libraries, joined with ":" in the one DYLD_INSERT_LIBRARIES, so SpringBoard can carry both
-+ * our window-server library and the tweak loader. launchd refuses to pass DYLD_ variables
-+ * from a job description, which is why the kernel adds this one. Set once by our init (from
-+ * etc/inject.conf) before it hands over to launchd.
++ * our window-server library and the tweak loader. A NAME with a "/" in it is not a file name
++ * but the start of a path: "/Applications/" names every program started from a path under
++ * /Applications, so every application gets the package manager's tweak loader without each
++ * being listed. The path is the one the program was started by, as exec saved it for dyld
++ * (executable_path=), before symbolic links are followed. launchd refuses to pass DYLD_
++ * variables from a job description, which is why the kernel adds this one. Set once by our
++ * init (from etc/inject.conf) before it hands over to launchd.
 + */
-+static char exec_inject_conf[512];
++static char exec_inject_conf[1024];
 +SYSCTL_STRING(_kern, OID_AUTO, exec_inject, CTLFLAG_RW | CTLFLAG_LOCKED, exec_inject_conf, sizeof(exec_inject_conf),
 +    "LIBRARY NAME... [; LIBRARY NAME...]: programs started with the library inserted");
 +
 +static bool
 +exec_inject_env(struct image_params *imgp, char *env, size_t size)
 +{
-+	const char *name, *p = exec_inject_conf;
++	const char *name, *path, *p = exec_inject_conf;
 +	size_t namelen, used;
 +	bool any = false;
 +
@@ -742,6 +763,8 @@ index 1d71c66629fb..a22095ccf5f0 100644
 +	}
 +	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
 +	namelen = imgp->ip_ndp->ni_cnd.cn_namelen;
++	/* the path exec_save_path put at the start of the strings, after "executable_path=" */
++	path = imgp->ip_strings + strlen(EXECUTABLE_KEY);
 +	used = strlcpy(env, "DYLD_INSERT_LIBRARIES=", size);
 +	while (*p != 0) {
 +		const char *library;
@@ -762,8 +785,17 @@ index 1d71c66629fb..a22095ccf5f0 100644
 +			while (*p != 0 && *p != ' ' && *p != ';') {
 +				p++;
 +			}
-+			if (!matched && (size_t)(p - word) == namelen && namelen != 0 && liblen != 0 &&
-+			    strncmp(word, name, namelen) == 0) {
++			size_t wordlen = (size_t)(p - word);
++
++			if (matched || liblen == 0 || wordlen == 0) {
++				continue;
++			}
++			if (memchr(word, '/', wordlen) != NULL) {
++				/* a path prefix (see above); the saved path is NUL-terminated */
++				if (strncmp(path, word, wordlen) == 0) {
++					matched = true;
++				}
++			} else if (wordlen == namelen && strncmp(word, name, namelen) == 0) {
 +				matched = true;         /* this group names this program; its library is added once */
 +			}
 +		}
@@ -788,7 +820,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	int error = 0;
  	int     ptr_size = (imgp->ip_flags & IMGPF_WAS_64BIT_ADDR) ? 8 : 4;
  	int new_ptr_size = (imgp->ip_flags & IMGPF_IS_64BIT_ADDR) ? 8 : 4;
-@@ -5759,6 +5923,33 @@ exec_extract_strings(struct image_params *imgp)
+@@ -5759,6 +5938,33 @@ exec_extract_strings(struct image_params *imgp)
  		imgp->ip_envc++;
  	}
  
@@ -822,7 +854,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -6636,7 +6827,23 @@ handle_mac_transition:
+@@ -6636,7 +6842,23 @@ handle_mac_transition:
  	}
  
  	/* Update the process' identity version and set the security token */
@@ -847,7 +879,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	task_set_uniqueid(task);
  	set_security_token_task_internal(p, task);
  
-@@ -7538,6 +7745,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -7538,6 +7760,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:
@@ -1900,10 +1932,10 @@ index 83259ebf9835..8864e5c7cc41 100644
  DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
  endif
 diff --git a/iokit/conf/files b/iokit/conf/files
-index 5fb0a52062e0..7cfee3142b5b 100644
+index 5fb0a52062e0..8d0529a1ea46 100644
 --- a/iokit/conf/files
 +++ b/iokit/conf/files
-@@ -79,6 +79,17 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+@@ -79,6 +79,18 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
  iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
  
  iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
@@ -1912,9 +1944,10 @@ index 5fb0a52062e0..7cfee3142b5b 100644
 +iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
 +# HakiOS drivers: made by tools/hakios-config.py kernel from drivers/*/conf. Edit those, not these lines.
 +iokit/Kernel/hakios.stubs.cpp            optional iokitcpp
-+iokit/Kernel/hakios.gpu.cpp              optional hakios_adreno iokitcpp
++iokit/Kernel/hakios.gpu.cpp              optional hakios_gpuservice iokitcpp
 +iokit/Kernel/hakios.battery.cpp          optional hakios_battery iokitcpp
-+iokit/Kernel/hakios.wlan.cpp             optional hakios_wifi iokitcpp
++iokit/Kernel/hakios.wlan.cpp             optional hakios_wifi_lx iokitcpp
++iokit/Kernel/hakios.bluetooth.sm8450.cpp optional hakios_bt_sm8450 iokitcpp
 +# end of the HakiOS drivers
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
@@ -2250,6 +2283,19 @@ index e26a1d70f470..f91095c98d26 100644
  
  #if APPLE_ARM64_ARCH_FAMILY
  	configure_late_apple_regs();
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+index 18ef2f02122f..ccd6e7aa25b1 100644
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -62,7 +62,7 @@
+ 
+ extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
+ 
+-#define IO_MAP_SIZE            (8ul << 20)
++#define IO_MAP_SIZE            (64ul << 20)     /* HakiOS: 8 MB ran out with every driver of a phone on */
+ 
+ __startup_data static struct mach_vm_range io_range;
+ static SECURITY_READ_ONLY_LATE(vm_map_t) io_submap;
 diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
 index 39daaf8db949..64ceb1a5f201 100644
 --- a/osfmk/arm/model_dep.c
@@ -2333,25 +2379,30 @@ index fc2096fa0010..8f198ed1b820 100644
  }
  
 diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
-index df672c65b144..d7e1da7c5db2 100644
+index df672c65b144..fe43bfb6e1b8 100644
 --- a/osfmk/arm/pmap/pmap.h
 +++ b/osfmk/arm/pmap/pmap.h
-@@ -112,7 +112,13 @@
+@@ -112,7 +112,18 @@
   */
  #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
  #else /* defined(ARM_LARGE_MEMORY) */
 -#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
 +/*
 + * With 4K pages every GB of DRAM costs one L2 page in each of the two
-+ * bootstrap mappings (start.s maps all of memSize). Apple sized this for a
-+ * 2 GB device (8 pages); 20 pages cover 8 GB, enough for a boot image of
-+ * several GB next to the kernel.
++ * bootstrap mappings (start.s maps all of memSize, and checks nothing: a
++ * mapping that needs more pages than this writes over what follows). Apple
++ * sized this for a 2 GB device (8 pages). Each mapping takes one page for
++ * every GB its range touches -- one more than its size in GB when it does
++ * not start on a GB, as the kernel's (0xFFFFFFF004000000) never does -- plus
++ * its L1: a window of N GB needs at most 2 + 2 * (N + 1) pages. 32 pages
++ * cover 14 GB (zeus gives XNU 9, its largest free block; the loader's
++ * default is 6).
 + */
-+#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 20)
++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 32)
  #endif /* defined(ARM_LARGE_MEMORY) */
  
  typedef uint64_t tt_entry_t; /* translation table entry type */
-@@ -442,7 +448,7 @@ struct pmap {
+@@ -442,7 +453,7 @@ struct pmap {
  #if HAS_APPLE_PAC
  	bool disable_jop;
  #else

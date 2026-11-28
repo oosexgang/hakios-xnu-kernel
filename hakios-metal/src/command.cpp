@@ -368,6 +368,16 @@ std::vector<CommandBuffer::PassTime> CommandBuffer::passTimes() const {
     return out;
 }
 
+bool CommandBuffer::needsRenderer(const char* what) {
+    if (queue_.gpu().renders()) {
+        return true;
+    }
+    char text[200];
+    snprintf(text, sizeof(text), "%s on chip %#x: the A7xx's registers for it are not ported yet (buffers, copies, fills and compute work)",
+             what, queue_.gpu().chipId());
+    return fail(text);
+}
+
 bool CommandBuffer::refuseWork(const std::string& why) {
     if (!skipRefused_) {
         return fail(why);
@@ -556,9 +566,11 @@ std::shared_ptr<Texture> CommandQueue::nullTexture(std::string* why) {
 }
 
 namespace {
-// the A635's SP cores and fibers an SP (freedreno_devices.py, the 7c+ Gen 3 entry: num_ccu 2, fibers_per_sp 128 * 2 * 16)
-constexpr uint32_t kSpCores = 2;
+// the SP cores and fibers an SP (freedreno_devices.py: the 7c+ Gen 3's A635 num_ccu 2, the Adreno 730 num_ccu 4; both
+// fibers_per_sp 128 * 2 * 16). Private memory is perSp bytes for each core: too few cores and the last ones' fibers
+// spill past the buffer (the A730 on 11 November: 582 of 4096 words right with 2)
 constexpr uint32_t kFibersPerSp = 128 * 2 * 16;
+uint32_t spCores(Gpu& gpu) { return gpu.generation() == 7 ? 4 : 2; }
 }  // namespace
 
 std::shared_ptr<Buffer> CommandQueue::privateMemory(uint32_t bytes, bool perWave, PrivateMemory* out, std::string* why) {
@@ -568,7 +580,7 @@ std::shared_ptr<Buffer> CommandQueue::privateMemory(uint32_t bytes, bool perWave
         uint32_t perFiber = 512;
         while (perFiber < bytes) perFiber *= 2;
         const uint64_t perSp = (uint64_t(perFiber) * kFibersPerSp + 4095) & ~uint64_t(4095);
-        std::shared_ptr<Buffer> b = newBuffer(gpu_, perSp * kSpCores, why);
+        std::shared_ptr<Buffer> b = newBuffer(gpu_, perSp * spCores(gpu_), why);
         if (b == nullptr) return nullptr;
         private_[l].push_back(std::move(b));
         privatePerFiber_[l] = perFiber;

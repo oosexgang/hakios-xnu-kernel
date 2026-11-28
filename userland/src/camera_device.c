@@ -36,6 +36,7 @@
 #include <IOSurface/IOSurfaceRef.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <mach/mach_time.h>
@@ -45,8 +46,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 #include "camera_isp.h"
+#include "camera_portrait.h"
 
 void hakios_camera_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
@@ -113,6 +116,12 @@ static OSStatus (*derived_create)(CFAllocatorRef, const struct vtable *, CMBaseC
 static void *(*derived_storage)(CMBaseObjectRef);
 static CMBaseClassID (*device_class_id)(void);
 static CMBaseClassID (*stream_class_id)(void);
+static CMBaseClassID (*group_class_id)(void);   /* FigCaptureSynchronizedStreamsGroupGetClassID */
+static CFStringRef port_tele;           /* kFigCapturePortType_BackFacingTelephotoCamera */
+static bool portrait;                   /* boot-arg portrait=1: the telephoto stream and the pair's group are offered */
+static bool portrait_show;              /* boot-arg portrait_show=1: the pair's depth shown in place of the picture */
+static double portrait_trace_after = 130;
+static int portrait_trace_left = 1500;
 static CFStringRef port_back;           /* kFigCapturePortType_BackFacingCamera */
 static CFStringRef port_front;          /* kFigCapturePortType_FrontFacingCamera */
 
@@ -162,6 +171,24 @@ find_functions(void)
 	port_back = port != NULL ? *port : NULL;
 	port = dlsym(RTLD_DEFAULT, "kFigCapturePortType_FrontFacingCamera");
 	port_front = port != NULL ? *port : NULL;
+	port = dlsym(RTLD_DEFAULT, "kFigCapturePortType_BackFacingTelephotoCamera");
+	port_tele = port != NULL ? *port : NULL;
+	group_class_id = dlsym(RTLD_DEFAULT, "FigCaptureSynchronizedStreamsGroupGetClassID");
+	{
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		portrait = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "portrait=1") != NULL &&
+		    port_tele != NULL && group_class_id != NULL;
+		if (strstr(args, "portrait_trace=") != NULL) {
+			portrait_trace_after = atof(strstr(args, "portrait_trace=") + 15);
+		}
+		portrait_show = portrait && strstr(args, "portrait_show=1") != NULL;
+		if (portrait) {
+			portrait_init(hakios_camera_say, strstr(args, "portrait_views=1") != NULL);
+			portrait_photo_init(hakios_camera_say, false);
+		}
+	}
 	port = dlsym(RTLD_DEFAULT, "kFigCaptureSampleBufferAttachmentKey_MetadataDictionary");
 	md_attachment = port != NULL ? *port : NULL;
 	for (int i = 0; i < MD_KEYS; i++) {
@@ -205,6 +232,34 @@ say_value(const char *what, CFStringRef key, CFTypeRef value)
 		}
 	}
 	say("%s %s%s%s", what, name, value ? " = " : "", text);
+}
+
+/*
+ * portrait=1: everything set on and asked of the device, its streams and the pair's group from portrait_trace_after
+ * seconds of the system's time on (boot-arg portrait_trace=N, default 130: about when a test's finger reaches PORTRAIT),
+ * so that what the Portrait session wants shows in the log; 1500 lines at most.
+ */
+
+static void
+trace(const char *who, const char *what, CFStringRef key, CFTypeRef value)
+{
+	static mach_timebase_info_data_t base;
+	char line[96];
+
+	if (!portrait || portrait_trace_left <= 0) {
+		return;
+	}
+	if (base.denom == 0) {
+		mach_timebase_info(&base);
+	}
+	double now = (double)mach_absolute_time() * base.numer / base.denom / 1e9;
+
+	if (now < portrait_trace_after) {
+		return;
+	}
+	portrait_trace_left--;
+	snprintf(line, sizeof(line), "TRACE %.2f %s: %s", now, who, what);
+	say_value(line, key, value);
 }
 
 static void
@@ -301,6 +356,8 @@ static const struct prop stream_props[] = {
 	{ "FocusNow", "Collection", "WriteOnly" }, { "PeakTrackingFocusNow", "Collection", "WriteOnly" },
 	{ "LockAFNow", "Boolean", "WriteOnly" }, { "ManualFocusNow", "Collection", "WriteOnly" },
 	{ "AFWindowParams", "Collection", "ReadWrite" }, { "AutoFocusMode", "Number", "ReadWrite" },
+	/* portrait=1: the pair (kept as set, given back when asked) */
+	{ "SynchronizedStreamsSlaveConfiguration", "Collection", "ReadWrite" },
 }, device_props[] = {
 	{ "StreamArray", "Collection", "ReadOnly" }, { "Clock", "Clock", "ReadOnly" }, { "ClientIsActive", "Boolean", "ReadWrite" },
 	{ "SupportedSynchronizedStreamsGroups", "Collection", "ReadOnly" }, { "MemoryPoolID", "Number", "ReadWrite" },
@@ -405,8 +462,8 @@ struct output {
 	bool            enabled;
 	void *          handler;                /* a block: ^(CVPixelBufferRef, CMTime) */
 	bool            said_shape;
-	uint64_t        delivered, refused;
-	CVPixelBufferRef held[HELD];            /* the pictures given last, kept from the pool (see deliver) */
+	uint64_t        delivered, refused, portrait_blurred;
+	CVPixelBufferRef held[HELD];           /* the pictures given last, kept from the pool (see deliver) */
 	unsigned        held_next;
 	bool            said_pool;
 };
@@ -430,14 +487,19 @@ static const struct camera {
 	bool            turned;         /* its sensor the other way up from the iPhone's: the pictures turned half round */
 	double          focal_length, f_number, pixel_size, fov;
 	int             formats[2][3];  /* sensor width, height, frames a second of "Photo" and of a video format */
-} cameras[2] = {
+} cameras[3] = {
 	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.0, 1.8, 1.22, 65.0,
 	  { { 4032, 3024, 30 }, { 4224, 2376, 60 } } },        /* "Photo", "Video-60" */
 	{ 2, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", true, 2.87, 2.2, 1.0, 70.0,
 	  { { 3088, 2320, 30 }, { 3840, 2160, 30 } } },        /* "Photo", "Video-30" */
+	/* Portrait's second camera (boot-arg portrait=1): the plist's "Back Telephoto Camera", whose formats are the back
+	 * camera's (its baseCaptureDeviceUniqueID). zeus's telephoto is the kernel's sensor 0, twice the wide's reach. */
+	{ 0, "Back Telephoto Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:2", false, 6.0, 1.9, 1.28, 37.0,
+	  { { 4032, 3024, 30 }, { 4224, 2376, 60 } } },
 };
 
 struct stream {
+	CFTypeRef       slave_config;   /* SynchronizedStreamsSlaveConfiguration, as set (portrait=1) */
 	CFArrayRef      formats;
 	CFDictionaryRef supported;
 	CFDictionaryRef colour_info;    /* from VideoOutputsColorInfo */
@@ -482,6 +544,7 @@ output_index(CFStringRef name)
 static OSStatus
 stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocator, void *out)
 {
+	trace(stream_of(o)->camera->name, "asked", key, NULL);
 	struct stream *s = stream_of(o);
 	CFTypeRef value = NULL;
 
@@ -559,6 +622,8 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 		 * (0, 100) is accepted.
 		 */
 		value = number_f(s->camera->pixel_size);
+	} else if (key_is(key, "SynchronizedStreamsSlaveConfiguration")) {
+		value = s->slave_config != NULL ? CFRetain(s->slave_config) : new_dict();
 	} else if (key_is(key, "MaxZoomFactor")) {
 		value = number_f(MAX_ZOOM);
 	} else if (key_is(key, "ZoomFactor")) {
@@ -634,10 +699,26 @@ af_window(struct stream *s, CFTypeRef value)
 	s->af_window[3] = (float)(y0 + height);
 }
 
+static volatile bool pair_on;
+static CMBaseObjectRef all_streams[3];
+
 static OSStatus
 stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 {
+	trace(stream_of(o)->camera->name, "set", key, value);
 	struct stream *s = stream_of(o);
+
+	if (key_is(key, "SynchronizedStreamsSlaveConfiguration")) {
+		say_value("stream: the pair's slave configuration:", key, value);
+		if (value != NULL) {
+			CFRetain(value);
+		}
+		if (s->slave_config != NULL) {
+			CFRelease(s->slave_config);
+		}
+		s->slave_config = value;
+		return 0;
+	}
 
 	if (key_is(key, "FormatIndex")) {
 		int64_t i = 0;
@@ -664,6 +745,29 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 			CFNumberGetValue(value, kCFNumberDoubleType, &zoom);
 		}
 		zoom = zoom < 1 ? 1 : zoom > MAX_ZOOM ? MAX_ZOOM : zoom;
+		/*
+		 * Portrait (portrait=1): going to the pair, the capture stack sets the wide's zoom twice at once from two threads,
+		 * the pair's (1.64: the telephoto's reach) and 1, in either order. With 1 last the preview's pixel transfer node
+		 * passed nothing on (boots 14, 15, 18, 19: black); with 1.64 last it worked (16, 17). A 1 within 100 ms of a
+		 * larger zoom is that race's, and is not taken.
+		 */
+		{
+			static uint64_t last_zoomed;
+			uint64_t now = mach_absolute_time();
+			static mach_timebase_info_data_t tb;
+
+			if (tb.denom == 0) {
+				mach_timebase_info(&tb);
+			}
+			if (portrait && s->port == port_back && zoom == 1 && s->zoom > 1 &&
+			    (double)(now - last_zoomed) * tb.numer / tb.denom < 100e6) {
+				say("stream: zoom 1x right after %.2fx: the pair's race, not taken", s->zoom);
+				return 0;
+			}
+			if (zoom > 1) {
+				last_zoomed = now;
+			}
+		}
 		if (fabs(zoom - s->zoom) >= 0.25 || (zoom == 1) != (s->zoom == 1)) {
 			say("stream: zoom %.2fx", zoom);
 		}
@@ -720,6 +824,11 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 				CFTypeRef h = CFGetTypeID(values[i]) == CFDictionaryGetTypeID() ?
 				    CFDictionaryGetValue(values[i], CFSTR("PixelBufferHandler")) : NULL;
 
+				/* A session's reconfigure first sets every handler to <null> (kCFNull): no handler, not a block
+				 * to call (called, mediaserverd died of SIGBUS). */
+				if (h != NULL && CFGetTypeID(h) == CFNullGetTypeID()) {
+					h = NULL;
+				}
 				if (out->handler != NULL) {
 					CFRelease(out->handler);
 				}
@@ -742,6 +851,20 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 		s->stills_wanted++;
 		pthread_mutex_unlock(&s->lock);
 		say_once("stream: a photograph asked for", key, value);
+		/*
+		 * The pair's: the shutter is the master's (the wide's) alone, the slave being only made ready for it
+		 * (prepareForStillImageCaptureFromFirmware..., boot 29), as the cameras take it together in Apple's
+		 * firmware. Here the telephoto's photograph is asked for with the wide's.
+		 */
+		if (portrait && pair_on && s->port == port_back && all_streams[2] != NULL && stream_of(all_streams[2])->running) {
+			struct stream *tele = stream_of(all_streams[2]);
+
+			portrait_photo_reset();         /* (no depth of the last photograph's for this one) */
+			pthread_mutex_lock(&tele->lock);
+			tele->stills_wanted++;
+			pthread_mutex_unlock(&tele->lock);
+			say("stream: the telephoto's photograph asked for with the wide's");
+		}
 		return 0;
 	}
 	if (key_is(key, "VideoOutputsColorInfo")) {
@@ -916,6 +1039,8 @@ md_put(CFMutableDictionaryRef m, int key, CFTypeRef value)
 	}
 }
 
+static volatile bool pair_on;           /* (below: the wide's reader also reads the telephoto's) */
+
 /* the frame's metadata, as H10ISP's stream gives them (see md_names) */
 static CFDictionaryRef
 frame_metadata(const struct isp *isp, const struct hakios_camera_frame *f, const struct isp_stats *st, CFStringRef port)
@@ -953,7 +1078,67 @@ frame_metadata(const struct isp *isp, const struct hakios_camera_frame *f, const
 	 * and would make up the rest of what was asked for itself; without it, a zoomed preview stood still.
 	 */
 	md_put(m, MD_ZOOM, number_f(isp->zoom));
+	/*
+	 * The pair (portrait=1): the wide is the synchronized streams' master. The capture graph's crossover nodes pass on
+	 * only the master's frames (-[BWCrossoverNode renderSampleBuffer:forInput:] reads this flag); without it nothing
+	 * reached the preview.
+	 */
+	if (pair_on && (port == port_back || port == port_tele)) {
+		CFDictionarySetValue(m, CFSTR("SynchronizedStreamsIsMaster"), port == port_back ? kCFBooleanTrue : kCFBooleanFalse);
+	}
 	return m;
+}
+
+/* Portrait's photograph: the two cameras' views of their photographs (grey), twice the preview's views' size */
+static uint8_t wide_still_view[PORTRAIT_WIDE_H * PORTRAIT_PHOTO_SCALE * PORTRAIT_WIDE_W * PORTRAIT_PHOTO_SCALE];
+static uint8_t tele_still_view[PORTRAIT_TELE_H * PORTRAIT_PHOTO_SCALE * PORTRAIT_TELE_W * PORTRAIT_PHOTO_SCALE];
+static bool have_tele_still;
+static uint64_t tele_still_frame;
+
+static double
+ms_since_camera(uint64_t t)
+{
+	static mach_timebase_info_data_t tb;
+
+	if (tb.denom == 0) {
+		mach_timebase_info(&tb);
+	}
+	return (double)(mach_absolute_time() - t) * tb.numer / tb.denom / 1e6;
+}
+
+/*
+ * A view (ow x oh, grey) of the middle 1/view_zoom of the sensor, from a picture's luma (width x height, the middle
+ * 1/zoom of it): each of its pixels the mean of the picture's under it.
+ */
+static void
+still_view(const uint8_t *y, size_t stride, uint32_t width, uint32_t height, float zoom, float view_zoom, uint8_t *out,
+    int ow, int oh)
+{
+	float step = width * zoom / (view_zoom * ow);
+	int k = (int)(step + 0.5f);
+
+	k = k < 1 ? 1 : k;
+	for (int j = 0; j < oh; j++) {
+		float sv = 0.5f + ((j + 0.5f) / oh - 0.5f) / view_zoom;
+		int py = (int)((0.5f + (sv - 0.5f) * zoom) * height - k / 2.0f);
+
+		py = py < 0 ? 0 : py > (int)height - k ? (int)height - k : py;
+		for (int i = 0; i < ow; i++) {
+			float su = 0.5f + ((i + 0.5f) / ow - 0.5f) / view_zoom;
+			int px = (int)((0.5f + (su - 0.5f) * zoom) * width - k / 2.0f);
+			unsigned sum = 0;
+
+			px = px < 0 ? 0 : px > (int)width - k ? (int)width - k : px;
+			for (int b = 0; b < k; b++) {
+				const uint8_t *row = y + (size_t)(py + b) * stride + px;
+
+				for (int a = 0; a < k; a++) {
+					sum += row[a];
+				}
+			}
+			out[j * ow + i] = (uint8_t)(sum / (unsigned)(k * k));
+		}
+	}
 }
 
 static void
@@ -985,6 +1170,47 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
 	uint64_t began = mach_absolute_time();
 
 	dispatch_apply_f(job.pieces, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), &job, render_piece);
+	/*
+	 * Portrait's photograph: the telephoto's (first: see worker) leaves its view; the wide's then makes the photograph's
+	 * own depth from both (camera_portrait_photo.c), twice as fine as the preview's.
+	 */
+	bool photo_depth = false;
+
+	if (portrait && pair_on && job.still && s->port == port_tele) {
+		still_view(CVPixelBufferGetBaseAddressOfPlane(pb, 0), CVPixelBufferGetBytesPerRowOfPlane(pb, 0), width, height,
+		    isp->zoom, 1, tele_still_view, PORTRAIT_TELE_W * PORTRAIT_PHOTO_SCALE, PORTRAIT_TELE_H * PORTRAIT_PHOTO_SCALE);
+		tele_still_frame = f->sequence;
+		have_tele_still = true;
+	}
+	if (portrait && pair_on && job.still && s->port == port_back && pf != PF_BGRA) {
+		if (have_tele_still) {
+			uint64_t t0 = mach_absolute_time();
+
+			still_view(CVPixelBufferGetBaseAddressOfPlane(pb, 0), CVPixelBufferGetBytesPerRowOfPlane(pb, 0), width, height,
+			    isp->zoom, PORTRAIT_WIDE_ZOOM, wide_still_view, PORTRAIT_WIDE_W * PORTRAIT_PHOTO_SCALE,
+			    PORTRAIT_WIDE_H * PORTRAIT_PHOTO_SCALE);
+			photo_depth = portrait_photo_depth(wide_still_view, tele_still_view);
+			say("%s: the photograph's own depth %s (the telephoto's of frame %llu, this of %llu; %.0f ms)", out->name,
+			    photo_depth ? "made" : "not made (not lined up yet)", (unsigned long long)tele_still_frame,
+			    (unsigned long long)f->sequence, ms_since_camera(t0));
+			have_tele_still = false;
+		} else {
+			say("%s: no telephoto photograph beside it: the preview's depth", out->name);
+		}
+	}
+	/* Portrait (the pair): the wide's pictures blurred by the depth from the two cameras (camera_portrait.c) */
+	if (portrait && pair_on && s->port == port_back && pf != PF_BGRA) {
+		bool (*apply)(uint8_t *, size_t, uint8_t *, size_t, uint32_t, uint32_t, float, float, float, bool) =
+		    photo_depth ? portrait_photo_apply : portrait_apply;
+		bool blurred = apply(CVPixelBufferGetBaseAddressOfPlane(pb, 0), CVPixelBufferGetBytesPerRowOfPlane(pb, 0),
+		    CVPixelBufferGetBaseAddressOfPlane(pb, 1), CVPixelBufferGetBytesPerRowOfPlane(pb, 1), width, height, isp->zoom,
+		    (s->af_window[0] + s->af_window[2]) / 2, (s->af_window[1] + s->af_window[3]) / 2, portrait_show);
+
+		if (blurred && (out->portrait_blurred++ == 0 || job.still)) {
+			say("%s: %ux%u blurred by the %s depth%s", out->name, width, height, photo_depth ? "photograph's own" : "pair's",
+			    job.still ? " (the photograph)" : "");
+		}
+	}
 	if (job.still) {
 		static mach_timebase_info_data_t tb;
 
@@ -1285,10 +1511,13 @@ af_frame(int device, struct af *af, const struct hakios_camera_frame *f, const u
 static void
 load_tuning(struct isp *isp, uint32_t sensor)
 {
-	static const char *const names[] = { "ov02b10", "s5khm2sd", "ov16a1q", "s5k4h7" };
+	static const char *const redwood[] = { "ov02b10", "s5khm2sd", "ov16a1q", "s5k4h7" };
+	/* the Xiaomi 12 Pro's by the same numbers (no macro there: 0 is its telephoto), known by the wide one's tuning */
+	static const char *const zeus[] = { "s5kjn1", "imx707", "ov32b40", "s5kjn1" };
+	const char *const *names = access("/redwood/fw/camera-imx707.isp", F_OK) == 0 ? zeus : redwood;
 	char path[96];
 
-	if (sensor >= sizeof(names) / sizeof(names[0])) {
+	if (sensor >= 4) {
 		return;
 	}
 	snprintf(path, sizeof(path), "/redwood/fw/camera-%s.isp", names[sensor]);
@@ -1302,31 +1531,164 @@ load_tuning(struct isp *isp, uint32_t sensor)
 	}
 }
 
+/* What a stream's frames are made with, kept from one frame to the next */
+struct pipe {
+	struct isp isp;
+	struct isp_stats st;
+	uint32_t tuned_for;
+	float lux, cct;
+	struct af af;
+};
+
+static volatile bool pair_on;           /* the wide's reader also reads the telephoto's frames (portrait=1: the kernel's
+                                         * HAKIOS_CAMERA_PAIR), for the telephoto's stream */
+static CMBaseObjectRef all_streams[3];  /* the device's: back, front and (portrait=1) the telephoto */
+
+/* One frame of a stream: measured, the exposure and focus kept, and given to the graph's outputs. `second`: the pair's
+ * telephoto (its exposure commands say so; it has no lens motor to focus). */
+static void
+frame_through(struct stream *s, struct pipe *p, int device, const struct hakios_camera_frame *f, const uint8_t *raw,
+    bool second)
+{
+	struct hakios_camera_command c;
+
+	isp_measure(&p->isp, f, raw, &p->st);
+	isp_awb(&p->isp, &p->st);
+	if (f->sensor != p->tuned_for) {
+		p->tuned_for = f->sensor;
+		load_tuning(&p->isp, f->sensor);
+	}
+	/*
+	 * Slowly, a second or so: the colour temperature is guessed from the white balance, the tuning it
+	 * picks changes what the white balance sees, and the colour matrix makes every swing of it plain.
+	 */
+	p->lux = p->lux < 0 ? lux_index(&p->isp, f) : p->lux * 0.9f + lux_index(&p->isp, f) * 0.1f;
+	p->cct = p->cct < 0 ? colour_temperature(&p->isp) : p->cct * 0.97f + colour_temperature(&p->isp) * 0.03f;
+	isp_tune(&p->isp, p->lux, p->cct);
+	p->isp.zoom = s->zoom;
+	p->isp.turned = s->camera->turned;
+	if (isp_ae(&p->isp, f, &p->st, &c)) {
+		c.d = second;                   /* (HAKIOS_CAMERA_PAIR: 1 says the telephoto) */
+		(void)write(device, &c, sizeof(c));
+	}
+	if (s->af_now) {
+		s->af_now = false;
+		/* (whatever it was doing: at once, from the next frame) */
+		p->af.state = AF_STEADY;
+		p->af.now = true;
+		p->af.sweep = true;
+	}
+	if (!second) {
+		af_frame(device, &p->af, f, raw, s->af_window, s->af_locked);
+	}
+	s->frames++;
+	/*
+	 * Portrait (the pair): each camera's small grey view for the depth (camera_portrait.c) -- the wide's of the middle
+	 * 1/PORTRAIT_WIDE_ZOOM of its sensor, the telephoto's of all of its own, whatever zoom the pictures are at.
+	 */
+	if (portrait && pair_on && (second || s->port == port_back)) {
+		static uint8_t view_y[PORTRAIT_WIDE_H * PORTRAIT_WIDE_W], view_uv[PORTRAIT_WIDE_H / 2 * PORTRAIT_WIDE_W];
+		static struct isp view_isp;
+		uint32_t w = second ? PORTRAIT_TELE_W : PORTRAIT_WIDE_W, h = second ? PORTRAIT_TELE_H : PORTRAIT_WIDE_H;
+
+		view_isp = p->isp;
+		view_isp.zoom = second ? 1 : PORTRAIT_WIDE_ZOOM;
+		isp_render_nv12(&view_isp, f, raw, view_y, w, view_uv, w, w, h, 0, h, false);
+		portrait_feed(second, view_y, w);
+	}
+
+	CFDictionaryRef metadata = frame_metadata(&p->isp, f, &p->st, s->port);
+
+	/*
+	 * Only once the graph has started the stream. Its PixelBufferHandler blocks hand the buffer
+	 * to multiStreamCameraSourceNode_sendBufferToBufferServicingThread, which reaches into the
+	 * source node's innards: called before the graph is started (or after it has been torn down)
+	 * it walks a pointer that is not there yet and mediaserverd dies of SIGSEGV. The frames
+	 * before that are read and thrown away, which is also what settles the exposure.
+	 */
+	if (metadata != NULL) {
+		pthread_mutex_lock(&s->metadata_lock);
+		if (s->metadata != NULL) {
+			CFRelease(s->metadata);
+		}
+		s->metadata = CFRetain(metadata);
+		pthread_mutex_unlock(&s->metadata_lock);
+	}
+	pthread_mutex_lock(&s->lock);
+	for (int i = 0; s->graph_running && i < OUTPUTS; i++) {
+		struct output *out = &s->out[i];
+
+		/*
+		 * The scalers' outputs are the moving picture and are given every frame. The still image
+		 * output is the whole sensor (4032x3024) and is the photograph: a frame goes to it only
+		 * when the graph has asked for one, which is not something to make thirty times a second.
+		 */
+		bool still = strcmp(out->name, "StillImage") == 0;
+
+		if (out->handler == NULL || out->config == NULL || !(out->enabled || i == 0)) {
+			continue;
+		}
+		if (still && s->stills_wanted == 0) {
+			continue;
+		}
+		deliver(s, out, &p->isp, f, raw, metadata);
+		if (still) {
+			s->stills_wanted--;
+			say("the photograph is given (%llu so far)", (unsigned long long)++s->stills_given);
+		}
+	}
+	pthread_mutex_unlock(&s->lock);
+	if (metadata != NULL) {
+		CFRelease(metadata);
+	}
+	if (s->frames == 1 || s->frames % 300 == 0) {
+		say("frame %llu: exposure %.1f ms, gain %.1fx, digital %.2fx, green %.0f above black; white balance R %.2f "
+		    "B %.2f, lux index %.0f, about %.0f K", f->sequence, f->exposure_lines * (double)f->line_ns / 1e6,
+		    (double)f->gain / f->gain_unity, p->isp.digital, p->st.mean[1], p->isp.wb[0], p->isp.wb[2], p->lux, p->cct);
+	}
+}
+
 static void *
 worker(void *context)
 {
 	CMBaseObjectRef o = context;
 	struct stream *s = stream_of(o);
 	struct hakios_camera_frame head;
-	struct isp isp;
-	struct isp_stats st;
+	struct pipe *pipes = calloc(2, sizeof(*pipes));
 	uint8_t *buffer = NULL;
 	size_t bytes = 0;
-	uint32_t tuned_for = ~0u;
-	bool switched = false;
-	float lux = -1, cct = -1;
-	struct af af = { 0 };
+	bool switched = false, pair = false;
 	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), failures = 0;
 
 	pthread_setname_np("hakios-camera");
-	if (device < 0) {
+	if (device < 0 || pipes == NULL) {
 		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
+		free(pipes);
 		return NULL;
 	}
-	isp_init(&isp);
+	for (int i = 0; i < 2; i++) {
+		isp_init(&pipes[i].isp);
+		pipes[i].tuned_for = ~0u;
+		pipes[i].lux = pipes[i].cct = -1;
+	}
 	while (s->running && failures < 5) {
 		ssize_t n;
+		bool want_pair = pair_on && o == all_streams[0] && all_streams[2] != NULL;
 
+		if (want_pair != pair) {
+			/* the telephoto's stream has begun or ended beside the wide's: both cameras at once, or the wide alone */
+			struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR,
+			    .a = want_pair ? HAKIOS_CAMERA_PAIR : s->camera->sensor, .b = ~0u };
+
+			pair = want_pair;
+			portrait_reset();               /* (the views and depth were of the pair before) */
+			say(pair ? "the wide and the telephoto together (the kernel's pair)" : "the wide alone again");
+			(void)write(device, &c, sizeof(c));
+			free(buffer);
+			buffer = NULL;
+			switched = true;
+			continue;
+		}
 		if (buffer == NULL) {
 			n = read(device, &head, sizeof(head));
 			if (n != (ssize_t)sizeof(head)) {
@@ -1337,7 +1699,16 @@ worker(void *context)
 				}
 				continue;
 			}
-			if (head.sensor != s->camera->sensor) {
+			if (pair) {
+				if (!head.more) {
+					continue;               /* (a frame from before the pair began) */
+				}
+				bytes = 2 * sizeof(head) + head.frame_bytes + 64ul * 1024 * 1024;     /* (the telephoto's is larger) */
+				buffer = malloc(bytes);
+				say("paired frames from the kernel: the wide's %ux%u", head.width, head.height);
+				continue;
+			}
+			if (head.sensor != s->camera->sensor || head.more) {
 				/* another camera's frames (the kernel's last sensor): changed, and the next ones are this one's */
 				if (!switched) {
 					struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = s->camera->sensor, .b = ~0u };
@@ -1354,6 +1725,42 @@ worker(void *context)
 			continue;
 		}
 		n = read(device, buffer, bytes);
+		if (pair) {
+			const struct hakios_camera_frame *w = (const void *)buffer, *t;
+			struct stream *tele = stream_of(all_streams[2]);
+
+			if (n < 0 && errno == EIO) {
+				say("the kernel's camera has had a fault: no more frames");
+				break;
+			}
+			if (n < (ssize_t)(2 * sizeof(head)) || !w->more || (size_t)n < w->header_bytes + w->frame_bytes + sizeof(head)) {
+				failures += n < 0 && errno == EAGAIN ? 0 : 1;
+				continue;
+			}
+			t = (const void *)(buffer + w->header_bytes + w->frame_bytes);
+			if ((size_t)n != w->header_bytes + w->frame_bytes + t->header_bytes + t->frame_bytes) {
+				failures++;
+				continue;
+			}
+			failures = 0;
+			/*
+			 * Both owing a photograph (Portrait's shutter): the telephoto's first, so that its photograph's view is
+			 * there for the wide's photograph's depth (portrait_photo_depth, in deliver).
+			 */
+			bool tele_first = portrait && tele->running && tele->stills_wanted > 0 && s->stills_wanted > 0;
+
+			if (tele_first) {
+				frame_through(tele, &pipes[1], device, t, (const uint8_t *)t + t->header_bytes, true);
+			}
+			frame_through(s, &pipes[0], device, w, buffer + w->header_bytes, false);
+			if (tele->running && !tele_first) {
+				if (tele->frames == 0) {
+					say("the telephoto's frames beside the wide's: %ux%u", t->width, t->height);
+				}
+				frame_through(tele, &pipes[1], device, t, (const uint8_t *)t + t->header_bytes, true);
+			}
+			continue;
+		}
 		if (n != (ssize_t)bytes) {
 			if (n < 0 && errno == EIO) {
 				say("the kernel's camera has had a fault: no more frames");
@@ -1363,90 +1770,11 @@ worker(void *context)
 			continue;
 		}
 		failures = 0;
-
-		const struct hakios_camera_frame *f = (const void *)buffer;
-		const uint8_t *raw = buffer + f->header_bytes;
-		struct hakios_camera_command c;
-
-		isp_measure(&isp, f, raw, &st);
-		isp_awb(&isp, &st);
-		if (f->sensor != tuned_for) {
-			tuned_for = f->sensor;
-			load_tuning(&isp, f->sensor);
-		}
-		/*
-		 * Slowly, a second or so: the colour temperature is guessed from the white balance, the tuning it
-		 * picks changes what the white balance sees, and the colour matrix makes every swing of it plain.
-		 */
-		lux = lux < 0 ? lux_index(&isp, f) : lux * 0.9f + lux_index(&isp, f) * 0.1f;
-		cct = cct < 0 ? colour_temperature(&isp) : cct * 0.97f + colour_temperature(&isp) * 0.03f;
-		isp_tune(&isp, lux, cct);
-		isp.zoom = s->zoom;
-		isp.turned = s->camera->turned;
-		if (isp_ae(&isp, f, &st, &c)) {
-			(void)write(device, &c, sizeof(c));
-		}
-		if (s->af_now) {
-			s->af_now = false;
-			/* (whatever it was doing: at once, from the next frame) */
-			af.state = AF_STEADY;
-			af.now = true;
-			af.sweep = true;
-		}
-		af_frame(device, &af, f, raw, s->af_window, s->af_locked);
-		s->frames++;
-
-		CFDictionaryRef metadata = frame_metadata(&isp, f, &st, s->port);
-
-		/*
-		 * Only once the graph has started the stream. Its PixelBufferHandler blocks hand the buffer
-		 * to multiStreamCameraSourceNode_sendBufferToBufferServicingThread, which reaches into the
-		 * source node's innards: called before the graph is started (or after it has been torn down)
-		 * it walks a pointer that is not there yet and mediaserverd dies of SIGSEGV. The frames
-		 * before that are read and thrown away, which is also what settles the exposure.
-		 */
-		if (metadata != NULL) {
-			pthread_mutex_lock(&s->metadata_lock);
-			if (s->metadata != NULL) {
-				CFRelease(s->metadata);
-			}
-			s->metadata = CFRetain(metadata);
-			pthread_mutex_unlock(&s->metadata_lock);
-		}
-		pthread_mutex_lock(&s->lock);
-		for (int i = 0; s->graph_running && i < OUTPUTS; i++) {
-			struct output *out = &s->out[i];
-
-			/*
-			 * The scalers' outputs are the moving picture and are given every frame. The still image
-			 * output is the whole sensor (4032x3024) and is the photograph: a frame goes to it only
-			 * when the graph has asked for one, which is not something to make thirty times a second.
-			 */
-			bool still = strcmp(out->name, "StillImage") == 0;
-
-			if (out->handler == NULL || out->config == NULL || !(out->enabled || i == 0)) {
-				continue;
-			}
-			if (still && s->stills_wanted == 0) {
-				continue;
-			}
-			deliver(s, out, &isp, f, raw, metadata);
-			if (still) {
-				s->stills_wanted--;
-				say("the photograph is given (%llu so far)", (unsigned long long)++s->stills_given);
-			}
-		}
-		pthread_mutex_unlock(&s->lock);
-		if (metadata != NULL) {
-			CFRelease(metadata);
-		}
-		if (s->frames == 1 || s->frames % 300 == 0) {
-			say("frame %llu: exposure %.1f ms, gain %.1fx, digital %.2fx, green %.0f above black; white balance R %.2f "
-			    "B %.2f, lux index %.0f, about %.0f K", f->sequence, f->exposure_lines * (double)f->line_ns / 1e6,
-			    (double)f->gain / f->gain_unity, isp.digital, st.mean[1], isp.wb[0], isp.wb[2], lux, cct);
-		}
+		frame_through(s, &pipes[0], device, (const void *)buffer, buffer + ((const struct hakios_camera_frame *)buffer)->header_bytes,
+		    false);
 	}
 	free(buffer);
+	free(pipes);
 	close(device);
 	say("the frames stopped (%llu)", s->frames);
 	return NULL;
@@ -1458,7 +1786,6 @@ worker(void *context)
  * takes a moment to settle and the exposure longer), the second only when the graph starts the
  * stream itself (`graph` true, the FigCaptureStream start method).
  */
-static CMBaseObjectRef all_streams[2];  /* the device's, back and front */
 static OSStatus stream_stop(CMBaseObjectRef o);
 
 static OSStatus
@@ -1475,12 +1802,46 @@ stream_begin(CMBaseObjectRef o, bool graph)
 	if (s->running) {
 		return 0;
 	}
+	/*
+	 * Portrait's pair (portrait=1): the wide and the telephoto run together. The wide's reader takes the kernel's paired
+	 * frames and gives the telephoto's to the telephoto's stream, which has no reader of its own.
+	 */
+	bool pairable = portrait && all_streams[2] != NULL && (o == all_streams[0] || o == all_streams[2]);
+
+	if (pairable && o == all_streams[2]) {
+		struct stream *wide = stream_of(all_streams[0]);
+
+		if (stream_of(all_streams[1])->running) {
+			(void)stream_stop(all_streams[1]);
+		}
+		s->frames = 0;
+		s->running = true;
+		pair_on = true;
+		say("stream: the telephoto's frames begin beside the wide's (format %d)", s->format_index);
+		if (!wide->running) {
+			wide->running = true;
+			wide->frames = 0;
+			if (pthread_create(&wide->worker, NULL, worker, all_streams[0]) != 0) {
+				wide->running = s->running = false;
+				pair_on = false;
+				return ERR_UNSUPPORTED;
+			}
+			wide->worker_started = true;
+		}
+		return 0;
+	}
 	/* one camera at a time: the kernel gives one sensor's frames (the other stream's worker stopped first) */
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
+		if (pairable && i != 1) {
+			continue;               /* (the pair's other stream stays) */
+		}
 		if (all_streams[i] != NULL && all_streams[i] != o && stream_of(all_streams[i])->running) {
 			say("stream: the %s's frames stop for the %s's", stream_of(all_streams[i])->camera->name, s->camera->name);
 			(void)stream_stop(all_streams[i]);
 		}
+	}
+	if (pairable && stream_of(all_streams[2])->running) {
+		pair_on = true;
 	}
 	s->running = true;
 	s->frames = 0;
@@ -1496,6 +1857,7 @@ stream_begin(CMBaseObjectRef o, bool graph)
 static OSStatus
 stream_start(CMBaseObjectRef o)
 {
+	trace(stream_of(o)->camera->name, "START", CFSTR("the graph starts the stream"), NULL);
 	return stream_begin(o, true);
 }
 
@@ -1504,6 +1866,7 @@ stream_stop(CMBaseObjectRef o)
 {
 	struct stream *s = stream_of(o);
 
+	trace(s->camera->name, "STOP", CFSTR("the stream is stopped"), NULL);
 	say("stream: stop (%llu frames, %llu pictures given)", (unsigned long long)s->frames,
 	    (unsigned long long)s->out[0].delivered);
 	pthread_mutex_lock(&s->lock);
@@ -1513,6 +1876,9 @@ stream_stop(CMBaseObjectRef o)
 	}
 	pthread_mutex_unlock(&s->lock);
 	s->running = false;
+	if (o == all_streams[2]) {
+		pair_on = false;                /* (the wide's reader goes back to the wide alone) */
+	}
 	if (s->worker_started) {
 		pthread_join(s->worker, NULL);
 		s->worker_started = false;
@@ -1618,8 +1984,7 @@ stream_finalize(CMBaseObjectRef o)
 static CFStringRef
 stream_description(CMBaseObjectRef o)
 {
-	(void)o;
-	return CFRetain(CFSTR("<HakiosCaptureStream: the wide camera>"));
+	return CFStringCreateWithFormat(NULL, NULL, CFSTR("<HakiosCaptureStream: %s>"), stream_of(o)->camera->name);
 }
 
 static const struct base_class stream_base = {
@@ -1670,7 +2035,149 @@ stream_create(CFAllocatorRef allocator, const struct camera *camera, CFStringRef
 struct device {
 	CFArrayRef      streams;
 	CFDictionaryRef supported;
+	CFArrayRef      groups;         /* the pair's FigCaptureSynchronizedStreamsGroup (portrait=1), or none */
 };
+
+/*
+ * The wide and the telephoto as a pair ("Back Dual Camera" in the plist: synchronizedStreamUniqueIDs :0 and :2): a
+ * FigCaptureSynchronizedStreamsGroup, which in H10ISP.mediacapture is an object of properties only (its class has a
+ * version, 1, and no functions; its base class finalize, copy property, set property). What is asked of it and not
+ * answered is said once, as for the device and the streams.
+ */
+struct group {
+	CFArrayRef      streams;        /* the wide, the telephoto */
+	CFDictionaryRef supported;
+	CFMutableDictionaryRef set;     /* what was set, given back when asked */
+};
+
+static const struct prop group_props[] = {
+	{ "SupportedStreams", "Collection", "ReadOnly" }, { "ActiveStreams", "Collection", "ReadWrite" },
+	{ "MasterConfiguration", "Collection", "ReadWrite" }, { "MasterConfigurationSupportedKeys", "Collection", "ReadOnly" },
+	{ "SynchronizationMaster", "Stream", "ReadOnly" }, { "BaseZoomFactorsByPortType", "Collection", "ReadOnly" },
+	{ "MinimumMasterToSlaveFrameRateRatio", "Number", "ReadOnly" },
+	{ "MaximumNumberOfSlaveStreamsWithoutFrameSkipping", "Number", "ReadOnly" },
+	{ "MaximumNumberOfSlaveStreamsWithFrameProcessingEnabled", "Number", "ReadOnly" },
+	{ "MaximumNumberOfEnabledSlaveTimeMachines", "Number", "ReadOnly" }, { "Extrinsics", "Collection", "ReadOnly" },
+};
+
+/*
+ * The pair's extrinsics: from each port, to each port, a 3x4 matrix of floats (four columns of three: the
+ * rotation's, then the translation, in millimetres). The X5 Pro's wide and its "telephoto" (the 2 MP depth sensor
+ * beside it) sit side by side: about 10 mm apart, no rotation measured.
+ */
+static CFDataRef
+extrinsic(float tx)
+{
+	const float m[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, tx, 0, 0 };
+
+	return CFDataCreate(NULL, (const UInt8 *)m, sizeof(m));
+}
+
+static CFDictionaryRef
+group_extrinsics(void)
+{
+	CFMutableDictionaryRef d = (CFMutableDictionaryRef)new_dict();
+	CFStringRef ports[2] = { port_back, port_tele };
+	const float baseline = 10.0f;
+
+	for (int i = 0; i < 2; i++) {
+		CFMutableDictionaryRef to = (CFMutableDictionaryRef)new_dict();
+
+		for (int j = 0; j < 2; j++) {
+			CFDataRef m = extrinsic(i == j ? 0 : i == 0 ? -baseline : baseline);
+
+			CFDictionarySetValue(to, ports[j], m);
+			CFRelease(m);
+		}
+		CFDictionarySetValue(d, ports[i], to);
+		CFRelease(to);
+	}
+	return d;
+}
+
+static OSStatus
+group_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocator, void *out)
+{
+	struct group *g = derived_storage(o);
+	CFTypeRef value = NULL;
+
+	trace("group", "asked", key, NULL);
+	(void)allocator;
+	if (key_is(key, "SupportedStreams")) {
+		value = CFRetain(g->streams);
+	} else if (key_is(key, "SupportedPropertiesDictionary")) {
+		value = CFRetain(g->supported);
+	} else if (key_is(key, "SynchronizationMaster")) {
+		value = CFRetain(CFArrayGetValueAtIndex(g->streams, 0));
+	} else if (key_is(key, "MasterConfigurationSupportedKeys")) {
+		value = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+	} else if (key_is(key, "Extrinsics")) {
+		value = group_extrinsics();
+	} else if (key_is(key, "BaseZoomFactorsByPortType")) {
+		CFMutableDictionaryRef zoom = (CFMutableDictionaryRef)new_dict();
+
+		CFDictionarySetValue(zoom, port_back, number_f(1));
+		CFDictionarySetValue(zoom, port_tele, number_f(2));
+		value = zoom;
+	} else if (key_is(key, "MinimumMasterToSlaveFrameRateRatio") || key_is(key, "MaximumNumberOfSlaveStreamsWithoutFrameSkipping") ||
+	    key_is(key, "MaximumNumberOfSlaveStreamsWithFrameProcessingEnabled") ||
+	    key_is(key, "MaximumNumberOfEnabledSlaveTimeMachines")) {
+		value = number_i(1);
+	} else if (g->set != NULL && CFDictionaryContainsKey(g->set, key)) {
+		value = CFRetain(CFDictionaryGetValue(g->set, key));
+	} else if (key_is(key, "ActiveStreams")) {
+		value = CFRetain(g->streams);
+	} else {
+		say_once("group: no answer for", key, NULL);
+		return ERR_NOT_AVAILABLE;
+	}
+	say_once("group: asked for", key, value);
+	*(CFTypeRef *)out = value;
+	return 0;
+}
+
+static OSStatus
+group_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
+{
+	struct group *g = derived_storage(o);
+
+	trace("group", "set", key, value);
+	say_once("group: set", key, value);
+	if (portrait && key_is(key, "ActiveStreams") && value != NULL) {
+		static unsigned said;
+
+		if (said++ < 2) {
+			say_value("group: ActiveStreams set to", key, value);
+		}
+	}
+	if (g->set != NULL && key != NULL && value != NULL) {
+		CFDictionarySetValue(g->set, key, value);
+	}
+	return 0;
+}
+
+static void
+group_finalize(CMBaseObjectRef o)
+{
+	struct group *g = derived_storage(o);
+
+	if (g->streams != NULL) {
+		CFRelease(g->streams);
+	}
+	if (g->supported != NULL) {
+		CFRelease(g->supported);
+	}
+	if (g->set != NULL) {
+		CFRelease(g->set);
+	}
+}
+
+static const struct base_class group_base = {
+	.version = 1, .storage_size = sizeof(struct group), .finalize = group_finalize, .copy_property = group_copy_property,
+	.set_property = group_set_property,
+};
+static const uint64_t group_derived[2] = { 1, 0 };      /* (the class: its version, and no functions) */
+static const struct vtable group_vtable = { NULL, &group_base, group_derived };
 
 static OSStatus
 device_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocator, void *out)
@@ -1678,6 +2185,7 @@ device_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	struct device *d = derived_storage(o);
 	CFTypeRef value = NULL;
 
+	trace("device", "asked", key, NULL);
 	(void)allocator;
 	if (key_is(key, "StreamArray")) {
 		value = CFRetain(d->streams);
@@ -1686,7 +2194,7 @@ device_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	} else if (key_is(key, "SupportedPropertiesDictionary")) {
 		value = CFRetain(d->supported);
 	} else if (key_is(key, "SupportedSynchronizedStreamsGroups")) {
-		value = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+		value = d->groups != NULL ? CFRetain(d->groups) : CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
 	} else {
 		say_once("device: no answer for", key, NULL);
 		return ERR_NOT_AVAILABLE;
@@ -1699,16 +2207,49 @@ static OSStatus
 device_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 {
 	(void)o;
+	trace("device", "set", key, value);
 	say_once("device: set (not used)", key, value);
 	return 0;
 }
 
 static unsigned requests, relinquishes;
 
+/*
+ * portrait=1 bring-up: who gives the streams back (the capture stack decides to and says nothing in the log). The
+ * return addresses, before the shared cache's slide, to be read in the extracted cache; the first few times only.
+ */
+extern const void *_dyld_get_shared_cache_range(size_t *length);
+void hakios_media_symbol(uintptr_t unslid, char *out, size_t size);
+
+static void
+say_callers(const char *why)
+{
+	static unsigned said;
+	void *frames[24];
+	char line[400];
+	size_t length = 0, used;
+	uintptr_t slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - 0x180000000UL;
+	int n;
+
+	if (!portrait || said++ >= 4) {
+		return;
+	}
+	n = backtrace(frames, 24);
+	say("callers of %s:", why);
+	for (int i = 1; i < n && i < 16; i++) {
+		uintptr_t a = (uintptr_t)frames[i];
+
+		hakios_media_symbol(a >= slide ? a - slide : a, line, sizeof(line));
+		say("  %#lx %s", (unsigned long)(a >= slide ? a - slide : a), line);
+	}
+	(void)used;
+}
+
 static OSStatus
 device_request_streams(CMBaseObjectRef o, CFArrayRef streams, CFDictionaryRef options)
 {
 	(void)o;
+	trace("device", "RequestStreams", CFSTR("streams"), streams);
 	if (requests++ < 3) {
 		say("device: streams asked for (%ld)%s", streams ? (long)CFArrayGetCount(streams) : 0L, options ? ", with options" : "");
 		if (options != NULL) {
@@ -1741,6 +2282,7 @@ device_relinquish_streams(CMBaseObjectRef o, CFArrayRef streams, CFDictionaryRef
 {
 	(void)o;
 	(void)options;
+	say_callers("RelinquishStreams");
 	if (relinquishes++ < 3) {
 		say("device: streams given back (%ld)", streams ? (long)CFArrayGetCount(streams) : 0L);
 	} else if (relinquishes % 1000 == 0) {
@@ -1790,7 +2332,8 @@ OSStatus
 hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out)
 {
 	static bool found, usable;
-	CMBaseObjectRef device = NULL, stream[2];
+	CMBaseObjectRef device = NULL, stream[3] = { NULL, NULL, NULL }, group = NULL;
+	CFIndex count = 2;
 	struct device *d;
 
 	(void)options;
@@ -1816,9 +2359,30 @@ hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, C
 	}
 	d = derived_storage(device);
 	memset(d, 0, sizeof(*d));
-	d->streams = CFArrayCreate(NULL, (const void **)stream, 2, &kCFTypeArrayCallBacks);
+	if (portrait && (stream[2] = stream_create(allocator, &cameras[2], port_tele)) != NULL) {
+		count = 3;
+		if (derived_create(allocator, &group_vtable, group_class_id(), &group) == 0 && group != NULL) {
+			struct group *g = derived_storage(group);
+			const void *pair[2] = { stream[0], stream[2] };
+
+			memset(g, 0, sizeof(*g));
+			g->streams = CFArrayCreate(NULL, pair, 2, &kCFTypeArrayCallBacks);
+			g->supported = supported(group_props, sizeof(group_props) / sizeof(group_props[0]));
+			g->set = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+			d->groups = CFArrayCreate(NULL, (const void **)&group, 1, &kCFTypeArrayCallBacks);
+			CFRelease(group);
+			say("portrait=1: a third stream, the telephoto (sensor 0), and the wide and telephoto's synchronized group");
+		} else {
+			say("portrait=1: the pair's group cannot be made");
+		}
+	}
+	d->streams = CFArrayCreate(NULL, (const void **)stream, count, &kCFTypeArrayCallBacks);
 	all_streams[0] = stream[0];             /* (kept by the device's array) */
 	all_streams[1] = stream[1];
+	all_streams[2] = stream[2];
+	if (stream[2] != NULL) {
+		CFRelease(stream[2]);
+	}
 	d->supported = supported(device_props, sizeof(device_props) / sizeof(device_props[0]));
 	CFRelease(stream[0]);
 	CFRelease(stream[1]);

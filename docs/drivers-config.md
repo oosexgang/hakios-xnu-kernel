@@ -46,7 +46,7 @@ driver SOUND
 Every `.c` and `.cpp` of `drivers/map` is built by exactly one `standard` line or `driver`, of the conf of its own subsystem;
 `tools/drivers-check.py` (CI) checks that, and a file that none builds would be in the tree and never compiled.
 
-The 25 drivers there are now, by subsystem:
+The 26 drivers there are now, by subsystem:
 
 | Subsystem | Drivers (`CONFIG_HAKIOS_*`) | Always built |
 |---|---|---|
@@ -58,7 +58,7 @@ The 25 drivers there are now, by subsystem:
 | haptic | `HAPTIC` | |
 | audio | `ADSP`, `SPEAKER`, `SOUND` (requires ADSP, SPEAKER), `MIC` (requires ADSP, SOUND), `VIRTIO_SOUND` | `hakios.audio.c` |
 | power | `BATTERY`, `CPUFREQ`, `THERMAL`, `PMIC`, `BATTGUARD` | |
-| wifi | `WIFI` (requires QMI) | |
+| wifi | `WIFI_LX` (requires QMI), `WIFI` (requires QMI, WIFI_LX) | |
 | bluetooth | `BT` | |
 | modem | `QMI`, `MODEM` (requires QMI, UFS) | |
 | net | `VIRTIO_NET` | `hakios.net.c` |

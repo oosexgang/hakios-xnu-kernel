@@ -257,6 +257,110 @@ TEST(a_dispatch_of_fill_id_holds_together_and_the_fake_does_not_run_it) {
     CHECK(allWords(*out, 0xcccccccc));
 }
 
+// The A730's (a6xx.hpp, "the A7xx's compute registers"): the moved registers at their A7xx places, none of the A6xx-only
+// ones, CP_EVENT_WRITE7's 4-word events with WRITE_ENABLED, and the rest (the program, the IBO) where the A6xx has them
+TEST(an_a7xx_dispatch_writes_the_a730s_registers) {
+    using namespace a6xx;
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    compute::Options o;
+    o.a7xx = true;
+    const uint32_t loc[3] = {64, 1, 1};
+    Encoded e(r, kernels::fill_id, kGroups16, loc, Bindings{{Binding{out.get(), 0}}, {}, {}, {}}, o);
+    CHECK(e.ok);
+    const auto& w = e.stream.words();
+    for (uint32_t gone : {REG_A6XX_HLSQ_CS_CNTL, REG_A6XX_HLSQ_CS_CNTL_0, REG_A6XX_HLSQ_CS_CTRL_REG1, REG_A6XX_HLSQ_CS_NDRANGE_0,
+                          REG_A6XX_HLSQ_CS_KERNEL_GROUP_X, REG_A6XX_HLSQ_INVALIDATE_CMD}) {
+        CHECK_EQ(e.findReg(gone), size_t(-1));
+    }
+    size_t at = e.findReg(REG_A7XX_HLSQ_CS_NDRANGE_0);
+    CHECK(at != size_t(-1));
+    CHECK_EQ(w[at], ndrange0(3, 64, 1, 1));
+    CHECK_EQ(w[at + 1], 64u * 16);   // NDRANGE_1, the global size in X
+    at = e.findReg(REG_A7XX_HLSQ_CS_LAST_LOCAL_SIZE);
+    CHECK(at != size_t(-1));
+    CHECK_EQ(w[at], a7xxLastLocalSize(64, 1, 1));
+    at = e.findReg(REG_A7XX_HLSQ_CS_CNTL);
+    CHECK(at != size_t(-1));
+    CHECK_EQ(w[at], a7xxHlsqCsCntl(kernels::fill_id.constlen));
+    CHECK(e.findReg(REG_A7XX_HLSQ_CS_CNTL_1) != size_t(-1));
+    CHECK(e.findReg(REG_A7XX_SP_CS_CNTL_1) != size_t(-1));
+    CHECK(e.findReg(REG_A7XX_SP_CS_UNKNOWN_A9BE) != size_t(-1));
+    CHECK(e.findReg(REG_A7XX_HLSQ_INVALIDATE_CMD) != size_t(-1));
+    {   // the bindless bits too: on the A7xx they are what drops the cached buffer descriptors
+        size_t inv = e.findReg(REG_A7XX_HLSQ_INVALIDATE_CMD);
+        CHECK_EQ(w[inv] & (A7XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS | A7XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS),
+                 A7XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS | A7XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS);
+        CHECK(w[inv] & A6XX_HLSQ_INVALIDATE_CMD_CS_IBO);
+    }
+    // UCHE invalidated before the first state load (the A7xx's CACHE_CLEAN tail leaves the last table's lines valid)
+    {
+        size_t ev = e.find(CP_EVENT_WRITE), load = e.find(CP_LOAD_STATE6_FRAG);
+        CHECK(ev != size_t(-1) && load != size_t(-1) && ev < load);
+        CHECK_EQ(w[ev + 1] & 0xffu, uint32_t(CACHE_INVALIDATE7));
+    }
+    CHECK(e.findReg(REG_A6XX_SP_CS_CNTL_0) != size_t(-1));
+    CHECK(e.findReg(REG_A6XX_SP_CS_IBO) != size_t(-1));
+    at = e.findReg(REG_A7XX_SP_CS_VGPR_CONFIG);
+    CHECK(at != size_t(-1));
+    CHECK_EQ(w[at], 0u);
+    for (const RegValue& rv : kA730StaticRegs) {   // the A730's static registers, each with its value
+        at = e.findReg(rv.reg);
+        CHECK(at != size_t(-1));
+        if (at != size_t(-1)) CHECK_EQ(w[at], rv.value);
+    }
+    // every 4-word event is CP_EVENT_WRITE7 with WRITE_ENABLED, and no CACHE_FLUSH_TS (the A6xx's) is asked for
+    size_t events4 = 0;
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kCommand && h.opcode == CP_EVENT_WRITE) {
+            CHECK((w[i + 1] & 0xffu) != CACHE_FLUSH_TS);
+            if (h.count == 4) {
+                events4++;
+                CHECK((w[i + 1] & CP_EVENT_WRITE7_0_WRITE_ENABLED) != 0);
+            }
+        }
+        i += 1 + h.count;
+    }
+    CHECK_EQ(events4, size_t(2));
+}
+
+
+// A kernel compiled for bindless buffers (Kernel::bindlessIbo, what the A7xx needs: it keeps the first SP_CS_IBO table it
+// is given): set 0's base at the IBO table with 64-byte descriptors, the IBOs preloaded from it by an SS6_BINDLESS
+// load of set 0, SP_CS_CONFIG saying BINDLESS_IBO, and no SP_CS_IBO at all
+TEST(a_bindless_kernel_points_bindless_set_0_at_the_ibo_table) {
+    using namespace a6xx;
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    compute::Options o;
+    o.a7xx = true;
+    const uint32_t loc[3] = {64, 1, 1};
+    Kernel k = kernels::fill_id;
+    k.bindlessIbo = 1;
+    Encoded e(r, k, kGroups16, loc, Bindings{{Binding{out.get(), 0}}, {}, {}, {}}, o);
+    CHECK(e.ok);
+    const auto& w = e.stream.words();
+    CHECK_EQ(e.findReg(REG_A6XX_SP_CS_IBO), size_t(-1));
+    CHECK_EQ(e.findReg(REG_A6XX_HLSQ_CS_BINDLESS_BASE_DESCRIPTOR_0), size_t(-1));   // the A6xx's copy only
+    size_t at = e.findReg(REG_A6XX_SP_CS_BINDLESS_BASE_DESCRIPTOR_0);
+    CHECK(at != size_t(-1));
+    const uint64_t base = (uint64_t(w[at + 1]) << 32) | w[at];
+    CHECK_EQ(base & 3u, uint64_t(kBindlessDescriptor64B));
+    CHECK_EQ(base & ~uint64_t(3), e.table->gpuAddress() + compute::kTableIbosAt);
+    at = e.findReg(REG_A6XX_SP_CS_CONFIG);
+    CHECK(at != size_t(-1) && (w[at] & A6XX_SP_CS_CONFIG_BINDLESS_IBO) != 0);
+    bool loaded = false;
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kCommand && h.opcode == CP_LOAD_STATE6_FRAG &&
+            w[i + 1] == loadState6_0(0, ST6_IBO, SS6_BINDLESS, SB6_CS_SHADER, k.numBufs)) {
+            loaded = w[i + 2] == 0 && w[i + 3] == 0;   // set 0, dword 0
+        }
+        i += 1 + h.count;
+    }
+    CHECK(loaded);
+}
 TEST(a_dispatch_of_end_only_needs_no_buffers) {
     Rig r;
     const uint32_t one[3] = {1, 1, 1};

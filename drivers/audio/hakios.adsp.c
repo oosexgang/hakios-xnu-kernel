@@ -41,7 +41,7 @@
  *              DSP that a kernel before this one left running is asked to stop and shut down first
  *   5  writes  the image into the DSP's memory, and reads it back
  *   6  writes  our SMP2P item (429) into the shared memory, and our two marks of GLINK to zero
- *   7  asks    RPMh for the DSP's rails, writes "adsp: on" to the always-on processor, asks
+ *   7  asks    RPMh for the DSP's rails, writes DSP_TAG ": on" to the always-on processor, asks
  *              TrustZone to authenticate and start the DSP, and watches for its first words
  *              (answering in our item what SMP2P has us answer)
  *   8  reads   GLINK's queues
@@ -58,7 +58,7 @@
  *
  * What is started is stopped: when the steps are over (unless adsp_keep=1, and then when the run
  * ends), and on a panic's way back to the loader. The DSP is asked first (bit 0 of our entry
- * "master-kernel"), then TrustZone shuts it down, then the always-on processor hears "adsp: off".
+ * "master-kernel"), then TrustZone shuts it down, then the always-on processor hears DSP_TAG ": off".
  * A DSP that a kernel before this one left running is found by its item and treated the same way
  * before this one is started; one that was shut down without having said it stopped is not
  * started again unless adsp_again=1 (the Wi-Fi DSP reset the phone, twice, when that was tried).
@@ -94,6 +94,23 @@
 #include <sys/vnode_internal.h>
 #include <vm/vm_kern.h>
 #include <sys/hakios.audio.h>
+/*
+ * DSP_SLPI (devices/zeus/drivers/sensors/hakios.slpi.sm8450.c): the same driver for the SM8450's sensor DSP, the
+ * SLPI, up to QRTR (steps 1-10), its own numbers below and its log lines, boot-args and files named "slpi".
+ */
+#ifdef DSP_SLPI
+#define DSP_TAG                 "slpi"
+#else
+#define DSP_TAG                 "adsp"
+#endif
+#ifdef ADSP_SM8450
+#define ADSP_AUDIO_PROTOCOL     "GPR"
+static void gpr_input(const uint8_t *data, uint32_t length);
+bool hakios_adsp_gpr(uint32_t port, uint32_t opcode, const void *payload, uint32_t length, uint32_t ms,
+    struct hakios_apr_answer *answer);
+#else
+#define ADSP_AUDIO_PROTOCOL     "APR"
+#endif
 #include <sys/hakios.input.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
@@ -110,10 +127,16 @@ extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
 extern lck_mtx_t hakios_aop_mailbox_lock;
 extern lck_mtx_t hakios_smem_alloc_lock;
 extern lck_mtx_t hakios_rsc_lock;            /* RPMh's sequencer, shared with the other DSP's driver */
+extern volatile bool hakios_adsp_starting;   /* the audio DSP's start is under way (set and cleared by the audio DSP's build) */
+extern uint32_t hakios_lpass_rails_users;    /* how many DSP starts have LCX and LMX asked for now (under hakios_rsc_lock) */
 
 static LCK_GRP_DECLARE(adsp_lock_group, "hakios-adsp");
 
-#define STEPS                   11
+#ifdef DSP_SLPI
+#define STEPS                   10      /* the sensor DSP: up to QRTR and the services it tells of */
+#else
+#define STEPS                   11      /* on the SM8450 step 11 speaks GPR (AudioReach), not APR: see step_gpr() */
+#endif
 #define HAKIOS_SOC_BASE        0x00400000ul    /* where the loader says the phone's peripherals begin */
 
 static uint32_t last_step, pause_ms = 2200, listen_seconds = 3;
@@ -261,7 +284,7 @@ hold(void)
 static void
 announce(const char *what)
 {
-	printf("adsp: step %u: %s\n", step, what);
+	printf(DSP_TAG ": step %u: %s\n", step, what);
 	hold();
 }
 
@@ -272,7 +295,7 @@ get(struct block *b, const char *name, uint32_t offset)
 
 	need(b);
 	value = rd(b->base + offset);
-	printf("adsp: %u: %s %s (%#x) = %#x\n", step, b->name, name, b->phys + offset, value);
+	printf(DSP_TAG ": %u: %s %s (%#x) = %#x\n", step, b->name, name, b->phys + offset, value);
 	return value;
 }
 
@@ -280,7 +303,7 @@ static void
 put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 {
 	need(b);
-	printf("adsp: %u: about to write %s %s at %#x: %#x\n", step, b->name, name, b->phys + offset, value);
+	printf(DSP_TAG ": %u: about to write %s %s at %#x: %#x\n", step, b->name, name, b->phys + offset, value);
 	snprintf(last_write, sizeof(last_write), "step %u wrote %#x to %s %s at %#x", step, value, b->name, name, b->phys + offset);
 	wr(b->base + offset, value);
 }
@@ -290,7 +313,11 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 #define SMEM_PHYS               0x80900000UL
 #define SMEM_SIZE               0x00200000u
 #define SMEM_US                 0
+#ifdef DSP_SLPI
+#define SMEM_ADSP               3               /* zeus: qcom,remote-pid of qcom,smp2p-slpi and glink-edge "dsps" */
+#else
 #define SMEM_ADSP               2               /* dt: qcom,remote-pid of qcom,smp2p-adsp and qcom,glink/adsp */
+#endif
 #define SMEM_GLOBAL             0xfffe
 #define SMEM_CANARY             0xa5a5
 
@@ -323,9 +350,15 @@ struct smem_item {
  * ours -- the Wi-Fi's <617 616> are in the same order; taken the other way round, the DSP made
  * our item its own and never said "up" --, and qcom,smem-id of qcom,lpass@3700000).
  */
+#ifdef DSP_SLPI
+#define ITEM_SMP2P_OURS         430             /* zeus: qcom,smem <481 430> of qcom,smp2p-slpi */
+#define ITEM_SMP2P_THEIRS       481
+#define ITEM_CRASH_REASON       424             /* the SLPI's (Linux's qcom_q6v5_pas: crash_reason_smem 424) */
+#else
 #define ITEM_SMP2P_OURS         429
 #define ITEM_SMP2P_THEIRS       443
 #define ITEM_CRASH_REASON       423
+#endif
 
 static const volatile uint8_t *smem;
 
@@ -474,11 +507,11 @@ show_partition(void)
 	char line[320];
 
 	if (partition == 0 || !smem_peek(partition, &header, sizeof(header))) {
-		printf("adsp: %u: there is no partition for us and the audio DSP (0 and 2)\n", step);
+		printf(DSP_TAG ": %u: there is no partition for us and the audio DSP (0 and 2)\n", step);
 		return;
 	}
 	count = smem_items(partition, cacheline, found, 256);
-	printf("adsp: %u: the partition for us and the audio DSP (0 and 2): at %#lx, %#x bytes, of which %#x free; %u items\n", step,
+	printf(DSP_TAG ": %u: the partition for us and the audio DSP (0 and 2): at %#lx, %#x bytes, of which %#x free; %u items\n", step,
 	    SMEM_PHYS + partition, size, header.free_cached - header.free_uncached, count);
 	for (unsigned i = 0; i < count && i < 256;) {
 		int at = 0;
@@ -486,7 +519,7 @@ show_partition(void)
 		for (unsigned n = 0; n < 12 && i < count && i < 256; n++, i++) {
 			at += snprintf(line + at, sizeof(line) - (size_t)at, " %u (%u)", found[i].item, found[i].size);
 		}
-		printf("adsp: %u:   items (bytes):%s\n", step, line);
+		printf(DSP_TAG ": %u:   items (bytes):%s\n", step, line);
 	}
 }
 
@@ -570,7 +603,7 @@ show_words(const char *prefix, const struct smp2p *words)
 	for (unsigned i = 0; i < words->valid && i < 16 && at < (int)sizeof(line) - 40; i++) {
 		at += snprintf(line + at, sizeof(line) - (size_t)at, " %.16s = %#x;", words->entry[i].name, words->entry[i].value);
 	}
-	printf("adsp: %u: %s: SMP2P version %u, features %#x, from processor %u to %u, flags %#x, %u of %u entries:%s\n", step, prefix,
+	printf(DSP_TAG ": %u: %s: SMP2P version %u, features %#x, from processor %u to %u, flags %#x, %u of %u entries:%s\n", step, prefix,
 	    words->version & 0xff, words->version >> 8, words->local, words->remote, words->flags, words->valid, words->total, line);
 }
 
@@ -581,15 +614,15 @@ show_crash_reason(void)
 	uint32_t size = 0, at = smem_item(ITEM_CRASH_REASON, &size);
 
 	if (at == 0 || size == 0) {
-		printf("adsp: %u: item %u, the DSP's last words: not there\n", step, ITEM_CRASH_REASON);
+		printf(DSP_TAG ": %u: item %u, the DSP's last words: not there\n", step, ITEM_CRASH_REASON);
 		return;
 	}
 	bzero(text, sizeof(text));
 	smem_peek(at, text, size < sizeof(text) - 1 ? size : sizeof(text) - 1);
 	if (text[0] == 0) {
-		printf("adsp: %u: item %u, the DSP's last words (%u bytes): none\n", step, ITEM_CRASH_REASON, size);
+		printf(DSP_TAG ": %u: item %u, the DSP's last words (%u bytes): none\n", step, ITEM_CRASH_REASON, size);
 	} else {
-		printf("adsp: %u: THE AUDIO DSP'S LAST WORDS (item %u, %u bytes): \"%s\"\n", step, ITEM_CRASH_REASON, size, text);
+		tell(DSP_TAG ": %u: THE AUDIO DSP'S LAST WORDS (item %u, %u bytes): \"%s\"\n", step, ITEM_CRASH_REASON, size, text);
 	}
 }
 
@@ -621,11 +654,19 @@ static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
 #define IPCC_CLEAR              0x1c
 #define IPCC_NOBODY             0xffffffffu
 #define IPCC_AOP                0u
+#ifdef DSP_SLPI
+#define IPCC_LPASS              4u              /* zeus: mboxes <&ipcc 4 ...> of qcom,smp2p-slpi and the "dsps" glink-edge */
+#else
 #define IPCC_LPASS              3u              /* dt: mboxes of qcom,smp2p-adsp and qcom,glink/adsp */
+#endif
 #define IPCC_GLINK              0u
 #define IPCC_SMP2P              2u
 
+#ifdef ADSP_SM8450
+static struct block ipcc = { "ipcc", 0x0ed18000, 0x1000 };     /* zeus: qcom,ipcc@ed18000 (0x408000 is the compute IPCC there) */
+#else
 static struct block ipcc = { "ipcc", 0x00408000, 0x1000 };
+#endif
 
 static struct {
 	uint32_t glink, smp2p, said;
@@ -653,7 +694,7 @@ doorbells(void)
 			uint64_t now = now_us() - doorbell.since;
 
 			doorbell.said++;
-			printf("adsp: doorbell: +%llu.%03llu ms: signal %u of the audio DSP; heard and cleared\n", now / 1000, now % 1000,
+			printf(DSP_TAG ": doorbell: +%llu.%03llu ms: signal %u of the audio DSP; heard and cleared\n", now / 1000, now % 1000,
 			    who & 0xffff);
 		}
 	}
@@ -688,20 +729,20 @@ mailbox_open(void)
 	need(&aoss);
 	need(&ipcc);
 	if (get(&aoss, "magic", QMP_MAGIC) != QMP_MAGIC_VALUE || get(&aoss, "version", QMP_VERSION) != 1) {
-		printf("adsp: %u: not a mailbox this knows\n", step);
+		printf(DSP_TAG ": %u: not a mailbox this knows\n", step);
 		return false;
 	}
 	box = get(&aoss, "our mailbox", QMP_OUR_BOX);
 	size = get(&aoss, "our mailbox's size", QMP_OUR_BOX_SIZE);
 	/* (box and size come from the always-on processor: "box + size" could wrap in 32 bits and pass, so it is compared as a difference) */
 	if (size < QMP_MESSAGE + 4 || box < 0x3c || box >= aoss.size || size > aoss.size - box || (box & 3)) {
-		printf("adsp: %u: our mailbox is not where a message fits\n", step);
+		printf(DSP_TAG ": %u: our mailbox is not where a message fits\n", step);
 		return false;
 	}
 	if (rd(aoss.base + QMP_OUR_LINK) == QMP_UP && rd(aoss.base + QMP_OUR_LINK_ACK) == QMP_UP &&
 	    rd(aoss.base + QMP_OUR_CHANNEL) == QMP_UP && rd(aoss.base + QMP_THEIR_CHANNEL) == QMP_UP &&
 	    rd(aoss.base + QMP_OUR_CHANNEL_ACK) == QMP_UP) {
-		printf("adsp: %u: the mailbox is open already (the Wi-Fi's start, or a kernel before this one, opened it)\n", step);
+		printf(DSP_TAG ": %u: the mailbox is open already (the Wi-Fi's start, or a kernel before this one, opened it)\n", step);
 		our_box = box;
 		return true;
 	}
@@ -709,7 +750,7 @@ mailbox_open(void)
 	put(&aoss, "our link", QMP_OUR_LINK, QMP_UP);
 	ring_aop();
 	if (!mailbox_wait(QMP_OUR_LINK_ACK, QMP_UP, 1000)) {
-		printf("adsp: %u: THE ALWAYS-ON PROCESSOR DOES NOT ACKNOWLEDGE OUR LINK within a second; taken down again\n", step);
+		printf(DSP_TAG ": %u: THE ALWAYS-ON PROCESSOR DOES NOT ACKNOWLEDGE OUR LINK within a second; taken down again\n", step);
 		put(&aoss, "our link", QMP_OUR_LINK, QMP_DOWN);
 		ring_aop();
 		return false;
@@ -717,7 +758,7 @@ mailbox_open(void)
 	put(&aoss, "our channel", QMP_OUR_CHANNEL, QMP_UP);
 	ring_aop();
 	if (!mailbox_wait(QMP_THEIR_CHANNEL, QMP_UP, 1000)) {
-		printf("adsp: %u: THE ALWAYS-ON PROCESSOR DOES NOT OPEN ITS CHANNEL within a second; ours is taken down again\n", step);
+		printf(DSP_TAG ": %u: THE ALWAYS-ON PROCESSOR DOES NOT OPEN ITS CHANNEL within a second; ours is taken down again\n", step);
 		put(&aoss, "our channel", QMP_OUR_CHANNEL, QMP_DOWN);
 		put(&aoss, "our link", QMP_OUR_LINK, QMP_DOWN);
 		ring_aop();
@@ -726,13 +767,13 @@ mailbox_open(void)
 	put(&aoss, "their channel, seen by us", QMP_THEIR_CHANNEL_ACK, QMP_UP);
 	ring_aop();
 	if (!mailbox_wait(QMP_OUR_CHANNEL_ACK, QMP_UP, 1000)) {
-		printf("adsp: %u: THE ALWAYS-ON PROCESSOR DOES NOT ACKNOWLEDGE OUR CHANNEL within a second; taken down again\n", step);
+		printf(DSP_TAG ": %u: THE ALWAYS-ON PROCESSOR DOES NOT ACKNOWLEDGE OUR CHANNEL within a second; taken down again\n", step);
 		put(&aoss, "our channel", QMP_OUR_CHANNEL, QMP_DOWN);
 		put(&aoss, "our link", QMP_OUR_LINK, QMP_DOWN);
 		ring_aop();
 		return false;
 	}
-	printf("adsp: %u: THE MAILBOX TO THE ALWAYS-ON PROCESSOR IS OPEN\n", step);
+	printf(DSP_TAG ": %u: THE MAILBOX TO THE ALWAYS-ON PROCESSOR IS OPEN\n", step);
 	our_box = box;
 	return true;
 }
@@ -751,10 +792,10 @@ mailbox_send(const char *text)
 		goto out;
 	}
 	strlcpy((char *)words, text, sizeof(words));
-	printf("adsp: %u: about to tell the always-on processor \"%s\"\n", step, text);
+	printf(DSP_TAG ": %u: about to tell the always-on processor \"%s\"\n", step, text);
 	snprintf(last_write, sizeof(last_write), "step %u sent the always-on processor a message", step);
 	if (rd(aoss.base + our_box) != 0) {
-		printf("adsp: %u: our mailbox still holds a message of %u bytes: not sent\n", step, rd(aoss.base + our_box));
+		printf(DSP_TAG ": %u: our mailbox still holds a message of %u bytes: not sent\n", step, rd(aoss.base + our_box));
 		goto out;
 	}
 	for (unsigned i = 0; i < QMP_MESSAGE / 4; i++) {
@@ -764,11 +805,11 @@ mailbox_send(const char *text)
 	(void)rd(aoss.base + our_box);
 	ring_aop();
 	if (!mailbox_wait(our_box, 0, 1000)) {
-		printf("adsp: %u: THE ALWAYS-ON PROCESSOR DOES NOT TAKE THE MESSAGE within a second; it is taken back\n", step);
+		printf(DSP_TAG ": %u: THE ALWAYS-ON PROCESSOR DOES NOT TAKE THE MESSAGE within a second; it is taken back\n", step);
 		wr(aoss.base + our_box, 0);
 		goto out;
 	}
-	printf("adsp: %u: the always-on processor has taken it\n", step);
+	printf(DSP_TAG ": %u: the always-on processor has taken it\n", step);
 	sent = true;
 out:
 	if (!leaving) {
@@ -816,7 +857,11 @@ struct cmd_db_entry {
 
 static const struct cmd_db_header *cmd_db;
 
+#ifdef ADSP_SM8450
+static struct block rsc = { "rsc", 0x17a20000, 0x10000 };      /* zeus: apps RSC DRV2; TCSs 0 to 2 are the active ones */
+#else
 static struct block rsc = { "rsc", 0x18220000, 0x10000 };
+#endif
 #define RSC_TCS_BASE            0xd00
 #define RSC_IRQ_STATUS          (RSC_TCS_BASE + 0x04)   /* a bit per TCS: done */
 #define RSC_IRQ_CLEAR           (RSC_TCS_BASE + 0x08)
@@ -841,7 +886,7 @@ rail_position(const char *name, uint32_t level, uint32_t *address)
 		cmd_db = (const struct cmd_db_header *)ml_io_map_unmappable(CMD_DB_PHYS, CMD_DB_SIZE, VM_WIMG_WCOMB);
 	}
 	if (!(cmd_db->magic[0] == 0xdb && cmd_db->magic[1] == 0x30 && cmd_db->magic[2] == 0x03 && cmd_db->magic[3] == 0x0c)) {
-		printf("adsp: %u: the boot loader's command database is not there\n", step);
+		printf(DSP_TAG ": %u: the boot loader's command database is not there\n", step);
 		return -1;
 	}
 	strlcpy(id, name, sizeof(id));
@@ -873,7 +918,7 @@ rail_position(const char *name, uint32_t level, uint32_t *address)
 				}
 				at += snprintf(levels + at, sizeof(levels) - (size_t)at, " %u", value);
 			}
-			printf("adsp: %u: RPMh has %s\n", step, levels);
+			printf(DSP_TAG ": %u: RPMh has %s\n", step, levels);
 			for (unsigned l = 0; l < entry[i].length / 2u && l < 16; l++) {
 				if ((uint32_t)(data[2 * l] | data[2 * l + 1] << 8) >= level) {
 					*address = entry[i].address;
@@ -883,7 +928,7 @@ rail_position(const char *name, uint32_t level, uint32_t *address)
 			return -1;
 		}
 	}
-	printf("adsp: %u: RPMh has no \"%s\"\n", step, name);
+	printf(DSP_TAG ": %u: RPMh has no \"%s\"\n", step, name);
 	return -1;
 }
 
@@ -902,7 +947,7 @@ rails(uint32_t level)
 			rail_position(names[r], 0, &addresses[r]);
 		}
 		if (position < 0 || addresses[r] == 0) {
-			printf("adsp: %u: no position for %s at level %u: the rails are not asked\n", step, names[r], level);
+			printf(DSP_TAG ": %u: no position for %s at level %u: the rails are not asked\n", step, names[r], level);
 			return false;
 		}
 		values[r] = (uint32_t)position;
@@ -914,14 +959,28 @@ rails(uint32_t level)
 	}
 	/* (the boot loader leaves the trigger set after its last request, done: idle is what the status says) */
 	if (rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_STATUS) == 0) {
-		printf("adsp: %u: TCS %u of the sequencer is busy (status %#x, control %#x): the rails are not asked\n", step, RPMH_TCS,
+		printf(DSP_TAG ": %u: TCS %u of the sequencer is busy (status %#x, control %#x): the rails are not asked\n", step, RPMH_TCS,
 		    rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_STATUS), rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL));
 		if (!leaving) {
 			lck_mtx_unlock(&hakios_rsc_lock);
 		}
 		return false;
 	}
-	printf("adsp: %u: about to ask RPMh, through TCS %u, for lcx.lvl (%#x) = %u and lmx.lvl (%#x) = %u (level %u%s)\n", step,
+	/*
+	 * The SM8450's audio DSP and sensor DSP (DSP_SLPI) run from the same two rails, and RPMh keeps one request per rail
+	 * from us, not one per DSP: the rails are given back only by the last start that asked for them, else one DSP's
+	 * handover would take them from the other while it boots.
+	 */
+	if (level != 0) {
+		hakios_lpass_rails_users++;
+	} else if (hakios_lpass_rails_users > 0 && --hakios_lpass_rails_users > 0) {
+		printf(DSP_TAG ": %u: the rails are not given back: the other DSP's start still has them asked for\n", step);
+		if (!leaving) {
+			lck_mtx_unlock(&hakios_rsc_lock);
+		}
+		return true;
+	}
+	printf(DSP_TAG ": %u: about to ask RPMh, through TCS %u, for lcx.lvl (%#x) = %u and lmx.lvl (%#x) = %u (level %u%s)\n", step,
 	    RPMH_TCS, addresses[0], values[0], addresses[1], values[1], level, level == 0 ? ": given back" : "");
 	snprintf(last_write, sizeof(last_write), "step %u asked RPMh for the audio DSP's rails at level %u", step, level);
 	hold();
@@ -945,7 +1004,7 @@ rails(uint32_t level)
 		}
 		sleep_us(50);
 	}
-	printf("adsp: %u: RPMh %s after %llu us; the commands' status %#x %#x, the TCS's %#x\n", step, done ? "HAS DONE IT" :
+	printf(DSP_TAG ": %u: RPMh %s after %llu us; the commands' status %#x %#x, the TCS's %#x\n", step, done ? "HAS DONE IT" :
 	    "HAS NOT SAID DONE", now_us() - began, rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_COMMAND(0) + 12),
 	    rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_COMMAND(1) + 12), rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_STATUS));
 	wr(rsc.base + RSC_IRQ_CLEAR, 1u << RPMH_TCS);
@@ -970,22 +1029,39 @@ step_survey(void)
 	if (dsp_words(&words)) {
 		show_words("the DSP's item (443) is there: it has run since the phone was started", &words);
 	} else {
-		printf("adsp: %u: the DSP's SMP2P item (443) is not there: it has not run since the phone was started\n", step);
+		printf(DSP_TAG ": %u: the DSP's SMP2P item (443) is not there: it has not run since the phone was started\n", step);
 	}
-	printf("adsp: %u: our SMP2P item (429): %s; GLINK's descriptor (478): %s, our queue (479): %s, the DSP's (480): %s\n", step,
+	printf(DSP_TAG ": %u: our SMP2P item (429): %s; GLINK's descriptor (478): %s, our queue (479): %s, the DSP's (480): %s\n", step,
 	    smem_item(ITEM_SMP2P_OURS, &size) ? "there" : "not there", smem_item(478, &size) ? "there" : "NOT THERE",
 	    smem_item(479, &size) ? "there" : "NOT THERE", smem_item(480, &size) ? "there" : "not there (the DSP makes it)");
 	show_crash_reason();
 	need(&ipcc);
-	printf("adsp: %u: the doorbells say %#x\n", step, rd(ipcc.base + IPCC_RECEIVED));
+	printf(DSP_TAG ": %u: the doorbells say %#x\n", step, rd(ipcc.base + IPCC_RECEIVED));
 	return smem_partition(SMEM_US, SMEM_ADSP, &size, &size) != 0;
 }
 
 /* ---- step 2: the firmware -------------------------------------------------------------------------- */
 
+#if defined(DSP_SLPI)
+/* zeus: reserved-memory slpi_region@88000000, 25 MB; the image is linked there (slpi.mdt), nothing is moved */
+#define ADSP_MEMORY             0x88000000u
+#define ADSP_MEMORY_SIZE        0x01900000u
+#elif defined(ADSP_SM8450)
+/*
+ * zeus: reserved-memory adsp_region@9fd00000 (uefipil.cfg's FULL_ADSP says the same). The image is linked for 0x86300000
+ * and marked relocatable; it is moved here as Linux's qcom_mdt_load() moves it: every segment by the same offset.
+ */
+#define ADSP_MEMORY             0x9fd00000u
+#define ADSP_MEMORY_SIZE        0x03100000u
+#else
 #define ADSP_MEMORY             0x86700000u     /* dt: reserved-memory adsp@86700000, memory-region of qcom,lpass@3700000 */
 #define ADSP_MEMORY_SIZE        0x04000000u
+#endif
+#ifdef DSP_SLPI
+#define PAS_ADSP                12              /* the SLPI's (Linux's qcom_q6v5_pas: sm8450 slpi pas_id 12) */
+#else
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
+#endif
 
 
 /*
@@ -1027,7 +1103,7 @@ root_file(const char *name, uint64_t *size)
 	    vfs_context_ucred(context), &left, vfs_context_proc(context));
 	vnode_put(vnode);
 	if (error != 0 || left != 0) {
-		printf("adsp: %u: %s: read error %d, %d bytes left\n", step, path, error, left);
+		printf(DSP_TAG ": %u: %s: read error %d, %d bytes left\n", step, path, error, left);
 		kfree_data(data, attributes.va_data_size);
 		return NULL;
 	}
@@ -1072,7 +1148,7 @@ image_file(const char *name, uint64_t *size)
 			return data;
 		}
 	}
-	printf("adsp: %u: no fw/%s in the small image nor on the root: put the phone's /vendor/firmware_mnt/image/%s into "
+	printf(DSP_TAG ": %u: no fw/%s in the small image nor on the root: put the phone's /vendor/firmware_mnt/image/%s into "
 	    "fw-audio/ and run SYSTEM=1 userland/build.sh (or ADSP=1, for the small image)\n", step, name, name);
 	return NULL;
 }
@@ -1126,13 +1202,13 @@ step_firmware(void)
 	struct elf_segment segment;
 	const uint8_t *header;
 	uint64_t size = 0, files = 0;
-	uint32_t count, hashes = 0, lowest = ~0u, highest = 0;
+	uint32_t count, hashes = 0, lowest = ~0u, highest = 0, linked = ~0u;
 	uint8_t first[4] = { 0 };
 
 	announce("find the audio DSP's image in the small image or on the root, and check it against its own header");
 	image_forget();
 	image.segments = 0;
-	header = image_file("adsp.mdt", &size);
+	header = image_file(DSP_TAG ".mdt", &size);
 	if (header == NULL) {
 		return false;
 	}
@@ -1143,14 +1219,24 @@ step_firmware(void)
 	memcpy(first, header, size < sizeof(first) ? size : sizeof(first));
 	if (size < 5 || memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size ||
 	    size > PAGE_SIZE) {
-		printf("adsp: %u: fw/adsp.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, first[0],
+		printf(DSP_TAG ": %u: fw/adsp.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, first[0],
 		    first[1], first[2], first[3], count, size);
 		goto fail;
+	}
+	/* where the image is linked; every segment is put at the same distance from ADSP_MEMORY (equal on redwood) */
+	for (uint32_t i = 0; i < count; i++) {
+		memcpy(&segment, header + 52 + 32 * i, sizeof(segment));
+		if (segment.type == 1 && !MDT_HASH(segment.flags) && segment.memory_size != 0 && segment.paddr < linked) {
+			linked = segment.paddr;
+		}
 	}
 	for (uint32_t i = 0; i < count; i++) {
 		char name[16];
 
 		memcpy(&segment, header + 52 + 32 * i, sizeof(segment));
+		if (segment.type == 1 && !MDT_HASH(segment.flags) && segment.memory_size != 0) {
+			segment.paddr = segment.paddr - linked + ADSP_MEMORY;
+		}
 		if (MDT_HASH(segment.flags)) {
 			hashes = segment.file_size;
 		}
@@ -1159,7 +1245,7 @@ step_firmware(void)
 		}
 		if (segment.paddr < ADSP_MEMORY || segment.file_size > segment.memory_size ||
 		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)ADSP_MEMORY + ADSP_MEMORY_SIZE) {
-			printf("adsp: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
+			printf(DSP_TAG ": %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			goto fail;
 		}
@@ -1170,13 +1256,13 @@ step_firmware(void)
 		if (segment.file_size != 0) {
 			uint64_t file_size = 0;
 
-			snprintf(name, sizeof(name), "adsp.b%02u", i);
+			snprintf(name, sizeof(name), DSP_TAG ".b%02u", i);
 			image.segment[image.segments].file = image_file(name, &file_size);
 			if (image.segment[image.segments].file == NULL) {
 				goto fail;
 			}
 			if (file_size != segment.file_size) {
-				printf("adsp: %u: fw/%s has %llu bytes, the header says %u\n", step, name, file_size, segment.file_size);
+				printf(DSP_TAG ": %u: fw/%s has %llu bytes, the header says %u\n", step, name, file_size, segment.file_size);
 				/* (the file is given back with the size it was allocated with, not the header's: kfree_data() needs that) */
 				image.segment[image.segments].file_size = (uint32_t)file_size;
 				image.segments++;               /* (for its file to be given back) */
@@ -1189,14 +1275,17 @@ step_firmware(void)
 		image.segments++;
 	}
 	if (image.segments == 0 || lowest != ADSP_MEMORY || 52 + 32 * count + (uint64_t)hashes != size) {
-		printf("adsp: %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
+		printf(DSP_TAG ": %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
 		    "the header %u and the hashes %u\n", step, image.segments, lowest, size, 52 + 32 * count, hashes);
 		goto fail;
 	}
 	image.header = header;
 	image.header_size = size;
 	image.size = ((highest + 0xfff) & ~0xfffu) - ADSP_MEMORY;
-	printf("adsp: %u: the image is whole (%s): a header of %llu bytes (%u of hashes), %u segments, %llu bytes of files, %#x "
+	if (linked != ADSP_MEMORY) {
+		printf(DSP_TAG ": %u: the image is linked for %#x and is moved to %#x\n", step, linked, ADSP_MEMORY);
+	}
+	printf(DSP_TAG ": %u: the image is whole (%s): a header of %llu bytes (%u of hashes), %u segments, %llu bytes of files, %#x "
 	    "bytes of the DSP's %#x from %#x\n", step, from_root ? "from /fw on the root" : "from the small image", size, hashes,
 	    image.segments, files, image.size, ADSP_MEMORY_SIZE, ADSP_MEMORY);
 	return true;
@@ -1241,16 +1330,27 @@ static bool stopped_by_its_word;
 static uint32_t our_item;
 static bool smp2p_agreed, smp2p_restart_acks, smp2p_restart_acked;
 
+extern bool hakios_scm_enter(void);
+extern void hakios_scm_leave(bool held);
+
 static int32_t
 scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
 {
+	bool held;                      /* one TrustZone call at a time, the whole kernel's (hakios.platform.c) */
 	uint64_t session = 0;
 
 	function |= SCM_64 | SCM_SIP;
-	printf("adsp: %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
+	printf(DSP_TAG ": %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
-	for (int i = 0; i < 100; i++) {
+	held = hakios_scm_enter();
+	/*
+	 * TrustZone answers "interrupted" whenever an interrupt comes in during a long call; the call goes on when it is asked
+	 * again with its session, and Linux asks again for as long as it takes. Giving up (the limit here was 100) leaves
+	 * TrustZone inside the call: the next image load by anybody then never returns and the kernel stops (zeus, 16
+	 * November 2026: the audio DSP's header was given up on, and the video codec's load hung every such boot).
+	 */
+	for (int i = 0; i < 10000000; i++) {
 		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
 		register uint64_t x1 __asm__("x1") = arguments;
 		register uint64_t x2 __asm__("x2") = first;
@@ -1264,12 +1364,14 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 		    "+r" (x7) : : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
 		session = x6;
 		if (x0 != SCM_INTERRUPTED) {
-			printf("adsp: %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
+			printf(DSP_TAG ": %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
 			*answer = x1;
+			hakios_scm_leave(held);
 			return (int32_t)x0;
 		}
 	}
-	printf("adsp: %u: TrustZone keeps saying the call was interrupted\n", step);
+	printf(DSP_TAG ": %u: TrustZone keeps saying the call was interrupted\n", step);
+	hakios_scm_leave(held);
 	return -1;
 }
 
@@ -1302,11 +1404,11 @@ dsp_listen(const struct smp2p *theirs)
 		}
 		smp2p_restart_acks = features & SMP2P_RESTART_ACKS;
 		smp2p_agreed = true;
-		printf("adsp: %u: the DSP and we agree on SMP2P: version %u, features %#x\n", step, ours.version & 0xff, features);
+		printf(DSP_TAG ": %u: the DSP and we agree on SMP2P: version %u, features %#x\n", step, ours.version & 0xff, features);
 	}
 	if (smp2p_restart_acks && ((theirs->flags & SMP2P_RESTART_DONE) != 0) != smp2p_restart_acked) {
 		smp2p_restart_acked = !smp2p_restart_acked;
-		printf("adsp: %u: the DSP's flags say it has restarted (%#x): answered in our flags (bit 1 = %u), and its SMP2P doorbell\n",
+		printf(DSP_TAG ": %u: the DSP's flags say it has restarted (%#x): answered in our flags (bit 1 = %u), and its SMP2P doorbell\n",
 		    step, theirs->flags, smp2p_restart_acked);
 		smem_poke(our_item + SMP2P_AT_FLAGS, (ours.flags & ~SMP2P_RESTART_ACK) | (smp2p_restart_acked ? SMP2P_RESTART_ACK : 0));
 		settle();
@@ -1325,25 +1427,25 @@ dsp_ask_to_stop(uint32_t bound_ms)
 
 	if (at == 0 || !smem_peek(at, &ours, sizeof(ours)) || ours.magic != SMP2P_MAGIC || (ours.version & 0xff) != SMP2P_VERSION ||
 	    (entry = smp2p_entry(&ours, OUR_ENTRY_STOP)) < 0) {
-		printf("adsp: %u: the DSP is not asked to stop first: there is no SMP2P item of ours to ask it with\n", step);
+		printf(DSP_TAG ": %u: the DSP is not asked to stop first: there is no SMP2P item of ours to ask it with\n", step);
 		return false;
 	}
 	if (!dsp_words(&theirs) || smp2p_entry(&theirs, "slave-kernel") < 0) {
-		printf("adsp: %u: the DSP is not asked to stop first: its item has no entry to answer in\n", step);
+		printf(DSP_TAG ": %u: the DSP is not asked to stop first: its item has no entry to answer in\n", step);
 		return false;
 	}
 	state = dsp_state(&theirs);
 	if (state & DSP_STOP_ACK) {
-		printf("adsp: %u: the DSP is not asked to stop: its entry says %#x, that it has stopped when asked before\n", step, state);
+		printf(DSP_TAG ": %u: the DSP is not asked to stop: its entry says %#x, that it has stopped when asked before\n", step, state);
 		return true;
 	}
 	if (!(state & DSP_READY) || (state & DSP_FATAL)) {
-		printf("adsp: %u: the DSP is not asked to stop first: its entry says %#x, not \"up\"\n", step, state);
+		printf(DSP_TAG ": %u: the DSP is not asked to stop first: its entry says %#x, not \"up\"\n", step, state);
 		return false;
 	}
 	need(&ipcc);
 	value_at = at + SMP2P_AT_VALUE((uint32_t)entry);
-	printf("adsp: %u: about to ask the DSP to stop: bit 0 of our entry \"%s\" at %#lx, and its SMP2P doorbell\n", step,
+	printf(DSP_TAG ": %u: about to ask the DSP to stop: bit 0 of our entry \"%s\" at %#lx, and its SMP2P doorbell\n", step,
 	    OUR_ENTRY_STOP, SMEM_PHYS + value_at);
 	snprintf(last_write, sizeof(last_write), "step %u asked the audio DSP to stop", step);
 	smem_poke(value_at, ours.entry[entry].value | DSP_STOP);
@@ -1358,7 +1460,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 		now = now_us();
 	}
 	state = dsp_words(&theirs) ? dsp_state(&theirs) : 0;
-	printf("adsp: %u: %s after %llu.%03llu ms; its entry says %#x\n", step, state & DSP_STOP_ACK ?
+	printf(DSP_TAG ": %u: %s after %llu.%03llu ms; its entry says %#x\n", step, state & DSP_STOP_ACK ?
 	    "THE AUDIO DSP ACKNOWLEDGES THE STOP" : "THE AUDIO DSP DOES NOT ACKNOWLEDGE THE STOP", (now - asked) / 1000,
 	    (now - asked) % 1000, state);
 	smem_poke(value_at, ours.entry[entry].value & ~DSP_STOP);
@@ -1376,23 +1478,23 @@ dsp_shutdown(const char *why)
 	uint64_t answer = ~0ull;
 	int32_t result;
 
-	printf("adsp: %u: %s: the audio DSP is asked to stop, then TrustZone to shut it down\n", step, why);
+	printf(DSP_TAG ": %u: %s: the audio DSP is asked to stop, then TrustZone to shut it down\n", step, why);
 	if (!leaving) {
 		link_stop();
 	}
 	stopped_by_its_word = dsp_ask_to_stop(leaving ? 2000 : 5000);
 	result = scm("to shut the audio DSP down", SCM_PAS_SHUTDOWN, SCM_ONE_VALUE, PAS_ADSP, 0, 0, &answer);
 	if (result != 0 || answer != 0) {
-		printf("adsp: %u: TRUSTZONE DOES NOT SHUT THE AUDIO DSP DOWN: the call returns %d, its answer is %#llx\n", step, result,
+		printf(DSP_TAG ": %u: TRUSTZONE DOES NOT SHUT THE AUDIO DSP DOWN: the call returns %d, its answer is %#llx\n", step, result,
 		    answer);
 		return false;
 	}
-	printf("adsp: %u: THE AUDIO DSP IS SHUT DOWN\n", step);
+	printf(DSP_TAG ": %u: THE AUDIO DSP IS SHUT DOWN\n", step);
 	need(&ipcc);
 	wr(ipcc.base + IPCC_DISABLE, IPCC_LPASS << 16 | IPCC_SMP2P);
 	doorbells();
 	dsp_started = false;
-	mailbox_send("{class: image, res: load_state, name: adsp, val: off}");
+	mailbox_send("{class: image, res: load_state, name: " DSP_TAG ", val: off}");
 	if (rails_asked) {
 		rails(0);
 		rails_asked = false;
@@ -1419,18 +1521,18 @@ step_header(void)
 		if (!dsp_shutdown("it may be running")) {
 			return false;
 		}
-		if (!stopped_by_its_word && !option("adsp_again")) {
-			printf("adsp: %u: THE AUDIO DSP IS NOT STARTED AGAIN: it was shut down without having acknowledged a stop, and "
+		if (!stopped_by_its_word && !option(DSP_TAG "_again")) {
+			printf(DSP_TAG ": %u: THE AUDIO DSP IS NOT STARTED AGAIN: it was shut down without having acknowledged a stop, and "
 			    "with the Wi-Fi's DSP a start after that reset the phone (adsp_again=1 to try all the same)\n", step);
 			return false;
 		}
 	} else {
-		printf("adsp: %u: the DSP has left nothing in the shared memory: it has not run since the phone was started\n", step);
+		printf(DSP_TAG ": %u: the DSP has left nothing in the shared memory: it has not run since the phone was started\n", step);
 	}
 
 	announce("hand the image's header to TrustZone to check its signature (image 1), in a page of ours");
 	if (kmem_alloc(kernel_map, &page, PAGE_SIZE, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-		printf("adsp: %u: no memory\n", step);
+		printf(DSP_TAG ": %u: no memory\n", step);
 		return false;
 	}
 	memcpy((void *)page, image.header, image.header_size);
@@ -1440,18 +1542,18 @@ step_header(void)
 	settle();
 	result = scm("to take the audio DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_ADSP, kvtophys(page), 0, &answer);
 	if (result != 0 || answer != 0) {
-		printf("adsp: %u: TRUSTZONE DOES NOT TAKE THE HEADER: the call returns %d, its answer is %#llx\n", step, result, answer);
+		printf(DSP_TAG ": %u: TRUSTZONE DOES NOT TAKE THE HEADER: the call returns %d, its answer is %#llx\n", step, result, answer);
 		return false;
 	}
-	printf("adsp: %u: TRUSTZONE ACCEPTS THE AUDIO DSP'S SIGNATURE FROM THIS KERNEL\n", step);
+	printf(DSP_TAG ": %u: TRUSTZONE ACCEPTS THE AUDIO DSP'S SIGNATURE FROM THIS KERNEL\n", step);
 
 	announce("tell TrustZone where the image will be");
 	result = scm("where the image will be", SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, PAS_ADSP, ADSP_MEMORY, image.size, &answer);
 	if (result != 0 || answer != 0) {
-		printf("adsp: %u: TRUSTZONE DOES NOT TAKE THE PLACE: the call returns %d, its answer is %#llx\n", step, result, answer);
+		printf(DSP_TAG ": %u: TRUSTZONE DOES NOT TAKE THE PLACE: the call returns %d, its answer is %#llx\n", step, result, answer);
 		return false;
 	}
-	printf("adsp: %u: TrustZone takes the place: %#x bytes at %#x\n", step, image.size, ADSP_MEMORY);
+	printf(DSP_TAG ": %u: TrustZone takes the place: %#x bytes at %#x\n", step, image.size, ADSP_MEMORY);
 	return true;
 }
 
@@ -1479,20 +1581,26 @@ step_image(void)
 	if (image.segments == 0) {
 		return false;
 	}
-	announce("put the image's segments into the audio DSP's memory (0x86700000, 64 MB: memory of nobody's until TrustZone "
-	    "starts the DSP), with zeroes where a segment is longer than its file, and read them back");
+	announce("put the image's segments into the DSP's memory (memory of nobody's until TrustZone starts the DSP), with "
+	    "zeroes where a segment is longer than its file, and read them back");
 	dsp_memory = (volatile uint64_t *)ml_io_map_unmappable(ADSP_MEMORY, ADSP_MEMORY_SIZE, VM_WIMG_WCOMB);
 	snprintf(last_write, sizeof(last_write), "step %u wrote the image at %#x", step, ADSP_MEMORY);
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *to = dsp_memory + image.segment[s].at / 8;
 
-		if ((image.segment[s].at | image.segment[s].memory_size) & 7) {
-			printf("adsp: %u: a segment that does not begin and end at a multiple of eight bytes: not written\n", step);
+		uint32_t whole = image.segment[s].memory_size & ~7u;
+
+		/* (a segment may end anywhere -- the SLPI's 5th is 0x52 bytes --: its last bytes are written one at a time) */
+		if (image.segment[s].at & 7) {
+			printf(DSP_TAG ": %u: a segment that does not begin at a multiple of eight bytes: not written\n", step);
 			ml_io_unmap((vm_offset_t)dsp_memory, ADSP_MEMORY_SIZE);
 			return false;
 		}
-		for (uint32_t i = 0; i < image.segment[s].memory_size; i += 8) {
+		for (uint32_t i = 0; i < whole; i += 8) {
 			to[i / 8] = segment_word(s, i);
+		}
+		for (uint32_t i = whole; i < image.segment[s].memory_size; i++) {
+			((volatile uint8_t *)to)[i] = (uint8_t)(segment_word(s, i) & 0xff);
 		}
 		written += image.segment[s].file_size;
 		cleared += image.segment[s].memory_size - image.segment[s].file_size;
@@ -1501,11 +1609,16 @@ step_image(void)
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *from = dsp_memory + image.segment[s].at / 8;
 
-		for (uint32_t i = 0; i < image.segment[s].memory_size; i += 8) {
+		uint32_t whole = image.segment[s].memory_size & ~7u;
+
+		for (uint32_t i = 0; i < whole; i += 8) {
 			wrong += from[i / 8] != segment_word(s, i);
 		}
+		for (uint32_t i = whole; i < image.segment[s].memory_size; i++) {
+			wrong += ((volatile uint8_t *)from)[i] != (uint8_t)(segment_word(s, i) & 0xff);
+		}
 	}
-	printf("adsp: %u: %u segments, %llu bytes written and %llu cleared; read back, %llu words of eight bytes differ\n", step,
+	printf(DSP_TAG ": %u: %u segments, %llu bytes written and %llu cleared; read back, %llu words of eight bytes differ\n", step,
 	    image.segments, written, cleared, wrong);
 	settle();
 	ml_io_unmap((vm_offset_t)dsp_memory, ADSP_MEMORY_SIZE);
@@ -1532,7 +1645,7 @@ our_item_make(uint32_t partition)
 
 	lck_mtx_lock(&hakios_smem_alloc_lock);         /* (the Wi-Fi's start allocates under the same hardware lock) */
 	need(&smem_lock);
-	printf("adsp: %u: about to take the lock (%#x), write an entry for item %u with %u bytes behind it at the partition's mark, "
+	printf(DSP_TAG ": %u: about to take the lock (%#x), write an entry for item %u with %u bytes behind it at the partition's mark, "
 	    "move the mark by %u, and release the lock\n", step, smem_lock.phys + LOCK_OWNER, ITEM_SMP2P_OURS, item_size, need_bytes);
 	snprintf(last_write, sizeof(last_write), "step %u took the shared memory's lock", step);
 	for (uint32_t ms = 0; ms <= 1000; ms++) {
@@ -1544,13 +1657,13 @@ our_item_make(uint32_t partition)
 		sleep_ms(1);
 	}
 	if (owner != LOCK_US) {
-		printf("adsp: %u: THE LOCK IS HELD BY PROCESSOR %u AND STAYS SO FOR A SECOND: nothing is written\n", step, owner);
+		printf(DSP_TAG ": %u: THE LOCK IS HELD BY PROCESSOR %u AND STAYS SO FOR A SECOND: nothing is written\n", step, owner);
 		lck_mtx_unlock(&hakios_smem_alloc_lock);
 		return false;
 	}
 	if (!smem_peek(partition, &header, sizeof(header)) || header.free_uncached > header.free_cached ||
 	    header.free_cached > header.size) {
-		printf("adsp: %u: the partition's marks make no sense: nothing is written\n", step);
+		printf(DSP_TAG ": %u: the partition's marks make no sense: nothing is written\n", step);
 		goto out;
 	}
 	for (at = sizeof(header); at < header.free_uncached;) {
@@ -1561,12 +1674,12 @@ our_item_make(uint32_t partition)
 		at += sizeof(entry) + entry.padding_header + entry.size;
 	}
 	if (at != header.free_uncached) {
-		printf("adsp: %u: the partition's entries do not end at its mark (+%#x, the mark is +%#x), or the item has appeared: "
+		printf(DSP_TAG ": %u: the partition's entries do not end at its mark (+%#x, the mark is +%#x), or the item has appeared: "
 		    "nothing is written\n", step, at, header.free_uncached);
 		goto out;
 	}
 	if (at + need_bytes > header.free_cached) {
-		printf("adsp: %u: no room: %u bytes wanted, %u free: nothing is written\n", step, need_bytes, header.free_cached - at);
+		printf(DSP_TAG ": %u: no room: %u bytes wanted, %u free: nothing is written\n", step, need_bytes, header.free_cached - at);
 		goto out;
 	}
 	smem_poke(partition + at, SMEM_CANARY | ITEM_SMP2P_OURS << 16);
@@ -1579,7 +1692,7 @@ our_item_make(uint32_t partition)
 	made = true;
 out:
 	wr(smem_lock.base + LOCK_OWNER, 0);
-	printf("adsp: %u: the lock is released (it reads %u)\n", step, rd(smem_lock.base + LOCK_OWNER));
+	printf(DSP_TAG ": %u: the lock is released (it reads %u)\n", step, rd(smem_lock.base + LOCK_OWNER));
 	lck_mtx_unlock(&hakios_smem_alloc_lock);
 	return made;
 }
@@ -1596,12 +1709,12 @@ step_our_item(void)
 	announce("look for an SMP2P item of ours (429) in our partition with the audio DSP, make it if there is none, and fill it in");
 	partition = smem_partition(SMEM_US, SMEM_ADSP, &cacheline, &size);
 	if (partition == 0 || !smem_peek(partition, &header, sizeof(header))) {
-		printf("adsp: %u: there is no such partition\n", step);
+		printf(DSP_TAG ": %u: there is no such partition\n", step);
 		return false;
 	}
 	our_item = our_item_find();
 	if (our_item != 0) {
-		printf("adsp: %u: item %u is there, at %#lx: a kernel before this one made it, and it is used again\n", step,
+		printf(DSP_TAG ": %u: item %u is there, at %#lx: a kernel before this one made it, and it is used again\n", step,
 		    ITEM_SMP2P_OURS, SMEM_PHYS + our_item);
 	} else {
 		if (!our_item_make(partition)) {
@@ -1609,10 +1722,10 @@ step_our_item(void)
 		}
 		our_item = our_item_find();
 		if (our_item == 0) {
-			printf("adsp: %u: THE ITEM IS NOT FOUND where it was just made\n", step);
+			printf(DSP_TAG ": %u: THE ITEM IS NOT FOUND where it was just made\n", step);
 			return false;
 		}
-		printf("adsp: %u: item %u made, at %#lx\n", step, ITEM_SMP2P_OURS, SMEM_PHYS + our_item);
+		printf(DSP_TAG ": %u: item %u made, at %#lx\n", step, ITEM_SMP2P_OURS, SMEM_PHYS + our_item);
 	}
 	/* zeroes; from processor 0 to 2, room for 16 entries, "master-kernel" at zero, feature bit 0; last the version */
 	snprintf(last_write, sizeof(last_write), "step %u filled in our SMP2P item", step);
@@ -1635,7 +1748,7 @@ step_our_item(void)
 	need(&ipcc);
 	wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_SMP2P);
 	if (!smem_peek(our_item, &ours, sizeof(ours)) || ours.magic != SMP2P_MAGIC || smp2p_entry(&ours, OUR_ENTRY_STOP) < 0) {
-		printf("adsp: %u: OUR ITEM DOES NOT READ BACK AS WRITTEN\n", step);
+		printf(DSP_TAG ": %u: OUR ITEM DOES NOT READ BACK AS WRITTEN\n", step);
 		return false;
 	}
 	show_words("our item reads back", &ours);
@@ -1663,10 +1776,10 @@ step_start(void)
 	bool have, spoke = false, handed_over = false;
 
 	if (!image_written) {
-		printf("adsp: %u: the image is not in place\n", step);
+		printf(DSP_TAG ": %u: the image is not in place\n", step);
 		return false;
 	}
-	PE_parse_boot_argn("adsp_wait", &wait_seconds, sizeof(wait_seconds));
+	PE_parse_boot_argn(DSP_TAG "_wait", &wait_seconds, sizeof(wait_seconds));
 	bzero(&last, sizeof(last));
 	have = dsp_words(&last);
 	announce("listen for the audio DSP's doorbells, ask RPMh for its rails, tell the always-on processor that its image is "
@@ -1684,7 +1797,7 @@ step_start(void)
 		return false;
 	}
 	rails_asked = true;
-	if (!mailbox_send("{class: image, res: load_state, name: adsp, val: on}")) {
+	if (!mailbox_send("{class: image, res: load_state, name: " DSP_TAG ", val: on}")) {
 		rails(0);
 		rails_asked = false;
 		lck_mtx_unlock(&dsp_lock);
@@ -1695,9 +1808,9 @@ step_start(void)
 	doorbell.since = started = now_us();
 	image_written = false;
 	if (result != 0 || answer != 0) {
-		printf("adsp: %u: TRUSTZONE DOES NOT START THE AUDIO DSP: the call returns %d, its answer is %#llx\n", step, result,
+		printf(DSP_TAG ": %u: TRUSTZONE DOES NOT START THE AUDIO DSP: the call returns %d, its answer is %#llx\n", step, result,
 		    answer);
-		mailbox_send("{class: image, res: load_state, name: adsp, val: off}");
+		mailbox_send("{class: image, res: load_state, name: " DSP_TAG ", val: off}");
 		rails(0);
 		rails_asked = false;
 		lck_mtx_unlock(&dsp_lock);
@@ -1705,7 +1818,7 @@ step_start(void)
 	}
 	dsp_started = true;
 	lck_mtx_unlock(&dsp_lock);
-	printf("adsp: %u: TRUSTZONE HAS AUTHENTICATED THE IMAGE AND LET THE AUDIO DSP OUT OF RESET; watching for %u s\n", step,
+	printf(DSP_TAG ": %u: TRUSTZONE HAS AUTHENTICATED THE IMAGE AND LET THE AUDIO DSP OUT OF RESET; watching for %u s\n", step,
 	    wait_seconds);
 	limit = started + wait_seconds * 1000000ull;
 	for (;;) {
@@ -1730,12 +1843,12 @@ step_start(void)
 			if ((state & DSP_READY) && ready_at == 0) {
 				ready_at = now;
 				limit = now + 3000000ull;
-				printf("adsp: %u: THE AUDIO DSP SAYS IT IS UP: \"slave-kernel\" says %#x, %llu.%03llu ms after TrustZone started "
+				printf(DSP_TAG ": %u: THE AUDIO DSP SAYS IT IS UP: \"slave-kernel\" says %#x, %llu.%03llu ms after TrustZone started "
 				    "it\n", step, state, (now - started) / 1000, (now - started) % 1000);
 			}
 			if ((state & DSP_HANDOVER) && !handed_over) {
 				handed_over = true;
-				printf("adsp: %u: the DSP says it has asked for its own power (bit 2), %llu.%03llu ms after the start: ours is "
+				printf(DSP_TAG ": %u: the DSP says it has asked for its own power (bit 2), %llu.%03llu ms after the start: ours is "
 				    "given back\n", step, (now - started) / 1000, (now - started) % 1000);
 				lck_mtx_lock(&dsp_lock);
 				if (rails_asked) {
@@ -1745,14 +1858,14 @@ step_start(void)
 				lck_mtx_unlock(&dsp_lock);
 			}
 			if (state & DSP_FATAL) {
-				printf("adsp: %u: THE AUDIO DSP SAYS IT HAS GIVEN UP\n", step);
+				printf(DSP_TAG ": %u: THE AUDIO DSP SAYS IT HAS GIVEN UP\n", step);
 				show_crash_reason();
 				break;
 			}
 		}
 		sleep_us(200);
 	}
-	printf("adsp: %u: the watch is over after %llu ms; its doorbells heard: GLINK %u, SMP2P %u\n", step,
+	printf(DSP_TAG ": %u: the watch is over after %llu ms; its doorbells heard: GLINK %u, SMP2P %u\n", step,
 	    (now_us() - started) / 1000, doorbell.glink, doorbell.smp2p);
 	show_partition();
 	if (our_item != 0 && smem_peek(our_item, &words, sizeof(words))) {
@@ -1765,12 +1878,12 @@ step_start(void)
 		struct smem_entry entry;
 
 		if (partition != 0 && smem_peek(partition, &header, sizeof(header))) {
-			printf("adsp: %u: the partition's header: hosts %u and %u, size %#x, free from the bottom at +%#x, from the top at "
+			printf(DSP_TAG ": %u: the partition's header: hosts %u and %u, size %#x, free from the bottom at +%#x, from the top at "
 			    "+%#x; the table's line size %u\n", step, header.host0, header.host1, header.size, header.free_uncached,
 			    header.free_cached, cacheline);
 			for (uint32_t at = sizeof(header), n = 0; at + sizeof(entry) <= header.size && n < 8; n++) {
 				smem_peek(partition + at, &entry, sizeof(entry));
-				printf("adsp: %u:   +%#x: canary %#x item %u size %u padding %u/%u\n", step, at, entry.canary, entry.item,
+				printf(DSP_TAG ": %u:   +%#x: canary %#x item %u size %u padding %u/%u\n", step, at, entry.canary, entry.item,
 				    entry.size, entry.padding_data, entry.padding_header);
 				if (entry.canary != SMEM_CANARY) {
 					break;
@@ -1783,7 +1896,7 @@ step_start(void)
 		return false;
 	}
 	if (ready_at == 0) {
-		printf("adsp: %u: %s\n", step, spoke ? "THE AUDIO DSP RUNS BUT HAS NOT SAID \"UP\"" : "NOT A WORD FROM THE AUDIO DSP");
+		printf(DSP_TAG ": %u: %s\n", step, spoke ? "THE AUDIO DSP RUNS BUT HAS NOT SAID \"UP\"" : "NOT A WORD FROM THE AUDIO DSP");
 		show_crash_reason();
 	}
 	return ready_at != 0;
@@ -1860,9 +1973,19 @@ static struct {
 } glink = {
 	.channel = {
 		[CHANNEL_QRTR] = { .name = "IPCRTR", .ours = 1, .intents = { { 0x800, 5 }, { 0x2000, 3 }, { 0x4400, 2 } } },
+#ifdef ADSP_SM8450
+		/* the SM8450's audio services speak GPR on "adsp_apps" (Linux: qcom,gpr's qcom,glink-channels) */
+		[CHANNEL_APR] = { .name = "adsp_apps", .ours = 2, .intents = { { 0x200, 8 }, { 0x1000, 4 }, { 0x2000, 2 } } },
+#else
 		[CHANNEL_APR] = { .name = "apr_audio_svc", .ours = 2, .intents = { { 0x200, 8 }, { 0x1000, 4 }, { 0x2000, 2 } } },
+#endif
+#ifdef DSP_SLPI
+		/* the sensor DSP has no battery manager: the place is FastRPC's (hakios.slpi.sm8450.c), answers of 16 bytes */
+		[CHANNEL_PMIC] = { .name = "fastrpcglink-apps-dsp", .ours = 3, .intents = { { 0x200, 8 }, { 0x1000, 2 }, { 0, 0 } } },
+#else
 		/* the battery manager's (battmgr below): answers of a few dozen bytes, a name of 128 */
 		[CHANNEL_PMIC] = { .name = "PMIC_RTR_ADSP_APPS", .ours = 3, .intents = { { 0x200, 6 }, { 0x1000, 2 }, { 0, 0 } } },
+#endif
 	},
 };
 
@@ -1901,14 +2024,14 @@ glink_reset(void)
 
 	/* (and inside the SMEM window: the words below are read and written without a bounds check) */
 	if (descriptor == 0 || size != 32 || (uint64_t)descriptor + size > SMEM_SIZE) {
-		printf("adsp: %u: GLINK's descriptor (item %u) is not there: nothing to reset\n", step, ITEM_GLINK_DESCRIPTOR);
+		printf(DSP_TAG ": %u: GLINK's descriptor (item %u) is not there: nothing to reset\n", step, ITEM_GLINK_DESCRIPTOR);
 		return;
 	}
-	printf("adsp: %u: GLINK's descriptor at %#lx: our queue read to %#x and written to %#x, the DSP's read to %#x and written "
+	printf(DSP_TAG ": %u: GLINK's descriptor at %#lx: our queue read to %#x and written to %#x, the DSP's read to %#x and written "
 	    "to %#x\n", step, SMEM_PHYS + descriptor, smem_word(descriptor + GLINK_OUR_TAIL), smem_word(descriptor + GLINK_OUR_HEAD),
 	    smem_word(descriptor + GLINK_THEIR_TAIL), smem_word(descriptor + GLINK_THEIR_HEAD));
 	if (smem_word(descriptor + GLINK_OUR_HEAD) != 0 || smem_word(descriptor + GLINK_THEIR_TAIL) != 0) {
-		printf("adsp: %u: about to write our two marks there (+4, +8): 0\n", step);
+		printf(DSP_TAG ": %u: about to write our two marks there (+4, +8): 0\n", step);
 		smem_poke(descriptor + GLINK_OUR_HEAD, 0);
 		smem_poke(descriptor + GLINK_THEIR_TAIL, 0);
 		settle();
@@ -1995,7 +2118,7 @@ glink_say(unsigned command, uint32_t param1, uint32_t param2, const void *more, 
 
 	if (glink.trace > 0 || !sent) {
 		glink.trace -= glink.trace > 0;
-		printf("adsp: glink: > %s %u %#x%s\n", glink_name(command), param1, param2, sent ? "" : ": NO ROOM IN OUR QUEUE, not sent");
+		printf(DSP_TAG ": glink: > %s %u %#x%s\n", glink_name(command), param1, param2, sent ? "" : ": NO ROOM IN OUR QUEUE, not sent");
 	}
 }
 
@@ -2059,7 +2182,7 @@ glink_pump(void)
 		}
 		wide = (wide + 7) & ~7ull;
 		if (wide > glink.theirs_size - 8) {
-			printf("adsp: glink: A MESSAGE OF %llu BYTES (%s %u %#x): not believed, and nothing more is read\n", wide,
+			printf(DSP_TAG ": glink: A MESSAGE OF %llu BYTES (%s %u %#x): not believed, and nothing more is read\n", wide,
 			    glink_name(message.command), message.param1, message.param2);
 			glink.broken = true;
 			return;
@@ -2072,7 +2195,7 @@ glink_pump(void)
 		if (glink.trace > 0 && message.command != GLINK_DATA && message.command != GLINK_DATA_MORE &&
 		    message.command != GLINK_INTENT && message.command != GLINK_DONE_REUSE) {
 			glink.trace--;
-			printf("adsp: glink: < %s %u %#x\n", glink_name(message.command), message.param1, message.param2);
+			printf(DSP_TAG ": glink: < %s %u %#x\n", glink_name(message.command), message.param1, message.param2);
 		}
 		switch (message.command) {
 		case GLINK_VERSION:
@@ -2102,7 +2225,7 @@ glink_pump(void)
 				}
 			}
 			if (channel == NULL) {
-				printf("adsp: glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n", name,
+				printf(DSP_TAG ": glink: the DSP opens \"%s\" as its channel %u: left unanswered, nobody here speaks it\n", name,
 				    message.param1);
 				for (unsigned i = 0; i < 4; i++) {
 					if (glink.others[i][0] == 0) {
@@ -2112,7 +2235,7 @@ glink_pump(void)
 				}
 				break;
 			}
-			printf("adsp: glink: the DSP opens \"%s\" as its channel %u: acknowledged, and opened from our side as channel %u\n",
+			printf(DSP_TAG ": glink: the DSP opens \"%s\" as its channel %u: acknowledged, and opened from our side as channel %u\n",
 			    name, message.param1, channel->ours);
 			channel->theirs = message.param1;
 			glink_say(GLINK_OPEN_ACK, channel->theirs, 0, NULL, 0);
@@ -2135,8 +2258,15 @@ glink_pump(void)
 			break;
 		case GLINK_INTENT:
 			channel = glink_theirs(message.param1);
+			if (channel == NULL && glink.trace > 0) {
+				printf(DSP_TAG ": glink: < intent for their channel %u, which is none of ours: %u of them\n", message.param1,
+				    message.param2);
+			}
 			for (uint32_t i = 0; channel != NULL && i < message.param2; i++) {
 				glink_peek(words, 8 + 8 * i, 8);
+				if (glink.trace > 0 && words[0] > 128) {
+					printf(DSP_TAG ": glink: < intent on \"%s\": %u bytes, number %u\n", channel->name, words[0], words[1]);
+				}
 				for (unsigned n = 0; n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]); n++) {
 					if (!channel->their_intents[n].there || channel->their_intents[n].id == words[1]) {
 						channel->their_intents[n].there = true;
@@ -2184,7 +2314,7 @@ glink_pump(void)
 			channel = glink_theirs(message.param1);
 			if (channel == NULL || intent >= channel->our_intent_count ||
 			    words[0] > channel->our_intents[intent].size - channel->our_intents[intent].fill) {
-				printf("adsp: glink: < data of %u bytes on channel %u for intent %u: NOT OURS OR TOO MUCH, dropped\n", words[0],
+				printf(DSP_TAG ": glink: < data of %u bytes on channel %u for intent %u: NOT OURS OR TOO MUCH, dropped\n", words[0],
 				    message.param1, message.param2);
 				glink_advance(length);
 				break;
@@ -2219,7 +2349,7 @@ glink_pump(void)
 			glink_advance(length);
 			glink_say(GLINK_CLOSE_ACK, message.param1, 0, NULL, 0);
 			if ((channel = glink_theirs(message.param1)) != NULL) {
-				printf("adsp: glink: THE DSP CLOSES \"%s\"\n", channel->name);
+				printf(DSP_TAG ": glink: THE DSP CLOSES \"%s\"\n", channel->name);
 				channel->open = false;
 				channel->theirs = 0;
 			}
@@ -2229,7 +2359,7 @@ glink_pump(void)
 			glink_advance(length);
 			break;
 		default:
-			printf("adsp: glink: A MESSAGE THIS DOES NOT KNOW (%u, %u, %#x): nothing more is read\n", message.command,
+			printf(DSP_TAG ": glink: A MESSAGE THIS DOES NOT KNOW (%u, %u, %#x): nothing more is read\n", message.command,
 			    message.param1, message.param2);
 			glink.broken = true;
 			return;
@@ -2238,7 +2368,7 @@ glink_pump(void)
 			channel = &glink.channel[c];
 			if (channel->theirs != 0 && channel->acknowledged && !channel->open) {
 				channel->open = true;
-				printf("adsp: glink: THE CHANNEL \"%s\" IS OPEN both ways (ours %u, the DSP's %u); telling the DSP our intents\n",
+				printf(DSP_TAG ": glink: THE CHANNEL \"%s\" IS OPEN both ways (ours %u, the DSP's %u); telling the DSP our intents\n",
 				    channel->name, channel->ours, channel->theirs);
 				for (unsigned i = 0; i < 3; i++) {
 					for (unsigned n = 0; n < channel->intents[i].count; n++) {
@@ -2289,10 +2419,24 @@ glink_send(struct glink_channel *channel, const void *data, uint32_t length)
 		}
 		if (!fits && !asked) {
 			channel->request_answered = false;
+			glink.trace = glink.trace > 20 ? glink.trace : 20;     /* (what comes of the request is told) */
 			glink_say(GLINK_INTENT_REQUEST, channel->ours, length, NULL, 0);
 			asked = true;
 		}
 		if (waited >= 5000 || (!fits && asked && channel->request_answered && !channel->request_granted)) {
+			char sizes[160];
+			int at = 0;
+
+			for (unsigned n = 0; n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]) &&
+			    at < (int)sizeof(sizes) - 12; n++) {
+				if (channel->their_intents[n].there) {
+					at += snprintf(sizes + at, sizeof(sizes) - (size_t)at, " %u%s", channel->their_intents[n].size,
+					    channel->their_intents[n].in_use ? "*" : "");
+				}
+			}
+			printf(DSP_TAG ": glink: %u bytes on \"%s\" not sent after %u ms: their intents (* in use):%s%s; asked for one: %s\n",
+			    length, channel->name, waited, at ? sizes : " none", fits ? "" : ", none large enough", !asked ? "no" :
+			    !channel->request_answered ? "no answer" : channel->request_granted ? "granted" : "REFUSED");
 			lck_mtx_unlock(&glink_lock);
 			return found < 0 ? ENOBUFS : EAGAIN;
 		}
@@ -2327,6 +2471,17 @@ static struct {
 	bool there;
 } qrtr_servers[64];
 static uint32_t qrtr_peer, qrtr_in, qrtr_out, qrtr_hellos, qrtr_lookups;
+
+#ifdef DSP_SLPI
+/* the sensor service's client, in hakios.slpi.sm8450.c after this file: datagrams to its port, and its run */
+static bool sns_datagram(const struct qrtr_header *header, const uint8_t *data, uint32_t length);
+static void sns_run(void);
+static void sns_end(void);
+/* and its FastRPC: the files its sensor drivers read (their registry), served from fw/sensors/root */
+static void fastrpc_input(const uint8_t *data, uint32_t length);
+static void fastrpc_run(void);
+static void fastrpc_end(void);
+#endif
 
 static int
 qrtr_out_packet(uint32_t type, uint32_t from_port, uint32_t to_node, uint32_t to_port, const void *data, uint32_t length)
@@ -2365,7 +2520,7 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 			break;
 		}
 		error = qrtr_out_packet(QRTR_HELLO, QRTR_CONTROL, header->from_node, QRTR_CONTROL, &hello, sizeof(hello));
-		printf("adsp: qrtr: HELLO FROM NODE %u; ours to it: %s\n", header->from_node, error == 0 ? "SENT" : "NOT SENT");
+		printf(DSP_TAG ": qrtr: HELLO FROM NODE %u; ours to it: %s\n", header->from_node, error == 0 ? "SENT" : "NOT SENT");
 		break;
 	case QRTR_NEW_SERVER:
 		for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
@@ -2384,11 +2539,11 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 			qrtr_servers[found].node = control->words[2];
 			qrtr_servers[found].port = control->words[3];
 		}
-		printf("adsp: qrtr: a service: %u (%#x), version %u, instance %u, at node %u port %u\n", control->words[0],
+		printf(DSP_TAG ": qrtr: a service: %u (%#x), version %u, instance %u, at node %u port %u\n", control->words[0],
 		    control->words[0], control->words[1] & 0xff, control->words[1] >> 8, control->words[2], control->words[3]);
 		break;
 	case QRTR_DEL_SERVER:
-		printf("adsp: qrtr: service %u at node %u port %u has gone\n", control->words[0], control->words[2], control->words[3]);
+		printf(DSP_TAG ": qrtr: service %u at node %u port %u has gone\n", control->words[0], control->words[2], control->words[3]);
 		for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
 			if (qrtr_servers[i].there && qrtr_servers[i].node == control->words[2] && qrtr_servers[i].port == control->words[3]) {
 				qrtr_servers[i].there = false;
@@ -2398,12 +2553,12 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 	case QRTR_NEW_LOOKUP:
 		/* the DSP looks for a service of ours (a protection domain's locator, say): there are none yet */
 		if (qrtr_lookups++ < 16) {
-			printf("adsp: qrtr: the DSP looks for service %u (%#x), instance %u: nobody here offers it\n", control->words[0],
+			printf(DSP_TAG ": qrtr: the DSP looks for service %u (%#x), instance %u: nobody here offers it\n", control->words[0],
 			    control->words[0], control->words[1]);
 		}
 		break;
 	case QRTR_BYE:
-		printf("adsp: qrtr: BYE from node %u\n", header->from_node);
+		printf(DSP_TAG ": qrtr: BYE from node %u\n", header->from_node);
 		bzero(qrtr_servers, sizeof(qrtr_servers));
 		break;
 	default:
@@ -2433,12 +2588,12 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		header.to_port = header.to_port == 0xfffe ? QRTR_CONTROL : header.to_port;
 		at = 16 + data[3];
 	} else {
-		printf("adsp: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
+		printf(DSP_TAG ": qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
 	}
 	/* (the datagram's size is the DSP's word: "at + size" could wrap in 32 bits and pass, so it is compared as a difference) */
 	if (header.size == 0 || at > length || header.size > length - at) {
-		printf("adsp: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
+		printf(DSP_TAG ": qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
 	}
 	qrtr_in++;
@@ -2461,7 +2616,12 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		qrtr_control(&header, &control);
 		return;
 	}
-	printf("adsp: qrtr: a datagram of %u bytes from node %u port %u to our port %u: nobody here listens there\n", header.size,
+#ifdef DSP_SLPI
+	if (sns_datagram(&header, data + at, header.size)) {
+		return;
+	}
+#endif
+	printf(DSP_TAG ": qrtr: a datagram of %u bytes from node %u port %u to our port %u: nobody here listens there\n", header.size,
 	    header.from_node, header.from_port, header.to_port);
 }
 
@@ -2516,13 +2676,13 @@ apr_input(const uint8_t *data, uint32_t length)
 	uint32_t header_length, payload;
 
 	if (length < sizeof(header)) {
-		printf("adsp: apr: %u bytes, no APR packet\n", length);
+		printf(DSP_TAG ": apr: %u bytes, no APR packet\n", length);
 		return;
 	}
 	memcpy(&header, data, sizeof(header));
 	header_length = ((header.field >> 4) & 0xf) * 4;
 	if (header_length < sizeof(header) || header_length > length) {
-		printf("adsp: apr: a header of %u bytes in a packet of %u: dropped\n", header_length, length);
+		printf(DSP_TAG ": apr: a header of %u bytes in a packet of %u: dropped\n", header_length, length);
 		return;
 	}
 	/*
@@ -2530,7 +2690,7 @@ apr_input(const uint8_t *data, uint32_t length)
 	 * below would then read 256 bytes from beyond this packet. Such a packet is dropped.
 	 */
 	if ((header.size < length ? header.size : length) < header_length) {
-		printf("adsp: apr: a packet of %u bytes with a header of %u: dropped\n", header.size < length ? header.size : length,
+		printf(DSP_TAG ": apr: a packet of %u bytes with a header of %u: dropped\n", header.size < length ? header.size : length,
 		    header_length);
 		return;
 	}
@@ -2556,7 +2716,7 @@ apr_input(const uint8_t *data, uint32_t length)
 		uint32_t w[4] = { 0, 0, 0, 0 };
 
 		memcpy(w, data + header_length, payload < sizeof(w) ? payload : sizeof(w));
-		printf("adsp: apr: < from service %u of domain %u (port %u) to %u of %u (port %u): opcode %#x, token %u, %u bytes: %#x %#x "
+		printf(DSP_TAG ": apr: < from service %u of domain %u (port %u) to %u of %u (port %u): opcode %#x, token %u, %u bytes: %#x %#x "
 		    "%#x %#x\n", header.from_service, header.from_domain, header.from_port, header.to_service, header.to_domain,
 		    header.to_port, header.opcode, header.token, payload, w[0], w[1], w[2], w[3]);
 	}
@@ -2618,7 +2778,7 @@ hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode,
 	apr_waited_for = token;
 	error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
 	if (error != 0) {
-		printf("adsp: apr: > opcode %#x to service %u: NOT SENT (%d)\n", opcode, service, error);
+		printf(DSP_TAG ": apr: > opcode %#x to service %u: NOT SENT (%d)\n", opcode, service, error);
 	} else {
 		apr_out++;
 		for (uint32_t waited = 0; waited < ms && !answered; waited++) {
@@ -2669,7 +2829,13 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
  * answer, or 2, a notice; an opcode) and its words; a property is asked for with opcode 0x30 (the
  * battery's) or 0x32 (the USB port's), the battery's number (0), the property's number and a word
  * that a get does not use, and is answered with the property's number, its value and a result (0:
- * good). Only gets are sent from here: nothing is set, no limit, no current, no notice asked for.
+ * good). One thing is set (opcode 0x33, the USB port's): the input current limit, the most the
+ * charger takes from the cable. With no operating system to say otherwise the DSP's firmware holds it
+ * at USB 2.0's 500 mA, and the phone running HakiOS needs 1-2.5 A, so it ran down on the cable. It is
+ * set to the phone's own 5 V limit, 3 A (Type-C's most without USB-PD; Xiaomi's 120 W needs its own
+ * charge pumps and adapter talk, which nothing here does), boot-arg usb_icl=<mA> (0: left as it is).
+ * The firmware still takes less when the cable or the port gives less (its AICL lowers the current
+ * when the input voltage sags), and the battery's own limits (FCC, float voltage, JEITA) stay its own.
  * With adsp=1 (battmgr=0: not) it is asked every BATTMGR_SECONDS while the DSP runs, and what it says
  * goes to drivers/power/hakios.battery.c (hakios_battery_report()), and from there to the power source
  * that Darwin reads (drivers/power/hakios.battery.cpp). battmgr=2: every property once, for the log.
@@ -2686,6 +2852,8 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
 #define BATTMGR_NOTICE          2
 #define BATTMGR_BATTERY_GET     0x30
 #define BATTMGR_USB_GET         0x32
+#define BATTMGR_USB_SET         0x33
+#define BATTMGR_USB_ICL_MA      3000            /* the phone's 5 V input limit (usb_icl=) */
 #define BATT_STATUS             0               /* Linux's POWER_SUPPLY_STATUS_*: 1 charging, 2 discharging, 3 not charging, 4 full */
 #define BATT_HEALTH             1
 #define BATT_PRESENT            2
@@ -2699,6 +2867,7 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
 #define BATT_CHG_FULL           18              /* the full charge as the fuel gauge has learnt it, uAh */
 #define USB_VOLT_NOW            1               /* uV */
 #define USB_CURR_NOW            3               /* uA, what the port gives */
+#define USB_INPUT_CURR_LIMIT    5               /* uA, the most the charger takes from the port */
 #define USB_TYPE                6               /* Linux's POWER_SUPPLY_USB_TYPE_*: 1 here, a computer's port */
 #define USB_ONLINE              0
 #define BATTMGR_SECONDS         10
@@ -2723,13 +2892,13 @@ battmgr_input(const uint8_t *data, uint32_t length)
 	bzero(&m, sizeof(m));
 	memcpy(&m, data, length < sizeof(m) ? length : sizeof(m));
 	if (m.owner != BATTMGR_OWNER || length < 12) {
-		printf("adsp: battmgr: < %u bytes of owner %u, type %u, opcode %#x: not the battery manager's\n", length, m.owner,
+		printf(DSP_TAG ": battmgr: < %u bytes of owner %u, type %u, opcode %#x: not the battery manager's\n", length, m.owner,
 		    m.type, m.opcode);
 		return;
 	}
 	if (m.type == BATTMGR_NOTICE) {
 		if (battmgr.notices++ < 8) {
-			tell("adsp: battmgr: < a notice, opcode %#x, %u bytes (%#x %#x %#x)\n", m.opcode, length, m.words[0], m.words[1],
+			tell(DSP_TAG ": battmgr: < a notice, opcode %#x, %u bytes (%#x %#x %#x)\n", m.opcode, length, m.words[0], m.words[1],
 			    m.words[2]);
 		}
 		return;
@@ -2769,6 +2938,72 @@ battmgr_get(uint32_t opcode, uint32_t property, uint32_t *value)
 	return false;
 }
 
+/*
+ * One property set: { battery 0, property, value } with opcode 0x33 (the USB port's), answered with the same opcode and
+ * one word, the result (0: done).
+ */
+static bool
+battmgr_set(uint32_t opcode, uint32_t property, uint32_t value)
+{
+	struct battmgr_message q = { BATTMGR_OWNER, BATTMGR_REQUEST, opcode, { 0, property, value } };
+	uint32_t before = os_atomic_load(&battmgr.answers, acquire);
+
+	if (glink_send(&glink.channel[CHANNEL_PMIC], &q, sizeof(q)) != 0) {
+		return false;
+	}
+	for (unsigned ms = 0; ms < 1000; ms++) {
+		if (os_atomic_load(&battmgr.answers, acquire) != before) {
+			if (battmgr.opcode != opcode || battmgr.length < 16) {
+				before = battmgr.answers;
+				continue;
+			}
+			return battmgr.property == 0;   /* (the answer's first word is its result) */
+		}
+		sleep_ms(1);
+	}
+	return false;
+}
+
+/*
+ * The input current limit raised to usb_icl= (BATTMGR_USB_ICL_MA by default) while a cable is in: asked each round, set
+ * when it is not that (the firmware puts it back to 500 mA when the cable is pulled out and put in again).
+ */
+static void
+battmgr_input_limit(void)
+{
+	static uint32_t sets;
+	static bool refused;
+	uint32_t ma = BATTMGR_USB_ICL_MA, now = 0;
+
+	PE_parse_boot_argn("usb_icl", &ma, sizeof(ma));
+	if (ma == 0 || refused) {
+		return;
+	}
+	if (!battmgr_get(BATTMGR_USB_GET, USB_INPUT_CURR_LIMIT, &now)) {
+		if (sets++ < 8) {
+			tell(DSP_TAG ": battmgr: USB input current limit: NO ANSWER to the get, nothing set\n");
+		}
+		return;
+	}
+	if (now == ma * 1000) {
+		return;
+	}
+	bool ok = battmgr_set(BATTMGR_USB_SET, USB_INPUT_CURR_LIMIT, ma * 1000);
+	uint32_t after = 0;
+
+	(void)battmgr_get(BATTMGR_USB_GET, USB_INPUT_CURR_LIMIT, &after);
+	if (sets++ < 8) {
+		tell(DSP_TAG ": battmgr: USB input current limit %u uA -> %u uA asked: %s, now %u uA\n", now, ma * 1000,
+		    ok ? "done" : "NOT DONE (not asked again)", after);
+	}
+	/*
+	 * (10 November 2026, from a Mac's port: refused, the limit reads 100000 uA and the port gives 500 mA -- what Android
+	 * says of the same port too, "Max charging current: 500000": the firmware keeps a computer's port at USB 2.0's 500 mA.
+	 * A charger that offers more, Type-C 1.5/3 A or USB-PD, is what gives the phone more.)
+	 */
+	refused = !ok;
+}
+
 static void
 battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -2777,7 +3012,7 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 		sleep_ms(10);
 	}
 	if (!glink.channel[CHANNEL_PMIC].open) {
-		tell("adsp: battmgr: the DSP has not opened PMIC_RTR_ADSP_APPS: nothing is asked\n");
+		tell(DSP_TAG ": battmgr: the DSP has not opened PMIC_RTR_ADSP_APPS: nothing is asked\n");
 		battmgr.runs = false;
 		thread_terminate(current_thread());
 	}
@@ -2790,19 +3025,19 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 			uint32_t v = 0;
 			bool ok = battmgr_get(BATTMGR_BATTERY_GET, p, &v);
 
-			tell("adsp: battmgr: battery property %u: %s %u (%d)\n", p, ok ? "" : "NO ANSWER", v, (int)v);
+			tell(DSP_TAG ": battmgr: battery property %u: %s %u (%d)\n", p, ok ? "" : "NO ANSWER", v, (int)v);
 		}
 		for (uint32_t p = 0; mode == 2 && p < 12; p++) {
 			uint32_t v = 0;
 			bool ok = battmgr_get(BATTMGR_USB_GET, p, &v);
 
-			tell("adsp: battmgr: USB property %u: %s %u (%d)\n", p, ok ? "" : "NO ANSWER", v, (int)v);
+			tell(DSP_TAG ": battmgr: USB property %u: %s %u (%d)\n", p, ok ? "" : "NO ANSWER", v, (int)v);
 		}
 	}
 	for (unsigned round = 0; battmgr.wanted && glink.up && glink.channel[CHANNEL_PMIC].open; round++) {
 		struct hakios_battery_state b = { .size = sizeof(b) };
 		uint32_t capacity = 0, status = 0, present = 0, volt = 0, curr = 0, temp = 0, usb = 0;
-		uint32_t usb_type = 0, usb_volt = 0, usb_curr = 0, charge = 0;
+		uint32_t usb_type = 0, usb_volt = 0, usb_curr = 0, usb_icl = 0, charge = 0;
 		static uint32_t full, design, cycles;
 		bool good = battmgr_get(BATTMGR_BATTERY_GET, BATT_CAPACITY, &capacity) &&
 		    battmgr_get(BATTMGR_BATTERY_GET, BATT_STATUS, &status) &&
@@ -2816,9 +3051,11 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 			/* (what may be missing without harm, and the capacities and the cycles only now and then: they hardly change) */
 			(void)battmgr_get(BATTMGR_BATTERY_GET, BATT_CHG_COUNTER, &charge);
 			if (usb) {
+				battmgr_input_limit();
 				(void)battmgr_get(BATTMGR_USB_GET, USB_TYPE, &usb_type);
 				(void)battmgr_get(BATTMGR_USB_GET, USB_VOLT_NOW, &usb_volt);
 				(void)battmgr_get(BATTMGR_USB_GET, USB_CURR_NOW, &usb_curr);
+				(void)battmgr_get(BATTMGR_USB_GET, USB_INPUT_CURR_LIMIT, &usb_icl);
 			}
 			if (round % 30 == 0 || full == 0) {
 				(void)battmgr_get(BATTMGR_BATTERY_GET, BATT_CHG_FULL, &full);
@@ -2842,12 +3079,12 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 			hakios_battery_report(&b);
 		}
 		if (round < 3 || round % 6 == 0 || !good) {
-			tell("adsp: battmgr: %s capacity %u (hundredths of a percent), status %u, present %u, %d uV, %d uA, temperature %d "
-			    "(hundredths of a degree), charge %u uAh, USB online %u (type %u, %u uV, %u uA)\n",
+			tell(DSP_TAG ": battmgr: %s capacity %u (hundredths of a percent), status %u, present %u, %d uV, %d uA, temperature %d "
+			    "(hundredths of a degree), charge %u uAh, USB online %u (type %u, %u uV, %u uA, limit %u uA)\n",
 			    good ? "the DSP says:" : "NO ANSWER to all of", capacity, status, present, (int)volt, (int)curr, (int)temp,
-			    charge, usb, usb_type, usb_volt, usb_curr);
+			    charge, usb, usb_type, usb_volt, usb_curr, usb_icl);
 			if (round % 30 == 0 && good) {
-				tell("adsp: battmgr: full charge %u uAh, as designed %u uAh, %u cycles\n", full, design, cycles);
+				tell(DSP_TAG ": battmgr: full charge %u uAh, as designed %u uAh, %u cycles\n", full, design, cycles);
 			}
 		}
 		for (unsigned ms = 0; ms < BATTMGR_SECONDS * 1000 && battmgr.wanted && glink.up; ms += 50) {
@@ -2871,7 +3108,7 @@ battmgr_start(void)
 	}
 	if (option("battery")) {
 		/* (the loader's way, through Qualcomm's UEFI charger drivers: one way to the battery at a time) */
-		tell("adsp: battmgr: not with battery=1: the battery is asked about the loader's way\n");
+		tell(DSP_TAG ": battmgr: not with battery=1: the battery is asked about the loader's way\n");
 		return;
 	}
 	battmgr.wanted = true;
@@ -2910,7 +3147,7 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 			dsp_listen(&words);
 			if ((dsp_state(&words) & DSP_FATAL) && !gave_up) {
 				gave_up = true;
-				printf("adsp: link: THE AUDIO DSP SAYS IT HAS GIVEN UP (\"slave-kernel\" = %#x)\n", dsp_state(&words));
+				printf(DSP_TAG ": link: THE AUDIO DSP SAYS IT HAS GIVEN UP (\"slave-kernel\" = %#x)\n", dsp_state(&words));
 				show_crash_reason();
 			}
 		}
@@ -2936,9 +3173,17 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 			if (from == CHANNEL_QRTR) {
 				qrtr_input(packet->data, packet->length);
 			} else if (from == CHANNEL_PMIC) {
+#ifdef DSP_SLPI
+				fastrpc_input(packet->data, packet->length);
+#else
 				battmgr_input(packet->data, packet->length);
+#endif
 			} else {
+#ifdef ADSP_SM8450
+				gpr_input(packet->data, packet->length);
+#else
 				apr_input(packet->data, packet->length);
+#endif
 			}
 			kfree_data(packet, sizeof(*packet) + packet->length);
 		}
@@ -2957,7 +3202,7 @@ link_stop(void)
 		for (unsigned ms = 0; ms < 2000 && link_runs; ms++) {
 			sleep_ms(1);
 		}
-		printf("adsp: link: %s; GLINK said %u and heard %u messages, QRTR sent %u and received %u datagrams, APR %u and %u "
+		printf(DSP_TAG ": link: %s; GLINK said %u and heard %u messages, QRTR sent %u and received %u datagrams, APR %u and %u "
 		    "packets; its doorbells heard: GLINK %u, SMP2P %u\n", link_runs ? "THE THREAD DOES NOT END" : "down", glink.said,
 		    glink.heard, qrtr_out, qrtr_in, apr_out, apr_in, doorbell.glink, doorbell.smp2p);
 	}
@@ -3000,13 +3245,13 @@ step_queues(void)
 
 	announce("find GLINK's descriptor and the two queues, and read what the audio DSP has put into its own");
 	if (!glink_find()) {
-		printf("adsp: %u: GLINK's items are not all there, or not of a shape this knows (descriptor %#x, ours %#x of %u bytes, "
+		printf(DSP_TAG ": %u: GLINK's items are not all there, or not of a shape this knows (descriptor %#x, ours %#x of %u bytes, "
 		    "the DSP's %#x of %u)\n", step, glink.descriptor, glink.ours, glink.ours_size, glink.theirs, glink.theirs_size);
 		return false;
 	}
 	head = smem_word(glink.descriptor + GLINK_THEIR_HEAD);
 	tail = smem_word(glink.descriptor + GLINK_THEIR_TAIL);
-	printf("adsp: %u: our queue: %u bytes at %#lx, written to %#x, read by the DSP to %#x; the DSP's: %u bytes at %#lx, written "
+	printf(DSP_TAG ": %u: our queue: %u bytes at %#lx, written to %#x, read by the DSP to %#x; the DSP's: %u bytes at %#lx, written "
 	    "to %#x, read by us to %#x\n", step, glink.ours_size, SMEM_PHYS + glink.ours, smem_word(glink.descriptor + GLINK_OUR_HEAD),
 	    smem_word(glink.descriptor + GLINK_OUR_TAIL), glink.theirs_size, SMEM_PHYS + glink.theirs, head, tail);
 	for (uint32_t at = 0, shown = 0; at + sizeof(message) <= head && head < glink.theirs_size && tail == 0 && shown < 8; shown++) {
@@ -3018,7 +3263,7 @@ step_queues(void)
 			glink_peek(name, at + 8, message.param2 < 32 ? message.param2 : 32);
 			length += message.param2;
 		}
-		printf("adsp: %u:   in the DSP's queue at %#x: %s %u %#x %s\n", step, at, glink_name(message.command), message.param1,
+		printf(DSP_TAG ": %u:   in the DSP's queue at %#x: %s %u %#x %s\n", step, at, glink_name(message.command), message.param1,
 		    message.param2, name);
 		if (message.command != GLINK_VERSION && message.command != GLINK_OPEN) {
 			break;
@@ -3065,7 +3310,7 @@ step_link(void)
 	link_wanted = link_runs = true;
 	if (kernel_thread_start(link_thread, NULL, &thread) != KERN_SUCCESS) {
 		link_wanted = link_runs = false;
-		printf("adsp: %u: no thread\n", step);
+		printf(DSP_TAG ": %u: no thread\n", step);
 		return false;
 	}
 	thread_deallocate(thread);
@@ -3073,7 +3318,7 @@ step_link(void)
 		sleep_ms(1);
 	}
 	sleep_ms(50);
-	printf("adsp: %u: %llu ms after our version: versions %s (features %#x); the channel \"IPCRTR\" is %s, \"apr_audio_svc\" %s; "
+	printf(DSP_TAG ": %u: %llu ms after our version: versions %s (features %#x); the channel \"IPCRTR\" is %s, \"apr_audio_svc\" %s; "
 	    "the DSP also opened \"%s\" \"%s\" \"%s\" \"%s\"\n", step, (now_us() - began) / 1000, glink.agreed ? "agreed" :
 	    "NOT AGREED", glink.features, glink.channel[CHANNEL_QRTR].open ? "OPEN" : "NOT OPEN",
 	    glink.channel[CHANNEL_APR].open ? "OPEN" : "NOT OPEN", glink.others[0], glink.others[1], glink.others[2], glink.others[3]);
@@ -3090,7 +3335,7 @@ step_qrtr(void)
 	if (!glink.channel[CHANNEL_QRTR].open) {
 		return false;
 	}
-	PE_parse_boot_argn("adsp_listen", &listen_seconds, sizeof(listen_seconds));
+	PE_parse_boot_argn(DSP_TAG "_listen", &listen_seconds, sizeof(listen_seconds));
 	announce("listen to QRTR on the channel: the DSP's hello (answered from the link's thread), and the services it tells of");
 	for (unsigned ms = 0; ms < listen_seconds * 1000; ms++) {
 		sleep_ms(1);
@@ -3098,7 +3343,7 @@ step_qrtr(void)
 	for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
 		services += qrtr_servers[i].there;
 	}
-	printf("adsp: %u: after %u s: %s; the DSP is node %u and has told of %u services; it looked for %u of ours; QRTR received %u "
+	printf(DSP_TAG ": %u: after %u s: %s; the DSP is node %u and has told of %u services; it looked for %u of ours; QRTR received %u "
 	    "and sent %u datagrams\n", step, listen_seconds, qrtr_hellos ? "HELLO BOTH WAYS" : "NO HELLO FROM THE DSP", qrtr_peer,
 	    services, qrtr_lookups, qrtr_in, qrtr_out);
 	return qrtr_hellos != 0;
@@ -3112,14 +3357,14 @@ step_apr(void)
 	uint32_t wait_seconds = 10, asked = 0, state = 0;
 	uint64_t began = now_us();
 
-	PE_parse_boot_argn("adsp_apr_wait", &wait_seconds, sizeof(wait_seconds));
+	PE_parse_boot_argn(DSP_TAG "_apr_wait", &wait_seconds, sizeof(wait_seconds));
 	announce("ask the audio DSP's core service over APR whether the audio services are up (again and again, as Android "
 	    "does), then which services it has");
 	for (unsigned ms = 0; ms < 3000 && !glink.channel[CHANNEL_APR].open; ms++) {
 		sleep_ms(1);
 	}
 	if (!glink.channel[CHANNEL_APR].open) {
-		printf("adsp: %u: the channel \"apr_audio_svc\" is not open: the DSP has not opened it\n", step);
+		printf(DSP_TAG ": %u: the channel \"apr_audio_svc\" is not open: the DSP has not opened it\n", step);
 		return false;
 	}
 	while (now_us() - began < wait_seconds * 1000000ull) {
@@ -3134,7 +3379,7 @@ step_apr(void)
 		sleep_ms(200);
 	}
 	audio_up = state == 1;
-	printf("adsp: %u: %s after %llu ms and %u questions (the last answer: opcode %#x, %u bytes, %#x)\n", step, state == 1 ?
+	printf(DSP_TAG ": %u: %s after %llu ms and %u questions (the last answer: opcode %#x, %u bytes, %#x)\n", step, state == 1 ?
 	    "THE AUDIO SERVICES ARE UP" : "THE AUDIO SERVICES DO NOT SAY THEY ARE UP", (now_us() - began) / 1000, asked,
 	    apr_answer.opcode, apr_answer.length, apr_answer.words[0]);
 	if (apr_ask(APR_SVC_ADSP_CORE, AVCS_GET_VERSIONS, NULL, 0, 1000)) {
@@ -3144,20 +3389,217 @@ step_apr(void)
 		for (uint32_t i = 0; i < apr_answer.length / 4 && i < 64 && at < (int)sizeof(line) - 12; i++) {
 			at += snprintf(line + at, sizeof(line) - (size_t)at, " %#x", apr_answer.words[i]);
 		}
-		printf("adsp: %u: the services and their versions (opcode %#x, %u bytes):%s\n", step, apr_answer.opcode,
+		printf(DSP_TAG ": %u: the services and their versions (opcode %#x, %u bytes):%s\n", step, apr_answer.opcode,
 		    apr_answer.length, line);
 	} else {
-		printf("adsp: %u: no answer to the question of the services' versions\n", step);
+		printf(DSP_TAG ": %u: no answer to the question of the services' versions\n", step);
 	}
 	return state == 1;
 }
+
+
+#ifdef ADSP_SM8450
+/* ---- GPR: the SM8450's audio services' protocol (AudioReach), on the channel adsp_apps ------------------------ */
+
+/*
+ * Linux: drivers/soc/qcom/apr.c (its GPR half), include/linux/soc/qcom/apr.h, sound/soc/qcom/qdsp6/audioreach.c
+ * and q6apm.c. A packet is a header of six words -- version and header size (4 bits each) and the packet's size
+ * (24); the domains it goes to and comes from (ADSP 2, ours 3); the ports it is from and to; a token; an opcode --
+ * and what the opcode takes. The DSP's audio manager (APM, port 1) says whether the audio framework is ready
+ * (APM_CMD_GET_SPF_STATE: Linux asks it again and again after the DSP has started, until the answer is 1).
+ * Answers are put where APR's are (apr_answer), and are waited for the same way.
+ */
+#define GPR_DOMAIN_ADSP                 2
+#define GPR_DOMAIN_APPS                 3
+#define GPR_APM_PORT                    1       /* APM_MODULE_INSTANCE_ID; ours is GPR_APM_MODULE_IID, also 1 */
+#define GPR_BASIC_RSP_RESULT            0x02001005u
+#define APM_CMD_GET_SPF_STATE           0x01001021u
+#define APM_CMD_RSP_GET_SPF_STATE       0x02001007u
+
+struct gpr_header {
+	uint32_t field;                         /* version 4 bits, header size in words 4, packet size 24 */
+	uint8_t to_domain, from_domain;
+	uint16_t reserved;
+	uint32_t from_port, to_port, token, opcode;
+};
+
+static void
+gpr_input(const uint8_t *data, uint32_t length)
+{
+	struct gpr_header header;
+	uint32_t header_length, size, payload;
+
+	if (length < sizeof(header)) {
+		printf(DSP_TAG ": gpr: %u bytes, no GPR packet\n", length);
+		return;
+	}
+	memcpy(&header, data, sizeof(header));
+	header_length = ((header.field >> 4) & 0xf) * 4;
+	size = header.field >> 8;
+	size = size < length ? size : length;
+	if (header_length < sizeof(header) || header_length > size) {
+		printf(DSP_TAG ": gpr: a header of %u bytes in a packet of %u: dropped\n", header_length, size);
+		return;
+	}
+	payload = size - header_length;
+	apr_in++;
+	if (apr_in <= 40) {
+		uint32_t w[4] = { 0, 0, 0, 0 };
+
+		memcpy(w, data + header_length, payload < sizeof(w) ? payload : sizeof(w));
+		printf(DSP_TAG ": gpr: < from port %#x of domain %u to port %#x of %u: opcode %#x, token %u, %u bytes: %#x %#x %#x %#x\n",
+		    header.from_port, header.from_domain, header.to_port, header.to_domain, header.opcode, header.token, payload, w[0],
+		    w[1], w[2], w[3]);
+	}
+	if (header.token != apr_waited_for || apr_waited_for == 0) {
+		/* nobody waits for it: the sound's (hakios.sound.sm8450.c) events -- a written buffer's "done" -- else dropped */
+		hakios_apr_events_t events = apr_events;
+		uint32_t words[64];
+
+		if (events != NULL) {
+			bzero(words, sizeof(words));
+			memcpy(words, data + header_length, payload < sizeof(words) ? payload : sizeof(words));
+			(void)events(HAKIOS_GPR_SERVICE, (uint16_t)header.from_port, header.opcode, header.token, words,
+			    payload < sizeof(words) ? payload : sizeof(words));
+		}
+		return;
+	}
+	bzero(apr_answer.words, sizeof(apr_answer.words));
+	memcpy(apr_answer.words, data + header_length, payload < sizeof(apr_answer.words) ? payload : sizeof(apr_answer.words));
+	apr_answer.length = payload;
+	apr_answer.opcode = header.opcode;
+	apr_answer.token = header.token;
+	os_atomic_store(&apr_answer.there, true, release);
+}
+
+/*
+ * A packet to port `to' of the DSP's from port `from' of ours. With `ms', the answer is waited for (the token is
+ * ours, a new one) and true means it came, in *answer if asked for; without, the packet goes with `token' and true
+ * means it was sent (what comes back goes to the events' handler: hakios_adsp_apr_events()).
+ */
+bool
+hakios_adsp_gpr_send(uint32_t to, uint32_t from, uint32_t token, uint32_t opcode, const void *payload, uint32_t length,
+    uint32_t ms, struct hakios_apr_answer *answer)
+{
+	static uint8_t packet[sizeof(struct gpr_header) + HAKIOS_GPR_PAYLOAD_MAX];     /* (under apr_lock) */
+	struct gpr_header *header = (struct gpr_header *)packet;
+	bool answered = false;
+	int error;
+
+	if (length > HAKIOS_GPR_PAYLOAD_MAX || (length & 3) != 0 || !glink.channel[CHANNEL_APR].open) {
+		return false;
+	}
+	lck_mtx_lock(&apr_lock);
+	bzero(packet, sizeof(*header) + length);
+	header->field = (uint32_t)(sizeof(*header) + length) << 8 | (sizeof(*header) / 4) << 4;   /* version 0 */
+	header->to_domain = GPR_DOMAIN_ADSP;
+	header->from_domain = GPR_DOMAIN_APPS;
+	header->from_port = from;
+	header->to_port = to;
+	header->opcode = opcode;
+	if (length != 0) {
+		memcpy(packet + sizeof(*header), payload, length);
+	}
+	if (ms != 0) {
+		token = apr_next_token++;
+		if (apr_next_token >= 0x01000000u) {
+			apr_next_token = 1;
+		}
+		apr_answer.there = false;
+		apr_waited_for = token;
+	}
+	header->token = token;
+	error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
+	if (error != 0) {
+		printf(DSP_TAG ": gpr: > opcode %#x to port %#x: NOT SENT (%d)\n", opcode, to, error);
+	} else {
+		apr_out++;
+		answered = ms == 0;
+		for (uint32_t waited = 0; waited < ms; waited++) {
+			if (os_atomic_load(&apr_answer.there, acquire) && apr_answer.token == token) {
+				answered = true;
+				if (answer != NULL) {
+					answer->opcode = apr_answer.opcode;
+					answer->token = apr_answer.token;
+					answer->length = apr_answer.length;
+					memcpy(answer->words, apr_answer.words, sizeof(answer->words));
+				}
+				break;
+			}
+			sleep_ms(1);
+		}
+	}
+	if (ms != 0) {
+		apr_waited_for = 0;
+	}
+	lck_mtx_unlock(&apr_lock);
+	return answered;
+}
+
+/* A command to a port of the DSP's (from the same port of ours, as audioreach.c sends), and its answer waited for. */
+bool
+hakios_adsp_gpr(uint32_t port, uint32_t opcode, const void *payload, uint32_t length, uint32_t ms,
+    struct hakios_apr_answer *answer)
+{
+	return ms != 0 && hakios_adsp_gpr_send(port, port, 0, opcode, payload, length, ms, answer);
+}
+
+/* Step 11 on the SM8450: the channel adsp_apps open, and the audio manager asked until it says it is ready. */
+static bool
+step_gpr(void)
+{
+	struct hakios_apr_answer answer;
+	uint64_t began = now_us();
+	uint32_t state = 0, asked = 0, wait_seconds = 10;
+
+	PE_parse_boot_argn(DSP_TAG "_apr_wait", &wait_seconds, sizeof(wait_seconds));
+	announce("ask the audio DSP's audio manager (APM) over GPR whether the audio framework is ready (again and again, as "
+	    "Linux's q6apm does)");
+	for (unsigned ms = 0; ms < 3000 && !glink.channel[CHANNEL_APR].open; ms++) {
+		sleep_ms(1);
+	}
+	if (!glink.channel[CHANNEL_APR].open) {
+		printf(DSP_TAG ": %u: the channel \"adsp_apps\" is not open: the DSP has not opened it\n", step);
+		return false;
+	}
+	bzero(&answer, sizeof(answer));
+	while (now_us() - began < wait_seconds * 1000000ull) {
+		asked++;
+		if (hakios_adsp_gpr(GPR_APM_PORT, APM_CMD_GET_SPF_STATE, NULL, 0, 500, &answer) &&
+		    answer.opcode == APM_CMD_RSP_GET_SPF_STATE) {
+			state = answer.words[0];
+			if (state == 1) {
+				break;
+			}
+		}
+		sleep_ms(200);
+	}
+	audio_up = state == 1;
+	printf(DSP_TAG ": %u: %s after %llu ms and %u questions (the last answer: opcode %#x, %u bytes, %#x %#x)\n", step, state == 1 ?
+	    "THE AUDIO FRAMEWORK (APM) IS READY" : "THE AUDIO MANAGER DOES NOT SAY IT IS READY", (now_us() - began) / 1000, asked,
+	    answer.opcode, answer.length, answer.words[0], answer.words[1]);
+	return state == 1;
+}
+#endif
 
 /* ---- the steps, and their end ----------------------------------------------------------------------- */
 
 static bool (*const steps[STEPS])(void) = {
 	step_survey, step_firmware, step_mailbox, step_header, step_image, step_our_item, step_start, step_queues, step_link,
-	step_qrtr, step_apr,
+	step_qrtr,
+#if defined(DSP_SLPI)
 };
+static bool (*const step_apr_unused)(void) __unused = step_apr;
+static bool (*const step_gpr_unused)(void) __unused = step_gpr;
+static void (*const battmgr_input_unused)(const uint8_t *, uint32_t) __unused = battmgr_input;
+#elif defined(ADSP_SM8450)
+	step_gpr,
+};
+static bool (*const step_apr_unused)(void) __unused = step_apr;
+#else
+	step_apr,
+};
+#endif
 
 static bool keep;                       /* the DSP and the link stay up while the system runs (adsp_keep, adsp=1) */
 
@@ -3166,7 +3608,7 @@ steps_over(uint32_t done)
 {
 	lck_mtx_lock(&dsp_lock);
 	if (dsp_started && done == last_step && keep) {
-		printf("adsp: THE AUDIO DSP STAYS ON while the system runs%s\n", link_runs ? ", and the link with it" : "");
+		printf(DSP_TAG ": THE AUDIO DSP STAYS ON while the system runs%s\n", link_runs ? ", and the link with it" : "");
 	} else if (dsp_started) {
 		dsp_shutdown("the steps are over");
 	}
@@ -3177,9 +3619,12 @@ steps_over(uint32_t done)
 void
 hakios_adsp_stop(void)
 {
+	tell(DSP_TAG ": stopping (the DSP %s)\n", dsp_started ? "runs" : "is not running");
+#ifndef DSP_SLPI
 	battmgr_stop();
 	hakios_sound_dsp_down();               /* the amplifiers, the stream and the port first, while the DSP still listens */
 	hakios_mic_dsp_down();                 /* and what the microphones' path has asked for */
+#endif
 	lck_mtx_lock(&dsp_lock);
 	if (dsp_started) {
 		unsigned services = 0;
@@ -3189,9 +3634,15 @@ hakios_adsp_stop(void)
 		for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
 			services += qrtr_servers[i].there;
 		}
+#ifdef DSP_SLPI
+		sns_end();
+#endif
 		down = dsp_shutdown("the run is about to end");
+#ifdef DSP_SLPI
+		fastrpc_end();                  /* (the DSP is off: what was set up for its file access is put back) */
+#endif
 		/* (said again at the end: a long run's log keeps its beginning and its end, and the middle may be gone) */
-		tell("adsp: the audio DSP is off: it had been up%s (node %u, %u services; audio services %s), it %s, and TrustZone %s\n",
+		tell(DSP_TAG ": the audio DSP is off: it had been up%s (node %u, %u services; audio services %s), it %s, and TrustZone %s\n",
 		    node ? " and linked" : ", NOT LINKED", node, services, audio_up ? "up" : "NOT UP", stopped_by_its_word ?
 		    "stopped when asked" : "DID NOT SAY IT HAD STOPPED", down ? "has shut it down" : "DID NOT SHUT IT DOWN");
 	}
@@ -3202,7 +3653,9 @@ hakios_adsp_stop(void)
 void
 hakios_adsp_quiesce(void)
 {
+#ifndef DSP_SLPI
 	hakios_sound_quiesce();                /* the amplifiers off, whatever the DSP's state */
+#endif
 	if (!dsp_started) {
 		return;
 	}
@@ -3218,16 +3671,16 @@ run_steps(void)
 
 	for (step = 1; step <= last_step; step++) {
 		if (!steps[step - 1]()) {
-			printf("adsp: step %u: FAILED; the steps after it are not attempted\n", step);
+			printf(DSP_TAG ": step %u: FAILED; the steps after it are not attempted\n", step);
 			break;
 		}
-		printf("adsp: step %u: done\n", step);
+		printf(DSP_TAG ": step %u: done\n", step);
 		done = step;
 	}
 	step = done;
 	new_from = STEPS + 1;
 	steps_over(done);
-	printf("adsp: over after step %u; %s\n", done, last_write);
+	printf(DSP_TAG ": over after step %u; %s\n", done, last_write);
 }
 
 static void
@@ -3240,20 +3693,53 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 	for (unsigned waited = 0; waited < 300 && rootvnode == NULLVP; waited++) {
 		sleep_ms(200);
 	}
+#ifdef DSP_SLPI
+	/*
+	 * Started side by side, the audio DSP gave up after handing its power over, while the sensor DSP went
+	 * through its own TrustZone steps (logs/131241-run.log.live; logs/115918 failed at step 4): the sensor
+	 * DSP's start waits for the audio DSP's to be over, up or not (a minute at most; slpi_after_adsp=0: no wait).
+	 */
+	{
+		uint32_t after = 1;
+		unsigned waited = 0;
+
+		PE_parse_boot_argn(DSP_TAG "_after_adsp", &after, sizeof(after));
+		for (; after && waited < 600 && hakios_adsp_starting; waited++) {
+			sleep_ms(100);
+		}
+		if (waited > 0) {
+			tell(DSP_TAG ": the sensor DSP's start waited %u ms for the audio DSP's%s\n", waited * 100,
+			    hakios_adsp_starting ? ", which is STILL NOT OVER" : "");
+		}
+	}
+#endif
 	run_steps();
 	for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]); i++) {
 		services += qrtr_servers[i].there;
 	}
+#ifdef DSP_SLPI
 	if (step == STEPS && dsp_started) {
-		tell("adsp: THE AUDIO DSP IS UP AND LINKED, its audio services up (APR), %llu ms after the kernel began on it (the "
+		tell(DSP_TAG ": THE SENSOR DSP IS UP AND LINKED, %llu ms after the kernel began on it (the root's waited for included): "
+		    "node %u, %u services; it stays on\n", (now_us() - began) / 1000, qrtr_peer, services);
+		fastrpc_run();                  /* (its file access, on a thread of its own; slpi_rpc=0: not served) */
+		sns_run();                      /* (the sensors, through its sensor service; slpi_sns=0: not asked) */
+	} else {
+		tell(DSP_TAG ": THE SENSOR DSP DID NOT COME UP: step %u failed (%s); see the kernel's own log for the steps\n", step + 1,
+		    last_write);
+	}
+#else
+	if (step == STEPS && dsp_started) {
+		tell(DSP_TAG ": THE AUDIO DSP IS UP AND LINKED, its audio services up (" ADSP_AUDIO_PROTOCOL "), %llu ms after the kernel began on it (the "
 		    "root's waited for included): node %u, %u services; it stays on\n", (now_us() - began) / 1000, qrtr_peer, services);
 		hakios_sound_dsp_up();         /* (boot-arg sound=N: the speakers' path, hakios.sound.c) */
 		hakios_mic_dsp_up();           /* (boot-arg mic=N: the microphones' path, hakios.mic.c) */
 		battmgr_start();                /* (how the battery is, from the DSP; battmgr=0: not asked) */
 	} else {
-		tell("adsp: THE AUDIO DSP DID NOT COME UP: step %u failed (%s); see the kernel's own log for the steps\n", step + 1,
+		tell(DSP_TAG ": THE AUDIO DSP DID NOT COME UP: step %u failed (%s); see the kernel's own log for the steps\n", step + 1,
 		    last_write);
 	}
+	hakios_adsp_starting = false;
+#endif
 	thread_terminate(current_thread());
 }
 
@@ -3264,14 +3750,22 @@ hakios_adsp_init(void)
 	uint32_t on = 0;
 	thread_t thread;
 
-	PE_parse_boot_argn("adsp_step", &last_step, sizeof(last_step));
-	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
+	PE_parse_boot_argn(DSP_TAG "_step", &last_step, sizeof(last_step));
+	/* the name spelled out, not DSP_TAG: tools/boot-args.py finds an argument by its literal name */
+#ifdef DSP_SLPI
+	PE_parse_boot_argn("slpi", &on, sizeof(on));
+#else
+	PE_parse_boot_argn("adsp", &on, sizeof(on));
+#endif
+	if (last_step == 0 && on != 1) {
 		return;
 	}
+#ifndef ADSP_SM8450
 	if (pe_arm_get_soc_base_phys() != HAKIOS_SOC_BASE) {
-		printf("adsp: adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
+		printf(DSP_TAG ": adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
 		return;
 	}
+#endif
 	if (last_step == 0) {
 		/* all of it, on a thread of its own, and left up */
 		last_step = STEPS;
@@ -3280,27 +3774,33 @@ hakios_adsp_init(void)
 		pause_ms = 0;
 		listen_seconds = 1;
 		new_from = STEPS + 1;
+#ifndef DSP_SLPI
+		hakios_adsp_starting = true;
+#endif
 		if (kernel_thread_start(whole_thread, NULL, &thread) != KERN_SUCCESS) {
-			printf("adsp: no thread: the audio DSP is not brought up\n");
+#ifndef DSP_SLPI
+			hakios_adsp_starting = false;
+#endif
+			printf(DSP_TAG ": no thread: the audio DSP is not brought up\n");
 			return;
 		}
 		thread_deallocate(thread);
-		tell("adsp: the audio DSP is being brought up beside the system's start (adsp=1)\n");
+		tell(DSP_TAG ": the audio DSP is being brought up beside the system's start (adsp=1)\n");
 		return;
 	}
 	if (last_step > STEPS) {
 		last_step = STEPS;
 	}
-	keep = option("adsp_keep");
+	keep = option(DSP_TAG "_keep");
 	new_from = last_step;
-	PE_parse_boot_argn("adsp_new", &new_from, sizeof(new_from));
-	PE_parse_boot_argn("adsp_pause", &pause_ms, sizeof(pause_ms));
-	printf("adsp: steps up to %u; those from %u on are new and wait %u ms after each announcement\n", last_step, new_from,
+	PE_parse_boot_argn(DSP_TAG "_new", &new_from, sizeof(new_from));
+	PE_parse_boot_argn(DSP_TAG "_pause", &pause_ms, sizeof(pause_ms));
+	printf(DSP_TAG ": steps up to %u; those from %u on are new and wait %u ms after each announcement\n", last_step, new_from,
 	    pause_ms);
 	run_steps();
-	if (option("adsp_return")) {
-		printf("adsp: back to the loader (adsp_return)\n");
+	if (option(DSP_TAG "_return")) {
+		printf(DSP_TAG ": back to the loader (adsp_return)\n");
 		loader_return();
 	}
-	printf("adsp: the system goes on starting\n");
+	printf(DSP_TAG ": the system goes on starting\n");
 }

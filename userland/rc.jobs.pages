@@ -1,0 +1,9 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# The home screen's outer pages, for the screen recording (rec_secs=N rec_start=S, tools/recording.py --frames) and the
+# frame counters: unlock, then a finger dragged halfway to the widgets page and held there (what the photo of the glitch
+# shows: black stairs and pieces of other frames), back, halfway to the next page and held, then swipes to the App Library
+# and back, slow and then fast.
+/redwood/bin/rwtouch wait 30 swipe 0.5 0.985 0.5 0.3 200 wait 25
+/redwood/bin/rwtouch drag 0.15 0.5 0.6 0.5 800 2500 wait 3 drag 0.85 0.5 0.4 0.5 800 2500 wait 3 drag 0.15 0.5 0.6 0.5 800 2500 wait 3 drag 0.85 0.5 0.4 0.5 800 2500 wait 3
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3 swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.15 0.5 0.85 0.5 600 wait 3
+/redwood/bin/rwtouch swipe 0.15 0.5 0.85 0.5 200 wait 3 swipe 0.85 0.5 0.15 0.5 200 wait 3 swipe 0.85 0.5 0.15 0.5 200 wait 3 swipe 0.15 0.5 0.85 0.5 200 wait 3

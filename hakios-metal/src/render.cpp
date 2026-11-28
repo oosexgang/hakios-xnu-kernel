@@ -2766,6 +2766,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (status_ > kEnqueued) {
         return fail("draw after commit");
     }
+    if (!needsRenderer("a draw")) return false;
     // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the
     // copy first, by the 2D engine into the UBWC layout, in a pass of its own before this draw's
     if (!freshen(vsBindings, options) || !freshen(fsBindings, options)) return false;
@@ -3116,6 +3117,7 @@ bool CommandBuffer::blitInto(const Texture& src, uint32_t srcLevel, render::Blit
     if (status_ > kEnqueued) {
         return fail("blit after commit");
     }
+    if (!needsRenderer("a texture blit")) return false;
     closePass();   // the copy reads what the draws before it wrote: their pass's tail first
     std::string why;
     // A copy of a level onto itself. Metal leaves it to the GPU, and an Apple GPU does it -- VectorKit (MapKit's snapshot
@@ -3329,6 +3331,7 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
     if (status_ > kEnqueued) {
         return fail("clear after commit");
     }
+    if (!needsRenderer("a clear")) return false;
     closePass();
     std::string why;
     Piece table;

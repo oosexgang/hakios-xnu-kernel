@@ -19,6 +19,7 @@
 #include <kern/thread.h>
 #include <os/atomic_private.h>
 #include <libkern/libkern.h>
+#include <libkern/OSAtomic.h>
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>
 #include <pexpert/pexpert.h>
@@ -27,6 +28,7 @@
 #include <sys/hakios.input.h>
 #include <sys/hakios.lx.h>
 #include <sys/hakios.net.h>
+#include <sys/hakios.wifi.h>
 #include <sys/systm.h>
 #include <vm/memory_types.h>
 #include <vm/vm_kern.h>
@@ -228,7 +230,126 @@ lx_os_firmware(const char *name, const void **data, unsigned long *size)
 int
 lx_os_rproc_boot(void)
 {
-	return hakios_wifi_dsp_is_up() ? 0 : ENXIO;
+	return hakios_wifi_radio_boot() ? 0 : ENXIO;
+}
+
+/*
+ * A radio on PCIe (sys/hakios.wifi.h): the radio's driver answers. These weak answers are a kernel's whose radio
+ * is not on PCIe (the WCN6750's driver has none of them): the driver's object then never asks the others.
+ */
+__attribute__((weak)) uint32_t
+hakios_wifi_radio_bus(void)
+{
+	return HAKIOS_WIFI_BUS_AHB;
+}
+
+__attribute__((weak)) bool
+hakios_wifi_radio_pci(__unused uint16_t *vendor, __unused uint16_t *device, __unused uint16_t *subsystem_vendor,
+    __unused uint16_t *subsystem_device)
+{
+	return false;
+}
+
+__attribute__((weak)) bool
+hakios_wifi_radio_bar(__unused uint64_t *physical, __unused uint64_t *size)
+{
+	return false;
+}
+
+__attribute__((weak)) uint32_t
+hakios_wifi_radio_read32(__unused uint32_t offset)
+{
+	return 0xffffffff;
+}
+
+__attribute__((weak)) void
+hakios_wifi_radio_write32(__unused uint32_t offset, __unused uint32_t value)
+{
+}
+
+__attribute__((weak)) void
+hakios_wifi_radio_wake(__unused bool awake)
+{
+}
+
+__attribute__((weak)) void
+hakios_wifi_radio_halt(void)
+{
+}
+
+__attribute__((weak)) bool
+hakios_wifi_radio_irq_attach(__unused void (*arrived)(uint32_t vectors))
+{
+	return false;
+}
+
+__attribute__((weak)) void
+hakios_wifi_radio_irq_mask(__unused uint32_t vector, __unused bool masked)
+{
+}
+
+__attribute__((weak)) void
+hakios_wifi_radio_irq_detach(void)
+{
+}
+
+unsigned
+lx_os_radio_bus(void)
+{
+	return hakios_wifi_radio_bus() == HAKIOS_WIFI_BUS_PCI ? LX_OS_BUS_PCI : LX_OS_BUS_AHB;
+}
+
+int
+lx_os_radio_pci_id(unsigned short *vendor, unsigned short *device, unsigned short *subsystem_vendor,
+    unsigned short *subsystem_device)
+{
+	uint16_t v, d, sv, sd;
+
+	if (!hakios_wifi_radio_pci(&v, &d, &sv, &sd)) {
+		return 0;
+	}
+	*vendor = v;
+	*device = d;
+	*subsystem_vendor = sv;
+	*subsystem_device = sd;
+	return 1;
+}
+
+int
+lx_os_radio_bar(unsigned long long *physical, unsigned long *size)
+{
+	uint64_t p, s;
+
+	if (!hakios_wifi_radio_bar(&p, &s)) {
+		return 0;
+	}
+	*physical = p;
+	*size = (unsigned long)s;
+	return 1;
+}
+
+unsigned
+lx_os_radio_read32(unsigned offset)
+{
+	return hakios_wifi_radio_read32(offset);
+}
+
+void
+lx_os_radio_write32(unsigned offset, unsigned value)
+{
+	hakios_wifi_radio_write32(offset, value);
+}
+
+void
+lx_os_radio_wake(int awake)
+{
+	hakios_wifi_radio_wake(awake != 0);
+}
+
+void
+lx_os_radio_halt(void)
+{
+	hakios_wifi_radio_halt();
 }
 
 int
@@ -262,6 +383,65 @@ static LCK_MTX_DECLARE(lx_queue_lock, &lx_lock_group);
 static struct lx_frame *lx_queue;
 static uint32_t lx_queue_in, lx_queue_out;      /* frames put in and taken out, counted from the start */
 static uint64_t lx_queue_dropped;
+
+/*
+ * The first frames of the network's own kinds that pass, said: ARP (who has an address, and the answer) and DHCP
+ * (DISCOVER, OFFER, REQUEST, ACK; the address handed out). Enough to see that data moves once a network is joined;
+ * no hardware address is said, and nothing else of any frame.
+ */
+#define LX_NOTES_MOST   24
+static volatile SInt32 lx_notes;
+
+static void
+lx_frame_note(const uint8_t *f, size_t length, bool out)
+{
+	static const char *const kinds[] = { "?", "DISCOVER", "OFFER", "REQUEST", "DECLINE", "ACK", "NAK", "RELEASE", "INFORM" };
+	unsigned type;
+
+	if (length < 14 || lx_notes >= LX_NOTES_MOST) {
+		return;
+	}
+	type = (unsigned)f[12] << 8 | f[13];
+	if (type == 0x0806 && length >= 42) {
+		unsigned op = (unsigned)f[20] << 8 | f[21];
+
+		if (OSIncrementAtomic(&lx_notes) < LX_NOTES_MOST) {
+			say("lx: %s: ARP %s: %u.%u.%u.%u %s %u.%u.%u.%u\n", out ? "sent" : "received", op == 1 ? "request" : op == 2 ?
+			    "reply" : "?", f[28], f[29], f[30], f[31], op == 1 ? "asks who has" : "says it is at its address, to",
+			    f[38], f[39], f[40], f[41]);
+		}
+	} else if (type == 0x0800 && length >= 34 && f[23] == 17) {
+		size_t ip = (size_t)(f[14] & 0xf) * 4, udp = 14 + ip, bootp = udp + 8;
+		unsigned from, to, kind = 0;
+
+		if (bootp + 240 > length) {
+			return;
+		}
+		from = (unsigned)f[udp] << 8 | f[udp + 1];
+		to = (unsigned)f[udp + 2] << 8 | f[udp + 3];
+		if (!((from == 67 && to == 68) || (from == 68 && to == 67))) {
+			return;
+		}
+		for (size_t o = bootp + 240; o + 2 < length && f[o] != 255;) {
+			if (f[o] == 0) {
+				o++;
+				continue;
+			}
+			if (f[o] == 53 && f[o + 1] == 1) {
+				kind = f[o + 2];
+			}
+			o += 2 + f[o + 1];
+		}
+		if (OSIncrementAtomic(&lx_notes) < LX_NOTES_MOST) {
+			say("lx: %s: DHCP %s%s", out ? "sent" : "received", kind < sizeof(kinds) / sizeof(kinds[0]) ? kinds[kind] : "?",
+			    kind == 2 || kind == 5 ? "" : "\n");
+			if (kind == 2 || kind == 5) {
+				say(": THE ADDRESS %u.%u.%u.%u, from the server %u.%u.%u.%u\n", f[bootp + 16], f[bootp + 17],
+				    f[bootp + 18], f[bootp + 19], f[26], f[27], f[28], f[29]);
+			}
+		}
+	}
+}
 
 static void
 lx_queue_runs(__unused void *parameter, __unused wait_result_t result)
@@ -299,6 +479,7 @@ lx_link_transmit(mbuf_t packet, size_t length)
 		return false;
 	}
 	frame->length = (uint16_t)length;
+	lx_frame_note(frame->bytes, length, true);
 	lx_queue_in++;
 	lck_mtx_unlock(&lx_queue_lock);
 	thread_wakeup((event_t)&lx_queue_in);
@@ -359,6 +540,7 @@ void
 lx_os_net_input(const unsigned char *frame, unsigned long length)
 {
 	if (lx_link_attached && length <= HAKIOS_NET_FRAME_MAX) {
+		lx_frame_note(frame, length, false);
 		hakios_net_input(frame, length);
 	}
 }
@@ -378,7 +560,12 @@ static struct {
 	void *argument;
 	bool attached;
 } lx_vector[LX_VECTORS];
-static uint32_t lx_irq_first;                   /* the GIC's number of vector 0; 0: no interrupts */
+static uint32_t lx_irq_first;                   /* the GIC's number of vector 0; 0: no interrupts (or on one line) */
+static bool lx_irq_line;                        /* the radio's vectors come on one line, told apart by the machine (zeus) */
+static bool lx_irq_line_attached;
+static uint64_t lx_irq_counts[LX_VECTORS];      /* (on one line: what came, by vector) */
+static uint64_t lx_irq_cpu;                     /* the thread's time in the vectors' functions, mach units */
+static uint64_t lx_irq_wakes;
 static uint32_t lx_irq_pending;                 /* the vectors that have fired and are not dealt with yet */
 static uint32_t lx_irq_running;                 /* the vectors whose function the thread is in */
 static thread_t lx_irq_thread;
@@ -390,6 +577,17 @@ lx_irq_arrived(__unused void *context, uint32_t intid)
 {
 	gic_v3_spi_mask(intid);
 	os_atomic_or(&lx_irq_pending, 1u << (intid - lx_irq_first), relaxed);
+	thread_wakeup((event_t)&lx_irq_pending);
+}
+
+/* In interrupt context, on one line: the vectors that fired, masked by the machine already. */
+static void
+lx_irq_line_arrived(uint32_t vectors)
+{
+	for (uint32_t v = vectors; v != 0; v &= v - 1) {
+		os_atomic_inc(&lx_irq_counts[__builtin_ctz(v)], relaxed);
+	}
+	os_atomic_or(&lx_irq_pending, vectors, relaxed);
 	thread_wakeup((event_t)&lx_irq_pending);
 }
 
@@ -407,6 +605,8 @@ lx_irq_runs(__unused void *parameter, __unused wait_result_t result)
 			}
 			thread_block(THREAD_CONTINUE_NULL);
 		}
+		uint64_t cpu = thread_get_runtime_self();
+		lx_irq_wakes++;
 		for (unsigned v = 0; v < LX_VECTORS; v++) {
 			if (!(pending & 1u << v)) {
 				continue;
@@ -424,7 +624,28 @@ lx_irq_runs(__unused void *parameter, __unused wait_result_t result)
 			lck_mtx_unlock(&lx_irq_lock);
 			thread_wakeup((event_t)&lx_irq_running);
 		}
+		lx_irq_cpu += thread_get_runtime_self() - cpu;
 	}
+}
+
+/* The CPU time of the thread that calls (nanoseconds), and of the interrupts' thread in the vectors' functions. */
+unsigned long long
+lx_os_thread_cpu(void)
+{
+	uint64_t ns;
+
+	absolutetime_to_nanoseconds(thread_get_runtime_self(), &ns);
+	return ns;
+}
+
+unsigned long long
+lx_os_irq_cpu(unsigned long long *wakes)
+{
+	uint64_t ns;
+
+	absolutetime_to_nanoseconds(lx_irq_cpu, &ns);
+	*wakes = lx_irq_wakes;
+	return ns;
 }
 
 int
@@ -436,6 +657,7 @@ lx_os_irq_msi(unsigned long long *address, unsigned *data)
 		return 0;
 	}
 	lx_irq_first = first;
+	lx_irq_line = first == 0;
 	return 1;
 }
 
@@ -444,10 +666,16 @@ lx_os_irq_attach(unsigned vector, void (*function)(void *), void *argument)
 {
 	kern_return_t kr;
 
-	if (vector >= LX_VECTORS || lx_irq_first == 0 || function == NULL) {
+	if (vector >= LX_VECTORS || (lx_irq_first == 0 && !lx_irq_line) || function == NULL) {
 		return EINVAL;
 	}
-	if (lx_irq_thread == THREAD_NULL) {
+	if (lx_irq_thread == THREAD_NULL && lx_irq_line) {
+		if (kernel_thread_start(lx_irq_runs, NULL, &lx_irq_thread) != KERN_SUCCESS) {
+			lx_irq_thread = THREAD_NULL;
+			return ENOMEM;
+		}
+		thread_set_thread_name(lx_irq_thread, "wifi-irq");
+	} else if (lx_irq_thread == THREAD_NULL) {
 		hakios_wifi_tell("lx: wifi_irq: THE GIC'S DISTRIBUTOR IS WRITTEN for the radio's interrupts: each vector's SPI (%u + v) edge-"
 		    "triggered, group 1, routed to this processor, then enabled\n", lx_irq_first);
 		if (kernel_thread_start(lx_irq_runs, NULL, &lx_irq_thread) != KERN_SUCCESS) {
@@ -461,6 +689,19 @@ lx_os_irq_attach(unsigned vector, void (*function)(void *), void *argument)
 	lx_vector[vector].argument = argument;
 	lx_vector[vector].attached = true;
 	lck_mtx_unlock(&lx_irq_lock);
+	if (lx_irq_line) {
+		hakios_wifi_radio_irq_mask(vector, true);
+		if (!lx_irq_line_attached) {
+			if (!hakios_wifi_radio_irq_attach(lx_irq_line_arrived)) {
+				lck_mtx_lock(&lx_irq_lock);
+				lx_vector[vector].attached = false;
+				lck_mtx_unlock(&lx_irq_lock);
+				return ENXIO;
+			}
+			lx_irq_line_attached = true;
+		}
+		return 0;
+	}
 	if ((kr = gic_v3_spi_attach(lx_irq_first + vector, true, lx_irq_arrived, NULL)) != KERN_SUCCESS) {
 		lck_mtx_lock(&lx_irq_lock);
 		lx_vector[vector].attached = false;
@@ -475,7 +716,11 @@ void
 lx_os_irq_enable(unsigned vector)
 {
 	if (vector < LX_VECTORS && lx_vector[vector].attached) {
-		gic_v3_spi_unmask(lx_irq_first + vector);
+		if (lx_irq_line) {
+			hakios_wifi_radio_irq_mask(vector, false);
+		} else {
+			gic_v3_spi_unmask(lx_irq_first + vector);
+		}
 	}
 }
 
@@ -485,7 +730,11 @@ lx_os_irq_disable(unsigned vector)
 	if (vector >= LX_VECTORS || !lx_vector[vector].attached) {
 		return;
 	}
-	gic_v3_spi_mask(lx_irq_first + vector);
+	if (lx_irq_line) {
+		hakios_wifi_radio_irq_mask(vector, true);
+	} else {
+		gic_v3_spi_mask(lx_irq_first + vector);
+	}
 	if (current_thread() == lx_irq_thread) {
 		return;                         /* (from the vector's own function, or another's: nothing to wait for) */
 	}
@@ -499,7 +748,11 @@ lx_os_irq_disable(unsigned vector)
 void
 lx_os_irq_detach_all(void)
 {
-	for (unsigned v = 0; v < LX_VECTORS; v++) {
+	if (lx_irq_line && lx_irq_line_attached) {
+		hakios_wifi_radio_irq_detach();
+		lx_irq_line_attached = false;
+	}
+	for (unsigned v = 0; !lx_irq_line && v < LX_VECTORS; v++) {
 		if (lx_vector[v].attached) {
 			gic_v3_spi_detach(lx_irq_first + v);
 		}
@@ -518,7 +771,11 @@ lx_os_irq_detach_all(void)
 unsigned long long
 lx_os_irq_count(unsigned vector)
 {
-	return vector < LX_VECTORS && lx_irq_first != 0 ? gic_v3_spi_count(lx_irq_first + vector) : 0;
+	if (vector >= LX_VECTORS) {
+		return 0;
+	}
+	return lx_irq_line ? os_atomic_load(&lx_irq_counts[vector], relaxed) : lx_irq_first != 0 ?
+	       gic_v3_spi_count(lx_irq_first + vector) : 0;
 }
 
 /* ---- the station (sys/hakios.sta.h) --------------------------------------------------------------------- */

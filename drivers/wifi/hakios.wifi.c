@@ -1735,10 +1735,14 @@ static bool dsp_started;                /* TrustZone has let it out of reset, an
 static bool stopped_by_its_word;        /* the shutdown last asked for was of a DSP that had acknowledged a stop */
 static uint32_t dirty;
 
+extern bool hakios_scm_enter(void);
+extern void hakios_scm_leave(bool held);
+
 /* One call, as Linux makes these: one that may be preempted. What TrustZone returns: 0 or an error of its own, and a word of answer. */
 static int32_t
 scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
 {
+	bool held;                      /* one TrustZone call at a time, the whole kernel's (hakios.platform.c) */
 	uint64_t session = 0;
 
 	function |= SCM_64 | SCM_SIP;
@@ -1746,7 +1750,14 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
 	hold(true);
-	for (int i = 0; i < 100; i++) {
+	held = hakios_scm_enter();
+	/*
+	 * TrustZone answers "interrupted" whenever an interrupt comes in during a long call; the call goes on when it is asked
+	 * again with its session, and Linux asks again for as long as it takes. Giving up (the limit here was 100) leaves
+	 * TrustZone inside the call: the next image load by anybody then never returns and the kernel stops (zeus, 16
+	 * November 2026: the audio DSP's header was given up on, and the video codec's load hung every such boot).
+	 */
+	for (int i = 0; i < 10000000; i++) {
 		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
 		register uint64_t x1 __asm__("x1") = arguments;
 		register uint64_t x2 __asm__("x2") = first;
@@ -1762,10 +1773,12 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 		if (x0 != SCM_INTERRUPTED) {
 			printf("wifi: %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
 			*answer = x1;
+			hakios_scm_leave(held);
 			return (int32_t)x0;
 		}
 	}
 	printf("wifi: %u: TrustZone keeps saying the call was interrupted\n", step);
+	hakios_scm_leave(held);
 	return -1;
 }
 
@@ -4019,7 +4032,7 @@ radio_space_try(void)
 /* ---- for the driver (hakios.lx.c): the firmware's processor, and files ------------------------------- */
 
 bool
-hakios_wifi_dsp_is_up(void)
+hakios_wifi_radio_boot(void)
 {
 	printf("wifi: %u: the driver asks for the firmware's processor: it %s\n", step, dsp_started && glink.open ? "has been up "
 	    "since step 11, with the link of step 13" : "IS NOT UP");

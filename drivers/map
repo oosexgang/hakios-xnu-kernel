@@ -53,6 +53,7 @@ modem    bsd/dev/hakios.mpss.c
 modem    bsd/dev/hakios.cell.c
 modem    bsd/dev/hakios.qmi.c
 modem    bsd/dev/hakios.nas.c
+modem    bsd/dev/hakios.loc.c
 modem    bsd/dev/hakios.ipa.c
 
 net      bsd/dev/hakios.net.c

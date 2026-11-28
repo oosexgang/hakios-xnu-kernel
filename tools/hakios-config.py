@@ -73,7 +73,11 @@ SYMBOLS = [
                                         "(the names go to the log: for debugging only)", None, None),
     ("VIRTIO_NET", "bool", "virtio_net", "QEMU's virtio network device as en0 (QEMU only; its bus address means nothing on a phone)", None, None),
     ("SOCINFO", "bool", "socinfo", "read the chip's identity from the firmware's shared memory: kern.hakios.soc_* (SoC number, revision, board)", None, None),
-    ("THERMAL", "bool", "thermal", "read the SoC's 27 temperature sensors: kern.hakios.thermal_* and a line in the log; read only", None, None),
+    ("THERMAL", "bool", "thermal", "read the SoC's temperature sensors (27 on redwood, 32 on zeus): kern.hakios.thermal_* and a line in the log; "
+                                   "the brake on the cores' clocks near the vendor's trip points and the thermal pressure level iOS reads", None, None),
+    ("THERMAL_THROTTLE", "int", "thermal_throttle", "start holding the cores' clocks back this many degrees below each sensor's own trip point "
+                                                    "(0: never; 15), one more row of the frequency table every thermal_step degrees closer", None, "THERMAL"),
+    ("THERMAL_STEP", "int", "thermal_step", "degrees per row of the brake (1 to 20; 3)", None, "THERMAL"),
     ("THERMAL_POLL", "int", "thermal_poll", "how often the sensors are read, in milliseconds (200 to 60000; 2000)", None, "THERMAL"),
     ("THERMAL_STOP", "int", "thermal_stop", "hand control back to the loader when the hottest sensor reads this many degrees three times in a row "
                                            "(0: never; 105): the protection of a phone left running unattended", None, "THERMAL"),
@@ -97,7 +101,7 @@ GROUP_OF = {
     "MODEM": "Cellular", "MODEM_AGAIN": "Cellular", "MODEM_BUFFER": "Cellular",
     "NET_TRACE": "Network", "NET_NAMES": "Network", "VIRTIO_NET": "Network",
     "BATTERY_STOP": "Audio and battery", "BATTERY_STOP_POLL": "Audio and battery", "SOCINFO": "Chip, thermal and PMIC", "THERMAL": "Chip, thermal and PMIC", "THERMAL_POLL": "Chip, thermal and PMIC",
-    "THERMAL_STOP": "Chip, thermal and PMIC", "PMIC": "Chip, thermal and PMIC", "BOOTARGS": "Extra arguments",
+    "THERMAL_STOP": "Chip, thermal and PMIC", "THERMAL_THROTTLE": "Chip, thermal and PMIC", "THERMAL_STEP": "Chip, thermal and PMIC", "PMIC": "Chip, thermal and PMIC", "BOOTARGS": "Extra arguments",
 }
 LAYER_OF = {}
 RELAXED = re.compile(r"[A-Za-z0-9_.,:/+@=\-]+")       # what a text value may hold: no space, no quote, no backslash
@@ -315,7 +319,7 @@ for _d in DRIVERS:
 SYMBOLS[3:3] = driver_symbols(DRIVERS)      # after the build facts: they are facts about the build as well
 BY_NAME = {s[0]: s for s in SYMBOLS}
 FIRMWARE_VALUES = ("device", "none")
-RANGES = {"CPUS": (1, 8), "BOOTCPU": (0, 7), "UFS": (1, 2), "THERMAL_POLL": (200, 60000), "THERMAL_STOP": (0, 160), "BATTERY_STOP": (0, 99), "BATTERY_STOP_POLL": (5, 600)}
+RANGES = {"CPUS": (1, 8), "BOOTCPU": (0, 7), "UFS": (1, 2), "THERMAL_POLL": (200, 60000), "THERMAL_STOP": (0, 160), "THERMAL_THROTTLE": (0, 100), "THERMAL_STEP": (1, 20), "BATTERY_STOP": (0, 99), "BATTERY_STOP_POLL": (5, 600)}
 
 
 # ---- reading and writing --------------------------------------------------------------------------------------
@@ -585,9 +589,20 @@ def check_drivers(config, parsed):
     owner = {os.path.basename(f): d.symbol for d in DRIVERS for f, _tags in d.files}
     wanted = [(name, BY_NAME[name][2]) for name in parsed if BY_NAME[name][2]]
     wanted += [("BOOTARGS", w.partition("=")[0]) for w in parsed.get("BOOTARGS", [])]
+    # the scan sees this repository's files only: a built driver of a SoC or device repository that reads the argument counts too
+    def read_outside(arg):
+        for d in DRIVERS:
+            if built[d.symbol] and d.origin:
+                for f, _tags in d.files:
+                    try:
+                        if ('"%s"' % arg) in open(d.source(f), encoding="utf-8").read():
+                            return True
+                    except OSError:
+                        pass
+        return False
     for name, arg in wanted:
         read_by = readers.get(arg)
-        if read_by and read_by <= left_out:
+        if read_by and read_by <= left_out and not read_outside(arg):
             problems.append("CONFIG_%s gives %s=, which only %s read%s, and %s not built (%s)" % (
                 name, arg, ", ".join(sorted(read_by)), "s" if len(read_by) == 1 else "", "it is" if len(read_by) == 1 else "they are",
                 ", ".join(sorted({"CONFIG_%s" % owner[f] for f in read_by}))))

@@ -22,9 +22,13 @@
  *                everything that needs a container (the window server, for one) waits with
  *                them. Told that personas are not supported, they do not ask.
  *
+ *   locationd    (build.sh LOCATIOND=1) the kernel's GNSS fixes (kern.hakios.gnss_fix), handed to it through
+ *                CoreLocation's own location simulation, so that CLLocationManager clients get positions.
+ *
  * Addresses of things inside the dyld shared cache are those of Darwin userland 16.5 (20F66) for iPhone10,3;
  * every one is checked against what is expected to be there before it is touched.
  */
+#include <Block.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <dispatch/dispatch.h>
@@ -45,6 +49,7 @@
 #include <sys/sysctl.h>
 #include <signal.h>
 #include <sys/ucontext.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "hakios.gl.h"
@@ -580,6 +585,179 @@ brightness_fixes(void)
 	method_setImplementation(method, (IMP)wait_for_als_arrival);
 }
 
+/* ---- backboardd: which way up the phone is ------------------------------------------------------- */
+
+/*
+ * backboardd's BKOrientationManager learns how the phone is held from CoreMotion: it asks a CMDeviceOrientationManager
+ * for updates (-startDeviceOrientationUpdatesToQueue:withHandler:, a block given a CMDeviceOrientation on an
+ * NSOperationQueue), or for the orientation now (-deviceOrientationBlocking). CoreMotion has it from locationd, which
+ * has it from Apple's motion coprocessor; this phone has the SLPI instead, whose accelerometer the kernel reads
+ * (devices/zeus/drivers/sensors/hakios.slpi.sm8450.c) and whose orientation it posts to /dev/hakios-touch as
+ * HAKIOS_ORIENTATION when it changes. Here those CoreMotion calls are answered from that: the handler is kept, and
+ * each change is handed to it, so backboardd's own logic (rotation lock, face up and down) does the rest.
+ * The orientation is UIKit's number (UIDeviceOrientation, 1 to 6), which CoreMotion's is too.
+ */
+static pthread_mutex_t orientation_lock = PTHREAD_MUTEX_INITIALIZER;
+static id orientation_queue;                    /* NSOperationQueue */
+static void (^orientation_handler)(id, id);
+static uint32_t orientation_now;                /* 0 until the kernel has said */
+static unsigned orientation_kind;               /* 1: -initWithOrientation:(int), 2: (long), 3: ...andTimestamp: */
+static unsigned orientation_handed;
+
+static id
+orientation_object(uint32_t orientation)
+{
+	Class cls = objc_getClass("CMDeviceOrientation");
+	id object = cls ? ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc")) : NULL;
+
+	if (object == NULL) {
+		return NULL;
+	}
+	switch (orientation_kind) {
+	case 1:
+		return ((id (*)(id, SEL, int))objc_msgSend)(object, sel_registerName("initWithOrientation:"), (int)orientation);
+	case 2:
+		return ((id (*)(id, SEL, long))objc_msgSend)(object, sel_registerName("initWithOrientation:"), (long)orientation);
+	case 3:
+		return ((id (*)(id, SEL, long, double))objc_msgSend)(object, sel_registerName("initWithOrientation:andTimestamp:"),
+		    (long)orientation, (double)mach_absolute_time());
+	default:
+		((void (*)(id, SEL))objc_msgSend)(object, sel_registerName("release"));
+		return NULL;
+	}
+}
+
+static void
+orientation_hand_on(void)
+{
+	id queue;
+	void (^handler)(id, id);
+	uint32_t orientation;
+
+	pthread_mutex_lock(&orientation_lock);
+	queue = orientation_queue;
+	handler = orientation_handler ? Block_copy(orientation_handler) : NULL;
+	orientation = orientation_now;
+	pthread_mutex_unlock(&orientation_lock);
+	if (queue == NULL || handler == NULL || orientation == 0) {
+		if (handler != NULL) {
+			Block_release(handler);
+		}
+		return;
+	}
+	((void (*)(id, SEL, void (^)(void)))objc_msgSend)(queue, sel_registerName("addOperationWithBlock:"), ^{
+		id object = orientation_object(orientation);
+
+		if (object != NULL) {
+			handler(object, NULL);
+			((void (*)(id, SEL))objc_msgSend)(object, sel_registerName("release"));
+		}
+		Block_release(handler);
+	});
+	if (orientation_handed++ < 20) {
+		say("hakios: orientation: %u handed to backboardd\n", orientation);
+	}
+}
+
+/* from the input thread: the kernel says the phone is now held this way */
+static void
+orientation_post(uint32_t orientation)
+{
+	if (orientation < 1 || orientation > 6) {
+		return;
+	}
+	pthread_mutex_lock(&orientation_lock);
+	orientation_now = orientation;
+	pthread_mutex_unlock(&orientation_lock);
+	orientation_hand_on();
+}
+
+static void
+my_start_orientation(__unused id self, __unused SEL selector, id queue, void (^handler)(id, id))
+{
+	pthread_mutex_lock(&orientation_lock);
+	if (orientation_queue != NULL) {
+		((void (*)(id, SEL))objc_msgSend)(orientation_queue, sel_registerName("release"));
+	}
+	if (orientation_handler != NULL) {
+		Block_release(orientation_handler);
+	}
+	orientation_queue = queue ? ((id (*)(id, SEL))objc_msgSend)(queue, sel_registerName("retain")) : NULL;
+	orientation_handler = handler ? Block_copy(handler) : NULL;
+	pthread_mutex_unlock(&orientation_lock);
+	say("hakios: orientation: backboardd asks for updates (queue %p); the orientation now: %u\n", (void *)queue, orientation_now);
+	orientation_hand_on();
+}
+
+static void
+my_stop_orientation(__unused id self, __unused SEL selector)
+{
+	pthread_mutex_lock(&orientation_lock);
+	if (orientation_handler != NULL) {
+		Block_release(orientation_handler);
+		orientation_handler = NULL;
+	}
+	pthread_mutex_unlock(&orientation_lock);
+	say("hakios: orientation: backboardd stops its updates\n");
+}
+
+static id
+my_orientation_blocking(__unused id self, __unused SEL selector)
+{
+	id object = orientation_object(orientation_now);
+
+	return object ? ((id (*)(id, SEL))objc_msgSend)(object, sel_registerName("autorelease")) : NULL;
+}
+
+static BOOL
+my_orientation_available(__unused id self, __unused SEL selector)
+{
+	return YES;
+}
+
+static void
+orientation_fixes(void)
+{
+	Class manager = objc_getClass("CMDeviceOrientationManager"), cls = objc_getClass("CMDeviceOrientation");
+	Method method;
+	const char *taken[4] = { "-", "-", "-", "-" };
+
+	if (manager == NULL || cls == NULL) {
+		say("hakios: orientation: CoreMotion's classes are not here (manager %p, orientation %p); left alone\n",
+		    (void *)manager, (void *)cls);
+		return;
+	}
+	if ((method = class_getInstanceMethod(cls, sel_registerName("initWithOrientation:"))) != NULL) {
+		char type[8] = "";
+
+		method_getArgumentType(method, 2, type, sizeof(type));
+		orientation_kind = type[0] == 'i' || type[0] == 'I' ? 1 : 2;
+	} else if (class_getInstanceMethod(cls, sel_registerName("initWithOrientation:andTimestamp:")) != NULL) {
+		orientation_kind = 3;
+	} else {
+		say("hakios: orientation: CMDeviceOrientation has no initializer known here; left alone\n");
+		return;
+	}
+	if ((method = class_getInstanceMethod(manager, sel_registerName("startDeviceOrientationUpdatesToQueue:withHandler:"))) != NULL) {
+		method_setImplementation(method, (IMP)my_start_orientation);
+		taken[0] = "start";
+	}
+	if ((method = class_getInstanceMethod(manager, sel_registerName("stopDeviceOrientationUpdates"))) != NULL) {
+		method_setImplementation(method, (IMP)my_stop_orientation);
+		taken[1] = "stop";
+	}
+	if ((method = class_getInstanceMethod(manager, sel_registerName("deviceOrientationBlocking"))) != NULL) {
+		method_setImplementation(method, (IMP)my_orientation_blocking);
+		taken[2] = "blocking";
+	}
+	if ((method = class_getClassMethod(manager, sel_registerName("isDeviceOrientationAvailable"))) != NULL) {
+		method_setImplementation(method, (IMP)my_orientation_available);
+		taken[3] = "available";
+	}
+	say("hakios: orientation: CoreMotion's orientation answered from the kernel (initializer %u; %s %s %s %s)\n",
+	    orientation_kind, taken[0], taken[1], taken[2], taken[3]);
+}
+
 /* ---- backboardd: the touch screen and the buttons ---------------------------------------------- */
 
 /* IOKit's HID event system, the part that has no public header on Darwin (prototypes checked against 20F66) */
@@ -756,7 +934,7 @@ static const struct virtual_service_callbacks service_callbacks = {
  * the service is made again until the server has opened it.
  */
 static IOHIDServiceClientRef
-make_service(IOHIDEventSystemClientRef client, const char *product, int page, int usage, bool display)
+make_service(IOHIDEventSystemClientRef client, const char *product, int page, int usage, bool display, bool external)
 {
 	struct service *made = calloc(1, sizeof(*made));
 	IOHIDServiceClientRef service = NULL;
@@ -776,8 +954,9 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 	CFDictionarySetValue(properties, CFSTR("DeviceUsagePage"), page_number);
 	CFDictionarySetValue(properties, CFSTR("DeviceUsage"), usage_number);
 	CFDictionarySetValue(properties, CFSTR("DeviceUsagePairs"), pairs);
-	CFDictionarySetValue(properties, CFSTR("Built-In"), kCFBooleanTrue);
-	CFDictionarySetValue(properties, CFSTR("Transport"), CFSTR("SPI"));
+	/* an external one (the Bluetooth keyboard) is no part of the phone: UIKit then hides its own keyboard */
+	CFDictionarySetValue(properties, CFSTR("Built-In"), external ? kCFBooleanFalse : kCFBooleanTrue);
+	CFDictionarySetValue(properties, CFSTR("Transport"), external ? CFSTR("Bluetooth Low Energy") : CFSTR("SPI"));
 	CFDictionarySetValue(properties, CFSTR("Manufacturer"), CFSTR("redwood"));
 	CFDictionarySetValue(properties, CFSTR("Product"), name);
 	CFDictionarySetValue(properties, CFSTR("VendorID"), zero);
@@ -887,6 +1066,46 @@ send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 }
 
 /*
+ * A key of a Bluetooth keyboard (HAKIOS_KEY_DOWN/UP, written by our library inside BTLEServer, src/inject_hid.c,
+ * since this port has no IOHIDFamily for BTLEServer's own IOHIDUserDevice). The keyboard's service is made at its
+ * first key and removed when it goes away (HAKIOS_KEYBOARD_GONE): while a keyboard service exists, UIKit shows no
+ * keyboard of its own on the screen.
+ */
+#define HID_PAGE_GENERIC_DESKTOP        0x01
+#define HID_USAGE_KEYBOARD              0x06
+#define HID_PAGE_KEYBOARD               0x07
+
+static void
+send_key(IOHIDEventSystemClientRef client, IOHIDServiceClientRef *keyboard, const struct hakios_touch *t)
+{
+	static unsigned keys;
+	IOHIDEventRef event;
+
+	if (t->type == HAKIOS_KEYBOARD_GONE) {
+		if (*keyboard != NULL) {
+			IOHIDVirtualServiceClientRemove(*keyboard);
+			CFRelease(*keyboard);
+			*keyboard = NULL;
+			say("hakios: input: the Bluetooth keyboard went away (%u keys): its service removed\n", keys);
+		}
+		return;
+	}
+	if (*keyboard == NULL) {
+		*keyboard = make_service(client, "HakiOS Bluetooth keyboard", HID_PAGE_GENERIC_DESKTOP, HID_USAGE_KEYBOARD, false,
+		    true);
+		say("hakios: input: Bluetooth keyboard service %p\n", (void *)*keyboard);
+		if (*keyboard == NULL) {
+			return;
+		}
+	}
+	keys++;
+	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, t->x != 0 ? t->x : HID_PAGE_KEYBOARD, t->finger,
+	    t->type == HAKIOS_KEY_DOWN, 0);
+	IOHIDVirtualServiceClientDispatchEvent(*keyboard, event);
+	CFRelease(event);
+}
+
+/*
  * Boot-arg touch_lat=1: a line for every touch sample, "tl: i TYPE posted US read US sent US" -- when
  * the kernel stamped it, when this thread had it, when the event system had the event -- in
  * microseconds of mach_absolute_time, the kernel's own time (tools/latency.py).
@@ -905,7 +1124,7 @@ input_thread(__unused void *arg)
 {
 	static const int types[] = { HID_CLIENT_SIMPLE, HID_CLIENT_RATE_CONTROLLED };
 	IOHIDEventSystemClientRef client = NULL;
-	IOHIDServiceClientRef screen = NULL, buttons = NULL;
+	IOHIDServiceClientRef screen = NULL, buttons = NULL, keyboard = NULL;
 	struct hakios_touch t;
 	unsigned count = 0, waking = 0;         /* waking: the fingers whose touch went into waking the display */
 	int device;
@@ -934,15 +1153,25 @@ input_thread(__unused void *arg)
 			continue;
 		}
 		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
-		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
+		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true, false);
 		if (screen == NULL) {
 			say("hakios: input: a HID client of type %d may not create services\n", types[i]);
 		}
 	}
 	if (screen != NULL) {
-		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
+		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false, false);
 	}
 	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
+	{
+		/* (a backboardd started again would otherwise not know which way up the phone is until it turns) */
+		int orientation = 0;
+		size_t length = sizeof(orientation);
+
+		if (sysctlbyname("kern.hakios.orientation", &orientation, &length, NULL, 0) == 0 && orientation != 0) {
+			say("hakios: orientation: the kernel says %d already\n", orientation);
+			orientation_post((uint32_t)orientation);
+		}
+	}
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */
 	if (screen == NULL) {
 		return NULL;
@@ -954,7 +1183,11 @@ input_thread(__unused void *arg)
 		if (count++ < 4) {
 			say("hakios: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
 		}
-		if (t.type > HAKIOS_TOUCH_UP) {
+		if (t.type == HAKIOS_ORIENTATION) {
+			orientation_post(t.finger);
+		} else if (t.type >= HAKIOS_KEY_DOWN) {
+			send_key(client, &keyboard, &t);
+		} else if (t.type > HAKIOS_TOUCH_UP) {
 			if (buttons != NULL) {
 				send_button(buttons, &t);
 			}
@@ -1161,6 +1394,180 @@ watch_metallib_lookups(const char *arguments)
 	    ca_metallib ? ca_metallib : "");
 }
 
+/* ---- locationd: positions from the modem's GNSS ------------------------------------------------------- */
+
+/*
+ * The GNSS of this phone is inside its Qualcomm modem, not Apple's: the kernel's LOC client
+ * (drivers/modem/hakios.loc.c) keeps the latest fix in sysctl kern.hakios.gnss_fix. locationd has no driver for it,
+ * but it takes positions from somewhere else as a matter of course: the location simulation Xcode drives through
+ * CoreLocation's CLSimulationManager (com.apple.locationd.simulation, an entitlement locationd itself carries).
+ * Positions given that way go through locationd's own provider (CLSimulatedLocationProvider) to every
+ * CLLocationManager client exactly as a GPS fix would. So here, inside locationd, a thread reads the kernel's fix
+ * once a second and hands each new one to a CLSimulationManager. (Clients that look at
+ * CLLocationSourceInformation see isSimulatedBySoftware; nothing else tells them apart.)
+ * Boot-args: gnss_sim_delivery=N, gnss_sim_repeat=N set CLSimulationManager's delivery and repeat behaviours.
+ */
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+
+typedef struct {
+	double latitude, longitude;
+} gnss_coordinate;
+
+static const char *const gnss_state_names[] = {
+	"no location service (the modem is not up, or has not offered one)", "the location service is there",
+	"events registered", "session started, no fix yet", "fix",
+};
+
+static void
+gnss_set_behaviour(id manager, const char *setter, long value)
+{
+	SEL selector = sel_registerName(setter);
+	Method method = class_getInstanceMethod(object_getClass(manager), selector);
+	char type[8] = "";
+
+	if (method == NULL) {
+		say("hakios: gnss: CLSimulationManager has no %s\n", setter);
+		return;
+	}
+	method_getArgumentType(method, 2, type, sizeof(type));
+	if (type[0] == 'C' || type[0] == 'c' || type[0] == 'B') {
+		((void (*)(id, SEL, unsigned char))objc_msgSend)(manager, selector, (unsigned char)value);
+	} else if (type[0] == 'i' || type[0] == 'I') {
+		((void (*)(id, SEL, int))objc_msgSend)(manager, selector, (int)value);
+	} else {
+		((void (*)(id, SEL, long))objc_msgSend)(manager, selector, value);
+	}
+	say("hakios: gnss: %s%ld (argument type %s)\n", setter, value, type);
+}
+
+static id
+gnss_manager(const char *arguments)
+{
+	Class cls;
+	id manager;
+	const char *at;
+
+	dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_NOW);
+	cls = objc_getClass("CLSimulationManager");
+	if (cls == NULL) {
+		say("hakios: gnss: CoreLocation has no CLSimulationManager; locationd gets no positions\n");
+		return NULL;
+	}
+	manager = ((id (*)(id, SEL))objc_msgSend)(((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc")),
+	    sel_registerName("init"));
+	if (manager == NULL) {
+		say("hakios: gnss: CLSimulationManager would not be made\n");
+		return NULL;
+	}
+	if ((at = strstr(arguments, "gnss_sim_delivery=")) != NULL) {
+		gnss_set_behaviour(manager, "setLocationDeliveryBehavior:", strtol(at + 18, NULL, 10));
+	}
+	if ((at = strstr(arguments, "gnss_sim_repeat=")) != NULL) {
+		gnss_set_behaviour(manager, "setLocationRepeatBehavior:", strtol(at + 16, NULL, 10));
+	}
+	say("hakios: gnss: a CLSimulationManager (%p) carries the kernel's fixes into locationd\n", (void *)manager);
+	return manager;
+}
+
+static void
+gnss_hand_on(id manager, int lat_e7, int lon_e7, int alt_mm, unsigned hacc_mm, unsigned vacc_mm, int speed_mms,
+    int heading_mdeg, unsigned long long utc_ms, unsigned flags)
+{
+	Class location_class = objc_getClass("CLLocation"), date_class = objc_getClass("NSDate");
+	gnss_coordinate coordinate = { lat_e7 / 1e7, lon_e7 / 1e7 };
+	double timestamp = utc_ms ? utc_ms / 1000.0 : (double)time(NULL);
+	id date, location;
+
+	if (location_class == NULL || date_class == NULL) {
+		return;
+	}
+	date = ((id (*)(Class, SEL, double))objc_msgSend)(date_class, sel_registerName("dateWithTimeIntervalSince1970:"), timestamp);
+	location = ((id (*)(id, SEL, gnss_coordinate, double, double, double, double, double, id))objc_msgSend)(
+		((id (*)(Class, SEL))objc_msgSend)(location_class, sel_registerName("alloc")),
+		sel_registerName("initWithCoordinate:altitude:horizontalAccuracy:verticalAccuracy:course:speed:timestamp:"), coordinate,
+		alt_mm / 1000.0, hacc_mm ? hacc_mm / 1000.0 : 50.0, (flags & 2) ? (vacc_mm ? vacc_mm / 1000.0 : 50.0) : -1.0,
+		heading_mdeg >= 0 ? heading_mdeg / 1000.0 : -1.0, speed_mms >= 0 ? speed_mms / 1000.0 : -1.0, date);
+	if (location == NULL) {
+		return;
+	}
+	((void (*)(id, SEL))objc_msgSend)(manager, sel_registerName("clearSimulatedLocations"));
+	((void (*)(id, SEL, id))objc_msgSend)(manager, sel_registerName("appendSimulatedLocation:"), location);
+	if (class_respondsToSelector(object_getClass(manager), sel_registerName("flush"))) {
+		((void (*)(id, SEL))objc_msgSend)(manager, sel_registerName("flush"));
+	}
+	((void (*)(id, SEL))objc_msgSend)(manager, sel_registerName("startLocationSimulation"));
+	((void (*)(id, SEL))objc_msgSend)(location, sel_registerName("release"));
+}
+
+static void *
+gnss_thread(__unused void *argument)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	unsigned last_seq = 0, handed = 0, polls = 0;
+	int last_state = -1;
+	id manager = NULL;
+
+	sysctlbyname("kern.bootargs", arguments, &size, NULL, 0);
+	sleep(5);                       /* locationd's own services up first: the manager talks to one of them */
+	for (;;) {
+		void *pool = objc_autoreleasePoolPush();
+		int state = -1;
+		size_t length = sizeof(state);
+		char text[160] = "", sky[80] = "";
+		unsigned seq = 0, flags = 0, status = 0, hacc = 0, vacc = 0, sats = 0;
+		int lat = 0, lon = 0, alt = 0, speed = -1, heading = -1;
+		unsigned long long utc = 0;
+
+		if (sysctlbyname("kern.hakios.gnss_state", &state, &length, NULL, 0) != 0) {
+			say("hakios: gnss: the kernel has no GNSS (kern.hakios.gnss_state: %s); locationd gets no positions\n",
+			    strerror(errno));
+			objc_autoreleasePoolPop(pool);
+			return NULL;
+		}
+		length = sizeof(sky) - 1;
+		sysctlbyname("kern.hakios.gnss_sky", sky, &length, NULL, 0);
+		if (state != last_state) {
+			say("hakios: gnss: the kernel's GNSS: %s (state %d; satellites: %s)\n", state >= 0 && state <= 4 ?
+			    gnss_state_names[state] : "?", state, sky);
+			last_state = state;
+		} else if (state < 4 && ++polls % 120 == 0) {
+			say("hakios: gnss: still no fix after %u s: state %d, satellites (seq seen tracked best_snr engine) %s\n",
+			    polls, state, sky);
+		}
+		length = sizeof(text) - 1;
+		if (state == 4 && sysctlbyname("kern.hakios.gnss_fix", text, &length, NULL, 0) == 0 &&
+		    sscanf(text, "%u %u %u %d %d %d %u %u %d %d %llu %u", &seq, &flags, &status, &lat, &lon, &alt, &hacc, &vacc,
+		    &speed, &heading, &utc, &sats) == 12 && seq != last_seq && (flags & 1)) {
+			last_seq = seq;
+			if (manager == NULL) {
+				manager = gnss_manager(arguments);
+			}
+			if (manager != NULL) {
+				gnss_hand_on(manager, lat, lon, alt, hacc, vacc, speed, heading, utc, flags);
+				if (handed++ < 5 || handed % 300 == 0) {
+					say("hakios: gnss: fix #%u handed to locationd: %.7f %.7f +-%.1f m, alt %.1f m, %u sats%s\n", seq,
+					    lat / 1e7, lon / 1e7, hacc / 1000.0, alt / 1000.0, sats, (flags & 4) ? " (MADE UP: gnss_fake)" : "");
+				}
+			}
+		}
+		objc_autoreleasePoolPop(pool);
+		sleep(1);
+	}
+}
+
+static void
+location_fixes(void)
+{
+	pthread_t thread;
+
+	if (pthread_create(&thread, NULL, gnss_thread, NULL) == 0) {
+		pthread_detach(thread);
+		say("hakios: gnss: locationd is to have the kernel's GNSS fixes\n");
+	}
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1220,6 +1627,7 @@ hakios_init(void)
 		}
 		opengl_es();
 		window_server_fixes();
+		orientation_fixes();
 		/*
 		 * brightness_fixes() is not used for now: with it backboardd no longer took our touch
 		 * screen service for its own ("still waiting for a main screen digitizer"), whether the
@@ -1230,5 +1638,7 @@ hakios_init(void)
 		input_start();
 	} else if (strncmp(name, "containermanagerd", 17) == 0) {
 		container_manager_fixes();
+	} else if (strcmp(name, "locationd") == 0) {
+		location_fixes();
 	}
 }

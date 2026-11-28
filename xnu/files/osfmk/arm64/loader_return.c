@@ -51,6 +51,8 @@ extern void hakios_wifi_stop(void);
 extern void hakios_wifi_quiesce(void);
 extern void hakios_adsp_stop(void);
 extern void hakios_adsp_quiesce(void);
+extern void hakios_slpi_stop(void);
+extern void hakios_slpi_quiesce(void);
 extern void hakios_mpss_stop(void);
 extern void hakios_mpss_quiesce(void);
 extern void hakios_ddr_quiesce(void);
@@ -375,6 +377,7 @@ loader_return(void)
 	hakios_adreno_quiesce();       /* the GPU block, if it was started, has tables in memory that is about to be reused */
 	hakios_wifi_quiesce();         /* the Wi-Fi DSP, if it still runs (a panic), is not left to itself */
 	hakios_adsp_quiesce();         /* nor the audio DSP */
+	hakios_slpi_quiesce();         /* nor the sensor DSP */
 	hakios_mpss_quiesce();         /* nor the modem */
 	hakios_ddr_quiesce();          /* and the vote for the memory's bandwidth taken away */
 	hakios_haptic_quiesce();       /* the vibration motor's chip back into reset, if it was let out */
@@ -443,6 +446,7 @@ loader_return_timer(__unused thread_call_param_t p0, __unused thread_call_param_
 		hakios_adreno_stop();          /* a GPU kept for the system is given back while there is a thread to wait in */
 		hakios_wifi_stop();            /* and the Wi-Fi DSP, if it runs, shut down */
 		hakios_adsp_stop();            /* and the audio DSP */
+		hakios_slpi_stop();            /* and the sensor DSP */
 		hakios_mpss_stop();            /* and the modem */
 	}
 	if (PE_parse_boot_argn("return_cpu", &cpu, sizeof(cpu)) && cpu <= (uint32_t)ml_get_max_cpu_number() &&
@@ -490,6 +494,7 @@ loader_stop_poll(__unused thread_call_param_t p0, __unused thread_call_param_t p
 		hakios_adreno_stop();
 		hakios_wifi_stop();
 		hakios_adsp_stop();
+		hakios_slpi_stop();
 		loader_return();
 	}
 	clock_interval_to_deadline(1, NSEC_PER_SEC, &deadline);

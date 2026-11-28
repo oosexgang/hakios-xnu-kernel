@@ -54,8 +54,27 @@ void	 lx_os_random(void *buffer, unsigned long size);	/* bytes nobody can guess 
 unsigned lx_os_option(const char *name);
 /* a file the driver asks for by the name Linux has for it, in place: 0, or an errno (ENOENT) */
 int	 lx_os_firmware(const char *name, const void **data, unsigned long *size);
-/* the processor that runs the radio's firmware: started, and up when this returns; 0 or an errno */
+/* the radio's firmware started (the WCN6750's DSP; on PCIe: the chip booted over MHI, QRTR up), and up when this returns; 0 or an errno */
 int	 lx_os_rproc_boot(void);
+/*
+ * ---- a radio on PCIe (zeus's WCN6855; the WCN6750 is not: lx_os_radio_bus() says 0 there and the rest is
+ * not asked). The kernel owns the chip's boot (BHI, MHI, its firmware, QRTR) and the window register of
+ * its BAR0; the driver's bus (wifi/lx/src/lx_bus_pci.c) reads BAR0's first 512 KB itself and everything
+ * above through the kernel.
+ */
+#define LX_OS_BUS_AHB	0
+#define LX_OS_BUS_PCI	1
+unsigned lx_os_radio_bus(void);
+/* its PCI identity: 1, or 0 */
+int	 lx_os_radio_pci_id(unsigned short *vendor, unsigned short *device, unsigned short *subsystem_vendor,
+	    unsigned short *subsystem_device);
+/* BAR0's physical address and size: 1, or 0 */
+int	 lx_os_radio_bar(unsigned long long *physical, unsigned long *size);
+/* a register of the chip, any offset (above 0x80000 through the window, under the kernel's lock) */
+unsigned lx_os_radio_read32(unsigned offset);
+void	 lx_os_radio_write32(unsigned offset, unsigned value);
+void	 lx_os_radio_wake(int awake);				/* MHI's device wake asserted (1) / let go (0), counted */
+void	 lx_os_radio_halt(void);				/* after the mode "off": MHI and the chip reset */
 /* the radio's own address (six bytes), if the machine has one for it: 1, or 0 and nothing written */
 int	 lx_os_radio_address(unsigned char *address);
 /*
@@ -82,6 +101,9 @@ void	 lx_os_irq_enable(unsigned vector);
 void	 lx_os_irq_disable(unsigned vector);			/* returns when its function is not running */
 void	 lx_os_irq_detach_all(void);				/* returns when no function is running */
 unsigned long long lx_os_irq_count(unsigned vector);		/* how many have arrived */
+/* CPU time (nanoseconds): of the thread that calls; of the interrupts' thread in the vectors' functions (and its wakes) */
+unsigned long long lx_os_thread_cpu(void);
+unsigned long long lx_os_irq_cpu(unsigned long long *wakes);
 
 /* ---- the station: scanning and joining, for whoever asks the kernel (hakios.sta.h) ---- */
 void	 lx_os_station(const struct hakios_sta_ops *ops);	/* here it is, to be asked; NULL: no longer (returns when no call is under way) */

@@ -12,8 +12,9 @@
 #                       make a video of it (default logs/recording.mp4)
 #   xl sound [F]        fetch the sound the last run recorded (rec_sound=N among XL_CMDLINE: the first N
 #                       seconds of what Darwin played) and make a WAV file of it (default logs/sound.wav)
-#   xl camera [P]       fetch the frames the last run's camera left (cam=3 and up among XL_CMDLINE) and make
-#                       pictures of them (P-0.png, ...; default prefix logs/camera)
+#   xl camera [P] [...] fetch the frames the last run's camera left (cam=3 and up among XL_CMDLINE) and make
+#                       pictures of them (P-0.png, ...; default prefix logs/camera); what follows P goes to
+#                       tools/camraw.py (--isp TUNING.isp: the camera's colour tuning, from tools/camtuning.py)
 #   xl selftest         exercise only the kernel->loader return path
 #   xl log              fetch the loader's current log; during a run, the kernel's log so far as well
 #   xl stop             end the run in progress now (the kernel returns as when its time is up)
@@ -128,7 +129,8 @@ firmware() {
 	case "${XL_FIRMWARE:-}" in
 	u-boot|silicium) echo "$XL_FIRMWARE"; return ;;
 	esac
-	if [ -f Mu-Silicium/Build/redwoodPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd ] || [ -f devices/redwood/prebuilt/SILICIUM_UEFI.fd ]; then
+	local d=${DEVICE:-redwood}
+	if [ -f Mu-Silicium/Build/${d}Pkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd ] || [ -f devices/$d/prebuilt/SILICIUM_UEFI.fd ]; then
 		echo silicium
 	else
 		echo u-boot
@@ -148,7 +150,7 @@ enter() {
 	xnuloader/mkpayload.py -o usb-payload.bin loader.efi=$L --usb >/dev/null || { echo "xl: payload build failed"; return 1; }
 	case "$(firmware)" in
 	u-boot) tools/mkubootimg.py -d "${DEVICE:-redwood}" -l $L -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
-	*) ./mkxnuimg.py -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
+	*) ./mkxnuimg.py -d "${DEVICE:-redwood}" -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
 	esac || { echo "xl: image build failed ($(firmware))"; return 1; }
 	# Right after the phone enters fastboot the first "boot" is sometimes not taken: try twice.
 	local try
@@ -234,7 +236,7 @@ run() { # run <oem command> <label>
 				followed_n=$(( ${followed_n:-0} + 1 ))
 				fb oem log | grep -q OKAY && fetch_log "$log.live" && { [ -z "$XL_FOLLOW_KEEP" ] || cp "$log.live" "$log.live.$followed_n"; }
 			fi
-			sleep 2
+			sleep "${XL_FOLLOW_SLEEP:-2}"   # (XL_FOLLOW_SLEEP=0 with XL_FOLLOW=0: fetch back to back)
 		done
 	else
 		result=$(FB_TIMEOUT=$(( ${XL_SECS:-8} + 100 )) fb getvar result | grep '^result:')
@@ -286,7 +288,8 @@ camera() { # camera [prefix]: the frames the last run's camera left (boot-arg ca
 	local out=${1:-logs/camera}
 	fb oem recording | grep -q OKAY || { echo "xl: the last run left no frames (boot-arg cam=3)"; return 1; }
 	FB_TIMEOUT=120 fb get_staged logs/camera.raw >/dev/null
-	tools/camraw.py logs/camera.raw "$out"
+	[ $# -gt 0 ] && shift
+	tools/camraw.py logs/camera.raw "$out" "$@"
 }
 
 ramdisk() { # ramdisk [<file>|none]
@@ -360,7 +363,7 @@ case "$1" in
 enter) enter && echo "xl: loader is up" ;;
 screenshot) screenshot "$2" ;;
 recording) recording "$2" ;;
-camera) camera "$2" ;;
+camera) shift; camera "$@" ;;
 sound) sound "$2" ;;
 ramdisk) ramdisk "$2" ;;
 run) run "oem run $2" "run${2:+-cp$2}" ;;

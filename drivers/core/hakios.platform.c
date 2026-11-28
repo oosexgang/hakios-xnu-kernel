@@ -54,6 +54,39 @@ LCK_MTX_DECLARE(hakios_smem_alloc_lock, &hakios_platform_lock_group);
 LCK_MTX_DECLARE(hakios_rsc_lock, &hakios_platform_lock_group);
 LCK_MTX_DECLARE(hakios_smmu_lock, &hakios_platform_lock_group);
 
+/*
+ * One TrustZone call at a time across the drivers that make them (the two DSPs', the GPU's, the modem's, the
+ * Wi-Fi's): each has a scm() of its own, and they start side by side. Two images given to TrustZone's loader at
+ * once is what the audio DSP's step 4 failing now and then looked like (logs/115918-run.log). Where interrupts
+ * are off (a panic's way back to the loader) the call goes ahead without the lock.
+ */
+static LCK_MTX_DECLARE(hakios_scm_lock, &hakios_platform_lock_group);
+extern boolean_t ml_get_interrupts_enabled(void);
+
+bool hakios_scm_enter(void);
+void hakios_scm_leave(bool held);
+
+bool
+hakios_scm_enter(void)
+{
+	if (!ml_get_interrupts_enabled()) {
+		return false;
+	}
+	lck_mtx_lock(&hakios_scm_lock);
+	return true;
+}
+
+void
+hakios_scm_leave(bool held)
+{
+	if (held) {
+		lck_mtx_unlock(&hakios_scm_lock);
+	}
+}
+/* the audio and sensor DSPs' starts that have LCX and LMX asked for of RPMh now (drivers/audio/hakios.adsp.c, under hakios_rsc_lock) */
+uint32_t hakios_lpass_rails_users;
+volatile bool hakios_adsp_starting;   /* the audio DSP's start is under way: the sensor DSP's waits for it (hakios.adsp.c) */
+
 static char hakios_drivers_string[] = HAKIOS_DRIVERS_LIST;
 
 SYSCTL_STRING(_kern_hakios, OID_AUTO, drivers, CTLFLAG_RD | CTLFLAG_LOCKED, hakios_drivers_string, 0,

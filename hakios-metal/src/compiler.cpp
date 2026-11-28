@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 
 #ifdef HAKIOS_METAL_MESA
@@ -24,6 +25,8 @@ namespace hakios::metal {
 #ifndef HAKIOS_METAL_MESA
 
 bool hasCompiler() { return false; }
+void setCompilerChip(uint32_t) {}
+void setCompilerBindlessIbo(bool) {}
 
 std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why, const FunctionConstants&) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
@@ -48,6 +51,23 @@ bool argumentBufferLayout(const void*, size_t, uint32_t, std::vector<std::pair<u
 #else
 
 namespace {
+// the chip the compiler is made for: the kernel's (setCompilerChip, from hakios_metal_open), else the A6xx of a6xx.hpp
+std::atomic<uint32_t> gCompilerChip{0};
+}  // namespace
+
+void setCompilerChip(uint32_t chip) {
+    if (chip != 0) gCompilerChip.store(chip);
+}
+
+namespace {
+std::atomic<bool> gCompilerBindlessIbo{false};
+}  // namespace
+
+void setCompilerBindlessIbo(bool on) {
+    gCompilerBindlessIbo.store(on);
+}
+
+namespace {
 
 std::mutex gCompilerLock;   // ir3 keeps state in the compiler object; one compilation at a time
 
@@ -56,7 +76,7 @@ ir3_compiler* theCompiler() {
     static ir3_compiler* compiler = [] {
         fd_dev_id id{};
         id.gpu_id = 0;
-        id.chip_id = a6xx::kChipId;
+        id.chip_id = gCompilerChip.load() != 0 ? gCompilerChip.load() : a6xx::kChipId;
         // A framebuffer fetch (nir_texop_txf_ms_fb) through the FS's own texture table, at the slot after its last
         // texture, as turnip has it (tu_device.cc: -1): the zero default would make it a bindless read of descriptor
         // set 0, which this driver never binds
@@ -671,6 +691,38 @@ bool usesSubgroup(nir_shader* nir) {
     return false;
 }
 
+// Gallium's ir3_nir_lower_io_to_bindless (ir3_descriptor.c, MIT), with this driver's slots: every buffer and image
+// access takes its descriptor from bindless set 0 -- buffer n at slot n, image n at numSsbos + n, the IBO table's own
+// layout, where Gallium puts images at 32 -- so the dispatch's table serves both ways unchanged. No modulo of the index:
+// an AIR kernel's indices are constants.
+bool lowerIboToBindless(nir_builder* b, nir_intrinsic_instr* intr, void*) {
+    unsigned base;
+    switch (intr->intrinsic) {
+    case nir_intrinsic_load_ssbo:
+    case nir_intrinsic_store_ssbo:
+    case nir_intrinsic_ssbo_atomic:
+    case nir_intrinsic_ssbo_atomic_swap:
+    case nir_intrinsic_get_ssbo_size:
+        base = 0;
+        break;
+    case nir_intrinsic_image_load:
+    case nir_intrinsic_image_store:
+    case nir_intrinsic_image_atomic:
+    case nir_intrinsic_image_atomic_swap:
+    case nir_intrinsic_image_size:
+    case nir_intrinsic_image_samples:
+        base = b->shader->info.num_ssbos;
+        break;
+    default:
+        return false;
+    }
+    const unsigned at = intr->intrinsic == nir_intrinsic_store_ssbo ? 1 : 0;   // store_ssbo has the value first
+    b->cursor = nir_before_instr(&intr->instr);
+    nir_def* index = nir_iadd_imm(b, intr->src[at].ssa, base);
+    nir_src_rewrite(&intr->src[at], nir_bindless_resource_ir3(b, 32, index, 0));
+    return true;
+}
+
 bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_compiler* compiler = theCompiler();
     nir_shader* nir = t.nir;
@@ -695,6 +747,11 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
     if (!lowerFbRead(nir, t.fbTargets, why)) return false;
+    // where Gallium lowers (after the finalize, before ir3_nir_post_finalize), for compute kernels only
+    if (gCompilerBindlessIbo.load() && order == PassOrder::kCompute &&
+        (nir->info.stage == MESA_SHADER_COMPUTE || nir->info.stage == MESA_SHADER_KERNEL)) {
+        nir_shader_intrinsics_pass(nir, lowerIboToBindless, nir_metadata_control_flow, nullptr);
+    }
 
     t.shader = static_cast<ir3_shader*>(rzalloc_size(nullptr, sizeof(ir3_shader)));
     t.shader->compiler = compiler;
@@ -867,6 +924,7 @@ bool fillKernel(Translation& t, const KernelHome& out, uint32_t highestSampler, 
     k.numUbos = cs->num_ubos;
     k.numSsbos = v->num_ssbos;
     k.numIbos = v->num_ibos;
+    k.bindlessIbo = v->bindless_ibo ? 1u : 0u;
     k.numSamp = numSamp;
     for (uint32_t i = 0; i < kMaxUboRanges; i++) {
         if (i < cs->ubo_state.num_enabled) {

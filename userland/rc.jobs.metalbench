@@ -1,0 +1,5 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Where the time goes in the Metal layer on the phone (hakios-metal/tools/bench.cpp), beside the window server:
+#   EXTRA="../hakios-metal/out/ios/hakios-metal-bench" SYSTEM=1 GL=1 REST=1 RC_JOBS=rc.jobs.metalbench userland/build.sh
+/redwood/bin/rwtouch wait 40
+/redwood/bin/hakios-metal-bench

@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# zeus's radio as Darwin's (wlan=19 wifi=1, RC_JOBS=rc.jobs.wlan, REST=1 for configd, XL_SECS=180): the kernel joins
+# the network of fw-wifi/wlan.conf through the station wifid also asks, and configd gives en0 its address (its own
+# "Wi-Fi" service). Late in the run, so that it lands in the kernel's message buffer that the log keeps whole
+# ("kernel": each line goes there too): the interfaces, the routing table, the gateway pinged, configd's view.
+# (The system has no ifconfig, netstat or ping: net_test.)
+/redwood/bin/net_test kernel wait 120 waitaddr en0 30 route ping gateway 5 store State:/Network/Global/IPv4 store State:/Network/Interface/en0/IPv4

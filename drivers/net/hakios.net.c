@@ -32,6 +32,7 @@
 #include <sys/proc.h>
 #include <sys/hakios.net.h>
 #include <sys/sockio.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 
 extern void HakiosWLANStart(const char *interface, const uint8_t *address);  /* drivers/wifi/hakios.wlan.cpp */
@@ -426,3 +427,33 @@ hakios_net_init(void)
 	PE_parse_boot_argn("net_names", &net_names, sizeof(net_names));
 	hakios_virtio_net_init();
 }
+
+/*
+ * A line from a test program into the kernel's log (userland/src/net_test.m, "kernel"): the console drops lines
+ * when the system is busy, and the kernel's message buffer is what a run's log keeps whole at its end. Root only;
+ * at most 255 bytes a line, said as "user: ...".
+ */
+static int
+hakios_net_say_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	char line[256];
+	size_t length;
+	int error;
+
+	if (req->newptr == USER_ADDR_NULL) {
+		return SYSCTL_OUT(req, "", 1);
+	}
+	length = req->newlen < sizeof(line) - 1 ? req->newlen : sizeof(line) - 1;
+	if ((error = SYSCTL_IN(req, line, length)) != 0) {
+		return error;
+	}
+	line[length] = 0;
+	while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == 0)) {
+		line[--length] = 0;
+	}
+	printf("user: %s\n", line);
+	return 0;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, hakios_say, CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0, hakios_net_say_sysctl, "A",
+    "write a line: it goes into the kernel's log as \"user: ...\" (for test programs)");

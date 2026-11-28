@@ -65,8 +65,8 @@ def u32(value, index=0):
     return struct.unpack_from('>I', value, index * 4)[0]
 
 
-def reg_address(nodes, path, index=0):
-    """An address from reg tuple `index`, or None if that tuple is absent."""
+def reg_address(nodes, path, index=0, size=False):
+    """An address (or with size=True, the size) from reg tuple `index`, or None if that tuple is absent."""
     if path is None or 'reg' not in nodes[path]:
         return None
     # These properties describe the parent's children; they are not inherited from ancestors.
@@ -87,6 +87,8 @@ def reg_address(nodes, path, index=0):
     at = index * stride
     if at >= len(data):
         return None
+    if size:
+        return int.from_bytes(data[at + 4 * address_cells:at + stride], 'big') if size_cells else None
     return int.from_bytes(data[at:at + 4 * address_cells], 'big')
 
 
@@ -119,6 +121,7 @@ def main():
         sys.exit(__doc__)
     nodes = nodes_of(open(sys.argv[1], 'rb').read())
     args = []
+    rail = None
 
     def address(arg, value, bits=32):
         if value is not None:
@@ -152,13 +155,25 @@ def main():
         if 'phandle' in props:
             by_phandle[u32(props['phandle'])] = (path, props)
 
-    def reserved(leaf, arg):
-        path, _ = find_named(nodes, leaf)
+    def reserved(leaves, arg, compatible=None):
+        # a mainline-style tree names them cmd_db@, mpss@, ipa_gsi@; a vendor (Android) tree aop_cmd_db_region@,
+        # mpss_region@, ipa_gsi_region@
+        path = None
+        for leaf in leaves:
+            path, _ = find_named(nodes, leaf)
+            if path:
+                break
+        if path is None and compatible:
+            path, _ = find(nodes, compatible)
         address(arg, reg_address(nodes, path))
+        return path
 
-    reserved('cmd_db', 'soc_cmd_db')
-    reserved('mpss', 'soc_mpss_mem')
-    reserved('ipa_gsi', 'modem_ipa_fw_at')              # where the IPA's firmware is loaded (the ipa_gsi reservation)
+    reserved(('cmd_db', 'aop_cmd_db_region'), 'soc_cmd_db', 'qcom,cmd-db')
+    mpss = reserved(('mpss', 'mpss_region'), 'soc_mpss_mem')
+    mpss_size = reg_address(nodes, mpss, size=True)
+    if mpss_size is not None and mpss_size != 0x0f600000:     # the kernel's default is the first phone's 246 MB
+        address('soc_mpss_size', mpss_size)
+    reserved(('ipa_gsi', 'ipa_gsi_region'), 'modem_ipa_fw_at')   # where the IPA's firmware is loaded (the ipa_gsi reservation)
     _, smem = find(nodes, 'qcom,smem')
     if smem and 'memory-region' in smem:
         target = by_phandle.get(u32(smem['memory-region']))
@@ -183,6 +198,17 @@ def main():
             args.append((arg, u32(props['qcom,pas-id'])))
 
     pas_id('qcom,mss', 'soc_pas_mpss')
+    # a vendor tree of the SM8450 era: remoteproc-mss@ with compatible qcom,<soc>-modem-pas and no pas-id (Linux's
+    # table gives the modem 4, the kernel's default); its rails are named by reg-names, cx and mx (the default is mss)
+    for path, props in nodes.items():
+        kinds = props.get('compatible', b'').split(b'\0')
+        if any(k.startswith(b'qcom,') and k.endswith(b'-modem-pas') for k in kinds):
+            if 'qcom,pas-id' in props:
+                args.append(('soc_pas_mpss', u32(props['qcom,pas-id'])))
+            names = props.get('reg-names', b'').split(b'\0')
+            if b'mx' in names and b'mss' not in names:
+                rail = 'mx'
+            break
     pas_id('qcom,ipa_fws', 'soc_pas_ipa')
 
     _, ipa_fws = find_named(nodes, 'qcom,ipa_fws')
@@ -192,6 +218,8 @@ def main():
 
     for name, value in args:
         print(f'{name}={value:#x}')
+    if rail:
+        print(f'soc_mpss_rail={rail}')
     if ipa_fw_name:
         print(f'soc_ipa_fw={ipa_fw_name}')
     if not args:

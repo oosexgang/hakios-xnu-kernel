@@ -755,14 +755,27 @@ iounmap(void *address)
  * or the other way round. The first part of it is handed out for good, a stretch at a time
  * (rings); the rest is slots of one size, taken and given back (buffers).
  */
-#define POOL_SIZE	(44u << 20)
-#define POOL_RINGS	(12u << 20)		/* (the data path's rings and link descriptors come to about 6 MB) */
+/*
+ * By the radio's bus. The WCN6750 (AHB): 44 MB, 12 of them rings (the data path's rings and link
+ * descriptors come to about 6 MB). A chip on PCIe (the WCN6855) also takes its firmware's own memory
+ * (about 9.4 MB, which the firmware wants at addresses aligned to their size, as Linux's IOMMU
+ * allocator hands it out) and m3.bin out of the rings' part: 32 MB of rings, 64 MB in all. The
+ * buffers' part is 32 MB on both.
+ */
+#define POOL_SIZE_AHB	(44u << 20)
+#define POOL_RINGS_AHB	(12u << 20)
+#define POOL_SIZE_PCI	(64u << 20)
+#define POOL_RINGS_PCI	(32u << 20)		/* (zeus, M2: the firmware's 6 + 3.7 MB with their alignment and m3.bin end at 20.3 MB) */
+#define POOL_SIZE	(pool.size)
+#define POOL_RINGS	(pool.rings)
 #define POOL_SLOT	4096u
-#define POOL_SLOTS	((POOL_SIZE - POOL_RINGS) / POOL_SLOT)
+#define POOL_SLOTS	((32u << 20) / POOL_SLOT)
 
 static struct {
 	uint8_t *memory;
 	unsigned long long address;		/* the radio's, of the first byte */
+	uint32_t size, rings;			/* POOL_SIZE_*, POOL_RINGS_* of the radio's bus */
+	bool aligned;				/* a stretch of rings at least a page long sits at a multiple of its size (PCI) */
 	uint32_t rings_used;
 	uint32_t free_slots[POOL_SLOTS], free_count;
 } pool;
@@ -772,6 +785,15 @@ lx_pool_init(void)
 {
 	if (pool.memory != NULL) {
 		return (0);
+	}
+	if (lx_os_radio_bus() == LX_OS_BUS_PCI) {
+		pool.size = POOL_SIZE_PCI;
+		pool.rings = POOL_RINGS_PCI;
+		pool.aligned = true;
+	} else {
+		pool.size = POOL_SIZE_AHB;
+		pool.rings = POOL_RINGS_AHB;
+		pool.aligned = false;
 	}
 	pool.memory = lx_os_radio_memory(POOL_SIZE, &pool.address);
 	if (pool.memory == NULL) {
@@ -799,12 +821,25 @@ linux_dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle
 	size = roundup2(size, 64);
 	lx_os_lock();
 	at = pool.rings_used;
+	if (pool.aligned && size >= 4096) {
+		/*
+		 * (as Linux's IOMMU allocator: the radio's address a multiple of the size rounded up to a power of
+		 * two. The WCN6855's firmware takes its memory that way, and a segment that is only page-aligned
+		 * makes it fail at once: zeus, log 001604)
+		 */
+		unsigned long long align = 4096;
+
+		while (align < size) {
+			align <<= 1;
+		}
+		at = (uint32_t)(((pool.address + at + align - 1) & ~(align - 1)) - pool.address);
+	}
 	if (pool.memory == NULL || at + size > POOL_RINGS) {
 		lx_os_unlock();
 		printf("lx: no room for %zu more bytes of rings\n", size);
 		return (NULL);
 	}
-	pool.rings_used += size;
+	pool.rings_used = at + size;
 	lx_os_unlock();
 	bzero(pool.memory + at, size);
 	*dma_handle = pool.address + at;

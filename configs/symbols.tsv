@@ -10,15 +10,6 @@ ADRENO_SKIP	arg	adreno_skip	GPU and display	k	hakios.adreno.c	leave out the step
 ADRENO_SPEED	arg	adreno_speed	GPU and display	k	hakios.adreno.c	step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for)
 ADRENO_STREAM1	arg	adreno_stream1	GPU and display	k	hakios.adreno.c	step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core
 ADRENO_WATCH	arg	adreno_watch	GPU and display	k	hakios.adreno.c	after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last
-ADSP_AGAIN	arg	adsp_again	Audio and battery	k	hakios.adsp.c	
-ADSP_APR_WAIT	arg	adsp_apr_wait	Audio and battery	k	hakios.adsp.c	
-ADSP_KEEP	arg	adsp_keep	Audio and battery	k	hakios.adsp.c	
-ADSP_LISTEN	arg	adsp_listen	Audio and battery	k	hakios.adsp.c	
-ADSP_NEW	arg	adsp_new	Audio and battery	k	hakios.adsp.c	
-ADSP_PAUSE	arg	adsp_pause	Audio and battery	k	hakios.adsp.c	
-ADSP_RETURN	arg	adsp_return	Audio and battery	k	hakios.adsp.c	
-ADSP_STEP	arg	adsp_step	Audio and battery	k	hakios.adsp.c	
-ADSP_WAIT	arg	adsp_wait	Audio and battery	k	hakios.adsp.c	
 APFS_CHEAP	arg	apfs_cheap	Storage and APFS	k	apfs_vfsops.c	
 APFS_CHECK	arg	apfs_check	Storage and APFS	k	hakios.apfs_check.c	walk the whole volume and print only the totals
 APFS_CHUNK	arg	apfs_chunk	Storage and APFS	k	hakios.apfs_check.c	
@@ -80,13 +71,17 @@ DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock manag
 DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c	
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
 DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
+FB_ADAPT	arg	fb_adapt	GPU and display	k	MiniIOMobileFramebuffer.cpp	the same, as measured at each panel rate (0: 120 Hz, 1: 60 Hz, 2: 90 Hz), and the rate the panel is at
+FB_ADAPT_HOLD	arg	fb_adapt_hold	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_BEAM	arg	fb_beam	GPU and display	k	MiniIOMobileFramebuffer.cpp	frames written to the panel's memory whenever their beat comes, as before
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
 FB_DIFF	arg	fb_diff	GPU and display	k	MiniIOMobileFramebuffer.cpp	which pixels of the panel each frame changed (it costs: the panel's memory is slow to read)
 FB_FILTER	arg	fb_filter	GPU and display	k	MiniIOMobileFramebuffer.cpp	the picture is scaled to the panel nearest neighbour, as it once was
+FB_FRESH	arg	fb_fresh	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_HZ	arg	fb_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_INTF	arg	fb_intf	GPU and display	k	MiniIOMobileFramebuffer.cpp	the registers of the display interface the panel is on, for a port
+FB_INVAL	arg	fb_inval	GPU and display	k	MiniIOMobileFramebuffer.cpp	surfaces the GPU draws into are read as they are
 FB_MEASURE	arg	fb_measure	GPU and display	k	MiniIOMobileFramebuffer.cpp	how often the panel is really refreshed
 FB_PRI	arg	fb_pri	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_QUEUE	arg	fb_queue	GPU and display	k	MiniIOMobileFramebuffer.cpp	
@@ -133,6 +128,10 @@ GLTRACE_SHADERS	arg	gltrace_shaders	GPU and display	u	eagl.c	the text of the sha
 GLTRACE_UNIFORMS	arg	gltrace_uniforms	GPU and display	u	eagl.c	what the program of a traced draw was given, by the names its shaders use (coord_arg, texmat0, ...)
 GLWAIT	arg	glwait	GPU and display	u	eagl.c	
 GLYES	arg	glyes	User space	u	inject.c	the renderer is made to answer that it has those functions after all
+GNSS_INTERVAL	arg	gnss_interval	Cellular	k	hakios.mpss.c	
+GNSS_MODE	arg	gnss_mode	Cellular	k	hakios.mpss.c	
+GNSS_SIM_DELIVERY	arg	gnss_sim_delivery	User space	u	inject.c	
+GNSS_SIM_REPEAT	arg	gnss_sim_repeat	User space	u	inject.c	
 GPU_CACHED	arg	gpu_cached	GPU and display	k	hakios.gpu.cpp	
 GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c	
 GPU_KEEP	arg	gpu_keep	GPU and display	k	hakios.gpu.cpp	
@@ -160,11 +159,16 @@ MIC_MAIN	arg	mic_main	Audio and battery	k	hakios.mic.c
 MIC_SECS	arg	mic_secs	Audio and battery	k	hakios.mic.c	
 MIC_TAP	arg	mic_tap	Audio and battery	k	hakios.mic.c	
 MIC_TEST	arg	mic_test	Audio and battery	k	hakios.mic.c	
+MODEM_ALOUD	arg	modem_aloud	Cellular	k	hakios.mpss.c	
 MODEM_APN	arg	modem_apn	Cellular	k	hakios.mpss.c	a session to that APN instead of the default profile
+MODEM_BUFFER_PA	hex	modem_buffer_pa	Cellular	k	hakios.mpss.c	
 MODEM_DATA_NOBIND	arg	modem_data_nobind	Cellular	k	hakios.mpss.c	
 MODEM_DATA_OFF	arg	modem_data_off	Cellular	k	hakios.mpss.c	
 MODEM_DATA_WAIT	arg	modem_data_wait	Cellular	k	hakios.mpss.c	
 MODEM_DPM_OFF	arg	modem_dpm_off	Cellular	k	hakios.mpss.c	
+MODEM_GNSS_OFF	arg	modem_gnss_off	Cellular	k	hakios.mpss.c	
+MODEM_HEADER_PA	hex	modem_header_pa	Cellular	k	hakios.mpss.c	
+MODEM_INIT_ONCE	arg	modem_init_once	Cellular	k	hakios.mpss.c	
 MODEM_IPA	arg	modem_ipa	Cellular	k	hakios.mpss.c	
 MODEM_IPA_BUS_OFF	arg	modem_ipa_bus_off	Cellular	k	hakios.mpss.c	
 MODEM_IPA_DATA_OFF	arg	modem_ipa_data_off	Cellular	k	hakios.ipa.c	none of this. modem_ipa_data_trace=1: a line per packet.
@@ -189,6 +193,7 @@ MODEM_NO_TFTP	arg	modem_no_tftp	Cellular	k	hakios.mpss.c
 MODEM_ONLINE	arg	modem_online	Cellular	k	hakios.mpss.c	
 MODEM_PAUSE	arg	modem_pause	Cellular	k	hakios.mpss.c	
 MODEM_RETURN	arg	modem_return	Cellular	k	hakios.mpss.c	
+MODEM_RMTFS	arg	modem_rmtfs	Loader	l	loader.c	
 MODEM_RMTFS_DELAY	arg	modem_rmtfs_delay	Cellular	k	hakios.mpss.c	
 MODEM_RMTFS_RW_FAKE	arg	modem_rmtfs_rw_fake	Cellular	k	hakios.mpss.c	
 MODEM_RMTFS_RW_OFF	arg	modem_rmtfs_rw_off	Cellular	k	hakios.mpss.c	
@@ -197,12 +202,21 @@ MODEM_SHARE_TEST	arg	modem_share_test	Cellular	k	hakios.mpss.c
 MODEM_SIM_PROBE_OFF	arg	modem_sim_probe_off	Cellular	k	hakios.mpss.c	
 MODEM_SIM_SWITCH_OFF	arg	modem_sim_switch_off	Cellular	k	hakios.mpss.c	
 MODEM_STEP	arg	modem_step	Cellular	k	hakios.mpss.c	the steps once the root is there, then back to the loader if modem_return=1 says so
+MODEM_TABLES_PA	hex	modem_tables_pa	Cellular	k	hakios.mpss.c	
 MODEM_WAIT	arg	modem_wait	Cellular	k	hakios.mpss.c	
 MODEM_WDA_OFF	arg	modem_wda_off	Cellular	k	hakios.mpss.c	
+MTRACE	arg	mtrace	User space	u	inject_media.c	
+MTRACE_SEL	arg	mtrace_sel	User space	u	inject_media.c	
 PMIC_LIST	arg	pmic_list	Chip, thermal and PMIC	k	hakios.pmic.c	only the clock, not the inventory of every block
+PORTRAIT	arg	portrait	User space	u	camera_device.c,inject_media.c	everything set on and asked of the device, its streams and the pair's group from portrait_trace_after
+PORTRAIT_DUMP	arg	portrait_dump	User space	u	inject_media.c	
+PORTRAIT_SHOW	arg	portrait_show	User space	u	camera_device.c	
+PORTRAIT_TRACE	arg	portrait_trace	User space	u	camera_device.c	
+PORTRAIT_VIEWS	arg	portrait_views	User space	u	camera_device.c	
 PRESS_POWER	arg	press_power	Touch and buttons	k	hakios.buttons.c	a short press of the power key that many seconds after boot, and another ten seconds later, given to Darwin as the key's own are (hakios_touch_post):
 PRESS_POWER_MS	arg	press_power_ms	Touch and buttons	k	hakios.buttons.c	
 PRIVS	arg	privs	Security stand-ins	k	kern_minimac.c	
+RAM_GB	arg	ram_gb	Loader	l	loader.c	
 RD	arg	rd	CPU, memory and boot	kl	(patch),loader.c	
 REC_MB	arg	rec_mb	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 REC_RING	arg	rec_ring	GPU and display	k	MiniIOMobileFramebuffer.cpp	
@@ -217,6 +231,7 @@ RETURN_CPU	arg	return_cpu	CPU, memory and boot	k	loader_return.c
 RETURN_PANIC	arg	return_panic	CPU, memory and boot	k	loader_return.c	
 ROOT_APFS	arg	root_apfs	User space	u	init.c	the root is to be the Darwin root volume on /dev/DEV -- the phone's flash, read only
 SERIAL	arg	serial	Loader	l	loader.c	
+SLPI	arg	slpi	Audio and battery	k	hakios.adsp.c	
 SMALL_CORES	arg	small_cores	CPU, memory and boot	k	(patch)	
 SMALL_CORES_AFTER	arg	small_cores_after	CPU, memory and boot	k	GenericARMPE.cpp	
 SOC_CMD_DB	hex	soc_cmd_db	Cellular	k	hakios.mpss.c	
@@ -226,7 +241,10 @@ SOC_IPA_BASE	hex	soc_ipa_base	Cellular	k	hakios.ipa.c
 SOC_IPA_FW	arg	soc_ipa_fw	Cellular	k	hakios.mpss.c	
 SOC_IPA_STREAM	arg	soc_ipa_stream	Cellular	k	hakios.mpss.c	
 SOC_IPA_STREAM_UC	arg	soc_ipa_stream_uc	Cellular	k	hakios.mpss.c	
+SOC_IPA_VER	hex	soc_ipa_ver	Cellular	k	hakios.mpss.c	
 SOC_MPSS_MEM	hex	soc_mpss_mem	Cellular	k	hakios.mpss.c	
+SOC_MPSS_RAIL	hex	soc_mpss_rail	Cellular	k	hakios.mpss.c	
+SOC_MPSS_SIZE	hex	soc_mpss_size	Cellular	k	hakios.mpss.c	
 SOC_PAS_IPA	arg	soc_pas_ipa	Cellular	k	hakios.mpss.c	
 SOC_PAS_MPSS	arg	soc_pas_mpss	Cellular	k	hakios.mpss.c	
 SOC_SMEM	hex	soc_smem	Cellular	k	hakios.mpss.c,hakios.socinfo.c	where SMEM is (also the modem driver's argument; 0x80900000 on the reference phone)
@@ -269,6 +287,7 @@ UFS_NATIVE_SLOTS	arg	ufs_native_slots	Storage and APFS	k	hakios.ufshc.c
 UFS_NATIVE_SPIN	arg	ufs_native_spin	Storage and APFS	k	hakios.ufshc.c	
 UFS_PROBE	arg	ufs_probe	Loader	l	loader.c	
 UI_LITE	arg	ui_lite	User space	u	inject_sb.c	the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
+USB_ICL	arg	usb_icl	Audio and battery	k	hakios.adsp.c	
 USTACKS	arg	ustacks	Debugging	k	user_exception_trace.c	
 USTACKS_AT	arg	ustacks_at	Debugging	k	user_exception_trace.c	
 USTACKS_COUNT	arg	ustacks_count	Debugging	k	user_exception_trace.c	

@@ -159,6 +159,12 @@ public:
     int param(uint32_t which, uint64_t* value);
     // the chip id without the speed bin above it: 0x06030500 on the phone, 0 if the driver does not say
     uint32_t chipId();
+    // the Adreno generation the chip ID names: 7 for 0x07xxxxxx (the A730), else 6 (the tables of a6xx.hpp; also a driver
+    // that does not say)
+    int generation() { return (chipId() >> 24) == 7 ? 7 : 6; }
+    // whether this driver's register streams are this chip's: compute, draws and the 2D engine (blits of textures,
+    // clears) are written for the A6xx and refused on another generation until ported; buffers, copies and fills work on both
+    bool renders() { return generation() == 6; }
     // how many times the kernel has reset a hung GPU in this run (0 when it cannot say)
     uint64_t faults();
 

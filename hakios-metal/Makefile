@@ -87,7 +87,7 @@ check: test
 
 # (the probe wants the fixtures, which want a host build of Mesa to be made again: with none here the library alone, which is what
 # the kernel's userland/build.sh links)
-ios: out/ios/libhakios-metal.a $(if $(wildcard $(IR3_CMDLINE_C)),out/ios/hakios-metal-probe)
+ios: out/ios/libhakios-metal.a out/ios/hakios-metal-bench $(if $(wildcard $(IR3_CMDLINE_C)),out/ios/hakios-metal-probe)
 
 darwin: ios
 
@@ -119,6 +119,11 @@ out/ios/hakios-metal-probe: tools/probe.cpp out/ios/libhakios-metal.a $(wildcard
 	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -o $@ tools/probe.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
 		-framework IOKit -framework CoreFoundation -framework IOSurface
 
+
+# where the time goes in the Metal layer on the phone (tools/bench.cpp; userland/rc.jobs.metalbench)
+out/ios/hakios-metal-bench: tools/bench.cpp out/ios/libhakios-metal.a tests/fixtures/fill_id_air.hpp
+	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -o $@ tools/bench.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
+		-framework IOKit -framework CoreFoundation -framework IOSurface
 
 # a kernel's bitcode as a header, for a probe that compiles it on the phone (our own kernels only: tools/kernels/*.ll)
 tests/fixtures/%_bc.hpp: out/host/kernels/%.bc tools/bc-header.py

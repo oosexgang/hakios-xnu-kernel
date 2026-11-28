@@ -16,5 +16,16 @@ void	lx_station_leave(void);		/* lx_80211.c: leave it, and the interface down */
 int	lx_station_send(const unsigned char *frame, unsigned long length);	/* lx_80211.c: an Ethernet frame for the network */
 int	lx_station_offer(void);	/* lx_80211.c: the station given to the kernel to ask (sys/hakios.sta.h); 0, or an errno */
 void	lx_station_withdraw(void);	/* lx_80211.c: ... and taken back */
+int	lx_pci_start(void);		/* lx_bus_pci.c: lx_start() for a chip on PCIe; 0, or an errno */
+struct ath11k_base;
+void	lx_driver_up(struct ath11k_base *ab);	/* lx_bus.c: the driver stays up (a network joined on PCIe); lx_stop() takes it down */
+void	say_radio(struct ath11k_base *ab);	/* lx_bus.c: what the firmware has said of the radio, after "unified ready" */
+struct qmi_handle;
+struct sockaddr_qrtr;
+struct qmi_txn;
+struct qmi_elem_info;
+/* lx_bus_pci.c: a request of the driver's to the firmware on its way out, for a chip on PCIe (lx_bus.c hands it over) */
+int	lx_pci_qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi_txn *txn, int msg_id,
+	    unsigned long largest, const struct qmi_elem_info *ei, const void *structure);
 
 #endif

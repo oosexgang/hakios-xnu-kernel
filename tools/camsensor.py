@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Make the register tables of a camera sensor, as the kernel's camera driver reads them
 (drivers/camera/hakios.camera.c, boot-arg cam=2 and up), out of the sensor's module file of Android's camera
-stack (/vendor/lib64/camera/com.qti.sensormodule.<name>.bin of the phone: the vendor's, kept in
+stack (/vendor/lib64/camera/com.qti.sensormodule.<name>.bin of the phone, Parameter Parser V3.0.1 or V3.4.0: the vendor's, kept in
 fw-camera/ and never in the repository; so is what this makes of it).
 
 usage: camsensor.py MODULE.bin OUT.tab     (camsensor.py MODULE.bin -   lists the tables only)
@@ -55,8 +55,12 @@ def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     data = open(sys.argv[1], 'rb').read()
-    if not data.startswith(b'QTI Chromatix Header') or b'Parameter Parser V3.0.1' not in data[:0x60]:
+    if not data.startswith(b'QTI Chromatix Header'):
         sys.exit('camsensor.py: not a module file of the kind known here')
+    version = next((v for v in LAYOUTS if b'Parameter Parser ' + v in data[:0x60]), None)
+    if version is None:
+        sys.exit('camsensor.py: not a module file of the kind known here')
+    L = LAYOUTS[version]
     syms, order, pool = symbols(data)
 
     def value(sid):
@@ -68,32 +72,34 @@ def main():
         return struct.unpack('<%dI' % (len(v) // 4), v)
 
     # the sensor driver's structure: slave address, address/data bytes of the id read, id address, id, mask, power sequences
-    driver = struct.unpack_from('<20I', data, pool)
-    slave, address_bytes, data_bytes, id_address, chip_id, id_mask = driver[7], driver[8], driver[9], driver[10], driver[11], \
-        driver[12]
+    driver = struct.unpack_from('<24I', data, pool)
+    d = L['driver']
+    slave, address_bytes, data_bytes, id_address, chip_id, id_mask = driver[d:d + 6]
     power = {}
-    for name, (count, sid) in (('pwrup', driver[14:16]), ('pwrdn', driver[16:18])):
+    for name, (count, sid) in (('pwrup', driver[d + 7:d + 9]), ('pwrdn', driver[d + 9:d + 11])):
         w = words(sid)
         power[name] = [w[i:i + 3] for i in range(0, min(len(w), 3 * count), 3)]
-    # the resolutions: a 196-byte element each
+    # the resolutions: an element of L['size'] bytes each
     res_sid = next(s for s in order if syms[s][0] == 'resolutionData')
     raw = value(res_sid)
+    size, f = L['size'], L['res']
     modes, mode_tables, cfa = [], [], []
-    for k in range(len(raw) // 196):
-        w = struct.unpack_from('<49I', raw, 196 * k)
-        fps = struct.unpack_from('<d', raw, 196 * k + 40)[0]
-        stream = struct.unpack_from('<8I', value(w[2]))
-        data_type, x, y, width, height = stream[1:6]
-        lanes, settle, cphy, writes_sid = w[14], w[17], w[18], w[24]
-        modes.append((width, height, x, y, lanes, cphy, settle, w[7], w[3], w[4], int(fps * 1000), data_type))
+    for k in range(len(raw) // size):
+        w = struct.unpack_from('<%dI' % (size // 4), raw, size * k)
+        fps = struct.unpack_from('<d', raw, size * k + L['fps'])[0]
+        stream = struct.unpack_from('<%dI' % (L['stream'] + 5), value(w[f['stream']]))
+        data_type, x, y, width, height = stream[L['stream']:L['stream'] + 5]
+        lanes, settle, cphy, writes_sid = w[f['lanes']], w[f['settle']], w[f['cphy']], w[f['writes']]
+        modes.append((width, height, x, y, lanes, cphy, settle, w[f['pclk']], w[f['line']], w[f['frame']], int(fps * 1000),
+                      data_type))
         cfa.append(CFA.get(w[0], str(w[0])))
         mode_tables.append(('res%d' % k, regsetting(data, pool, syms, value, writes_sid)))
     lane_sid = next((s for s in order if syms[s][0] == 'laneAssign'), None)
     lane_assign = struct.unpack('<H', value(lane_sid))[0] if lane_sid is not None and syms[lane_sid][2] == 2 else 0
 
-    roles = {'regToRealGain': ['on', 'off', 'holdon', 'holdoff'], 'initSettings': ['init'], 'testPatternData': ['tpgoff', 'tpgon']}
+    roles = L['roles']
     tables, after, used = [], '', {}
-    mode_sids = {struct.unpack_from('<49I', raw, 196 * k)[24] for k in range(len(raw) // 196)}
+    mode_sids = {struct.unpack_from('<%dI' % (size // 4), raw, size * k)[f['writes']] for k in range(len(raw) // size)}
     for sid in order:
         name = syms[sid][0]
         if name != 'regSetting':
@@ -105,7 +111,7 @@ def main():
         names = roles.get(after, [])
         n = used.get(after, 0)
         used[after] = n + 1
-        if n < len(names):
+        if n < len(names) and names[n]:
             tables.append((names[n], regsetting(data, pool, syms, value, sid)))
     tables = mode_tables + tables
 
@@ -138,6 +144,22 @@ def main():
     print(f'camsensor.py: {sys.argv[2]}: {len(out)} bytes')
 
 
+# where the fields are, by the parser's version: the sensor driver structure's slave address (then address bytes, data
+# bytes, id address, id, id mask, ?, power up count and symbol, power down count and symbol), the resolution element's
+# size and words, the offset of its frames a second (a double), and the stream configuration's data type word
+LAYOUTS = {
+    b'V3.0.1': {'driver': 7, 'size': 196, 'fps': 40, 'stream': 1,
+                'roles': {'regToRealGain': ['on', 'off', 'holdon', 'holdoff'], 'initSettings': ['init'],
+                          'testPatternData': ['tpgoff', 'tpgon']},
+                'res': {'stream': 2, 'line': 3, 'frame': 4, 'pclk': 7, 'lanes': 14, 'settle': 17, 'cphy': 18, 'writes': 24}},
+    # V3.4.0: six tables after the gains (stream on, two empty ones, stream off, group hold on and off: the IMX707's
+    # 100=1, 0=0, 0=0, 100=0, 104=1, 104=0), and initSettings an array of one table per sensor version ({version,
+    # count, symbol, ...} of 28 bytes: the IMX707's version 0 and 0x10, "init" and "init16")
+    b'V3.4.0': {'driver': 11, 'size': 252, 'fps': 68, 'stream': 2,
+                'roles': {'regToRealGain': ['on', '', '', 'off', 'holdon', 'holdoff'], 'initSettings': ['init', 'init16'],
+                          'preInitSetting': ['init16'], 'testPatternData': ['tpgoff', 'tpgon']},
+                'res': {'stream': 7, 'line': 10, 'frame': 11, 'pclk': 14, 'lanes': 21, 'settle': 24, 'cphy': 25, 'writes': 29}},
+}
 TYPES = {0: 'MCLK', 1: 'VANA', 2: 'VDIG', 3: 'VIO', 4: 'VAF', 8: 'RESET', 9: 'STANDBY'}
 CFA = {0: 'BGGR', 1: 'GBRG', 2: 'GRBG', 3: 'RGGB', 4: 'mono'}
 

@@ -115,6 +115,12 @@ typedef bool (*hakios_apr_events_t)(uint8_t service, uint16_t port, uint32_t opc
 bool hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode, const void *payload, uint32_t length,
     uint32_t wait_ms, struct hakios_apr_answer *answer);
 void hakios_adsp_apr_events(hakios_apr_events_t handler);
+/* the SM8450's GPR (AudioReach, hakios.adsp.c): to port `to' of the DSP's from port `from' of ours; ms 0: not waited for,
+ * what comes back goes to the events' handler with service HAKIOS_GPR_SERVICE and the port it came from (16 bits) */
+#define HAKIOS_GPR_SERVICE      0xff
+#define HAKIOS_GPR_PAYLOAD_MAX  1024
+bool hakios_adsp_gpr_send(uint32_t to, uint32_t from, uint32_t token, uint32_t opcode, const void *payload, uint32_t length,
+    uint32_t ms, struct hakios_apr_answer *answer);
 const uint8_t *hakios_adsp_fw_file(const char *name, uint64_t *size);        /* /fw/name, read whole; give back with: */
 void hakios_adsp_fw_free(const uint8_t *data, uint64_t size);
 

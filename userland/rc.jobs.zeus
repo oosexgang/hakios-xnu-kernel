@@ -1,0 +1,18 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist): what devices/zeus/run.sh puts on the
+# system image (RC_JOBS=rc.jobs.zeus). wifid does not join a network by itself: it is asked, as Settings asks it, to turn
+# the radio on, scan and join the network of fw-wifi/wlan.conf (src/wifi_client.c); configd then gets the address.
+# Bluetooth as an application sees it: CoreBluetooth's state, then an LE scan for keyboards and mice (HID, 1812) that
+# connects to the user's own keyboard, by its exact name, and reads it, which makes bluetoothd pair
+# (src/bt_test.m; bluetoothd gives a scan of a process that is not an application no device unless it names services)
+# Bluetooth audio's tone test (src/sound_test.c) is off now that Bluetooth audio works; to run it again:
+# /redwood/bin/sound_test springboard wait 30 route tone 15 wait 15 route tone 15 wait 15
+# The package manager's prefix (tools/mk-jb.sh puts it in the image; init grafts it onto /var/jb): its
+# once-per-boot preparation, and OpenSSH from it in the background, so the phone can be logged into as root
+# over Wi-Fi with the key in ssh/authorized_keys (build.sh puts it, and the host key, on the data volume).
+/var/jb/bin/sh /var/jb/prep.sh
+/var/jb/usr/sbin/sshd -D -e -h /var/root/.ssh/ssh_host_ed25519_key -o UsePAM=no -o PasswordAuthentication=no -o PermitRootLogin=prohibit-password -o AuthorizedKeysFile=/var/root/.ssh/authorized_keys &
+/redwood/bin/bt_test pair MIIIW_KB_Air_85 180 1812
+/redwood/bin/wifi_client wait 90 power scan join
+# Once wifid has joined: a fresh package index for apt and Sileo (devices/zeus/README.md, "Sileo, apt, tweaks and SSH")
+/redwood/bin/net_test waitaddr en0 90 resolve apt.procurs.us
+/var/jb/usr/bin/apt-get update
