@@ -16,6 +16,30 @@ void counted(hakios_metal_cb* cb, void* context) {
 }
 }  // namespace
 
+TEST(c_api_buffers_given_back_are_made_again_zeroed_and_only_when_nothing_holds_them) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* a = hakios_metal_buffer_new(d, 8192);
+    const uint64_t at = hakios_metal_buffer_gpu_address(a);
+    memset(hakios_metal_buffer_contents(a), 0x7e, 8192);
+    hakios_metal_buffer_free(a);
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 8192);
+    CHECK_EQ(hakios_metal_buffer_gpu_address(b), at);   // the same memory again...
+    for (int i = 0; i < 8192; i++) CHECK_EQ(static_cast<uint8_t*>(hakios_metal_buffer_contents(b))[i], 0);   // ...zeroed
+    hakios_metal_buffer* c = hakios_metal_buffer_new(d, 12288);   // another length: a new one
+    CHECK(hakios_metal_buffer_gpu_address(c) != at);
+    // one a command buffer in flight holds is not given back: the GPU is still to read it
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_copy(cb, b, 0, c, 0, 8192), 0);
+    hakios_metal_buffer_free(b);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    hakios_metal_cb_free(cb);
+    hakios_metal_buffer_free(c);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
 TEST(c_api_copy_and_callbacks) {
     hakios_metal_device* d = hakios_metal_open_fake();
     CHECK(d != nullptr);

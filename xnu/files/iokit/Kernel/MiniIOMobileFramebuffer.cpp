@@ -260,6 +260,7 @@ static TUNABLE(uint32_t, gMeasure, "fb_measure", 0);
  * starts, with fb_measure's reads, and if it does not count as a line counter should, frames stay on their beat.
  */
 static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
+static TUNABLE(uint32_t, gAdapt, "fb_adapt", 0);
 extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 static inline uint32_t refreshHz(void);
 
@@ -270,16 +271,52 @@ static inline uint32_t refreshHz(void);
  */
 static TUNABLE(uint64_t, gIntfPhysical, "fb_intf", 0);
 
+/*
+ * A panel in DSI command mode (zeus, SM8450: DPU 8.1) has no timing engine running: the controller sends it a frame on its
+ * tear pulse (auto-refresh) and the interface's tear-check block counts instead. Linux's dpu_hw_intf.c (INTF_TEAR_*,
+ * dpu_hw_intf_get_vsync_info) reads INT_COUNT_VAL as frames << 16 | the read pointer's line, which starts each frame at
+ * VSYNC_INIT_VAL, and LINE_COUNT as the write pointer: the rows sent so far. The display's driver for the SoC
+ * (devices/zeus/drivers/gpu/hakios.a730.c) sets hakios_panel_tear_intf once the bus clocks for reading it are on: read
+ * with them off, the bus hangs until the watchdog resets the phone.
+ */
+extern "C" { uint64_t hakios_panel_tear_intf; int (*hakios_panel_rate_set)(uint32_t hz); }
+#define INTF_TEAR_CHECK_EN      0x284
+#define INTF_TEAR_VSYNC_INIT    0x294
+#define INTF_TEAR_INT_COUNT     0x298
+#define INTF_TEAR_LINE_COUNT    0x2b0
+
 static vm_offset_t
-panelInterface(void)
+panelInterface(bool * tear)
 {
 	char version[128] = "";
 	uint64_t physical = gIntfPhysical;
 
+	*tear = false;
 	if (physical == 0 && PE_parse_boot_argn("hakios_kver", version, sizeof(version)) && strnstr(version, "-sc7280-", sizeof(version)) != NULL) {
 		physical = DPU_SC7280_INTF1;
 	}
+	if (physical == 0 && hakios_panel_tear_intf != 0) {
+		physical = hakios_panel_tear_intf;
+		*tear = true;
+	}
 	return physical != 0 ? ml_io_map((vm_offset_t) (physical & ~0x3fffULL), 0x4000) + (vm_offset_t) (physical & 0x3fffULL) : 0;
+}
+
+/* The frame counter and the line being read: the timing engine's (video mode) or the tear check's (command mode). */
+static inline uint32_t
+panelFrames(vm_offset_t intf, bool tear)
+{
+	return tear ? *(volatile uint32_t *)(intf + INTF_TEAR_INT_COUNT) >> 16 : *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
+}
+static inline uint32_t
+panelLine(vm_offset_t intf, bool tear, uint32_t init)
+{
+	if (tear) {
+		uint32_t line = *(volatile uint32_t *)(intf + INTF_TEAR_INT_COUNT) & 0xffff;
+
+		return line >= init ? line - init : 0;
+	}
+	return *(volatile uint32_t *)(intf + INTF_LINE_COUNT);
 }
 
 static void
@@ -288,18 +325,25 @@ measurePanel(__unused void * arg, __unused wait_result_t wr)
 	vm_offset_t intf;
 	uint32_t on, first, second;
 
+	bool tear;
+
 	IOSleep(60000);
-	intf = panelInterface();
+	intf = panelInterface(&tear);
 	if (intf == 0) {
 		IOLog("MiniIOMobileFramebuffer: fb_measure: no display interface known for this SoC (fb_intf=)\n");
 		return;
 	}
-	on = *(volatile uint32_t *)(intf + INTF_TIMING_ENGINE_EN);
-	first = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
+	on = *(volatile uint32_t *)(intf + (tear ? INTF_TEAR_CHECK_EN : INTF_TIMING_ENGINE_EN));
+	first = panelFrames(intf, tear);
 	IOSleep(1000);
-	second = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
-	IOLog("MiniIOMobileFramebuffer: the panel: DSI interface's timing engine %s, %u refreshes in one second "
-	    "(frames are made at %u a second: fb_hz)\n", (on & 1) ? "on" : "OFF", second - first, refreshHz());
+	second = panelFrames(intf, tear);
+	if (tear) {
+		second = (second - first) & 0xffff;
+		first = 0;
+	}
+	IOLog("MiniIOMobileFramebuffer: the panel: DSI interface's %s %s, %u refreshes in one second "
+	    "(frames are made at %u a second: fb_hz)\n", tear ? "tear check" : "timing engine", (on & 1) ? "on" : "OFF",
+	    second - first, refreshHz());
 }
 
 static inline uint32_t
@@ -387,6 +431,17 @@ public:
 	uint64_t        fBeamPeriod;            /* ... how long a scan takes */
 	uint64_t        fBeamScan;              /* ... when the scan that shows the frame being written begins */
 	uint64_t        fBeamShare;             /* ... how long a thread's share of the rows takes to write */
+	bool            fBeamTear;              /* ... the counters are the tear check's (a panel in command mode) */
+	uint32_t        fBeamInit;              /* ... where the tear check's line count starts a frame */
+	int64_t         fBeamOff16;             /* ... lines of the scan before the display fetches row 0, << 16 */
+	uint32_t        fBeamScale16;           /* ... lines of the scan the display takes to fetch a row, << 16 */
+	/* fb_adapt: the same, as measured at each panel rate (0: 120 Hz, 1: 60 Hz, 2: 90 Hz), and the rate the panel is at */
+	uint32_t        fSaveLines[3], fSaveInit[3], fSaveScale[3];
+	uint64_t        fSavePeriod[3];
+	int64_t         fSaveOff[3];
+	bool            fSaveValid[3];
+	uint32_t        fPanelHz;
+	uint32_t        fHeldCount;             /* swaps that had to wait for a place in the queue (never reset): the window server wants more frames than the panel takes */
 	uint32_t        fStatScans, fStatScansMissed;   /* ... frames in time for the next scan, and those that were not */
 	/* ... for each thread's share of the rows: how many, their time, begun after the scan reached them or not done before it left them, and done after it reached them */
 	uint64_t        fStatShareTime[8];
@@ -441,8 +496,13 @@ public:
 	static void helperMain(void * self, wait_result_t result);
 	static void beamProbeMain(void * self, wait_result_t result);
 	void beamProbe(void);
-	uint64_t beamNextScan(uint64_t now);
-	void beamWait(const struct RowJob * job, int32_t lastRow);
+	bool beamMeasure(vm_offset_t intf, bool tear);
+	static void adaptMain(void * self, wait_result_t result);
+	void adapt(void);
+	bool adaptSwitch(uint32_t hz, vm_offset_t intf);
+	uint64_t beamNextScan(uint64_t now, bool count = true);
+	uint64_t beamRowAt(int32_t row) const;
+	void beamWait(const struct RowJob * job, int32_t firstRow, int32_t lastRow);
 	void beamShareDone(const struct RowJob * job, unsigned share, int32_t firstRow, int32_t lastRow, uint64_t began);
 	/* the scaling shared out (fb_threads): fThreads drawers, the presenter and fThreads - 1 helpers */
 	unsigned        fThreads;
@@ -818,8 +878,77 @@ struct RowJob {
 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
 	int32_t         ry0, ry1;       /* the rows of the rectangle that are on the panel: all that is looked at, whatever its size */
 	bool            filter, unscaled;
+	bool            gpu;            /* fb_inval: the GPU draws into the surface: its rows out of this processor's cache first */
 	uint64_t        scan;           /* fb_beam: when the scan that is to show the frame begins (0: write at once) */
 };
+
+/*
+ * Boot-arg fb_inval=0: surfaces the GPU draws into are read as they are. The GPU writes them past the processors' caches
+ * (its pages are not cacheable, and the SM8450's GPU does not snoop them), while this driver reads them through the
+ * kernel's cacheable mapping: lines of a surface it read for an earlier frame, still in a cache when CoreAnimation hands the
+ * same surface back with a new frame in it, were read again instead of the memory -- short streaks and tiles of an older
+ * frame, here and there, mostly where the shares of the rows end (review G16, docs/driver-review/gpu-display.md). HakiosGPU
+ * cleans a buffer before a submission only when the processor wrote it. By default each share of the rows takes the source
+ * rows it is about to read out of the cache (dc civac) first, once the GPU is done with them.
+ */
+static TUNABLE(uint32_t, gInvalidate, "fb_inval", 1);
+
+/* fb_inval=2: also how many of the rows (one in eight is looked at) read differently from the cache than from memory */
+static uint32_t gStaleRows, gCheckedRows;
+
+static uint64_t
+rowSum(uintptr_t start, uintptr_t end)
+{
+	uint64_t sum = 0;
+
+	for (uintptr_t at = start & ~(uintptr_t) 7; at + 8 <= end; at += 8) {
+		sum = (sum ^ *(volatile uint64_t *) at) * 0x100000001b3ULL;
+	}
+	return sum;
+}
+
+/*
+ * Boot-arg fb_fresh=N (milliseconds; default 0: off, see below): a swap that names a surface the GPU has not been asked to draw into
+ * since the swap that showed it last waits up to N ms for that to happen. The window server swaps between two surfaces, and
+ * now and then hands over the next swap before the submission that draws into its surface has been made: with the GPU's last
+ * fence on the surface unchanged, the frame on the panel was the picture from two swaps before -- a pair of frames shown
+ * again, a jerk back in time at 120 Hz, mostly while pages slide (home screen to the widgets page or the App Library;
+ * 18 November, the recording of tools/recording.py --frames and "tl: v ... surface S fence F": two swaps with
+ * the same surface and fence, the pictures of the two equal to the pixel). The wait is for a submission that was on its way.
+ * Off by default: with fb_fresh=12 about half of the waits found no submission coming (nothing new for that surface), each a
+ * 12 ms stall, and frames over 10 ms apart rose from 12% to 16%; the pair of frames shown again was seen 4 times in one boot
+ * of 100 moving frames and not in two others, with or without the wait. Not proven; kept for a closer look.
+ */
+static TUNABLE(uint32_t, gFresh, "fb_fresh", 0);
+static uint32_t gShownSurface4[4], gShownFence4[4];     /* the surfaces shown last, and the fence they had */
+static uint32_t gFreshWaited, gFreshLost;               /* swaps that waited for a new fence, and that gave up */
+
+static void
+surfaceRowsFromMemory(const uint8_t * pixels, uint32_t stride, int32_t sx, int32_t sw, int32_t first, int32_t last)
+{
+	uint32_t stale = 0, checked = 0;
+
+	for (int32_t row = first; row <= last; row++) {
+		uintptr_t start = (uintptr_t) (pixels + (size_t) row * stride + (size_t) sx * 4);
+		uintptr_t end = start + (size_t) sw * 4;
+		bool check = gInvalidate == 2 && (row & 7) == 0;
+		uint64_t before = check ? rowSum(start, end) : 0;
+
+		for (uintptr_t line = start & ~(uintptr_t) 63; line < end; line += 64) {
+			__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
+		}
+		if (check) {
+			__asm__ volatile ("dsb sy" : : : "memory");
+			checked++;
+			stale += rowSum(start, end) != before;
+		}
+	}
+	__asm__ volatile ("dsb sy" : : : "memory");
+	if (checked != 0) {
+		__atomic_fetch_add(&gStaleRows, stale, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&gCheckedRows, checked, __ATOMIC_RELAXED);
+	}
+}
 
 void
 IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32_t * blendRow)
@@ -830,6 +959,19 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 	int32_t px0 = job->px0, py0 = job->py0, px1 = job->px1, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
 	bool filter = job->filter;
 
+	if (job->gpu) {
+		/* the source rows these panel rows take (bilinear: and the one below), out of the cache */
+		int32_t lo = y0 > py0 ? y0 : py0, hi = y1 < py1 ? y1 : py1;
+
+		if (hi > lo) {
+			int32_t first = sy + (int32_t) ((int64_t) (lo - py0) * sh / (py1 - py0)) - 1;
+			int32_t last = sy + (int32_t) ((int64_t) (hi - py0) * sh / (py1 - py0)) + 1;
+
+			first = first < sy ? sy : first;
+			last = last > sy + sh - 1 ? sy + sh - 1 : last;
+			surfaceRowsFromMemory(pixels, stride, sx, sw, first, last);
+		}
+	}
 	for (int32_t y = y0; y < y1; y++) {
 		const uint32_t * from;
 		uint32_t * to;
@@ -896,6 +1038,8 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 			}
 		}
 	}
+	/* (the panel's memory is write-combined: the rows out of the write buffers before the scan comes for them) */
+	__asm__ volatile ("dsb sy" : : : "memory");
 }
 
 /* A helper of the scaling (fb_threads): waits for rows to do, does them, says so. */
@@ -926,7 +1070,7 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
 		y0 = job->ry0 + (int32_t) ((int64_t) rows * (index + 1) / fb->fThreads);
 		y1 = job->ry0 + (int32_t) ((int64_t) rows * (index + 2) / fb->fThreads);
 		blend = fb->fHelperBlend[index];
-		fb->beamWait(job, y1);
+		fb->beamWait(job, y0, y1);
 		{
 			uint64_t began = mach_absolute_time();
 
@@ -949,72 +1093,283 @@ IOMobileFramebuffer::beamProbeMain(void * self, wait_result_t result __unused)
 	((IOMobileFramebuffer *) self)->beamProbe();
 }
 
-void
-IOMobileFramebuffer::beamProbe(void)
+bool
+IOMobileFramebuffer::beamMeasure(vm_offset_t intf, bool tear)
 {
-	vm_offset_t intf;
-	uint32_t first, frames, line, lines = 0, smallest = ~0u;
+	uint32_t first, frames, line, lines = 0, smallest = ~0u, init = 0;
 	uint64_t began, ended, until;
+	/* command mode: the write pointer (the rows the display has fetched and sent) against the read pointer's line */
+	uint64_t n = 0;
+	__int128 sx = 0, sy = 0, sxx = 0, sxy = 0;
 
-	IOSleep(60000);
-	intf = panelInterface();
-	if (intf == 0) {
-		IOLog("MiniIOMobileFramebuffer: fb_beam: no display interface known for this SoC (fb_intf=): frames stay on their beat\n");
-		return;
+	if (!(*(volatile uint32_t *)(intf + (tear ? INTF_TEAR_CHECK_EN : INTF_TIMING_ENGINE_EN)) & 1)) {
+		IOLog("MiniIOMobileFramebuffer: fb_beam: the interface's %s is off: frames stay on their beat\n",
+		    tear ? "tear check" : "timing engine");
+		return false;
 	}
-	if (!(*(volatile uint32_t *)(intf + INTF_TIMING_ENGINE_EN) & 1)) {
-		IOLog("MiniIOMobileFramebuffer: fb_beam: the interface's timing engine is off: frames stay on their beat\n");
-		return;
-	}
+	if (tear) {
+		/*
+		 * The tear check's frame count (INT_COUNT_VAL's top half) stood still on the phone at 120 Hz, a frame every
+		 * pulse (17 November); its line count runs and starts again at every pulse. So the scans are timed by the line
+		 * count's restarts, half a second of them, and the write pointer is looked at all along.
+		 */
+		uint32_t previous = 0, wraps = 0;
+		uint64_t firstWrap = 0, lastWrap = 0, now;
+
+		init = *(volatile uint32_t *)(intf + INTF_TEAR_VSYNC_INIT) & 0xffff;
+		nanoseconds_to_absolutetime(500 * NSEC_PER_MSEC, &until);
+		until += mach_absolute_time();
+		while ((now = mach_absolute_time()) < until) {
+			uint32_t row = *(volatile uint32_t *)(intf + INTF_TEAR_LINE_COUNT) & 0xffff;
+
+			line = panelLine(intf, tear, init);
+			if (line + fPanelHeight / 2 < previous) {
+				lastWrap = now;
+				firstWrap = wraps++ == 0 ? now : firstWrap;
+			}
+			previous = line;
+			lines = line > lines ? line : lines;
+			smallest = line < smallest ? line : smallest;
+			if (row > 0 && row < fPanelHeight) {
+				n++;
+				sx += line;
+				sy += row;
+				sxx += (uint64_t) line * line;
+				sxy += (uint64_t) line * row;
+			}
+		}
+		frames = wraps > 1 ? wraps - 1 : 0;
+		began = firstWrap;
+		ended = lastWrap;
+	} else {
 	/* a whole number of scans, from one frame's start to another's */
-	first = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
+	first = panelFrames(intf, tear);
 	nanoseconds_to_absolutetime(100 * NSEC_PER_MSEC, &until);
 	until += mach_absolute_time();
-	while (*(volatile uint32_t *)(intf + INTF_FRAME_COUNT) == first && mach_absolute_time() < until) {
+	while (panelFrames(intf, tear) == first && mach_absolute_time() < until) {
 	}
 	began = mach_absolute_time();
-	first = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
+	first = panelFrames(intf, tear);
 	nanoseconds_to_absolutetime(50 * NSEC_PER_MSEC, &until);
 	until += began;
 	while (mach_absolute_time() < until) {
-		line = *(volatile uint32_t *)(intf + INTF_LINE_COUNT);
+		line = panelLine(intf, tear, init);
 		lines = line > lines ? line : lines;
 		smallest = line < smallest ? line : smallest;
 	}
 	IOSleep(450);
-	frames = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
+	frames = panelFrames(intf, tear);
 	nanoseconds_to_absolutetime(100 * NSEC_PER_MSEC, &until);
 	until += mach_absolute_time();
-	while (*(volatile uint32_t *)(intf + INTF_FRAME_COUNT) == frames && mach_absolute_time() < until) {
+	while (panelFrames(intf, tear) == frames && mach_absolute_time() < until) {
 	}
 	ended = mach_absolute_time();
-	frames = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT) - first;
-	if (frames == 0 || lines < fPanelHeight || lines > fPanelHeight * 2 || smallest > fPanelHeight / 4) {
+	frames = panelFrames(intf, tear) - first;
+	}
+	if (frames == 0 || lines < (tear ? fPanelHeight * 3 / 4 : fPanelHeight) || lines > fPanelHeight * 2 || smallest > fPanelHeight / 4) {
 		IOLog("MiniIOMobileFramebuffer: fb_beam: the interface's counters do not count as they should (%u frames, lines %u to %u): "
 		    "frames stay on their beat\n", frames, smallest, lines);
-		return;
+		return false;
 	}
 	fBeamLines = lines + 1;
+	fBeamOff16 = (int64_t) (fBeamLines > fPanelHeight ? fBeamLines - fPanelHeight : 0) << 16;
+	fBeamScale16 = 1u << 16;
+	if (tear) {
+		/* row = a + b * line, fitted: row r is fetched at line (r - a) / b */
+		__int128 num = (__int128) n * sxy - sx * sy, den = (__int128) n * sxx - sx * sx;
+		int64_t scale = num > 0 ? (int64_t) ((den << 16) / num) : 0;
+		int64_t off = num > 0 && n != 0 ? (int64_t) (((sx * num - sy * den) << 16) / ((__int128) n * num)) : 0;
+
+		if (n >= 200 && scale >= (1 << 16) / 4 && scale <= (1 << 16) * 5 / 4 &&
+		    off >= -((int64_t) fBeamLines << 16) / 4 && off <= ((int64_t) fBeamLines << 16) / 2) {
+			fBeamOff16 = off;
+			fBeamScale16 = (uint32_t) scale;
+		} else {
+			/* (as if the display fetched each row as the panel reads it: the write pointer did not say otherwise) */
+			fBeamOff16 = 0;
+		}
+		IOLog("MiniIOMobileFramebuffer: fb_beam: command mode, tear check from line %u; the display fetches row 0 at line %lld "
+		    "and a row every %u/65536 lines (%llu samples of the write pointer%s)\n", init, fBeamOff16 >> 16, fBeamScale16, n,
+		    fBeamScale16 == (1u << 16) && fBeamOff16 == 0 ? ": not used" : "");
+	}
+	fBeamTear = tear;
+	fBeamInit = init;
 	fBeamPeriod = (ended - began) / frames;
 	absolutetime_to_nanoseconds(fBeamPeriod, &began);
 	IOLog("MiniIOMobileFramebuffer: fb_beam: the panel's scan is %u lines, %llu us: frames are written behind it from now on\n",
 	    fBeamLines, began / NSEC_PER_USEC);
+	return true;
+}
+
+void
+IOMobileFramebuffer::beamProbe(void)
+{
+	vm_offset_t intf;
+	bool tear;
+
+	IOSleep(60000);
+	intf = panelInterface(&tear);
+	if (intf == 0) {
+		IOLog("MiniIOMobileFramebuffer: fb_beam: no display interface known for this SoC (fb_intf=): frames stay on their beat\n");
+		return;
+	}
+	if (!beamMeasure(intf, tear)) {
+		return;
+	}
+	fPanelHz = 120;
+	fSaveLines[0] = fBeamLines;
+	fSaveInit[0] = fBeamInit;
+	fSaveScale[0] = fBeamScale16;
+	fSavePeriod[0] = fBeamPeriod;
+	fSaveOff[0] = fBeamOff16;
+	fSaveValid[0] = true;
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 	fBeamIntf = intf;
+	if (gAdapt != 0 && tear && hakios_panel_rate_set != NULL) {
+		adapt();
+	}
+}
+
+/*
+ * Boot-arg fb_adapt=1 (zeus, the A730 driver's panel_rate_set): the panel's refresh rate follows the frames the window server
+ * hands over, on a ladder of 60, 90 and 120 Hz: a step up when the frames fill the rate or swaps find the queue full, down to
+ * the rate the frames ask for (under 30 a second: 60 Hz; under 65: 90) after the hold (a still screen, the blur with glfetch=0). At 60 Hz the frames are taken one a scan, 60 a second at most, so the way back up is by
+ * the swaps that find the queue full (fHeldCount: three in 100 ms), not by their rate. At each rate the scan is measured once
+ * (beamMeasure) and kept. 60 Hz is the panel's
+ * own timing (devices/zeus/README.md, "Display"): at it, a still picture costs half the panel's and the display's work.
+ */
+/* Boot-arg fb_adapt_hold=MS (default 15000): how long the frames stay under 45 a second before the panel goes to 60 Hz
+ * (0.8 s at first: it went 120 -> 60 -> 120 between swipes a second or two apart, a flicker each time). */
+static TUNABLE(uint32_t, gAdaptHold, "fb_adapt_hold", 15000);
+#define ADAPT_DOWN_HOLD ((gAdaptHold < 200 ? 200 : gAdaptHold) / 100)      /* windows of 100 ms */
+
+void
+IOMobileFramebuffer::adaptMain(void * self, wait_result_t result __unused)
+{
+	((IOMobileFramebuffer *) self)->adapt();
+}
+
+bool
+IOMobileFramebuffer::adaptSwitch(uint32_t hz, vm_offset_t intf)
+{
+	unsigned at = hz == 120 ? 0 : hz == 60 ? 1 : 2;
+
+	fBeamIntf = 0;                          /* (frames go on their beat while the rate changes) */
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+	IOSleep(10);
+	if (hakios_panel_rate_set(hz) != 0) {
+		IOLog("MiniIOMobileFramebuffer: fb_adapt: the panel did not go to %u Hz\n", hz);
+		fBeamIntf = intf;
+		return false;
+	}
+	IOSleep(150);
+	if (!fSaveValid[at]) {
+		if (!beamMeasure(intf, true)) {
+			IOLog("MiniIOMobileFramebuffer: fb_adapt: no scan at %u Hz: frames stay on their beat\n", hz);
+			fPanelHz = hz;
+			return true;
+		}
+		fSaveLines[at] = fBeamLines;
+		fSaveInit[at] = fBeamInit;
+		fSaveScale[at] = fBeamScale16;
+		fSavePeriod[at] = fBeamPeriod;
+		fSaveOff[at] = fBeamOff16;
+		fSaveValid[at] = true;
+	} else {
+		fBeamLines = fSaveLines[at];
+		fBeamInit = fSaveInit[at];
+		fBeamScale16 = fSaveScale[at];
+		fBeamPeriod = fSavePeriod[at];
+		fBeamOff16 = fSaveOff[at];
+	}
+	fPanelHz = hz;
+	__atomic_thread_fence(__ATOMIC_RELEASE);
+	fBeamIntf = intf;
+	return true;
+}
+
+void
+IOMobileFramebuffer::adapt(void)
+{
+	static const uint32_t steps[3] = { 60, 90, 120 };       /* the ladder: a step at a time up, to the rate the frames ask for down */
+	vm_offset_t intf = fBeamIntf;
+	uint32_t last = fSwapsShown, lastHeld = fHeldCount, low = 0, switches = 0, recent[5] = { 0 }, at = 0;
+	bool simple = gAdapt == 1;              /* fb_adapt=1: 120 Hz, 60 Hz when still, back at once; fb_adapt=2: the ladder, the rate by the frames */
+
+	for (;;) {
+		uint32_t now, fps, held, level = fPanelHz == 120 ? 2 : fPanelHz == 90 ? 1 : 0, want, shown;
+
+		IOSleep(100);
+		now = fSwapsShown;
+		shown = now - last;
+		last = now;
+		held = fHeldCount - lastHeld;
+		lastHeld = fHeldCount;
+		recent[at++ % 5] = shown;
+		fps = (recent[0] + recent[1] + recent[2] + recent[3] + recent[4]) * 2;      /* (the last half second: 100 ms alone is steps of ten) */
+		/* up: the window server wants more frames than the panel takes (swaps that find the queue full), one step. (Not frames at
+		 * nearly the panel's rate: a source of 60 a second filled 60 Hz and went up, then down, again and again.) */
+		if (level < 2 && held >= 3) {
+			uint32_t was = fPanelHz, to = simple ? 120 : steps[level + 1];
+
+			if (adaptSwitch(to, intf) && switches++ < 1000) {
+				IOLog("MiniIOMobileFramebuffer: fb_adapt: %u -> %u Hz (%u frames a second, %u swaps held)\n", was, to, fps,
+				    held);
+			}
+			last = fSwapsShown;
+			lastHeld = fHeldCount;
+			low = 0;
+			continue;
+		}
+		/*
+		 * The rate the frames ask for, a whole number of refreshes to a frame (TestUFO's 60 a second showed 60, 30 and 15 at 90 Hz:
+		 * 1.5 refreshes to a frame, one and two by turns): 60 or 120 for 60 a second (60: it is what they ask for), 90 for about 45,
+		 * 60 for under 40, 120 for the rest. Down after the hold; 90 is a step on the way, left after half a second.
+		 */
+		want = simple ? (fps < 30 ? 60 : 120) : fps < 40 ? 60 : fps < 52 ? 90 : fps < 68 ? 60 : 120;
+		if (level == 1 ? want != 90 : want < fPanelHz) {
+			low++;
+		} else {
+			low = 0;
+		}
+		if (low >= (level == 1 ? 5u : ADAPT_DOWN_HOLD)) {
+			uint32_t was = fPanelHz;
+
+			low = 0;
+			if (adaptSwitch(want, intf) && switches++ < 1000) {
+				IOLog("MiniIOMobileFramebuffer: fb_adapt: %u -> %u Hz (%u frames a second)\n", was, want, fps);
+			}
+			last = fSwapsShown;
+			lastHeld = fHeldCount;
+		}
+	}
+}
+
+
+/* fb_beam: when, from the start of a scan, the display has fetched a row (for the timing engine: the blanking, then a row a line). */
+uint64_t
+IOMobileFramebuffer::beamRowAt(int32_t row) const
+{
+	int64_t line16 = fBeamOff16 + (int64_t) row * fBeamScale16;
+
+	if (line16 < 0) {
+		line16 = 0;
+	}
+	return (uint64_t) ((__int128) fBeamPeriod * line16 / ((uint64_t) fBeamLines << 16));
 }
 
 /* When the next scan the frame can be whole for begins: the first share has to be written before that scan reaches it. */
 uint64_t
-IOMobileFramebuffer::beamNextScan(uint64_t now)
+IOMobileFramebuffer::beamNextScan(uint64_t now, bool count)
 {
-	uint32_t line = *(volatile uint32_t *)(fBeamIntf + INTF_LINE_COUNT);
+	uint32_t line = panelLine(fBeamIntf, fBeamTear, fBeamInit);
 	uint64_t scan = now - fBeamPeriod * (line < fBeamLines ? line : fBeamLines - 1) / fBeamLines + fBeamPeriod;
 	/*
 	 * The first share is written from its top down about as fast as the scan reads it, so it may begin just before the
 	 * scan does: by what it takes longer than the scan takes over the same rows, and a little. (Its whole time as a
 	 * margin lost a frame in eight: each too late for one scan waits for the next, and all behind it with it.)
 	 */
-	uint64_t over = fThreads != 0 ? fBeamPeriod / fThreads : 0;
+	uint64_t over = fThreads != 0 ? fBeamPeriod * fBeamScale16 / (1u << 16) / fThreads : 0;
 	uint64_t margin = (fBeamShare > over ? fBeamShare - over : 0) + fBeamPeriod / 16;
 	bool missed = false;
 
@@ -1026,19 +1381,31 @@ IOMobileFramebuffer::beamNextScan(uint64_t now)
 	while (fBeamScan != 0 && scan < fBeamScan + fBeamPeriod / 2) {
 		scan += fBeamPeriod;
 	}
-	fStatScans++;
-	fStatScansMissed += missed;
+	if (count) {
+		fStatScans++;
+		fStatScansMissed += missed;
+	}
 	return scan;
 }
 
 /* fb_beam: a share of the rows that ends at lastRow waits for the scan before the frame's to have passed it. */
 void
-IOMobileFramebuffer::beamWait(const struct RowJob * job, int32_t lastRow)
+IOMobileFramebuffer::beamWait(const struct RowJob * job, int32_t firstRow, int32_t lastRow)
 {
-	if (job->scan != 0) {
-		/* (the lines of the blanking are counted before the first row, as far as one can tell: taken as a margin either way) */
-		uint64_t lines = (uint64_t) lastRow + (fBeamLines - fPanelHeight);
-		uint64_t passed = job->scan - fBeamPeriod + fBeamPeriod * lines / fBeamLines;
+	/* (fb_beam=2: frames on their beat as with fb_beam=0, the scan only looked at: how many shares come out torn) */
+	if (job->scan != 0 && gBeam != 2) {
+		/*
+		 * (the lines of the blanking are counted before the first row, as far as one can tell: taken as a margin either way)
+		 * The share is written from its top down. A writer slower than the scan never catches up with it, so it need only
+		 * wait for the scan to pass the share's first row; one quicker than it, for the scan to be far enough ahead that it
+		 * passes the last row before the writer gets there (three quarters of the share's usual time, to be safe). Waiting for
+		 * the last row every time (as at first) left the writer the scan's period less the share's: on zeus (command mode, the
+		 * display fetching a frame in 7 of the 8.25 ms) that was 5.9 ms for a share that takes 5 ms filtered, and hundreds of
+		 * shares in a session came out torn or close (17 November).
+		 */
+		uint64_t first = beamRowAt(firstRow), last = beamRowAt(lastRow), quick = fBeamShare * 3 / 4;
+		uint64_t after = last > first + quick ? last - quick : first;
+		uint64_t passed = job->scan - fBeamPeriod + after + fBeamPeriod / 64;
 
 		if (mach_absolute_time() < passed) {
 			clock_delay_until(passed);
@@ -1055,9 +1422,8 @@ IOMobileFramebuffer::beamShareDone(const struct RowJob * job, unsigned share, in
 	__atomic_fetch_add(&fStatShareTime[share], now - began, __ATOMIC_RELAXED);
 	__atomic_fetch_add(&fStatShares[share], 1, __ATOMIC_RELAXED);
 	if (job->scan != 0) {
-		uint64_t blank = fBeamLines - fPanelHeight;
-		uint64_t top = job->scan + fBeamPeriod * ((uint64_t) firstRow + blank) / fBeamLines;
-		uint64_t bottom = job->scan + fBeamPeriod * ((uint64_t) lastRow + blank) / fBeamLines;
+		uint64_t top = job->scan + beamRowAt(firstRow);
+		uint64_t bottom = job->scan + beamRowAt(lastRow);
 
 		if (began > top || now > bottom) {
 			__atomic_fetch_add(&fStatShareTorn[share], 1, __ATOMIC_RELAXED);
@@ -1184,7 +1550,8 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	job.ry1 = py1 > (int32_t) fPanelHeight ? (int32_t) fPanelHeight : py1;
 	job.filter = filter;
 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
-	job.scan = fSettling ? 0 : fBeamScan;
+	job.gpu = gInvalidate != 0 && s->drawn != 0;
+	job.scan = fBeamScan;
 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
 		drawRows(&job, job.ry0, job.ry1, fBlendRow);
 		return;
@@ -1200,7 +1567,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		int32_t last = job.ry0 + (int32_t) ((int64_t) (job.ry1 - job.ry0) / fThreads);
 		uint64_t wrote;
 
-		beamWait(&job, last);
+		beamWait(&job, job.ry0, last);
 		wrote = mach_absolute_time();
 		drawRows(&job, job.ry0, last, fBlendRow);
 		beamShareDone(&job, 0, job.ry0, last, wrote);
@@ -1272,6 +1639,7 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	fStatSwapsLate += fSwapTime != 0 && now - fSwapTime > period && now - fSwapTime < pause;
 	fSwapTime = now;
 	fStatHeld += fSwapsWaiting >= swapQueue();
+	fHeldCount += fSwapsWaiting >= swapQueue();
 	while (fSwapsWaiting >= swapQueue()) {
 		if (IOLockSleepDeadline(fSwapLock, &fSwapsWaiting, deadline, THREAD_UNINT) == THREAD_TIMED_OUT &&
 		    fSwapsWaiting >= swapQueue()) {
@@ -1409,6 +1777,8 @@ IOMobileFramebuffer::settle(const uint8_t * swap, MiniIOSurface ** surfaces)
 		return;
 	}
 	fSettling = true;
+	/* fb_beam: behind the scan as well, or the still picture is torn between its two drawings (moving by a pixel at a line) */
+	fBeamScan = fBeamIntf != 0 ? beamNextScan(mach_absolute_time(), false) : 0;
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 		MiniIOSurface * s = surfaces[layer];
 
@@ -1434,15 +1804,38 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	bool report;
 
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
-		if (surfaces[layer] != NULL && !MiniIOSurfaceDrawn(surfaces[layer], SWAP_GPU_MS)) {
+		MiniIOSurface * s = surfaces[layer];
+
+		if (s != NULL && gFresh != 0 && s->drawn != 0) {
+			uint32_t sid = swapWord(swap, SWAP_SURFACE(layer)), at = sid & 3;
+
+			if (gShownSurface4[at] == sid && gShownFence4[at] == *(volatile uint32_t *) &s->drawn) {
+				uint64_t until;
+
+				nanoseconds_to_absolutetime((uint64_t) gFresh * NSEC_PER_MSEC, &until);
+				until += mach_absolute_time();
+				gFreshWaited++;
+				while (gShownFence4[at] == *(volatile uint32_t *) &s->drawn && mach_absolute_time() < until) {
+					IODelay(100);
+				}
+				gFreshLost += gShownFence4[at] == *(volatile uint32_t *) &s->drawn;
+			}
+		}
+		if (s != NULL && !MiniIOSurfaceDrawn(s, SWAP_GPU_MS)) {
 			IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; shown as it is\n",
 			    swapWord(swap, SWAP_ID), swapWord(swap, SWAP_SURFACE(layer)), SWAP_GPU_MS);
+		}
+		if (s != NULL && s->drawn != 0) {
+			uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
+
+			gShownSurface4[sid & 3] = sid;
+			gShownFence4[sid & 3] = s->drawn;
 		}
 	}
 	fStatWaiting += mach_absolute_time() - began;
 	began = ready = mach_absolute_time();
 	fBeamScan = fBeamIntf != 0 ? beamNextScan(began) : 0;
-	if (fBeamIntf != 0) {
+	if (fBeamIntf != 0 && gBeam != 2) {
 		/* (on the panel when that scan reads it: that is the beat now, kept by the panel) */
 		fStatOnBeat++;
 	} else if (gOnTheBeat) {
@@ -1549,8 +1942,8 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fSwapsShown++;
 	if (gTouchLat) {
-		hakios_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
-		    micros(drawn));
+		hakios_tl("tl: v %u ready %llu shown %llu done %llu surface %u fence %u\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
+		    micros(drawn), swapWord(swap, SWAP_SURFACE(0)), surfaces[0] != NULL ? surfaces[0]->drawn : 0);
 	}
 	if (layers != fLayersShown) {
 		IOLog("MiniIOMobileFramebuffer: swap #%u: surfaces in layers 0x%x now (0x%x before): %u %u %u %u\n", fSwapsShown, layers,
@@ -1575,10 +1968,10 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		absolutetime_to_nanoseconds(fStatBeatWait, &beat);
 		IOLog("MiniIOMobileFramebuffer: %u frames in %llu ms (%llu a second), %llu us each in the driver, after %llu us "
 		    "waiting for the GPU and, %u of them, %llu us for the next refresh; %u swaps waited for the frame before, "
-		    "%u gave up; %u swaps came a refresh late themselves; %u frames drawn again filtered; %u of %u too late for the next scan\n", fStatFrames, nanos / NSEC_PER_MSEC,
+		    "%u gave up; %u swaps came a refresh late themselves; %u frames drawn again filtered; %u of %u too late for the next scan (panel at %u Hz)\n", fStatFrames, nanos / NSEC_PER_MSEC,
 		    fStatFrames * NSEC_PER_SEC / nanos, drawing / fStatFrames / NSEC_PER_USEC,
 		    waiting / fStatFrames / NSEC_PER_USEC, fStatOnBeat, fStatOnBeat ? beat / fStatOnBeat / NSEC_PER_USEC : 0,
-		    fStatHeld, fStatLost, fStatSwapsLate, fStatSettled, fStatScansMissed, fStatScans);
+		    fStatHeld, fStatLost, fStatSwapsLate, fStatSettled, fStatScansMissed, fStatScans, fPanelHz != 0 ? fPanelHz : refreshHz());
 		fStatScans = fStatScansMissed = 0;
 		if (fBeamIntf != 0) {
 			char shares[8 * 24] = "";
@@ -1595,6 +1988,16 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			}
 			IOLog("MiniIOMobileFramebuffer: shares of the rows, us each/torn/close:%s; %u not drawn again, their surface taken for the next frame\n", shares, fStatSettleReused);
 			fStatSettleReused = 0;
+		}
+		if (gFreshWaited != 0) {
+			IOLog("MiniIOMobileFramebuffer: fb_fresh: %u swaps waited for the GPU's next submission on their surface, %u gave up\n",
+			    gFreshWaited, gFreshLost);
+			gFreshWaited = gFreshLost = 0;
+		}
+		if (gCheckedRows != 0) {
+			IOLog("MiniIOMobileFramebuffer: fb_inval: %u of %u rows of GPU surfaces looked at were stale in the cache\n",
+			    gStaleRows, gCheckedRows);
+			gStaleRows = gCheckedRows = 0;
 		}
 		fStatSwapsLate = 0;
 		for (different = 0; different < 8 && fStatSurfaces[different] != 0; different++) {

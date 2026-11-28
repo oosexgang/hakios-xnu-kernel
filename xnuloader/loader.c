@@ -15,7 +15,15 @@
 /* ------------------------------------------------------------------------ */
 /* Fixed conventions shared with the boot shim, the packer and the kernel   */
 
-#define PAYLOAD_BASE        0xF0000000ULL
+/*
+ * Where the payload is put before the loader runs: 0xF0000000 on QEMU and redwood, another address on a phone whose
+ * firmware keeps that one (zeus: TZApps Reserved, 0xEA000000-0xF1400000). It is the platform's, so the loader finds
+ * the platform before it reads anything there (choose_platform()); the boot shim, mkxnuimg.py and the UEFI's
+ * XnuLoader.h are given the same number from the device's files.
+ */
+#define PAYLOAD_BASE_DEFAULT 0xF0000000ULL
+static uint64_t payload_base = PAYLOAD_BASE_DEFAULT;
+#define PAYLOAD_BASE        payload_base
 #define PAYLOAD_MAGIC       0x50554E58u /* "XNUP" */
 
 struct payload_header { uint32_t magic; uint32_t size; };
@@ -24,7 +32,13 @@ struct payload_entry { char name[16]; uint32_t size; uint32_t reserved; };
 #define KERNEL_VIRT_BASE    0xFFFFFFF004000000ULL /* boot_args.virtBase */
 #define KERNEL_LINK_OFFSET  0x03000000ULL         /* kernel text sits 48 MB above the base */
 #define BASE_ALIGN          0x02000000ULL         /* 32 MB: L2 block size with 16K pages */
-#define MAX_MEM_SIZE        0x180000000ULL        /* 6 GB; the kernel's bootstrap page tables cover 8 */
+/*
+ * The most RAM given to XNU unless the platform says otherwise (struct platform, max_mem). XNU's two bootstrap
+ * mappings (start.s) take one 4K L2 page for every GB the window touches, from bootstrap_pagetables
+ * (BOOTSTRAP_TABLE_SIZE, osfmk/arm/pmap/pmap.h), with no bounds check: what does not fit writes over the data
+ * that follows. 6 GB stays well inside any table size.
+ */
+#define MAX_MEM_SIZE        0x180000000ULL        /* 6 GB */
 /*
  * A root image too big for the payload area is placed here, at a fixed
  * offset inside the kernel's memory window, once; it then survives any
@@ -554,6 +568,7 @@ struct platform {
 	const char *name;
 	uint64_t io_base, io_size;       /* one window covering the SoC peripherals */
 	uint64_t gic_dist, gic_redist;   /* GICv3 */
+	uint32_t gic_stride;             /* redistributor frames of one core to the next; 0: 0x20000 (RD + SGI) */
 	uint64_t uart;                   /* PL011, 0 if none */
 	int psci_hvc;                    /* the firmware's power interface is called with HVC, not SMC */
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
@@ -561,6 +576,10 @@ struct platform {
 	int core_shift;                  /* ... in this bit of MPIDR: the phone numbers them in the second affinity field */
 	uint32_t timeout_scale;          /* a kernel on several cores gets this much longer to wait for a lock, 0: as it is */
 	uint32_t small_cores;            /* a bit for each of the slower cores, by number: "small-core" in the device tree */
+	uint64_t screen_base;            /* the phone is known by its framebuffer, where its UEFI leaves it; 0: not a phone */
+	uint64_t payload_base;           /* where the payload is put before the loader runs; 0: PAYLOAD_BASE_DEFAULT */
+	int qcom;                        /* Qualcomm's UEFI and hypervisor: its charger protocols, its watchdog calls */
+	uint64_t max_mem;                /* the most RAM XNU's window may have with ram_gb=; 0: MAX_MEM_SIZE */
 };
 
 static const struct platform platform_qemu_virt = {
@@ -586,7 +605,37 @@ static const struct platform platform_redwood = {
 	 * (XNU's machine_routines.c, ml_choose_slow_core_partners()).
 	 */
 	.small_cores = 0x0f,
+	.screen_base = 0xE1000000, .qcom = 1,
 };
+
+static const struct platform platform_zeus = {
+	/*
+	 * Xiaomi 12 Pro (SM8450, devices/zeus). The GIC is the one of the phone's own device tree
+	 * (interrupt-controller@17100000: distributor 0x17100000, redistributors 0x17180000); the cores
+	 * are numbered in MPIDR's second affinity field, 0x000 to 0x700. Cores 0-3 are Cortex-A510s,
+	 * 4-6 Cortex-A710s and 7 the Cortex-X2. Its UEFI leaves the panel at 0xB8000000 (Display
+	 * Reserved in its uefiplat.cfg) and keeps 0xF0000000 for TZApps (0xE8800000-0xF4600000 is a hole): the payload
+	 * is at 0xDC000000, the top of MTE Reserved (its MemoryMapLib.c). Runs on the phone (USB mode).
+	 */
+	.name = "zeus", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17100000, .gic_redist = 0x17180000, .uart = 0, .log_other_cpu = 1,
+	.gic_stride = 0x40000,           /* redistributor-stride in its tree: RD, SGI, VLPI and a reserved frame */
+	.cores = 8, .core_shift = 8,
+	.small_cores = 0x0f,
+	.screen_base = 0xB8000000, .payload_base = 0xDC000000, .qcom = 1,
+	/*
+	 * 12 GB in all, but the largest free block its UEFI leaves is 9 GB at 0x840000000 (below it HYP Reserved,
+	 * 0x830000000-0x840000000; the rest is the low 2 GB, cut up by firmware carve-outs), and XNU takes one contiguous
+	 * window: all 9. From a GB boundary that is 9 L2 pages for the V=P bootstrap mapping, 10 for the kernel's (its
+	 * base, 0xFFFFFFF004000000, is 64 MB into a GB) and two L1s: 21 pages, which needs the kernel's
+	 * BOOTSTRAP_TABLE_SIZE of 32 (osfmk/arm/pmap/pmap.h; it was 20, enough for 8 GB). An older kernel with this
+	 * loader would write past its tables: build both. Only with boot-arg ram_gb=7..9: by default 6 GB, since at 9 GB
+	 * the video driver's 30 MB kmem_alloc for the encoder failed once (log 224640, cause not found yet).
+	 */
+	.max_mem = 0x240000000ULL,
+};
+
+static const struct platform *const phones[] = { &platform_redwood, &platform_zeus };
 
 /* ------------------------------------------------------------------------ */
 
@@ -1620,6 +1669,14 @@ static void block_io2_probe(efi_handle h, efi_block_io *bio);
 static int block_probe_requested;       /* ufs_probe=1: block_io2_probe() at block_start() */
 static efi_block_io *block_bios[BLOCK_MAX_PARTS];
 static int block_enabled;
+/*
+ * "modem_rmtfs=1": 2.5 MiB below 4 GiB, from the firmware, for the modem's file buffer (drivers/modem/hakios.mpss.c,
+ * rmtfs). The modem takes 32-bit addresses, TrustZone gives the modem only memory that is HLOS's, and XNU's window is
+ * above 4 GiB; Android puts it in the same kind of memory (uio rmtfs at 0xfa300000). Taken once, kept across runs
+ * (the loader stays), handed to the kernel as modem_buffer_pa=.
+ */
+static int rmtfs_requested;
+static uint64_t rmtfs_pa;
 static int block_write_requested;       /* ufs_write=1 on the command line */
 static int block_write_part = -1;       /* the only partition a write may reach; -1: none, writes refused */
 static uint64_t block_writes, block_writes_refused, block_write_bytes;
@@ -2235,7 +2292,7 @@ charger_start(void)
 	static const efi_guid qcom_charger_guid = QCOM_CHARGER_GUID;
 	efi_status ex_status, qcom_status, init_status = 0;
 
-	if (charger_enabled || PLAT != &platform_redwood) {
+	if (charger_enabled || !PLAT->qcom) {
 		return;
 	}
 	ex_status = BS->locate_protocol(&charger_ex_guid, NULL, (void **)&CHARGER_EX);
@@ -2503,7 +2560,7 @@ wdt_arm(void)
 {
 	uint64_t ctl = 0, since = 0;
 
-	if (PLAT != &platform_redwood) {
+	if (!PLAT->qcom) {
 		return; /* SMC is not routed anywhere useful on QEMU virt */
 	}
 	uint64_t st = smc_call(VIRT_WDT_STATUS, 0, 0, &ctl, &since);
@@ -2568,6 +2625,8 @@ struct payload_info {
 	const char *kernel_version;     /* kernel.ver: the version of the kernel in this payload (tools/kernel-version.py) */
 	int usb_mode;
 };
+
+static int starts_with(const char *s, const char *prefix);
 
 static uint64_t
 parse_number(const char *c, unsigned base)
@@ -2796,12 +2855,28 @@ choose_window(const struct payload_info *pi)
 		}
 	}
 	print("largest free block %x size %x\n", best_base, best_size);
+	/*
+	 * MAX_MEM_SIZE unless the command line says ram_gb=N (whole GB), which may go up to the platform's max_mem: a
+	 * window above 6 GB is opt-in until everything is known to work with it.
+	 */
+	uint64_t max_mem = MAX_MEM_SIZE;
+	for (const char *c = pi->cmdline; *c; c++) {
+		if (starts_with(c, "ram_gb=") && (c == pi->cmdline || c[-1] == ' ')) {
+			uint64_t gb = parse_number(c + 7, 10);
+			uint64_t ceiling = PLAT->max_mem ? PLAT->max_mem : MAX_MEM_SIZE;
+
+			if (gb != 0) {
+				max_mem = gb << 30 < ceiling ? gb << 30 : ceiling;
+			}
+			print("ram_gb=%x: window up to %x\n", gb, max_mem);
+		}
+	}
 	if (pi->forced_base != 0) {
 		best_base = pi->forced_base;
-		best_size = MAX_MEM_SIZE;
+		best_size = max_mem;
 	}
-	if (best_size > MAX_MEM_SIZE) {
-		best_size = MAX_MEM_SIZE;
+	if (best_size > max_mem) {
+		best_size = max_mem;
 	}
 	/* UEFI stays alive while the kernel runs, so the kernel must own all of its window. */
 	uint64_t claim = best_base;
@@ -2820,7 +2895,6 @@ choose_window(const struct payload_info *pi)
  * back (panic, checkpoint, early exception); the combined log is staged and
  * written to the log partition. Returns 0 if the kernel could not be started.
  */
-static int starts_with(const char *s, const char *prefix);
 
 static int
 run_kernel(int have_checkpoint, uint64_t checkpoint)
@@ -3001,6 +3075,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	int camera_requested = 0;
 	/* (the loader stays for run after run: what the last run's arguments said must not hold for this one) */
 	gamut_p3 = 0;
+	rmtfs_requested = 0;
 	/* a run that does not ask for writes does not get them, whatever an earlier run of this
 	 * loader asked for (the loader stays resident across runs) */
 	block_write_requested = 0;
@@ -3022,6 +3097,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		torch_requested |= starts_with(c, "torch=") && (c == pi.cmdline || c[-1] == ' ') && c[6] >= '1' && c[6] <= '9';
 		camera_requested |= starts_with(c, "cam=5") && (c == pi.cmdline || c[-1] == ' ') && (c[5] == 0 || c[5] == ' ');
 		gamut_p3 |= starts_with(c, "gamut=p3") && (c == pi.cmdline || c[-1] == ' ');
+		rmtfs_requested |= starts_with(c, "modem_rmtfs=1") && (c == pi.cmdline || c[-1] == ' ') && (c[13] == 0 || c[13] == ' ');
 		if (starts_with(c, "ufs=") && (c == pi.cmdline || c[-1] == ' ') && c[4] >= '1' && c[4] <= '2' &&
 		    (c[5] == 0 || c[5] == ' ')) {
 			ufs_requested = c[4] - '0';
@@ -3169,6 +3245,27 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		}
 		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
 			ba->commandLine[n++] = hex[(address >> shift) & 0xf];
+		}
+		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
+	}
+	if (rmtfs_requested && rmtfs_pa == 0) {
+		uint64_t address = 0xFFFFFFFFULL;
+
+		/* (16 KiB more, so that the buffer can start on one of XNU's 16 KiB pages) */
+		if (!EFI_ERROR(BS->allocate_pages(AllocateMaxAddress, 2 /* EfiLoaderData */, (0x280000 + 0x4000) >> 12, &address))) {
+			rmtfs_pa = (address + 0x3FFFULL) & ~0x3FFFULL;
+		}
+		print("modem_rmtfs: 2.5 MiB below 4 GiB at %x\n", rmtfs_pa);
+	}
+	if (rmtfs_requested && rmtfs_pa != 0) {
+		static const char prefix[] = "modem_buffer_pa=0x";
+		static const char hex[] = "0123456789abcdef";
+
+		for (const char *c = prefix; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
+			ba->commandLine[n++] = hex[(rmtfs_pa >> shift) & 0xf];
 		}
 		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
 	}
@@ -3428,8 +3525,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_begin(&w, "gic");
 	dt_prop_str(&w, "device_type", "interrupt-controller");
 	dt_prop_str(&w, "compatible", "arm,gic-v3");
-	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base, 0x100000 };
+	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base,
+		plat->gic_stride ? (uint64_t)plat->cores * plat->gic_stride : 0x100000 };
 	dt_prop(&w, "reg", gic_reg, sizeof(gic_reg));
+	if (plat->gic_stride)
+		dt_prop_u32(&w, "redistributor-stride", plat->gic_stride);
 	dt_end(&w);
 	if (plat->uart != 0) {
 		dt_begin(&w, "uart0");
@@ -4308,10 +4408,36 @@ print_banner(void)
 	print("\n");
 }
 
+/*
+ * Which machine this is, from the framebuffer its firmware left (a phone's UEFI puts it at an address of its own; QEMU's
+ * ramfb is anywhere else, or absent), and with it where the payload is. Nothing is printed here: the banner comes later.
+ */
+static void
+choose_platform(void)
+{
+	static const efi_guid gop_guid = EFI_GOP_GUID;
+
+	PLAT = &platform_qemu_virt;
+	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) || GOP->mode == NULL ||
+	    GOP->mode->info == NULL || GOP->mode->fb_base == 0) {
+		GOP = NULL;                     /* no display (QEMU without -device ramfb) */
+	} else {
+		SCREEN.base = GOP->mode->fb_base;
+		SCREEN.width = GOP->mode->info->width;
+		SCREEN.height = GOP->mode->info->height;
+		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+		for (unsigned i = 0; i < sizeof(phones) / sizeof(phones[0]); i++) {
+			if (SCREEN.base == phones[i]->screen_base) {
+				PLAT = phones[i];
+			}
+		}
+	}
+	payload_base = PLAT->payload_base ? PLAT->payload_base : PAYLOAD_BASE_DEFAULT;
+}
+
 efi_status EFIAPI
 efi_main(efi_handle image, efi_system_table *st)
 {
-	static const efi_guid gop_guid = EFI_GOP_GUID;
 	struct payload_info pi;
 
 	ST = st;
@@ -4319,6 +4445,8 @@ efi_main(efi_handle image, efi_system_table *st)
 	IMAGE = image;
 
 	BS->set_watchdog_timer(0, 0, 0, NULL);
+	/* the platform first: the payload's address is the platform's, and on some phones 0xF0000000 is not ours to read */
+	choose_platform();
 	/* no payload in memory (nobody put one there): the volume this loader came from may have one, as a UEFI boot loader's does */
 	if (((const struct payload_header *)PAYLOAD_BASE)->magic != PAYLOAD_MAGIC) {
 		load_payload_from_volume();
@@ -4334,23 +4462,13 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
-	PLAT = &platform_qemu_virt;
-	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) || GOP->mode == NULL ||
-	    GOP->mode->info == NULL || GOP->mode->fb_base == 0) {
-		GOP = NULL;                     /* no display (QEMU without -device ramfb) */
-	} else {
-		SCREEN.base = GOP->mode->fb_base;
-		SCREEN.width = GOP->mode->info->width;
-		SCREEN.height = GOP->mode->info->height;
-		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
-		if (SCREEN.base == 0xE1000000ULL) {
-			PLAT = &platform_redwood;
-		} else {
+	if (GOP != NULL) {
+		if (PLAT == &platform_qemu_virt) {
 			ramfb_phone_screen();
 		}
 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	}
-	print("platform %s\n", PLAT->name);
+	print("platform %s, payload at %x\n", PLAT->name, PAYLOAD_BASE);
 
 	install_exception_hook();
 	wdt_arm();

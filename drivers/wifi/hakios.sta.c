@@ -44,6 +44,8 @@ static bool sta_on;                             /* the radio's power, as last as
 
 /* what has been asked for and not begun */
 static bool asked_power, asked_power_on, asked_scan, asked_join, asked_leave;
+static bool asked_ps, asked_ps_on;
+static int sta_ps = -1;                         /* power save as last asked: 1, 0, -1 never */
 static struct hakios_sta_scan asked_scan_what;
 static struct hakios_sta_join asked_join_what;
 static struct hakios_sta_join standing;        /* the network joined whenever the radio comes on (ssid_length 0: none) */
@@ -73,11 +75,11 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 
 	for (;;) {
 		const struct hakios_sta_ops *ops;
-		bool power = false, power_on = false, leave = false, do_join = false, do_scan = false;
+		bool power = false, power_on = false, ps = false, ps_on = false, leave = false, do_join = false, do_scan = false;
 		int error = 0;
 
 		lck_mtx_lock(&sta_lock);
-		while (sta_ops == NULL || !(asked_power || asked_leave || asked_join || asked_scan)) {
+		while (sta_ops == NULL || !(asked_power || asked_ps || asked_leave || asked_join || asked_scan)) {
 			lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_ops, THREAD_UNINT);
 		}
 		ops = sta_ops;
@@ -86,6 +88,10 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 			power = true;
 			power_on = asked_power_on;
 			asked_power = false;
+		} else if (asked_ps) {
+			ps = true;
+			ps_on = asked_ps_on;
+			asked_ps = false;
 		} else if (asked_leave) {
 			leave = true;
 			asked_leave = false;
@@ -122,6 +128,9 @@ sta_runs(__unused void *parameter, __unused wait_result_t result)
 				asked_join = true;
 			}
 			lck_mtx_unlock(&sta_lock);
+		} else if (ps) {
+			error = ops->powersave != NULL ? ops->powersave(ps_on) : EOPNOTSUPP;
+			printf("sta: power save %s: %d\n", ps_on ? "on" : "off", error);
 		} else if (leave) {
 			ops->leave();
 			hakios_apple80211_event(HAKIOS_STA_LINK, 0);
@@ -166,7 +175,7 @@ hakios_sta_attach(const struct hakios_sta_ops *ops)
 	if (ops == NULL) {
 		lck_mtx_lock(&sta_lock);
 		sta_ops = NULL;
-		asked_power = asked_scan = asked_join = asked_leave = false;
+		asked_power = asked_ps = asked_scan = asked_join = asked_leave = false;
 		while (sta_calls || sta_reads != 0) {
 			lck_mtx_sleep(&sta_lock, LCK_SLEEP_DEFAULT, (event_t)&sta_calls, THREAD_UNINT);
 		}
@@ -225,7 +234,7 @@ hakios_sta_busy(void)
 	bool busy;
 
 	lck_mtx_lock(&sta_lock);
-	busy = sta_ops != NULL && (sta_calls || asked_power || asked_leave || asked_join || asked_scan);
+	busy = sta_ops != NULL && (sta_calls || asked_power || asked_ps || asked_leave || asked_join || asked_scan);
 	lck_mtx_unlock(&sta_lock);
 	return busy;
 }
@@ -295,6 +304,28 @@ hakios_sta_ask_join(const struct hakios_sta_join *what)
 	lck_mtx_unlock(&sta_lock);
 	thread_wakeup((event_t)&sta_ops);
 	return 0;
+}
+
+int
+hakios_sta_ask_powersave(bool on)
+{
+	lck_mtx_lock(&sta_lock);
+	if (sta_ops == NULL || sta_ops->powersave == NULL) {
+		lck_mtx_unlock(&sta_lock);
+		return sta_ops == NULL ? ENXIO : EOPNOTSUPP;
+	}
+	sta_ps = on;
+	asked_ps = true;
+	asked_ps_on = on;
+	lck_mtx_unlock(&sta_lock);
+	thread_wakeup((event_t)&sta_ops);
+	return 0;
+}
+
+int
+hakios_sta_powersave(void)
+{
+	return sta_ps;
 }
 
 int

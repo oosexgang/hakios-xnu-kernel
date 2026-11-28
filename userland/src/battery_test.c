@@ -9,13 +9,19 @@
  *   battery_test open URL   have SpringBoard open a URL, such as prefs:root=BATTERY_USAGE (Settings >
  *                           Battery): for screenshots of a page that is hard to reach by touches alone
  *                           (needs the entitlement in battery_test.entitlements, which build.sh signs in)
+ *   battery_test health     what powerd's Battery Health rests on: MobileKeyBag's "unlocked since boot" (powerd
+ *                           makes its health record only then), the record itself (CFPreferences
+ *                           com.apple.batteryhealthdata, by host, in /var/MobileSoftwareUpdate/Hardware/Battery) and that folder
  *   battery_test powerlog   what Darwin's power log (aggregated, CurrentPowerlog.PLSQL) has collected: every
  *                           table with rows, how many and over what time; one row of each of the accounting
  *                           tables Settings > Battery reads (the energy per application comes from them)
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
+#include <dirent.h>
 #include <dlfcn.h>
+#include <sys/stat.h>
+#include <uuid/uuid.h>
 #include <glob.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -26,6 +32,7 @@
 
 /* IOKit's IOPowerSources.h and IOPSKeys.h, which the SDK leaves out */
 extern CFTypeRef IOPSCopyPowerSourcesInfo(void);
+extern CFArrayRef IOPSCopyPowerSourcesByType(int type);         /* 1: the battery health list, Settings > Battery Health's */
 extern CFArrayRef IOPSCopyPowerSourcesList(CFTypeRef blob);
 extern CFDictionaryRef IOPSGetPowerSourceDescription(CFTypeRef blob, CFTypeRef ps);
 extern CFStringRef IOPSGetProvidingPowerSourceType(CFTypeRef snapshot);
@@ -142,6 +149,25 @@ once(void)
 		printf("battery_test: powerd lists no power source\n");
 	}
 	show("battery_test: the power adapter", adapter);
+	/* what Settings > Battery > Battery Health reads: powerd's health list ("Maximum Capacity Percent") and whether
+	 * the battery is genuine (AppleAuthCPRelay under the power source, isTrustedForUI) */
+	CFArrayRef health = IOPSCopyPowerSourcesByType(1);
+	for (CFIndex i = 0; health != NULL && i < CFArrayGetCount(health); i++) {
+		show("battery_test: battery health", CFArrayGetValueAtIndex(health, i));
+	}
+	if (health == NULL || CFArrayGetCount(health) == 0) {
+		printf("battery_test: powerd lists no battery health\n");
+	}
+	if (health != NULL) CFRelease(health);
+	io_service_t relay = IOServiceGetMatchingService(0, IOServiceMatching("AppleAuthCPRelay"));
+	if (relay != 0) {
+		CFTypeRef trusted = IORegistryEntryCreateCFProperty(relay, CFSTR("isTrustedForUI"), kCFAllocatorDefault, 0);
+		show("battery_test: AppleAuthCPRelay isTrustedForUI", trusted);
+		if (trusted != NULL) CFRelease(trusted);
+		IOObjectRelease(relay);
+	} else {
+		printf("battery_test: no AppleAuthCPRelay\n");
+	}
 	if (adapter != NULL) CFRelease(adapter);
 	if (list != NULL) CFRelease(list);
 	if (blob != NULL) CFRelease(blob);
@@ -240,9 +266,107 @@ powerlog(void)
 	return 0;
 }
 
+/* a folder and what is under it, a few levels down */
+static void
+list(const char *path, int depth)
+{
+	DIR *dir = opendir(path);
+	struct dirent *e;
+	char sub[1024];
+	struct stat st;
+
+	if (dir == NULL) {
+		printf("battery_test:   %*s%s: cannot open\n", depth * 2, "", path);
+		return;
+	}
+	while ((e = readdir(dir)) != NULL) {
+		if (e->d_name[0] == '.') continue;
+		snprintf(sub, sizeof(sub), "%s/%s", path, e->d_name);
+		if (lstat(sub, &st) != 0) continue;
+		printf("battery_test:   %*s%s %o %u:%u %lld\n", depth * 2, "", sub, st.st_mode & 07777, st.st_uid, st.st_gid,
+		    (long long)st.st_size);
+		if (S_ISDIR(st.st_mode) && depth < 6) list(sub, depth + 1);
+	}
+	closedir(dir);
+}
+
+static int
+health(void)
+{
+	int (*unlocked)(void) = (int (*)(void))dlsym(RTLD_DEFAULT, "MKBDeviceUnlockedSinceBoot");
+	int (*state)(CFDictionaryRef) = (int (*)(CFDictionaryRef))dlsym(RTLD_DEFAULT, "MKBGetDeviceLockState");
+	extern CFDictionaryRef _CFPreferencesCopyMultipleWithContainer(CFArrayRef, CFStringRef, CFStringRef, CFStringRef,
+	    CFStringRef);
+	char line[2048] = "";
+	CFDictionaryRef record;
+
+	if (unlocked == NULL) {
+		dlopen("/System/Library/PrivateFrameworks/MobileKeyBag.framework/MobileKeyBag", RTLD_NOW);
+		unlocked = (int (*)(void))dlsym(RTLD_DEFAULT, "MKBDeviceUnlockedSinceBoot");
+		state = (int (*)(CFDictionaryRef))dlsym(RTLD_DEFAULT, "MKBGetDeviceLockState");
+	}
+	printf("battery_test: MKBDeviceUnlockedSinceBoot %d, MKBGetDeviceLockState %d\n", unlocked ? unlocked() : -99,
+	    state ? state(NULL) : -99);
+	record = _CFPreferencesCopyMultipleWithContainer(NULL, CFSTR("com.apple.batteryhealthdata"), kCFPreferencesCurrentUser,
+	    kCFPreferencesCurrentHost, CFSTR("/var/MobileSoftwareUpdate/Hardware/Battery/"));
+	if (record) put(line, sizeof(line), record);
+	printf("battery_test: health record: %s\n", record ? line : "none");
+	fflush(stdout);
+	list("/var/MobileSoftwareUpdate", 0);
+	/* who would write it: powerd asks cfprefsd, which writes the file; their users, the host's UUID (ByHost) */
+	{
+		int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL };
+		size_t size = 0;
+		struct kinfo_proc *procs;
+
+		if (sysctl(mib, 3, NULL, &size, NULL, 0) == 0 && (procs = malloc(size)) != NULL) {
+			if (sysctl(mib, 3, procs, &size, NULL, 0) == 0) {
+				for (size_t i = 0; i < size / sizeof(*procs); i++) {
+					const char *name = procs[i].kp_proc.p_comm;
+					if (strcmp(name, "powerd") == 0 || strcmp(name, "cfprefsd") == 0) {
+						printf("battery_test: %s pid %d uid %u\n", name, procs[i].kp_proc.p_pid,
+						    procs[i].kp_eproc.e_ucred.cr_uid);
+					}
+				}
+			}
+			free(procs);
+		}
+	}
+	{
+		uuid_t host;
+		struct timespec wait = { 1, 0 };
+		uuid_string_t text = "-";
+		int (*hostuuid)(uuid_t, const struct timespec *) = (int (*)(uuid_t, const struct timespec *))dlsym(RTLD_DEFAULT,
+		    "gethostuuid");
+		int rc = hostuuid ? hostuuid(host, &wait) : -99;
+
+		if (rc == 0) uuid_unparse(host, text);
+		printf("battery_test: gethostuuid %d %s\n", rc, text);
+	}
+	{
+		extern void _CFPreferencesSetValueWithContainer(CFStringRef, CFPropertyListRef, CFStringRef, CFStringRef,
+		    CFStringRef, CFStringRef);
+		extern Boolean _CFPreferencesSynchronizeWithContainer(CFStringRef, CFStringRef, CFStringRef, CFStringRef);
+		CFStringRef where = CFSTR("/var/MobileSoftwareUpdate/Hardware/Battery/");
+		Boolean synced;
+
+		_CFPreferencesSetValueWithContainer(CFSTR("probe"), CFSTR("written"), CFSTR("com.hakios.prefsprobe"),
+		    kCFPreferencesCurrentUser, kCFPreferencesCurrentHost, where);
+		synced = _CFPreferencesSynchronizeWithContainer(CFSTR("com.hakios.prefsprobe"), kCFPreferencesCurrentUser,
+		    kCFPreferencesCurrentHost, where);
+		printf("battery_test: a ByHost value written in that container: synchronized %d\n", synced);
+		fflush(stdout);
+		list("/var/MobileSoftwareUpdate", 0);
+	}
+	return 0;
+}
+
 int
 main(int argc, char **argv)
 {
+	if (argc > 1 && strcmp(argv[1], "health") == 0) {
+		return health();
+	}
 	if (argc > 2 && strcmp(argv[1], "open") == 0) {
 		return open_url(argv[2]);
 	}

@@ -41,19 +41,28 @@ struct hakios_camera_frame {
 	uint32_t        sensor;         /* which: 0 the macro, 1 the wide, 2 the front, 3 the ultra-wide camera */
 	uint32_t        focus;          /* the lens's position as last set, 0 (the furthest) to 1023: HAKIOS_CAMERA_NO_FOCUS where it
 	                                 * has no motor (or it does not answer) */
-	uint32_t        reserved[5];
+	uint32_t        frame_bytes;    /* the frame's bytes after this header (0 from a kernel that did not say: stride x height) */
+	uint32_t        more;           /* 1: another header and its frame follow this frame's bytes (HAKIOS_CAMERA_PAIR) */
+	uint32_t        reserved[3];
 };
 
 #define HAKIOS_CAMERA_NO_FOCUS 0xffffffffu
 
 enum {
-	HAKIOS_CAMERA_EXPOSURE = 1,    /* a: lines, b: gain, c: frame lines (0: the shortest that holds the exposure) */
+	HAKIOS_CAMERA_EXPOSURE = 1,    /* a: lines, b: gain, c: frame lines (0: the shortest that holds the exposure); d 1: the pair's second */
 	HAKIOS_CAMERA_KEEP = 2,        /* a picture for the host: a width, b height, c stride, d format (1 the frame's RAW10, 2 NV12,
 	                                 * 3 BGRA); bytes follow */
 	HAKIOS_CAMERA_SENSOR = 3,      /* another sensor: a which (as in the frames' header), b its mode (~0: the usual one);
 	                                 * the frames stop, everything goes down, and the next read starts the other one */
-	HAKIOS_CAMERA_FOCUS = 4,       /* the lens to a: 0 (the furthest) to 1023, from the next frame or so */
+	HAKIOS_CAMERA_FOCUS = 4,       /* the lens to a: 0 (the furthest) to 1023, from the next frame or so; b 1: the pair's second */
 };
+
+/*
+ * HAKIOS_CAMERA_SENSOR's a for two cameras at once (zeus: the wide and the telephoto, for Portrait's depth): every read
+ * gives the wide's newest frame (more = 1), then the telephoto's frame nearest it in time with its own header (sensor
+ * 0). HAKIOS_CAMERA_EXPOSURE's d and HAKIOS_CAMERA_FOCUS's b say which of the two: 0 the wide, 1 the telephoto.
+ */
+#define HAKIOS_CAMERA_PAIR     4
 
 struct hakios_camera_command {
 	uint32_t        command;

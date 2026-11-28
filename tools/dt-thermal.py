@@ -35,9 +35,12 @@ def main():
     nodes = mod.nodes_of(open(args[0], "rb").read())
     phandle_reg = {}
     for path, props in nodes.items():
-        if "compatible" in props and b"qcom,tsens26xx" in props["compatible"] and "phandle" in props:
-            reg = cells(props["reg"])             # srot base/size, tm base/size
-            phandle_reg[cells(props["phandle"])[0]] = reg[2] if len(reg) >= 4 else reg[0]
+        if "compatible" in props and (b"qcom,tsens26xx" in props["compatible"] or b"qcom,tsens-v2" in props["compatible"]) and "phandle" in props:
+            # two regions, the readings ("tm") and the control ("srot"): the vendor's qcom,tsens26xx (redwood) lists
+            # srot first, two cells each; qcom,tsens-v2 (zeus, Linux's binding) lists tm first, one cell each
+            reg = cells(props["reg"])
+            tm_first = b"qcom,tsens-v2" in props["compatible"]
+            phandle_reg[cells(props["phandle"])[0]] = reg[0] if tm_first or len(reg) < 4 else reg[2]
     zones = []
     for path, props in sorted(nodes.items()):
         parts = path.split("/")

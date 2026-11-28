@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 371 symbols in 18 groups; 34 are set, 25 of them drivers built in.
+# 382 symbols in 18 groups; 37 are set, 28 of them drivers built in.
 #
 
 #
@@ -19,7 +19,7 @@
 CONFIG_FIRMWARE="device"
 
 #
-# Drivers built in (25)
+# Drivers built in (35)
 #
 
 # the audio DSP started and linked (adsp=1, adsp_step=N); the battery's state comes through it too. Needs the DSP's ... [hakios.adsp.c]
@@ -28,7 +28,10 @@ CONFIG_HAKIOS_ADSP=y
 # the two speaker amplifiers on I2C, and their watch of temperature and battery [hakios.speaker.c]
 CONFIG_HAKIOS_SPEAKER=y
 
-# the speakers playing (sound=N): what the DSP's services are told, the feeder, and the speakers' guard that limits ... [hakios.sound.c, hakios.guard.c; requires CONFIG_HAKIOS_ADSP, CONFIG_HAKIOS_SPEAKER]
+# the speakers' guard: a high-pass filter, power and peak limits on what the amplifiers get; plain arithmetic, no ... [hakios.guard.c]
+CONFIG_HAKIOS_GUARD=y
+
+# the speakers playing (sound=N): what the DSP's services are told, the feeder, and the speakers' guard that limits ... [hakios.sound.c; requires CONFIG_HAKIOS_ADSP, CONFIG_HAKIOS_SPEAKER, CONFIG_HAKIOS_GUARD]
 CONFIG_HAKIOS_SOUND=y
 
 # the microphones, through the audio DSP (mic=N) [hakios.mic.c; requires CONFIG_HAKIOS_ADSP, CONFIG_HAKIOS_SOUND]
@@ -49,8 +52,11 @@ CONFIG_HAKIOS_TORCH=y
 # the chip's identity from the firmware's shared memory: kern.hakios.soc_* (socinfo=1). Any Qualcomm SoC that keeps ... [hakios.socinfo.c]
 CONFIG_HAKIOS_SOCINFO=y
 
-# the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa, Metal and the ... [hakios.adreno.c, hakios.gpu.cpp]
+# the Adreno 642L of the SC7280 woken step by step (adreno=N), kept for HakiosGPU with gpu=1 or adreno_keep=1 ... [hakios.adreno.c; requires CONFIG_HAKIOS_GPUSERVICE]
 CONFIG_HAKIOS_ADRENO=y
+
+# HakiosGPU, the IOKit service Mesa, Metal and the window server draw through. It calls a GPU driver's hakios_gpu_* ... [hakios.gpu.cpp]
+CONFIG_HAKIOS_GPUSERVICE=y
 
 # the vibration motor: an Awinic AW86927 driving a linear resonant actuator (haptic=N), its waveforms from fw-haptic/ [hakios.haptic.c]
 CONFIG_HAKIOS_HAPTIC=y
@@ -94,8 +100,32 @@ CONFIG_HAKIOS_UFS=y
 # a disk image of the host as /dev/rvblk0 (virtio_blk=1). QEMU only [hakios.virtio_blk.c]
 CONFIG_HAKIOS_VIRTIO_BLK=y
 
-# Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, Linux's ath11k (its object, made ... [hakios.wifi.c, hakios.wlfw.c, hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp; requires CONFIG_HAKIOS_QMI]
+# the half of Wi-Fi that is not one radio's: the kernel's side of Linux's ath11k (its object, made by ... [hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp; requires CONFIG_HAKIOS_QMI]
+CONFIG_HAKIOS_WIFI_LX=y
+
+# Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, and the radio's answers to ... [hakios.wifi.c, hakios.wlfw.c; requires CONFIG_HAKIOS_QMI, CONFIG_HAKIOS_WIFI_LX]
 CONFIG_HAKIOS_WIFI=y
+
+# the audio DSP started and linked (adsp=1, adsp_step=N) on the SM8450, and the battery's state through it: ... [hakios.adsp.sm8450.c]
+# CONFIG_HAKIOS_ADSP_SM8450 is not set
+
+# the four Cirrus CS35L41 speaker amplifiers on zeus (amps=N): found, trimmed from their OTP, configured for the ... [hakios.cs35l41.c]
+# CONFIG_HAKIOS_CS35L41 is not set
+
+# the speakers' path through the SM8450's audio DSP (sound=N, with adsp=1 and amps=2): the tertiary MI2S pins, its bit ... [hakios.sound.sm8450.c; requires CONFIG_HAKIOS_ADSP_SM8450, CONFIG_HAKIOS_CS35L41, CONFIG_HAKIOS_GUARD]
+# CONFIG_HAKIOS_SOUND_SM8450 is not set
+
+# the Adreno 730 of the SM8450, woken step by step (adreno=N); its steps are ported from the Adreno 642L's driver ... [hakios.a730.c; requires CONFIG_HAKIOS_GPUSERVICE]
+# CONFIG_HAKIOS_A730 is not set
+
+# the touch screen: an ST FingerTip on SPI, its supplies from RPMh and the PM8008 (touchscreen=1). The bus, pins and ... [hakios.fts.c]
+# CONFIG_HAKIOS_FTS is not set
+
+# the clock of the cores the kernel runs on (cpufreq=1) and the memory bus's vote (ddr=), on the SM8450: ... [hakios.cpufreq.sm8450.c]
+# CONFIG_HAKIOS_CPUFREQ_SM8450 is not set
+
+# the Wi-Fi of zeus (wlan=N): the WCN6855 on the SM8450's first PCIe controller, step by step -- its firmware over MHI ... [hakios.wlan.sm8450.c, hakios.wlan.sm8450.lx.c; requires CONFIG_HAKIOS_QMI, CONFIG_HAKIOS_WIFI_LX]
+# CONFIG_HAKIOS_WLAN_SM8450 is not set
 
 #
 # CPU, memory and boot (21)
@@ -335,7 +365,7 @@ CONFIG_TOUCHSCREEN=y
 # CONFIG_VIRTIO_INPUT is not set
 
 #
-# GPU and display (76)
+# GPU and display (77)
 #
 
 # rendering on Adreno (an image built with GL=1; the GPU's firmware from your phone) [needs fw-gpu/ from the phone]
@@ -398,6 +428,9 @@ CONFIG_GPU=y
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_HZ is not set
 
+# the registers of the display interface the panel is on, for a port
+# CONFIG_FB_INTF is not set
+
 # how often the panel is really refreshed
 # CONFIG_FB_MEASURE is not set
 
@@ -422,7 +455,7 @@ CONFIG_GPU=y
 # log the first N calls of every selector (default 3)
 # CONFIG_FBTRACE is not set
 
-# read by MiniIOMobileFramebuffer.cpp (kernel)
+# read by MiniIOMobileFramebuffer.cpp, inject_sb.c (kernel and user space)
 # CONFIG_FBWIDTH is not set
 
 # the surface's memory, as before

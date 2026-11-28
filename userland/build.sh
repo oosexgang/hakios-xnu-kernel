@@ -11,6 +11,9 @@
 #                      JOBS="..."   labels of the stock Darwin launchd jobs to load (default: DARWIN_JOBS)
 #                      REST=1       ... and the rest of them, started only when asked for (see mkjobs.py)
 #                      WIFID=0      without wifid, Darwin's Wi-Fi daemon, which is in by default (see below)
+#                      BLUETOOTHD=1 with bluetoothd, Darwin's Bluetooth daemon, on a controller a kernel driver
+#                                   offers (zeus: bt=7), and src/bluetool_stub.c in BlueTool's place (see below)
+#                      LOCATIOND=1  with locationd, given the kernel's GNSS fixes by libhakios (see below)
 #                      OSLOG="..."  labels of the jobs whose os_log output goes to the console ("all": every
 #                                   one of JOBS; default: only the window server, which says little)
 #                      INJECT="..." the programs started with a library of ours, "LIBRARY NAME..." per line
@@ -124,6 +127,30 @@ DARWIN_JOBS=${JOBS-"
 # (Count a QEMU run log with its duplicate lines removed: run-darwin.sh prints launchd's log twice.)
 # WIFID=0 leaves it out.
 [ "${WIFID-1}" != 0 ] && DARWIN_JOBS="$DARWIN_JOBS com.apple.wifid"
+# BLUETOOTHD=1: Darwin's Bluetooth daemon, on a controller a kernel driver offers as a UART: /dev/uart.bluetooth
+# carrying HCI over H4 (zeus: devices/zeus/drivers/bluetooth/hakios.bt.sm8450.c, bt=7, which also publishes the IOKit
+# service "bluetooth" with the address bluetoothd needs). BT_HCI_TRANSPORT is "transport:driver:name,speed": H4 over
+# POSIX, the serial-port driver (the others are USB, APPLEBT, VIRT, PCIE, PCIESW), which opens the kernel control socket
+# of that name (Apple's com.apple.uart.sk.bluetooth is a Skywalk channel; the driver's com.hakios.uart.bluetooth is
+# a plain byte stream with terminal settings). BlueTool, which loads Apple's own chips, is not
+# run: src/bluetool_stub.c answers its service (com.hakios.bluetool), since the driver has loaded the firmware already.
+# bluetoothd's os_log goes to the console too.
+if [ "${BLUETOOTHD-0}" != 0 ]; then
+	# BTLEServer (com.apple.BTServer.le, kept out by mkjobs.py's DENY like the other BTServer jobs) is what holds an
+	# LE keyboard or mouse: its HID-over-GATT side claims the device, and without it bluetoothd ("failed lookup:
+	# com.apple.BTServer.le") hangs up on a paired keyboard as soon as Settings stops looking (reason 0x16, log 231326)
+	DARWIN_JOBS="$DARWIN_JOBS com.apple.bluetoothd com.apple.BTServer.le"
+	export JOB_ENV="${JOB_ENV:+$JOB_ENV }com.apple.bluetoothd:BT_HCI_TRANSPORT=${BT_HCI_TRANSPORT:-H4:POSIX:com.hakios.uart.bluetooth,3000000}"
+	OSLOG="${OSLOG-com.apple.backboardd} com.apple.bluetoothd com.apple.BTServer.le com.apple.mediaserverd"
+fi
+# LOCATIOND=1: Darwin's location daemon, given the kernel's GNSS fixes (kern.hakios.gnss_fix, drivers/modem/hakios.loc.c)
+# by libhakios.dylib inside it, through CoreLocation's own location simulation (src/inject.c, "locationd"), so that
+# CLLocationManager clients get positions. locationd (30 MB) is too big for sysimage/select-system.py, so it is taken out
+# of the root filesystem image here (into obj/, once) and put in the system image: build with SYSTEM=1 the first time.
+# mkjobs.py's DENY keeps locationd out of the REST jobs; a job named here is loaded all the same.
+if [ "${LOCATIOND-0}" != 0 ]; then
+	DARWIN_JOBS="$DARWIN_JOBS com.apple.locationd"
+fi
 # The programs (file names) started with a library of ours inside them: "LIBRARY NAME..." per line
 # (src/inject.c is libhakios.dylib, src/inject_sb.c is libhakios.sb.dylib, src/inject_media.c is
 # libhakios.media.dylib).
@@ -131,13 +158,18 @@ DARWIN_JOBS=${JOBS-"
 # boot volume's bin, bound over the Darwin volume's /bin when that is the root (src/init.c, flash_root).
 SILEO_BIN="chmod cp mkdir mv rm"
 # (libhakios.tweaks is the tweak loader of the package manager's prefix, src/inject_tweaks.c: in
-# SpringBoard the library above opens it, here it is named for the programs that have no library of
-# ours -- Settings, where a tweak's own pane belongs. Add a program's name to have tweaks in it.)
+# SpringBoard the library above opens it; here it goes into every application, since a name with a
+# "/" in it is the start of a path to the kernel (xnu/hakios.patch, exec_inject_env), and each tweak's
+# Filter then picks its programs. Preferences is named as well, for a kernel without that. Add a
+# daemon's file name to the line to have tweaks in it too.)
 INJECT=${INJECT-"/redwood/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
 /redwood/lib/libhakios.sb.dylib SpringBoard
 /redwood/lib/libhakios.media.dylib mediaserverd
+/redwood/lib/libhakios.hid.dylib BTLEServer bluetoothd
 /redwood/lib/libhakios.app.dylib Sileo
-/redwood/lib/libhakios.tweaks.dylib Preferences"}
+/redwood/lib/libhakios.tweaks.dylib Preferences /Applications/"}
+[ "${LOCATIOND-0}" != 0 ] && INJECT="$INJECT
+/redwood/lib/libhakios.dylib locationd"
 mkdir -p obj
 
 if [ -z "$PREBUILT" ] && ! command -v ld64 >/dev/null; then PREBUILT=1; fi
@@ -208,6 +240,8 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			{ ${LDID:-ldid} -Ssrc/record_test.entitlements obj/record_test 2>/dev/null ||
 			  echo "build.sh: no ldid: record_test is unsigned, and the system may not let it record"; }
 		$DYN -o obj/cpu_test src/cpu_test.c
+		# (the kernel's thermal pressure level posted for iOS, and a load to heat the phone with: src/thermal_notify.c)
+		$DYN -lobjc -framework Foundation -o obj/thermal_notify src/thermal_notify.c
 		# which processes take the processors, every few seconds (src/cputop.c; rc.jobs.cputop)
 		$DYN -o obj/cputop src/cputop.c
 		$DYN -framework CoreFoundation -framework IOSurface -o obj/cow_test src/cow_test.c
@@ -233,6 +267,16 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		$DYN -framework CoreFoundation -framework Security -o obj/keychain_test src/keychain_test.c &&
 			{ ${LDID:-ldid} -Ssrc/keychain_test.entitlements obj/keychain_test 2>/dev/null ||
 			  echo "build.sh: no ldid: keychain_test is unsigned, and the keychain will refuse it (-34018)"; }
+		# (and Wi-Fi run by wifid itself, asked as Settings asks it: src/wifi_client.c, with wifid's rights)
+		# (BlueTool's service for bluetoothd, with BLUETOOTHD=1: src/bluetool_stub.c)
+		$DYN -o obj/bluetool_stub src/bluetool_stub.c
+		# (Bluetooth as an application sees it, through CoreBluetooth: src/bt_test.m, with the TCC right to use it)
+		$DYN -fobjc-arc -framework Foundation -framework CoreBluetooth -o obj/bt_test src/bt_test.m &&
+			{ ${LDID:-ldid} -Ssrc/bt_test.entitlements obj/bt_test 2>/dev/null ||
+			  echo "build.sh: no ldid: bt_test is unsigned, and bluetoothd may not let it scan"; }
+		$DYN -framework CoreFoundation -o obj/wifi_client src/wifi_client.c &&
+			{ ${LDID:-ldid} -Ssrc/wifi_client.entitlements obj/wifi_client 2>/dev/null ||
+			  echo "build.sh: no ldid: wifi_client is unsigned, and wifid will refuse it"; }
 		# (and wifid's way of keeping a network's password, by wifid's name: src/wifipw_test.c)
 		$DYN -framework CoreFoundation -framework Security -o obj/wifipw_test src/wifipw_test.c &&
 			{ ${LDID:-ldid} -Ssrc/wifipw_test.entitlements obj/wifipw_test 2>/dev/null ||
@@ -242,6 +286,10 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			-o obj/libhakios.dylib src/inject.c
 		$DYN -dynamiclib -install_name /redwood/lib/libhakios.sb.dylib -framework CoreFoundation -framework CoreGraphics -framework IOKit -framework IOSurface -lobjc \
 			-o obj/libhakios.sb.dylib src/inject_sb.c
+		# ... inside BTLEServer, a Bluetooth keyboard's keys to backboardd: there is no IOHIDFamily for its own
+		# IOHIDUserDevice (src/inject_hid.c)
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios.hid.dylib -framework CoreFoundation -framework IOKit \
+			-o obj/libhakios.hid.dylib src/inject_hid.c
 		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
 		$DYN -dynamiclib -install_name /redwood/lib/libhakios.tweaks.dylib -framework CoreFoundation -lobjc \
@@ -249,9 +297,9 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		# ... and inside an application, to say what killed it (src/inject_app.c)
 		$DYN -dynamiclib -install_name /redwood/lib/libhakios.app.dylib -lobjc \
 			-o obj/libhakios.app.dylib src/inject_app.c
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios.media.dylib -framework CoreFoundation -framework CoreMedia \
+		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios.media.dylib -framework CoreFoundation -framework CoreMedia -framework VideoToolbox \
 			-framework CoreVideo -framework IOSurface -lobjc \
-			-o obj/libhakios.media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
+			-o obj/libhakios.media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c src/camera_portrait.c src/camera_portrait_photo.c
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# the plug-in Metal loads when the kernel names it (boot-arg metal=1): a device, its buffers and the libraries it reads
@@ -358,8 +406,12 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	[ -f obj/fps_info ] && cp obj/fps_info root/bin/
 	[ -f obj/net_test ] && cp obj/net_test root/bin/
 	[ -f obj/battery_test ] && cp obj/battery_test root/bin/
+	[ -f obj/thermal_notify ] && cp obj/thermal_notify root/bin/
 	[ -f obj/keychain_test ] && cp obj/keychain_test root/bin/
 	[ -f obj/wifipw_test ] && cp obj/wifipw_test root/bin/
+	[ -f obj/wifi_client ] && cp obj/wifi_client root/bin/
+	[ -f obj/bluetool_stub ] && cp obj/bluetool_stub root/bin/
+	[ -f obj/bt_test ] && cp obj/bt_test root/bin/
 	[ -f obj/sound_test ] && cp obj/sound_test root/bin/
 	[ -f obj/torch_test ] && cp obj/torch_test root/bin/
 	[ -f obj/camera_test ] && cp obj/camera_test root/bin/
@@ -372,6 +424,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	mkdir -p root/lib
 	cp obj/libhakios.dylib obj/libhakios.sb.dylib root/lib/
 	[ -f obj/libhakios.media.dylib ] && cp obj/libhakios.media.dylib root/lib/     # (as with cpu_test)
+	[ -f obj/libhakios.hid.dylib ] && cp obj/libhakios.hid.dylib root/lib/
 	[ -f obj/libhakios.app.dylib ] && cp obj/libhakios.app.dylib root/lib/
 	[ -f obj/libhakios.tweaks.dylib ] && cp obj/libhakios.tweaks.dylib root/lib/
 	if [ -f obj/HakiosAudio ]; then
@@ -383,6 +436,13 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		mkdir -p root/lib/HakiosMetal.bundle
 		cp obj/HakiosMetal root/lib/HakiosMetal.bundle/
 		cp src/HakiosMetal.plist root/lib/HakiosMetal.bundle/Info.plist
+	fi
+	# METAL_CLIENTS="mediaserverd ...": the programs shown the Metal device whatever the level of boot-arg metal
+	# (HakiosMetal.clients beside the bundle, one name a line; the plug-in reads it). Not given: no such file.
+	rm -f root/lib/HakiosMetal.clients
+	if [ -n "${METAL_CLIENTS:-}" ] && [ -d root/lib/HakiosMetal.bundle ]; then
+		printf '%s\n' $METAL_CLIENTS > root/lib/HakiosMetal.clients
+		echo "build.sh: the Metal device is shown to: $METAL_CLIENTS"
 	fi
 	if [ -n "${TURNIP:-}" ]; then
 		cp obj/libvulkan_freedreno.dylib root/lib/
@@ -427,6 +487,14 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	# the prefix with the root on the flash, downloads every package and index there, and without it each
 	# download ended in "No such file or directory"
 	printf 'd\t700\t501\t501\t/private/var/mobile/tmp\n' >> root/etc/var.skel
+	# powerd's battery health record (Settings > Battery > Battery Health): CFPreferences com.apple.batteryhealthdata, by
+	# host, in the container /var/MobileSoftwareUpdate/Hardware/Battery, which cfprefsd (root) writes; Darwin's template has
+	# only the top folder. With these folders the record is written (zeus log 235951; without them it never was). They are
+	# mobile's as tested then; root's may do as well
+	for d in Hardware Hardware/Battery Hardware/Battery/Library Hardware/Battery/Library/Preferences \
+	    Hardware/Battery/Library/Preferences/ByHost; do
+		printf 'd\t755\t501\t501\t/private/var/MobileSoftwareUpdate/%s\n' $d
+	done >> root/etc/var.skel
 	# Metal's compiled shader stages (HakiosMetalCA.m: HM_CACHE_DIR): in /var/db so that var_store keeps them (it
 	# leaves tmp out), open to every user like tmp, since the window server may not be root
 	printf 'd\t1777\t0\t0\t/private/var/db/hakios-metal-cache\n' >> root/etc/var.skel
@@ -463,6 +531,9 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	# and not by what select-system.py extracted here (--root-volume; seven jobs turn on the difference,
 	# fairplayd among them).
 	cp com.hakios.demo.plist com.hakios.wifi.plist root/LaunchDaemons/
+	[ -f root/bin/thermal_notify ] && cp com.hakios.thermal.plist root/LaunchDaemons/
+	rm -f root/LaunchDaemons/com.hakios.bluetool.plist
+	[ "${BLUETOOTHD-0}" != 0 ] && cp com.hakios.bluetool.plist root/LaunchDaemons/
 	VOLUME=""
 	[ -n "$FLASHBOOT" ] && [ -f $DARWIN/rootfs.slt ] && VOLUME="--root-volume $DARWIN/rootfs.slt"
 	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $DARWIN/rootfs root/LaunchDaemons $DARWIN_JOBS
@@ -471,7 +542,8 @@ fi
 # (it is the vendor's and never in the repository): the kernel's GPU bring-up, drivers/gpu/hakios.adreno.c, finds it in fw/
 if [ -d ../fw-gpu ]; then
 	mkdir -p root/fw
-	cp ../fw-gpu/* root/fw/
+	# the files only: a folder beside them (android/, what was pulled to read) is not firmware
+	find ../fw-gpu -maxdepth 1 -type f -exec cp {} root/fw/ \;
 fi
 # ... and the image of the Wi-Fi DSP, from /vendor/firmware_mnt/image of the same Android into ../fw-wifi
 # (drivers/wifi/hakios.wifi.c; 7.6 MB), with what the radio's firmware is sent once it runs: this phone's
@@ -488,27 +560,45 @@ if [ -f ../fw-wifi/wpss.mdt ]; then
 	# SHARE=1: leave it out, for an image that is going to somebody else -- it is a passphrase
 	if [ -z "$SHARE" ] && [ -f ../fw-wifi/network ]; then install -m 0600 ../fw-wifi/network root/fw/network; fi
 fi
+# ... and zeus's network to join at wlan=18 (devices/zeus/drivers/wifi/hakios.wlan.sm8450.lx.c: hakios_wifi_network()):
+# wlan.conf, two lines, ssid=... and psk=..., which the user makes in ../fw-wifi or in the fw-wifi beside the repository
+# (../../fw-wifi). Into the small image, as the WCN6750's network file: /redwood/fw/wlan.conf. Never in the repository;
+# SHARE=1 leaves it out
+rm -f root/fw/wlan.conf
+for f in ../fw-wifi/wlan.conf ../../fw-wifi/wlan.conf; do
+	if [ -z "$SHARE" ] && [ -f "$f" ]; then mkdir -p root/fw && install -m 0600 "$f" root/fw/wlan.conf && break; fi
+done
 # ... and the vibration motor's waveforms, the phone's /vendor/firmware/aw8697_haptic.bin, from ../fw-haptic
 # (drivers/haptic/hakios.haptic.c, haptic=3; 3.6 KB, the vendor's and not in the repository either)
 if [ -f ../fw-haptic/aw8697_haptic.bin ]; then
 	mkdir -p root/fw
 	install -m 0644 ../fw-haptic/aw8697_haptic.bin root/fw/
 fi
+# ... and the video codec's firmware, the phone's /vendor/firmware_mnt/image/vpu20_4v.*, from ../fw-video
+# (devices/zeus/drivers/camera/hakios.video.sm8450.c, vid=1; the vendor's and not in the repository either)
+if ls ../fw-video/vpu20_4v.* >/dev/null 2>&1; then
+	mkdir -p root/fw
+	install -m 0644 ../fw-video/vpu20_4v.* root/fw/
+fi
 # ... and the cameras' register tables (drivers/camera/hakios.camera.c, cam=2 and up), made by tools/camsensor.py out of
 # the sensors' module files of Android's camera stack, the phone's /vendor/lib64/camera/com.qti.sensormodule.
-# hakios_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
+# hakios_<maker>_<sensor>_<camera>.bin (zeus_<maker>_<sensor>_<camera>.bin on the Xiaomi 12 Pro), in ../fw-camera (the vendor's: neither they nor the tables are in the
 # repository): camera-<sensor>.tab
-for module in ../fw-camera/com.qti.sensormodule.hakios_*.bin; do
+for module in ../fw-camera/com.qti.sensormodule.hakios_*.bin ../fw-camera/com.qti.sensormodule.zeus_*.bin; do
 	[ -f "$module" ] || continue
-	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
 	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
+	# (and by the camera too, camera-<sensor>-<camera>.tab: zeus's ultra-wide and telephoto are both S5KJN1s, whose
+	# tables differ, and the driver asks for each by that name)
+	camera=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.[a-z0-9]*_[a-z]*_[a-z0-9]*_\([a-z]*\).*/\1/')
+	[ -n "$camera" ] && [ "$camera" != "$(basename "$module" .bin)" ] && cp "root/fw/camera-$sensor.tab" "root/fw/camera-$sensor-$camera.tab"
 done
 # ... and their colour tuning (libhakios.media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
 # cameras' tuning files beside them, com.qti.tuned.hakios_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
-for tuned in ../fw-camera/com.qti.tuned.hakios_*.bin; do
+for tuned in ../fw-camera/com.qti.tuned.hakios_*.bin ../fw-camera/com.qti.tuned.zeus_*.bin; do
 	[ -f "$tuned" ] || continue
-	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
 	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
 done
@@ -517,7 +607,7 @@ done
 # the loader takes.
 if [ -n "$ADSP" ] && [ -f ../fw-audio/adsp.mdt ]; then
 	mkdir -p root/fw
-	install -m 0644 ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] root/fw/
+	install -m 0644 ../fw-audio/adsp.mdt ../fw-audio/adsp.b[0-9][0-9] root/fw/
 fi
 # Firmware that is not there is otherwise silent at build time and speaks only much later, deep in a
 # device log -- "adreno: THE GPU IS NOT STARTED: the small image has no fw/a660_gmu.bin" cost a phone
@@ -561,6 +651,8 @@ for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
 	echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
 done
 [ -d big ] && SYSTEM=1          # (the links point into it: it is made again with them)
+# the plug-in reads its clients list beside the binary it was loaded from (the link's target when it moved)
+[ -f root/lib/HakiosMetal.clients ] && [ -f big/lib/HakiosMetal.bundle/HakiosMetal ] && cp root/lib/HakiosMetal.clients big/lib/
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
 python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -1
@@ -605,7 +697,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 	# from the Darwin volume's /fw, which src/init.c (flash_root) binds to this
 	if [ -f ../fw-audio/adsp.mdt ]; then
 		mkdir -p flashboot/fw
-		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] flashboot/fw/
+		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b[0-9][0-9] flashboot/fw/
 	fi
 	if [ -f ../fw-audio/aw882xx_acf.bin ]; then
 		mkdir -p flashboot/fw
@@ -679,15 +771,18 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	# it once the root is mounted (drivers/audio/hakios.adsp.c, adsp=1): 20 MB that do not fit beside GL=1 in the small image
 	if [ -f ../fw-audio/adsp.mdt ]; then
 		mkdir -p sysroot/fw
-		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] sysroot/fw/
+		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b[0-9][0-9] sysroot/fw/
 	fi
 	# MPSS firmware is much too large for the small boot image. Keep it in the system APFS,
 	# only when explicitly requested, after checking every loadable segment against this DTB.
 	# This stages the files; a separate XNU MPSS driver is still required to start the modem.
 	if [ -n "$MODEM" ]; then
 		[ -f ../fw-modem/modem.mdt ] || { echo "build.sh: MODEM=1 needs ../fw-modem/modem.mdt" >&2; exit 1; }
-		../devices/redwood/tools/modem_firmware.py --dtb ../devices/redwood/prebuilt/device-tree.dtb --firmware-dir ../fw-modem \
-			--node /soc/qcom,mss@4080000 >/dev/null
+		# (redwood's tree only: zeus's modem node, remoteproc-mss@04080000, has no qcom,pas-id; MODEM_CHECK=0 skips it)
+		if [ "${MODEM_CHECK-1}" != 0 ]; then
+			../devices/redwood/tools/modem_firmware.py --dtb ../devices/redwood/prebuilt/device-tree.dtb --firmware-dir ../fw-modem \
+				--node /soc/qcom,mss@4080000 >/dev/null
+		fi
 		mkdir -p sysroot/fw
 		cp ../fw-modem/modem.mdt ../fw-modem/modem.b[0-9][0-9] sysroot/fw/
 		# ... and the firmware partition's image/ (its mcfg configurations and the registry's *.jsn, pulled from
@@ -695,6 +790,25 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 		if [ -d ../fw-modem/image ]; then
 			rm -rf sysroot/fw/image && cp -R ../fw-modem/image sysroot/fw/image
 		fi
+	fi
+	# ... and, for a phone whose Wi-Fi is a WCN6855 on PCIe (zeus: devices/zeus/drivers/wifi/hakios.wlan.sm8450.c, wlan=7
+	# and up), the radio's own firmware from ../fw-wifi (the vendor's, never in the repository): amss.bin (5.4 MB, sent
+	# over MHI; amss20.bin for a chip of version 2), m3.bin, the board files (bdwlan.*, over QMI) and the regulatory database. Too large for the small image as well
+	if [ -f ../fw-wifi/amss.bin ]; then
+		mkdir -p sysroot/fw
+		for f in amss.bin amss20.bin m3.bin regdb.bin; do
+			[ -f ../fw-wifi/$f ] && cp ../fw-wifi/$f sysroot/fw/
+		done
+		# the board files (wlan=12): bdwlan.eXX by the board id the firmware gives, bdwlan.elf when it gives none
+		for f in ../fw-wifi/bdwlan.*; do
+			[ -f "$f" ] && cp "$f" sysroot/fw/
+		done
+	fi
+	# ... and the WCN6855's Bluetooth firmware from ../fw-bt (zeus: devices/zeus/drivers/bluetooth/hakios.bt.sm8450.c,
+	# bt=6): the rampatch hpbtfwXX.tlv and the NVM files hpnvXX*, the vendor's, never in the repository
+	if [ -f ../fw-bt/hpbtfw21.tlv ]; then
+		mkdir -p sysroot/fw
+		cp ../fw-bt/hpbtfw*.tlv ../fw-bt/hpnv2* sysroot/fw/
 	fi
 	# ... and the speaker amplifiers' configuration, the phone's /vendor/etc/aw882xx_acf.bin (drivers/audio/hakios.speaker.c,
 	# for sound=3): Android's own register values, which are not in the repository either
@@ -722,7 +836,18 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 		done
 		echo "  the package manager's prefix: $(du -sh sysroot/jb | cut -f1) as /jb (init puts it at /var/jb)"
 	fi
-	# our audio device, where the audio server looks for such plug-ins (and for no others: Apple's are left out)
+	# our audio device, where the audio server looks for such plug-ins (of Apple's only the Bluetooth one is there,
+	# BTAudioHALPlugin.driver: sysimage/select-system.py)
+	if [ "${LOCATIOND-0}" != 0 ] && [ ! -f sysroot/usr/libexec/locationd ]; then
+		if [ ! -s obj/locationd ]; then
+			SEVENZ=$(command -v 7z || command -v 7zz)
+			rm -rf obj/locationd.x && mkdir -p obj/locationd.x
+			"$SEVENZ" x -y -oobj/locationd.x $DARWIN/rootfs.dmg usr/libexec/locationd >/dev/null
+			mv obj/locationd.x/usr/libexec/locationd obj/locationd && rm -rf obj/locationd.x
+		fi
+		cp obj/locationd sysroot/usr/libexec/locationd && chmod 755 sysroot/usr/libexec/locationd
+		echo "  locationd: taken from the root filesystem image (LOCATIOND=1)"
+	fi
 	mkdir -p sysroot/System/Library/Audio/Plug-Ins/HAL
 	ln -s /redwood/lib/HakiosAudio.driver sysroot/System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver
 	# the plug-in Metal opens when the accelerator names it (boot-arg metal=1; without it nothing names this bundle)
@@ -730,6 +855,8 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	[ -d big ] && mkdir -p sysroot/usr/local && cp -a big sysroot/usr/local/redwood
 	mkdir -p sysroot/System/Library/Extensions
 	[ -d root/lib/HakiosMetal.bundle ] && ln -sfn /redwood/lib/HakiosMetal.bundle sysroot/System/Library/Extensions/HakiosMetal.bundle
+	rm -f sysroot/System/Library/Extensions/HakiosMetal.clients
+	[ -f root/lib/HakiosMetal.clients ] && ln -sfn /redwood/lib/HakiosMetal.clients sysroot/System/Library/Extensions/HakiosMetal.clients
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld
 	# shared cache (dyld looks there first) and a few libraries and resources outside the cache.
 	mkdir -p sysroot/System/Cryptexes

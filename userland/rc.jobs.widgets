@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Only the widgets page, for a screen recording that ends soon after it (devices/zeus/README.md, "Page swipes"): unlock, then
+# six times a swipe to the widgets page (left) and back, 600 ms each, 3 s apart.
+/redwood/bin/rwtouch wait 30 swipe 0.5 0.985 0.5 0.3 200 wait 10
+/redwood/bin/rwtouch swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3 swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3
+/redwood/bin/rwtouch swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3 swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3
+/redwood/bin/rwtouch swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3 swipe 0.15 0.5 0.85 0.5 600 wait 3 swipe 0.85 0.5 0.15 0.5 600 wait 3

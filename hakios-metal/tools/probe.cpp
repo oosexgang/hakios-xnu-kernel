@@ -15,6 +15,9 @@
 #include <mutex>
 #include <random>
 #include <vector>
+#include <thread>
+#include <sys/sysctl.h>
+#include <unistd.h>
 
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
@@ -373,7 +376,43 @@ static const char* dimName(uint8_t dim) {
     return dim == kTexDim1D ? "1D" : dim == kTexDim2D ? "2D" : dim == kTexDim3D ? "3D" : dim == kTexDimCube ? "cube" : "undeclared";
 }
 
+// What the probe prints also goes into the kernel's log, line by line, as "user: ..." (sysctl kern.hakios_say, root
+// only): a run's log keeps that whole, where /dev/console's text is only drawn on the screen. stdout is a pipe that a
+// thread reads; each line goes to the console it was before and to the kernel. Without the sysctl, the console only.
+static void echoIntoKernelLog() {
+    int fds[2];
+    if (pipe(fds) != 0) return;
+    const int console = dup(1);
+    if (console < 0 || dup2(fds[1], 1) < 0) return;
+    close(fds[1]);
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::thread([reader = fds[0], console] {
+        std::string line;
+        char buf[512];
+        ssize_t n;
+        while ((n = read(reader, buf, sizeof(buf))) > 0) {
+            (void)!write(console, buf, size_t(n));
+            for (ssize_t i = 0; i < n; i++) {
+                if (buf[i] != '\n') { line += buf[i]; continue; }
+                for (size_t at = 0; at < line.size() || at == 0; at += 250) {
+                    std::string piece = line.substr(at, 250);
+                    sysctlbyname("kern.hakios_say", nullptr, nullptr, (void*)piece.c_str(), piece.size());
+                    if (line.size() <= 250) break;
+                }
+                line.clear();
+            }
+        }
+    }).detach();
+    // at the end, what is still in the pipe reaches the kernel before the process goes
+    atexit([] {
+        fflush(stdout);
+        close(1);
+        usleep(300 * 1000);
+    });
+}
+
 int main(int argc, char** argv) {
+    echoIntoKernelLog();
     bool recover = false, bisect = false, binTrace = false;
     compute::Options chosen;   // what the dispatches of stage 5 are encoded with
     std::vector<std::pair<std::string, std::string>> metallibs;   // --metallib FILE FUNCTION: a kernel of the phone's own image
@@ -761,6 +800,114 @@ int main(int argc, char** argv) {
                 report(ok, "fill_id_air over " + std::to_string(groups) + " groups (" + std::to_string(n) + " words): " + describe(r, n, 0) + status(*cb, gpu));
                 if (!ok) break;
             }
+            // 5e'. which of the two grows past what works on the A730 (11 November: 16 groups into 4 KiB right, 64 into 16 KiB
+            // nothing): the group count with the buffer as large as it, then 16 groups into larger buffers (the rest canary)
+            if (gpu.generation() == 7) {
+                struct Case { uint32_t groups, words; };
+                for (Case cs : {Case{24, 64 * 24}, Case{32, 64 * 32}, Case{48, 64 * 48}, Case{16, 2048}, Case{16, 4096}, Case{16, 16384}}) {
+                    auto buf = newBuffer(gpu, 4ull * cs.words, &why);
+                    if (buf == nullptr) { report(false, "a buffer of " + std::to_string(4ull * cs.words) + " bytes: " + why); break; }
+                    uint32_t cv = canaryFor(cs.words, c);
+                    auto* w = static_cast<uint32_t*>(buf->contents());
+                    for (uint32_t i = 0; i < cs.words; i++) w[i] = cv;
+                    const uint32_t local[3] = {64, 1, 1};
+                    auto cb = run(kernels::fill_id_air, cs.groups, local, {Binding{buf.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                    const uint32_t n = 64 * cs.groups;
+                    Readback r = readBack(*buf, n, c, cv);
+                    uint32_t tail = 0;
+                    for (uint32_t i = n; i < cs.words; i++) tail += w[i] == cv;
+                    report(cb->status() == CommandBuffer::kCompleted && r.right == n && tail == cs.words - n,
+                           "a7xx: fill_id_air, " + std::to_string(cs.groups) + " groups into " + std::to_string(4 * cs.words) + " bytes: " +
+                               describe(r, n, 0) + "; " + std::to_string(tail) + " of " + std::to_string(cs.words - n) + " past them canary" + status(*cb, gpu) +
+                               ", buffer at GPU " + hex8(uint32_t(buf->gpuAddress() >> 32)) + "_" + hex8(uint32_t(buf->gpuAddress())));
+                }
+                // 5e''. which of four it is (12 November): a fresh buffer of 4 KiB as the passing 5d's (fresh against reused);
+                // the second half of an 8 KiB one (a descriptor of 4 KiB in a buffer of 8: the size against the place); and
+                // the processor's own fill of the same 8 KiB after the dispatch (the place reached at all). The addresses say
+                // where each lies, out's (5d's, which passes) among them; FAULTS counts what the SMMU refused (the kernel's
+                // log says where).
+                const uint32_t local[3] = {64, 1, 1};
+                report(true, "a7xx: out (5d's buffer) at GPU " + hex8(uint32_t(out->gpuAddress() >> 32)) + "_" + hex8(uint32_t(out->gpuAddress())) +
+                                 ", FAULTS " + std::to_string(gpu.faults()));
+                if (auto fresh = newBuffer(gpu, 4096, &why)) {
+                    uint32_t cv = canaryFor(1024, c);
+                    auto* w = static_cast<uint32_t*>(fresh->contents());
+                    for (uint32_t i = 0; i < 1024; i++) w[i] = cv;
+                    prefill();   // out canary too: a dispatch that used a stale descriptor of out's writes there instead
+                    auto cb = run(kernels::fill_id_air, 16, local, {Binding{fresh.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                    Readback r = readBack(*fresh, 1024, c, cv);
+                    uint32_t intoOut = 0;
+                    {
+                        std::vector<uint32_t> ob(words);
+                        memcpy(ob.data(), out->contents(), 4ull * words);
+                        for (uint32_t i = 0; i < words; i++) intoOut += ob[i] == expectedWord(i, c);
+                    }
+                    report(cb->status() == CommandBuffer::kCompleted && r.right == 1024 && intoOut == 0,
+                           "a7xx: fill_id_air, 16 groups into a fresh 4096-byte buffer: " + describe(r, 1024, 0) + status(*cb, gpu) + ", at GPU " +
+                               hex8(uint32_t(fresh->gpuAddress())) + "; " + std::to_string(intoOut) + " of out's " + std::to_string(words) +
+                               " words written instead (a stale descriptor)");
+                }
+                // 5e'''. the stale descriptor, four ways (11 November: a fresh buffer's dispatch stored into out, 1024 of 1024
+                // words, with UCHE and the bindless descriptor cache invalidated): as before; the descriptors in the packets
+                // (iboDirect); each table at another address (tableRotate); both. Each a fresh buffer, out canary.
+                {
+                    struct Variant { const char* name; bool direct, rotate; };
+                    for (Variant v : {Variant{"as before", false, false}, Variant{"iboDirect", true, false},
+                                      Variant{"tableRotate", false, true}, Variant{"iboDirect + tableRotate", true, true}}) {
+                        for (int twice = 0; twice < 2; twice++) {
+                            auto fresh = newBuffer(gpu, 4096, &why);
+                            if (fresh == nullptr) { report(false, std::string("a7xx variant ") + v.name + ": a buffer: " + why); break; }
+                            uint32_t cv = canaryFor(1024, c);
+                            auto* fw = static_cast<uint32_t*>(fresh->contents());
+                            for (uint32_t i = 0; i < 1024; i++) fw[i] = cv;
+                            prefill();
+                            compute::Options vo = chosen;
+                            vo.iboDirect = v.direct;
+                            vo.tableRotate = v.rotate;
+                            const uint32_t g[3] = {16, 1, 1};
+                            auto cb = queue->commandBuffer();
+                            cb->dispatch(kernels::fill_id_air, g, local, {Binding{fresh.get(), 0}, Binding{cbuf.get(), 0}}, nullptr, vo);
+                            cb->commit();
+                            cb->waitUntilCompleted();
+                            Readback r = readBack(*fresh, 1024, c, cv);
+                            std::vector<uint32_t> ob(words);
+                            memcpy(ob.data(), out->contents(), 4ull * words);
+                            uint32_t intoOut = 0;
+                            for (uint32_t i = 0; i < words; i++) intoOut += ob[i] == expectedWord(i, c);
+                            report(cb->status() == CommandBuffer::kCompleted && r.right == 1024 && intoOut == 0,
+                                   std::string("a7xx variant ") + v.name + (twice ? " (again)" : "") + ": fill_id_air into a fresh buffer at GPU " +
+                                       hex8(uint32_t(fresh->gpuAddress())) + ": " + describe(r, 1024, 0) + "; " + std::to_string(intoOut) +
+                                       " of out's words written instead" + status(*cb, gpu));
+                        }
+                    }
+                }
+                if (auto two = newBuffer(gpu, 8192, &why)) {
+                    uint32_t cv = canaryFor(2048, c);
+                    auto* w = static_cast<uint32_t*>(two->contents());
+                    for (uint32_t i = 0; i < 2048; i++) w[i] = cv;
+                    auto cb = run(kernels::fill_id_air, 16, local, {Binding{two.get(), 4096}, Binding{cbuf.get(), 0}}, nullptr);
+                    std::vector<uint32_t> back(2048);
+                    memcpy(back.data(), two->contents(), 8192);
+                    uint32_t right = 0, before = 0;
+                    for (uint32_t i = 0; i < 1024; i++) {
+                        before += back[i] == cv;
+                        right += back[1024 + i] == expectedWord(i, c);
+                    }
+                    report(cb->status() == CommandBuffer::kCompleted && right == 1024 && before == 1024,
+                           "a7xx: fill_id_air, 16 groups into the second half of an 8192-byte buffer: " + std::to_string(right) +
+                               " of 1024 words as computed, " + std::to_string(before) + " of 1024 before them canary" + status(*cb, gpu));
+                    auto fc = queue->commandBuffer();
+                    fc->fill(*two, 0, 8192, 0x5a);
+                    fc->commit();
+                    fc->waitUntilCompleted();
+                    memcpy(back.data(), two->contents(), 8192);
+                    uint32_t filled = 0;
+                    for (uint32_t i = 0; i < 2048; i++) filled += back[i] == 0x5a5a5a5au;
+                    report(fc->status() == CommandBuffer::kCompleted && filled == 2048,
+                           "a7xx: the processor's fill of the same 8192 bytes: " + std::to_string(filled) + " of 2048 words 0x5a5a5a5a" +
+                               status(*fc, gpu));
+                }
+            }
         }
     }
 
@@ -802,6 +949,53 @@ int main(int argc, char** argv) {
                 Readback r = readBack(*out, words, c, canary);
                 report(cb->status() == CommandBuffer::kCompleted && r.right == words,
                        "dispatch of the kernel compiled on the phone, 16 groups of 64, c = 0x4321: " + describe(r, words, 0) + status(*cb, gpu));
+            }
+        }
+    }
+
+    // 6b. the same kernel compiled for bindless buffers (Kernel::bindlessIbo; 11 November: the A7xx keeps the first
+    // SP_CS_IBO table it is given, whatever the invalidates, and Gallium and turnip reach buffers only bindless on it).
+    // Three dispatches in a row, each into a fresh buffer with its own c: each must land in its own buffer, and the
+    // first buffer must still hold its own c's words afterwards (a stale descriptor would overwrite it with a later c's).
+    if (hasCompiler()) {
+        std::string why2;
+        setCompilerBindlessIbo(true);
+        auto compiled = compileAir(kernels::fill_id_bc, kernels::fill_id_bc_size, &why2);
+        setCompilerBindlessIbo(false);
+        if (compiled == nullptr) {
+            report(false, "bindless: compile fill_id.ll for bindless buffers: " + why2);
+        } else {
+            const Kernel& k = compiled->kernel;
+            report(k.bindlessIbo != 0, std::string("bindless: fill_id.ll compiled ") + (k.bindlessIbo ? "with" : "WITHOUT") +
+                                           " bindless buffers, " + std::to_string(k.numWords) + " words, " + std::to_string(k.numIbos) + " IBO(s)");
+            const uint32_t words = 1024;
+            const uint32_t cs[3] = {0x00001111, 0x00002222, 0x00003333};
+            std::shared_ptr<Buffer> first;
+            auto cbuf = newBuffer(gpu, 64, &why);
+            for (int i = 0; i < 3 && cbuf != nullptr; i++) {
+                auto fresh = newBuffer(gpu, 4 * words, &why);
+                if (fresh == nullptr) { report(false, "bindless: a buffer: " + why); break; }
+                const uint32_t canary = canaryFor(words, cs[i]);
+                auto* fw = static_cast<uint32_t*>(fresh->contents());
+                for (uint32_t j = 0; j < words; j++) fw[j] = canary;
+                static_cast<uint32_t*>(cbuf->contents())[0] = cs[i];
+                const uint32_t g[3] = {16, 1, 1}, local[3] = {64, 1, 1};
+                auto cb = queue->commandBuffer();
+                cb->dispatch(k, g, local, {Binding{fresh.get(), 0}, Binding{cbuf.get(), 0}}, nullptr, chosen);
+                cb->commit();
+                cb->waitUntilCompleted();
+                Readback r = readBack(*fresh, words, cs[i], canary);
+                std::string firstSays;
+                bool firstOk = true;
+                if (first != nullptr) {
+                    Readback f = readBack(*first, words, cs[0], canaryFor(words, cs[0]));
+                    firstOk = f.right == words;
+                    firstSays = std::string("; the first buffer ") + (firstOk ? "still holds its own words" : "WAS OVERWRITTEN: " + describe(f, words, 0));
+                }
+                report(cb->status() == CommandBuffer::kCompleted && r.right == words && firstOk,
+                       "bindless: dispatch " + std::to_string(i + 1) + " of 3 into a fresh buffer at GPU " + hex8(uint32_t(fresh->gpuAddress())) +
+                           ", c = " + hex8(cs[i]) + ": " + describe(r, words, 0) + firstSays + status(*cb, gpu));
+                if (first == nullptr) first = fresh;
             }
         }
     }

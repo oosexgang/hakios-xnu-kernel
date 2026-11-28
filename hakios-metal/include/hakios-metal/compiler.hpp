@@ -101,6 +101,11 @@ struct CompiledProgram {
 
 // whether a compiler is in this build
 bool hasCompiler();
+// the chip the compiler is made for, as the kernel names it (0: the A6xx of a6xx.hpp); only before the first compilation
+void setCompilerChip(uint32_t chip);
+// compute kernels compiled from now on reach their buffers and images through bindless descriptors (Kernel::bindlessIbo),
+// as Gallium compiles every shader for gen 6 and up (ir3_nir_lower_io_to_bindless); off by default
+void setCompilerBindlessIbo(bool on);
 
 // A function constant's value as the pipeline supplies it (MTLFunctionConstantValues): INDEX is the module's
 // [[function_constant(n)]], BITS the value as the bits of its type -- a bool 0 or 1, an integer or a float its own bits

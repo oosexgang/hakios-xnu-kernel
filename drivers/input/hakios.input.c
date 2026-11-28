@@ -258,7 +258,7 @@ touch_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		if (error) {
 			break;
 		}
-		if (t.type < HAKIOS_TOUCH_DOWN || t.type > HAKIOS_BUTTON_UP) {
+		if (t.type < HAKIOS_TOUCH_DOWN || t.type > HAKIOS_KEYBOARD_GONE) {
 			return EINVAL;
 		}
 		touch_post(t.type, t.finger, t.x, t.y, false);
@@ -284,6 +284,7 @@ hakios_input_init(void)
 	hakios_cpufreq_init();
 	hakios_virtio_input_init();
 	hakios_goodix_init();
+	hakios_fts_init();
 	hakios_buttons_init();
 	hakios_battery_init();
 	hakios_ufs_init();
@@ -291,5 +292,6 @@ hakios_input_init(void)
 	hakios_adreno_init();
 	hakios_wifi_init();
 	hakios_adsp_init();
+	hakios_slpi_init();
 	hakios_mpss_init();
 }

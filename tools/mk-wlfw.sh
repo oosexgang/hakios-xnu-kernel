@@ -7,14 +7,20 @@
 # Without that header hakios.wlfw.c compiles to a line that says so.
 #
 # usage: tools/mk-wlfw.sh          then build the kernel (./xnu-build.sh); again after a clean build
+#   ATH=dir        ath11k's sources somewhere else (a directory with qmi.c, qmi.h, core.c, hw.c, ce.h, htc.h
+#                  and ../.release; zeus's WCN6855 needs only those six files, not the whole of mk-ath11k.sh's)
+#   WLFW_CHIP=name the entry of core.c whose copy-engine tables go in (default "wcn6750 hw1.0"; zeus:
+#                  "wcn6855 hw2.1")
 set -e
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ROOT/xnu-env.sh"
-ATH=$ROOT/xnu-deps/build/ath11k/src/ath11k
+ATH=${ATH:-$ROOT/xnu-deps/build/ath11k/src/ath11k}
+export WLFW_CHIP=${WLFW_CHIP:-wcn6750 hw1.0}
 [ -f "$ATH/qmi.c" ] || "$ROOT/tools/mk-ath11k.sh"
 OUT=$XNU_SRC/BUILD/obj/DEVELOPMENT_ARM64_${MACHINE:-BCM2837}/bsd/DEVELOPMENT
 [ -d "$OUT" ] || { echo "mk-wlfw.sh: no build directory $OUT: build the kernel once first" >&2; exit 1; }
 python3 - "$ATH" "$(cat "$ATH/../.release" | cut -d' ' -f1)" > "$OUT/hakios.wlfw_ath11k.h.new" <<'PY'
+import os
 import re
 import sys
 
@@ -53,10 +59,11 @@ core = open(src + '/core.c').read()
 hw = open(src + '/hw.c').read()
 ce = open(src + '/ce.h').read()
 htc = open(src + '/htc.h').read()
-entry = core[core.index('"wcn6750 hw1.0"'):]
+entry = core[core.index('"%s"' % os.environ['WLFW_CHIP']):]
 entry = entry[:entry.index('\n\t},')]
 def of(field):
     return re.search(r'\.%s = (\w+),' % field, entry).group(1)
+print('/* copy-engine tables of core.c\'s entry "%s" */' % os.environ['WLFW_CHIP'])
 print('/* as Linux has it on a little-endian machine, whatever this kernel\'s headers define */')
 print('#undef __BIG_ENDIAN\n#define __cpu_to_le32(x) (x)')
 print(re.search(r'#define CE_ATTR_BYTE_SWAP_DATA.*?#endif\n', ce, re.S).group(0))

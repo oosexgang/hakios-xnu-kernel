@@ -29,17 +29,17 @@
  #endif /* hfs_iokit_h */
 --- a/bsd/hfs/hfs_vfsops.c
 +++ b/bsd/hfs/hfs_vfsops.c
-@@ -2622,6 +2622,10 @@
+@@ -2621,6 +2621,10 @@
+ #endif
  
  	journal_init();
- 
++
 +	/* HakiOS: built in, so what the kext's start() did after vfs_fsadd() is done here */
 +	hfs_init_zones();
 +	hfs_sysctl_register();
-+
+ 
  	return (0);
  }
- 
 --- a/bsd/hfs/kext-config.h
 +++ b/bsd/hfs/kext-config.h
 @@ -1,55 +1,16 @@

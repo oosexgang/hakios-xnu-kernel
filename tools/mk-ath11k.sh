@@ -36,6 +36,8 @@
 #
 # usage: tools/mk-ath11k.sh [fetch]        "fetch" stops when the driver's sources are there
 set -e
+# (macOS's sha256sum takes no --quiet: shasum does the same check there)
+sha_check() { if command -v shasum >/dev/null; then shasum -a 256 -c --quiet; else sha256sum -c --quiet; fi; }
 VERSION=7.0.14
 SHA256=de9999b784d2293f00d39c62d8f92a08ab8a54bc4e80ffd250a0c09cb07a0f98
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -47,7 +49,7 @@ cd "$B"
 if [ "$(cat src/.release 2>/dev/null)" != "$VERSION $SHA256" ]; then
 	[ -f linux-$VERSION.tar.xz ] || curl -sL --fail -o linux-$VERSION.tar.xz \
 		https://cdn.kernel.org/pub/linux/kernel/v${VERSION%%.*}.x/linux-$VERSION.tar.xz
-	echo "$SHA256  linux-$VERSION.tar.xz" | sha256sum -c --quiet
+	echo "$SHA256  linux-$VERSION.tar.xz" | sha_check
 	rm -rf src unpacked
 	mkdir unpacked
 	tar xJf linux-$VERSION.tar.xz -C unpacked --strip-components=1 linux-$VERSION/$ATH/ath11k \
@@ -81,7 +83,7 @@ PATCHES=$(cat "$W"/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)
 if [ "$(cat freebsd/.release 2>/dev/null)" != "$FREEBSD $FREEBSD_SHA256 $PATCHES" ]; then
 	[ -f freebsd-$FREEBSD-src.txz ] || curl -sL --fail -o freebsd-$FREEBSD-src.txz \
 		https://download.freebsd.org/releases/amd64/$FREEBSD-RELEASE/src.txz
-	echo "$FREEBSD_SHA256  freebsd-$FREEBSD-src.txz" | sha256sum -c --quiet
+	echo "$FREEBSD_SHA256  freebsd-$FREEBSD-src.txz" | sha_check
 	rm -rf freebsd gen obj
 	mkdir freebsd
 	tar xJf freebsd-$FREEBSD-src.txz -C freebsd --strip-components=2 usr/src/COPYRIGHT \
@@ -116,6 +118,11 @@ fi
 # --- compile: the driver's files that are built so far, and ours
 DRIVER="core hal qmi ce hw fw htc wmi mac reg peer dp dp_rx dp_tx hal_rx hal_tx dbring p2p"
 CC="clang -target arm64-apple-ios16.5"
+# LLVM's nm and size: on PATH, or Xcode's (macOS has them only through xcrun). Without them the check of what is
+# missing below would see nothing and pass.
+tool() { command -v "$1" 2>/dev/null || xcrun -f "$1" 2>/dev/null || { echo "mk-ath11k.sh: no $1 (LLVM's; on macOS: Xcode)" >&2; exit 1; }; }
+NM=$(tool llvm-nm)
+SIZE=$(tool llvm-size)
 LD=$ROOT/xnu-deps/host/bin/ld64
 CFLAGS="-mkernel -mgeneral-regs-only -fno-builtin -fno-common -ffreestanding -fno-strict-aliasing
 	-funsigned-char -nostdinc -std=gnu17 -O2 -g -w
@@ -123,7 +130,8 @@ CFLAGS="-mkernel -mgeneral-regs-only -fno-builtin -fno-common -ffreestanding -fn
 	-I$W/include -Igen -I$S -I$S/contrib/ck/include
 	-I$S/compat/linuxkpi/common/include -I$S/compat/linuxkpi/dummy/include
 	-include $S/compat/linuxkpi/common/include/linux/kconfig.h -DLINUXKPI_VERSION=70000"
-DFLAGS="-Isrc/ath11k -Isrc -include $W/include/lx_prelude.h -DCONFIG_ATH11K_AHB -DCONFIG_ATH11K_DEBUG
+# (both buses: lx_bus.c is the WCN6750's, lx_bus_pci.c zeus's WCN6855; ath11k's own ahb.c, pci.c, pcic.c and mhi.c are not built)
+DFLAGS="-Isrc/ath11k -Isrc -include $W/include/lx_prelude.h -DCONFIG_ATH11K_AHB -DCONFIG_ATH11K_PCI -DCONFIG_ATH11K_DEBUG
 	-DKBUILD_MODNAME=\"ath11k\""
 # two headers are the kernel's: what it offers this object (wifi/lx/include/lx_os.h), and its QMI
 # helpers (wifi/lx/include/linux/soc/qcom/qmi.h)
@@ -160,7 +168,7 @@ OBJECTS=$(for f in $DRIVER; do echo obj/ath11k_$f.o; done; for f in "$W"/src/*.c
 KERNEL="memcmp memcpy memmove memset strcmp strncmp strlen strchr strrchr strlcpy strlcat bzero
 	snprintf vsnprintf __stack_chk_fail __stack_chk_guard"
 $LD -r -arch arm64 $OBJECTS -o out/all.o 2> out/ld.err || { cat out/ld.err; exit 1; }
-llvm-nm -u --format=just-symbols out/all.o | sed 's/^_//' | sort > out/undefined.txt
+$NM -u --format=just-symbols out/all.o | sed 's/^_//' | sort > out/undefined.txt
 : > out/stubs.txt
 : > out/stubs.s
 missing=
@@ -182,6 +190,6 @@ printf '_lx_prepare\n_lx_start\n_lx_stop\n_lx_transmit\n' > out/exported.txt
 $LD -r -arch arm64 -exported_symbols_list out/exported.txt out/all.o out/stubs.o -o out/ath11k.o 2> out/ld.err ||
 	{ cat out/ld.err; exit 1; }
 rm -f out/all.o
-echo "mk-ath11k.sh: out/ath11k.o: $(llvm-size out/ath11k.o | awk 'NR == 2 { print $1 + $2 }') bytes of code and data from" \
+echo "mk-ath11k.sh: out/ath11k.o: $($SIZE out/ath11k.o | awk 'NR == 2 { print $1 + $2 }') bytes of code and data from" \
 	"$(echo $DRIVER | wc -w) of the driver's files; $(wc -l < out/stubs.txt) functions of the others are stubs (out/stubs.txt);" \
-	"asks the kernel for $(llvm-nm -u --format=just-symbols out/ath11k.o | grep -vc 'section\$') names"
+	"asks the kernel for $($NM -u --format=just-symbols out/ath11k.o | grep -vc 'section\$') names"

@@ -40,10 +40,11 @@ void loadIndirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32
 }
 
 // CP_LOAD_STATE6_FRAG with the data in the packet (Mesa writes zeros for the two address words)
-void loadDirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32_t units, const uint32_t* data, uint32_t dwords) {
+void loadDirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32_t units, const uint32_t* data, uint32_t dwords,
+                a6xx_state_block block = SB6_CS_SHADER) {
     std::vector<uint32_t> w;
     w.reserve(3 + dwords);
-    w.push_back(loadState6_0(dstOff, type, SS6_DIRECT, SB6_CS_SHADER, units));
+    w.push_back(loadState6_0(dstOff, type, SS6_DIRECT, block, units));
     w.push_back(0);
     w.push_back(0);
     w.insert(w.end(), data, data + dwords);
@@ -58,6 +59,17 @@ void event(pm4::Stream& st, vgt_event_type e) {
 // an event that writes VALUE to ADDRESS when it has completed: how the GPU says the caches are flushed
 void eventTimestamp(pm4::Stream& st, vgt_event_type e, uint64_t address, uint32_t value, bool timestampBit) {
     uint32_t w[4] = {eventWrite0(e, timestampBit), uint32_t(address), uint32_t(address >> 32), value};
+    st.packet(CP_EVENT_WRITE, w, 4);
+}
+
+// The A7xx's CP_EVENT_WRITE7 (same opcode): the event in word 0, and for the 4-word form WRITE_ENABLED with the source a
+// user word and the destination memory (turnip's tu_emit_raw_event_write<A7XX>); E is an A6xx or an A7xx event number
+void event7(pm4::Stream& st, uint32_t e) {
+    uint32_t w = field(e, 0, 0x000000ffu);
+    st.packet(CP_EVENT_WRITE, &w, 1);
+}
+void eventValue7(pm4::Stream& st, uint32_t e, uint64_t address, uint32_t value) {
+    uint32_t w[4] = {field(e, 0, 0x000000ffu) | CP_EVENT_WRITE7_0_WRITE_ENABLED, uint32_t(address), uint32_t(address >> 32), value};
     st.packet(CP_EVENT_WRITE, w, 4);
 }
 
@@ -401,10 +413,22 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     }
 
     // --- nothing is refused from here on: the stream, in computerator's order ---
+    if (o.a7xx && o.invalidate) {
+        // The A7xx's stream ends with CACHE_CLEAN, which writes UCHE's lines back and leaves them valid (the A6xx's
+        // CACHE_FLUSH_TS also invalidated them). The program, the constants, the IBOs and the texture descriptors below
+        // are fetched through UCHE, from a table in a pooled buffer that is often where the last dispatch's table was:
+        // Turnip and Gallium invalidate at the start of a command buffer too, before any state is loaded. (This alone did
+        // not cure the stale buffer descriptors of 11 November; the bindless bits of HLSQ_INVALIDATE_CMD below are for that.)
+        event7(stream, CACHE_INVALIDATE7);
+        stream.waitForIdle();
+    }
     if (o.prelude) {
         reg(stream, REG_A6XX_SP_MODE_CONTROL, A6XX_SP_MODE_CONTROL_CONSTANT_DEMOTION_ENABLE | A6XX_SP_MODE_CONTROL_ISAMMODE(ISAMMODE_GL));
         reg(stream, REG_A6XX_SP_PERFCTR_ENABLE, A6XX_SP_PERFCTR_ENABLE_CS);
         reg(stream, REG_A6XX_SP_FLOAT_CNTL, 0);
+        if (o.a7xx) {
+            for (const RegValue& r : kA730StaticRegs) reg(stream, r.reg, r.value);
+        }
     }
     if (o.tpState) {
         // the TP's own copy of ISAMMODE (isaml's coordinate convention depends on it, and SP_MODE_CONTROL's copy above is
@@ -415,15 +439,26 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         reg64(stream, REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
     }
     if (o.invalidateCmd) {
-        // whatever state loads are still queued for any stage are dropped before the new program's
-        reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD,
+        // whatever state loads are still queued for any stage are dropped before the new program's (the A7xx's register
+        // has the same bits at another place). On the A7xx the descriptors the SP fetches are cached by address too, and
+        // only the bindless bits drop that cache, as turnip's BINDLESS_DESCRIPTOR_INVALIDATE does whenever descriptors
+        // change: with CS_IBO alone, every dispatch kept the first one's buffer descriptor (the phone, 11 November: a
+        // kernel given any buffer but the boot's first wrote into that first one, and no more of it than its size).
+        reg(stream, o.a7xx ? REG_A7XX_HLSQ_INVALIDATE_CMD : REG_A6XX_HLSQ_INVALIDATE_CMD,
             A6XX_HLSQ_INVALIDATE_CMD_VS_STATE | A6XX_HLSQ_INVALIDATE_CMD_HS_STATE | A6XX_HLSQ_INVALIDATE_CMD_DS_STATE |
                 A6XX_HLSQ_INVALIDATE_CMD_GS_STATE | A6XX_HLSQ_INVALIDATE_CMD_FS_STATE | A6XX_HLSQ_INVALIDATE_CMD_CS_STATE |
-                A6XX_HLSQ_INVALIDATE_CMD_CS_IBO | A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO);
+                A6XX_HLSQ_INVALIDATE_CMD_CS_IBO | A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO |
+                (o.a7xx ? A7XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS | A7XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS
+                        : (k.bindlessIbo ? field(0x1f, A6XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS__SHIFT, A6XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS__MASK) : 0u)));
     }
-    reg(stream, REG_A6XX_HLSQ_CS_CNTL, hlsqCsCntl(k.constlen));
+    if (o.a7xx) {
+        reg(stream, REG_A7XX_HLSQ_CS_CNTL, a7xxHlsqCsCntl(k.constlen));
+    } else {
+        reg(stream, REG_A6XX_HLSQ_CS_CNTL, hlsqCsCntl(k.constlen));
+    }
     {
-        uint32_t v[2] = {spCsConfig(nibo, k.numSamp, k.numSamp), k.instrlen};   // SP_CS_CONFIG, SP_CS_INSTRLEN
+        uint32_t v[2] = {spCsConfig(nibo, k.numSamp, k.numSamp) | (k.bindlessIbo ? A6XX_SP_CS_CONFIG_BINDLESS_IBO : 0u),
+                         k.instrlen};   // SP_CS_CONFIG, SP_CS_INSTRLEN
         stream.registers(REG_A6XX_SP_CS_CONFIG, v, 2);
     }
     reg(stream, REG_A6XX_SP_CS_CTRL_REG0,
@@ -432,10 +467,18 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     // the HLSQ the real size where computerator writes 1, and the one that is right when they disagree is not measured
     uint32_t ctrl1 = spCsCtrlReg1(shared, k.constlen);
     reg(stream, REG_A6XX_SP_CS_CTRL_REG1, ctrl1);
-    if (o.hlsqCopies) {
-        reg(stream, REG_A6XX_HLSQ_CS_CTRL_REG1, ctrl1);
-    }
-    {
+    if (o.a7xx) {
+        // turnip's A7XX order (tu6_emit_cs_config): HLSQ_CS_CNTL_1, HLSQ_FS_CNTL_0's thread size, SP_CS_CNTL_0, SP_CS_CNTL_1,
+        // SP_CS_UNKNOWN_A9BE; no HLSQ_CS_CNTL_0 or HLSQ_CS_CTRL_REG1 on this generation
+        reg(stream, REG_A7XX_HLSQ_CS_CNTL_1, a7xxHlsqCsCntl1(threadsize, local[1]));
+        reg(stream, REG_A7XX_HLSQ_FS_CNTL_0, uint32_t(THREAD64));
+        reg(stream, REG_A6XX_SP_CS_CNTL_0, csCntl0(k.workGroupIdRegid, k.localIdRegid));
+        reg(stream, REG_A7XX_SP_CS_CNTL_1, a7xxSpCsCntl1(threadsize));
+        reg(stream, REG_A7XX_SP_CS_UNKNOWN_A9BE, 0);
+    } else {
+        if (o.hlsqCopies) {
+            reg(stream, REG_A6XX_HLSQ_CS_CTRL_REG1, ctrl1);
+        }
         uint32_t v[2] = {csCntl0(k.workGroupIdRegid, k.localIdRegid), csCntl1(threadsize)};
         stream.registers(REG_A6XX_HLSQ_CS_CNTL_0, v, 2);   // HLSQ_CS_CNTL_0, HLSQ_CS_CNTL_1
         if (o.hlsqCopies) {
@@ -445,6 +488,9 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     {
         uint32_t v[3] = {0, uint32_t(program), uint32_t(program >> 32)};   // SP_CS_OBJ_FIRST_EXEC_OFFSET, SP_CS_OBJ_START lo, hi
         stream.registers(REG_A6XX_SP_CS_OBJ_FIRST_EXEC_OFFSET, v, 3);
+    }
+    if (o.a7xx) {
+        reg(stream, REG_A7XX_SP_CS_VGPR_CONFIG, 0);   // fd6_emit_shader<A7XX>, tu6_emit_xs
     }
     if (k.pvtmemSize != 0) {
         // SP_CS_PVT_MEM_PARAM, _ADDR lo, hi, _SIZE and the stack offset as tu6_emit_xs writes a stage's (the draw's the same)
@@ -474,8 +520,21 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     if (!ubos.empty()) {
         loadDirect(stream, ST6_UBO, 0, uint32_t(ubos.size() / 2), ubos.data(), uint32_t(ubos.size()));
     }
-    if (nibo != 0) {
-        loadIndirect(stream, ST6_IBO, 0, nibo, table + kTableIbosAt);
+    if (nibo != 0 && k.bindlessIbo) {
+        // Gallium's compute bindless state (fd6_image.cc, fd6_build_bindless_state): set 0's base at the IBO table (the
+        // invalidate above dropped the old one's descriptors), then the IBOs preloaded from it. The "address" of an
+        // SS6_BINDLESS load is the set in bits 28-31 and the dword offset in it: set 0, slot 0. No SP_CS_IBO.
+        const uint64_t base = (table + kTableIbosAt) | kBindlessDescriptor64B;
+        reg64(stream, REG_A6XX_SP_CS_BINDLESS_BASE_DESCRIPTOR_0, base);
+        if (!o.a7xx) reg64(stream, REG_A6XX_HLSQ_CS_BINDLESS_BASE_DESCRIPTOR_0, base);
+        uint32_t w[3] = {loadState6_0(0, ST6_IBO, SS6_BINDLESS, SB6_CS_SHADER, nibo), (0u << 28) | 0u, 0u};
+        stream.packet(CP_LOAD_STATE6_FRAG, w, 3);
+    } else if (nibo != 0) {
+        if (o.iboDirect) {
+            loadDirect(stream, ST6_IBO, 0, nibo, reinterpret_cast<const uint32_t*>(tableCpu + kTableIbosAt), nibo * 16);
+        } else {
+            loadIndirect(stream, ST6_IBO, 0, nibo, table + kTableIbosAt);
+        }
         reg64(stream, REG_A6XX_SP_CS_IBO, table + kTableIbosAt);
         reg(stream, REG_A6XX_SP_CS_IBO_COUNT, nibo);
     }
@@ -483,9 +542,17 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         // Gallium's CS_TEX group, in its order (fd6_texture.cc:593-687): the samplers, their pointer, the textures, their
         // pointer, the count. SP_CS_CONFIG's NTEX and NSAMP (above) stay ir3's num_samp, which counts images too and so may
         // exceed this count, as in every Gallium dispatch of a shader with an image.
-        loadIndirect(stream, ST6_SHADER, 0, numSampDesc, table + kTableTexSampAt, SB6_CS_TEX);
+        if (o.iboDirect) {
+            loadDirect(stream, ST6_SHADER, 0, numSampDesc, reinterpret_cast<const uint32_t*>(tableCpu + kTableTexSampAt), numSampDesc * 4, SB6_CS_TEX);
+        } else {
+            loadIndirect(stream, ST6_SHADER, 0, numSampDesc, table + kTableTexSampAt, SB6_CS_TEX);
+        }
         reg64(stream, REG_A6XX_SP_CS_TEX_SAMP, table + kTableTexSampAt);
-        loadIndirect(stream, ST6_CONSTANTS, 0, numTex, table + kTableTexConstAt, SB6_CS_TEX);
+        if (o.iboDirect) {
+            loadDirect(stream, ST6_CONSTANTS, 0, numTex, reinterpret_cast<const uint32_t*>(tableCpu + kTableTexConstAt), numTex * 16, SB6_CS_TEX);
+        } else {
+            loadIndirect(stream, ST6_CONSTANTS, 0, numTex, table + kTableTexConstAt, SB6_CS_TEX);
+        }
         reg64(stream, REG_A6XX_SP_CS_TEX_CONST, table + kTableTexConstAt);
         reg(stream, REG_A6XX_SP_CS_TEX_COUNT, numTex);
     }
@@ -510,14 +577,14 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
             }
         }
         stream.packet(pm4::kWaitMemWrites, nullptr, 0);
-        event(stream, CACHE_INVALIDATE);
+        if (o.a7xx) event7(stream, CACHE_INVALIDATE7); else event(stream, CACHE_INVALIDATE);
         stream.waitForIdle();
         if (k.numwgConstRegid != kNoConstRegid) loadIndirect(stream, ST6_CONSTANTS, k.numwgConstRegid / 4, 1, table + kTableIndirectAt);
         if (k.driverParamsOffsetVec4 >= 0) loadIndirect(stream, ST6_CONSTANTS, uint32_t(k.driverParamsOffsetVec4), 1, table + kTableIndirectAt + 16);
     }
     if (o.invalidate) {
         // what the CPU or a blit wrote last is what the kernel reads
-        event(stream, CACHE_INVALIDATE);
+        if (o.a7xx) event7(stream, CACHE_INVALIDATE7); else event(stream, CACHE_INVALIDATE);
     }
     if (o.marker) {
         uint32_t w = setMarker0(RM6_COMPUTE);
@@ -525,9 +592,15 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     }
     {
         uint32_t v[7] = {ndrange0(3, local[0], local[1], local[2]), local[0] * groups[0], 0, local[1] * groups[1], 0, local[2] * groups[2], 0};
-        stream.registers(REG_A6XX_HLSQ_CS_NDRANGE_0, v, 7);
-        uint32_t ones[3] = {1, 1, 1};
-        stream.registers(REG_A6XX_HLSQ_CS_KERNEL_GROUP_X, ones, 3);
+        if (o.a7xx) {
+            // the same seven words at the A7xx's place, and the last group's local size (the whole one: groups are whole)
+            stream.registers(REG_A7XX_HLSQ_CS_NDRANGE_0, v, 7);
+            reg(stream, REG_A7XX_HLSQ_CS_LAST_LOCAL_SIZE, a7xxLastLocalSize(local[0], local[1], local[2]));
+        } else {
+            stream.registers(REG_A6XX_HLSQ_CS_NDRANGE_0, v, 7);
+            uint32_t ones[3] = {1, 1, 1};
+            stream.registers(REG_A6XX_HLSQ_CS_KERNEL_GROUP_X, ones, 3);
+        }
     }
     // A program longer than the instruction cache is fetched from memory as it runs, and that fetch is bounds-checked
     // against SP_FS_INSTRLEN of the other register context instead of SP_CS_INSTRLEN (Mesa issue 5892, MR 19023: "affects
@@ -538,7 +611,7 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     const bool instrlenWorkaround = k.instrlen > kInstrCacheSize || (o.preloadCap != 0 && k.instrlen > o.preloadCap);
     if (instrlenWorkaround) {
         reg(stream, REG_A6XX_SP_FS_INSTRLEN, k.instrlen);
-        event(stream, LABEL);
+        if (o.a7xx) event7(stream, LABEL); else event(stream, LABEL);
     }
     if (indirect != 0) {
         uint32_t w[4] = {0, uint32_t(indirect), uint32_t(indirect >> 32), execCsIndirect3(local[0], local[1], local[2])};
@@ -548,12 +621,27 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         stream.packet(CP_EXEC_CS, w, 4);
     }
     if (instrlenWorkaround) {
-        event(stream, LABEL);
+        if (o.a7xx) event7(stream, LABEL); else event(stream, LABEL);
     }
     stream.waitForIdle();
     if (o.tail) {
         // the end, as computerator's cache_flush: the GPU says it is done, the caches are flushed, and the flush is waited for
         uint64_t ts = table + kTableTimestampsAt;
+        if (o.a7xx) {
+            // the A7xx: RB_DONE_TS writes its value with CP_EVENT_WRITE7's WRITE_ENABLED; the cache flush (FD_CACHE_CLEAN)
+            // is CACHE_CLEAN there, which writes nothing, so a second RB_DONE_TS after it says it is done
+            if (o.tailRbDone) {
+                eventValue7(stream, RB_DONE_TS, ts, 1);
+                waitForWord(stream, ts, 1);
+            }
+            if (o.tailCacheFlush) {
+                event7(stream, CACHE_CLEAN);
+                stream.waitForIdle();
+                eventValue7(stream, RB_DONE_TS, ts + 4, 2);
+                waitForWordAtLeast(stream, ts + 4, 2);
+            }
+            return true;
+        }
         if (o.tailRbDone) {
             eventTimestamp(stream, RB_DONE_TS, ts, 1, o.tailTimestampBit);
             waitForWord(stream, ts, 1);
@@ -616,6 +704,14 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
         return fail(std::string("no memory for the program: ") + why);
     }
     Piece table;
+    if (options.tableRotate) {
+        // (an experiment: compute.hpp, Options::tableRotate) a gap of 1..7 tables before this one (inside the slab: a piece over a quarter of it gets a buffer of its own), another each dispatch
+        static uint32_t turn;
+        Piece gap;
+        if (!piece(compute::kTableBytes * (1 + turn++ % 7), &gap, &why)) {
+            return fail(std::string("no memory for the descriptors: ") + why);
+        }
+    }
     if (!piece(compute::kTableBytes, &table, &why)) {
         return fail(std::string("no memory for the descriptors: ") + why);
     }
@@ -636,9 +732,11 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
         b = &withScratch;
     }
     pm4::Stream added;
+    compute::Options o = options;
+    o.a7xx = queue_.gpu().generation() == 7;
     const bool encoded = args != nullptr ? compute::encodeIndirect(added, k, args->gpuAddress() + offset, loc, *b, immediates, program, table.gpuAddress(),
-                                                                   table.contents(), &why, options)
-                                         : compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, options);
+                                                                   table.contents(), &why, o)
+                                         : compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, o);
     if (!encoded) {
         return refuseWork(why);
     }

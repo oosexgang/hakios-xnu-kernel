@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# Wi-Fi run by wifid on zeus (wlan=19 wifi=1 wifi_file=0, RC_JOBS=rc.jobs.wifid, REST=1, XL_SECS=200): the kernel offers
+# the station and joins nothing itself; wifid is asked, as Settings asks it, to turn the radio on, scan and join the
+# network of fw-wifi/wlan.conf (src/wifi_client.c); configd then gets the address. Late in the run, so that the lines
+# land in the kernel's message buffer that the log keeps whole. (No ifconfig, netstat or ping here: net_test.)
+/redwood/bin/wifi_client wait 90 power scan join
+/redwood/bin/net_test kernel waitaddr en0 40 route ping gateway 5 store State:/Network/Global/IPv4

@@ -1514,18 +1514,29 @@ space_off(struct gpu_space *space, uint32_t match)
 #define SCM_INTERRUPTED         1                       /* a call that was preempted says so, and is made again so */
 #define PAS_GPU                 13
 
+extern bool hakios_scm_enter(void);
+extern void hakios_scm_leave(bool held);
+
 /* One call. What TrustZone returns: 0 or an error of its own, and a word of answer. */
 static int32_t
 scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third,
     uint64_t *answer)
 {
+	bool held;                      /* one TrustZone call at a time, the whole kernel's (hakios.platform.c) */
 	uint64_t session = 0;
 
 	printf("adreno: %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
 	hold(true);
-	for (int i = 0; i < 100; i++) {
+	held = hakios_scm_enter();
+	/*
+	 * TrustZone answers "interrupted" whenever an interrupt comes in during a long call; the call goes on when it is asked
+	 * again with its session, and Linux asks again for as long as it takes. Giving up (the limit here was 100) leaves
+	 * TrustZone inside the call: the next image load by anybody then never returns and the kernel stops (zeus, 16
+	 * November 2026: the audio DSP's header was given up on, and the video codec's load hung every such boot).
+	 */
+	for (int i = 0; i < 10000000; i++) {
 		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
 		register uint64_t x1 __asm__("x1") = arguments;
 		register uint64_t x2 __asm__("x2") = first;
@@ -1541,10 +1552,12 @@ scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uin
 		if (x0 != SCM_INTERRUPTED) {
 			printf("adreno: %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
 			*answer = x1;
+			hakios_scm_leave(held);
 			return (int32_t)x0;
 		}
 	}
 	printf("adreno: %u: TrustZone keeps saying the call was interrupted\n", step);
+	hakios_scm_leave(held);
 	return -1;
 }
 

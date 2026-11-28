@@ -72,6 +72,9 @@ hakios_metal_device *hakios_metal_open_fake(void);
 void hakios_metal_close(hakios_metal_device *device);
 /* the chip id (0x06030500 on the phone: the kernel's GPU_ID is 0, the chip id is what names the GPU) */
 uint64_t hakios_metal_gpu_id(hakios_metal_device *device);
+/* 1 when compute, draws, texture blits and clears are this chip's (the A6xx); 0 on a chip where only buffers, copies and
+ * fills are (the A730 until its registers are ported): the window server stays on OpenGL ES there */
+int hakios_metal_can_render(hakios_metal_device *device);
 /* whether kernels can be compiled in this build (MESA=1); without it hakios_metal_kernel_compile* refuse by name */
 int hakios_metal_has_compiler(void);
 

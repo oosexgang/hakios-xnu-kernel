@@ -4,6 +4,7 @@
  * usage: camera_test raw [FRAMES] [noae] [noawb] [keepraw|full] [ccm M] [sensor N]
  *        camera_test cycle [FRAMES]
  *        camera_test noise [SENSOR|all]
+ *        camera_test pair [FRAMES]
  *   raw: reads FRAMES frames (default 150) from the kernel's /dev/hakios-camera, with src/camera_isp.c's
  *   exposure (unless noae: the kernel's, boot-args cam_shutter and cam_gain) and white balance working
  *   on them, says what came and how fast, and leaves the last one as a picture for the host (xl
@@ -19,6 +20,9 @@
  *   site of the 2x2 cell the mean (the black level), the temporal noise (the two frames' difference,
  *   over the square root of 2), the fixed pattern (what is left of the two frames' mean), the rows'
  *   noise (how much whole lines move together); for one sensor (0 to 3) or all four.
+ *   pair: the wide and the telephoto at once (HAKIOS_CAMERA_PAIR, Portrait's two cameras), FRAMES reads
+ *   (default 90): each read is the wide's frame and the telephoto's nearest it; how fast each came, how
+ *   far apart in time the two of a read were, and their levels.
  */
 #include <dispatch/dispatch.h>
 #include <errno.h>
@@ -137,6 +141,85 @@ cycle(int frames)
 	free(buffer);
 	close(device);
 	return failures == 0 ? 0 : 1;
+}
+
+/* HAKIOS_CAMERA_PAIR: both frames of each read, how they came */
+static int
+pair(int reads)
+{
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), got = 0, wide_new = 0, tele_new = 0;
+	struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = HAKIOS_CAMERA_PAIR, .b = ~0u };
+	struct hakios_camera_frame head;
+	uint64_t wide_seq = 0, tele_seq = 0, wide_first = 0, wide_last = 0, tele_first = 0, tele_last = 0;
+	double apart_sum = 0, apart_max = 0;
+	uint8_t *buffer;
+	size_t want;
+	ssize_t r;
+
+	if (device < 0) {
+		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
+		return 1;
+	}
+	if (write(device, &c, sizeof(c)) != (ssize_t)sizeof(c)) {
+		printf("camera_test: the pair cannot be chosen: %s\n", strerror(errno));
+		return 1;
+	}
+	for (int tries = 0; (r = read(device, &head, sizeof(head))) < 0 && errno == EAGAIN && tries < 3; tries++) {
+	}
+	if (r != (ssize_t)sizeof(head) || memcmp(head.magic, HAKIOS_CAMERA_MAGIC, 8) != 0 || !head.more) {
+		printf("camera_test: the pair: no paired frames (%s, more %u)\n", r < 0 ? strerror(errno) : "short",
+		    r == (ssize_t)sizeof(head) ? head.more : 0);
+		return 1;
+	}
+	want = 2 * sizeof(head) + head.frame_bytes + 64ul * 1024 * 1024;     /* (the telephoto's is larger: room for it) */
+	buffer = malloc(want);
+	for (int i = 0; i < reads; i++) {
+		const struct hakios_camera_frame *w = (const void *)buffer, *t;
+
+		r = read(device, buffer, want);
+		if (r < (ssize_t)(2 * sizeof(head)) || !w->more || (size_t)r < w->header_bytes + w->frame_bytes + sizeof(head)) {
+			printf("camera_test: the pair: read %d gave %zd bytes (%s)\n", i, r, r < 0 ? strerror(errno) : "short");
+			break;
+		}
+		t = (const void *)(buffer + w->header_bytes + w->frame_bytes);
+		if ((size_t)r != w->header_bytes + w->frame_bytes + t->header_bytes + t->frame_bytes) {
+			printf("camera_test: the pair: read %d gave %zd bytes, not %u + %u + %u + %u\n", i, r, w->header_bytes,
+			    w->frame_bytes, t->header_bytes, t->frame_bytes);
+			break;
+		}
+		got++;
+		wide_new += w->sequence != wide_seq;
+		tele_new += t->sequence != tele_seq;
+		wide_seq = w->sequence;
+		tele_seq = t->sequence;
+		wide_first = wide_first ? wide_first : w->time;
+		tele_first = tele_first ? tele_first : t->time;
+		wide_last = w->time;
+		tele_last = t->time;
+		double apart = ticks_ms(t->time > w->time ? t->time - w->time : w->time - t->time);
+
+		apart_sum += apart;
+		apart_max = apart > apart_max ? apart : apart_max;
+		if (i == 0 || i + 1 == reads) {
+			struct isp_stats sw, st;
+
+			isp_measure(NULL, w, buffer + w->header_bytes, &sw);
+			isp_measure(NULL, t, (const uint8_t *)t + t->header_bytes, &st);
+			printf("camera_test: pair read %d: wide %ux%u frame %llu (%u lines, gain %.2fx; G %.1f) and telephoto (sensor %u) "
+			    "%ux%u frame %llu (%u lines, gain %.2fx; G %.1f), %.1f ms apart\n", i, w->width, w->height, w->sequence,
+			    w->exposure_lines, (double)w->gain / w->gain_unity, sw.mean[1], t->sensor, t->width, t->height, t->sequence,
+			    t->exposure_lines, (double)t->gain / t->gain_unity, st.mean[1], apart);
+		}
+	}
+	if (got > 1) {
+		printf("camera_test: the pair: %d reads; the wide %d new frames (%.1f a second), the telephoto %d (%.1f a second); "
+		    "%.1f ms apart on average, %.1f at the most\n", got, wide_new, (wide_new - 1) * 1000.0 / ticks_ms(wide_last - wide_first),
+		    tele_new, tele_last > tele_first ? (tele_new - 1) * 1000.0 / ticks_ms(tele_last - tele_first) : 0.0, apart_sum / got,
+		    apart_max);
+	}
+	free(buffer);
+	close(device);
+	return got == reads ? 0 : 1;
 }
 
 /* the value of pixel x of line y of a RAW10 frame */
@@ -441,6 +524,9 @@ main(int argc, char **argv)
 	}
 	if (argc >= 2 && strcmp(argv[1], "noise") == 0) {
 		return noise(argc >= 3 ? argv[2] : "all");
+	}
+	if (argc >= 2 && strcmp(argv[1], "pair") == 0) {
+		return pair(argc >= 3 ? atoi(argv[2]) : 90);
 	}
 	if (argc >= 2 && strcmp(argv[1], "cycle") == 0) {
 		return cycle(argc >= 3 ? atoi(argv[2]) : 30);

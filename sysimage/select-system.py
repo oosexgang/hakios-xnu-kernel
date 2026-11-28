@@ -23,7 +23,7 @@ The whole root is 7.9 GB and the kernel on the phone has about 4 GB of RAM for e
     (userland/build.sh moves the extracted files);
   - machine-learning models, other languages' localizations, media and GPU shader libraries
     are left out, and so are a few very big daemons that have nothing to do with the display;
-  - /Library (the wallpapers, regional tables) without its sounds;
+  - /Library (the wallpapers, the ringtones, regional tables) without its other sounds;
   - of pictures, what the user interface itself is drawn with: small images, asset catalogs of
     moderate size; the fonts, the two biggest (colour emoji and Chinese) made smaller by unpack.sh;
   - the empty LANGUAGE.lproj directories of the bundles whose strings are in one .loctable file
@@ -56,6 +56,12 @@ SKIP_EXT = ('.weights', '.weights_nonane', '.metallib', '.mov', '.pcm', '.scnz',
             '.ds', '.dat', '.bin')
 # ... but '.dat' and '.bin' are also what these keep the tables in that the user interface is made with:
 # the layouts of the on-screen keyboard, the emoji, the list of public domain suffixes
+# ... but the camera's shader libraries are taken: Portrait's pipeline in mediaserverd (AppleCVAPhoto's
+# CVAPortraitVideoPipeline) asserts without its cvadepth-iOS.metallib, and the capture frameworks look for theirs
+CAMERA_METALLIBS = tuple(f'System/Library/PrivateFrameworks/{name}.metallib' for name in (
+    'AppleCVAPhoto.framework/Resources/cvadepth-iOS', 'AppleCVA.framework/cvaviewpointcorrection',
+    'CMCapture.framework/default', 'CMImaging.framework/default', 'Portrait.framework/default',
+    'PhotoImaging.framework/default'))
 DATA_FRAMEWORKS = tuple(f'System/Library/{name}.framework/' for name in (
     'PrivateFrameworks/TextInputUI', 'PrivateFrameworks/CoreEmoji', 'Frameworks/CFNetwork'))
 # never from applications: their sound, video and 3D content
@@ -82,16 +88,19 @@ BIG_CATALOGS = ('System/Library/PrivateFrameworks/SFSymbols.framework/',)
 # taken whole in principle, but not these: big and of no use until much later
 # (/Library is the wallpapers and a few tables of regional settings, apart from the sounds)
 HEALTH = 'System/Library/Health/'
+# (Library/Ringtones is taken: 53 files, 17 MB, and without them Settings' ringtone list plays and sets nothing)
 SKIP_PREFIX = ('usr/share/tokenizer/', 'usr/share/firmware/', 'usr/share/mecabra/',
-               'usr/standalone/', 'Library/Audio/', 'Library/Ringtones/',
+               'usr/standalone/', 'Library/Audio/',
                HEALTH + 'Assets/FitnessUIAssets.bundle/') + \
     tuple(f'System/Library/{name}/' for name in SKIP_SYSTEM_LIBRARY)
 BIG_PROGRAM = 10 << 20           # daemons bigger than this (locationd, lskdd, ...) are not on the way to the screen
 # sound, outside the directories above: the virtual audio device, a plug-in that all of mediaserverd's
 # audio goes through, with its tunings (signal processing chains) for this model and for any, and the
 # system's own sounds. Not the neural networks among the tunings, nor the sounds of the watch.
+# ... and Apple's Bluetooth audio plug-in, which makes the Bluetooth devices (A2DP, HFP) that the virtual audio device
+# routes to: bluetoothd talks to it (com.apple.BTAudioHALPlugin.xpc). The other plug-ins there are left out.
 AUDIO = ('Library/Audio/Plug-Ins/', 'Library/Audio/Tunings/D22/', 'Library/Audio/Tunings/Generic/',
-         'System/Library/Audio/UISounds/')
+         'System/Library/Audio/UISounds/', 'System/Library/Audio/Plug-Ins/HAL/BTAudioHALPlugin.driver/')
 SKIP_AUDIO = ('System/Library/Audio/UISounds/nano/',)
 KEEP_LANG = ('en', 'Base', 'English', 'en_US', 'en_GB')
 
@@ -151,6 +160,8 @@ def wanted_file(path, size):
     if path.startswith(FRAMEWORKS):
         if re.search(r'/(XPCServices|Support|Helpers)/', path):
             return size <= 32 << 20 and not path.lower().endswith(('.png', '.car', '.loctable', '.caml'))
+        if path in CAMERA_METALLIBS:
+            return True
         if path.endswith('.car'):
             return size <= MAX_ASSET_CATALOG or path.startswith(BIG_CATALOGS)
         if path.endswith('.loctable'):

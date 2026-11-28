@@ -370,6 +370,10 @@ int
 lx_qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi_txn *txn, int msg_id, size_t largest,
     const struct qmi_elem_info *ei, const void *structure)
 {
+	/* (a chip on PCIe: its bus has its own say over the requests, lx_bus_pci.c) */
+	if (lx_os_radio_bus() == LX_OS_BUS_PCI) {
+		return (lx_pci_qmi_send_request(qmi, sq, txn, msg_id, largest, ei, structure));
+	}
 	if (msg_id == QMI_WLANFW_WLAN_MODE_REQ_V01) {
 		u32 mode = ((const struct qmi_wlanfw_wlan_mode_req_msg_v01 *)structure)->mode;
 
@@ -674,8 +678,8 @@ linuxkpi_device_get_mac_address(struct device *dev, char *address)
 
 /* ---- what the firmware has said of the radio ------------------------------------------------------- */
 
-/* After "unified ready": what wmi.c has kept of the firmware's two announcements. */
-static void
+/* After "unified ready": what wmi.c has kept of the firmware's two announcements (lx_bus_pci.c says it too). */
+void
 say_radio(struct ath11k_base *ab)
 {
 	const struct ath11k_targ_cap *t = &ab->target_caps;
@@ -725,6 +729,10 @@ lx_start(void)
 	bool up;
 	int ret;
 
+	/* a chip on PCIe (zeus's WCN6855) has a bus of its own: lx_bus_pci.c */
+	if (lx_os_radio_bus() == LX_OS_BUS_PCI) {
+		return (lx_pci_start());
+	}
 	bus.how = lx_os_option("wifi_lx");
 	if (lx_prepare() != 0) {
 		lx_tell("lx: no thread, or no memory the radio can be given\n");
@@ -840,6 +848,13 @@ lx_prepare(void)
 	return (lx_base_init() != 0 || lx_pool_init() != 0 ? ENOMEM : 0);
 }
 
+/* lx_bus_pci.c: the driver is up on a chip on PCIe and stays so (a network joined): lx_stop() takes it down */
+void
+lx_driver_up(struct ath11k_base *ab)
+{
+	driver = ab;
+}
+
 /* The network left, and the driver down as its own removal does it (the copy engines are let go of on the way: bus_quiet()). */
 void
 lx_stop(void)
@@ -852,6 +867,9 @@ lx_stop(void)
 	driver = NULL;
 	lx_station_withdraw();
 	lx_station_leave();
+	if (lx_os_radio_bus() == LX_OS_BUS_PCI) {
+		lx_pause_ms(1000);		/* (the WCN6855 answers the mode "off" only a while after its vdev is deleted: log 103000) */
+	}
 	ath11k_core_deinit(ab);
 	lx_tell("lx: the driver is down again\n");
 }

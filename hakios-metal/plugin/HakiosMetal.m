@@ -152,9 +152,23 @@ queueLabel(__unused id self, __unused SEL _cmd)
 	return @"HakiosMetalQueue";
 }
 
-static void
+/* <MTLCommandQueueSPI>'s priorities (BOOL: done); mediaserverd's CMMTLCommandQueue sends the background one first */
+static BOOL
 queueSetGPUPriority(__unused id self, __unused SEL _cmd, __unused unsigned long priority)
 {
+	return YES;
+}
+
+static BOOL
+queueSetGPUPriorityOffset(__unused id self, __unused SEL _cmd, __unused unsigned long priority, __unused unsigned short offset)
+{
+	return YES;
+}
+
+static unsigned long
+queueGPUPriority(__unused id self, __unused SEL _cmd)
+{
+	return 0;
 }
 
 static id
@@ -831,6 +845,28 @@ libraryNewFunctionConstants(id self, SEL _cmd, id name, id constants, NSError **
 	return function;
 }
 
+/* <MTLLibrarySPI>: the same with a pipeline library of compiled stages (Apple's GPU binaries), which there is none of */
+static id
+libraryNewFunctionPipelines(id self, SEL _cmd, id name, id constants, __unused id pipelines, NSError **error)
+{
+	return libraryNewFunctionConstants(self, _cmd, name, constants, error);
+}
+
+/*
+ * <MTLDeviceSPI>: a pipeline library is a file of stages compiled for Apple's GPUs (AppleCVAPhoto's pipelines.g11p ...
+ * beside its AIR in "functions"). _MTLDevice's own crashes making the AGX class; none of them is for this GPU, so nil:
+ * CVAPortraitVideoPipeline then takes its functions from the library alone.
+ */
+static id
+deviceNewPipelineLibrary(__unused id self, __unused SEL _cmd, NSString *path, NSError **error)
+{
+	say([NSString stringWithFormat:@"newPipelineLibraryWithFilePath:%@: none (no stages compiled for this GPU)", path]);
+	if (error != NULL) {
+		*error = nil;
+	}
+	return nil;
+}
+
 static unsigned long
 libraryType(__unused id self, __unused SEL _cmd)
 {
@@ -1085,6 +1121,8 @@ registerObjectClasses(Class device)
 		class_addMethod(gLibraryClass, sel_registerName("newFunctionWithName:"), (IMP)libraryNewFunction, "@@:@");
 		class_addMethod(gLibraryClass, sel_registerName("newFunctionWithName:constantValues:error:"), (IMP)libraryNewFunctionConstants,
 		    "@@:@@^@");
+		class_addMethod(gLibraryClass, sel_registerName("newFunctionWithName:constantValues:pipelineLibrary:error:"),
+		    (IMP)libraryNewFunctionPipelines, "@@:@@@^@");
 		class_addMethod(gLibraryClass, sel_registerName("type"), (IMP)libraryType, "Q@:");
 		objc_registerClassPair(gLibraryClass);
 		class_addMethod(device, sel_registerName("newLibraryWithURL:error:"), (IMP)deviceNewLibraryURL, "@@:@^@");
@@ -1092,6 +1130,7 @@ registerObjectClasses(Class device)
 		class_addMethod(device, sel_registerName("newLibraryWithData:error:"), (IMP)deviceNewLibraryData, "@@:@^@");
 		class_addMethod(device, sel_registerName("newDefaultLibrary"), (IMP)deviceNewDefaultLibrary, "@@:");
 		class_addMethod(device, sel_registerName("newDefaultLibraryWithBundle:error:"), (IMP)deviceNewDefaultLibraryBundle, "@@:@^@");
+		class_addMethod(device, sel_registerName("newPipelineLibraryWithFilePath:error:"), (IMP)deviceNewPipelineLibrary, "@@:@^@");
 	}
 	class_addMethod(device, sel_registerName("hasUnifiedMemory"), (IMP)deviceUnifiedMemory, "B@:");
 	class_addMethod(device, sel_registerName("dedicatedMemorySize"), (IMP)deviceNoDedicatedMemory, "Q@:");
@@ -1120,6 +1159,42 @@ declareProtocolFamily(Class cls, const char * protocolName)
 	free(all);
 }
 
+/*
+ * The descriptor forms of the pipeline makers (AppleCVAPhoto's computeKernel makes every kernel's pipeline from an
+ * MTLComputePipelineDescriptor): the same empty stubs as from a function; a reflection asked for is none.
+ */
+static id
+deviceComputeFromDescriptor(id self, __unused SEL _cmd, __unused id descriptor, NSError **error)
+{
+	if (error != NULL) {
+		*error = nil;
+	}
+	return stubFactory(self, sel_registerName("newComputePipelineStateWithFunction:error:"));
+}
+
+static id
+deviceComputeFromDescriptorReflection(id self, SEL _cmd, id descriptor, __unused unsigned long options, id *reflection,
+    NSError **error)
+{
+	if (reflection != NULL) {
+		*reflection = nil;
+	}
+	return deviceComputeFromDescriptor(self, _cmd, descriptor, error);
+}
+
+static id
+deviceRenderFromDescriptorReflection(id self, __unused SEL _cmd, __unused id descriptor, __unused unsigned long options,
+    id *reflection, NSError **error)
+{
+	if (reflection != NULL) {
+		*reflection = nil;
+	}
+	if (error != NULL) {
+		*error = nil;
+	}
+	return stubFactory(self, sel_registerName("newRenderPipelineStateWithDescriptor:error:"));
+}
+
 static void
 registerStubClasses(Class device)
 {
@@ -1140,6 +1215,12 @@ registerStubClasses(Class device)
 		say([NSString stringWithFormat:@"%s is a %s (a subclass of %s)", gStubSpecs[i].selector, gStubSpecs[i].cls,
 		    base != Nil ? gStubSpecs[i].base : "NSObject: this system has no such class"]);
 	}
+	class_addMethod(device, sel_registerName("newComputePipelineStateWithDescriptor:error:"), (IMP)deviceComputeFromDescriptor,
+	    "@@:@^@");
+	class_addMethod(device, sel_registerName("newComputePipelineStateWithDescriptor:options:reflection:error:"),
+	    (IMP)deviceComputeFromDescriptorReflection, "@@:@Q^@^@");
+	class_addMethod(device, sel_registerName("newRenderPipelineStateWithDescriptor:options:reflection:error:"),
+	    (IMP)deviceRenderFromDescriptorReflection, "@@:@Q^@^@");
 }
 
 #ifdef HAKIOS_METAL_GPU
@@ -1484,7 +1565,12 @@ registerQueueClass(void)
 	free(all);
 	class_addMethod(gQueueClass, sel_registerName("device"), (IMP)queueDevice, "@@:");
 	class_addMethod(gQueueClass, sel_registerName("label"), (IMP)queueLabel, "@@:");
-	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:"), (IMP)queueSetGPUPriority, "v@:Q");
+	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:"), (IMP)queueSetGPUPriority, "B@:Q");
+	class_addMethod(gQueueClass, sel_registerName("setBackgroundGPUPriority:"), (IMP)queueSetGPUPriority, "B@:Q");
+	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:offset:"), (IMP)queueSetGPUPriorityOffset, "B@:QS");
+	class_addMethod(gQueueClass, sel_registerName("setBackgroundGPUPriority:offset:"), (IMP)queueSetGPUPriorityOffset, "B@:QS");
+	class_addMethod(gQueueClass, sel_registerName("getGPUPriority"), (IMP)queueGPUPriority, "Q@:");
+	class_addMethod(gQueueClass, sel_registerName("getBackgroundGPUPriority"), (IMP)queueGPUPriority, "Q@:");
 	class_addMethod(gQueueClass, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
 	class_addMethod(gQueueClass, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
 	class_addMethod(gQueueClass, sel_registerName("dealloc"), (IMP)queueDealloc, "v@:");

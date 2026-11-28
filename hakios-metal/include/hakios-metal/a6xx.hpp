@@ -27,6 +27,11 @@ namespace hakios::metal::a6xx {
 // From Mesa's src/freedreno/common/freedreno_devices.py: the entry for chip_id ...06030500 ("Adreno 7c+ Gen 3", every
 // speedbin of the A635) is a6xx_base + a6xx_gen4 with num_ccu = 2.
 
+// The Adreno 730 (zeus, SM8450): Mesa's freedreno_devices.py GPUId(chip_id=0x07030001, name="FD730"). A7xx: buffers and
+// the command processor's own copies and fills work as on the A6xx; compute has its own registers below ("the A7xx's
+// compute registers", compute::Options::a7xx); draws and the 2D engine write registers that moved and are refused there
+// until they are ported (gpu.hpp, renders()).
+inline constexpr uint32_t kChipIdA730 = 0x07030001;   // not-in-headers: freedreno_devices.py GPUId(chip_id=0x07030001)
 inline constexpr uint32_t kChipId = 0x06030500;             // not-in-headers: freedreno_devices.py GPUId(chip_id=0x..06030500)
 inline constexpr bool kHasLpac = true;                       // not-in-headers: freedreno_devices.py a6xx_gen4.has_lpac
 inline constexpr bool kSupportsDoubleThreadsize = true;      // not-in-headers: freedreno_devices.py a6xx_base.supports_double_threadsize
@@ -1313,6 +1318,92 @@ constexpr uint32_t csCntl0(uint32_t workGroupIdConst, uint32_t localIdReg) {
 // HLSQ_CS_CNTL_1 and SP_CS_CNTL_1 (same layout): no linear local id, the thread size
 constexpr uint32_t csCntl1(a6xx_threadsize threadsize) {
     return A6XX_HLSQ_CS_CNTL_1_LINEARLOCALIDREGID(kRegidNone) | A6XX_HLSQ_CS_CNTL_1_THREADSIZE(threadsize);
+}
+
+// --- the A7xx's compute registers (the Adreno 730) ----------------------------------------------------------------
+// What moved or is new for a compute dispatch on the A7xx, from the same headers; the order and values are turnip's A7XX
+// path (tu_shader.cc tu6_emit_cs_config<A7XX>, tu_cmd_buffer.cc tu_dispatch<A7XX>, tu_emit_raw_event_write<A7XX>).
+// The rest of the dispatch's registers (SP_CS_CONFIG, SP_CS_CTRL_REG0/1, SP_CS_CNTL_0, the program, private memory,
+// IBO, texture and constant loads) have no A7XX name and the same place. HLSQ_CS_CNTL_0 and HLSQ_CS_CTRL_REG1 are not
+// written on the A7xx (turnip writes neither there), nor HLSQ_CS_KERNEL_GROUP_X/Y/Z (CP_EXEC_CS sets them).
+inline constexpr uint32_t REG_A7XX_HLSQ_CS_CNTL = 0xa9cd;                               // a6xx.xml.h:10632
+inline constexpr uint32_t A7XX_HLSQ_CS_CNTL_ENABLED = 0x00000100;                       // a6xx.xml.h:10640
+inline constexpr uint32_t REG_A7XX_HLSQ_CS_NDRANGE_0 = 0xa9d4;                          // a6xx.xml.h:10778  NDRANGE_0..6, the A6xx layout
+inline constexpr uint32_t REG_A7XX_HLSQ_CS_CNTL_1 = 0xa9db;                             // a6xx.xml.h:10868
+inline constexpr uint32_t A7XX_HLSQ_CS_CNTL_1_THREADSIZE__SHIFT = 9;                    // a6xx.xml.h:10876
+inline constexpr uint32_t A7XX_HLSQ_CS_CNTL_1_WORKGROUPRASTORDERZFIRSTEN = 0x00000800;  // a6xx.xml.h:10881
+inline constexpr uint32_t A7XX_HLSQ_CS_CNTL_1_WGTILEWIDTH__SHIFT = 20;                  // a6xx.xml.h:10883
+inline constexpr uint32_t A7XX_HLSQ_CS_CNTL_1_WGTILEHEIGHT__SHIFT = 26;                 // a6xx.xml.h:10889
+inline constexpr uint32_t REG_A7XX_HLSQ_CS_LAST_LOCAL_SIZE = 0xa9df;                    // a6xx.xml.h:10896  the NDRANGE_0 layout, no KERNELDIM
+inline constexpr uint32_t REG_A7XX_HLSQ_INVALIDATE_CMD = 0xab1f;                        // a6xx.xml.h:11050  bits 0-7 as the A6xx's
+// bindless descriptor set N's base: the address of 64-byte descriptors, DESC_SIZE 3 (BINDLESS_DESCRIPTOR_64B) in bits 0-1;
+// the A6xx has the HLSQ's copy too (fd6_image.cc: fd6_build_bindless_state)
+inline constexpr uint32_t REG_A6XX_SP_CS_BINDLESS_BASE_DESCRIPTOR_0 = 0xa9e8;           // a6xx.xml.h:9329 (A7XX the same, :9347)
+inline constexpr uint32_t REG_A6XX_HLSQ_CS_BINDLESS_BASE_DESCRIPTOR_0 = 0xb9c0;         // a6xx.xml.h:10928 (A6XX only)
+inline constexpr uint32_t kBindlessDescriptor64B = 3;                                   // a6xx.xml.h:2317
+inline constexpr uint32_t A7XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS = 0x0001fe00;          // a6xx.xml (A7XX-): bits 9-16, one a bindless base
+inline constexpr uint32_t A7XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS = 0x01fe0000;         // bits 17-24
+inline constexpr uint32_t REG_A7XX_HLSQ_FS_CNTL_0 = 0xa9c6;                             // a6xx.xml.h:10511  turnip writes THREAD64 here for a dispatch
+inline constexpr uint32_t REG_A7XX_SP_CS_CNTL_1 = 0xa9c3;                               // a6xx.xml.h:9293   the A6xx's place, another layout
+inline constexpr uint32_t A7XX_SP_CS_CNTL_1_THREADSIZE__SHIFT = 8;                      // a6xx.xml.h:9301
+inline constexpr uint32_t A7XX_SP_CS_CNTL_1_WORKITEMRASTORDER__SHIFT = 15;              // a6xx.xml.h:9308
+inline constexpr uint32_t REG_A7XX_SP_CS_UNKNOWN_A9BE = 0xa9be;                         // a6xx.xml.h:9243   turnip writes 0 ("sometimes is 0x08000000")
+inline constexpr uint32_t CP_EVENT_WRITE7_0_WRITE_ENABLED = 0x08000000;
+inline constexpr uint32_t REG_A7XX_SP_CS_VGPR_CONFIG = 0xa9c5;                          // a6xx.xml: Gallium and turnip write 0 (fd6_emit_shader)
+// The A730's static registers as Gallium writes them at every batch start (fd6_emit_static_regs<A7XX>), with
+// freedreno_devices.py's a730_magic_regs and a730_raw_magic_regs values (FD730, chip 0x07030001). The kernel's hw_init
+// (Linux's) does not write the SP and TP ones; Gallium's GL on this GPU always has them.
+struct RegValue { uint32_t reg, value; };
+inline constexpr RegValue kA730StaticRegs[] = {
+    {0x0e17, 0x00840004},   // UCHE_CACHE_WAYS
+    {0xb602, 0x00040724},   // TPL1_DBG_ECO_CNTL1 (TP_UBWC_FLAG_HINT clear: enable_tp_ubwc_flag_hint is false here)
+    {0xae08, 0x00002400}, {0xae09, 0}, {0xae0a, 0},          // SP_UNKNOWN_AE08..AE0A
+    {0x0e10, 0}, {0x0e11, 0x00000040},                        // UCHE_UNKNOWN_0E10, 0E11
+    {0xae6c, 0x00008000}, {0xae06, 0}, {0xae6a, 0}, {0xae6b, 0x00000080}, {0xae73, 0},  // SP_UNKNOWN_AE6C, AE06, AE6A, AE6B, AE73
+    {0xab02, 0}, {0xab01, 0}, {0xab22, 0}, {0xb310, 0},       // SP_UNKNOWN_AB02, AB01, AB22, B310
+    {0x0ce2, 0}, {0x0ce3, 0}, {0x0ce4, 0}, {0x0ce5, 0}, {0x0ce6, 0}, {0x0ce7, 0},  // SP_UNKNOWN_0CE2..0CE7
+    {0xae00, 0x10000000},   // SP_DBG_ECO_CNTL
+    {0xb600, 0x01000000},   // TPL1_DBG_ECO_CNTL
+    {0xae03, 0x00001440},   // SP_CHICKEN_BITS
+    {0xab20, 0},            // SP_IBO_COUNT
+    {0xb182, 0}, {0xb183, 0}, {0xa9a8, 0},                    // SP_UNKNOWN_B182, B183, A9A8
+    {0x0e12, 0x03200000},   // UCHE_UNKNOWN_0E12
+    {0x0e19, 0x00000084},   // UCHE_CLIENT_PF
+};
+                 // adreno_pm4.xml.h:2386
+// CP_EVENT_WRITE7 is CP_EVENT_WRITE's opcode (adreno_pm4.xml.h:235); its word 0 has the event in bits 0-7 as before, and
+// a 4-word event (address, value) sets WRITE_ENABLED with WRITE_SRC 0 (EV_WRITE_USER_32B) and WRITE_DST 0 (EV_DST_RAM).
+// The A7xx's names for the events the dispatch uses (freedreno_gpu_event.h fd_gpu_events<A7XX>): FD_CACHE_INVALIDATE
+// is CACHE_INVALIDATE7 and FD_CACHE_CLEAN is CACHE_CLEAN, written without a value; RB_DONE_TS and LABEL keep theirs.
+enum a7xx_event_type : uint32_t {
+    CACHE_CLEAN = 49,              // adreno_pm4.xml.h:121
+    CACHE_INVALIDATE7 = 51,        // adreno_pm4.xml.h:123
+};
+enum a7xx_workitem_rast_order : uint32_t {
+    WORKITEMRASTORDER_LINEAR = 0,  // a6xx.xml.h:2311
+    WORKITEMRASTORDER_TILED = 1,   // a6xx.xml.h:2312
+};
+
+// HLSQ_CS_CNTL on the A7xx: the A6xx layout at its new place
+constexpr uint32_t a7xxHlsqCsCntl(uint32_t constlenVec4) {
+    return field(((constlenVec4 + 3) & ~3u) >> 2, 0, 0x000000ffu) | A7XX_HLSQ_CS_CNTL_ENABLED;
+}
+// HLSQ_CS_CNTL_1: no linear local id, the thread size, work groups walked in tiles 4 wide and as high as the local size's
+// Y allows (turnip: 3 when it is a multiple of 8, 5 of 4, 9 of 2, else 17)
+constexpr uint32_t a7xxHlsqCsCntl1(a6xx_threadsize threadsize, uint32_t localY) {
+    const uint32_t height = localY % 8 == 0 ? 3 : localY % 4 == 0 ? 5 : localY % 2 == 0 ? 9 : 17;
+    return field(kRegidNone, 0, 0x000000ffu) | field(threadsize, A7XX_HLSQ_CS_CNTL_1_THREADSIZE__SHIFT, 0x00000200u) |
+           A7XX_HLSQ_CS_CNTL_1_WORKGROUPRASTORDERZFIRSTEN | field(4, A7XX_HLSQ_CS_CNTL_1_WGTILEWIDTH__SHIFT, 0x03f00000u) |
+           field(height, A7XX_HLSQ_CS_CNTL_1_WGTILEHEIGHT__SHIFT, 0xfc000000u);
+}
+// SP_CS_CNTL_1: no linear local id, the thread size, work items in tiles (turnip's default; linear only when forced)
+constexpr uint32_t a7xxSpCsCntl1(a6xx_threadsize threadsize) {
+    return field(kRegidNone, 0, 0x000000ffu) | field(threadsize, A7XX_SP_CS_CNTL_1_THREADSIZE__SHIFT, 0x00000100u) |
+           field(WORKITEMRASTORDER_TILED, A7XX_SP_CS_CNTL_1_WORKITEMRASTORDER__SHIFT, 0x00008000u);
+}
+// HLSQ_CS_LAST_LOCAL_SIZE: the last group's local size, each axis minus one; for an aligned dispatch the local size
+constexpr uint32_t a7xxLastLocalSize(uint32_t localX, uint32_t localY, uint32_t localZ) {
+    return field(localX - 1, 2, 0x00000ffcu) | field(localY - 1, 12, 0x003ff000u) | field(localZ - 1, 22, 0xffc00000u);
 }
 
 constexpr uint32_t loadState6_0(uint32_t dstOff, a6xx_state_type type, a6xx_state_src src, a6xx_state_block block, uint32_t numUnit) {

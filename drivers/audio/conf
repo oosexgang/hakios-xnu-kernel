@@ -15,10 +15,14 @@ driver SPEAKER
 	file    bsd/dev/hakios.speaker.c
 	help    the two speaker amplifiers on I2C, and their watch of temperature and battery
 
+driver GUARD
+	file    bsd/dev/hakios.guard.c
+	help    the speakers' guard: a high-pass filter, power and peak limits on what the amplifiers get; plain arithmetic,
+	help    no hardware of its own (the sound drivers of redwood and zeus feed through it)
+
 driver SOUND
 	file    bsd/dev/hakios.sound.c
-	file    bsd/dev/hakios.guard.c
-	requires ADSP SPEAKER
+	requires ADSP SPEAKER GUARD
 	help    the speakers playing (sound=N): what the DSP's services are told, the feeder, and the speakers' guard
 	help    that limits what the amplifiers get
 

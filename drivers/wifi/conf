@@ -2,14 +2,19 @@
 # CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel; "standard" files are always built.
 # tools/hakios-config.py reads this file; docs/drivers-config.md says what each word means and how it reaches XNU.
 
-driver WIFI
-	file    bsd/dev/hakios.wifi.c
-	file    bsd/dev/hakios.wlfw.c
+driver WIFI_LX
 	file    bsd/dev/hakios.lx.c
 	file    bsd/dev/hakios.sta.c
 	file    bsd/dev/hakios.apple80211.c
 	file    iokit/Kernel/hakios.wlan.cpp iokitcpp
 	requires QMI
-	help    Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, Linux's ath11k
-	help    (its object, made by tools/mk-ath11k.sh, is linked in only with this), a station, and the Apple80211
-	help    surface Darwin's wifid talks to. Needs fw-wifi/ from the phone
+	help    the half of Wi-Fi that is not one radio's: the kernel's side of Linux's ath11k (its object, made by
+	help    tools/mk-ath11k.sh, is linked in only with this), a station, and the Apple80211 surface Darwin's wifid
+	help    talks to. A radio driver answers what it asks of the radio (sys/hakios.wifi.h): WIFI, or a device's own
+
+driver WIFI
+	file    bsd/dev/hakios.wifi.c
+	file    bsd/dev/hakios.wlfw.c
+	requires QMI WIFI_LX
+	help    Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, and the radio's
+	help    answers to WIFI_LX. Needs fw-wifi/ from the phone

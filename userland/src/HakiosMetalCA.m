@@ -2336,6 +2336,16 @@ hm_boot_arg_set(const char *what)
 		[self release];
 		return nil;
 	}
+	/* A chip whose buffers and copies hakios-metal does but not yet its draws (the A730): the window server draws, so
+	 * it stays on OpenGL ES there */
+	if (!hakios_metal_can_render(_gpu)) {
+		hm_print("no device: chip %#llx draws nothing through hakios-metal yet (its registers are not ported)\n",
+		    (unsigned long long)hakios_metal_gpu_id(_gpu));
+		hakios_metal_close(_gpu);
+		_gpu = NULL;
+		[self release];
+		return nil;
+	}
 	/* Without this the device inherits _MTLDevice's own name, "Apple GPU": true of the code, false of the hardware.
 	 * The chip id is asked of the kernel (hakios-metal reads it off the GPU's parameters), not written down. */
 	_name = [[NSString alloc] initWithFormat:@"Adreno (hakios-metal, chip %#llx)", (unsigned long long)hakios_metal_gpu_id(_gpu)];

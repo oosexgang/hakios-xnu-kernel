@@ -1,0 +1,16 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist): the cameras on zeus
+# (RC_JOBS=rc.jobs.zeus.camera devices/zeus/run.sh; cam=5 is in devices/zeus/phone.args).
+# 1. Once SpringBoard is up and mediaserverd has taken its first look at the camera: camera_test pair reads 90 pairs of
+#    frames, the wide's and the telephoto's at once (HAKIOS_CAMERA_PAIR, Portrait's two cameras).
+# 2. A swipe up past the lock screen, then Camera.app opened as a finger opens it (its icon is top right of the first
+#    page). Live Photo off, the preview left to settle (xl screenshot), the shutter pressed: a photograph.
+# 3. VIDEO mode, the shutter to start a recording, 10 s, the shutter to stop it.
+# 4. Home, then Photos (first page, third icon) to show what was taken; then home.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 20
+/redwood/bin/camera_test pair 90
+/redwood/bin/rwtouch wait 5 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 15 tap 0.353 0.066 wait 15 tap 0.5 0.863 wait 10
+/redwood/bin/rwtouch tap 0.313 0.774 wait 5 tap 0.5 0.863 wait 12 tap 0.5 0.863 wait 10
+# (what the photograph and the recording left: names and sizes, for the log)
+/redwood/bin/vol_ls ls /var/mobile/Media/DCIM /var/mobile/Media/DCIM/100APPLE
+/redwood/bin/rwtouch button home wait 5 tap 0.615 0.36 wait 15 button home wait 5

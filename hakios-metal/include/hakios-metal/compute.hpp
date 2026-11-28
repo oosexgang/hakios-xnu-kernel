@@ -129,6 +129,15 @@ struct Options {
     // A cap below a6xx::kInstrCacheSize (Mesa's instr_cache_size for this chip) on the program units CP_LOAD_STATE6
     // preloads; 0 is none. For a probe that has the GPU fetch the rest past the preload of a program that would fit.
     uint32_t preloadCap = 0;
+    // Experiments for the A7xx's stale descriptors (the phone, 11 November: every dispatch stored through the first
+    // dispatch's buffer descriptor, whatever was invalidated). iboDirect: the IBO and texture descriptors go into the
+    // CP_LOAD_STATE6 packets themselves (SS6_DIRECT) instead of being fetched from the table; the SP_CS_IBO and
+    // SP_CS_TEX_* pointers still name the table. tableRotate: the command buffer puts each dispatch's table at another
+    // place of its slab (command.cpp), so that no two dispatches in a row read their descriptors at one address.
+    bool iboDirect = false;
+    bool tableRotate = false;
+    // The Adreno 730's registers (a6xx.hpp, "the A7xx's compute registers"): set by the command buffer from the chip id
+    bool a7xx = false;
 };
 
 // The whole dispatch into STREAM: KERNEL over GROUPS work groups of LOCAL threads each, BUFFERS bound by index,

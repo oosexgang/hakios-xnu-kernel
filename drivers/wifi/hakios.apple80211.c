@@ -230,6 +230,36 @@ channel_fill(struct apple80211_channel *channel, unsigned frequency, unsigned fl
 	    0 : CHANNEL_ACTIVE) | (flags & HAKIOS_STA_CHANNEL_RADAR ? CHANNEL_DFS : 0);
 }
 
+/*
+ * The channels the radio may tune to, as the station says once it is offered. Before that -- wifid asks at its
+ * start, and on zeus (wlan=19) en0 is there seconds before the driver has registered its radio -- a set every
+ * country allows: 2.4 GHz 1-11 and the 5 GHz channels without radar (36-48, 149-165). Answered with nothing,
+ * wifid gives up its automatic join for the whole run ("FAILED to get supported channels (err=-3903)", log
+ * 112239). The driver's own regulatory rules still decide where it scans and joins.
+ */
+static unsigned
+channels_now(struct hakios_sta_channel *channels, unsigned most)
+{
+	static const uint16_t safe[] = { 2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 5180, 5200, 5220,
+		                         5240, 5745, 5765, 5785, 5805, 5825 };
+	static bool said;
+	unsigned count = hakios_sta_channels(channels, most);
+
+	if (count != 0) {
+		return count;
+	}
+	for (count = 0; count < sizeof(safe) / sizeof(safe[0]) && count < most; count++) {
+		channels[count].frequency = safe[count];
+		channels[count].flags = 0;
+	}
+	if (!said) {
+		said = true;
+		printf("apple80211: the channels are asked for before the station is offered: %u that every country allows\n",
+		    count);
+	}
+	return count;
+}
+
 /* ---- what the caller is given back ------------------------------------------------------------------- */
 
 /* At most as many bytes as it has room for. */
@@ -324,11 +354,19 @@ get(struct apple80211req *request)
 	case 15:                                /* the mode: a station (APPLE80211_M_STA) */
 		request->req_val = 1;
 		return 0;
+	case 5: {                               /* power save: apple80211_powersave_data, a version and the level */
+		struct {                        /* (APPLE80211_POWERSAVE_MODE_DISABLED 0, _80211 1); off until asked */
+			uint32_t version, level;
+		} answer = { .version = 1, .level = hakios_sta_powersave() > 0 };
+
+		request->req_val = answer.level;
+		return give(request, &answer, sizeof(answer));
+	}
 	case 27:
 	case 254: {                             /* the channels the radio may tune to */
 		struct apple80211_channels *answer;
 		struct hakios_sta_channel channels[96];
-		unsigned count = hakios_sta_channels(channels, 96);
+		unsigned count = channels_now(channels, 96);
 
 		if (count == 0 || (answer = kalloc_data(sizeof(*answer), Z_WAITOK | Z_ZERO)) == NULL) {
 			return count == 0 ? ENXIO : ENOMEM;
@@ -345,7 +383,7 @@ get(struct apple80211req *request)
 	case 207: {                             /* ... and more of each */
 		struct apple80211_channels_info *answer;
 		struct hakios_sta_channel channels[96];
-		unsigned count = hakios_sta_channels(channels, 96);
+		unsigned count = channels_now(channels, 96);
 
 		if (count == 0 || (answer = kalloc_data(sizeof(*answer), Z_WAITOK | Z_ZERO)) == NULL) {
 			return count == 0 ? ENXIO : ENOMEM;
@@ -589,6 +627,18 @@ set(const struct apple80211req *request, char *said, size_t said_size)
 	}
 	case 10:
 		return set_scan(request, said, said_size);
+	case 5: {                               /* power save: apple80211_powersave_data; any level but 0 is 802.11's */
+		struct {
+			uint32_t version, level;
+		} asked = { 0, request->req_val };
+
+		if (request->req_data != USER_ADDR_NULL && request->req_len >= sizeof(asked) &&
+		    copyin(request->req_data, &asked, sizeof(asked)) != 0) {
+			return EFAULT;
+		}
+		snprintf(said, said_size, " (power save: level %u, %s)", asked.level, asked.level ? "on" : "off");
+		return hakios_sta_ask_powersave(asked.level != 0);
+	}
 	default:
 		return EOPNOTSUPP;
 	}

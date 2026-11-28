@@ -57,7 +57,7 @@ def tree(ac=1, sc=1, reserved_ac=2, reserved_sc=2):
         }),
         'reserved-memory': ({'#address-cells': cells(reserved_ac), '#size-cells': cells(reserved_sc)}, {
             'cmd_db': memory(0x80860000, 0x10000),
-            'mpss': memory(0x8b800000, 0x400000),
+            'mpss': memory(0x8b800000, 0x0f600000),   # the first phone's 246 MB: soc_mpss_size is not printed
             'ipa_gsi': memory(0x8b710000, 0xa000),
             'smem': memory(0x80900000, 0x100000, phandle=cells(7)),
         }),

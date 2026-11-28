@@ -17,6 +17,17 @@
  * As on Apple's newer batteries, CurrentCapacity is the percentage that the fuel gauge shows (and
  * MaxCapacity 100); the charges in mAh are AppleRawCurrentCapacity, AppleRawMaxCapacity (what the
  * gauge has learnt a full charge to be), NominalChargeCapacity and DesignCapacity.
+ *
+ * Settings > Battery > Battery Health (BatteryUsageUI) reads two more things. Its "Maximum Capacity" is powerd's
+ * "Maximum Capacity Percent" in the battery health list (IOPSCopyPowerSourcesByType(1)), which powerd works out as
+ * NominalChargeCapacity / DesignCapacity, rounded up, once it keeps a battery health record for a battery of this
+ * "Serial" (the record: CFPreferences com.apple.batteryhealthdata, by host, in /var/MobileSoftwareUpdate/Hardware/
+ * Battery). And before it shows the number it
+ * asks whether the battery is genuine: an AppleAuthCPRelay service under the power source, property
+ * isTrustedForUI; without one it keeps its spinner. Nothing here can authenticate a battery (Apple's relay asks the
+ * battery's own authentication chip): the relay below says trusted so that the page shows what the fuel gauge says.
+ * The page also wants thermalmonitord's names (userland/src/thermal_notify.c posts them) and BatteryData below.
+ * zeus, 2026-11-15 (logs 004744, 045053): the page shows Maximum Capacity (79%, then 81%) (devices/zeus/README.md "Battery health").
  */
 
 #include <IOKit/IOLib.h>
@@ -26,6 +37,7 @@
 #include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
 #include <libkern/c++/OSSymbol.h>
 
 /* The same as struct hakios_battery_state in bsd/sys/hakios.input.h, which is not seen from here. */
@@ -57,6 +69,17 @@ private:
 };
 
 OSDefineMetaClassAndStructors(HakiosBattery, IOPMPowerSource);
+
+/* What Battery Health asks whether the battery is genuine (see the top): only its class and one property count. */
+class AppleAuthCPRelay : public IOService
+{
+	OSDeclareDefaultStructors(AppleAuthCPRelay);
+};
+
+OSDefineMetaClassAndStructors(AppleAuthCPRelay, IOService);
+
+/* The serial the battery health record is kept under: the DSP gives none, so one of ours (userland/build.sh seeds powerd's record with it) */
+#define BATTERY_SERIAL  "HAKIOS-BATTERY-0"
 
 static HakiosBattery * battery;
 
@@ -133,8 +156,15 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 	setAmperage(b->current_ua / 1000);
 	number("InstantAmperage", b->current_ua / 1000);
 	number("Temperature", b->temperature_hundredths);
-	if (b->charge_uah > 0) {
+	/*
+	 * The charge left. zeus's DSP answers the charge counter with a few mAh (2 at 81% of 3590 mAh: not in uAh, or
+	 * not this property on its firmware), so a counter under a fiftieth of a full charge while the gauge says more
+	 * than 2% is taken for that and the charge is worked out from the gauge's percentage of its full charge instead.
+	 */
+	if (b->charge_uah > 0 && (b->full_uah <= 0 || percent <= 2 || b->charge_uah >= b->full_uah / 50)) {
 		number("AppleRawCurrentCapacity", b->charge_uah / 1000);
+	} else if (b->full_uah > 0) {
+		number("AppleRawCurrentCapacity", ((long long) b->full_uah / 1000) * percent / 100);
 	}
 	if (b->full_uah > 0) {
 		number("AppleRawMaxCapacity", b->full_uah / 1000);
@@ -145,6 +175,30 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 	}
 	if (b->cycles > 0) {
 		setCycleCount((unsigned) b->cycles);
+	}
+	if (getProperty("Serial") == NULL) {
+		OSString * serial = OSString::withCString(BATTERY_SERIAL);
+
+		object("Serial", serial);
+		OSSafeReleaseNULL(serial);
+	}
+	/*
+	 * BatteryData's WeightedRa: Apple's gauge's weighted cell resistance, which powerd holds against the P0 threshold
+	 * (thermalmonitord's com.apple.system.batteryHealth.p0Threshold) to say whether peak performance is held back.
+	 * Without it powerd cannot tell and marks the battery's health "unable to determine" (Service Flags 0x2000000).
+	 * The DSP gives no resistance, and nothing here holds performance back for the battery's age, so 1 stands for
+	 * "nothing measured": below the threshold userland's thermal_notify posts (userland/src/thermal_notify.c).
+	 */
+	if (getProperty("BatteryData") == NULL) {
+		OSDictionary * data = OSDictionary::withCapacity(1);
+		OSNumber * ra = OSNumber::withNumber(1ULL, 32);
+
+		if (data != NULL && ra != NULL) {
+			data->setObject("WeightedRa", ra);
+			object("BatteryData", data);
+		}
+		OSSafeReleaseNULL(ra);
+		OSSafeReleaseNULL(data);
 	}
 
 	if (b->external) {
@@ -224,6 +278,14 @@ HakiosBatteryReport(const void * state, unsigned size)
 		}
 		made->registerService();
 		battery = made;
+
+		AppleAuthCPRelay * relay = OSTypeAlloc(AppleAuthCPRelay);
+
+		if (relay != NULL && relay->init() && relay->attach(made)) {
+			relay->setProperty("isTrustedForUI", kOSBooleanTrue);
+			relay->registerService();
+		}
+		OSSafeReleaseNULL(relay);
 		/* (64-bit rounding, as in report(): no signed overflow on a large value from the DSP) */
 		IOLog("HakiosBattery: the battery's power source is up: %d%%, %s\n", (int) (((int64_t) b->percent_hundredths + 50) / 100),
 		    b->external ? (b->status == 1 ? "charging" : "on a charger, not charging") : "not on a charger");

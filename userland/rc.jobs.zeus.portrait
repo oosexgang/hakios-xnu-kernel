@@ -1,0 +1,10 @@
+# Commands run by the launchd job com.hakios.demo: Portrait on zeus
+# (RC_JOBS=rc.jobs.zeus.portrait MORE="portrait=1" devices/zeus/run.sh; cam=5 is in devices/zeus/phone.args).
+# Camera.app opened as in rc.jobs.zeus.camera; then a tap where the mode dial has PORTRAIT (right of PHOTO), the
+# preview left to settle, the shutter, and what DCIM holds. The run ends inside Camera: xl screenshot then shows it.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 20
+/redwood/bin/rwtouch wait 5 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 15 tap 0.353 0.066 wait 12
+# (the first time in PORTRAIT a "Portrait Camera" page comes with Continue in its middle)
+/redwood/bin/rwtouch tap 0.69 0.774 wait 8 tap 0.5 0.54 wait 20 tap 0.5 0.863 wait 20
+/redwood/bin/vol_ls ls /var/mobile/Media/DCIM /var/mobile/Media/DCIM/100APPLE

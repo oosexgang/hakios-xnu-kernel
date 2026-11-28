@@ -177,6 +177,8 @@ struct hakios_show {
 #define GPU_SUBMIT_BOS          8192
 #define GPU_PATIENCE_MS         5000            /* for a buffer or a submission that somebody waits for without a limit */
 #define GPU_ASK_AGAIN_US        200             /* while waiting for the core: how long between two looks at how far it is */
+#define GPU_ASK_SOON_US         4               /* ... for the first GPU_ASK_SOON_LOOKS looks: what is waited for (a copy, a dispatch, a draw) is mostly done within a few tens of microseconds, and a look every 200 added 100 to each wait on average */
+#define GPU_ASK_SOON_LOOKS      250             /* (about a millisecond of them) */
 #define GPU_PUSH_AGAIN_MS       4               /* a surface is pushed out of the cache again for a submission this long after the last */
 
 static IOLock * gGPULock;                       /* around everything that is the GPU's (hakios_gpu_...) */
@@ -197,6 +199,7 @@ static bool
 gpuWait(uint32_t fence, uint64_t milliseconds)
 {
 	uint64_t began = mach_absolute_time(), patience;
+	uint32_t looks = 0;
 
 	nanoseconds_to_absolutetime(milliseconds * NSEC_PER_MSEC, &patience);
 	for (bool waited = false;; waited = true) {
@@ -211,7 +214,7 @@ gpuWait(uint32_t fence, uint64_t milliseconds)
 			break;                  /* (a GPU that has stopped answering is not waited for again) */
 		}
 		IOLockUnlock(gGPULock);
-		delay_for_interval(GPU_ASK_AGAIN_US, NSEC_PER_USEC);
+		delay_for_interval(looks++ < GPU_ASK_SOON_LOOKS ? GPU_ASK_SOON_US : GPU_ASK_AGAIN_US, NSEC_PER_USEC);
 		IOLockLock(gGPULock);
 	}
 	if (milliseconds >= 1000 && !gGPUReported) {

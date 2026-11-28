@@ -163,6 +163,12 @@ struct Kernel {
     // program was uploaded (render.cpp: pushedRanges, uboDescriptors). Plus one so that a fixture written before the
     // field, which leaves it zero, says none.
     uint32_t constantDataUbo;
+    // 1: the kernel reaches its buffers and images through bindless descriptors (ir3's bindless_ibo, compiled so by
+    // setCompilerBindlessIbo): descriptor set 0 is the IBO table above, slot for slot (buffer n at n, image n at
+    // numSsbos + n), and the dispatch points SP_CS_BINDLESS_BASE_DESCRIPTOR[0] at it instead of SP_CS_IBO. The A7xx
+    // keeps the first SP_CS_IBO table it is given (the phone, 11 November), and neither Gallium nor turnip uses that
+    // path on it. 0 in a fixture written before the field.
+    uint32_t bindlessIbo = 0;
 };
 
 } // namespace hakios::metal

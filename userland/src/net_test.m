@@ -25,6 +25,12 @@
  *                         state: State:/Network/Service/.../IPv4, State:/Network/Interface/en0/...,
  *                         State:/Network/Global/IPv4 (the key, whether it is there, the names in it;
  *                         no addresses)
+ *   route                 the IPv4 routing table as the kernel has it (sysctl NET_RT_DUMP): each route's
+ *                         destination, mask, gateway and interface -- what "netstat -rn" says, which this system lacks
+ *   ping HOST|gateway N   N ICMP echo requests (an ICMP datagram socket, as an ordinary user may), and the answers
+ *                         with their round-trip times; "gateway": the default route's gateway
+ *   kernel                from here on every line is also written into the kernel's log (sysctl kern.hakios_say):
+ *                         the console drops lines when the system is busy, the kernel's message buffer does not
  *   wrongjoin             ask the radio to join the network it is on with a passphrase that is
  *                         wrong on purpose, through the request wifid uses (Apple80211's
  *                         ASSOCIATE), and say what the kernel answers: Apple80211's result number
@@ -56,6 +62,10 @@
 #include <net/if_dl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +92,191 @@ seconds(void)
 		mach_timebase_info(&base);
 	}
 	return (double)mach_absolute_time() * base.numer / base.denom / 1e9;
+}
+
+/* ---- kernel: stdout's lines into the kernel's log as well ------------------------------------------ */
+
+static FILE *real_stdout;
+
+static int
+to_kernel(__unused void *cookie, const char *data, int length)
+{
+	static char line[256];
+	static size_t used;
+
+	fwrite(data, 1, (size_t)length, real_stdout);
+	fflush(real_stdout);
+	for (int i = 0; i < length; i++) {
+		if (data[i] == '\n' || used == sizeof(line) - 1) {
+			line[used] = 0;
+			sysctlbyname("kern.hakios_say", NULL, NULL, line, used + 1);
+			used = 0;
+			if (data[i] == '\n') {
+				continue;
+			}
+		}
+		line[used++] = data[i];
+	}
+	return length;
+}
+
+/* ---- route and ping -------------------------------------------------------------------------------- */
+
+/* (net/route.h is not in the iOS SDK: the kernel's layout of a routing message, xnu bsd/net/route.h) */
+struct nt_metrics {
+	uint32_t locks, mtu, hopcount;
+	int32_t expire;
+	uint32_t recvpipe, sendpipe, ssthresh, rtt, rttvar, pksent, state, filler[3];
+};
+struct nt_msghdr {
+	unsigned short msglen;
+	unsigned char version, type;
+	unsigned short index;
+	int flags, addrs;
+	pid_t pid;
+	int seq, error, use;
+	uint32_t inits;
+	struct nt_metrics rmx;
+};
+#define NT_DUMP		1		/* NET_RT_DUMP */
+#define NT_GATEWAY	0x2		/* RTF_GATEWAY */
+#define NT_ROUNDUP(a)	((a) > 0 ? (1 + (((a) - 1) | (sizeof(uint32_t) - 1))) : sizeof(uint32_t))
+
+/* the table said (say) or not; the default route's gateway into *gateway, if there is one: true */
+static bool
+route(bool say, struct in_addr *gateway)
+{
+	int mib[6] = { CTL_NET, PF_ROUTE, 0, AF_INET, NT_DUMP, 0 };
+	size_t size = 0;
+	char *buffer;
+	bool found = false;
+
+	if (sysctl(mib, 6, NULL, &size, NULL, 0) != 0 || (buffer = malloc(size + 4096)) == NULL) {
+		perror("net_test: route: sysctl");
+		return false;
+	}
+	size += 4096;
+	if (sysctl(mib, 6, buffer, &size, NULL, 0) != 0) {
+		perror("net_test: route: sysctl");
+		free(buffer);
+		return false;
+	}
+	for (char *at = buffer; at + sizeof(struct nt_msghdr) <= buffer + size;) {
+		struct nt_msghdr *m = (struct nt_msghdr *)at;
+		struct sockaddr_in addresses[3];
+		char *a = (char *)(m + 1), name[IF_NAMESIZE] = "?", text[3][INET_ADDRSTRLEN];
+
+		if (m->msglen == 0) {
+			break;
+		}
+		memset(addresses, 0, sizeof(addresses));
+		for (int bit = 0; bit < 8 && a < at + m->msglen; bit++) {
+			struct sockaddr *sa = (struct sockaddr *)a;
+
+			if (!(m->addrs & (1 << bit))) {
+				continue;
+			}
+			if (bit < 3) {
+				memcpy(&addresses[bit], sa, sa->sa_len < sizeof(addresses[bit]) ? sa->sa_len : sizeof(addresses[bit]));
+			}
+			a += NT_ROUNDUP(sa->sa_len);
+		}
+		if_indextoname(m->index, name);
+		for (int k = 0; k < 3; k++) {
+			if (k == 1 && addresses[1].sin_family == AF_LINK) {
+				snprintf(text[k], sizeof(text[k]), "link#%u", m->index);
+			} else {
+				inet_ntop(AF_INET, &addresses[k].sin_addr, text[k], sizeof(text[k]));
+			}
+		}
+		if (say) {
+			printf("net_test: route: %s/%s via %s on %s%s\n", addresses[0].sin_addr.s_addr == 0 ? "default" : text[0],
+			    text[2], (m->flags & NT_GATEWAY) ? text[1] : "(direct)", name, (m->flags & NT_GATEWAY) ? ", gateway" : "");
+		}
+		if (addresses[0].sin_addr.s_addr == 0 && (m->flags & NT_GATEWAY) && addresses[1].sin_family == AF_INET && !found) {
+			*gateway = addresses[1].sin_addr;
+			found = true;
+		}
+		at += m->msglen;
+	}
+	free(buffer);
+	return found;
+}
+
+static uint16_t
+checksum(const void *data, size_t length)
+{
+	const uint8_t *b = data;
+	uint32_t sum = 0;
+
+	for (size_t i = 0; i + 1 < length; i += 2) {
+		sum += (uint32_t)(b[i] << 8 | b[i + 1]);
+	}
+	if (length & 1) {
+		sum += (uint32_t)b[length - 1] << 8;
+	}
+	while (sum >> 16) {
+		sum = (sum & 0xffff) + (sum >> 16);
+	}
+	return htons((uint16_t)~sum);
+}
+
+static void
+ping(const char *host, int count)
+{
+	struct sockaddr_in to = { .sin_len = sizeof(to), .sin_family = AF_INET };
+	char text[INET_ADDRSTRLEN];
+	int s, answered = 0;
+
+	if (strcmp(host, "gateway") == 0) {
+		if (!route(false, &to.sin_addr)) {
+			printf("net_test: ping: there is no default route, so no gateway\n");
+			return;
+		}
+	} else if (inet_pton(AF_INET, host, &to.sin_addr) != 1) {
+		printf("net_test: ping: %s is not an IPv4 address\n", host);
+		return;
+	}
+	inet_ntop(AF_INET, &to.sin_addr, text, sizeof(text));
+	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)) < 0) {
+		perror("net_test: ping: socket");
+		return;
+	}
+	for (int n = 0; n < count; n++) {
+		uint8_t packet[64] = { 0 }, answer[1500];
+		struct icmp *echo = (struct icmp *)packet;
+		struct pollfd wait = { .fd = s, .events = POLLIN };
+		double sent = seconds();
+		bool got = false;
+
+		echo->icmp_type = ICMP_ECHO;
+		echo->icmp_id = htons((uint16_t)getpid());
+		echo->icmp_seq = htons((uint16_t)n);
+		echo->icmp_cksum = checksum(packet, sizeof(packet));
+		if (sendto(s, packet, sizeof(packet), 0, (struct sockaddr *)&to, sizeof(to)) < 0) {
+			printf("net_test: ping %s: seq %d: not sent: %s\n", text, n, strerror(errno));
+			sleep(1);
+			continue;
+		}
+		while (!got && seconds() - sent < 2 && poll(&wait, 1, 2000 - (int)((seconds() - sent) * 1000)) > 0) {
+			ssize_t length = recv(s, answer, sizeof(answer), 0);
+			size_t header = length > 0 ? (size_t)(answer[0] & 0xf) * 4 : 0;
+			struct icmp *reply = (struct icmp *)(answer + header);
+
+			got = length >= (ssize_t)(header + 8) && reply->icmp_type == ICMP_ECHOREPLY && ntohs(reply->icmp_seq) == n;
+		}
+		if (got) {
+			answered++;
+			printf("net_test: ping %s: seq %d: AN ANSWER after %.1f ms\n", text, n, (seconds() - sent) * 1000);
+		} else {
+			printf("net_test: ping %s: seq %d: no answer in 2 s\n", text, n);
+		}
+		if (seconds() - sent < 1) {
+			usleep((useconds_t)((1 - (seconds() - sent)) * 1e6));
+		}
+	}
+	close(s);
+	printf("net_test: ping %s: %d of %d answered\n", text, answered, count);
 }
 
 /* ---- show ------------------------------------------------------------------------------------------ */
@@ -584,6 +779,20 @@ main(int argc, char **argv)
 				wifi();
 			} else if (strcmp(step, "watch") == 0 && i + 1 < argc) {
 				watch(atof(argv[++i]));
+			} else if (strcmp(step, "kernel") == 0) {
+				int fd = dup(STDOUT_FILENO);
+
+				if (fd >= 0 && (real_stdout = fdopen(fd, "w")) != NULL) {
+					stdout = funopen(NULL, NULL, to_kernel, NULL, NULL);
+					setvbuf(stdout, NULL, _IOLBF, 0);
+				}
+			} else if (strcmp(step, "route") == 0) {
+				struct in_addr gateway;
+
+				route(true, &gateway);
+			} else if (strcmp(step, "ping") == 0 && i + 2 < argc) {
+				ping(argv[i + 1], atoi(argv[i + 2]));
+				i += 2;
 			} else if (strcmp(step, "wrongjoin") == 0) {
 				wrongjoin();
 			} else {

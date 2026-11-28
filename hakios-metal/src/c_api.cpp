@@ -1,6 +1,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <thread>
 // hakios_metal.h over the C++ core.
@@ -103,11 +104,43 @@ private:
 thread_local bool Deferrer::worker_ = false;
 }  // namespace
 
+// Buffers given back by the program, kept for the next newBuffer of the same length: a GEM object costs the driver an
+// object, an address and a mapping to make (13-30 us on the phone) and an unmap and close to let go (12-37 us), where a
+// buffer of this pool is a lookup and a memset (0.3 us for 4 KB, 25 us for 1 MB). A buffer comes out zeroed, as a new one.
+// Only ones nobody else holds (no command buffer in flight, no texture over it), up to kPoolEach bytes, kPoolTotal in all.
+struct BufferPool {
+    static constexpr uint64_t kPoolEach = 1u << 20, kPoolTotal = 16u << 20;
+    std::mutex lock;
+    std::multimap<uint64_t, std::shared_ptr<Buffer>> idle;
+    uint64_t bytes = 0;
+    std::atomic<uint64_t> hits{0}, misses{0};
+    std::shared_ptr<Buffer> take(uint64_t length) {
+        if (length > kPoolEach) return nullptr;
+        std::lock_guard<std::mutex> g(lock);
+        auto it = idle.find(length);
+        if (it == idle.end()) { misses++; return nullptr; }
+        std::shared_ptr<Buffer> b = std::move(it->second);
+        idle.erase(it);
+        bytes -= b->bo().size();
+        hits++;
+        return b;
+    }
+    void give(std::shared_ptr<Buffer> b) {
+        const uint64_t length = b->length();
+        if (length > kPoolEach) return;
+        std::lock_guard<std::mutex> g(lock);
+        if (bytes + b->bo().size() > kPoolTotal) return;
+        bytes += b->bo().size();
+        idle.emplace(length, std::move(b));
+    }
+};
 struct hakios_metal_device {
     std::unique_ptr<Gpu> gpu;
+    BufferPool pool;   // (after the GPU: let go of first)
 };
 struct hakios_metal_buffer {
     std::shared_ptr<Buffer> buffer;
+    BufferPool* pool = nullptr;   // where it goes when the program lets go of it (nullptr: nowhere)
 };
 struct hakios_metal_library {
     std::vector<uint8_t> bytes;   // the library's own copy: MetalLibrary points into it
@@ -215,7 +248,8 @@ const char* hakios_metal_error(void) { return lastError.c_str(); }
 // Tiles, GMEM offsets and the shader compiler are built for one chip (a6xx.hpp). A kernel that does not say (0) is taken at its
 // word that it is that one: only a chip it names as another is refused, so that the window server stays on OpenGL ES there.
 bool hakios_metal_chip_known(uint32_t chip) { return chip == 0 || chip == a6xx::kChipId; }
-static bool chipKnown(uint32_t chip) { return hakios_metal_chip_known(chip); }
+// A chip whose buffers and copies this driver can do although its draws are not ported (gpu.hpp, renders()): the A730
+[[maybe_unused]] static bool chipOpens(uint32_t chip) { return hakios_metal_chip_known(chip) || chip == a6xx::kChipIdA730; }
 
 static hakios_metal_device* deviceOn(std::unique_ptr<Transport> t) {
     auto* d = new hakios_metal_device;
@@ -233,7 +267,11 @@ hakios_metal_device* hakios_metal_open(void) {
         return nullptr;
     }
     hakios_metal_device* d = deviceOn(std::move(t));
-    if (!chipKnown(d->gpu->chipId())) {
+    setCompilerChip(d->gpu->chipId());
+    // the A730 keeps the first SP_CS_IBO table it is given (the phone, 11 November): its compute kernels reach their
+    // buffers bindless, as Gallium and turnip compile every shader for it
+    setCompilerBindlessIbo(d->gpu->chipId() == a6xx::kChipIdA730);
+    if (!chipOpens(d->gpu->chipId())) {
         char text[160];
         snprintf(text, sizeof(text), "the GPU's chip ID is %#x: the tables of this driver are the Adreno's of chip ID %#x (a6xx.hpp), another's would hang it",
                  d->gpu->chipId(), a6xx::kChipId);
@@ -253,6 +291,8 @@ hakios_metal_device* hakios_metal_open_fake(void) { return deviceOn(std::make_un
 void hakios_metal_close(hakios_metal_device* d) { delete d; }
 
 uint64_t hakios_metal_gpu_id(hakios_metal_device* d) { return d->gpu->chipId(); }
+
+int hakios_metal_can_render(hakios_metal_device* d) { return d->gpu->renders() ? 1 : 0; }
 
 int hakios_metal_has_compiler(void) { return hasCompiler() ? 1 : 0; }
 
@@ -319,7 +359,12 @@ void hakios_metal_kernel_free(hakios_metal_kernel* k) { delete k; }
 const char* hakios_metal_kernel_name(hakios_metal_kernel* k) { return k->kernel->name.c_str(); }
 unsigned hakios_metal_kernel_resource_count(hakios_metal_kernel* k) { return unsigned(k->kernel->resources.size()); }
 
-uint64_t hakios_metal_device_allocated_bytes(hakios_metal_device* d) { return d != nullptr && d->gpu ? d->gpu->allocatedBytes() : 0; }
+// (what the program holds: the pool's idle buffers are the driver's)
+uint64_t hakios_metal_device_allocated_bytes(hakios_metal_device* d) {
+    if (d == nullptr || !d->gpu) return 0;
+    std::lock_guard<std::mutex> g(d->pool.lock);
+    return d->gpu->allocatedBytes() - d->pool.bytes;
+}
 
 int hakios_metal_argument_buffer_layout(const void* bitcode, size_t size, unsigned set, unsigned* ids, unsigned* offsets, unsigned max) {
     std::vector<std::pair<uint32_t, uint32_t>> members;
@@ -354,17 +399,27 @@ unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel* k) { return
 
 hakios_metal_buffer* hakios_metal_buffer_new(hakios_metal_device* d, uint64_t length) {
     std::string why;
-    auto b = newBuffer(*d->gpu, length ? length : 1, &why);
-    if (b == nullptr) {
+    if (length == 0) length = 1;
+    auto b = d->pool.take(length);
+    if (b != nullptr) {
+        memset(b->contents(), 0, length);
+    } else if ((b = newBuffer(*d->gpu, length, &why)) == nullptr) {
         failed(why);
         return nullptr;
     }
     auto* r = new hakios_metal_buffer;
     r->buffer = std::move(b);
+    r->pool = &d->pool;
     return r;
 }
 
-void hakios_metal_buffer_free(hakios_metal_buffer* b) { delete b; }
+void hakios_metal_buffer_free(hakios_metal_buffer* b) {
+    if (b != nullptr && b->pool != nullptr && b->buffer.use_count() == 1 && b->buffer->contents() != nullptr) {
+        BufferPool* pool = b->pool;
+        pool->give(std::move(b->buffer));
+    }
+    delete b;
+}
 void* hakios_metal_buffer_contents(hakios_metal_buffer* b) { return b->buffer->contents(); }
 uint64_t hakios_metal_buffer_length(hakios_metal_buffer* b) { return b->buffer->length(); }
 uint64_t hakios_metal_buffer_gpu_address(hakios_metal_buffer* b) { return b->buffer->gpuAddress(); }

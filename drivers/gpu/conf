@@ -4,6 +4,12 @@
 
 driver ADRENO
 	file    bsd/dev/hakios.adreno.c
+	requires GPUSERVICE
+	help    the Adreno 642L of the SC7280 woken step by step (adreno=N), kept for HakiosGPU with gpu=1 or adreno_keep=1
+	help    (docs/reference/metal.md). Needs the GPU's firmware from the phone (fw-gpu/)
+
+driver GPUSERVICE
 	file    iokit/Kernel/hakios.gpu.cpp iokitcpp
-	help    the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa, Metal and
-	help    the window server draw through (gpu=1, adreno_keep=1; docs/reference/metal.md). Needs the GPU's firmware from the phone (fw-gpu/)
+	help    HakiosGPU, the IOKit service Mesa, Metal and the window server draw through. It calls a GPU driver's
+	help    hakios_gpu_* (ADRENO, or a device's own such as zeus's A730), so it goes with one of them
+	default n

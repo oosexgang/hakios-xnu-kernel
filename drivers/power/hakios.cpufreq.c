@@ -1,6 +1,7 @@
 /*
- * The clock speed of the processor cores the kernel runs on, on the POCO X5 Pro (redwood).
- * Only with boot-arg cpufreq=1: the addresses are this phone's.
+ * The clock speed of the processor cores the kernel runs on, on the POCO X5 Pro (redwood), and with
+ * CPUFREQ_SM8450 defined on the SM8450 (devices/zeus/drivers/power/hakios.cpufreq.sm8450.c, which includes
+ * this file). Only with boot-arg cpufreq=1: the addresses are the SoC's.
  *
  * The boot loader leaves each group of cores at a modest frequency and expects the operating
  * system to ask for more. On this SoC that is one register write: the hardware ("EPSS") has
@@ -54,7 +55,11 @@ tell(const char *format, ...)
 	}
 }
 
+#ifdef CPUFREQ_SM8450
+#define EPSS_PHYS               0x17d91000UL    /* sm8450.dtsi cpufreq_hw: the same three groups and layout */
+#else
 #define EPSS_PHYS               0x18591000UL    /* three groups ("domains") of 0x1000: small cores, big, biggest */
+#endif
 #define EPSS_DOMAIN_SIZE        0x1000UL
 #define EPSS_DOMAINS            3
 #define EPSS_FREQ_TABLE         0x100           /* a word per row: [31:30] clock source, [7:0] multiple of 19.2 MHz */
@@ -86,6 +91,16 @@ domain_of(uint32_t phys_id)
 	return core < 4 ? 0 : core < 7 ? 1 : 2;
 }
 
+/*
+ * What raise_domain() found, for the thermal driver's caps (hakios_cpufreq_cap()): each group's registers, its
+ * table's frequencies and its top row; top 0 and no base: a group with none of our cores, never raised, never capped.
+ */
+static struct {
+	vm_offset_t base;
+	uint32_t top, row;
+	uint32_t khz[EPSS_TABLE_ROWS];
+} group[EPSS_DOMAINS];
+
 static void
 raise_domain(uint32_t domain, uint32_t cores)
 {
@@ -100,14 +115,58 @@ raise_domain(uint32_t domain, uint32_t cores)
 		if (row > 0 && khz <= top_khz) {
 			break;                  /* the table ends by repeating its last row */
 		}
+		group[domain].khz[row] = khz;
 		top = row;
 		top_khz = khz;
 	}
 	was = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
 	*(volatile uint32_t *)(base + EPSS_PERF_STATE) = top;
+	group[domain].top = group[domain].row = top;
+	group[domain].base = base;
 	delay_for_interval(20, NSEC_PER_MSEC);
 	tell("cpufreq: group %u (%u of our cores): row %u -> %u of the frequency table, %u MHz\n", domain, cores, was, top,
 	    top_khz / 1000);
+}
+
+/*
+ * The thermal driver's brake (drivers/power/hakios.thermal.c): group `domain` held `steps` rows below its top, but
+ * never below its floor, the row at a third of the top frequency (the vendor's tables start at 300 MHz; a third of
+ * 3 GHz still keeps the window server's frames coming). steps 0 gives the top back. One write of the wanted row, as
+ * raise_domain(); EPSS changes the clock and the voltage itself. Returns the frequency now asked for, in MHz, or 0 for a
+ * group that was never raised (cpufreq=0, or none of our cores in it). Called from one thread at a time (the thermal poll).
+ */
+uint32_t
+hakios_cpufreq_cap(uint32_t domain, uint32_t steps)
+{
+	uint32_t row, floor = 0;
+
+	if (domain >= EPSS_DOMAINS || group[domain].base == 0) {
+		return 0;
+	}
+	while (floor < group[domain].top && group[domain].khz[floor] * 3 < group[domain].khz[group[domain].top]) {
+		floor++;
+	}
+	row = steps >= group[domain].top - floor ? floor : group[domain].top - steps;
+	if (row != group[domain].row) {
+		*(volatile uint32_t *)(group[domain].base + EPSS_PERF_STATE) = row;
+		group[domain].row = row;
+	}
+	return group[domain].khz[row] / 1000;
+}
+
+/* How many of the frequency table's rows hakios_cpufreq_cap() can step down: 0 for a group that was never raised */
+uint32_t
+hakios_cpufreq_steps(uint32_t domain)
+{
+	uint32_t floor = 0;
+
+	if (domain >= EPSS_DOMAINS || group[domain].base == 0) {
+		return 0;
+	}
+	while (floor < group[domain].top && group[domain].khz[floor] * 3 < group[domain].khz[group[domain].top]) {
+		floor++;
+	}
+	return group[domain].top - floor;
 }
 
 /*
@@ -380,10 +439,20 @@ ddr_look(void)
  * each (sc7280's qcom,tcs-config): every command with an address, and which of them go to the BCMs
  * above -- the bandwidth it asked for, and that is in force whenever the processors are awake.
  */
+#ifdef CPUFREQ_SM8450
+#define RSC_PHYS                0x17a20000UL    /* sm8450.dtsi apps_rsc drv-2; the same register layout (version 2.7) */
+#define RSC_ACTIVE              3               /* qcom,tcs-config: 3 active, 2 sleep, 2 wake, no control */
+#define RSC_SLEEP               2
+#define RSC_WAKE                2
+#else
 #define RSC_PHYS                0x18220000UL
+#define RSC_ACTIVE              2
+#define RSC_SLEEP               3
+#define RSC_WAKE                3
+#endif
 #define RSC_SIZE                0x10000UL
 #define RSC_TCS(n, reg)         (0xd00 + 0x2a0 * (n) + (reg))
-#define RSC_TCS_COUNT           9
+#define RSC_TCS_COUNT           (RSC_ACTIVE + RSC_SLEEP + RSC_WAKE + 1)
 #define RSC_CMDS                16
 
 static void
@@ -403,7 +472,8 @@ ddr_slots(void)
 				continue;
 			}
 			tell("ddr: slot set %u (%s) command %u%s: message %#x, address %#x, data %#x%s\n", t,
-			    t < 2 ? "active" : t < 5 ? "sleep" : t < 8 ? "wake" : "control", c, enabled & (1u << c) ? " (on)" : "",
+			    t < RSC_ACTIVE ? "active" : t < RSC_ACTIVE + RSC_SLEEP ? "sleep" :
+			    t < RSC_ACTIVE + RSC_SLEEP + RSC_WAKE ? "wake" : "control", c, enabled & (1u << c) ? " (on)" : "",
 			    msgid, address, data, (address >> 16 & 0xf) == CMD_DB_BCM ? " <- a BCM" : "");
 		}
 	}
@@ -586,7 +656,7 @@ hakios_cpufreq_init(void)
 			raise_domain(domain, cores[domain]);
 		}
 	}
-	printf("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
+	tell("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
 	/* membench has its own variable: when the boot-arg is absent, the cpufreq value (2 means on) must not start the benchmark */
 	PE_parse_boot_argn("membench", &membench, sizeof(membench));
 	if (membench == 1) {

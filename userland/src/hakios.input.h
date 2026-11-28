@@ -22,6 +22,10 @@
 #define HAKIOS_TOUCH_UP        3       /* it has lifted (x, y: where it was last) */
 #define HAKIOS_BUTTON_DOWN     4       /* a hardware button; `finger` says which (HAKIOS_BUTTON_*), x and y are 0 */
 #define HAKIOS_BUTTON_UP       5
+#define HAKIOS_KEY_DOWN        6       /* a key of a keyboard: `finger` its HID usage, x its usage page (7: keyboard) */
+#define HAKIOS_KEY_UP          7
+#define HAKIOS_KEYBOARD_GONE   8       /* the keyboard went away: every key of it is up (finger, x and y are 0) */
+#define HAKIOS_ORIENTATION     9       /* which way up the phone is now: `finger` a UIDeviceOrientation (1 portrait .. 6 face down) */
 
 #define HAKIOS_BUTTON_LOCK     1       /* the side button */
 #define HAKIOS_BUTTON_VOLUME_UP 2

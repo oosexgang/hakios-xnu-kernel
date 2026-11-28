@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.hakios.thermal</string>
+	<!-- thermalmonitord's one job here: the kernel's thermal pressure level (thermal=1,
+	     kern.hakios.thermal_pressure) posted as com.apple.system.thermalpressurelevel, which
+	     NSProcessInfo.thermalState and OSThermalNotification read (src/thermal_notify.c).
+	     Without thermal=1 it ends at once. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/redwood/bin/thermal_notify</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>

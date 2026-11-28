@@ -14,3 +14,11 @@ driver MODEM
 	requires QMI UFS
 	help    the modem (modem=1): started, its file systems served from the flash, the IPA's data path as en1,
 	help    the SIM and the network registration. Research; needs fw-modem/ from the phone
+
+driver GNSS
+	file    bsd/dev/hakios.loc.c
+	requires QMI
+	help    GNSS through the modem's location service (QMI LOC, 0x10): the client the modem driver opens once QRTR is up
+	help    (modem_gnss_off=1: not), and sysctl kern.hakios.gnss_state, _fix, _sky for userland (libhakios feeds locationd).
+	help    gnss_fake=LAT_E7,LON_E7 makes up a fix there, for trying the way to locationd without the modem
+	default n
